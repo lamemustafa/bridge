@@ -1,0 +1,21 @@
+node_modules/
+.pnpm-store/
+/dist
+/src-tauri/target
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+
+# Local environment and editor state. Keep examples tracked.
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test and coverage output.
+coverage/
+.nyc_output/

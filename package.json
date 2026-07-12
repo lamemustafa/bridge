@@ -1,0 +1,45 @@
+{
+  "name": "bridge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Bridge is the open-source Tauri implementation of AXAL Sync with local edge-first sync workflows.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamemustafa/bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lamemustafa/bridge/issues"
+  },
+  "homepage": "https://github.com/lamemustafa/bridge#readme",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "check": "pnpm run build && pnpm run cargo:check",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "cargo:check": "cargo check --locked --manifest-path src-tauri/Cargo.toml",
+    "cargo:clippy": "cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "cargo:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
+    "cargo:test": "cargo test --locked --manifest-path src-tauri/Cargo.toml"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "lucide-react": "^0.475.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.0"
+  }
+}
