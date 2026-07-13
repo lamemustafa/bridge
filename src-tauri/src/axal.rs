@@ -563,8 +563,9 @@ pub(crate) fn sanitized_server_message(message: &str) -> String {
 mod tests {
     use super::{
         api_client, bind_workspace, credential_sessions, credentials_for_session, endpoint,
-        endpoint_with_allowed_origins, revoke_credential_session, validate_workspace_binding,
-        AxalCredentials, CredentialSession, IntegrationKind, CREDENTIAL_SESSION_ABSOLUTE_TTL,
+        endpoint_with_allowed_origins, purge_expired_credential_sessions,
+        revoke_credential_session, validate_workspace_binding, AxalCredentials, CredentialSession,
+        IntegrationKind, CREDENTIAL_SESSION_ABSOLUTE_TTL,
     };
     use std::sync::Arc;
     use std::time::Duration;
@@ -674,6 +675,10 @@ mod tests {
         revoke_credential_session(&replacement_id).expect("revoke replacement");
 
         let expired_id = uuid::Uuid::new_v4().to_string();
+        let created_at = std::time::Instant::now();
+        let last_used_at = created_at
+            .checked_add(CREDENTIAL_SESSION_ABSOLUTE_TTL)
+            .expect("credential absolute lifetime");
         credential_sessions()
             .lock()
             .expect("credential session lock")
@@ -682,13 +687,18 @@ mod tests {
                 CredentialSession {
                     credentials,
                     bound_workspace: Some("workspace-synthetic".to_string()),
-                    created_at: std::time::Instant::now()
-                        - CREDENTIAL_SESSION_ABSOLUTE_TTL
-                        - Duration::from_secs(1),
-                    last_used_at: std::time::Instant::now(),
+                    created_at,
+                    last_used_at,
                 },
             );
-        assert!(credentials_for_session(&expired_id, None).is_err());
+        let expiry_check = last_used_at
+            .checked_add(Duration::from_secs(1))
+            .expect("credential expiry deadline");
+        let mut sessions = credential_sessions()
+            .lock()
+            .expect("credential session lock");
+        purge_expired_credential_sessions(&mut sessions, expiry_check);
+        assert!(!sessions.contains_key(&expired_id));
     }
 
     #[tokio::test]
