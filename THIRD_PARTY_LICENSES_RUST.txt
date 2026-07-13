@@ -27,7 +27,7 @@ allocator-api2 0.2.21
 License: MIT OR Apache-2.0
 Source: https://github.com/zakarumych/allocator-api2
 
-anyhow 1.0.102
+anyhow 1.0.103
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/anyhow
 
@@ -947,10 +947,6 @@ servo_arc 0.4.3
 License: MIT OR Apache-2.0
 Source: https://github.com/servo/stylo
 
-sha1 0.10.6
-License: MIT OR Apache-2.0
-Source: https://github.com/RustCrypto/hashes
-
 sha2 0.10.9
 License: MIT OR Apache-2.0
 Source: https://github.com/RustCrypto/hashes
@@ -1271,7 +1267,7 @@ utf8_iter 1.0.4
 License: Apache-2.0 OR MIT
 Source: https://github.com/hsivonen/utf8_iter
 
-uuid 1.23.3
+uuid 1.23.5
 License: Apache-2.0 OR MIT
 Source: https://github.com/uuid-rs/uuid
 
@@ -1387,23 +1383,11 @@ windows-strings 0.5.1
 License: MIT OR Apache-2.0
 Source: https://github.com/microsoft/windows-rs
 
-windows-sys 0.48.0
-License: MIT OR Apache-2.0
-Source: https://github.com/microsoft/windows-rs
-
-windows-sys 0.52.0
-License: MIT OR Apache-2.0
-Source: https://github.com/microsoft/windows-rs
-
 windows-sys 0.59.0
 License: MIT OR Apache-2.0
 Source: https://github.com/microsoft/windows-rs
 
 windows-sys 0.61.2
-License: MIT OR Apache-2.0
-Source: https://github.com/microsoft/windows-rs
-
-windows-targets 0.48.5
 License: MIT OR Apache-2.0
 Source: https://github.com/microsoft/windows-rs
 
@@ -1416,10 +1400,6 @@ License: MIT OR Apache-2.0
 Source: https://github.com/microsoft/windows-rs
 
 windows-version 0.1.7
-License: MIT OR Apache-2.0
-Source: https://github.com/microsoft/windows-rs
-
-windows_x86_64_msvc 0.48.5
 License: MIT OR Apache-2.0
 Source: https://github.com/microsoft/windows-rs
 
@@ -2153,16 +2133,12 @@ Apache License 2.0
 - windows-result 0.4.1
 - windows-strings 0.4.2
 - windows-strings 0.5.1
-- windows-sys 0.48.0
-- windows-sys 0.52.0
 - windows-sys 0.59.0
 - windows-sys 0.61.2
-- windows-targets 0.48.5
 - windows-targets 0.52.6
 - windows-threading 0.1.0
 - windows-version 0.1.7
 - windows 0.61.3
-- windows_x86_64_msvc 0.48.5
 - windows_x86_64_msvc 0.52.6
 
                                  Apache License
@@ -5997,7 +5973,7 @@ Apache License 2.0
 - thread_local 1.1.9
 - unicode-segmentation 1.13.3
 - url 2.5.8
-- uuid 1.23.3
+- uuid 1.23.5
 - version_check 0.9.5
 - web_atoms 0.2.5
 - window-vibrancy 0.6.0
@@ -6628,7 +6604,6 @@ Apache License 2.0
 - cpufeatures 0.2.17
 - crypto-common 0.1.7
 - digest 0.10.7
-- sha1 0.10.6
 - sha2 0.10.9
 
                               Apache License
@@ -8498,7 +8473,7 @@ limitations under the License.
 -------------------------------------------------------------------------------
 Apache License 2.0
 - allocator-api2 0.2.21
-- anyhow 1.0.102
+- anyhow 1.0.103
 - asn1-rs-impl 0.2.0
 - cargo_toml 0.22.3
 - dirs-sys 0.5.0
