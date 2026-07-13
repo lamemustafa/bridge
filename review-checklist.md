@@ -41,3 +41,7 @@ item relevant to the change and mark non-applicable sections explicitly.
 - [ ] Existing workflow changes include rollback and migration compatibility.
 - [ ] Repository setup changes update
   [docs/bootstrap/managed-git.md](./docs/bootstrap/managed-git.md).
+- [ ] Project manifests, LICENSE, README, and NOTICE use consistent licensing
+  metadata, and required third-party attributions are preserved.
+- [ ] Supported installers contain LICENSE, NOTICE, and the generated locked
+  third-party license reports.

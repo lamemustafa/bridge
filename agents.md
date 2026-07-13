@@ -6,8 +6,11 @@ This document defines agent-level expectations and review responsibilities for t
 
 - **Core implementation agent**: owns Rust/Tauri and React implementation and module-level code health.
 - **Security agent**: owns DSC credential handling, endpoint validation, and data-leak prevention checks.
-- **Release agent**: owns CI, packaging, changelog/release prep, and branch policy.
-- **Docs and governance agent**: owns onboarding docs, PR templates, issue lifecycle, and review process updates.
+- **Release agent**: owns CI, packaging, changelog/release prep, branch policy,
+  dependency-license inventory, and proof that license/NOTICE resources ship
+  in supported installers.
+- **Docs and governance agent**: owns onboarding docs, PR templates, issue
+  lifecycle, contribution licensing, provenance checks, and NOTICE updates.
 
 ## Review flow
 
@@ -39,4 +42,6 @@ This document defines agent-level expectations and review responsibilities for t
 - Any platform-sensitive change must be validated on affected Windows and macOS hosts,
   or the missing platform evidence must be called out explicitly in the PR.
 - Never merge a PR that introduces destructive DB migrations without rollback notes.
+- Never relicense or add third-party code or assets without documented authority
+  and preservation of applicable copyright, license, and attribution notices.
 - If you discover policy drift from this file, open an explicit PR to rectify before feature work.

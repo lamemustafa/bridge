@@ -5,6 +5,18 @@
 Follow [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md). Keep discussions
 constructive, technical, and free of private customer or contributor data.
 
+## Contribution license
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in Bridge is provided under the Apache License,
+Version 2.0, without additional terms or conditions. Mark material that is
+not a contribution conspicuously as `Not a Contribution`.
+
+Only submit work that you have the right to license. Identify third-party
+material in the pull request and preserve all applicable copyright,
+attribution, and license notices. Update [NOTICE](./NOTICE) when a required
+attribution is introduced.
+
 ## Development setup
 
 Bridge supports development on Windows and macOS. Install Node.js 20,

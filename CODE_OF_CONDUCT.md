@@ -1,4 +1,4 @@
-# Contributor Covenant Code of Conduct
+# Code of Conduct
 
 We are committed to building a respectful, collaborative, and inclusive OSS community.
 

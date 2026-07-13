@@ -5,6 +5,12 @@ All notable changes to Bridge are documented here. The project follows
 
 ## [Unreleased]
 
+### Changed
+
+- Relicensed future Bridge distributions from the MIT License to the Apache
+  License, Version 2.0. The previously published `v0.1.0` release remains
+  available under the MIT License that accompanied that release.
+
 ### Added
 
 - Native Windows and macOS CI coverage for formatting, tests, builds, and

@@ -84,3 +84,8 @@ for private reporting and handling requirements.
 - [Rectification guidelines](./docs/rectify-guidelines.md)
 - [Roadmap](./docs/step-by-step-roadmap.md)
 - [Managed Git guidance](./docs/bootstrap/managed-git.md)
+
+## License
+
+Bridge is licensed under the [Apache License, Version 2.0](./LICENSE).
+Attribution notices are provided in [NOTICE](./NOTICE).

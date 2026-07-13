@@ -3,6 +3,9 @@ name = "bridge"
 version = "0.1.0"
 description = "Bridge is the open-source Tauri implementation of the AXAL Sync desktop workflows."
 authors = ["AXAL"]
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
 edition = "2021"
 default-run = "bridge"
 

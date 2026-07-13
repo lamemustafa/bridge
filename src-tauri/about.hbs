@@ -1,0 +1,31 @@
+Bridge native third-party licenses
+==================================
+
+This report is generated from the locked Cargo dependency graph for the
+supported Windows and macOS targets. Package links and license texts are
+provided below.
+
+Components
+----------
+{{#each crates}}
+{{#if package.source}}
+{{{package.name}}} {{{package.version}}}
+License: {{{license}}}
+Source: {{#if package.repository}}{{{package.repository}}}{{else}}https://crates.io/crates/{{{package.name}}}{{/if}}
+
+{{/if}}
+{{/each}}
+License texts and notices
+-------------------------
+{{#each licenses}}
+{{{name}}}
+{{#each used_by}}
+{{#if crate.source}}
+- {{{crate.name}}} {{{crate.version}}}
+{{/if}}
+{{/each}}
+
+{{{text}}}
+
+-------------------------------------------------------------------------------
+{{/each}}

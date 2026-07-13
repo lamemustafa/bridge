@@ -26,6 +26,15 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "copyright": "Copyright 2026 ComplyEaze contributors",
+    "license": "Apache-2.0",
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "../LICENSE": "LICENSE",
+      "../NOTICE": "NOTICE",
+      "../THIRD_PARTY_LICENSES.txt": "THIRD_PARTY_LICENSES.txt",
+      "../THIRD_PARTY_LICENSES_RUST.txt": "THIRD_PARTY_LICENSES_RUST.txt"
+    },
     "icon": [
       "icons/icon.png",
       "icons/icon.ico",

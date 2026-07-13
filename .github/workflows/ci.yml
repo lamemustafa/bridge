@@ -26,6 +26,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm run license:check
       - run: corepack pnpm run build
 
   rust-format:

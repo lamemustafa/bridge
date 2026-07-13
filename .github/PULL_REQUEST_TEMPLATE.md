@@ -40,4 +40,6 @@ Why is this needed for Bridge now?
 - [ ] No personal/customer data, certificate output, local usernames, or
   developer-specific absolute paths added
 - [ ] Tests, screenshots, and fixtures use synthetic or redacted data
+- [ ] I have the right to submit these changes under Apache-2.0, and any
+  third-party license or NOTICE obligations are documented and preserved
 - [ ] Branching and labels align with managed-git policy

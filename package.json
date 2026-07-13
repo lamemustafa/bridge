@@ -2,6 +2,7 @@
   "name": "bridge",
   "private": true,
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Bridge is the open-source Tauri implementation of AXAL Sync with local edge-first sync workflows.",
   "repository": {
@@ -26,7 +27,8 @@
     "cargo:check": "cargo check --locked --manifest-path src-tauri/Cargo.toml",
     "cargo:clippy": "cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "cargo:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
-    "cargo:test": "cargo test --locked --manifest-path src-tauri/Cargo.toml"
+    "cargo:test": "cargo test --locked --manifest-path src-tauri/Cargo.toml",
+    "license:check": "node scripts/check-license-metadata.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
