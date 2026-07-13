@@ -17,7 +17,7 @@ account in project documentation:
 
 ```text
 git remote add origin <repository-url>
-git push -u origin main
+git push -u origin master
 ```
 
 Do not publish until tracked files and Git author metadata have been checked for
@@ -25,7 +25,7 @@ personal information.
 
 ## Managed repository settings
 
-- Require pull requests for `main`.
+- Require pull requests for `master`.
 - Require one or more approvals and dismiss stale approvals after new commits.
 - Require linear history and the `checks` status check.
 - Enable private vulnerability reporting.

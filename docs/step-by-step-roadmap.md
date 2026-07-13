@@ -22,7 +22,7 @@
 
 ## Managed repository controls
 
-1. Require pull requests and the `checks` status on `main`.
+1. Require pull requests and the required checks on `master`.
 2. Configure the area, severity, and type labels defined in
    [managed Git guidance](./bootstrap/managed-git.md).
 3. Enable private vulnerability reporting.

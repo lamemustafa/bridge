@@ -24,7 +24,7 @@ packaging. Do not treat a Windows build as macOS evidence or the reverse.
 
 ## Branching
 
-- Use short-lived branches from `main`.
+- Use short-lived branches from `master`.
 - Use `feat/` for features, `fix/` for defects, `refactor/` for refactors,
   `chore/` for infrastructure or docs, and `rectify/` for regressions.
 - Use an imperative commit subject no longer than 72 characters.
