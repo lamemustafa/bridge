@@ -18,6 +18,8 @@ item relevant to the change and mark non-applicable sections explicitly.
 - [ ] No secrets, credentials, certificate data, personal data, customer data,
   local usernames, or absolute machine paths appear in source, fixtures, logs,
   screenshots, documentation, or Git metadata intended for publication.
+- [ ] Potential vulnerabilities remain in the private advisory flow until
+  coordinated disclosure is safe.
 - [ ] Endpoints and command handlers enforce explicit input validation.
 - [ ] File and library paths are repository-relative, app-data-relative, or
   user-selected; no path assumes a developer machine or operating system.
@@ -37,6 +39,8 @@ item relevant to the change and mark non-applicable sections explicitly.
 
 - [ ] Changed entry points are covered by build and packaging commands.
 - [ ] Frontend, backend, binary, bundle, and product names are consistent.
+- [ ] Package, Cargo, Tauri, changelog, and tag versions identify one licensing
+  and release boundary.
 - [ ] CI is updated when commands, supported hosts, or publish logic change.
 - [ ] Existing workflow changes include rollback and migration compatibility.
 - [ ] Repository setup changes update
@@ -45,3 +49,5 @@ item relevant to the change and mark non-applicable sections explicitly.
   metadata, and required third-party attributions are preserved.
 - [ ] Supported installers contain LICENSE, NOTICE, and the generated locked
   third-party license reports.
+- [ ] New code/assets have a source, rights, license, and attribution record in
+  `docs/provenance.md` or `NOTICE`.

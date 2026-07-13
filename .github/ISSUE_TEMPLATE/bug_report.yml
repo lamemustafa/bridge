@@ -1,0 +1,93 @@
+name: Bug report
+description: Report a reproducible Bridge defect using synthetic or redacted evidence
+title: "[Bug] "
+labels:
+  - type:bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities, credentials, certificate output, or sensitive data here. Use private vulnerability reporting from the issue chooser.
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior without personal or customer data.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Use synthetic inputs and repository-relative paths.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Select exactly one owning area; maintainers apply the matching label.
+      options:
+        - area:tally
+        - area:dsc
+        - area:documents
+        - area:infra
+        - area:security
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Select the highest applicable severity; maintainers apply the matching label.
+      options:
+        - severity:p1 - urgent
+        - severity:p2 - production impact
+        - severity:p3 - medium
+        - severity:p4 - cleanup
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: cause
+    attributes:
+      label: Root cause and regression source
+      description: Link the introducing PR or commit when known.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and regression evidence
+      description: Provide an exact check or command that will prove the fix.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform scope
+      options:
+        - Windows
+        - macOS
+        - Windows and macOS
+        - Platform-independent
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Relevant versions
+      description: Bridge and safe-to-disclose Tally or DSC driver versions, if applicable.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Remove names, emails, company/tax data, certificate metadata, PINs, tokens, usernames, home directories, and absolute paths.

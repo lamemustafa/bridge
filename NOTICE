@@ -11,9 +11,12 @@ This product includes software developed at
 The Apache Software Foundation (http://www.apache.org/).
 
 -------------------------------------------------------------------------------
-This product bundles OASIS PKCS#11 documentation and header files, which are
-available under the OASIS IPR Policy
+The `pkcs11` Rust dependency incorporates material derived from OASIS PKCS#11
+documentation and header files under the OASIS IPR Policy
 
     [http://www.oasis-open.org/policies-guidelines/ipr].
 
-For details, see pkcs11-docs/.
+Bridge does not ship a local `pkcs11-docs/` directory. The upstream dependency
+source and referenced material are available at:
+
+    https://github.com/MarcusGrass/rust-pkcs11

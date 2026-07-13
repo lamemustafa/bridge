@@ -20,11 +20,16 @@ const [packageText, cargo, tauriText, license, notice, readme, frontendNotices, 
 const packageJson = JSON.parse(packageText);
 const tauri = JSON.parse(tauriText);
 const failures = [];
+const cargoVersion = cargo.match(/^version = "([^"]+)"$/m)?.[1];
 
 if (packageJson.license !== expectedLicense) failures.push("package.json license");
 if (!/^license = "Apache-2\.0"$/m.test(cargo)) failures.push("Cargo.toml license");
 if (tauri.bundle?.license !== expectedLicense) failures.push("Tauri bundle license");
 if (tauri.bundle?.licenseFile !== "../LICENSE") failures.push("Tauri licenseFile");
+if (!cargoVersion || packageJson.version !== cargoVersion || packageJson.version !== tauri.version) {
+  failures.push("manifest version consistency");
+}
+if (packageJson.version === "0.1.0") failures.push("MIT v0.1.0 version boundary");
 
 const resources = tauri.bundle?.resources ?? {};
 for (const [source, destination] of Object.entries({

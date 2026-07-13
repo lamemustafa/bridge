@@ -5,6 +5,10 @@ All notable changes to Bridge are documented here. The project follows
 
 ## [Unreleased]
 
+The next release line is `0.2.x`. This creates an unambiguous version boundary
+between the published MIT-licensed `v0.1.0` release and Apache-2.0 builds from
+current source.
+
 ### Changed
 
 - Relicensed future Bridge distributions from the MIT License to the Apache
@@ -17,6 +21,8 @@ All notable changes to Bridge are documented here. The project follows
   Clippy.
 - Repository-local Windows and macOS application icons.
 - Open-source contribution, security, review, and rectification guidance.
+- Reproducible Node and Rust toolchain baselines, installer smoke builds, and
+  complete lockfile-to-license-inventory checks.
 
 ### Security
 

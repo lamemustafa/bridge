@@ -35,7 +35,9 @@
 2. Define the Node, pnpm, Rust toolchain, and Rust minimum-supported-version
    policy.
 3. Run formatting, lint, test, build, and platform packaging checks in CI.
-4. Document release signing and rollback procedures for Windows and macOS.
+4. Configure organization-controlled Windows signing and macOS notarization
+   credentials using protected release environments. The process and rollback
+   gates are documented in [release-process.md](./release-process.md).
 5. Review external governance conventions before adopting them and record
    exact mappings, exceptions, and ownership in public project documentation.
 
@@ -48,3 +50,5 @@
 - No public artifact contains secrets, personal/customer data, or contributor
   machine paths.
 - Governance and rectification controls are enforced in the managed repository.
+- Production downloads are signed/notarized and carry checksums and provenance;
+  unsigned CI smoke bundles are not represented as releases.

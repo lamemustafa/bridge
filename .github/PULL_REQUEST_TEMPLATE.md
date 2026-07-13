@@ -16,7 +16,8 @@ Why is this needed for Bridge now?
 - [ ] Command checks (`corepack pnpm run ...`)
 - [ ] Screenshots/logs attached where UI/behavior changed
 - [ ] One completed [`review-checklist.md`](../review-checklist.md) line is linked here: <!-- paste permalink -->
-- [ ] `docs/rectify-guidelines.md` updated if this is a regression fix
+- [ ] Rectify issue linked and `docs/rectify-guidelines.md` followed if this is
+      a regression fix
 - [ ] Native Windows validation completed or explained as not applicable
 - [ ] Native macOS validation completed or explained as not applicable
 
@@ -39,6 +40,8 @@ Why is this needed for Bridge now?
 - [ ] No leftover debug logs with sensitive values
 - [ ] No personal/customer data, certificate output, local usernames, or
   developer-specific absolute paths added
+- [ ] Potential vulnerabilities use the private `SECURITY.md` flow until
+  coordinated disclosure is safe
 - [ ] Tests, screenshots, and fixtures use synthetic or redacted data
 - [ ] I have the right to submit these changes under Apache-2.0, and any
   third-party license or NOTICE obligations are documented and preserved

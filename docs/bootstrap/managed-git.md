@@ -26,11 +26,21 @@ personal information.
 ## Managed repository settings
 
 - Require pull requests for `master`.
-- Require one or more approvals and dismiss stale approvals after new commits.
-- Require linear history and the `checks` status check.
+- For a solo-maintainer repository, require the pull-request path with zero
+  mandatory approvals, strict status checks, conversation resolution, and
+  admin enforcement. Increase to at least one approval and dismiss stale
+  approvals as soon as a second trusted maintainer is available; do not create
+  a policy that can only be satisfied through routine bypasses.
+- Require linear history and these exact status contexts: `Frontend build`,
+  `Rust format`, `Native checks (windows-latest)`,
+  `Native checks (macos-latest)`, `Bundle smoke (windows-latest)`,
+  `Bundle smoke (macos-latest)`, and `GitGuardian Security Checks`.
 - Enable private vulnerability reporting.
 - Restrict merge permissions to maintainers.
 - Require issue and pull-request templates.
+- Require external actions to use full-length commit SHAs and keep the
+  human-readable action tag on the same line for Dependabot updates.
+- Protect `v*` release tags from updates and deletion after publication.
 
 ## Governance labels
 

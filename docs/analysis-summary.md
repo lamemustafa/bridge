@@ -4,6 +4,9 @@ Bridge was extracted from a pre-existing desktop sync implementation into an
 independent Tauri repository. This record avoids developer-machine paths and
 private workspace details.
 
+Public code, asset, and licensing boundaries are recorded in
+[provenance.md](./provenance.md).
+
 ## Reused architecture
 
 - React and TypeScript frontend workflow wiring

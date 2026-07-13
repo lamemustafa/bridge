@@ -19,8 +19,9 @@ attribution is introduced.
 
 ## Development setup
 
-Bridge supports development on Windows and macOS. Install Node.js 20,
-Corepack, the Rust stable toolchain, and the
+Bridge supports development on Windows and macOS. Install a supported Node.js
+22 or 24 release, Corepack, the Rust toolchain selected by
+`rust-toolchain.toml`, and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for the host
 operating system. Then run from any local clone:
 
@@ -43,6 +44,9 @@ packaging. Do not treat a Windows build as macOS evidence or the reverse.
 
 All changes go through a pull request. Follow
 [docs/rectify-guidelines.md](./docs/rectify-guidelines.md) for regressions.
+Potential vulnerabilities and credential/data leaks must use the private flow
+in [SECURITY.md](./SECURITY.md); do not open a public issue or PR until
+coordinated disclosure is safe.
 
 ## Pull-request requirements
 

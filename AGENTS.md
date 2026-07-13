@@ -1,4 +1,4 @@
-# agents.md
+# AGENTS.md
 
 This document defines agent-level expectations and review responsibilities for this repository.
 
@@ -24,7 +24,11 @@ This document defines agent-level expectations and review responsibilities for t
 
 ## Rectification expectations
 
-- **When defects are found**: open a follow-up `Bug` issue and include a `Rectify` PR with root-cause and regression check.
+- **When non-security defects are found**: open a follow-up `Bug` issue and
+  include a `Rectify` PR with root-cause and regression check.
+- **When a vulnerability, credential leak, or sensitive-data exposure is
+  suspected**: follow [SECURITY.md](./SECURITY.md) privately. This requirement
+  supersedes public issue/PR creation until coordinated disclosure is safe.
 - PRs that touch existing workflows must include rollback notes and migration compatibility.
 - Keep issue triage actionable:
   - assign one area label (tally / dsc / documents / infra / security)

@@ -9,18 +9,26 @@ Every production-affecting bug or behavior regression should enter a tracked rec
   - DSC token/certificate extraction
   - Document scan/upload behavior
   - Local persistence or migration integrity
-- A user reports that violates an existing acceptance criterion from the PR checklist.
+- A user reports behavior that violates an existing acceptance criterion from
+  the PR checklist.
+
+Potential vulnerabilities, credential leaks, and sensitive-data exposures do
+not enter a public issue first. Use the private reporting and coordinated
+disclosure process in [SECURITY.md](../SECURITY.md). Create a sanitized public
+record only after maintainers determine disclosure is safe.
 
 ## Flow
 
 1. Open issue with:
    - `type:rectify`
-   - severity label (`severity:p1` / `severity:p2` / `severity:p3`)
+   - severity label (`severity:p1` / `severity:p2` / `severity:p3` /
+     `severity:p4`)
    - short summary and reproduction steps
    - pointer to commit/PR that introduced the regression
    - synthetic reproduction data with personal/customer data and machine paths removed.
 2. Tag the owning area:
-   - `area:tally`, `area:dsc`, `area:documents`, or `area:infra`
+   - `area:tally`, `area:dsc`, `area:documents`, `area:infra`, or
+     `area:security`
 3. Open a dedicated fix branch:
    - format: `rectify/<area>/<short-slug>`
 4. Use `review-checklist.md` plus the original checklist item from the source PR.

@@ -1,7 +1,7 @@
 {
   "name": "bridge",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Bridge is the open-source Tauri implementation of AXAL Sync with local edge-first sync workflows.",
@@ -15,7 +15,7 @@
   "homepage": "https://github.com/lamemustafa/bridge#readme",
   "packageManager": "pnpm@9.15.4",
   "engines": {
-    "node": ">=20"
+    "node": ">=22 <25"
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -28,7 +28,10 @@
     "cargo:clippy": "cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "cargo:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
     "cargo:test": "cargo test --locked --manifest-path src-tauri/Cargo.toml",
-    "license:check": "node scripts/check-license-metadata.mjs"
+    "license:check": "node scripts/check-license-metadata.mjs && node scripts/check-dependency-inventory.mjs --frontend",
+    "license:rust": "node scripts/check-dependency-inventory.mjs --rust",
+    "license:all": "node scripts/check-license-metadata.mjs && node scripts/check-dependency-inventory.mjs",
+    "license:generate:rust": "node scripts/generate-rust-licenses.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",

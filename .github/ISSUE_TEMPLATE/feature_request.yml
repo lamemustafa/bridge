@@ -1,0 +1,66 @@
+name: Feature request
+description: Propose a Bridge enhancement
+title: "[Feature] "
+labels:
+  - type:feature
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and user value
+      description: Explain the problem using synthetic examples only.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Select exactly one owning area; maintainers apply the matching label.
+      options:
+        - area:tally
+        - area:dsc
+        - area:documents
+        - area:infra
+        - area:security
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform scope
+      options:
+        - Windows
+        - macOS
+        - Windows and macOS
+        - Platform-independent
+    validations:
+      required: true
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - label: New capability
+        - label: User-experience improvement
+        - label: Performance or reliability
+        - label: Security or privacy
+        - label: Cross-platform compatibility
+  - type: textarea
+    id: safety
+    attributes:
+      label: Security, privacy, compatibility, and rollback impact
+      description: Describe data, endpoint, credential, migration, and rollback considerations.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true

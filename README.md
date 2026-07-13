@@ -16,8 +16,8 @@ system does not verify the other.
 
 Shared prerequisites:
 
-- Node.js 20 and Corepack
-- the Rust stable toolchain
+- Node.js 22 or 24 and Corepack (`.node-version` pins the CI baseline)
+- the Rust toolchain pinned by `rust-toolchain.toml`
 - the operating-system dependencies listed in the
   [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 
@@ -44,6 +44,9 @@ not require a fixed checkout location. The first Rust build can take several
 minutes.
 
 For a release build, run `corepack pnpm run tauri:build` on each target host.
+CI-produced bundles are unsigned smoke artifacts only. Do not redistribute a
+desktop installer until the signing, notarization, provenance, and rollback
+gates in [the release runbook](./docs/release-process.md) are complete.
 
 ## Platform verification
 
@@ -77,15 +80,19 @@ for private reporting and handling requirements.
 
 ## Governance
 
-- [Agent responsibilities](./agents.md)
+- [Agent responsibilities](./AGENTS.md)
 - [Contributor guide](./CONTRIBUTING.md)
 - [Review checklist](./review-checklist.md)
 - [Security policy](./SECURITY.md)
 - [Rectification guidelines](./docs/rectify-guidelines.md)
 - [Roadmap](./docs/step-by-step-roadmap.md)
 - [Managed Git guidance](./docs/bootstrap/managed-git.md)
+- [Source and asset provenance](./docs/provenance.md)
+- [Release process](./docs/release-process.md)
 
 ## License
 
 Bridge is licensed under the [Apache License, Version 2.0](./LICENSE).
 Attribution notices are provided in [NOTICE](./NOTICE).
+The historical `v0.1.0` release remains under the MIT license shipped with
+that tag; current development source is version `0.2.0` under Apache-2.0.
