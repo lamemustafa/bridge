@@ -3,6 +3,7 @@ use std::io::Read;
 use std::process;
 
 use bridge_lib::dsc::{run_probe_child_from_args, run_probe_isolated};
+use zeroize::Zeroize;
 
 fn main() {
     let status = std::thread::Builder::new()
@@ -75,8 +76,11 @@ fn run() -> i32 {
         while pin.ends_with('\r') || pin.ends_with('\n') {
             pin.pop();
         }
-        if pin.is_empty() {
-            eprintln!("PIN from standard input must not be empty");
+        if pin.is_empty() || pin.len() > 128 || pin.chars().any(char::is_control) {
+            pin.zeroize();
+            eprintln!(
+                "PIN must be non-empty, at most 128 bytes, and contain no control characters"
+            );
             return 2;
         }
         Some(vec![pin])

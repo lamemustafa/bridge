@@ -3,6 +3,9 @@ use crate::tally::{
     ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger, TallyVoucher,
 };
 use serde::Deserialize;
+use zeroize::Zeroize;
+
+const MAX_DSC_PIN_BYTES: usize = 128;
 
 #[tauri::command]
 pub async fn check_tally_connection(config: TallyConfig) -> Result<ConnectionStatus, String> {
@@ -76,28 +79,47 @@ pub async fn detect_dsc_token() -> Result<crate::dsc::ProbeReport, String> {
 pub async fn extract_dsc_certificates(
     pins: Option<Vec<String>>,
 ) -> Result<crate::dsc::ProbeReport, String> {
-    let pins = pins.ok_or_else(|| "PIN is required to extract DSC certificates".to_string())?;
+    let mut pins = pins.ok_or_else(|| "PIN is required to extract DSC certificates".to_string())?;
+    if let Err(error) = validate_dsc_pins(&pins) {
+        pins.zeroize();
+        return Err(error);
+    }
+    run_dsc_probe(false, Some(pins)).await
+}
+
+fn validate_dsc_pins(pins: &[String]) -> Result<(), String> {
     if pins.len() != 1 || pins[0].is_empty() {
         return Err("Provide exactly one non-empty PIN".to_string());
     }
-    run_dsc_probe(false, Some(pins)).await
+    if pins[0].len() > MAX_DSC_PIN_BYTES || pins[0].chars().any(char::is_control) {
+        return Err(
+            "DSC PIN must be at most 128 bytes and contain no control characters".to_string(),
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn validate_axal_credentials(
     credentials: crate::axal::AxalCredentials,
-) -> Result<crate::axal::ValidationResponse, String> {
-    crate::axal::validate_api_key(credentials)
+) -> Result<crate::axal::AxalSessionResponse, String> {
+    crate::axal::establish_credential_session(credentials)
         .await
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn check_axal_connection_status(
-    credentials: crate::axal::AxalCredentials,
+    credential_session_id: String,
 ) -> Result<crate::axal::ConnectionStatusResponse, String> {
-    crate::axal::check_connection_status(credentials)
+    crate::axal::check_connection_status(&credential_session_id)
         .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn revoke_axal_credential_session(credential_session_id: String) -> Result<(), String> {
+    crate::axal::revoke_credential_session(&credential_session_id)
         .map_err(|error| error.to_string())
 }
 
@@ -129,29 +151,53 @@ pub async fn sync_documents_to_axal(
 }
 
 #[tauri::command]
-pub async fn select_document_files() -> Result<Vec<String>, String> {
-    tokio::task::spawn_blocking(|| {
-        rfd::FileDialog::new()
-            .set_title("Select documents")
-            .pick_files()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-    })
-    .await
-    .map_err(|error| format!("File picker failed: {error}"))
+pub fn revoke_document_authorizations(
+    selection_ids: Vec<String>,
+    scan_session_id: Option<String>,
+) -> Result<(), String> {
+    crate::documents::revoke_document_authorizations(&selection_ids, scan_session_id.as_deref())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn select_document_folder() -> Result<Vec<String>, String> {
+pub async fn select_document_files() -> Result<Vec<crate::documents::SelectedDocumentPath>, String>
+{
     tokio::task::spawn_blocking(|| {
-        rfd::FileDialog::new()
-            .set_title("Select document folder")
-            .pick_folder()
-            .map(|path| vec![path.display().to_string()])
-            .unwrap_or_default()
+        let paths = rfd::FileDialog::new()
+            .set_title("Select documents")
+            .pick_files()
+            .unwrap_or_default();
+        crate::documents::authorize_selected_paths(paths).map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| format!("Folder picker failed: {error}"))
+    .map_err(|error| format!("File picker failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDocumentPath>, String>
+{
+    tokio::task::spawn_blocking(|| {
+        let paths = rfd::FileDialog::new()
+            .set_title("Select document folder")
+            .pick_folder()
+            .into_iter()
+            .collect::<Vec<_>>();
+        crate::documents::authorize_selected_paths(paths).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Folder picker failed: {error}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_dsc_pins;
+
+    #[test]
+    fn dsc_pin_input_is_strictly_bounded() {
+        assert!(validate_dsc_pins(&["1234".to_string()]).is_ok());
+        assert!(validate_dsc_pins(&["".to_string()]).is_err());
+        assert!(validate_dsc_pins(&["1\n2".to_string()]).is_err());
+        assert!(validate_dsc_pins(&["x".repeat(129)]).is_err());
+        assert!(validate_dsc_pins(&["1".to_string(), "2".to_string()]).is_err());
+    }
 }

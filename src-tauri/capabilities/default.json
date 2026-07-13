@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default desktop permissions for Bridge",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": []
 }

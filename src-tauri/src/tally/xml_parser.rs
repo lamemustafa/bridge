@@ -10,15 +10,10 @@ pub struct TallyEnvelope<T> {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TallyCompany {
     pub name: String,
-    pub address: Option<String>,
     pub state: Option<String>,
     pub phone: Option<String>,
     pub email: Option<String>,
-    pub income_tax_number: Option<String>,
     pub mobile: Option<String>,
-    pub tan_reg_no: Option<String>,
-    pub tan_number: Option<String>,
-    pub website: Option<String>,
     pub pincode: Option<String>,
     pub gst_number: Option<String>,
 }
@@ -27,17 +22,8 @@ pub struct TallyCompany {
 pub struct TallyLedger {
     pub name: String,
     pub parent: Option<String>,
-    pub address: Vec<String>,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub mobile: Option<String>,
-    pub pincode: Option<String>,
-    pub state: Option<String>,
-    pub gst_registration_type: Option<String>,
     pub party_gstin: Option<String>,
-    pub income_tax_number: Option<String>,
     pub opening_balance: Option<String>,
-    pub tally_altmastid: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,16 +33,6 @@ pub struct TallyVoucher {
     pub voucher_type: Option<String>,
     pub voucher_number: Option<String>,
     pub party_ledger_name: Option<String>,
-    pub narration: Option<String>,
-    pub amount: Option<String>,
-    pub ledger_entries: Vec<TallyVoucherLedgerEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TallyVoucherLedgerEntry {
-    pub ledger_name: Option<String>,
-    pub amount: Option<String>,
-    pub is_deemed_positive: Option<String>,
 }
 
 pub fn parse_xml<T>(xml: &str) -> anyhow::Result<T>
@@ -129,15 +105,10 @@ pub fn parse_vouchers(xml: &str) -> anyhow::Result<Vec<TallyVoucher>> {
 fn parse_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<TallyCompany> {
     let mut company = TallyCompany {
         name: String::new(),
-        address: None,
         state: None,
         phone: None,
         email: None,
-        income_tax_number: None,
         mobile: None,
-        tan_reg_no: None,
-        tan_number: None,
-        website: None,
         pincode: None,
         gst_number: None,
     };
@@ -152,26 +123,11 @@ fn parse_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<TallyCompany
                         company.name =
                             read_optional_text(reader, element.name())?.unwrap_or_default()
                     }
-                    b"ADDRESSFIELD" => {
-                        company.address = read_optional_text(reader, element.name())?
-                    }
                     b"STATEFIELD" => company.state = read_optional_text(reader, element.name())?,
                     b"PHONEFIELD" => company.phone = read_optional_text(reader, element.name())?,
                     b"EMAILFIELD" => company.email = read_optional_text(reader, element.name())?,
-                    b"INCOMETAXFIELD" | b"INCOMETAXNUMBERFIELD" => {
-                        company.income_tax_number = read_optional_text(reader, element.name())?
-                    }
                     b"MOBILEFIELD" | b"MOBILENUMBERSFIELD" => {
                         company.mobile = read_optional_text(reader, element.name())?
-                    }
-                    b"TANREGFIELD" | b"TANREGNOFIELD" => {
-                        company.tan_reg_no = read_optional_text(reader, element.name())?
-                    }
-                    b"TANFIELD" | b"TANUMBERFIELD" => {
-                        company.tan_number = read_optional_text(reader, element.name())?
-                    }
-                    b"WEBSITEFIELD" => {
-                        company.website = read_optional_text(reader, element.name())?
                     }
                     b"PINCODEFIELD" => {
                         company.pincode = read_optional_text(reader, element.name())?
@@ -197,17 +153,8 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
     let mut ledger = TallyLedger {
         name: name.unwrap_or_default(),
         parent: None,
-        address: Vec::new(),
-        email: None,
-        phone: None,
-        mobile: None,
-        pincode: None,
-        state: None,
-        gst_registration_type: None,
         party_gstin: None,
-        income_tax_number: None,
         opening_balance: None,
-        tally_altmastid: None,
     };
 
     loop {
@@ -217,36 +164,11 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
 
                 match name.as_slice() {
                     b"PARENT" => ledger.parent = read_optional_text(reader, element.name())?,
-                    b"ADDRESS" => {
-                        if let Some(address) = read_optional_text(reader, element.name())? {
-                            ledger.address.push(address);
-                        }
-                    }
-                    b"EMAIL" => ledger.email = read_optional_text(reader, element.name())?,
-                    b"LEDGERPHONE" | b"PHONENUMBER" => {
-                        ledger.phone = read_optional_text(reader, element.name())?
-                    }
-                    b"LEDGERMOBILE" | b"MOBILENUMBER" => {
-                        ledger.mobile = read_optional_text(reader, element.name())?
-                    }
-                    b"PINCODE" => ledger.pincode = read_optional_text(reader, element.name())?,
-                    b"LEDSTATENAME" | b"STATENAME" => {
-                        ledger.state = read_optional_text(reader, element.name())?
-                    }
-                    b"GSTREGISTRATIONTYPE" => {
-                        ledger.gst_registration_type = read_optional_text(reader, element.name())?
-                    }
                     b"PARTYGSTIN" => {
                         ledger.party_gstin = read_optional_text(reader, element.name())?
                     }
-                    b"INCOMETAXNUMBER" => {
-                        ledger.income_tax_number = read_optional_text(reader, element.name())?
-                    }
                     b"OPENINGBALANCE" => {
                         ledger.opening_balance = read_optional_text(reader, element.name())?
-                    }
-                    b"ALTERID" | b"ALTMASTID" => {
-                        ledger.tally_altmastid = read_optional_text(reader, element.name())?
                     }
                     _ => {}
                 }
@@ -267,23 +189,10 @@ fn parse_voucher(reader: &mut Reader<&[u8]>, id: Option<String>) -> anyhow::Resu
         voucher_type: None,
         voucher_number: None,
         party_ledger_name: None,
-        narration: None,
-        amount: None,
-        ledger_entries: Vec::new(),
     };
 
     loop {
         match reader.read_event()? {
-            Event::Start(element)
-                if element
-                    .name()
-                    .as_ref()
-                    .eq_ignore_ascii_case(b"ALLLEDGERENTRIES.LIST") =>
-            {
-                voucher
-                    .ledger_entries
-                    .push(parse_voucher_ledger_entry(reader)?);
-            }
             Event::Start(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
 
@@ -298,10 +207,6 @@ fn parse_voucher(reader: &mut Reader<&[u8]>, id: Option<String>) -> anyhow::Resu
                     b"PARTYLEDGERNAME" => {
                         voucher.party_ledger_name = read_optional_text(reader, element.name())?
                     }
-                    b"NARRATION" => voucher.narration = read_optional_text(reader, element.name())?,
-                    b"AMOUNT" if voucher.amount.is_none() => {
-                        voucher.amount = read_optional_text(reader, element.name())?
-                    }
                     _ => {}
                 }
             }
@@ -314,47 +219,6 @@ fn parse_voucher(reader: &mut Reader<&[u8]>, id: Option<String>) -> anyhow::Resu
     }
 
     Ok(voucher)
-}
-
-fn parse_voucher_ledger_entry(
-    reader: &mut Reader<&[u8]>,
-) -> anyhow::Result<TallyVoucherLedgerEntry> {
-    let mut entry = TallyVoucherLedgerEntry {
-        ledger_name: None,
-        amount: None,
-        is_deemed_positive: None,
-    };
-
-    loop {
-        match reader.read_event()? {
-            Event::Start(element) => {
-                let name = element.name().as_ref().to_ascii_uppercase();
-
-                match name.as_slice() {
-                    b"LEDGERNAME" => {
-                        entry.ledger_name = read_optional_text(reader, element.name())?
-                    }
-                    b"AMOUNT" => entry.amount = read_optional_text(reader, element.name())?,
-                    b"ISDEEMEDPOSITIVE" => {
-                        entry.is_deemed_positive = read_optional_text(reader, element.name())?
-                    }
-                    _ => {}
-                }
-            }
-            Event::End(element)
-                if element
-                    .name()
-                    .as_ref()
-                    .eq_ignore_ascii_case(b"ALLLEDGERENTRIES.LIST") =>
-            {
-                break
-            }
-            Event::Eof => break,
-            _ => {}
-        }
-    }
-
-    Ok(entry)
 }
 
 fn attr_value(element: &quick_xml::events::BytesStart<'_>, key: &[u8]) -> Option<String> {
@@ -426,7 +290,6 @@ mod tests {
 
         assert_eq!(ledgers.len(), 1);
         assert_eq!(ledgers[0].name, "Customer A");
-        assert_eq!(ledgers[0].address, vec!["Line 1"]);
         assert_eq!(ledgers[0].parent.as_deref(), Some("Sundry Debtors"));
     }
 
@@ -452,7 +315,8 @@ mod tests {
 
         assert_eq!(vouchers.len(), 1);
         assert_eq!(vouchers[0].voucher_type.as_deref(), Some("Sales"));
-        assert_eq!(vouchers[0].ledger_entries.len(), 1);
+        let serialized = serde_json::to_string(&vouchers[0]).expect("serialize voucher");
+        assert!(!serialized.contains("1180"));
     }
 
     #[test]
@@ -483,10 +347,8 @@ mod tests {
 
         assert_eq!(vouchers.len(), 1);
         assert_eq!(vouchers[0].date.as_deref(), Some("20260401"));
-        assert_eq!(vouchers[0].ledger_entries.len(), 1);
-        assert_eq!(
-            vouchers[0].ledger_entries[0].ledger_name.as_deref(),
-            Some("Customer A")
-        );
+        let serialized = serde_json::to_string(&vouchers[0]).expect("serialize voucher");
+        assert!(!serialized.contains("Customer A"));
+        assert!(!serialized.contains("1180"));
     }
 }

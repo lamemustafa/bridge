@@ -1,8 +1,10 @@
 use std::env;
 use std::error::Error;
-use std::io::{Read, Write};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use cryptoki::context::{CInitializeArgs, CInitializeFlags, Pkcs11};
 use cryptoki::object::{Attribute, AttributeType, ObjectClass};
@@ -13,16 +15,91 @@ use pkcs11::types::{
     CKO_CERTIFICATE, CKU_USER, CK_ATTRIBUTE, CK_BBOOL, CK_TRUE,
 };
 use serde::{Deserialize, Serialize};
-use sha1::{Digest, Sha1};
+use sha2::{Digest, Sha256};
 use x509_parser::prelude::parse_x509_certificate;
+use zeroize::{Zeroize, Zeroizing};
+
+const CHILD_TIMEOUT: Duration = Duration::from_secs(30);
+const PROBE_OPERATION_TIMEOUT: Duration = Duration::from_secs(45);
+const CHILD_OUTPUT_LIMIT: usize = 1024 * 1024;
+
+#[cfg(windows)]
+struct ProcessContainment {
+    job: windows_sys::Win32::Foundation::HANDLE,
+}
+
+#[cfg(windows)]
+impl ProcessContainment {
+    fn new(child: &std::process::Child) -> std::io::Result<Self> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &information as *const _ as *const std::ffi::c_void,
+                std::mem::size_of_val(&information) as u32,
+            )
+        };
+        let assigned = unsafe { AssignProcessToJobObject(job, child.as_raw_handle() as _) };
+        if configured == 0 || assigned == 0 {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Self { job })
+    }
+
+    fn terminate(&self) {
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job, 1);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessContainment {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.job);
+        }
+    }
+}
+
+#[cfg(unix)]
+struct ProcessContainment {
+    process_group: i32,
+}
+
+#[cfg(unix)]
+impl ProcessContainment {
+    fn new(child: &std::process::Child) -> std::io::Result<Self> {
+        Ok(Self {
+            process_group: child.id() as i32,
+        })
+    }
+
+    fn terminate(&self) {
+        unsafe {
+            libc::kill(-self.process_group, libc::SIGKILL);
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProbeReport {
     pub platform: String,
     pub arch: String,
-    pub workspace_root: String,
-    pub bundled_library_root: String,
-    pub physical_token_hint: Option<String>,
     pub force_load: bool,
     pub detect_only: bool,
     pub attempts: Vec<ProbeAttempt>,
@@ -36,7 +113,6 @@ pub struct ProbeAttempt {
     pub loaded: bool,
     pub initialized: bool,
     pub slot_count: usize,
-    pub token_info: Option<String>,
     pub login_success: bool,
     pub certificate_count: Option<usize>,
     pub certificates: Vec<CertificateSummary>,
@@ -57,11 +133,17 @@ pub struct CertificateSummary {
     pub parse_error: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct TokenConfig {
     token_type: String,
     library_path: PathBuf,
     pins: Vec<String>,
+}
+
+impl Drop for TokenConfig {
+    fn drop(&mut self) {
+        self.pins.zeroize();
+    }
 }
 
 pub fn run_probe_isolated(
@@ -70,41 +152,57 @@ pub fn run_probe_isolated(
     explicit_pins: Option<Vec<String>>,
     force_load: bool,
 ) -> Result<ProbeReport, Box<dyn Error>> {
-    let workspace_root = workspace_root()?;
-    let library_root = workspace_root.join("assets").join("lib").join("dsc");
-    let physical_token_present = physical_token_hint().is_some();
-    let configs = token_configs(&library_root, explicit_library, explicit_pins);
+    let mut pins = explicit_pins.unwrap_or_default();
+    let report = (|| {
+        let library_root = runtime_library_root()?;
+        let configs = token_configs(&library_root, explicit_library);
+        let deadline = Instant::now() + PROBE_OPERATION_TIMEOUT;
+        let mut attempts = Vec::new();
 
-    let attempts = configs
-        .iter()
-        .map(|config| {
+        for config in &configs {
+            if Instant::now() >= deadline {
+                attempts.push(skipped_attempt(config, "DSC probe operation timed out"));
+                break;
+            }
             if !config.library_path.exists() {
-                return skipped_attempt(config, "PKCS#11 library does not exist");
+                attempts.push(skipped_attempt(config, "PKCS#11 library does not exist"));
+                continue;
             }
-
-            if !physical_token_present && !force_load {
-                return skipped_attempt(
+            if !force_load {
+                attempts.push(skipped_attempt(
                     config,
-                    "no physical token detected; skipped native library load",
-                );
+                    "native library loading was not authorized",
+                ));
+                continue;
+            }
+            if detect_only {
+                attempts.push(run_child_attempt(config, true, deadline));
+                continue;
             }
 
-            run_child_attempt(config, detect_only)
-        })
-        .collect();
+            let detection = run_child_attempt(config, true, deadline);
+            if detection.loaded && detection.initialized && detection.slot_count > 0 {
+                let mut selected = config.clone();
+                selected.pins = std::mem::take(&mut pins);
+                attempts.push(run_child_attempt(&selected, false, deadline));
+                break;
+            }
+            attempts.push(detection);
+        }
 
-    Ok(ProbeReport {
-        platform: env::consts::OS.to_string(),
-        arch: env::consts::ARCH.to_string(),
-        // Avoid exposing user-specific absolute paths and hardware identifiers to the webview.
-        workspace_root: ".".to_string(),
-        bundled_library_root: "assets/lib/dsc".to_string(),
-        physical_token_hint: physical_token_present
-            .then(|| "Physical DSC token detected".to_string()),
-        force_load,
-        detect_only,
-        attempts,
-    })
+        for attempt in &mut attempts {
+            sanitize_attempt(attempt);
+        }
+        Ok(ProbeReport {
+            platform: env::consts::OS.to_string(),
+            arch: env::consts::ARCH.to_string(),
+            force_load,
+            detect_only,
+            attempts,
+        })
+    })();
+    pins.zeroize();
+    report
 }
 
 pub fn run_single_attempt(
@@ -119,7 +217,33 @@ pub fn run_single_attempt(
         pins,
     };
 
-    probe_config(&config, detect_only, true, true)
+    let mut attempt = probe_config(&config, detect_only, true, true);
+    sanitize_attempt(&mut attempt);
+    attempt
+}
+
+fn sanitize_attempt(attempt: &mut ProbeAttempt) {
+    attempt.error = attempt.error.as_deref().map(sanitize_probe_error);
+    for certificate in &mut attempt.certificates {
+        if certificate.parse_error.is_some() {
+            certificate.parse_error = Some("Certificate data could not be parsed".to_string());
+        }
+    }
+}
+
+fn sanitize_probe_error(error: &str) -> String {
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("locked") {
+        "The DSC token PIN appears to be locked".to_string()
+    } else if normalized.contains("pin") || normalized.contains("login") {
+        "The DSC token could not authenticate with the provided PIN".to_string()
+    } else if normalized.contains("no token") || normalized.contains("slot") {
+        "No usable DSC token was found".to_string()
+    } else if normalized.contains("library") || normalized.contains("pkcs") {
+        "The DSC token driver could not be loaded".to_string()
+    } else {
+        "The DSC token operation failed".to_string()
+    }
 }
 
 pub fn run_probe_child_from_args<I>(args: I) -> Option<i32>
@@ -156,7 +280,7 @@ where
     let pins = if detect_only {
         Vec::new()
     } else {
-        let mut input = String::new();
+        let mut input = Zeroizing::new(String::new());
         if let Err(error) = std::io::stdin().take(8192).read_to_string(&mut input) {
             eprintln!("failed to read DSC probe input: {error}");
             return Some(2);
@@ -183,32 +307,20 @@ where
     }
 }
 
-fn workspace_root() -> Result<PathBuf, Box<dyn Error>> {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for candidate in manifest_dir.ancestors() {
-        if candidate.join("assets").join("lib").join("dsc").exists() {
-            return Ok(candidate.to_path_buf());
-        }
-    }
-
-    // Source builds may intentionally rely on vendor-installed PKCS#11 drivers rather than
-    // redistributing proprietary modules. Keep probing diagnostic instead of failing startup.
-    Ok(manifest_dir
+fn runtime_library_root() -> Result<PathBuf, Box<dyn Error>> {
+    let executable = env::current_exe()?;
+    let executable_dir = executable
         .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or(manifest_dir))
+        .ok_or_else(|| "could not resolve the Bridge executable directory".to_string())?;
+    Ok(executable_dir.join("assets").join("lib").join("dsc"))
 }
 
-fn token_configs(
-    library_root: &Path,
-    explicit_library: Option<String>,
-    explicit_pins: Option<Vec<String>>,
-) -> Vec<TokenConfig> {
+fn token_configs(library_root: &Path, explicit_library: Option<String>) -> Vec<TokenConfig> {
     if let Some(library) = explicit_library {
         return vec![TokenConfig {
             token_type: "explicit".to_string(),
             library_path: PathBuf::from(library),
-            pins: explicit_pins.unwrap_or_default(),
+            pins: Vec::new(),
         }];
     }
 
@@ -301,12 +413,6 @@ fn token_configs(
     configs.sort_by(|left, right| left.library_path.cmp(&right.library_path));
     configs.dedup_by(|left, right| left.library_path == right.library_path);
 
-    if let Some(pins) = explicit_pins {
-        for config in &mut configs {
-            config.pins = pins.clone();
-        }
-    }
-
     configs
 }
 
@@ -326,7 +432,6 @@ fn skipped_attempt(config: &TokenConfig, error: &str) -> ProbeAttempt {
         loaded: false,
         initialized: false,
         slot_count: 0,
-        token_info: None,
         login_success: false,
         certificate_count: None,
         certificates: Vec::new(),
@@ -334,7 +439,7 @@ fn skipped_attempt(config: &TokenConfig, error: &str) -> ProbeAttempt {
     }
 }
 
-fn run_child_attempt(config: &TokenConfig, detect_only: bool) -> ProbeAttempt {
+fn run_child_attempt(config: &TokenConfig, detect_only: bool, deadline: Instant) -> ProbeAttempt {
     let exe = match probe_child_exe() {
         Ok(exe) => exe,
         Err(error) => {
@@ -352,16 +457,14 @@ fn run_child_attempt(config: &TokenConfig, detect_only: bool) -> ProbeAttempt {
         .arg(&config.token_type)
         .arg("--library")
         .arg(&config.library_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdin(Stdio::piped());
 
     if detect_only {
         command.arg("--detect-only");
     }
 
-    let mut child = match command.spawn() {
-        Ok(child) => child,
+    let (mut child, stdout, stderr, containment) = match spawn_with_output_files(&mut command) {
+        Ok(output) => output,
         Err(error) => {
             return skipped_attempt(config, &format!("failed to run child process: {error}"))
         }
@@ -379,13 +482,14 @@ fn run_child_attempt(config: &TokenConfig, detect_only: bool) -> ProbeAttempt {
                     .map_err(|error| format!("failed to write probe input: {error}"))
             });
         if let Err(error) = write_result {
+            containment.terminate();
             let _ = child.kill();
             let _ = child.wait();
             return skipped_attempt(config, &error);
         }
     }
 
-    match child.wait_with_output() {
+    match wait_with_limited_output(child, stdout, stderr, containment, deadline) {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             serde_json::from_str::<ProbeAttempt>(stdout.trim()).unwrap_or_else(|error| {
@@ -408,6 +512,89 @@ fn run_child_attempt(config: &TokenConfig, detect_only: bool) -> ProbeAttempt {
             &format!("failed to wait for child process: {error}"),
         ),
     }
+}
+
+fn spawn_with_output_files(
+    command: &mut Command,
+) -> std::io::Result<(std::process::Child, File, File, ProcessContainment)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let stdout = tempfile::tempfile()?;
+    let stderr = tempfile::tempfile()?;
+    command
+        .stdout(Stdio::from(stdout.try_clone()?))
+        .stderr(Stdio::from(stderr.try_clone()?));
+    let mut child = command.spawn()?;
+    let containment = match ProcessContainment::new(&child) {
+        Ok(containment) => containment,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
+    Ok((child, stdout, stderr, containment))
+}
+
+fn wait_with_limited_output(
+    mut child: std::process::Child,
+    mut stdout: File,
+    mut stderr: File,
+    containment: ProcessContainment,
+    operation_deadline: Instant,
+) -> std::io::Result<Output> {
+    let deadline = operation_deadline.min(Instant::now() + CHILD_TIMEOUT);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            containment.terminate();
+            break status;
+        }
+        if stdout.metadata()?.len() > CHILD_OUTPUT_LIMIT as u64
+            || stderr.metadata()?.len() > CHILD_OUTPUT_LIMIT as u64
+        {
+            containment.terminate();
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "DSC probe child exceeded its output limit",
+            ));
+        }
+        if Instant::now() >= deadline {
+            containment.terminate();
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "DSC probe child timed out",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    stdout.seek(SeekFrom::Start(0))?;
+    stderr.seek(SeekFrom::Start(0))?;
+    let stdout = read_limited(&mut stdout, CHILD_OUTPUT_LIMIT)?;
+    let stderr = read_limited(&mut stderr, CHILD_OUTPUT_LIMIT)?;
+    if stdout.len() > CHILD_OUTPUT_LIMIT || stderr.len() > CHILD_OUTPUT_LIMIT {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "DSC probe child exceeded its output limit",
+        ));
+    }
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn read_limited<R: Read>(reader: R, limit: usize) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    reader.take(limit as u64 + 1).read_to_end(&mut output)?;
+    Ok(output)
 }
 
 fn probe_child_exe() -> Result<PathBuf, Box<dyn Error>> {
@@ -456,7 +643,6 @@ fn probe_config(
         loaded: false,
         initialized: false,
         slot_count: 0,
-        token_info: None,
         login_success: false,
         certificate_count: None,
         certificates: Vec::new(),
@@ -507,10 +693,6 @@ fn probe_config(
         attempt.error = Some("no token slots found".to_string());
         return attempt;
     };
-
-    if let Ok(token_info) = pkcs11.get_token_info(slot) {
-        attempt.token_info = Some(format!("{token_info:?}"));
-    }
 
     if detect_only {
         return attempt;
@@ -572,7 +754,6 @@ fn probe_config_low_level(config: &TokenConfig, detect_only: bool) -> Option<Pro
         loaded: false,
         initialized: false,
         slot_count: 0,
-        token_info: None,
         login_success: false,
         certificate_count: None,
         certificates: Vec::new(),
@@ -622,10 +803,6 @@ fn probe_config_low_level(config: &TokenConfig, detect_only: bool) -> Option<Pro
         let _ = ctx.finalize();
         return Some(attempt);
     };
-
-    if let Ok(token_info) = ctx.get_token_info(slot) {
-        attempt.token_info = Some(format!("{token_info:?}"));
-    }
 
     if detect_only {
         let _ = ctx.finalize();
@@ -825,7 +1002,7 @@ fn enrich_certificate_native(
     );
     summary.valid_from = certificate.validity().not_before.to_rfc2822().ok();
     summary.valid_to = certificate.validity().not_after.to_rfc2822().ok();
-    summary.fingerprint = Some(hex_upper(&Sha1::digest(der)));
+    summary.fingerprint = Some(hex_upper(&Sha256::digest(der)));
 
     Ok(())
 }
@@ -840,73 +1017,121 @@ fn display_library_path(path: &Path) -> String {
         .unwrap_or_else(|| "PKCS#11 module".to_string())
 }
 
-fn physical_token_hint() -> Option<String> {
-    match env::consts::OS {
-        "macos" => command_output(
-            "sh",
-            &[
-                "-c",
-                "ioreg -p IOUSB -l -w 0 | awk '/USB TOKEN@|proxkey|epass|watchdata|hypersecu|hyperscu|feitian/{flag=1; count=0} flag && count < 24 {print; count++} count >= 24 {flag=0}' | grep -Ei \"HYPERSECU|USB TOKEN|USB Product Name|USB Vendor Name|kUSBProductString|kUSBVendorString|proxkey|epass|watchdata|hyperscu|feitian\"",
-            ],
-        ),
-        "windows" => command_output(
-            "powershell",
-            &[
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "$ErrorActionPreference='SilentlyContinue'; $d1 = Get-PnpDevice -Class SmartCard -ErrorAction SilentlyContinue; $d2 = Get-PnpDevice -Class SmartCardReader -ErrorAction SilentlyContinue; $all = @(); if ($d1) { $all += $d1 }; if ($d2) { $all += $d2 }; $all | Select-Object -ExpandProperty FriendlyName | Out-String",
-            ],
-        ),
-        _ => command_output(
-            "sh",
-            &[
-                "-c",
-                "lsusb 2>/dev/null | grep -i \"smart\\|card\\|token\\|proxkey\\|epass\\|watchdata\\|hypersecu\\|hyperscu\\|feitian\"",
-            ],
-        ),
-    }
-}
-
-fn command_output(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::token_configs;
+    use super::{
+        spawn_with_output_files, token_configs, wait_with_limited_output, CHILD_OUTPUT_LIMIT,
+    };
     use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
 
     #[test]
     fn token_configs_do_not_default_to_known_pins() {
-        let configs = token_configs(Path::new("assets/lib/dsc"), None, None);
+        let configs = token_configs(Path::new("assets/lib/dsc"), None);
 
         assert!(!configs.is_empty());
         assert!(configs.iter().all(|config| config.pins.is_empty()));
     }
 
     #[test]
-    fn explicit_pin_is_applied_to_each_token_config() {
-        let configs = token_configs(
-            Path::new("assets/lib/dsc"),
-            None,
-            Some(vec!["2468".to_string()]),
-        );
+    fn discovered_token_configs_never_contain_pins() {
+        let configs = token_configs(Path::new("assets/lib/dsc"), None);
 
         assert!(!configs.is_empty());
-        assert!(configs
-            .iter()
-            .all(|config| config.pins == vec!["2468".to_string()]));
+        assert!(configs.iter().all(|config| config.pins.is_empty()));
+    }
+
+    #[test]
+    fn child_process_deadline_kills_and_reaps() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 5"]);
+            command
+        };
+        command.stdin(Stdio::null());
+        let (child, stdout, stderr, containment) =
+            spawn_with_output_files(&mut command).expect("spawn sleeping child");
+        let error = wait_with_limited_output(
+            child,
+            stdout,
+            stderr,
+            containment,
+            Instant::now() + Duration::from_millis(100),
+        )
+        .expect_err("child should time out");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn child_process_output_is_capped() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 5"]);
+            command
+        };
+        command.stdin(Stdio::null());
+        let (child, stdout, stderr, containment) =
+            spawn_with_output_files(&mut command).expect("spawn noisy child");
+        stdout
+            .set_len(CHILD_OUTPUT_LIMIT as u64 + 1)
+            .expect("expand captured output beyond the limit");
+        let error = wait_with_limited_output(
+            child,
+            stdout,
+            stderr,
+            containment,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .expect_err("child output should be capped");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn child_process_timeout_terminates_descendants() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let marker = directory.path().join("descendant-survived.txt");
+        let mut command = if cfg!(windows) {
+            let marker = marker.display().to_string().replace('\'', "''");
+            let script = format!(
+                "$child = \"Start-Sleep -Milliseconds 800; Set-Content -LiteralPath '{marker}' -Value survived\"; Start-Process powershell -WindowStyle Hidden -ArgumentList @('-NoProfile','-Command',$child); Start-Sleep -Seconds 5"
+            );
+            let mut command = Command::new("powershell");
+            command.args(["-NoProfile", "-Command", &script]);
+            command
+        } else {
+            let script = format!(
+                "(sleep 1; printf survived > '{}') & sleep 5",
+                marker.display()
+            );
+            let mut command = Command::new("sh");
+            command.args(["-c", &script]);
+            command
+        };
+        command.stdin(Stdio::null());
+        let (child, stdout, stderr, containment) =
+            spawn_with_output_files(&mut command).expect("spawn process tree");
+        let error = wait_with_limited_output(
+            child,
+            stdout,
+            stderr,
+            containment,
+            Instant::now() + Duration::from_millis(200),
+        )
+        .expect_err("process tree should time out");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        std::thread::sleep(Duration::from_millis(1200));
+        assert!(
+            !marker.exists(),
+            "descendant survived process-tree termination"
+        );
     }
 }

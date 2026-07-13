@@ -31,47 +31,36 @@ pub fn company_list_request() -> String {
                     </PART>
                     <LINE NAME="Company Header">
                         <LEFTFIELDS>
-                            Company Name Header, Address Header, State Header, Phone Header, Email Header,
-                            INCOMETAXNUMBER Header, MOBILENUMBERS Header, TANREGNO Header, TANUMBER Header,
-                            Website Header, Pincode Header
+                            Company Name Header, State Header, Phone Header, Email Header,
+                            MOBILENUMBERS Header, Pincode Header, GSTNUMBER Header
                         </LEFTFIELDS>
                     </LINE>
                     <FIELD NAME="Company Name Header"><SET>"Company Name"</SET></FIELD>
-                    <FIELD NAME="Address Header"><SET>"Address"</SET></FIELD>
                     <FIELD NAME="State Header"><SET>"State"</SET></FIELD>
                     <FIELD NAME="Phone Header"><SET>"Phone"</SET></FIELD>
                     <FIELD NAME="Email Header"><SET>"Email"</SET></FIELD>
-                    <FIELD NAME="INCOMETAXNUMBER Header"><SET>"INCOMETAXNUMBER"</SET></FIELD>
                     <FIELD NAME="MOBILENUMBERS Header"><SET>"MOBILENUMBERS"</SET></FIELD>
-                    <FIELD NAME="TANREGNO Header"><SET>"TANREGNO"</SET></FIELD>
-                    <FIELD NAME="TANUMBER Header"><SET>"TANUMBER"</SET></FIELD>
-                    <FIELD NAME="Website Header"><SET>"Website"</SET></FIELD>
                     <FIELD NAME="Pincode Header"><SET>"Pincode"</SET></FIELD>
+                    <FIELD NAME="GSTNUMBER Header"><SET>"GST Number"</SET></FIELD>
                     <LINE NAME="Company Details">
                         <LEFTFIELDS>
-                            Company Name Field, Address Field, State Field, Phone Field, Email Field,
-                            INCOMETAXNUMBER Field, MOBILENUMBERS Field, TANREGNO Field, TANUMBER Field,
-                            Website Field, Pincode Field
+                            Company Name Field, State Field, Phone Field, Email Field,
+                            MOBILENUMBERS Field, Pincode Field, GSTNUMBER Field
                         </LEFTFIELDS>
                         <XMLTAG>"CompanyInfo"</XMLTAG>
                     </LINE>
                     <FIELD NAME="Company Name Field"><SET>$Name</SET></FIELD>
-                    <FIELD NAME="Address Field"><SET>$Address</SET></FIELD>
                     <FIELD NAME="State Field"><SET>$StateName</SET></FIELD>
                     <FIELD NAME="Phone Field"><SET>$PhoneNumber</SET></FIELD>
                     <FIELD NAME="Email Field"><SET>$Email</SET></FIELD>
-                    <FIELD NAME="INCOMETAXNUMBER Field"><SET>$INCOMETAXNUMBER</SET></FIELD>
                     <FIELD NAME="MOBILENUMBERS Field"><SET>$MOBILENUMBERS</SET></FIELD>
-                    <FIELD NAME="TANREGNO Field"><SET>$TANREGNO</SET></FIELD>
-                    <FIELD NAME="TANUMBER Field"><SET>$TANUMBER</SET></FIELD>
-                    <FIELD NAME="Website Field"><SET>$Website</SET></FIELD>
                     <FIELD NAME="Pincode Field"><SET>$Pincode</SET></FIELD>
+                    <FIELD NAME="GSTNUMBER Field"><SET>$GSTRegNumber</SET></FIELD>
                     <COLLECTION NAME="CompanyCollection">
                         <TYPE>Company</TYPE>
                         <FETCH>
-                            Name, Address, StateName, PhoneNumber, Email,
-                            INCOMETAXNUMBER, MOBILENUMBERS, TANREGNO, TANUMBER,
-                            Website, Pincode
+                            Name, StateName, PhoneNumber, Email, MOBILENUMBERS,
+                            Pincode, GSTRegNumber
                         </FETCH>
                     </COLLECTION>
                 </TDLMESSAGE>
@@ -107,7 +96,7 @@ pub fn sales_vouchers_request(company: &str, from: &str, to: &str) -> String {
           <COLLECTION NAME="Sales Vouchers">
             <TYPE>Voucher</TYPE>
             <FILTERS>SalesOnly</FILTERS>
-            <NATIVEMETHOD>*</NATIVEMETHOD>
+            <FETCH>Date, VoucherTypeName, VoucherNumber, PartyLedgerName</FETCH>
           </COLLECTION>
           <SYSTEM TYPE="Formulae" NAME="SalesOnly">$$IsSales:$VoucherTypeName</SYSTEM>
         </TDLMESSAGE>
@@ -144,7 +133,7 @@ pub fn ledgers_request(company: &str) -> String {
                 <TDLMESSAGE>
                     <COLLECTION ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No" NAME="Ledgers">
                         <TYPE>Ledger</TYPE>
-                        <NATIVEMETHOD>*</NATIVEMETHOD>
+                        <FETCH>Name, Parent, PartyGSTIN, OpeningBalance</FETCH>
                     </COLLECTION>
                 </TDLMESSAGE>
             </TDL>
@@ -180,7 +169,7 @@ pub fn vouchers_request(company: &str, from: &str, to: &str) -> String {
                 <TDLMESSAGE>
                     <COLLECTION NAME="Vouchers" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
                         <TYPE>Voucher</TYPE>
-                        <NATIVEMETHOD>*</NATIVEMETHOD>
+                        <FETCH>Date, VoucherTypeName, VoucherNumber, PartyLedgerName</FETCH>
                     </COLLECTION>
                 </TDLMESSAGE>
             </TDL>
@@ -203,4 +192,34 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{company_list_request, ledgers_request, vouchers_request};
+
+    #[test]
+    fn requests_only_fields_used_by_the_renderer() {
+        let combined = format!(
+            "{}{}{}",
+            company_list_request(),
+            ledgers_request("Synthetic Company"),
+            vouchers_request("Synthetic Company", "20260401", "20260430")
+        );
+        for prohibited in [
+            "NATIVEMETHOD>*",
+            "AllLedgerEntries",
+            "$Address",
+            "$INCOMETAXNUMBER",
+            "$TANREGNO",
+            "$TANUMBER",
+            "$Website",
+            "$Narration",
+        ] {
+            assert!(
+                !combined.contains(prohibited),
+                "unexpected TDL field: {prohibited}"
+            );
+        }
+    }
 }

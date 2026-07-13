@@ -18,15 +18,10 @@ type ConnectionStatus = {
 
 type TallyCompany = {
   name: string;
-  address?: string;
   state?: string;
   phone?: string;
   email?: string;
-  income_tax_number?: string;
   mobile?: string;
-  tan_reg_no?: string;
-  tan_number?: string;
-  website?: string;
   pincode?: string;
   gst_number?: string;
 };
@@ -34,18 +29,8 @@ type TallyCompany = {
 type TallyLedger = {
   name: string;
   parent?: string;
-  email?: string;
-  phone?: string;
-  mobile?: string;
-  state?: string;
   party_gstin?: string;
   opening_balance?: string;
-};
-
-type TallyVoucherLedgerEntry = {
-  ledger_name?: string;
-  amount?: string;
-  is_deemed_positive?: string;
 };
 
 type TallyVoucher = {
@@ -54,9 +39,6 @@ type TallyVoucher = {
   voucher_type?: string;
   voucher_number?: string;
   party_ledger_name?: string;
-  narration?: string;
-  amount?: string;
-  ledger_entries: TallyVoucherLedgerEntry[];
 };
 
 type GstReturnDraft = {
@@ -97,7 +79,6 @@ type DscAttempt = {
   loaded: boolean;
   initialized: boolean;
   slot_count: number;
-  token_info?: string | null;
   login_success: boolean;
   certificate_count?: number | null;
   certificates: DscCertificate[];
@@ -107,9 +88,6 @@ type DscAttempt = {
 type DscProbeReport = {
   platform: string;
   arch: string;
-  workspace_root: string;
-  bundled_library_root: string;
-  physical_token_hint?: string | null;
   force_load: boolean;
   detect_only: boolean;
   attempts: DscAttempt[];
@@ -122,6 +100,11 @@ type AxalValidationResponse = {
   status?: string | null;
   last_synced?: string | null;
   error?: string | null;
+};
+
+type AxalSessionResponse = {
+  credentialSessionId: string;
+  validation: AxalValidationResponse;
 };
 
 type AxalConnectionStatus = {
@@ -149,7 +132,7 @@ type DscSyncResponse = {
 };
 
 type DocumentFile = {
-  fullPath: string;
+  scanId: string;
   relativePath: string;
   size: number;
   mtime: number;
@@ -170,6 +153,7 @@ type DocumentFile = {
 };
 
 type ScanDocumentsResponse = {
+  scanSessionId: string;
   files: DocumentFile[];
   totalSize: number;
   skipped: { path: string; reason: string }[];
@@ -181,6 +165,11 @@ type SyncDocumentsResponse = {
   failedFiles: { relativePath: string; error: string }[];
   duplicateCount: number;
   batchIds: string[];
+};
+
+type SelectedDocumentPath = {
+  selectionId: string;
+  displayName: string;
 };
 
 type View = "dashboard" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
@@ -211,11 +200,12 @@ function App() {
   const [axalIntegration, setAxalIntegration] = React.useState<AxalIntegration>("dsc");
   const [axalApiId, setAxalApiId] = React.useState("");
   const [axalApiKey, setAxalApiKey] = React.useState("");
+  const [axalSession, setAxalSession] = React.useState<{ id: string; integration: AxalIntegration } | null>(null);
   const [axalValidation, setAxalValidation] = React.useState<AxalValidationResponse | null>(null);
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
   const [axalError, setAxalError] = React.useState<string | null>(null);
   const [axalAction, setAxalAction] = React.useState<"validate" | "status" | null>(null);
-  const [documentPaths, setDocumentPaths] = React.useState<string[]>([]);
+  const [documentPaths, setDocumentPaths] = React.useState<SelectedDocumentPath[]>([]);
   const [documentScan, setDocumentScan] = React.useState<ScanDocumentsResponse | null>(null);
   const [documentSync, setDocumentSync] = React.useState<SyncDocumentsResponse | null>(null);
   const [documentError, setDocumentError] = React.useState<string | null>(null);
@@ -329,7 +319,7 @@ function App() {
   }
 
   async function runDsc(detectOnly: boolean) {
-    const pin = dscPin.trim();
+    const pin = dscPin;
     if (!detectOnly && !pin) {
       setDscError("Enter the DSC token PIN before extracting certificates.");
       return;
@@ -338,6 +328,9 @@ function App() {
     setBusy(true);
     setDscAction(detectOnly ? "detect" : "extract");
     setDscError(null);
+    if (!detectOnly) {
+      setDscPin("");
+    }
     try {
       const result = detectOnly
         ? await invoke<DscProbeReport>("detect_dsc_token")
@@ -364,30 +357,48 @@ function App() {
     };
   }
 
+  function invalidateAxalSession() {
+    const sessionId = axalSession?.id;
+    setAxalSession(null);
+    setAxalConnection(null);
+    if (sessionId) {
+      void invoke("revoke_axal_credential_session", {
+        credentialSessionId: sessionId,
+      }).catch(() => undefined);
+    }
+  }
+
   async function validateAxal() {
     setBusy(true);
     setAxalAction("validate");
     setAxalError(null);
     try {
-      const result = await invoke<AxalValidationResponse>("validate_axal_credentials", {
+      const result = await invoke<AxalSessionResponse>("validate_axal_credentials", {
         credentials: axalCredentials(),
       });
-      setAxalValidation(result);
+      setAxalValidation(result.validation);
+      setAxalSession({ id: result.credentialSessionId, integration: axalIntegration });
+      setAxalConnection(null);
     } catch (error) {
       setAxalError(error instanceof Error ? error.message : String(error));
     } finally {
+      setAxalApiKey("");
       setBusy(false);
       setAxalAction(null);
     }
   }
 
   async function checkAxalStatus() {
+    if (!axalSession) {
+      setAxalError("Validate AXAL credentials before checking connection status.");
+      return;
+    }
     setBusy(true);
     setAxalAction("status");
     setAxalError(null);
     try {
       const result = await invoke<AxalConnectionStatus>("check_axal_connection_status", {
-        credentials: axalCredentials(),
+        credentialSessionId: axalSession.id,
       });
       setAxalConnection(result);
     } catch (error) {
@@ -399,7 +410,7 @@ function App() {
   }
 
   async function syncDscCertificate() {
-    if (!primaryCertificate || !successfulDscAttempt || !axalConnection) {
+    if (!primaryCertificate || !successfulDscAttempt || !axalConnection || axalSession?.integration !== "dsc") {
       setDscError("Extract a certificate and check AXAL workspace status before syncing.");
       return;
     }
@@ -411,10 +422,7 @@ function App() {
         primaryCertificate.common_name || primaryCertificate.organization || primaryCertificate.label;
       const result = await invoke<DscSyncResponse>("sync_dsc_certificates_to_axal", {
         request: {
-          credentials: {
-            ...axalCredentials(),
-            integration: "dsc",
-          },
+          credentialSessionId: axalSession.id,
           workspaceExternalId: axalConnection.workspace.id,
           certificates: [
             {
@@ -453,7 +461,7 @@ function App() {
     try {
       const result = await invoke<ScanDocumentsResponse>("scan_document_paths", {
         request: {
-          paths: documentPaths,
+          selection_ids: documentPaths.map((path) => path.selectionId),
           use_hash: true,
           exclude_hidden_files: true,
           exclude_zero_byte_files: true,
@@ -471,9 +479,9 @@ function App() {
   async function chooseDocumentFiles() {
     setDocumentError(null);
     try {
-      const paths = await invoke<string[]>("select_document_files");
+      const paths = await invoke<SelectedDocumentPath[]>("select_document_files");
       if (paths.length > 0) {
-        setDocumentPaths((current) => Array.from(new Set([...current, ...paths])));
+        setDocumentPaths((current) => [...current, ...paths]);
         setDocumentScan(null);
         setDocumentSync(null);
       }
@@ -485,9 +493,9 @@ function App() {
   async function chooseDocumentFolder() {
     setDocumentError(null);
     try {
-      const paths = await invoke<string[]>("select_document_folder");
+      const paths = await invoke<SelectedDocumentPath[]>("select_document_folder");
       if (paths.length > 0) {
-        setDocumentPaths((current) => Array.from(new Set([...current, ...paths])));
+        setDocumentPaths((current) => [...current, ...paths]);
         setDocumentScan(null);
         setDocumentSync(null);
       }
@@ -496,8 +504,18 @@ function App() {
     }
   }
 
+  function clearDocuments() {
+    void invoke("revoke_document_authorizations", {
+      selectionIds: documentPaths.map((path) => path.selectionId),
+      scanSessionId: documentScan?.scanSessionId ?? null,
+    }).catch(() => undefined);
+    setDocumentPaths([]);
+    setDocumentScan(null);
+    setDocumentSync(null);
+  }
+
   async function syncDocuments() {
-    if (!documentScan?.files.length || !axalConnection) {
+    if (!documentScan?.files.length || !axalConnection || axalSession?.integration !== "documents") {
       setDocumentError("Scan files and check AXAL workspace status before syncing documents.");
       return;
     }
@@ -508,11 +526,9 @@ function App() {
     try {
       const result = await invoke<SyncDocumentsResponse>("sync_documents_to_axal", {
         request: {
-          credentials: {
-            ...axalCredentials(),
-            integration: "documents",
-          },
+          credentialSessionId: axalSession.id,
           workspaceExternalId: axalConnection.workspace.id,
+          scanSessionId: documentScan.scanSessionId,
           files: documentScan.files,
           maxFilesPerBatch: 20,
         },
@@ -808,7 +824,6 @@ function App() {
                           <th>Type</th>
                           <th>No.</th>
                           <th>Party</th>
-                          <th>Entries</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -818,7 +833,6 @@ function App() {
                             <td>{voucher.voucher_type || "-"}</td>
                             <td>{voucher.voucher_number || "-"}</td>
                             <td>{voucher.party_ledger_name || "-"}</td>
-                            <td>{voucher.ledger_entries.length}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -923,7 +937,7 @@ function App() {
                 )}
                 {primaryCertificate && (
                   <div className="panel-actions">
-                    <button onClick={syncDscCertificate} disabled={busy || dscSyncing || !axalConnection || !axalApiId || !axalApiKey}>
+                    <button onClick={syncDscCertificate} disabled={busy || dscSyncing || !axalConnection || axalSession?.integration !== "dsc"}>
                       <Cloud size={18} className={dscSyncing ? "pulse-icon" : ""} />
                       {dscSyncing ? "Syncing..." : "Sync Certificate"}
                     </button>
@@ -945,14 +959,14 @@ function App() {
                 <FolderOpen size={18} />
                 Choose Folder
               </button>
-              <button onClick={() => { setDocumentPaths([]); setDocumentScan(null); setDocumentSync(null); }} disabled={busy || documentPaths.length === 0}>
+              <button onClick={clearDocuments} disabled={busy || (documentPaths.length === 0 && !documentScan)}>
                 Clear
               </button>
               <button onClick={scanDocuments} disabled={busy || documentPaths.length === 0}>
                 <RefreshCw size={18} className={documentAction === "scan" ? "spin" : ""} />
                 {documentAction === "scan" ? "Scanning..." : "Scan"}
               </button>
-              <button onClick={syncDocuments} disabled={busy || !documentScan?.files.length || !axalConnection || !axalApiId || !axalApiKey}>
+              <button onClick={syncDocuments} disabled={busy || !documentScan?.files.length || !axalConnection || axalSession?.integration !== "documents"}>
                 <UploadCloud size={18} className={documentAction === "sync" ? "pulse-icon" : ""} />
                 {documentAction === "sync" ? "Syncing..." : "Sync Documents"}
               </button>
@@ -974,7 +988,7 @@ function App() {
               ) : (
                 <div className="path-list">
                   {documentPaths.map((path) => (
-                    <div key={path}>{path}</div>
+                    <div key={path.selectionId}>{path.displayName}</div>
                   ))}
                 </div>
               )}
@@ -1042,7 +1056,7 @@ function App() {
                     </thead>
                     <tbody>
                       {documentScan.files.slice(0, 100).map((file) => (
-                        <tr key={file.fullPath}>
+                        <tr key={file.scanId}>
                           <td>{file.relativePath}</td>
                           <td>{file.mimeType}</td>
                           <td>{formatBytes(file.size)}</td>
@@ -1062,11 +1076,11 @@ function App() {
             <section className="toolbar">
               <label>
                 Base URL
-                <input value={axalBaseUrl} onChange={(event) => setAxalBaseUrl(event.target.value)} />
+                <input value={axalBaseUrl} onChange={(event) => { setAxalBaseUrl(event.target.value); invalidateAxalSession(); }} />
               </label>
               <label>
                 Integration
-                <select value={axalIntegration} onChange={(event) => setAxalIntegration(event.target.value as AxalIntegration)}>
+                <select value={axalIntegration} onChange={(event) => { setAxalIntegration(event.target.value as AxalIntegration); invalidateAxalSession(); }}>
                   <option value="tally">Tally Prime</option>
                   <option value="documents">Document Sync</option>
                   <option value="dsc">DSC Management</option>
@@ -1077,17 +1091,17 @@ function App() {
             <section className="toolbar secondary-toolbar">
               <label>
                 API ID
-                <input value={axalApiId} onChange={(event) => setAxalApiId(event.target.value)} />
+                <input value={axalApiId} onChange={(event) => { setAxalApiId(event.target.value); invalidateAxalSession(); }} />
               </label>
               <label>
                 API Key
-                <input type="password" value={axalApiKey} onChange={(event) => setAxalApiKey(event.target.value)} />
+                <input type="password" value={axalApiKey} onChange={(event) => { setAxalApiKey(event.target.value); invalidateAxalSession(); }} />
               </label>
               <button onClick={validateAxal} disabled={busy || !axalApiId || !axalApiKey}>
                 <RefreshCw size={18} className={axalAction === "validate" ? "spin" : ""} />
                 {axalAction === "validate" ? "Validating..." : "Validate"}
               </button>
-              <button onClick={checkAxalStatus} disabled={busy || !axalApiId || !axalApiKey}>
+              <button onClick={checkAxalStatus} disabled={busy || !axalSession}>
                 <Cloud size={18} className={axalAction === "status" ? "pulse-icon" : ""} />
                 {axalAction === "status" ? "Checking..." : "Check Status"}
               </button>

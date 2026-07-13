@@ -63,6 +63,31 @@ Also manually exercise the affected Tally, DSC, document, and sync workflows.
 Vendor integrations may require host-specific software even though repository
 paths and project commands are portable.
 
+## Integration trust boundaries
+
+Bridge restricts native network and file access even if the renderer is
+compromised:
+
+- Tally connections are loopback-only (`localhost`, `127.0.0.0/8`, or `::1`).
+  Remote plaintext Tally hosts are intentionally rejected.
+- AXAL credentials are sent only to the exact `https://complyeaze.com` origin
+  by default. Self-hosted deployments must set
+  `BRIDGE_AXAL_ALLOWED_ORIGINS` before Bridge starts to a comma-separated list
+  of exact HTTPS origins such as `https://bridge.example`. Entries cannot
+  contain paths, credentials, queries, or fragments.
+- Documents must be selected with Bridge's native file or folder picker. Scan
+  IDs are short-lived and native-only paths are never returned to the webview.
+  Presigned uploads are limited to `https://complyeaze.com` by default; set
+  `BRIDGE_DOCUMENT_UPLOAD_ALLOWED_ORIGINS` to the exact comma-separated HTTPS
+  storage origins used by your AXAL deployment.
+- A custom PKCS#11 module can be selected by the administrator-controlled
+  `BRIDGE_DSC_PKCS11_LIBRARY` environment variable before launch. Do not point
+  it at an untrusted library.
+
+These environment variables are process configuration, not checkout paths;
+the same policy applies on Windows and macOS. Restart Bridge after changing
+them.
+
 ## Privacy and safe diagnostics
 
 Do not commit or attach real customer, company, tax, certificate, credential,

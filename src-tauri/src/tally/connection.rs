@@ -151,10 +151,16 @@ fn tally_endpoint(config: &TallyConfig, path: &str) -> anyhow::Result<reqwest::U
 
     let mut url = reqwest::Url::parse("http://localhost")?;
     if let Ok(ip_address) = host.parse::<IpAddr>() {
+        if !ip_address.is_loopback() {
+            anyhow::bail!("Tally connections are restricted to this computer (loopback)");
+        }
         url.set_ip_host(ip_address)
             .map_err(|_| anyhow::anyhow!("Tally host is invalid"))?;
     } else {
-        url.set_host(Some(host))
+        if !host.eq_ignore_ascii_case("localhost") {
+            anyhow::bail!("Tally connections are restricted to localhost or a loopback IP");
+        }
+        url.set_ip_host("127.0.0.1".parse::<IpAddr>().expect("valid loopback IP"))
             .map_err(|_| anyhow::anyhow!("Tally host is invalid"))?;
     }
     url.set_port(Some(config.port))
@@ -224,6 +230,12 @@ mod tests {
 
     #[test]
     fn validates_tally_endpoint_components() {
+        assert_eq!(
+            tally_endpoint(&TallyConfig::default(), "/status")
+                .expect("localhost endpoint")
+                .as_str(),
+            "http://127.0.0.1:9000/status"
+        );
         let config = TallyConfig {
             host: "::1".to_string(),
             port: 9000,
@@ -241,6 +253,21 @@ mod tests {
                 port: 9000,
             };
             assert!(tally_endpoint(&invalid, "/status").is_err());
+        }
+
+        for host in [
+            "192.168.1.10",
+            "10.0.0.5",
+            "169.254.1.1",
+            "224.0.0.1",
+            "8.8.8.8",
+            "tally.internal",
+        ] {
+            let remote = TallyConfig {
+                host: host.to_string(),
+                port: 9000,
+            };
+            assert!(tally_endpoint(&remote, "/status").is_err());
         }
     }
 }
