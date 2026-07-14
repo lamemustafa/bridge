@@ -235,7 +235,8 @@ fn read_optional_text(
     name: QName<'_>,
 ) -> anyhow::Result<Option<String>> {
     let value = reader.read_text(name)?;
-    Ok(empty_to_none(value.trim()))
+    let decoded = value.decode()?;
+    Ok(empty_to_none(decoded.trim()))
 }
 
 fn empty_to_none(value: &str) -> Option<String> {

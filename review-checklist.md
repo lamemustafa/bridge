@@ -42,6 +42,8 @@ item relevant to the change and mark non-applicable sections explicitly.
 - [ ] Package, Cargo, Tauri, changelog, and tag versions identify one licensing
   and release boundary.
 - [ ] CI is updated when commands, supported hosts, or publish logic change.
+- [ ] Locked production dependencies pass the frontend registry and RustSec
+  advisory audits.
 - [ ] Existing workflow changes include rollback and migration compatibility.
 - [ ] Repository setup changes update
   [docs/bootstrap/managed-git.md](./docs/bootstrap/managed-git.md).

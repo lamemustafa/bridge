@@ -783,7 +783,7 @@ pkg-config 0.3.33
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/pkg-config-rs
 
-plist 1.9.0
+plist 1.10.0
 License: MIT
 Source: https://github.com/ebarnard/rust-plist/
 
@@ -811,11 +811,7 @@ proc-macro2 1.0.106
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/proc-macro2
 
-quick-xml 0.37.5
-License: MIT
-Source: https://github.com/tafia/quick-xml
-
-quick-xml 0.39.4
+quick-xml 0.41.0
 License: MIT
 Source: https://github.com/tafia/quick-xml
 
@@ -1404,6 +1400,10 @@ License: MIT OR Apache-2.0
 Source: https://github.com/microsoft/windows-rs
 
 windows-strings 0.5.1
+License: MIT OR Apache-2.0
+Source: https://github.com/microsoft/windows-rs
+
+windows-sys 0.52.0
 License: MIT OR Apache-2.0
 Source: https://github.com/microsoft/windows-rs
 
@@ -2157,6 +2157,7 @@ Apache License 2.0
 - windows-result 0.4.1
 - windows-strings 0.4.2
 - windows-strings 0.5.1
+- windows-sys 0.52.0
 - windows-sys 0.59.0
 - windows-sys 0.61.2
 - windows-targets 0.52.6
@@ -9133,7 +9134,7 @@ THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- plist 1.9.0
+- plist 1.10.0
 
 Copyright (c) 2015 Edward Barnard
 
@@ -10413,8 +10414,7 @@ SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- quick-xml 0.37.5
-- quick-xml 0.39.4
+- quick-xml 0.41.0
 
 The MIT License (MIT)
 

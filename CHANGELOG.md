@@ -26,6 +26,8 @@ current source.
 
 ### Security
 
+- Updated the XML parsing graph and removed unused Linux-only dialog
+  dependencies from the supported Windows and macOS build graph.
 - Updated the Tauri runtime to 2.11.5 and tauri-runtime-wry to 2.11.4.
 - HTTPS-only AXAL endpoints with redirect blocking, bounded responses, and
   credential validation.

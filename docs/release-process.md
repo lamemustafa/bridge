@@ -37,6 +37,8 @@ corepack pnpm run license:all
    attach redacted evidence to the release PR.
 7. Confirm the release commit and tag contain no PII, machine paths, secrets,
    or unsigned third-party assets.
+8. Confirm the `Dependency security` workflow passes and GitHub reports no open
+   Dependabot or secret-scanning alerts.
 
 ## Signing and publication
 
