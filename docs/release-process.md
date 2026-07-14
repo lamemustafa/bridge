@@ -31,8 +31,10 @@ corepack pnpm run license:all
    `corepack pnpm run license:all`.
 4. Run frontend build, Rust format/check/test/Clippy, and native Tauri bundle
    builds on Windows and macOS.
-5. Inspect candidate installers and app bundles for `LICENSE`, `NOTICE`,
-   `THIRD_PARTY_LICENSES.txt`, and `THIRD_PARTY_LICENSES_RUST.txt`.
+5. Confirm the bundle-smoke jobs pass their automated MSI, NSIS, staged macOS
+   app, and mounted DMG inspections for `LICENSE`, `NOTICE`,
+   `THIRD_PARTY_LICENSES.txt`, and `THIRD_PARTY_LICENSES_RUST.txt`; manually
+   inspect signed candidates again before publication.
 6. Exercise Tally, DSC, documents, sync, and persistence using synthetic data;
    attach redacted evidence to the release PR.
 7. Confirm the release commit and tag contain no PII, machine paths, secrets,

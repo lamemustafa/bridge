@@ -104,6 +104,13 @@ jobs:
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm run license:all
       - run: corepack pnpm run tauri:build
+      - name: Verify Windows installer legal resources
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check-windows-bundle-resources.ps1
+      - name: Verify macOS app legal resources
+        if: runner.os == 'macOS'
+        run: node scripts/check-macos-bundle-resources.mjs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unsigned-bundle-smoke-${{ matrix.os }}

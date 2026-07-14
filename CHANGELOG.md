@@ -23,6 +23,8 @@ current source.
 - Open-source contribution, security, review, and rectification guidance.
 - Reproducible Node and Rust toolchain baselines, installer smoke builds, and
   complete lockfile-to-license-inventory checks.
+- Automated legal-resource inspection for Windows MSI/NSIS installers and the
+  staged and DMG-packaged macOS app bundles.
 
 ### Security
 
