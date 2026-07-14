@@ -1269,8 +1269,8 @@ fn default_true() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        authorize_selected_paths, clean_etag, prepare_upload_snapshot, resolve_scanned_files,
-        scan_documents, validate_presign_mapping, validate_upload_url,
+        authorize_selected_paths, clean_etag, hash_file, prepare_upload_snapshot,
+        resolve_scanned_files, scan_documents, validate_presign_mapping, validate_upload_url,
         validate_upload_url_with_allowed_origins, PresignResponse, ScanDocumentsRequest,
     };
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -1312,6 +1312,18 @@ mod tests {
     fn cleans_quoted_etags() {
         assert_eq!(clean_etag("\"abc123\""), "abc123");
         assert_eq!(clean_etag("'abc123'"), "abc123");
+    }
+
+    #[tokio::test]
+    async fn file_hash_remains_sha256_compatible() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("hash-input.bin");
+        std::fs::write(&path, b"abc").expect("write hash input");
+
+        assert_eq!(
+            hash_file(&path).await.expect("hash file"),
+            "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"
+        );
     }
 
     #[test]

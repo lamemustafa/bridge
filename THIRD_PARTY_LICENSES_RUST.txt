@@ -83,6 +83,10 @@ block-buffer 0.10.4
 License: MIT OR Apache-2.0
 Source: https://github.com/RustCrypto/utils
 
+block-buffer 0.12.1
+License: MIT OR Apache-2.0
+Source: https://github.com/RustCrypto/utils
+
 block2 0.6.2
 License: MIT
 Source: https://github.com/madsmtm/objc2
@@ -139,6 +143,10 @@ concurrent-queue 2.5.0
 License: Apache-2.0 OR MIT
 Source: https://github.com/smol-rs/concurrent-queue
 
+const-oid 0.10.2
+License: Apache-2.0 OR MIT
+Source: https://github.com/RustCrypto/formats
+
 cookie 0.18.1
 License: MIT OR Apache-2.0
 Source: https://github.com/SergioBenitez/cookie-rs
@@ -167,6 +175,10 @@ cpufeatures 0.2.17
 License: MIT OR Apache-2.0
 Source: https://github.com/RustCrypto/utils
 
+cpufeatures 0.3.0
+License: MIT OR Apache-2.0
+Source: https://github.com/RustCrypto/utils
+
 crc 3.4.0
 License: MIT OR Apache-2.0
 Source: https://github.com/mrhooray/crc-rs.git
@@ -192,6 +204,10 @@ License: MIT OR Apache-2.0
 Source: https://github.com/crossbeam-rs/crossbeam
 
 crypto-common 0.1.7
+License: MIT OR Apache-2.0
+Source: https://github.com/RustCrypto/traits
+
+crypto-common 0.2.2
 License: MIT OR Apache-2.0
 Source: https://github.com/RustCrypto/traits
 
@@ -252,6 +268,10 @@ License: MIT
 Source: https://github.com/JelteF/derive_more
 
 digest 0.10.7
+License: MIT OR Apache-2.0
+Source: https://github.com/RustCrypto/traits
+
+digest 0.11.3
 License: MIT OR Apache-2.0
 Source: https://github.com/RustCrypto/traits
 
@@ -347,17 +367,13 @@ flate2 1.1.9
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/flate2-rs
 
-flume 0.11.1
+flume 0.12.0
 License: Apache-2.0 OR MIT
 Source: https://github.com/zesterer/flume
 
 fnv 1.0.7
 License: Apache-2.0  OR  MIT
 Source: https://github.com/servo/rust-fnv
-
-foldhash 0.1.5
-License: Zlib
-Source: https://github.com/orlp/foldhash
 
 foldhash 0.2.0
 License: Zlib
@@ -435,7 +451,7 @@ hashbrown 0.12.3
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/hashbrown
 
-hashbrown 0.15.5
+hashbrown 0.16.1
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/hashbrown
 
@@ -443,9 +459,9 @@ hashbrown 0.17.1
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/hashbrown
 
-hashlink 0.10.0
+hashlink 0.11.1
 License: MIT OR Apache-2.0
-Source: https://github.com/kyren/hashlink
+Source: https://github.com/djc/hashlink
 
 heck 0.5.0
 License: MIT OR Apache-2.0
@@ -474,6 +490,10 @@ Source: https://github.com/hyperium/http-body
 httparse 1.10.1
 License: MIT OR Apache-2.0
 Source: https://github.com/seanmonstar/httparse
+
+hybrid-array 0.4.13
+License: MIT OR Apache-2.0
+Source: https://github.com/RustCrypto/hybrid-array
 
 hyper 1.10.1
 License: MIT
@@ -823,7 +843,7 @@ reqwest 0.12.28
 License: MIT OR Apache-2.0
 Source: https://github.com/seanmonstar/reqwest
 
-rfd 0.15.4
+rfd 0.17.2
 License: MIT
 Source: https://github.com/PolyMeilex/rfd
 
@@ -951,6 +971,10 @@ sha2 0.10.9
 License: MIT OR Apache-2.0
 Source: https://github.com/RustCrypto/hashes
 
+sha2 0.11.0
+License: MIT OR Apache-2.0
+Source: https://github.com/RustCrypto/hashes
+
 sharded-slab 0.1.7
 License: MIT
 Source: https://github.com/hawkw/sharded-slab
@@ -991,23 +1015,23 @@ spin 0.9.8
 License: MIT
 Source: https://github.com/mvdnes/spin-rs.git
 
-sqlx 0.8.6
+sqlx 0.9.0
 License: MIT OR Apache-2.0
 Source: https://github.com/launchbadge/sqlx
 
-sqlx-core 0.8.6
+sqlx-core 0.9.0
 License: MIT OR Apache-2.0
 Source: https://github.com/launchbadge/sqlx
 
-sqlx-macros 0.8.6
+sqlx-macros 0.9.0
 License: MIT OR Apache-2.0
 Source: https://github.com/launchbadge/sqlx
 
-sqlx-macros-core 0.8.6
+sqlx-macros-core 0.9.0
 License: MIT OR Apache-2.0
 Source: https://github.com/launchbadge/sqlx
 
-sqlx-sqlite 0.8.6
+sqlx-sqlite 0.9.0
 License: MIT OR Apache-2.0
 Source: https://github.com/launchbadge/sqlx
 
@@ -5919,7 +5943,7 @@ Apache License 2.0
 - form_urlencoded 1.2.2
 - glob 0.3.3
 - hashbrown 0.12.3
-- hashbrown 0.15.5
+- hashbrown 0.16.1
 - hashbrown 0.17.1
 - heck 0.5.0
 - html5ever 0.38.0
@@ -6185,7 +6209,7 @@ limitations under the License.
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- hashlink 0.10.0
+- hashlink 0.11.1
 
                               Apache License
                         Version 2.0, January 2004
@@ -6601,10 +6625,17 @@ limitations under the License.
 -------------------------------------------------------------------------------
 Apache License 2.0
 - block-buffer 0.10.4
+- block-buffer 0.12.1
+- const-oid 0.10.2
 - cpufeatures 0.2.17
+- cpufeatures 0.3.0
 - crypto-common 0.1.7
+- crypto-common 0.2.2
 - digest 0.10.7
+- digest 0.11.3
+- hybrid-array 0.4.13
 - sha2 0.10.9
+- sha2 0.11.0
 
                               Apache License
                         Version 2.0, January 2004
@@ -7434,7 +7465,7 @@ limitations under the License.
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- flume 0.11.1
+- flume 0.12.0
 
    Apache License
                            Version 2.0, January 2004
@@ -8262,11 +8293,7 @@ Apache License
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- sqlx-core 0.8.6
-- sqlx-macros-core 0.8.6
-- sqlx-macros 0.8.6
-- sqlx-sqlite 0.8.6
-- sqlx 0.8.6
+- sqlx 0.9.0
 
 Apache License
 Version 2.0, January 2004
@@ -8456,7 +8483,8 @@ file or class name and description of purpose be included on the
 same "printed page" as the copyright notice for easier
 identification within third-party archives.
 
-Copyright 2020 LaunchBadge, LLC
+Copyright (C) SQLx Contributors
+Portions of this work Copyright (C) LaunchBadge, LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -8469,6 +8497,7 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
 
 -------------------------------------------------------------------------------
 Apache License 2.0
@@ -8512,6 +8541,10 @@ Apache License 2.0
 - serde_urlencoded 0.7.1
 - shlex 2.0.1
 - siphasher 1.0.3
+- sqlx-core 0.9.0
+- sqlx-macros-core 0.9.0
+- sqlx-macros 0.9.0
+- sqlx-sqlite 0.9.0
 - syn 2.0.118
 - sync_wrapper 1.0.2
 - tauri-build 2.6.3
@@ -9836,7 +9869,7 @@ SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- rfd 0.15.4
+- rfd 0.17.2
 
 MIT License
 
@@ -11663,7 +11696,6 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 
 -------------------------------------------------------------------------------
 zlib License
-- foldhash 0.1.5
 - foldhash 0.2.0
 
 Copyright (c) 2024 Orson Peters
