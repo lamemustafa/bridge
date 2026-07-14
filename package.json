@@ -15,7 +15,7 @@
   "homepage": "https://github.com/lamemustafa/bridge#readme",
   "packageManager": "pnpm@9.15.4",
   "engines": {
-    "node": ">=22 <25"
+    "node": ">=22.12 <25"
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -35,16 +35,16 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
-    "lucide-react": "^0.475.0",
+    "lucide-react": "^1.24.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.0",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
-    "@vitejs/plugin-react": "^4.3.4",
-    "typescript": "^5.7.3",
-    "vite": "^6.0.0"
+    "@vitejs/plugin-react": "^6.0.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4"
   }
 }

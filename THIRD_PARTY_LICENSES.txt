@@ -32,7 +32,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-lucide-react 0.475.0
+lucide-react 1.24.0
 --------------------
 License: ISC
 Source: https://github.com/lucide-icons/lucide
