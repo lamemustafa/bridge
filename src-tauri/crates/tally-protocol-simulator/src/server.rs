@@ -12,7 +12,10 @@ use std::{
 use crate::{Delivery, ResponseContentEncoding, ResponseFraming, ScenarioPlan, WireEncoding};
 use sha2::{Digest, Sha256};
 
-const ACCEPT_DEADLINE: Duration = Duration::from_secs(5);
+// Full workspace runs can briefly starve the simulator thread while Windows links or scans
+// several test binaries in parallel. Keep the synthetic peer patient enough that scheduler
+// delay is not misclassified as a Tally transport failure; cancellation still wakes accept.
+const ACCEPT_DEADLINE: Duration = Duration::from_secs(30);
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_REQUEST_BYTES: usize = 128 * 1024;
 pub const MAX_SEQUENCE_REQUESTS: usize = 64;

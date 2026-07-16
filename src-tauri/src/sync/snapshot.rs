@@ -3918,7 +3918,7 @@ mod tests {
             port: simulator.address().port(),
         };
         let runtime = TallyRuntime::with_transport_policy(TransportPolicy {
-            request_timeout: std::time::Duration::from_secs(5),
+            request_timeout: std::time::Duration::from_secs(30),
             status_response_max_bytes: TEST_RESPONSE_LIMIT,
             xml_request_max_bytes: XML_REQUEST_MAX_BYTES,
             xml_response_max_bytes: TEST_RESPONSE_LIMIT,

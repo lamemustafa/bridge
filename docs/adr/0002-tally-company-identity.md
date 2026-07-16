@@ -8,6 +8,8 @@ A display name is not a durable company identity. Bridge binds a run to source
 lineage, an observed company GUID where available, and a fingerprint of stable
 observations. Company-scoped requests explicitly set the current company and
 the response must be checked against the intended identity before commit.
+Observed GUIDs are ASCII-case-folded before both storage and fingerprinting, so
+letter-casing drift cannot manufacture a second runtime identity.
 
 Fallback fingerprints are labelled as weaker evidence. They do not authorize
 automatic rename or deletion behavior. Identity drift invalidates incremental
