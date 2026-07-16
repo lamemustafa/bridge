@@ -18,6 +18,9 @@ current source.
   sealed-profile execution evidence without claiming field support from an
   incidental first-day dataset; snapshot rows are always re-fetched after the
   durable run starts.
+- A probe that no longer returns the selected company now clears and
+  invalidates every company-scoped evidence, proof, mirror, diagnostic, and
+  snapshot view instead of leaving stale results visible without a selection.
 
 ### Added
 
