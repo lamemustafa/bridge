@@ -473,6 +473,25 @@ fn memory_evidence(
     }
 }
 
+#[cfg(any(unix, test))]
+const MACOS_RU_MAXRSS_METHOD: &str = "macos_getrusage_ru_maxrss_bytes";
+#[cfg(any(unix, test))]
+const LINUX_RU_MAXRSS_METHOD: &str = "linux_getrusage_ru_maxrss_kib_normalized_to_bytes";
+
+#[cfg(any(unix, test))]
+fn normalize_ru_maxrss(value: u64, target_os: &str) -> Option<(u64, &'static str)> {
+    match target_os {
+        // Darwin reports ru_maxrss in bytes. Multiplying it by 1024 would
+        // overstate the process-lifetime peak by three orders of magnitude.
+        "macos" => Some((value, MACOS_RU_MAXRSS_METHOD)),
+        // Linux reports ru_maxrss in KiB.
+        "linux" => value
+            .checked_mul(1024)
+            .map(|bytes| (bytes, LINUX_RU_MAXRSS_METHOD)),
+        _ => None,
+    }
+}
+
 #[cfg(windows)]
 fn peak_resident_bytes() -> Option<(u64, &'static str)> {
     use std::mem::{size_of, zeroed};
@@ -503,11 +522,7 @@ fn peak_resident_bytes() -> Option<(u64, &'static str)> {
         return None;
     }
     let value = unsafe { usage.assume_init() }.ru_maxrss;
-    let value = u64::try_from(value).ok()?.checked_mul(1024)?;
-    #[cfg(target_os = "macos")]
-    return Some((value, "macos_getrusage_ru_maxrss_kib_normalized_to_bytes"));
-    #[cfg(not(target_os = "macos"))]
-    Some((value, "unix_getrusage_ru_maxrss_kib_normalized_to_bytes"))
+    normalize_ru_maxrss(u64::try_from(value).ok()?, std::env::consts::OS)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -518,6 +533,28 @@ fn peak_resident_bytes() -> Option<(u64, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ru_maxrss_units_are_normalized_per_operating_system() {
+        assert_eq!(
+            normalize_ru_maxrss(4_096, "macos"),
+            Some((4_096, MACOS_RU_MAXRSS_METHOD))
+        );
+        assert_eq!(
+            normalize_ru_maxrss(4_096, "linux"),
+            Some((4_194_304, LINUX_RU_MAXRSS_METHOD))
+        );
+        assert_eq!(normalize_ru_maxrss(4_096, "freebsd"), None);
+    }
+
+    #[test]
+    fn linux_ru_maxrss_normalization_rejects_overflow() {
+        assert_eq!(normalize_ru_maxrss(u64::MAX, "linux"), None);
+        assert_eq!(
+            normalize_ru_maxrss(u64::MAX, "macos"),
+            Some((u64::MAX, MACOS_RU_MAXRSS_METHOD))
+        );
+    }
 
     #[test]
     fn ci_smoke_generated_window_is_consumable_by_reviewed_parser() {

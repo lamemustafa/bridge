@@ -273,6 +273,7 @@ fn snapshot_error_code(error: &SnapshotError) -> &'static str {
         SnapshotError::CorruptState => "snapshot_state_corrupt",
         SnapshotError::StateMigrationMissing => "snapshot_state_migration_missing",
         SnapshotError::LeaseUnavailable => "snapshot_run_owned_elsewhere",
+        SnapshotError::LeaseIo(_) => "snapshot_process_lock_failed",
         SnapshotError::StateConflict => "snapshot_state_generation_changed",
         SnapshotError::StateStore(_) => "snapshot_state_store_failed",
         SnapshotError::Mirror(_) => "snapshot_mirror_failed",

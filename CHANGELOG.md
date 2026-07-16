@@ -48,6 +48,11 @@ current source.
   zeroizing storage without retaining a key-derived pragma string. Proof
   contract v3 binds detailed record counts, and historical crash recovery no
   longer depends on current checkpoint ownership.
+- File-backed snapshot ownership now uses per-run kernel advisory locks, so a
+  crash can be reclaimed after wall-clock rollback without allowing a live
+  owner to be stolen. Persisted/live company profiles correlate through an
+  opaque endpoint-scoped identity key, and macOS qualification reports
+  `ru_maxrss` in its native byte units.
 - Updated the XML parsing graph and removed unused Linux-only dialog
   dependencies from the supported Windows and macOS build graph.
 - Updated the Tauri runtime to 2.11.5 and tauri-runtime-wry to 2.11.4.

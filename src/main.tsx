@@ -22,6 +22,7 @@ type TallyCompany = {
   guid?: string;
   guid_observed?: boolean;
   mirror_company_id?: string;
+  correlation_key?: string;
   identity_confidence?: "observed" | "unknown";
   canonical_endpoint?: string;
   last_observed_at_unix_ms?: number;
@@ -2873,8 +2874,9 @@ function formatPreviewCount(total: number, label = "loaded"): string {
 }
 
 function tallyCompanyKey(company: TallyCompany): string {
+  if (company.correlation_key) return `correlation:${company.correlation_key}`;
   if (company.mirror_company_id) return `mirror:${company.mirror_company_id}`;
-  if (company.guid) return `guid:${company.guid}`;
+  if (company.guid) return `guid:${company.guid.toLocaleLowerCase()}`;
   return `unverified-name:${company.name}`;
 }
 
@@ -2884,7 +2886,16 @@ function mergeTallyCompanies(preferred: TallyCompany[], existing: TallyCompany[]
   for (const company of preferred) {
     const key = tallyCompanyKey(company);
     const current = merged.get(key);
-    merged.set(key, { ...current, ...company, guid: company.guid ?? current?.guid });
+    merged.set(key, {
+      ...current,
+      ...company,
+      guid: company.guid ?? current?.guid,
+      guid_observed: company.guid_observed ?? current?.guid_observed,
+      mirror_company_id: company.mirror_company_id ?? current?.mirror_company_id,
+      correlation_key: company.correlation_key ?? current?.correlation_key,
+      canonical_endpoint: company.canonical_endpoint ?? current?.canonical_endpoint,
+      last_observed_at_unix_ms: company.last_observed_at_unix_ms ?? current?.last_observed_at_unix_ms,
+    });
   }
   return Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name));
 }

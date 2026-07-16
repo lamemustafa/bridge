@@ -43,13 +43,14 @@ snapshot completeness.
 
 - Pull-request CI may gate generator/parser correctness and receipt integrity.
 - Hosted-runner durations are diagnostic and cannot create release budgets.
-- Windows process-lifetime peak working set and Unix/macOS process-lifetime
-  `getrusage` maximum resident size are normalized to bytes and recorded with
-  distinct method identifiers; values are not compared across platforms. The
-  difference between baseline and final lifetime maxima is not an allocation
-  measurement.
+- Windows process-lifetime peak working set is reported in bytes. Darwin's
+  `getrusage().ru_maxrss` is already bytes and is preserved exactly; Linux's
+  KiB value is checked and normalized to bytes. Each uses a distinct method
+  identifier, and values are not compared across platforms. The difference
+  between baseline and final lifetime maxima is not an allocation measurement.
 - HTTP delivery, cap-boundary transport behavior, native persistence,
   reconciliation, resume, UI responsiveness, and live Education/licensed Tally
   compatibility remain separate qualification slices.
-- Deep voucher evidence is characterization only because the production parser
-  does not yet own a maximum XML-depth contract.
+- `large-voucher` characterizes one schema-valid voucher with 256 entries and
+  bounded text. The deprecated `deep-voucher` spelling is only a CLI alias and
+  establishes no XML-depth claim.
