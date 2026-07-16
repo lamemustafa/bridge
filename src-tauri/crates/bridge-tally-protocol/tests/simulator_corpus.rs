@@ -283,6 +283,20 @@ fn source_record_parsers_preserve_identity_kind_and_exact_fragment_hash() {
         Some("bridge-synthetic-voucher-001")
     );
     assert_eq!(vouchers.records[0].raw_source_sha256.len(), 64);
+
+    let mixed_case_guid = xml.replace(
+        "00000000-0000-4000-8000-000000000101",
+        "00000000-0000-4000-8000-000000000AaB",
+    );
+    let mixed_case = parse_ledger_source_records_with_evidence(&mixed_case_guid).unwrap();
+    assert_eq!(
+        mixed_case.records[0].source_id.as_deref(),
+        Some("00000000-0000-4000-8000-000000000aab")
+    );
+    assert_eq!(
+        mixed_case.records[0].identities.guid.as_deref(),
+        Some("00000000-0000-4000-8000-000000000aab")
+    );
 }
 
 #[test]

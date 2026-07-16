@@ -2433,7 +2433,8 @@ fn parsed_source_identities(
 ) -> anyhow::Result<ParsedSourceIdentities> {
     validate_unique_decodable_attributes(reader, element)?;
     Ok(ParsedSourceIdentities {
-        guid: validated_optional_identifier(attr_value(reader, element, b"GUID"))?,
+        guid: validated_optional_identifier(attr_value(reader, element, b"GUID"))?
+            .map(|guid| guid.to_ascii_lowercase()),
         remote_id: validated_optional_identifier(attr_value(reader, element, b"REMOTEID"))?,
         master_id: validated_optional_identifier(attr_value(reader, element, b"MASTERID"))?,
     })
