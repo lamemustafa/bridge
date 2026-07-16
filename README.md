@@ -18,11 +18,17 @@ Shared prerequisites:
 
 - Node.js 22 or 24 and Corepack (`.node-version` pins the CI baseline)
 - the Rust toolchain pinned by `rust-toolchain.toml`
+- Perl 5 with `Locale::Maketext::Simple` for the bundled SQLCipher/OpenSSL build
+- LLVM/libclang for SQLCipher binding generation (`LIBCLANG_PATH` may be required)
 - the operating-system dependencies listed in the
   [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 
-On Windows, install the Microsoft C++ build tools and WebView2 components
-described by Tauri. On macOS, install Xcode Command Line Tools. DSC workflows
+On Windows, install the Microsoft C++ build tools, WebView2 components, and a
+complete Perl distribution such as Strawberry Perl. If another incomplete
+`perl.exe` appears first on `PATH`, set `OPENSSL_SRC_PERL` to the complete Perl
+executable. Install LLVM as well; if `libclang.dll` is not discoverable, set
+`LIBCLANG_PATH` to its directory (commonly `C:\Program Files\LLVM\bin`). On
+macOS, install Xcode Command Line Tools. DSC workflows
 also require a vendor PKCS#11 library compatible with the host operating
 system; never commit a private key, PIN, certificate dump, or locally installed
 vendor library.

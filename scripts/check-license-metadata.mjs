@@ -47,6 +47,13 @@ if (!license.includes("Apache License") || !license.includes("Grant of Patent Li
 if (!notice.includes("Rust PKCS#11 Library") || !notice.includes("OASIS IPR Policy")) {
   failures.push("required PKCS#11 NOTICE attribution");
 }
+if (
+  !notice.includes("SQLCipher") ||
+  !notice.includes("Copyright (c) 2008-2020 Zetetic LLC") ||
+  !notice.includes("LOSS OF USE, DATA, OR PROFITS")
+) {
+  failures.push("complete bundled SQLCipher NOTICE attribution");
+}
 if (!readme.includes("Apache License, Version 2.0")) failures.push("README license declaration");
 if (!frontendNotices.includes("lucide-react") || !frontendNotices.includes("react 19.2.7")) {
   failures.push("frontend third-party notices");

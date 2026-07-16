@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "fixture_id": "education-native-outstandings-v0",
+  "dataset_tier": "synthetic_small",
+  "candidate": {
+    "profile_id": "native_ledger_outstandings_candidate_v0",
+    "template_sha256": "bc3b87484adb9a10cc15f6c9042853bb1047278896bcf0f495b93e7e6b428526",
+    "observation_posture": "profile_unobserved",
+    "request_shape_immutable": true
+  },
+  "synthetic_scope": {
+    "company_marker": "BRIDGE-PR18-NATIVE-OUTSTANDINGS-COMPANY-019f605f-e6cf-77b2-ac95-31722887a911",
+    "party_marker": "BRIDGE-PR18-NATIVE-OUTSTANDINGS-PARTY-019f605f-e6cf-77b2-ac95-31722887a911",
+    "currency": "INR",
+    "bill_by_bill_tracking_required": true,
+    "customer_or_personal_data_forbidden": true,
+    "expected_company_identity_commitment_source": "separate_reviewed_local_registration",
+    "expected_party_identity_commitment_source": "separate_reviewed_local_registration"
+  },
+  "education_constraints": {
+    "voucher_dates_are_literal_calendar_days": [
+      1,
+      2,
+      31
+    ],
+    "connected_services_forbidden": true,
+    "runner_is_read_only": true,
+    "fixture_creation_is_outside_runner_authority": true
+  },
+  "fixture_facts": [
+    {
+      "event_id": "opening-open-001",
+      "kind": "ledger_opening_bill",
+      "date": null,
+      "reference": "OPEN-001",
+      "allocation_type": "opening_bill",
+      "amount_text": "250.00",
+      "accounting_polarity": "debit"
+    },
+    {
+      "event_id": "sale-inv-001",
+      "kind": "sales_voucher",
+      "date": "20260701",
+      "reference": "INV-001",
+      "allocation_type": "new_ref",
+      "amount_text": "1000.00",
+      "accounting_polarity": "debit",
+      "due_date": "20260731"
+    },
+    {
+      "event_id": "sale-on-account-001",
+      "kind": "sales_voucher",
+      "date": "20260701",
+      "reference": null,
+      "allocation_type": "on_account",
+      "amount_text": "125.00",
+      "accounting_polarity": "debit"
+    },
+    {
+      "event_id": "receipt-partial-inv-001",
+      "kind": "receipt_voucher",
+      "date": "20260702",
+      "reference": "INV-001",
+      "allocation_type": "agst_ref",
+      "amount_text": "400.00",
+      "accounting_polarity": "credit"
+    },
+    {
+      "event_id": "receipt-advance-001",
+      "kind": "receipt_voucher",
+      "date": "20260702",
+      "reference": "ADV-001",
+      "allocation_type": "advance",
+      "amount_text": "50.00",
+      "accounting_polarity": "credit"
+    },
+    {
+      "event_id": "receipt-final-inv-001",
+      "kind": "receipt_voucher",
+      "date": "20260731",
+      "reference": "INV-001",
+      "allocation_type": "agst_ref",
+      "amount_text": "600.00",
+      "accounting_polarity": "credit"
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "education-to-date-20260701",
+      "to_date": "20260701",
+      "request_sha256": "b169cf8022d6ed6e0f2425d966c289e36953f7c1a60bdd861d02da4bd0da8467",
+      "scope_sha256": "cd5b3291d7a34300e57a4b3f7f941e01f7b727d74d1356d76d6215d54a83088f",
+      "expected_accounting_facts": [
+        "OPEN-001 remains INR 250.00 debit",
+        "INV-001 remains INR 1000.00 debit and is due 20260731",
+        "INR 125.00 debit remains On Account"
+      ],
+      "inv_001_ui_presence_requirement": "must_be_observed_present"
+    },
+    {
+      "scenario_id": "education-to-date-20260702",
+      "to_date": "20260702",
+      "request_sha256": "52a9e96dc800140ec6ec264fe3ea635ecf6c4c85a6af767c4cfc37d66a1bc026",
+      "scope_sha256": "37f060d8834aae8c753f3901898108b4969a3a4dae646eb017df1a5f3cbd8823",
+      "expected_accounting_facts": [
+        "OPEN-001 remains INR 250.00 debit",
+        "INV-001 remains INR 600.00 debit and is due 20260731",
+        "INR 125.00 debit remains On Account",
+        "ADV-001 remains INR 50.00 credit"
+      ],
+      "inv_001_ui_presence_requirement": "must_be_observed_present"
+    },
+    {
+      "scenario_id": "education-to-date-20260731",
+      "to_date": "20260731",
+      "request_sha256": "45447855b2dfb98fba648d8813ae6a127e279926127587b664faf04f8e8cf321",
+      "scope_sha256": "744371330ab70936d47264f126630ae6508393fd20a7d25083904f8ed4883c30",
+      "expected_accounting_facts": [
+        "OPEN-001 remains INR 250.00 debit",
+        "INV-001 has zero accounting pending amount after its final settlement",
+        "INR 125.00 debit remains On Account",
+        "ADV-001 remains INR 50.00 credit"
+      ],
+      "inv_001_ui_presence_requirement": "must_record_observed_present_or_omitted"
+    }
+  ],
+  "one_scenario_per_invocation": true,
+  "request_budget": {
+    "preflight_posts": 2,
+    "dispatch_identity_posts": 8,
+    "candidate_dispatch_posts": 3,
+    "dispatch_posts": 11,
+    "maximum_total_posts": 13,
+    "automatic_retries": 0,
+    "preflight_order": [
+      "company_list_v1",
+      "ledgers_v1"
+    ],
+    "dispatch_order": [
+      "b0_company_list_v1",
+      "b0_ledgers_v1",
+      "candidate_1",
+      "b1_company_list_v1",
+      "b1_ledgers_v1",
+      "candidate_2",
+      "b2_company_list_v1",
+      "b2_ledgers_v1",
+      "candidate_3",
+      "b3_company_list_v1",
+      "b3_ledgers_v1"
+    ],
+    "dispatch_request": "four_identity_brackets_and_three_byte_identical_native_ledger_outstandings_candidate_v0_requests"
+  },
+  "ui_observation_contract": {
+    "required_phases": [
+      "before",
+      "after"
+    ],
+    "report_name": "Ledger Outstandings",
+    "report_mode": "detailed",
+    "visible_columns_required": [
+      "opening",
+      "pending",
+      "due",
+      "overdue"
+    ],
+    "ordered_projection_fields": [
+      "row_index",
+      "row_kind",
+      "display_date_text",
+      "reference_text",
+      "opening_amount_text",
+      "pending_amount_text",
+      "due_date_text",
+      "overdue_text",
+      "voucher_details_text",
+      "dr_cr_text"
+    ],
+    "screenshot_sha256_required": true,
+    "structured_projection_required": true,
+    "before_after_projection_must_match": true,
+    "july31_inv_001_presence_or_omission_required": true,
+    "operator_observation_is_not_machine_attestation": true
+  },
+  "authority": {
+    "fixture_facts_are_accounting_expectations_not_xml_semantics": true,
+    "support_claim_authority": "none",
+    "canonical_authority": "none",
+    "zero_or_empty_semantics_authority": "none",
+    "source_identity_stability_authority": "none"
+  }
+}

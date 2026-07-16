@@ -23,7 +23,12 @@ Bridge supports development on Windows and macOS. Install a supported Node.js
 22 or 24 release, Corepack, the Rust toolchain selected by
 `rust-toolchain.toml`, and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for the host
-operating system. Then run from any local clone:
+operating system. The bundled SQLCipher/OpenSSL build also requires Perl 5 with
+`Locale::Maketext::Simple`; on Windows, use a complete distribution such as
+Strawberry Perl and set `OPENSSL_SRC_PERL` if an incomplete Perl appears first
+on `PATH`. SQLCipher binding generation also requires LLVM/libclang; set
+`LIBCLANG_PATH` to the directory containing `libclang.dll` when it is not
+discoverable automatically. Then run from any local clone:
 
 ```text
 corepack pnpm install --frozen-lockfile

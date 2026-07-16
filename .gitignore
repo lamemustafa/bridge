@@ -6,6 +6,7 @@ node_modules/
 Thumbs.db
 Desktop.ini
 *.log
+.bridge-live/
 
 # Local environment and editor state. Keep examples tracked.
 .env

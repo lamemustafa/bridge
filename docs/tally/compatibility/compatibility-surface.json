@@ -1,0 +1,326 @@
+{
+  "schema_version": 1,
+  "files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "8ef18ba324ffd66e6207dac4e157902342923058a8d17f8fcab38b97c5e2be4d"
+    },
+    {
+      "path": "docs/adr/0005-tally-snapshot-recovery.md",
+      "sha256": "dc6f5422496519f465697f9275a3efc4e29cca0ff0ff7bd936f573881776d002"
+    },
+    {
+      "path": "docs/adr/0014-tally-native-outstandings-probe-authority.md",
+      "sha256": "85f1ca5b2d073670f84b1450a3c027c8f78b8be37380e4439df6f750ba27d7c3"
+    },
+    {
+      "path": "docs/adr/0015-tally-selected-read-qualification-authority.md",
+      "sha256": "06d9e9178de87ddeb2f7228a6f37a841896337ad0d8fd8af591eb1899ecbb8f5"
+    },
+    {
+      "path": "docs/step-by-step-roadmap.md",
+      "sha256": "9613f595d823a4a307b61dec24e0ff650413632b2b013a3899110e423c59abd0"
+    },
+    {
+      "path": "docs/tally/TALLY_INTEGRATION_RESEARCH_AND_CODEX_PLAN.md",
+      "sha256": "bdd4ad09dbf8829da0dd7cb29de1af10fc6610525e4766517ba381d509129fe4"
+    },
+    {
+      "path": "docs/tally/compatibility/README.md",
+      "sha256": "ee138c6eec3f8a8acc28c4c15fc58b240da4b423c61c6a624e1d1609b8e33501"
+    },
+    {
+      "path": "docs/tally/compatibility/bills-native-probe-runbook.md",
+      "sha256": "21f04b2698f00087afb992707ad24f9f102193a2ee0f79f7d5c8a2f93093d846"
+    },
+    {
+      "path": "docs/tally/compatibility/fixtures/education-native-outstandings-v0.json",
+      "sha256": "95036eb7a735dd68932327b093a7c44cb87127719f5675d742be7a6c5fc213a0"
+    },
+    {
+      "path": "docs/tally/compatibility/fixtures/education-small-v1.json",
+      "sha256": "4783d8ae7c0ce81ed63f4dbead855b81b792890f7ea2d5ab49c44b2e78366553"
+    },
+    {
+      "path": "docs/tally/compatibility/native-outstandings-profile.example.json",
+      "sha256": "7ab63db939c19b34944851e81fb74dc580a74279bc5d9a6b1f1d3c448f452a1f"
+    },
+    {
+      "path": "docs/tally/compatibility/native-outstandings-ui-after.example.json",
+      "sha256": "1c11a91ecf1c63bf62ae2976e5aed29e85f21c2b4709de803350e4b181f4dd23"
+    },
+    {
+      "path": "docs/tally/compatibility/native-outstandings-ui-before.example.json",
+      "sha256": "9f842721c5ac86c44c900d0c94b2e5342ff4928ea6dbbf2dee6dcc26a255a9e0"
+    },
+    {
+      "path": "docs/tally/support-matrix.md",
+      "sha256": "d2acf62109c337299168555b447e9e8e70c12f22836e949fe6251ece62eb6a21"
+    },
+    {
+      "path": "scripts/check-tally-live-read-boundary.mjs",
+      "sha256": "9fb008716aa69d6d37260c552b16b56d228d6b42c6713759d1662ec383191ac0"
+    },
+    {
+      "path": "src-tauri/Cargo.lock",
+      "sha256": "c1b300fced10c2abd5e4f8cb5574192c6e0b7b143eab4e35d3a0b60ba9666690"
+    },
+    {
+      "path": "src-tauri/Cargo.toml",
+      "sha256": "674ea05cb08e0ff6474c40d7af9822daaeeb76c629c499d0277df7548c2b4fe5"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-canonical/Cargo.toml",
+      "sha256": "8750257055c37d81d9b93aea43c6902bd5a609a88eb5acd143752a88e8229631"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-canonical/src/lib.rs",
+      "sha256": "8e05ad98f5049ee8ec93007d808453ec47ad2df6848ce1167cc1034a75f8bf25"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-canonical/tests/canonicalization.rs",
+      "sha256": "ad596f29df6b6ce2d5a130e3793a8d4d60ea266b101eb6dd3f6e52c322fc88e6"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-compatibility/Cargo.toml",
+      "sha256": "fa7861275e42c039e1fa1f6e9ebf9de8102e7ecc89c55e6c3360da748fd64a0e"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-compatibility/src/bills_native_outstandings_probe_receipt.rs",
+      "sha256": "93a939dcf04d4b0b64feca20f2399ff6494fede9e6aa35fdb5ecffd896bf5978"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-compatibility/src/lib.rs",
+      "sha256": "6e24ec1ab4cd9a70987bc041641bfefe4fa4ed68fb1ff3e7e4ae60cafbaa5bed"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-compatibility/src/main.rs",
+      "sha256": "c6c97013b8e91d2b54c36e78233f531802bcf316fcc4c36c6c75aabe37993aa9"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-core/Cargo.toml",
+      "sha256": "31b2dda54fa78162c47aa202c17d86303ea2b648c5e562e368fecb0c8d1ee260"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-core/src/bills_reconciliation.rs",
+      "sha256": "c3b0bfa66147b3e90800f0ccf3ede8425b6324c5025af4c0f033b123eb9fe63a"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-core/src/exact_arithmetic.rs",
+      "sha256": "ea01744f3d1e68496414745bbedaec194585e97f0c18625a961a47b114e042c1"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-core/src/lib.rs",
+      "sha256": "221355c37833d8b466b3f48376847da7d6b41703a8418170d68189aa16b1e463"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-core/src/pack_models.rs",
+      "sha256": "3d3fb7b82c588a9c6f4b93bbed1acea6139c53cf5ca582b90337ceb0664598f1"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-live-read/Cargo.toml",
+      "sha256": "627b2ef41ef8bc01a3e5e28fc7985d98feece91f38135373b2aef9459e301226"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-live-read/src/bin/native_outstandings_probe.rs",
+      "sha256": "14c7e7e5c073ac1f36c331eb680b163c307d862e0bdefbaa88a65750ee2d3a7d"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-live-read/src/lib.rs",
+      "sha256": "2fa27c724a11d70cb415785fffd00b0efe0a09918f014c28da36805c7a5cd95f"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-live-read/src/main.rs",
+      "sha256": "c426c99d24ac50739566a3af04dfb21f94be842c2a70c755d0a741fdf0c6030f"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-live-read/src/native_outstandings_qualification.rs",
+      "sha256": "2f638c85044a2f4d5617e10b9ef396bf0183810fa868f758e2d08a6722d9b7db"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-observability/Cargo.toml",
+      "sha256": "21567544f89c83b6f291f9a483199c02c3a55f9fcb31e00beb27ae945032633f"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-observability/src/lib.rs",
+      "sha256": "6e861415d3872f9c1a62db386623077a798e689b7fd9ebf3d150d0ee514572e2"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/Cargo.toml",
+      "sha256": "9cf69356f36044a530018f1dc01bcc010847a9dfa42c8a260d253f078a282983"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/bills_native_outstandings_probe.rs",
+      "sha256": "ac237e8a042cb7105620b3503ff6ad46df543ab14b236ef58c5a246052bf0fb9"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/bills_payments_observation.rs",
+      "sha256": "070bae560982c3f9553c2cacfffe83a7debe0415688c43bb1b77befac0cec648"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
+      "sha256": "ee3c8ed89383638d814d24ac15e20abea75347a387cd03e687162ebe40c32c55"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/xml_read_profiles.rs",
+      "sha256": "95b491c98c95c315bf073a4aa5686558b34428e88c7b6accb3913d48631cb859"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/tests/simulator_corpus.rs",
+      "sha256": "e3f81daa05eef9282a8bb3dfef5a81ee9d7145597bd34f436db360ae93c5b7e4"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/tests/stream_text_decoder.rs",
+      "sha256": "62cb2bf28a63eff3dc70870d084262e8c762206cd917c786a17463a1b6b1e627"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-read-transport/Cargo.toml",
+      "sha256": "39ef352d8a1b8c71fd258ea70a9bc0f3656a9dbe381d2f00f98f64996a99e8dc"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-read-transport/src/lib.rs",
+      "sha256": "ef1d33e90da527faa9735469ea5040c9258fbab9e4c761f2473d79e7b3dbd0c4"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-runtime/Cargo.toml",
+      "sha256": "bf89ba14640d8bd05dffbdf79d719676e9aa881657c144efe0f105f34cabad87"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-runtime/src/lib.rs",
+      "sha256": "61624920f0386c827305d4a11d43269c6a9a2366265b402c61a7a72fd68c11f7"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-transport/Cargo.toml",
+      "sha256": "b6348f100abc27b6f074d9cebbf28ee9ace227b8591a4bd5dd29cda613c05ddd"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-transport/src/lib.rs",
+      "sha256": "0d6a1a66c158cbe3565f24a9d99e10d9020720fc6a80363a4949fd8fad9aefe3"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-transport/tests/http_transport.rs",
+      "sha256": "8fcca1f0a3629ef8893e3e067c7cbbc8654d4bfd5b573814ea956891b9358c03"
+    },
+    {
+      "path": "src-tauri/crates/tally-protocol-simulator/Cargo.toml",
+      "sha256": "45e0bb723e924938811bd058d91ee8a34cb12ca8edc2ddca84ca3a500618f6f0"
+    },
+    {
+      "path": "src-tauri/crates/tally-protocol-simulator/README.md",
+      "sha256": "e05ccf4ed654b2add4af4405e046972a5037623c17c4ad522238c5cd406532e9"
+    },
+    {
+      "path": "src-tauri/crates/tally-protocol-simulator/fixtures/inconsistent_date_filter.xml",
+      "sha256": "2bb6598b08167f3c38f99e7e0fc2902bbc2012b210b2f4c1ba030eacac27068c"
+    },
+    {
+      "path": "src-tauri/crates/tally-protocol-simulator/src/fixtures.rs",
+      "sha256": "28ccbb51a939e54d212647a2ec67af7d570e991c072eedd92d93988fff12d0a6"
+    },
+    {
+      "path": "src-tauri/crates/tally-protocol-simulator/src/server.rs",
+      "sha256": "84085bab2236be12f20a39ce55025637eec8b678db661a9273f899ce4681524c"
+    },
+    {
+      "path": "src-tauri/crates/tally-protocol-simulator/tests/protocol_simulator.rs",
+      "sha256": "194216b149d4e7e0351a2afb5124c41e40eea70f23cc97c525df01ae17baae95"
+    },
+    {
+      "path": "src-tauri/src/commands.rs",
+      "sha256": "1bc8a5dbfc39f983f4dd3ac3156b1d0cf9743f14b51e683e6136008755cc223a"
+    },
+    {
+      "path": "src-tauri/src/db/encrypted.rs",
+      "sha256": "bdc7c4f4709623bfdfa864ccb2f0b36024be7d48df0d24289056b4f0d2d51111"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0007_tally_selected_read_evidence.sql",
+      "sha256": "619fcdc8931f21fdfb6df8eaa1b1c30a5251f9f2f3032d948a894a23e8365e8b"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0008_tally_reviewed_setup_consumption.sql",
+      "sha256": "4f2156f242031ad3d891b9e2cd5166fb2f22dcd88f57f4691efcfeeb5611e9a4"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0009_tally_snapshot_window_staging.sql",
+      "sha256": "a1c6dc89699daf6bd18c23902a242faa7af2306fdc2e9df8e8b43aa4dd0fb02d"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0010_tally_provenance_unavailable_counts.sql",
+      "sha256": "3ca9d39a4f9605726c8041d1a4450403785433921ce5785cf21ee84e6b77ab3f"
+    },
+    {
+      "path": "src-tauri/src/db/tally_incremental.rs",
+      "sha256": "1ed920b700ff44ee3817c6c2dead72369814985b8b3027b2bedd426aed5dc017"
+    },
+    {
+      "path": "src-tauri/src/db/tally_mirror.rs",
+      "sha256": "e2d010a4153ea5782a737648837ba1d430d6624f9f66634541c973650d6f64c7"
+    },
+    {
+      "path": "src-tauri/src/db/tally_write_store.rs",
+      "sha256": "628a33d2cb481fcb73393b26be51a6b4239f1c9c1eddab8a858dd5111851b91d"
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "sha256": "7781a41ce27adf7427665dbafcded69ed15451ee38ff457374d7004271a3f2cb"
+    },
+    {
+      "path": "src-tauri/src/sync/coordinator.rs",
+      "sha256": "8173f7d433b5a2c61e7b34d6214d1af3eb8be3767f2fac0b05187e96c1e3697c"
+    },
+    {
+      "path": "src-tauri/src/sync/reconciliation.rs",
+      "sha256": "e96387dda907e42b14c9b2d238abbd22b0d7ba5837a2d1a93c94d52c82233072"
+    },
+    {
+      "path": "src-tauri/src/sync/snapshot.rs",
+      "sha256": "5d143b6b6ff1743a74598b173e2736e5db2959279c4d97c35470f7668e62edfb"
+    },
+    {
+      "path": "src-tauri/src/tally/capability_packs.rs",
+      "sha256": "92ba5d666a677ff164f95f140937705c238b967a9c8214f7e7101ed8ac2ebc7f"
+    },
+    {
+      "path": "src-tauri/src/tally/connection.rs",
+      "sha256": "c5d297323b3cded360429bf6ac265eb87631c0d019d7f30e786bb7f5076459ce"
+    },
+    {
+      "path": "src-tauri/src/tally/connector.rs",
+      "sha256": "96bdee6e37d9199ce7ce592b78744c315cbcaa7a43a65552acff103e9e06c02a"
+    },
+    {
+      "path": "src-tauri/src/tally/mod.rs",
+      "sha256": "389a5e80d0cdaba49b9cc88ec7e40c63db28e1449103a0966013cb9bee20876e"
+    },
+    {
+      "path": "src-tauri/src/tally/runtime.rs",
+      "sha256": "d940d352276d5329c19bafa5eaf848851769813747a52f8d95a53bf0e3f209b7"
+    },
+    {
+      "path": "src-tauri/src/tally/serial_queue.rs",
+      "sha256": "cf0e9c3a1da9510de6cb756455a2f0150e0d4d9ae6750489839a079d95fbdd98"
+    },
+    {
+      "path": "src-tauri/src/tally/tdl_engine.rs",
+      "sha256": "59e5c6c853b61ec22f5fd4d97cb9ef87e6c67a91807bb488fe3c21d281918fe1"
+    },
+    {
+      "path": "src-tauri/src/tally/validators.rs",
+      "sha256": "40976622598bdbfe2567f3fd70adee9ff78f5cd9c7fbc43e1fbac0640ef1523f"
+    },
+    {
+      "path": "src-tauri/src/tally/xml_parser.rs",
+      "sha256": "654938f3207822cd9889b8d81cd53684ca43c856b727fbabc09aadde6f9e82eb"
+    },
+    {
+      "path": "src/main.tsx",
+      "sha256": "d6f624a5d74c1c8e14b89eced24735681ee0112035934fbe45b7f3f455a4e658"
+    },
+    {
+      "path": "src/styles.css",
+      "sha256": "2a1123727cd527e54190236719787dbdc1420c5099712011290eab9e40590ccd"
+    }
+  ],
+  "manifest_sha256": "8d96338e41ad6a568e5ad46ed51fb07e6468eb0c29572835bfb10196b566cfef"
+}

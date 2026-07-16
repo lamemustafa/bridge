@@ -27,6 +27,11 @@ contain customer data in release artifacts.
   the repository owner under Apache-2.0.
 - Raster, ICO, and ICNS files under `src-tauri/icons/` are generated derivatives
   of that vector source and carry the same project license.
+- Tally XML and JSON files under `src-tauri/crates/tally-protocol-simulator/`
+  and `src-tauri/crates/bridge-tally-protocol/tests/fixtures/` are
+  project-authored synthetic interoperability fixtures contributed under
+  Apache-2.0. They contain reserved synthetic names and identifiers rather than
+  customer exports or copied vendor samples.
 
 Do not replace or add an icon, font, screenshot, fixture, or other asset unless
 its source, contributor authority, license, and required attribution are added

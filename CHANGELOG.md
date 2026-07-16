@@ -17,6 +17,18 @@ current source.
 
 ### Added
 
+- A local-first Tally Truth Layer with capability passports, explicit truth
+  states, encrypted mirror evidence, resumable/adaptive snapshots, Proof of
+  Sync and Gap Map output, and a safer operator console. The migrations are
+  additive; rollback requires restoring the prior application and retaining
+  the encrypted database for forward recovery rather than deleting evidence.
+- Portable, bounded Tally protocol, canonicalization, transport, runtime,
+  compatibility, incremental-policy, qualification, observability, and
+  write-safety crates backed by a synthetic loopback protocol simulator.
+- Reviewed single-use setup authority, exact selected-read qualification, and
+  fail-closed compatibility manifests/runbooks. Live Education behavior and
+  every write capability remain unknown or disabled until exact reviewed
+  evidence exists.
 - Native Windows and macOS CI coverage for formatting, tests, builds, and
   Clippy.
 - Repository-local Windows and macOS application icons.
@@ -28,6 +40,10 @@ current source.
 
 ### Security
 
+- SQLCipher/keyring-backed local Tally state, immutable proof/checkpoint
+  receipts, loopback-only proxy-free HTTP, bounded incremental decoding,
+  cancellation and lease enforcement, idempotent crash replay, and sealed
+  no-write qualification boundaries.
 - Updated the XML parsing graph and removed unused Linux-only dialog
   dependencies from the supported Windows and macOS build graph.
 - Updated the Tauri runtime to 2.11.5 and tauri-runtime-wry to 2.11.4.
