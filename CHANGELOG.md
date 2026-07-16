@@ -14,6 +14,10 @@ current source.
 - Relicensed future Bridge distributions from the MIT License to the Apache
   License, Version 2.0. The previously published `v0.1.0` release remains
   available under the MIT License that accompanied that release.
+- Core snapshot canaries now authorize attempts through stable observed
+  sealed-profile execution evidence without claiming field support from an
+  incidental first-day dataset; snapshot rows are always re-fetched after the
+  durable run starts.
 
 ### Added
 
@@ -53,6 +57,9 @@ current source.
   owner to be stolen. Persisted/live company profiles correlate through an
   opaque endpoint-scoped identity key, and macOS qualification reports
   `ru_maxrss` in its native byte units.
+- Losing checkpoint compare-and-swap decisions terminalize as durable failed
+  proofs and close staging attempts instead of remaining falsely resumable;
+  unrelated checkpoint advances do not rewrite Failed or Cancelled outcomes.
 - Updated the XML parsing graph and removed unused Linux-only dialog
   dependencies from the supported Windows and macOS build graph.
 - Updated the Tauri runtime to 2.11.5 and tauri-runtime-wry to 2.11.4.

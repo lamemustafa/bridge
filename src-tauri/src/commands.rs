@@ -20,10 +20,11 @@ use crate::tally::validators::{
     normalize_company_guid, validate_company_name, validate_date_range,
 };
 use crate::tally::{
-    company_source_identity, source_lineage, CachedProbeReservation, ConnectionStatus, EndpointKey,
-    RuntimeTallyConnector, SelectedReadObservation, SelectedReadScopeEvidence, TallyCompany,
-    TallyConfig, TallyLedger, TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport,
-    TallyVoucher, SELECTED_LEDGER_QUERY_PROFILE_ID, SELECTED_VOUCHER_QUERY_PROFILE_ID,
+    company_source_identity, core_snapshot_start_authorized, source_lineage,
+    CachedProbeReservation, ConnectionStatus, EndpointKey, RuntimeTallyConnector,
+    SelectedReadObservation, SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyLedger,
+    TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport, TallyVoucher,
+    SELECTED_LEDGER_QUERY_PROFILE_ID, SELECTED_VOUCHER_QUERY_PROFILE_ID,
 };
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityState,
@@ -1331,10 +1332,7 @@ pub async fn start_tally_core_snapshot(
             .profile
             .packs
             .get(&CapabilityPackId::CoreAccounting)
-            .is_some_and(|evidence| {
-                evidence.state == CapabilityState::Supported
-                    && evidence.confidence == bridge_tally_core::EvidenceConfidence::Observed
-            })
+            .is_some_and(core_snapshot_start_authorized)
     {
         return Err(
             "Core Accounting remains unverified for this company, release, and query profile"

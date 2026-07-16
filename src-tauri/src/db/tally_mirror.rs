@@ -58,6 +58,7 @@ pub(crate) const REVIEWED_TALLY_TERMINAL_CODES: &[&str] = &[
     "response_size_limit_exceeded",
     "response_truncated",
     "runtime_capacity_reached",
+    "snapshot_checkpoint_changed",
     "transport_policy_invalid",
     "unclassified_tally_error",
     "voucher_export_invalid",
@@ -2205,16 +2206,23 @@ impl TallyMirrorRepository {
         let capability_snapshot_id: String = batch.try_get("capability_snapshot_id")?;
         let company_id: String = batch.try_get("company_id")?;
         let pack_id: String = batch.try_get("pack_id")?;
-        let checkpoint_before = sqlx::query_scalar::<_, String>(
+        let current_checkpoint = sqlx::query_scalar::<_, String>(
             "SELECT checkpoint_token FROM tally_checkpoints WHERE company_id = ?1 AND pack_id = ?2",
         )
         .bind(&company_id)
         .bind(&pack_id)
         .fetch_optional(&mut *transaction)
         .await?;
-        if checkpoint_before != input.expected_checkpoint_before {
+        // Only a verified commit advances checkpoint authority and therefore needs a compare-and-
+        // swap against the current head. Non-advancing proofs retain the checkpoint observed at
+        // the start of their run, even if another run has advanced the live head meanwhile. This
+        // lets a losing verified run close its staging batch with a truthful terminal proof.
+        if input.verification == VerificationState::Verified
+            && current_checkpoint != input.expected_checkpoint_before
+        {
             return Err(MirrorError::ConcurrentCheckpoint);
         }
+        let checkpoint_before = input.expected_checkpoint_before.clone();
 
         sqlx::query(
             "UPDATE tally_observation_batches SET state = ?1, completed_at_unix_ms = ?2, \
