@@ -452,13 +452,29 @@ fn core_canary_capability(window: &CanonicalPackWindow) -> CapabilityEvidence {
     {
         record("voucher", "voucher_number");
     }
+    let mut derived_entry_identity_observed = false;
     if !batch.ledger_entries.is_empty() {
-        if window.record_evidence.as_deref().is_some_and(|evidence| {
-            evidence.iter().any(|record| {
-                record.object_type.as_str() == "ledger_entry"
-                    && record.identity_kind != bridge_tally_core::SourceIdentityKind::Fallback
+        let entry_identity_observed = window.record_evidence.as_deref().is_some_and(|evidence| {
+            batch.ledger_entries.iter().all(|entry| {
+                evidence.iter().any(|record| {
+                    if record.object_type.as_str() != "ledger_entry"
+                        || record.source_id.as_str() != entry.source_id
+                    {
+                        return false;
+                    }
+                    if record.identity_kind == bridge_tally_core::SourceIdentityKind::Fallback {
+                        let derived = entry
+                            .source_id
+                            .starts_with("bridge-derived:ledger-entry:v1:");
+                        derived_entry_identity_observed |= derived;
+                        derived
+                    } else {
+                        true
+                    }
+                })
             })
-        }) {
+        });
+        if entry_identity_observed {
             record("ledger_entry", "source_id");
         }
         record("ledger_entry", "voucher_source_id");
@@ -473,7 +489,11 @@ fn core_canary_capability(window: &CanonicalPackWindow) -> CapabilityEvidence {
     }) {
         observed_core_capability(
             CapabilityState::Supported,
-            "all_required_pack_fields_observed",
+            if derived_entry_identity_observed {
+                "all_required_pack_fields_observed_with_derived_entry_identity"
+            } else {
+                "all_required_pack_fields_observed"
+            },
         )
     } else if observed.is_empty() {
         observed_core_capability(
@@ -671,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn fully_populated_canary_with_derived_entry_identity_stays_unknown() {
+    fn fully_populated_canary_accepts_only_bound_derived_entry_identity() {
         let entry_source_id = "bridge-derived:ledger-entry:v1:synthetic".to_string();
         let window = CanonicalPackWindow {
             batch: PackBatch::CoreAccounting(bridge_tally_core::CoreAccountingBatch {
@@ -726,6 +746,17 @@ mod tests {
         };
 
         let evidence = core_canary_capability(&window);
+
+        assert_eq!(evidence.state, CapabilityState::Supported);
+        assert_eq!(
+            evidence.safe_reason_code.as_deref(),
+            Some("all_required_pack_fields_observed_with_derived_entry_identity")
+        );
+
+        let mut unbound = window;
+        unbound.record_evidence.as_mut().unwrap()[0].source_id =
+            bridge_tally_core::SourceRecordId::parse("unbound-fallback-entry").unwrap();
+        let evidence = core_canary_capability(&unbound);
 
         assert_eq!(evidence.state, CapabilityState::Unknown);
         assert_eq!(
