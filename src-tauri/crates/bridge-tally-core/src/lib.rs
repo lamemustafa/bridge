@@ -13,7 +13,7 @@ pub use pack_models::*;
 
 pub mod destination;
 
-pub const PROOF_CONTRACT_VERSION: u16 = 2;
+pub const PROOF_CONTRACT_VERSION: u16 = 3;
 const MAX_EXACT_DECIMAL_BYTES: usize = 256;
 pub const CORE_ACCOUNTING_SCHEMA_VERSION: PackSchemaVersion =
     PackSchemaVersion { major: 3, minor: 0 };

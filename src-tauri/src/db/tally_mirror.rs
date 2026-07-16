@@ -21,6 +21,8 @@ const MIRROR_MIGRATION_V8: &str =
 const MIRROR_MIGRATION_V9: &str = include_str!("migrations/0009_tally_snapshot_window_staging.sql");
 const MIRROR_MIGRATION_V10: &str =
     include_str!("migrations/0010_tally_provenance_unavailable_counts.sql");
+const MIRROR_MIGRATION_V11: &str =
+    include_str!("migrations/0011_tally_proof_record_counts_digest.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -43,6 +45,7 @@ pub(crate) const REVIEWED_TALLY_TERMINAL_CODES: &[&str] = &[
     "http_client_initialization_failed",
     "http_status_failure",
     "ledger_export_invalid",
+    "local_clock_moved_backwards",
     "minimum_window_response_too_large",
     "period_report_identity_missing",
     "period_report_invalid",
@@ -546,6 +549,8 @@ pub struct CommitReceiptFacts {
     pub accepted_records: i64,
     pub rejected_records: i64,
     pub provenance_unavailable_records: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_counts_sha256: Option<String>,
     pub snapshot_sha256: Option<String>,
     pub checkpoint_before: Option<String>,
     pub checkpoint_after: Option<String>,
@@ -973,9 +978,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let proof_record_counts_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 11",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if proof_record_counts_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V11)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -2101,6 +2116,10 @@ impl TallyMirrorRepository {
             return Err(MirrorError::InvalidInput("proof_or_freshness_version"));
         }
         validate_optional_sha256(input.snapshot_sha256.as_deref())?;
+        validate_optional_sha256(input.record_counts_sha256.as_deref())?;
+        if (input.proof_contract_version >= 3) != input.record_counts_sha256.is_some() {
+            return Err(MirrorError::InvalidInput("proof_record_counts_digest"));
+        }
         validate_optional_token(input.checkpoint_after.as_deref())?;
         for code in input.gap_codes.iter().chain(&input.warning_codes) {
             validate_safe_code(code)?;
@@ -2123,6 +2142,10 @@ impl TallyMirrorRepository {
         let state: String = batch.try_get("state")?;
         if state != "staging" {
             return Err(MirrorError::BatchClosed);
+        }
+        let started_at_unix_ms: i64 = batch.try_get("started_at_unix_ms")?;
+        if input.completed_at_unix_ms < started_at_unix_ms {
+            return Err(MirrorError::InvalidInput("batch_completed_at"));
         }
 
         let counts = sqlx::query(
@@ -2175,7 +2198,6 @@ impl TallyMirrorRepository {
         let capability_snapshot_id: String = batch.try_get("capability_snapshot_id")?;
         let company_id: String = batch.try_get("company_id")?;
         let pack_id: String = batch.try_get("pack_id")?;
-        let started_at_unix_ms: i64 = batch.try_get("started_at_unix_ms")?;
         let checkpoint_before = sqlx::query_scalar::<_, String>(
             "SELECT checkpoint_token FROM tally_checkpoints WHERE company_id = ?1 AND pack_id = ?2",
         )
@@ -2226,6 +2248,7 @@ impl TallyMirrorRepository {
             rejected_records,
             provenance_unavailable_records: (input.proof_contract_version >= 2)
                 .then_some(provenance_unavailable_records),
+            record_counts_sha256: input.record_counts_sha256.as_deref(),
             snapshot_sha256: input.snapshot_sha256.as_deref(),
             checkpoint_before: checkpoint_before.as_deref(),
             checkpoint_after: input.checkpoint_after.as_deref(),
@@ -2242,11 +2265,11 @@ impl TallyMirrorRepository {
                id, proof_contract_version, previous_entry_sha256, entry_sha256, run_id, batch_id, \
                capability_snapshot_id, company_id, pack_id, outcome, verification_state, \
                started_at_unix_ms, completed_at_unix_ms, accepted_records, rejected_records, \
-               provenance_unavailable_records, snapshot_sha256, checkpoint_before, \
+               provenance_unavailable_records, record_counts_sha256, snapshot_sha256, checkpoint_before, \
                checkpoint_after, gap_codes_json, warning_codes_json, created_at_unix_ms\
              ) VALUES (\
                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, \
-               ?17, ?18, ?19, ?20, ?21, ?22\
+               ?17, ?18, ?19, ?20, ?21, ?22, ?23\
              )",
         )
         .bind(&proof_id)
@@ -2265,6 +2288,7 @@ impl TallyMirrorRepository {
         .bind(accepted_records)
         .bind(rejected_records)
         .bind(provenance_unavailable_records)
+        .bind(&input.record_counts_sha256)
         .bind(&input.snapshot_sha256)
         .bind(&checkpoint_before)
         .bind(&input.checkpoint_after)
@@ -2329,6 +2353,7 @@ impl TallyMirrorRepository {
                 accepted_records,
                 rejected_records,
                 provenance_unavailable_records,
+                record_counts_sha256: input.record_counts_sha256,
                 snapshot_sha256: input.snapshot_sha256,
                 checkpoint_before,
                 checkpoint_after: input.checkpoint_after,
@@ -2445,7 +2470,7 @@ impl TallyMirrorRepository {
             "SELECT sequence, id, proof_contract_version, previous_entry_sha256, entry_sha256, \
                run_id, batch_id, capability_snapshot_id, company_id, pack_id, outcome, \
                verification_state, started_at_unix_ms, completed_at_unix_ms, accepted_records, \
-               rejected_records, provenance_unavailable_records, snapshot_sha256, \
+               rejected_records, provenance_unavailable_records, record_counts_sha256, snapshot_sha256, \
                checkpoint_before, checkpoint_after, gap_codes_json, warning_codes_json, \
                created_at_unix_ms \
              FROM tally_proof_ledger WHERE batch_id = ?1 AND run_id = ?2",
@@ -2475,6 +2500,7 @@ impl TallyMirrorRepository {
         let accepted_records: i64 = row.try_get("accepted_records")?;
         let rejected_records: i64 = row.try_get("rejected_records")?;
         let provenance_unavailable_records: i64 = row.try_get("provenance_unavailable_records")?;
+        let record_counts_sha256: Option<String> = row.try_get("record_counts_sha256")?;
         let snapshot_sha256: Option<String> = row.try_get("snapshot_sha256")?;
         let checkpoint_before: Option<String> = row.try_get("checkpoint_before")?;
         let checkpoint_after: Option<String> = row.try_get("checkpoint_after")?;
@@ -2491,6 +2517,13 @@ impl TallyMirrorRepository {
         }
         let outcome = parse_run_outcome(&outcome_text)?;
         let verification = parse_verification_state(&verification_text)?;
+        if (proof_contract_version >= 3) != record_counts_sha256.is_some()
+            || record_counts_sha256
+                .as_deref()
+                .is_some_and(|digest| validate_sha256(digest).is_err())
+        {
+            return Err(MirrorError::VerificationInvariant);
+        }
 
         let expected_previous = sqlx::query_scalar::<_, String>(
             "SELECT entry_sha256 FROM tally_proof_ledger WHERE sequence < ?1 \
@@ -2519,6 +2552,7 @@ impl TallyMirrorRepository {
             rejected_records,
             provenance_unavailable_records: (proof_contract_version >= 2)
                 .then_some(provenance_unavailable_records),
+            record_counts_sha256: record_counts_sha256.as_deref(),
             snapshot_sha256: snapshot_sha256.as_deref(),
             checkpoint_before: checkpoint_before.as_deref(),
             checkpoint_after: checkpoint_after.as_deref(),
@@ -2577,6 +2611,7 @@ impl TallyMirrorRepository {
                 accepted_records,
                 rejected_records,
                 provenance_unavailable_records,
+                record_counts_sha256,
                 snapshot_sha256,
                 checkpoint_before,
                 checkpoint_after,
@@ -3729,6 +3764,8 @@ struct ProofHashInput<'a> {
     rejected_records: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     provenance_unavailable_records: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    record_counts_sha256: Option<&'a str>,
     snapshot_sha256: Option<&'a str>,
     checkpoint_before: Option<&'a str>,
     checkpoint_after: Option<&'a str>,
@@ -3757,7 +3794,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
-    use crate::sync::reconciliation::CommitBatchParts;
+    use crate::sync::reconciliation::{proof_record_counts_sha256, CommitBatchParts};
 
     const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const HASH_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -4805,6 +4842,7 @@ mod tests {
                 outcome: RunOutcome::Failed,
                 verification: VerificationState::Unverified,
                 completed_at_unix_ms: 4_000,
+                record_counts_sha256: None,
                 snapshot_sha256: None,
                 expected_checkpoint_before: None,
                 checkpoint_after: None,
@@ -4962,6 +5000,7 @@ mod tests {
             accepted_records: 0,
             rejected_records: 0,
             provenance_unavailable_records: None,
+            record_counts_sha256: None,
             snapshot_sha256: None,
             checkpoint_before: None,
             checkpoint_after: None,
@@ -5001,10 +5040,19 @@ mod tests {
         .await
         .unwrap();
 
-        repository.migrate().await.expect("upgrade v9 to v10");
+        repository.migrate().await.expect("upgrade v9 through v11");
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 10",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 11",
             )
             .fetch_one(&repository.pool)
             .await
@@ -5018,6 +5066,7 @@ mod tests {
         assert_eq!(receipt.proof_sha256, proof_sha256);
         assert_eq!(receipt.facts.proof_contract_version, 1);
         assert_eq!(receipt.facts.provenance_unavailable_records, 0);
+        assert_eq!(receipt.facts.record_counts_sha256, None);
     }
 
     #[tokio::test]
@@ -5033,13 +5082,13 @@ mod tests {
         .await
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10)",
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 9);
+        assert_eq!(migration_count, 10);
         let snapshot_state_table = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM sqlite_master \
              WHERE type = 'table' AND name = 'tally_snapshot_run_states'",
@@ -5105,6 +5154,77 @@ mod tests {
         .await
         .expect("read migration timestamp");
         assert!(applied_at > 0, "migration marker must contain real time");
+    }
+
+    #[tokio::test]
+    async fn v3_receipt_binds_canonical_record_counts_and_rejects_pre_start_completion() {
+        let (repository, snapshot, company) = seeded_repository().await;
+        let batch_id = begin_batch(&repository, &snapshot, &company, "v3-count-binding").await;
+        let record_counts = BTreeMap::from([
+            ("group.accepted_unique".to_string(), 3),
+            ("locally_staged.accepted".to_string(), 3),
+            ("locally_staged.rejected".to_string(), 0),
+        ]);
+        let record_counts_sha256 = proof_record_counts_sha256(&record_counts);
+        let receipt = repository
+            .commit_batch(CommitBatchInput::test_only(CommitBatchParts {
+                batch_id: batch_id.clone(),
+                proof_contract_version: 3,
+                outcome: RunOutcome::Failed,
+                verification: VerificationState::Unverified,
+                completed_at_unix_ms: 2_500,
+                record_counts_sha256: Some(record_counts_sha256.clone()),
+                snapshot_sha256: None,
+                expected_checkpoint_before: None,
+                checkpoint_after: None,
+                freshness_target_seconds: 60,
+                gap_codes: vec!["source_outcome_unknown".to_string()],
+                warning_codes: Vec::new(),
+            }))
+            .await
+            .expect("commit v3 count-bound proof");
+        assert_eq!(
+            receipt.facts.record_counts_sha256.as_deref(),
+            Some(record_counts_sha256.as_str())
+        );
+        let recovered = repository
+            .historical_commit_receipt_for_batch(&batch_id, "v3-count-binding")
+            .await
+            .expect("revalidate count-bound historical receipt");
+        assert_eq!(recovered, receipt);
+
+        let clock_batch = begin_batch(&repository, &snapshot, &company, "clock-regression").await;
+        let error = repository
+            .commit_batch(CommitBatchInput::test_only(CommitBatchParts {
+                batch_id: clock_batch.clone(),
+                proof_contract_version: 3,
+                outcome: RunOutcome::Failed,
+                verification: VerificationState::Unverified,
+                completed_at_unix_ms: 1_999,
+                record_counts_sha256: Some(proof_record_counts_sha256(&BTreeMap::new())),
+                snapshot_sha256: None,
+                expected_checkpoint_before: None,
+                checkpoint_after: None,
+                freshness_target_seconds: 60,
+                gap_codes: vec!["source_outcome_unknown".to_string()],
+                warning_codes: Vec::new(),
+            }))
+            .await
+            .expect_err("proof completion before batch start must fail closed");
+        assert!(matches!(
+            error,
+            MirrorError::InvalidInput("batch_completed_at")
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM tally_observation_batches WHERE id = ?1",
+            )
+            .bind(clock_batch)
+            .fetch_one(&repository.pool)
+            .await
+            .unwrap(),
+            "staging"
+        );
     }
 
     #[tokio::test]
@@ -5565,6 +5685,7 @@ mod tests {
                 outcome: RunOutcome::Completed,
                 verification: VerificationState::Verified,
                 completed_at_unix_ms: 3_000,
+                record_counts_sha256: None,
                 snapshot_sha256: Some(HASH_B.to_string()),
                 expected_checkpoint_before: None,
                 checkpoint_after: Some("alter_id:42".to_string()),
@@ -5619,6 +5740,7 @@ mod tests {
                 outcome: RunOutcome::Completed,
                 verification: VerificationState::Verified,
                 completed_at_unix_ms: 4_000,
+                record_counts_sha256: None,
                 snapshot_sha256: Some(HASH_A.to_string()),
                 expected_checkpoint_before: Some("alter_id:42".to_string()),
                 checkpoint_after: Some("alter_id:43".to_string()),
@@ -5706,6 +5828,7 @@ mod tests {
                 outcome: RunOutcome::Completed,
                 verification: VerificationState::Partial,
                 completed_at_unix_ms: 3_000,
+                record_counts_sha256: None,
                 snapshot_sha256: Some(HASH_B.to_string()),
                 expected_checkpoint_before: None,
                 checkpoint_after: None,
@@ -5734,6 +5857,7 @@ mod tests {
                 outcome: RunOutcome::Completed,
                 verification: VerificationState::Verified,
                 completed_at_unix_ms: 3_000,
+                record_counts_sha256: None,
                 snapshot_sha256: Some(HASH_A.to_string()),
                 expected_checkpoint_before: None,
                 checkpoint_after: Some("full:first".to_string()),
@@ -5751,6 +5875,7 @@ mod tests {
                 outcome: RunOutcome::Completed,
                 verification: VerificationState::Verified,
                 completed_at_unix_ms: 3_001,
+                record_counts_sha256: None,
                 snapshot_sha256: Some(HASH_B.to_string()),
                 expected_checkpoint_before: None,
                 checkpoint_after: Some("full:second".to_string()),

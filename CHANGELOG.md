@@ -44,6 +44,10 @@ current source.
   receipts, loopback-only proxy-free HTTP, bounded incremental decoding,
   cancellation and lease enforcement, idempotent crash replay, and sealed
   no-write qualification boundaries.
+- SQLCipher pool replacement connections now receive raw key bytes from
+  zeroizing storage without retaining a key-derived pragma string. Proof
+  contract v3 binds detailed record counts, and historical crash recovery no
+  longer depends on current checkpoint ownership.
 - Updated the XML parsing graph and removed unused Linux-only dialog
   dependencies from the supported Windows and macOS build graph.
 - Updated the Tauri runtime to 2.11.5 and tauri-runtime-wry to 2.11.4.

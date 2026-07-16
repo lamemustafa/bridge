@@ -110,7 +110,13 @@ fn canonicalizes_all_core_records_with_exact_reference_and_provenance_binding() 
     assert!(batch.ledger_entries[0]
         .source_id
         .starts_with("bridge-derived:ledger-entry:v1:"));
-    assert_eq!(window.source_counts.as_ref().unwrap().len(), 5);
+    assert_eq!(window.source_counts.as_ref().unwrap().len(), 4);
+    assert!(window
+        .source_counts
+        .as_ref()
+        .unwrap()
+        .iter()
+        .all(|evidence| evidence.object_type.as_str() != "ledger_entry"));
     assert_eq!(window.record_evidence.as_ref().unwrap().len(), 7);
 
     let voucher_evidence = window
@@ -139,6 +145,32 @@ fn canonicalizes_all_core_records_with_exact_reference_and_provenance_binding() 
             .as_str(),
         "9"
     );
+}
+
+#[test]
+fn nested_entry_totals_remain_local_and_are_never_claimed_as_source_reported() {
+    let window = valid_window();
+    let PackBatch::CoreAccounting(batch) = &window.batch else {
+        panic!("wrong pack")
+    };
+
+    assert_eq!(batch.ledger_entries.len(), 2);
+    assert_eq!(
+        window
+            .record_evidence
+            .as_ref()
+            .unwrap()
+            .iter()
+            .filter(|evidence| evidence.object_type.as_str() == "ledger_entry")
+            .count(),
+        2
+    );
+    assert!(window
+        .source_counts
+        .as_ref()
+        .unwrap()
+        .iter()
+        .all(|evidence| evidence.object_type.as_str() != "ledger_entry"));
 }
 
 #[test]
