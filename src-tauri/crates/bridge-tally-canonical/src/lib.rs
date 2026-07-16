@@ -120,7 +120,6 @@ pub fn build_core_window(
         record_evidence.push(evidence);
     }
 
-    let mut ledger_entry_count = 0_u64;
     for source in vouchers.records {
         let voucher_source_id = required_source_id(&source, "voucher_identity_missing")?;
         let voucher_evidence = source_evidence("voucher", voucher_source_id.clone(), &source)?;
@@ -197,9 +196,6 @@ pub fn build_core_window(
                 raw_source_sha256: RawSourceSha256::parse(entry.raw_source_sha256.clone())?,
                 alter_id: None,
             });
-            ledger_entry_count = ledger_entry_count
-                .checked_add(1)
-                .ok_or_else(|| invalid_data("ledger_entry_count_overflow"))?;
         }
 
         batch.vouchers.push(VoucherRecord {
@@ -223,12 +219,6 @@ pub fn build_core_window(
             SourceCountScope::Complete,
         )?,
         count_evidence(context, "voucher", voucher_count, SourceCountScope::Window)?,
-        count_evidence(
-            context,
-            "ledger_entry",
-            ledger_entry_count,
-            SourceCountScope::Window,
-        )?,
     ];
     let window = CanonicalPackWindow {
         batch: PackBatch::CoreAccounting(batch),

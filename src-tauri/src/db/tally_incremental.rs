@@ -835,6 +835,7 @@ mod tests {
                 outcome: RunOutcome::Completed,
                 verification: MirrorVerificationState::Verified,
                 completed_at_unix_ms: 3_000,
+                record_counts_sha256: None,
                 snapshot_sha256: Some("2".repeat(64)),
                 expected_checkpoint_before: None,
                 checkpoint_after: Some("42".to_string()),

@@ -1,9 +1,10 @@
 use sha2::{Digest, Sha256};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::{ConnectOptions, SqlitePool};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::{ConnectOptions, Executor, SqlitePool};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
-use zeroize::{Zeroize, Zeroizing};
+use std::sync::Arc;
+use zeroize::Zeroizing;
 
 const MIRROR_KEY_BYTES: usize = 32;
 const KEYRING_SERVICE: &str = "com.complyeaze.bridge.tally-mirror";
@@ -131,25 +132,56 @@ pub async fn connect_encrypted(
     key: Zeroizing<Vec<u8>>,
 ) -> anyhow::Result<SqlitePool> {
     validate_key(&key)?;
-    let mut key_hex = Zeroizing::new(hex_key(&key));
-    let mut key_pragma_value = Zeroizing::new(format!("\"x'{}'\"", key_hex.as_str()));
+    // SqliteConnectOptions owns PRAGMA values as ordinary strings and the pool keeps those
+    // options for its lifetime so that it can replace connections. Keeping SQLCipher's key in
+    // `.pragma("key", ...)` would therefore leave an unprotected copy in the pool. Retain the
+    // original bytes only in zeroizing storage and apply them to every new SQLite handle through
+    // SQLCipher's C API instead.
+    let connection_key = Arc::new(key);
     let options = SqliteConnectOptions::new()
         .filename(database_path)
         .create_if_missing(true)
-        // SQLx reserves the first PRAGMA slot for SQLCipher's key. Supplying it here
-        // guarantees that no schema or journal operation runs against an unkeyed file.
-        .pragma("key", key_pragma_value.as_str().to_owned())
-        .pragma("cipher_memory_security", "ON")
-        .pragma("secure_delete", "ON")
-        .foreign_keys(true)
-        .journal_mode(SqliteJournalMode::Wal)
         .disable_statement_logging();
-    key_pragma_value.zeroize();
-    key_hex.zeroize();
-    drop(key);
 
+    let key_for_connections = Arc::clone(&connection_key);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
+        .after_connect(move |connection, _metadata| {
+            let key = Arc::clone(&key_for_connections);
+            Box::pin(async move {
+                {
+                    let mut handle = connection.lock_handle().await?;
+                    let key_length = i32::try_from(key.len())
+                        .map_err(|_| sqlx::Error::Protocol("SQLCipher key is too long".into()))?;
+                    // SAFETY: `lock_handle()` excludes the SQLx worker for the duration of this
+                    // call, the handle is live, and `key` remains allocated for the whole call.
+                    // SQLCipher copies the key into its per-connection codec state.
+                    let status = unsafe {
+                        libsqlite3_sys::sqlite3_key(
+                            handle.as_raw_handle().as_ptr(),
+                            key.as_ptr().cast(),
+                            key_length,
+                        )
+                    };
+                    if status != libsqlite3_sys::SQLITE_OK {
+                        return Err(sqlx::Error::Protocol(
+                            "SQLCipher rejected the Tally mirror key".into(),
+                        ));
+                    }
+                }
+
+                // These settings must be applied after sqlite3_key(). Executing them here also
+                // means replacement connections receive the same hardened configuration without
+                // putting key material in SqliteConnectOptions.
+                connection
+                    .execute("PRAGMA cipher_memory_security = ON;")
+                    .await?;
+                connection.execute("PRAGMA secure_delete = ON;").await?;
+                connection.execute("PRAGMA foreign_keys = ON;").await?;
+                connection.execute("PRAGMA journal_mode = WAL;").await?;
+                Ok(())
+            })
+        })
         .connect_with(options)
         .await?;
 
@@ -319,6 +351,12 @@ mod tests {
         let pool = connect_encrypted(&database, key.clone())
             .await
             .expect("open encrypted mirror");
+        let retained_options = format!("{:?}", pool.connect_options());
+        assert!(
+            !retained_options
+                .contains("1111111111111111111111111111111111111111111111111111111111111111"),
+            "pool connection options must not retain a hexadecimal copy of the key"
+        );
         sqlx::query("CREATE TABLE proof(value TEXT NOT NULL);")
             .execute(&pool)
             .await
@@ -328,6 +366,31 @@ mod tests {
             .execute(&pool)
             .await
             .expect("insert encrypted value");
+
+        // Make SQLx open the full pool, close every live connection, then require a replacement.
+        // This proves that per-connection keying works without retaining the key in connect
+        // options, including after the initial connection has gone away.
+        let mut connections = Vec::new();
+        for _ in 0..5 {
+            connections.push(pool.acquire().await.expect("acquire encrypted connection"));
+        }
+        for mut connection in connections {
+            let value = sqlx::query_scalar::<_, String>("SELECT value FROM proof;")
+                .fetch_one(&mut *connection)
+                .await
+                .expect("read through encrypted pooled connection");
+            assert_eq!(value, "SENSITIVE_TALLY_MARKER");
+            connection
+                .close()
+                .await
+                .expect("close encrypted pooled connection");
+        }
+        let replacement_value = sqlx::query_scalar::<_, String>("SELECT value FROM proof;")
+            .fetch_one(&pool)
+            .await
+            .expect("read through replacement encrypted connection");
+        assert_eq!(replacement_value, "SENSITIVE_TALLY_MARKER");
+
         assert_no_plaintext_artifacts(&database);
         pool.close().await;
 

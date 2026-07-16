@@ -74,6 +74,11 @@ the UI preview does not mutate the proof ledger or mirror. Existing v1 proof
 rows remain readable, but an export requires the newer durable receipt checks
 and is refused when those checks cannot be established.
 
+Proof contract v3 binds a domain-separated digest of the complete canonical
+record-count map into both receipt facts and the proof-ledger hash. Additive
+migration 0011 leaves v1/v2 rows nullable and preserves their original hash
+serialization; only v3 rows require the digest.
+
 ## Remaining evidence gates
 
 No supported environment may call Core Accounting `Verified` until the exact

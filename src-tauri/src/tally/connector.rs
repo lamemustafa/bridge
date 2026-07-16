@@ -2,8 +2,8 @@ use bridge_tally_canonical::build_core_window;
 use bridge_tally_core::report_tie_out::{LedgerPeriodBalance, LedgerPeriodBalanceReport};
 use bridge_tally_core::{
     CanonicalPackWindow, CapabilityEvidence, CapabilityPackId, CapabilityState, CompanyRef,
-    EvidenceConfidence, ExactDecimal, ProbeResult, ReadResponseScope, ReadWindow, RequestContext,
-    SourceIdentity, TallyConnector, TallyError, CORE_ACCOUNTING_SCHEMA_VERSION,
+    EvidenceConfidence, ExactDecimal, PackBatch, ProbeResult, ReadResponseScope, ReadWindow,
+    RequestContext, SourceIdentity, TallyConnector, TallyError, CORE_ACCOUNTING_SCHEMA_VERSION,
 };
 use bridge_tally_protocol::{
     parse_companies, parse_group_source_records_with_evidence, parse_ledger_period_balance_report,
@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
+use super::capability_packs::CapabilityPackRegistry;
 use super::runtime::{TallyRuntimeControlError, TallyRuntimeReadError};
 use super::{tdl_engine, TallyConfig, TallyRuntime};
 
@@ -224,18 +225,17 @@ impl TallyConnector for RuntimeTallyConnector {
                 .map_err(map_transport_error)?,
         };
         let canary_result = match cached_canary {
-            Some(_) => Ok(()),
+            Some(window) => Ok(window),
             None => match self.extract_core_window(&self.canary_context).await {
-                Ok(window) => self.store_canary_window(window),
+                Ok(window) => {
+                    self.store_canary_window(window.clone())?;
+                    Ok(window)
+                }
                 Err(error) => Err(error),
             },
         };
         let core_evidence = match canary_result {
-            Ok(()) => CapabilityEvidence {
-                state: CapabilityState::Supported,
-                confidence: EvidenceConfidence::Observed,
-                safe_reason_code: Some("nested_entry_identity_inferred".to_string()),
-            },
+            Ok(window) => core_canary_capability(&window),
             Err(error) => CapabilityEvidence {
                 state: CapabilityState::Unknown,
                 confidence: EvidenceConfidence::Observed,
@@ -259,11 +259,7 @@ impl TallyConnector for RuntimeTallyConnector {
             .await
             .map_err(map_transport_error)?;
         let core_evidence = match self.extract_core_window(&self.canary_context).await {
-            Ok(_) => CapabilityEvidence {
-                state: CapabilityState::Supported,
-                confidence: EvidenceConfidence::Observed,
-                safe_reason_code: Some("nested_entry_identity_inferred".to_string()),
-            },
+            Ok(window) => core_canary_capability(&window),
             Err(error) => CapabilityEvidence {
                 state: CapabilityState::Unknown,
                 confidence: EvidenceConfidence::Observed,
@@ -397,6 +393,109 @@ impl TallyConnector for RuntimeTallyConnector {
     }
 }
 
+fn core_canary_capability(window: &CanonicalPackWindow) -> CapabilityEvidence {
+    let PackBatch::CoreAccounting(batch) = &window.batch else {
+        return observed_core_capability(
+            CapabilityState::Unknown,
+            "sealed_profile_executed_unexpected_pack",
+        );
+    };
+    let mut observed = std::collections::BTreeSet::new();
+    let mut record = |object_type: &str, field: &str| {
+        observed.insert((object_type.to_string(), field.to_string()));
+    };
+
+    if !batch.groups.is_empty() {
+        record("group", "source_id");
+        record("group", "name");
+    }
+    if batch
+        .groups
+        .iter()
+        .any(|group| group.parent_source_id.is_some())
+    {
+        record("group", "parent_source_id");
+    }
+    if !batch.ledgers.is_empty() {
+        record("ledger", "source_id");
+        record("ledger", "name");
+    }
+    if batch
+        .ledgers
+        .iter()
+        .any(|ledger| ledger.parent_source_id.is_some())
+    {
+        record("ledger", "parent_source_id");
+    }
+    if batch
+        .ledgers
+        .iter()
+        .any(|ledger| ledger.opening_balance.is_some())
+    {
+        record("ledger", "opening_balance");
+    }
+    if !batch.voucher_types.is_empty() {
+        record("voucher_type", "source_id");
+        record("voucher_type", "name");
+    }
+    if !batch.vouchers.is_empty() {
+        record("voucher", "source_id");
+        record("voucher", "date_yyyymmdd");
+        record("voucher", "voucher_type_source_id");
+        record("voucher", "cancelled");
+        record("voucher", "optional");
+    }
+    if batch
+        .vouchers
+        .iter()
+        .any(|voucher| voucher.voucher_number.is_some())
+    {
+        record("voucher", "voucher_number");
+    }
+    if !batch.ledger_entries.is_empty() {
+        if window.record_evidence.as_deref().is_some_and(|evidence| {
+            evidence.iter().any(|record| {
+                record.object_type.as_str() == "ledger_entry"
+                    && record.identity_kind != bridge_tally_core::SourceIdentityKind::Fallback
+            })
+        }) {
+            record("ledger_entry", "source_id");
+        }
+        record("ledger_entry", "voucher_source_id");
+        record("ledger_entry", "ledger_source_id");
+        record("ledger_entry", "amount");
+        record("ledger_entry", "polarity");
+    }
+
+    let descriptor = CapabilityPackRegistry::descriptor(CapabilityPackId::CoreAccounting);
+    if descriptor.required_fields.iter().all(|required| {
+        observed.contains(&(required.object_type.to_string(), required.field.to_string()))
+    }) {
+        observed_core_capability(
+            CapabilityState::Supported,
+            "all_required_pack_fields_observed",
+        )
+    } else if observed.is_empty() {
+        observed_core_capability(
+            CapabilityState::Unknown,
+            "sealed_profile_executed_no_required_fields_observed",
+        )
+    } else {
+        observed_core_capability(
+            CapabilityState::Unknown,
+            "sealed_profile_executed_incomplete_field_coverage",
+        )
+    }
+}
+
+fn observed_core_capability(state: CapabilityState, reason: &str) -> CapabilityEvidence {
+    CapabilityEvidence {
+        state,
+        confidence: EvidenceConfidence::Observed,
+        safe_reason_code: Some(reason.to_string()),
+    }
+}
+
 pub fn source_lineage(config: &TallyConfig) -> Result<String, TallyError> {
     let endpoint =
         super::EndpointKey::from_config(config).map_err(|_| invalid_data("endpoint_invalid"))?;
@@ -513,6 +612,108 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_sealed_canary_stays_unknown() {
+        let window = CanonicalPackWindow::without_source_count_evidence(PackBatch::CoreAccounting(
+            bridge_tally_core::CoreAccountingBatch::default(),
+        ));
+
+        let evidence = core_canary_capability(&window);
+
+        assert_eq!(evidence.state, CapabilityState::Unknown);
+        assert_eq!(
+            evidence.safe_reason_code.as_deref(),
+            Some("sealed_profile_executed_no_required_fields_observed")
+        );
+        assert_eq!(evidence.confidence, EvidenceConfidence::Observed);
+    }
+
+    #[test]
+    fn partial_sealed_canary_does_not_promote_the_whole_pack() {
+        let window = CanonicalPackWindow::without_source_count_evidence(PackBatch::CoreAccounting(
+            bridge_tally_core::CoreAccountingBatch {
+                groups: vec![bridge_tally_core::GroupRecord {
+                    source_id: "group-guid".to_string(),
+                    name: "Assets".to_string(),
+                    parent_source_id: None,
+                }],
+                ..bridge_tally_core::CoreAccountingBatch::default()
+            },
+        ));
+
+        let evidence = core_canary_capability(&window);
+
+        assert_eq!(evidence.state, CapabilityState::Unknown);
+        assert_eq!(
+            evidence.safe_reason_code.as_deref(),
+            Some("sealed_profile_executed_incomplete_field_coverage")
+        );
+    }
+
+    #[test]
+    fn fully_populated_canary_with_derived_entry_identity_stays_unknown() {
+        let entry_source_id = "bridge-derived:ledger-entry:v1:synthetic".to_string();
+        let window = CanonicalPackWindow {
+            batch: PackBatch::CoreAccounting(bridge_tally_core::CoreAccountingBatch {
+                groups: vec![
+                    bridge_tally_core::GroupRecord {
+                        source_id: "root-group".to_string(),
+                        name: "Root".to_string(),
+                        parent_source_id: None,
+                    },
+                    bridge_tally_core::GroupRecord {
+                        source_id: "child-group".to_string(),
+                        name: "Assets".to_string(),
+                        parent_source_id: Some("root-group".to_string()),
+                    },
+                ],
+                ledgers: vec![bridge_tally_core::LedgerRecord {
+                    source_id: "ledger-guid".to_string(),
+                    name: "Cash".to_string(),
+                    parent_source_id: Some("child-group".to_string()),
+                    opening_balance: Some(ExactDecimal::parse("0").unwrap()),
+                }],
+                voucher_types: vec![bridge_tally_core::VoucherTypeRecord {
+                    source_id: "voucher-type-guid".to_string(),
+                    name: "Receipt".to_string(),
+                }],
+                vouchers: vec![bridge_tally_core::VoucherRecord {
+                    source_id: "voucher-guid".to_string(),
+                    date_yyyymmdd: "20260716".to_string(),
+                    voucher_type_source_id: "voucher-type-guid".to_string(),
+                    voucher_number: Some("SYN-1".to_string()),
+                    cancelled: false,
+                    optional: false,
+                }],
+                ledger_entries: vec![bridge_tally_core::LedgerEntryRecord {
+                    source_id: entry_source_id.clone(),
+                    voucher_source_id: "voucher-guid".to_string(),
+                    ledger_source_id: "ledger-guid".to_string(),
+                    amount: ExactDecimal::parse("0").unwrap(),
+                    polarity: bridge_tally_core::LedgerEntryPolarity::Debit,
+                }],
+            }),
+            source_counts: None,
+            record_evidence: Some(vec![bridge_tally_core::SourceRecordEvidence {
+                object_type: bridge_tally_core::CanonicalText::parse("ledger_entry").unwrap(),
+                source_id: bridge_tally_core::SourceRecordId::parse(entry_source_id).unwrap(),
+                identity_kind: bridge_tally_core::SourceIdentityKind::Fallback,
+                observed_identities: bridge_tally_core::ObservedSourceIdentities::default(),
+                raw_source_sha256: bridge_tally_core::RawSourceSha256::parse("0".repeat(64))
+                    .unwrap(),
+                alter_id: None,
+            }]),
+        };
+
+        let evidence = core_canary_capability(&window);
+
+        assert_eq!(evidence.state, CapabilityState::Unknown);
+        assert_eq!(
+            evidence.safe_reason_code.as_deref(),
+            Some("sealed_profile_executed_incomplete_field_coverage")
+        );
+    }
 
     #[test]
     fn only_exact_voucher_response_limit_becomes_adaptive_split_authority() {

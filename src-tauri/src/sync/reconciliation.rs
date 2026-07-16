@@ -275,6 +275,7 @@ pub(crate) struct CommitBatchParts {
     pub outcome: RunOutcome,
     pub verification: VerificationState,
     pub completed_at_unix_ms: i64,
+    pub record_counts_sha256: Option<String>,
     pub snapshot_sha256: Option<String>,
     pub expected_checkpoint_before: Option<String>,
     pub checkpoint_after: Option<String>,
@@ -764,6 +765,7 @@ pub fn build_reconciliation(
             safe_reason_code: code.clone(),
         })
         .collect();
+    let record_counts_sha256 = proof_record_counts_sha256(&record_counts);
     let proof = ProofManifest {
         proof_contract_version: PROOF_CONTRACT_VERSION,
         run_id: input.run_id,
@@ -793,6 +795,7 @@ pub fn build_reconciliation(
             VerificationState::Partial
         },
         completed_at_unix_ms: input.completed_at_unix_ms,
+        record_counts_sha256: Some(record_counts_sha256),
         snapshot_sha256: Some(snapshot_sha256),
         expected_checkpoint_before: None,
         checkpoint_after,
@@ -829,6 +832,11 @@ pub fn build_terminal_proof(
     warning_codes: BTreeSet<String>,
     record_counts: BTreeMap<String, u64>,
 ) -> ReconciliationDecision {
+    let clock_moved_backwards = completed_at_unix_ms < started_at_unix_ms;
+    let completed_at_unix_ms = completed_at_unix_ms.max(started_at_unix_ms);
+    if clock_moved_backwards {
+        gap_codes.insert("local_clock_moved_backwards".to_string());
+    }
     let (core_outcome, mirror_outcome) = match kind {
         TerminalKind::Failed => (CoreRunOutcome::Failed, RunOutcome::Failed),
         TerminalKind::Cancelled => (CoreRunOutcome::Cancelled, RunOutcome::Cancelled),
@@ -843,6 +851,7 @@ pub fn build_terminal_proof(
             safe_reason_code: code.clone(),
         })
         .collect();
+    let record_counts_sha256 = proof_record_counts_sha256(&record_counts);
     ReconciliationDecision {
         proof: ProofManifest {
             proof_contract_version: PROOF_CONTRACT_VERSION,
@@ -865,6 +874,7 @@ pub fn build_terminal_proof(
             outcome: mirror_outcome,
             verification: VerificationState::Unverified,
             completed_at_unix_ms,
+            record_counts_sha256: Some(record_counts_sha256),
             snapshot_sha256: None,
             expected_checkpoint_before: None,
             checkpoint_after: None,
@@ -874,6 +884,17 @@ pub fn build_terminal_proof(
         }),
         safe_mismatches: Vec::new(),
     }
+}
+
+pub(crate) fn proof_record_counts_sha256(record_counts: &BTreeMap<String, u64>) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"bridge-tally-proof-record-counts-v1\0");
+    digest.update((record_counts.len() as u64).to_be_bytes());
+    for (key, count) in record_counts {
+        hash_framed(&mut digest, key.as_bytes());
+        digest.update(count.to_be_bytes());
+    }
+    hex_digest(digest.finalize())
 }
 
 fn canonicalize_core_window(
@@ -2324,7 +2345,37 @@ mod tests {
             );
             assert_eq!(decision.proof.record_counts["locally_staged.accepted"], 2);
             assert_eq!(decision.proof.record_counts["locally_staged.rejected"], 1);
+            assert_eq!(
+                decision.mirror_commit.parts().record_counts_sha256,
+                Some(proof_record_counts_sha256(&decision.proof.record_counts))
+            );
         }
+    }
+
+    #[test]
+    fn terminal_proof_clamps_backward_clock_and_records_the_gap() {
+        let decision = build_terminal_proof(
+            "batch-clock".to_string(),
+            "run-clock".to_string(),
+            source_identity(),
+            CapabilityPackId::CoreAccounting,
+            PackSchemaVersion { major: 1, minor: 0 },
+            2_000,
+            1_999,
+            Freshness::NeverVerified,
+            300,
+            TerminalKind::Failed,
+            "source_outcome_unknown".to_string(),
+            BTreeSet::new(),
+            BTreeSet::new(),
+            BTreeMap::new(),
+        );
+        assert_eq!(decision.proof.completed_at_unix_ms, Some(2_000));
+        assert_eq!(decision.mirror_commit.parts().completed_at_unix_ms, 2_000);
+        assert_eq!(
+            decision.mirror_commit.parts().gap_codes,
+            vec!["local_clock_moved_backwards", "source_outcome_unknown"]
+        );
     }
 
     #[test]

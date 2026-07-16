@@ -23,10 +23,10 @@ use crate::db::tally_mirror::{
     SnapshotWindowMembershipInput, SnapshotWindowReceipt, TallyMirrorRepository,
 };
 use crate::sync::reconciliation::{
-    build_reconciliation, build_terminal_proof, canonicalize_window, CanonicalWindowContext,
-    ComparisonScope, EndProfileCheck, ExternalReferenceCatalog, ReconciliationDecision,
-    ReconciliationError, ReconciliationInput, ReconciliationMismatch, ReportTieOutEvidence,
-    SourceStabilityCheck, TerminalKind, WindowEvidence,
+    build_reconciliation, build_terminal_proof, canonicalize_window, proof_record_counts_sha256,
+    CanonicalWindowContext, ComparisonScope, EndProfileCheck, ExternalReferenceCatalog,
+    ReconciliationDecision, ReconciliationError, ReconciliationInput, ReconciliationMismatch,
+    ReportTieOutEvidence, SourceStabilityCheck, TerminalKind, WindowEvidence,
 };
 
 const SNAPSHOT_STATE_VERSION: u16 = 5;
@@ -2544,6 +2544,7 @@ where
             accepted_records: counts.accepted_records,
             rejected_records: counts.rejected_records,
             provenance_unavailable_records: counts.provenance_unavailable_records,
+            record_counts_sha256: commit.record_counts_sha256.clone(),
             snapshot_sha256: commit.snapshot_sha256.clone(),
             checkpoint_before: state.checkpoint_before.clone(),
             checkpoint_after: commit.checkpoint_after.clone(),
@@ -2576,7 +2577,7 @@ where
             .await
         {
             Ok(receipt) => {
-                verify_commit_receipt(&state, &receipt)?;
+                verify_commit_receipt(&state, &decision.proof, &receipt)?;
                 self.finish_committed_state(state, decision.proof, receipt)
                     .await
             }
@@ -2644,11 +2645,11 @@ where
             .ok_or(SnapshotError::StateInvariant("batch_id"))?;
         match self
             .mirror
-            .commit_receipt_for_batch(batch_id, &plan.run_id)
+            .historical_commit_receipt_for_batch(batch_id, &plan.run_id)
             .await
         {
             Ok(receipt) => {
-                verify_commit_receipt(&state, &receipt)?;
+                verify_commit_receipt(&state, &decision.proof, &receipt)?;
                 return self
                     .finish_committed_state(state, decision.proof, receipt)
                     .await;
@@ -2696,9 +2697,9 @@ where
             .ok_or(SnapshotError::StateInvariant("batch_id"))?;
         let receipt = self
             .mirror
-            .commit_receipt_for_batch(batch_id, &plan.run_id)
+            .historical_commit_receipt_for_batch(batch_id, &plan.run_id)
             .await?;
-        verify_commit_receipt(&state, &receipt)?;
+        verify_commit_receipt(&state, &proof, &receipt)?;
         self.finish_committed_state(state, proof, receipt).await
     }
 
@@ -2969,6 +2970,7 @@ fn is_lower_sha256(value: &str) -> bool {
 
 fn verify_commit_receipt(
     state: &DurableSnapshotState,
+    proof: &ProofManifest,
     receipt: &CommitResult,
 ) -> Result<(), SnapshotError> {
     let pending = state
@@ -2979,8 +2981,11 @@ fn verify_commit_receipt(
         .expected_receipt_facts_sha256
         .as_deref()
         .ok_or(SnapshotError::StateInvariant("commit_receipt"))?;
+    let record_counts_sha256 = proof_record_counts_sha256(&proof.record_counts);
     if receipt.checkpoint_advanced != pending.intended_checkpoint.is_some()
         || sha256_json(&receipt.facts)? != expected
+        || (receipt.facts.proof_contract_version >= 3
+            && receipt.facts.record_counts_sha256.as_deref() != Some(record_counts_sha256.as_str()))
     {
         return Err(SnapshotError::StateInvariant("commit_receipt"));
     }
@@ -4212,6 +4217,7 @@ mod tests {
                 outcome: RunOutcome::Completed,
                 verification: VerificationState::Verified,
                 completed_at_unix_ms: 1_500,
+                record_counts_sha256: None,
                 snapshot_sha256: Some("a".repeat(64)),
                 expected_checkpoint_before: None,
                 checkpoint_after: Some(token.clone()),
@@ -4222,6 +4228,119 @@ mod tests {
             .await
             .unwrap();
         token
+    }
+
+    #[tokio::test]
+    async fn closed_commit_pending_recovers_historical_receipt_after_checkpoint_advances() {
+        let (_, mirror, store, plan) = setup().await;
+        let first_batch = mirror
+            .begin_batch(BeginBatchInput {
+                run_id: plan.run_id.clone(),
+                capability_snapshot_id: plan.capability_snapshot_id.clone(),
+                company_id: plan.mirror_company_id.clone(),
+                pack_id: pack_code(plan.pack).to_string(),
+                pack_schema_major: plan.pack_schema_version.major,
+                pack_schema_minor: plan.pack_schema_version.minor,
+                source_transport: plan.source_transport.clone(),
+                source_release: None,
+                requested_from_yyyymmdd: Some("20260701".to_string()),
+                requested_to_yyyymmdd: Some("20260731".to_string()),
+                started_at_unix_ms: plan.started_at_unix_ms,
+            })
+            .await
+            .unwrap();
+        let record_counts = BTreeMap::new();
+        let first_checkpoint = "full:first-historical".to_string();
+        let first_receipt = mirror
+            .commit_batch(CommitBatchInput::test_only(CommitBatchParts {
+                batch_id: first_batch.clone(),
+                proof_contract_version: 3,
+                outcome: RunOutcome::Completed,
+                verification: VerificationState::Verified,
+                completed_at_unix_ms: 3_000,
+                record_counts_sha256: Some(proof_record_counts_sha256(&record_counts)),
+                snapshot_sha256: Some("a".repeat(64)),
+                expected_checkpoint_before: None,
+                checkpoint_after: Some(first_checkpoint.clone()),
+                freshness_target_seconds: 300,
+                gap_codes: Vec::new(),
+                warning_codes: Vec::new(),
+            }))
+            .await
+            .unwrap();
+        let proof = ProofManifest {
+            proof_contract_version: 3,
+            run_id: plan.run_id.clone(),
+            source_identity: plan.company.identity.clone(),
+            pack: plan.pack,
+            pack_schema_version: plan.pack_schema_version,
+            outcome: bridge_tally_core::RunOutcome::Completed,
+            verification: bridge_tally_core::VerificationState::Verified,
+            freshness: Freshness::Fresh,
+            started_at_unix_ms: plan.started_at_unix_ms,
+            completed_at_unix_ms: Some(3_000),
+            record_counts,
+            snapshot_sha256: Some("a".repeat(64)),
+            gaps: Vec::new(),
+        };
+        let mut pending_state = DurableSnapshotState::new(&plan, Freshness::NeverVerified).unwrap();
+        pending_state.batch_id = Some(first_batch.clone());
+        pending_state.set_phase(SnapshotPhase::CommitPending, None);
+        pending_state.pending_commit = Some(PendingCommit {
+            kind: PendingDecisionKind::Reconciled,
+            completed_at_unix_ms: 3_000,
+            safe_reason_code: None,
+            intended_checkpoint: Some(first_checkpoint.clone()),
+            expected_receipt_facts_sha256: Some(sha256_json(&first_receipt.facts).unwrap()),
+        });
+        store.save(&mut pending_state).await.unwrap();
+
+        let next_batch = mirror
+            .begin_batch(BeginBatchInput {
+                run_id: "later-run".to_string(),
+                capability_snapshot_id: plan.capability_snapshot_id.clone(),
+                company_id: plan.mirror_company_id.clone(),
+                pack_id: pack_code(plan.pack).to_string(),
+                pack_schema_major: plan.pack_schema_version.major,
+                pack_schema_minor: plan.pack_schema_version.minor,
+                source_transport: plan.source_transport.clone(),
+                source_release: None,
+                requested_from_yyyymmdd: None,
+                requested_to_yyyymmdd: None,
+                started_at_unix_ms: 3_100,
+            })
+            .await
+            .unwrap();
+        mirror
+            .commit_batch(CommitBatchInput::test_only(CommitBatchParts {
+                batch_id: next_batch,
+                proof_contract_version: 1,
+                outcome: RunOutcome::Completed,
+                verification: VerificationState::Verified,
+                completed_at_unix_ms: 3_500,
+                record_counts_sha256: None,
+                snapshot_sha256: Some("b".repeat(64)),
+                expected_checkpoint_before: Some(first_checkpoint),
+                checkpoint_after: Some("full:later".to_string()),
+                freshness_target_seconds: 300,
+                gap_codes: Vec::new(),
+                warning_codes: Vec::new(),
+            }))
+            .await
+            .unwrap();
+
+        let connector = FakeConnector {
+            batch: Mutex::new(VecDeque::new()),
+            company: plan.company.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        let recovered = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .resolve_closed_batch(&plan, pending_state, proof)
+            .await
+            .expect("historical immutable receipt must recover independently of checkpoint head");
+        assert_eq!(recovered.receipt.proof_id, Some(first_receipt.proof_id));
+        assert_eq!(recovered.state.progress.phase, SnapshotPhase::Completed);
+        assert!(connector.requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

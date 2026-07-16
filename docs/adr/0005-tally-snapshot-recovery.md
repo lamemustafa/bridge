@@ -51,10 +51,19 @@ a later PR06 slice and are not claimed by this decision.
 Before mirror commit, the durable `CommitPending` row stores a SHA-256 commitment to the complete
 expected ledger facts: run and batch identity, capability/company/pack binding, outcome, verification,
 timestamps, provenance-backed accepted, rejected, and provenance-unavailable counts, snapshot hash,
-checkpoint before/after, gaps, and warnings.
-After a crash, only a hash-valid immutable proof-ledger receipt matching that commitment can make the
-run terminal. Checkpoint advancement separately requires equality with the checkpoint observed before
-extraction inside the same SQLite write transaction.
+the domain-separated digest of the complete canonical record-count map, checkpoint before/after,
+gaps, and warnings. Proof contract v3 and migration 0011 add this count-map commitment without
+rewriting historical v1/v2 ledger rows or hashes.
+After a crash, only a hash-valid immutable proof-ledger receipt for the exact run and batch matching
+that commitment can make the run terminal. Recovery reads that historical receipt even if a later
+verified run now owns the current checkpoint; the pending run's receipt facts remain independently
+verifiable. Checkpoint advancement at the original commit still requires equality with the checkpoint
+observed before extraction inside the same SQLite write transaction.
+
+If the wall clock moves backwards during a terminal path, Bridge clamps the completion timestamp to
+the durable batch start and records `local_clock_moved_backwards`. The repository independently
+rejects any commit whose completion precedes its batch start, so an impossible negative-duration
+proof cannot enter the ledger.
 
 Failed and cancelled proofs carry the complete accumulated safe gap set, while the proof-ledger
 receipt also carries the complete warning set. Crash recovery reconstructs those same deterministic
