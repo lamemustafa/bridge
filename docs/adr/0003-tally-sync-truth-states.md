@@ -16,6 +16,14 @@ attempt, but it never promotes absent or coincidentally populated fields to
 supported. The run's reconciliation and proof remain responsible for a
 Partial or Verified result. Canary rows are qualification evidence only and
 are re-fetched after the durable run start before they can enter snapshot data.
+Snapshot start and end probes are also lifecycle evidence, not interactive
+setup reviews: they execute through an uncached runtime path and cannot replace
+a review token awaiting qualification or save. Restart admission accepts only
+the same exact persisted `unknown` + observed + `sealed_profile_executed`
+receipt; other unknown reasons and the ordinary supported-pack convention do
+not authorize a Core resume. Snapshot company discovery is likewise a fresh,
+validated lifecycle read that remains available after the single-use setup
+review has been consumed; it neither requires nor recreates that review cache.
 
 A verified proof requires all planned windows, stable identities, canonical
 hashes, count invariants, and pack-specific reconciliation. Warnings may

@@ -16,6 +16,11 @@ export type ProbeSelectionTransition = {
   dropped: boolean;
 };
 
+export type ProbeSelectionEffects = {
+  clearDroppedCompanyScope: () => void;
+  installProbeState: () => void;
+};
+
 export function reconcileProbeCompanySelection(
   selectedCompany: string,
   liveCompanyKeys: readonly string[],
@@ -25,6 +30,17 @@ export function reconcileProbeCompanySelection(
     selectedCompany: dropped ? "" : selectedCompany,
     dropped,
   };
+}
+
+export function applyProbeCompanySelectionTransition(
+  selectedCompany: string,
+  liveCompanyKeys: readonly string[],
+  effects: ProbeSelectionEffects,
+): ProbeSelectionTransition {
+  const transition = reconcileProbeCompanySelection(selectedCompany, liveCompanyKeys);
+  if (transition.dropped) effects.clearDroppedCompanyScope();
+  effects.installProbeState();
+  return transition;
 }
 
 export function clearCompanyScopedState(cleanup: CompanyScopeCleanup) {

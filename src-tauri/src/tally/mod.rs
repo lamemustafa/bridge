@@ -16,6 +16,7 @@ pub use connection::{
     TallyProbeResult, TallyProduct, SELECTED_LEDGER_QUERY_PROFILE_ID,
     SELECTED_VOUCHER_QUERY_PROFILE_ID,
 };
+pub(crate) use connector::core_snapshot_start_authorized_codes;
 pub use connector::{
     company_source_identity, core_snapshot_start_authorized, source_lineage, RuntimeTallyConnector,
 };

@@ -67,7 +67,7 @@
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
-      "sha256": "7971f9abd369b60c187890b107a0f4ec7d8a4fd6ad7cbd26fb6a3b8866ceccbe"
+      "sha256": "64130a6fa57179622cb300041d75fb752bd1a081dbcd9118595a4a8f120d9161"
     },
     {
       "path": "src-tauri/Cargo.lock",
@@ -235,7 +235,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "07421277486fb2c011c855c4beb357ee7a962c4ef017be447424efdef4e7b7f9"
+      "sha256": "74449f1f5d1499013c76deef67b143609dd655280088c4625bd2e20a47b35266"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -267,7 +267,7 @@
     },
     {
       "path": "src-tauri/src/db/tally_mirror.rs",
-      "sha256": "4b3b79242ba6d6e4269f7900abe1c7862844bd8cc355ebcf6e9bdf3582823254"
+      "sha256": "a221377058a84b343d4b0de2d0c20f2eaf9daec37f1ffa939946facf0b9f8013"
     },
     {
       "path": "src-tauri/src/db/tally_write_store.rs",
@@ -287,7 +287,7 @@
     },
     {
       "path": "src-tauri/src/sync/snapshot.rs",
-      "sha256": "8ba9f483f2219b8fd296764cdb1e6a2ed8edbd1942cf7251f594aa9e0a776fde"
+      "sha256": "b9a4c95e4b4579158bd8f39af413383fab2a28eebf55c41787dc21be4d5f0f76"
     },
     {
       "path": "src-tauri/src/tally/capability_packs.rs",
@@ -299,15 +299,15 @@
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
-      "sha256": "beef03c90fd24e2442fed52c1ab25073ea8d217005e8cbf25daf806f1dadc533"
+      "sha256": "1d7468e50b02f999ca5ea6e7f25c6b18ed7d112d992a4c4ae1bd3e132a844a04"
     },
     {
       "path": "src-tauri/src/tally/mod.rs",
-      "sha256": "d7721854b1240423c963dd256b3e905e51420485d97db1c006412006262b92cd"
+      "sha256": "9659ca8e4535444bc65e08d40ba570dd13b5ea280daf2e13cb4faccda62031ef"
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "d940d352276d5329c19bafa5eaf848851769813747a52f8d95a53bf0e3f209b7"
+      "sha256": "8547d9886478337b15e034e732a222243588bee06ff862ad1fdc698335c8a629"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -327,7 +327,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "cbd2de45f3f2000e2b0aaf5dd0bd2f0acc7efbaaff5b2a809e403fef0fc3bef3"
+      "sha256": "1d8a6d3235aa3fd3997650f6d234189feafa7338a4c6ccc41af9eb25e2dab5e4"
     },
     {
       "path": "src/styles.css",
@@ -335,8 +335,8 @@
     },
     {
       "path": "src/tally-company-selection.ts",
-      "sha256": "84c2e15432f651c6dc61addf50d9ca24cc5beeb25be73c4dcef1621ebc645840"
+      "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "83c96a4f11bfbb5777809231ff745268f0b7b8ba52ea7050d7276c2fd8e93320"
+  "manifest_sha256": "de9d5f27030194f2137e76d79c576948e465ac54f1999681e9fa0404dffd0198"
 }

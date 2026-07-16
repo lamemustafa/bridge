@@ -4,12 +4,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyProbeCompanySelectionTransition,
   clearCompanyScopedState,
   reconcileProbeCompanySelection,
 } from "../src/tally-company-selection.ts";
 
-test("an automatic probe drop clears company-scoped data and invalidates every request token", () => {
-  const state = {
+function companyScopedState() {
+  return {
+    passport: { profile_version: 1, company: "old-company" },
+    profileSha256: "profile-old",
+    reviewId: "review-old",
+    reviewCommitmentSha256: "commitment-old",
     selectedReadScope: { company: "old-company" },
     passportSnapshotId: "passport-old",
     diagnostics: ["ledger-old"],
@@ -27,42 +32,69 @@ test("an automatic probe drop clears company-scoped data and invalidates every r
     snapshotSelectionVersion: 11,
     tallyResultsVersion: 13,
   };
+}
 
-  const transition = reconcileProbeCompanySelection("old-company", ["new-company"]);
+function cleanupFor(state) {
+  return {
+    clearQualifiedReadReview: () => {
+      if (state.selectedReadScope) {
+        state.passport = null;
+        state.profileSha256 = null;
+        state.reviewId = null;
+        state.reviewCommitmentSha256 = null;
+        state.selectedReadScope = null;
+      }
+    },
+    clearPassportSnapshot: () => { state.passportSnapshotId = null; },
+    clearSensitiveDiagnostics: () => {
+      state.diagnostics = [];
+      state.diagnosticsRequestVersion += 1;
+    },
+    clearSyncEvidence: () => {
+      state.syncEvidence = null;
+      state.syncEvidenceError = null;
+    },
+    clearProofPreview: () => {
+      state.proofPreview = null;
+      state.proofPreviewSelection = null;
+      state.proofPreviewRequestVersion += 1;
+    },
+    clearMirrorExplorer: () => {
+      state.mirrorExplorer = null;
+      state.mirrorExplorerError = null;
+    },
+    clearSnapshotState: () => {
+      state.snapshotJob = null;
+      state.snapshotError = null;
+      state.snapshotStartOutcomeUnknown = false;
+      state.snapshotSelectionVersion += 1;
+    },
+    invalidateTallyResults: () => { state.tallyResultsVersion += 1; },
+  };
+}
+
+test("an automatic probe drop clears old company state before installing a usable fresh review", () => {
+  const state = companyScopedState();
+  const freshProbe = {
+    passport: { profile_version: 2, company: "new-company" },
+    profileSha256: "profile-new",
+    reviewId: "review-new",
+    reviewCommitmentSha256: "commitment-new",
+    selectedReadScope: null,
+    passportSnapshotId: null,
+  };
+
+  const transition = applyProbeCompanySelectionTransition(
+    "old-company",
+    ["new-company"],
+    {
+      clearDroppedCompanyScope: () => clearCompanyScopedState(cleanupFor(state)),
+      installProbeState: () => Object.assign(state, freshProbe),
+    },
+  );
   assert.deepEqual(transition, { selectedCompany: "", dropped: true });
-
-  if (transition.dropped) {
-    clearCompanyScopedState({
-      clearQualifiedReadReview: () => { state.selectedReadScope = null; },
-      clearPassportSnapshot: () => { state.passportSnapshotId = null; },
-      clearSensitiveDiagnostics: () => {
-        state.diagnostics = [];
-        state.diagnosticsRequestVersion += 1;
-      },
-      clearSyncEvidence: () => {
-        state.syncEvidence = null;
-        state.syncEvidenceError = null;
-      },
-      clearProofPreview: () => {
-        state.proofPreview = null;
-        state.proofPreviewSelection = null;
-        state.proofPreviewRequestVersion += 1;
-      },
-      clearMirrorExplorer: () => {
-        state.mirrorExplorer = null;
-        state.mirrorExplorerError = null;
-      },
-      clearSnapshotState: () => {
-        state.snapshotJob = null;
-        state.snapshotError = null;
-        state.snapshotStartOutcomeUnknown = false;
-        state.snapshotSelectionVersion += 1;
-      },
-      invalidateTallyResults: () => { state.tallyResultsVersion += 1; },
-    });
-  }
-
   assert.deepEqual(state, {
+    ...freshProbe,
     selectedReadScope: null,
     passportSnapshotId: null,
     diagnostics: [],
@@ -80,6 +112,34 @@ test("an automatic probe drop clears company-scoped data and invalidates every r
     snapshotSelectionVersion: 12,
     tallyResultsVersion: 14,
   });
+  assert.equal(
+    Boolean(state.passport && state.reviewId && state.reviewCommitmentSha256),
+    true,
+    "the fresh probe review remains available after selecting a returned company",
+  );
+});
+
+test("a manual company selection clears the existing review and all company-scoped state", () => {
+  const state = companyScopedState();
+
+  clearCompanyScopedState(cleanupFor(state));
+
+  assert.equal(state.passport, null);
+  assert.equal(state.profileSha256, null);
+  assert.equal(state.reviewId, null);
+  assert.equal(state.reviewCommitmentSha256, null);
+  assert.equal(state.selectedReadScope, null);
+  assert.equal(state.passportSnapshotId, null);
+  assert.deepEqual(state.diagnostics, []);
+  assert.equal(state.syncEvidence, null);
+  assert.equal(state.proofPreview, null);
+  assert.equal(state.mirrorExplorer, null);
+  assert.equal(state.snapshotJob, null);
+  assert.equal(state.snapshotStartOutcomeUnknown, false);
+  assert.equal(state.diagnosticsRequestVersion, 5);
+  assert.equal(state.proofPreviewRequestVersion, 8);
+  assert.equal(state.snapshotSelectionVersion, 12);
+  assert.equal(state.tallyResultsVersion, 14);
 });
 
 test("a selected company retained by the probe is not reported as dropped", () => {

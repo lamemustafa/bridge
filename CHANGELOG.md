@@ -20,7 +20,11 @@ current source.
   durable run starts.
 - A probe that no longer returns the selected company now clears and
   invalidates every company-scoped evidence, proof, mirror, diagnostic, and
-  snapshot view instead of leaving stale results visible without a selection.
+  snapshot view before installing the replacement probe, so its fresh review
+  remains usable without displaying stale company data.
+- Snapshot lifecycle probes no longer replace interactive setup-review state;
+  restart admission uses the exact sealed Core receipt, and ambiguous duplicate
+  live company identities fail before any snapshot read.
 
 ### Added
 
