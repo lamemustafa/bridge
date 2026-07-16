@@ -7,12 +7,56 @@ pub mod gst;
 pub mod sync;
 pub mod tally;
 
+use tauri::Manager;
+
+fn initialize_tally_mirror(app: &tauri::App) -> anyhow::Result<()> {
+    let app_data_directory = app.path().app_data_dir()?;
+    std::fs::create_dir_all(&app_data_directory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&app_data_directory, std::fs::Permissions::from_mode(0o700))?;
+    }
+
+    let database_path = app_data_directory.join("tally-mirror-v1.db");
+    let _initialization_lock = db::encrypted::lock_mirror_initialization(&database_path)?;
+    let key_store = db::OsMirrorKeyStore::for_database(&database_path);
+    let resolved_key = db::resolve_mirror_key(&database_path, &key_store)?;
+    let pool =
+        tauri::async_runtime::block_on(db::connect_encrypted(&database_path, resolved_key.key))?;
+    let repository = db::tally_mirror::TallyMirrorRepository::new(pool);
+    tauri::async_runtime::block_on(repository.migrate())?;
+    app.manage(repository);
+    Ok(())
+}
+
 pub fn run() {
     tracing_subscriber::fmt::init();
 
     tauri::Builder::default()
+        .manage(tally::TallyRuntime::default())
+        .manage(sync::coordinator::SnapshotCoordinator::default())
+        .setup(|app| {
+            initialize_tally_mirror(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::check_tally_connection,
+            commands::probe_tally,
+            commands::qualify_selected_tally_reads,
+            commands::save_tally_setup,
+            commands::tally_persisted_company_profiles,
+            commands::tally_mirror_explorer_page,
+            commands::tally_sync_evidence,
+            commands::preview_tally_redacted_proof,
+            commands::start_tally_core_snapshot,
+            commands::resume_tally_core_snapshot,
+            commands::tally_recent_snapshot_runs,
+            commands::tally_snapshot_status,
+            commands::cancel_tally_snapshot,
+            commands::cancel_tally_request,
+            commands::tally_runtime_snapshots,
+            commands::tally_telemetry_preview,
             commands::fetch_tally_companies,
             commands::fetch_tally_ledgers,
             commands::fetch_tally_vouchers,

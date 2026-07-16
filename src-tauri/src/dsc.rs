@@ -152,8 +152,8 @@ pub fn run_probe_isolated(
     explicit_pins: Option<Vec<String>>,
     force_load: bool,
 ) -> Result<ProbeReport, Box<dyn Error>> {
-    let mut pins = explicit_pins.unwrap_or_default();
-    let report = (|| {
+    let mut pins = Zeroizing::new(explicit_pins.unwrap_or_default());
+    (|| {
         let library_root = runtime_library_root()?;
         let configs = token_configs(&library_root, explicit_library);
         let deadline = Instant::now() + PROBE_OPERATION_TIMEOUT;
@@ -183,7 +183,7 @@ pub fn run_probe_isolated(
             let detection = run_child_attempt(config, true, deadline);
             if detection.loaded && detection.initialized && detection.slot_count > 0 {
                 let mut selected = config.clone();
-                selected.pins = std::mem::take(&mut pins);
+                selected.pins = std::mem::take(&mut *pins);
                 attempts.push(run_child_attempt(&selected, false, deadline));
                 break;
             }
@@ -200,9 +200,7 @@ pub fn run_probe_isolated(
             detect_only,
             attempts,
         })
-    })();
-    pins.zeroize();
-    report
+    })()
 }
 
 pub fn run_single_attempt(
@@ -1020,7 +1018,8 @@ fn display_library_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        spawn_with_output_files, token_configs, wait_with_limited_output, CHILD_OUTPUT_LIMIT,
+        run_single_attempt, spawn_with_output_files, token_configs, wait_with_limited_output,
+        CHILD_OUTPUT_LIMIT,
     };
     use std::path::Path;
     use std::process::{Command, Stdio};
@@ -1040,6 +1039,19 @@ mod tests {
 
         assert!(!configs.is_empty());
         assert!(configs.iter().all(|config| config.pins.is_empty()));
+    }
+
+    #[test]
+    fn probe_debug_and_serialized_output_never_contain_the_pin() {
+        let sentinel = "BRIDGE_SYNTHETIC_PIN_SENTINEL";
+        let attempt = run_single_attempt(
+            "synthetic".to_string(),
+            "definitely-missing-pkcs11-module".to_string(),
+            vec![sentinel.to_string()],
+            false,
+        );
+        assert!(!format!("{attempt:?}").contains(sentinel));
+        assert!(!serde_json::to_string(&attempt).unwrap().contains(sentinel));
     }
 
     #[test]
