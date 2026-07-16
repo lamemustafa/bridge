@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, Building2, Cable, CircleHelp, Cloud, Database, FileText, FolderOpen, KeyRound, Play, RefreshCw, ShieldCheck, UploadCloud } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { clearCompanyScopedState, reconcileProbeCompanySelection } from "./tally-company-selection";
 import "./styles.css";
 
 type TallyConfig = {
@@ -853,6 +854,44 @@ function App() {
     setVouchers([]);
   }
 
+  function clearSelectedCompanyScope() {
+    clearCompanyScopedState({
+      clearQualifiedReadReview: () => {
+        if (selectedReadScope) {
+          setPassport(null);
+          setProfileSha256(null);
+          setReviewId(null);
+          setReviewCommitmentSha256(null);
+          setSelectedReadScope(null);
+        }
+      },
+      clearPassportSnapshot: () => setPassportSnapshotId(null),
+      clearSensitiveDiagnostics,
+      clearSyncEvidence: () => {
+        setSyncEvidence(null);
+        setSyncEvidenceError(null);
+      },
+      clearProofPreview: () => {
+        setProofPreview(null);
+        setProofPreviewSelection(null);
+        proofPreviewRequestVersion.current += 1;
+      },
+      clearMirrorExplorer: () => {
+        setMirrorExplorer(null);
+        setMirrorExplorerError(null);
+      },
+      clearSnapshotState: () => {
+        snapshotSelectionVersion.current += 1;
+        setSnapshotJob(null);
+        setSnapshotError(null);
+        setSnapshotStartOutcomeUnknown(false);
+      },
+      invalidateTallyResults: () => {
+        tallyResultsVersion.current += 1;
+      },
+    });
+  }
+
   function updateTallyHost(host: string) {
     setConfig((current) => ({ ...current, host }));
     invalidateTallyResults();
@@ -882,9 +921,12 @@ function App() {
           canonical_endpoint: result.canonical_origin,
           last_observed_at_unix_ms: result.observed_at_unix_ms,
         }));
+        const nextLiveCompanyKeys = liveCompanies.map(tallyCompanyKey);
+        const selection = reconcileProbeCompanySelection(selectedCompany, nextLiveCompanyKeys);
         setCompanies((current) => mergeTallyCompanies(liveCompanies, current));
-        setLiveCompanyKeys(liveCompanies.map(tallyCompanyKey));
-        setSelectedCompany((current) => result.companies.some((company) => tallyCompanyKey(company) === current) ? current : "");
+        setLiveCompanyKeys(nextLiveCompanyKeys);
+        setSelectedCompany(selection.selectedCompany);
+        if (selection.dropped) clearSelectedCompanyScope();
         void refreshPersistedCompanyProfiles();
       }
     } catch (error) {
@@ -1901,25 +1943,7 @@ function App() {
                       disabled={tallyAction !== null || snapshotActive}
                       onChange={(event) => {
                         setSelectedCompany(event.target.value);
-                        if (selectedReadScope) {
-                          setPassport(null);
-                          setProfileSha256(null);
-                          setReviewId(null);
-                          setReviewCommitmentSha256(null);
-                          setSelectedReadScope(null);
-                        }
-                        setPassportSnapshotId(null);
-                        clearSensitiveDiagnostics();
-                        setSyncEvidence(null);
-                        setProofPreview(null);
-                        setProofPreviewSelection(null);
-                        proofPreviewRequestVersion.current += 1;
-                        setMirrorExplorer(null);
-                        setMirrorExplorerError(null);
-                        setSyncEvidenceError(null);
-                        snapshotSelectionVersion.current += 1;
-                        setSnapshotJob(null);
-                        tallyResultsVersion.current += 1;
+                        clearSelectedCompanyScope();
                       }}
                     >
                       <option value="">Select company</option>
