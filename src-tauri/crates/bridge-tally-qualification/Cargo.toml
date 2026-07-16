@@ -1,0 +1,28 @@
+[package]
+name = "bridge-tally-qualification"
+version = "0.1.0"
+description = "Portable synthetic Tally parser qualification evidence for Bridge"
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
+edition = "2021"
+rust-version = "1.96"
+
+[dependencies]
+bridge-tally-protocol = { path = "../bridge-tally-protocol" }
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tally-protocol-simulator = { path = "../tally-protocol-simulator" }
+tempfile = "3"
+thiserror = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_System_ProcessStatus",
+  "Win32_System_Threading",
+] }

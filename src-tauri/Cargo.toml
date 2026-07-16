@@ -10,6 +10,25 @@ edition = "2021"
 rust-version = "1.96"
 default-run = "bridge"
 
+[workspace]
+members = [
+  ".",
+  "crates/bridge-tally-canonical",
+  "crates/bridge-tally-compatibility",
+  "crates/bridge-tally-core",
+  "crates/bridge-tally-incremental",
+  "crates/bridge-tally-live-read",
+  "crates/bridge-tally-observability",
+  "crates/bridge-tally-protocol",
+  "crates/bridge-tally-qualification",
+  "crates/bridge-tally-read-transport",
+  "crates/bridge-tally-runtime",
+  "crates/bridge-tally-transport",
+  "crates/bridge-tally-write",
+  "crates/tally-protocol-simulator",
+]
+resolver = "2"
+
 [lib]
 name = "bridge_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -31,8 +50,19 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
+bridge-tally-core = { path = "crates/bridge-tally-core" }
+bridge-tally-canonical = { path = "crates/bridge-tally-canonical" }
+bridge-tally-incremental = { path = "crates/bridge-tally-incremental" }
+bridge-tally-protocol = { path = "crates/bridge-tally-protocol" }
+bridge-tally-runtime = { path = "crates/bridge-tally-runtime" }
+bridge-tally-transport = { path = "crates/bridge-tally-transport" }
+bridge-tally-write = { path = "crates/bridge-tally-write" }
 chrono = { version = "0.4", features = ["serde"] }
 cryptoki = "0.12"
+getrandom = "0.3"
+keyring = { version = "4.1.4", default-features = false, features = ["v1"] }
+libsqlite3-sys = { version = "0.30.1", features = ["bundled-sqlcipher-vendored-openssl"] }
 pkcs11 = "0.5"
 quick-xml = { version = "0.41", features = ["serialize"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
@@ -41,7 +71,7 @@ rfd = { version = "0.17", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
-sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate", "chrono", "uuid"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "migrate", "chrono", "uuid"] }
 tauri = { version = "2", features = [] }
 thiserror = "2"
 tempfile = "3"
@@ -52,6 +82,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 x509-parser = "0.16"
 zeroize = "1"
+
+[dev-dependencies]
+tally-protocol-simulator = { path = "crates/tally-protocol-simulator" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

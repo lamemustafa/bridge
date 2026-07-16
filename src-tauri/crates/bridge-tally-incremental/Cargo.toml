@@ -1,0 +1,13 @@
+[package]
+name = "bridge-tally-incremental"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96"
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
+description = "Portable fail-closed incremental policy for Bridge Tally sync"
+
+[dependencies]
+bridge-tally-core = { path = "../bridge-tally-core" }
+serde = { version = "1", features = ["derive"] }

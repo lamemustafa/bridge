@@ -1,0 +1,17 @@
+[package]
+name = "bridge-tally-write"
+version = "0.1.0"
+description = "Portable, network-free qualification contract for controlled Tally ledger writes"
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
+edition = "2021"
+rust-version = "1.96"
+
+[dependencies]
+bridge-tally-core = { path = "../bridge-tally-core" }
+bridge-tally-protocol = { path = "../bridge-tally-protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+thiserror = "2"

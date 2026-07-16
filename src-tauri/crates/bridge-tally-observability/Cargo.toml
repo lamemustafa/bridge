@@ -1,0 +1,14 @@
+[package]
+name = "bridge-tally-observability"
+version = "0.1.0"
+description = "Portable bounded and privacy-reduced Tally telemetry contract for Bridge"
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
+edition = "2021"
+rust-version = "1.96"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"

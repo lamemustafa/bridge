@@ -1,0 +1,17 @@
+[package]
+name = "bridge-tally-runtime"
+version = "0.1.0"
+description = "Portable read-only endpoint execution control plane for Bridge Tally"
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
+edition = "2021"
+rust-version = "1.96"
+
+[dependencies]
+bridge-tally-observability = { path = "../bridge-tally-observability" }
+tokio = { version = "1", features = ["macros", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

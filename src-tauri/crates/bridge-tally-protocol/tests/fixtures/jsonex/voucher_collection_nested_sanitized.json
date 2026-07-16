@@ -1,0 +1,235 @@
+{
+  "status": "1",
+  "data": {
+    "metadata": {
+      "is_cmp_dep_type": true,
+      "cmp_locus": 4,
+      "cmp_dep_type": 64
+    },
+    "collection": [
+      {
+        "metadata": {
+          "type": "Voucher",
+          "remoteid": "00000000-0000-4000-8000-000000000201",
+          "vchkey": "00000000-0000-4000-8000-000000000201:00000001",
+          "vchtype": "Sales",
+          "objview": "Invoice Voucher View"
+        },
+        "date": {
+          "type": "Date",
+          "value": "20250401"
+        },
+        "guid": "00000000-0000-4000-8000-000000000201",
+        "vouchertypename": "Sales",
+        "vouchernumber": "BRIDGE-SYNTHETIC-1",
+        "reference": {
+          "type": "String",
+          "value": ""
+        },
+        "serialmaster": {
+          "type": "String",
+          "value": ""
+        },
+        "areserialmaster": {
+          "type": "String",
+          "value": ""
+        },
+        "numberingstyle": "Auto Retain",
+        "persistedview": "Invoice Voucher View",
+        "isdeleted": false,
+        "asoriginal": false,
+        "isdeemedpositive": {
+          "type": "Logical",
+          "value": true
+        },
+        "isinvoice": true,
+        "aspayslip": false,
+        "isdeletedvchretained": false,
+        "isnegisposset": {
+          "type": "Logical",
+          "value": true
+        },
+        "masterid": {
+          "type": "Number",
+          "value": " 50"
+        },
+        "voucherkey": {
+          "type": "Number",
+          "value": "197134703919120"
+        },
+        "voucherretainkey": {
+          "type": "Number",
+          "value": "41"
+        },
+        "reuseholeid": {
+          "type": "Number",
+          "value": "0"
+        },
+        "amount": {
+          "type": "Amount",
+          "value": "-180000.00"
+        },
+        "vouchernumberseries": {
+          "type": "String",
+          "value": "Default"
+        },
+        "allledgerentries": [
+          {
+            "ledgername": {
+              "type": "String",
+              "value": "BRIDGE SYNTHETIC CASH"
+            },
+            "isdeemedpositive": {
+              "type": "Logical",
+              "value": false
+            },
+            "islastdeemedpositive": {
+              "type": "Logical",
+              "value": false
+            },
+            "amount": {
+              "type": "Amount",
+              "value": "180000.00"
+            },
+            "vatassessablevalue": {
+              "type": "Amount",
+              "value": ""
+            }
+          }
+        ],
+        "allinventoryentries": [
+          {
+            "stockitemname": {
+              "type": "String",
+              "value": "BRIDGE SYNTHETIC ITEM"
+            },
+            "addlamount": {
+              "type": "Amount",
+              "value": ""
+            },
+            "isdeemedpositive": {
+              "type": "Logical",
+              "value": false
+            },
+            "islastdeemedpositive": {
+              "type": "Logical",
+              "value": false
+            },
+            "rate": {
+              "type": "Rate",
+              "value": "180000.00/Nos"
+            },
+            "discount": {
+              "type": "Number",
+              "value": "0"
+            },
+            "amount": {
+              "type": "Amount",
+              "value": "180000.00"
+            },
+            "actualqty": {
+              "type": "Quantity",
+              "value": " 1 Nos"
+            },
+            "billedqty": {
+              "type": "Quantity",
+              "value": " 1 Nos"
+            },
+            "batchallocations": [
+              {
+                "batchname": {
+                  "type": "String",
+                  "value": "BRIDGE SYNTHETIC BATCH"
+                },
+                "indentno": {
+                  "type": "String",
+                  "value": "Not Applicable"
+                },
+                "orderno": {
+                  "type": "String",
+                  "value": "Not Applicable"
+                },
+                "trackingnumber": {
+                  "type": "String",
+                  "value": "Not Applicable"
+                },
+                "addlamount": {
+                  "type": "Amount",
+                  "value": ""
+                },
+                "batchdiscount": {
+                  "type": "Number",
+                  "value": "0"
+                },
+                "amount": {
+                  "type": "Amount",
+                  "value": "180000.00"
+                },
+                "actualqty": {
+                  "type": "Quantity",
+                  "value": " 1 Nos"
+                },
+                "billedqty": {
+                  "type": "Quantity",
+                  "value": " 1 Nos"
+                },
+                "batchrate": {
+                  "type": "Rate",
+                  "value": "180000.00/Nos"
+                }
+              }
+            ],
+            "accountingallocations": [
+              {
+                "ledgername": {
+                  "type": "String",
+                  "value": "BRIDGE SYNTHETIC SALES"
+                },
+                "isdeemedpositive": {
+                  "type": "Logical",
+                  "value": false
+                },
+                "islastdeemedpositive": {
+                  "type": "Logical",
+                  "value": false
+                },
+                "amount": {
+                  "type": "Amount",
+                  "value": "180000.00"
+                }
+              }
+            ]
+          }
+        ],
+        "ledgerentries": [
+          {
+            "ledgername": {
+              "type": "String",
+              "value": "BRIDGE SYNTHETIC PARTY"
+            },
+            "isdeemedpositive": {
+              "type": "Logical",
+              "value": true
+            },
+            "islastdeemedpositive": {
+              "type": "Logical",
+              "value": true
+            },
+            "amount": {
+              "type": "Amount",
+              "value": "-180000.00"
+            },
+            "billallocations": [
+              {
+                "amount": {
+                  "type": "Amount",
+                  "value": "-180000.00"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
