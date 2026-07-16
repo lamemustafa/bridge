@@ -13,7 +13,7 @@
     "url": "https://github.com/lamemustafa/bridge/issues"
   },
   "homepage": "https://github.com/lamemustafa/bridge#readme",
-  "packageManager": "pnpm@9.15.4",
+  "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": ">=22.12 <25"
   },
