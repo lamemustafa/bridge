@@ -24,6 +24,8 @@ const MIRROR_MIGRATION_V10: &str =
     include_str!("migrations/0010_tally_provenance_unavailable_counts.sql");
 const MIRROR_MIGRATION_V11: &str =
     include_str!("migrations/0011_tally_proof_record_counts_digest.sql");
+const MIRROR_MIGRATION_V12: &str =
+    include_str!("migrations/0012_tally_window_terminal_evidence.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -52,6 +54,7 @@ pub(crate) const REVIEWED_TALLY_TERMINAL_CODES: &[&str] = &[
     "period_report_invalid",
     "period_report_scope_mismatch",
     "query_profile_not_supported",
+    "reconciliation_record_budget_exceeded",
     "request_size_limit_exceeded",
     "response_content_encoding_unsupported",
     "response_encoding_invalid",
@@ -425,6 +428,18 @@ pub struct BeginSnapshotWindowAttemptInput {
     pub started_at_unix_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BeginSnapshotWindowAttemptResult {
+    pub attempt: SnapshotWindowAttemptRef,
+    pub prior_abandonment: Option<AbandonSnapshotWindowAttemptResult>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AbandonSnapshotWindowAttemptResult {
+    pub completed_at_unix_ms: i64,
+    pub local_clock_moved_backwards: bool,
+}
+
 #[derive(Debug, Clone)]
 pub enum SnapshotWindowMembershipInput {
     Observed {
@@ -461,6 +476,20 @@ pub struct SnapshotWindowReceipt {
     pub evidence: Value,
     pub completed_at_unix_ms: i64,
     pub receipt_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotWindowCompletionResult {
+    pub receipt: SnapshotWindowReceipt,
+    pub local_clock_moved_backwards: bool,
+}
+
+impl std::ops::Deref for SnapshotWindowCompletionResult {
+    type Target = SnapshotWindowReceipt;
+
+    fn deref(&self) -> &Self::Target {
+        &self.receipt
+    }
 }
 
 #[derive(Serialize)]
@@ -1056,9 +1085,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let window_abandonment_evidence_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 12",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if window_abandonment_evidence_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V12)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -1630,7 +1669,7 @@ impl TallyMirrorRepository {
     pub async fn begin_snapshot_window_attempt(
         &self,
         input: BeginSnapshotWindowAttemptInput,
-    ) -> Result<SnapshotWindowAttemptRef, MirrorError> {
+    ) -> Result<BeginSnapshotWindowAttemptResult, MirrorError> {
         validate_nonempty(&input.batch_id, 128, "window_attempt_batch_id")?;
         validate_nonempty(&input.window_id, 128, "window_attempt_window_id")?;
         if input.started_at_unix_ms <= 0 {
@@ -1651,7 +1690,9 @@ impl TallyMirrorRepository {
         sqlx::query(
             "UPDATE tally_snapshot_window_attempts \
              SET state = 'abandoned', completed_at_unix_ms = \
-               CASE WHEN started_at_unix_ms > ?1 THEN started_at_unix_ms ELSE ?1 END \
+               CASE WHEN started_at_unix_ms > ?1 THEN started_at_unix_ms ELSE ?1 END, \
+               terminal_safe_reason_code = CASE WHEN started_at_unix_ms > ?1 \
+                 THEN 'local_clock_moved_backwards' ELSE NULL END \
              WHERE batch_id = ?2 AND window_id = ?3 AND state = 'open'",
         )
         .bind(input.started_at_unix_ms)
@@ -1659,6 +1700,26 @@ impl TallyMirrorRepository {
         .bind(&input.window_id)
         .execute(&mut *transaction)
         .await?;
+        // Query cumulatively rather than relying on the row just changed. If the process loses
+        // the begin acknowledgement before saving its new attempt ref, a later begin can still
+        // recover rollback evidence from an earlier implicitly abandoned attempt.
+        let prior_abandonment = sqlx::query(
+            "SELECT completed_at_unix_ms FROM tally_snapshot_window_attempts \
+             WHERE batch_id = ?1 AND window_id = ?2 AND state = 'abandoned' \
+               AND terminal_safe_reason_code = 'local_clock_moved_backwards' \
+             ORDER BY attempt_ordinal DESC LIMIT 1",
+        )
+        .bind(&input.batch_id)
+        .bind(&input.window_id)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .map(|row| -> Result<_, MirrorError> {
+            Ok(AbandonSnapshotWindowAttemptResult {
+                completed_at_unix_ms: row.try_get("completed_at_unix_ms")?,
+                local_clock_moved_backwards: true,
+            })
+        })
+        .transpose()?;
         let next_ordinal = sqlx::query_scalar::<_, i64>(
             "SELECT COALESCE(MAX(attempt_ordinal), 0) + 1 \
              FROM tally_snapshot_window_attempts WHERE batch_id = ?1 AND window_id = ?2",
@@ -1683,11 +1744,14 @@ impl TallyMirrorRepository {
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
-        Ok(SnapshotWindowAttemptRef {
-            attempt_id,
-            batch_id: input.batch_id,
-            window_id: input.window_id,
-            attempt_ordinal,
+        Ok(BeginSnapshotWindowAttemptResult {
+            attempt: SnapshotWindowAttemptRef {
+                attempt_id,
+                batch_id: input.batch_id,
+                window_id: input.window_id,
+                attempt_ordinal,
+            },
+            prior_abandonment,
         })
     }
 
@@ -1703,35 +1767,60 @@ impl TallyMirrorRepository {
     pub async fn abandon_snapshot_window_attempt(
         &self,
         attempt: &SnapshotWindowAttemptRef,
-        completed_at_unix_ms: i64,
-    ) -> Result<(), MirrorError> {
+        observed_completed_at_unix_ms: i64,
+    ) -> Result<AbandonSnapshotWindowAttemptResult, MirrorError> {
         validate_snapshot_window_attempt_ref(attempt)?;
-        if completed_at_unix_ms <= 0 {
+        if observed_completed_at_unix_ms <= 0 {
             return Err(MirrorError::InvalidInput("window_attempt_completed_at"));
         }
         let mut transaction = self.pool.begin().await?;
         acquire_mirror_write_lock(&mut transaction).await?;
-        ensure_open_snapshot_window_attempt(&mut transaction, attempt).await?;
-        let started_at_unix_ms = sqlx::query_scalar::<_, i64>(
-            "SELECT started_at_unix_ms FROM tally_snapshot_window_attempts \
+        let stored = sqlx::query(
+            "SELECT state, started_at_unix_ms, completed_at_unix_ms, \
+               terminal_safe_reason_code \
+             FROM tally_snapshot_window_attempts \
              WHERE id = ?1 AND batch_id = ?2 AND window_id = ?3 AND attempt_ordinal = ?4",
         )
         .bind(&attempt.attempt_id)
         .bind(&attempt.batch_id)
         .bind(&attempt.window_id)
         .bind(i64::from(attempt.attempt_ordinal))
-        .fetch_one(&mut *transaction)
-        .await?;
-        if completed_at_unix_ms < started_at_unix_ms {
-            return Err(MirrorError::InvalidInput("window_attempt_completed_at"));
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(MirrorError::NotFound)?;
+        let state: String = stored.try_get("state")?;
+        let started_at_unix_ms: i64 = stored.try_get("started_at_unix_ms")?;
+        if state == "abandoned" {
+            let completed_at_unix_ms = stored
+                .try_get::<Option<i64>, _>("completed_at_unix_ms")?
+                .ok_or(MirrorError::InvalidInput("window_attempt_completed_at"))?;
+            let safe_reason_code =
+                stored.try_get::<Option<String>, _>("terminal_safe_reason_code")?;
+            transaction.commit().await?;
+            return Ok(AbandonSnapshotWindowAttemptResult {
+                completed_at_unix_ms,
+                local_clock_moved_backwards: safe_reason_code.as_deref()
+                    == Some("local_clock_moved_backwards"),
+            });
         }
+        if state != "open" {
+            return Err(MirrorError::WindowAttemptClosed);
+        }
+        // A process can restart after the local wall clock has moved behind the timestamp that
+        // was durably recorded when the attempt opened. Abandonment is cleanup, so waiting for
+        // wall time to catch up would strand the run in `Staging`. Preserve the database's
+        // monotonic timestamp invariant while reporting the rollback to the proof layer.
+        let local_clock_moved_backwards = observed_completed_at_unix_ms < started_at_unix_ms;
+        let completed_at_unix_ms = observed_completed_at_unix_ms.max(started_at_unix_ms);
         let updated = sqlx::query(
             "UPDATE tally_snapshot_window_attempts \
-             SET state = 'abandoned', completed_at_unix_ms = ?1 \
-             WHERE id = ?2 AND batch_id = ?3 AND window_id = ?4 \
-               AND attempt_ordinal = ?5 AND state = 'open'",
+             SET state = 'abandoned', completed_at_unix_ms = ?1, \
+               terminal_safe_reason_code = ?2 \
+             WHERE id = ?3 AND batch_id = ?4 AND window_id = ?5 \
+               AND attempt_ordinal = ?6 AND state = 'open'",
         )
         .bind(completed_at_unix_ms)
+        .bind(local_clock_moved_backwards.then_some("local_clock_moved_backwards"))
         .bind(&attempt.attempt_id)
         .bind(&attempt.batch_id)
         .bind(&attempt.window_id)
@@ -1742,7 +1831,10 @@ impl TallyMirrorRepository {
             return Err(MirrorError::WindowAttemptClosed);
         }
         transaction.commit().await?;
-        Ok(())
+        Ok(AbandonSnapshotWindowAttemptResult {
+            completed_at_unix_ms,
+            local_clock_moved_backwards,
+        })
     }
 
     pub async fn stage_snapshot_window_memberships(
@@ -1898,11 +1990,11 @@ impl TallyMirrorRepository {
     pub async fn complete_snapshot_window_attempt(
         &self,
         attempt: &SnapshotWindowAttemptRef,
-        completed_at_unix_ms: i64,
+        observed_completed_at_unix_ms: i64,
         evidence: Value,
-    ) -> Result<SnapshotWindowReceipt, MirrorError> {
+    ) -> Result<SnapshotWindowCompletionResult, MirrorError> {
         validate_snapshot_window_attempt_ref(attempt)?;
-        if completed_at_unix_ms <= 0 {
+        if observed_completed_at_unix_ms <= 0 {
             return Err(MirrorError::InvalidInput("window_attempt_completed_at"));
         }
         let evidence_json = canonical_json(&evidence)?;
@@ -1922,9 +2014,8 @@ impl TallyMirrorRepository {
         .bind(i64::from(attempt.attempt_ordinal))
         .fetch_one(&mut *transaction)
         .await?;
-        if completed_at_unix_ms < started_at_unix_ms {
-            return Err(MirrorError::InvalidInput("window_attempt_completed_at"));
-        }
+        let local_clock_moved_backwards = observed_completed_at_unix_ms < started_at_unix_ms;
+        let completed_at_unix_ms = observed_completed_at_unix_ms.max(started_at_unix_ms);
         let disappeared = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_snapshot_window_memberships \
              WHERE batch_id = ?1 AND window_id = ?2 AND last_seen_attempt_id <> ?3",
@@ -1973,30 +2064,35 @@ impl TallyMirrorRepository {
         sqlx::query(
             "UPDATE tally_snapshot_window_attempts \
              SET state = 'complete', completed_at_unix_ms = ?1, receipt_json = ?2, \
-                 receipt_sha256 = ?3 WHERE id = ?4 AND batch_id = ?5 AND window_id = ?6",
+                 receipt_sha256 = ?3, terminal_safe_reason_code = ?4 \
+             WHERE id = ?5 AND batch_id = ?6 AND window_id = ?7",
         )
         .bind(completed_at_unix_ms)
         .bind(receipt_json)
         .bind(receipt_sha256)
+        .bind(local_clock_moved_backwards.then_some("local_clock_moved_backwards"))
         .bind(&attempt.attempt_id)
         .bind(&attempt.batch_id)
         .bind(&attempt.window_id)
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
-        Ok(receipt)
+        Ok(SnapshotWindowCompletionResult {
+            receipt,
+            local_clock_moved_backwards,
+        })
     }
 
     pub async fn load_latest_completed_window_receipt(
         &self,
         batch_id: &str,
         window_id: &str,
-    ) -> Result<Option<SnapshotWindowReceipt>, MirrorError> {
+    ) -> Result<Option<SnapshotWindowCompletionResult>, MirrorError> {
         validate_nonempty(batch_id, 128, "window_attempt_batch_id")?;
         validate_nonempty(window_id, 128, "window_attempt_window_id")?;
         let mut transaction = self.pool.begin().await?;
         let row = sqlx::query(
-            "SELECT id, attempt_ordinal, receipt_json, receipt_sha256 \
+            "SELECT id, attempt_ordinal, receipt_json, receipt_sha256, terminal_safe_reason_code \
              FROM tally_snapshot_window_attempts \
              WHERE batch_id = ?1 AND window_id = ?2 AND state = 'complete' \
              ORDER BY attempt_ordinal DESC LIMIT 1",
@@ -2014,6 +2110,10 @@ impl TallyMirrorRepository {
             .map_err(|_| MirrorError::VerificationInvariant)?;
         let receipt_json: String = row.try_get("receipt_json")?;
         let stored_receipt_sha256: String = row.try_get("receipt_sha256")?;
+        let local_clock_moved_backwards = row
+            .try_get::<Option<String>, _>("terminal_safe_reason_code")?
+            .as_deref()
+            == Some("local_clock_moved_backwards");
         if receipt_json.len() > MAX_WINDOW_EVIDENCE_JSON_BYTES + 4_096 {
             return Err(MirrorError::VerificationInvariant);
         }
@@ -2059,7 +2159,10 @@ impl TallyMirrorRepository {
             return Err(MirrorError::VerificationInvariant);
         }
         transaction.commit().await?;
-        Ok(Some(receipt))
+        Ok(Some(SnapshotWindowCompletionResult {
+            receipt,
+            local_clock_moved_backwards,
+        }))
     }
 
     async fn snapshot_window_membership_digest(
@@ -2254,7 +2357,9 @@ impl TallyMirrorRepository {
         // catches the lost-ack window after attempt creation but before its durable state ref save.
         sqlx::query(
             "UPDATE tally_snapshot_window_attempts SET state = 'abandoned', \
-             completed_at_unix_ms = MAX(started_at_unix_ms, ?1) \
+             completed_at_unix_ms = MAX(started_at_unix_ms, ?1), \
+             terminal_safe_reason_code = CASE WHEN started_at_unix_ms > ?1 \
+               THEN 'local_clock_moved_backwards' ELSE NULL END \
              WHERE batch_id = ?2 AND state = 'open'",
         )
         .bind(input.completed_at_unix_ms)
@@ -2305,7 +2410,11 @@ impl TallyMirrorRepository {
         .fetch_optional(&mut *transaction)
         .await?;
         let proof_id = Uuid::new_v4().to_string();
-        let created_at_unix_ms = Utc::now().timestamp_millis();
+        // Proof creation is a local persistence event and cannot truthfully precede the run
+        // completion it seals, even when the wall clock moved backwards during the run.
+        let created_at_unix_ms = Utc::now()
+            .timestamp_millis()
+            .max(input.completed_at_unix_ms);
         let hash_input = ProofHashInput {
             proof_contract_version: input.proof_contract_version,
             previous_entry_sha256: previous_entry_sha256.as_deref(),
@@ -4608,6 +4717,7 @@ mod tests {
             })
             .await
             .expect("begin window attempt")
+            .attempt
     }
 
     #[tokio::test]
@@ -4835,7 +4945,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_window_abandon_is_owner_bound_and_terminal_immutable() {
+    async fn explicit_window_abandon_clamps_clock_rollback_and_is_terminal_immutable() {
         let (repository, snapshot, company) = seeded_repository().await;
         let batch_id = begin_batch(&repository, &snapshot, &company, "window-abandon-run").await;
         let attempt = begin_window_attempt(&repository, &batch_id, 3_000).await;
@@ -4852,12 +4962,6 @@ mod tests {
                 .await,
             Err(MirrorError::InvalidInput("window_attempt_completed_at"))
         ));
-        assert!(matches!(
-            repository
-                .abandon_snapshot_window_attempt(&attempt, 2_999)
-                .await,
-            Err(MirrorError::InvalidInput("window_attempt_completed_at"))
-        ));
         let forged = SnapshotWindowAttemptRef {
             window_id: "voucher:foreign".to_string(),
             ..attempt.clone()
@@ -4868,25 +4972,50 @@ mod tests {
                 .await,
             Err(MirrorError::NotFound)
         ));
-        repository
-            .abandon_snapshot_window_attempt(&attempt, 4_000)
+        let abandonment = repository
+            .abandon_snapshot_window_attempt(&attempt, 2_999)
             .await
-            .expect("abandon exact open attempt");
-        let stored = sqlx::query_as::<_, (String, Option<i64>, Option<String>, Option<String>)>(
-            "SELECT state, completed_at_unix_ms, receipt_json, receipt_sha256 \
+            .expect("clock rollback is clamped for terminal cleanup");
+        assert_eq!(
+            abandonment,
+            AbandonSnapshotWindowAttemptResult {
+                completed_at_unix_ms: 3_000,
+                local_clock_moved_backwards: true,
+            }
+        );
+        let stored = sqlx::query_as::<
+            _,
+            (
+                String,
+                Option<i64>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(
+            "SELECT state, completed_at_unix_ms, receipt_json, receipt_sha256, \
+               terminal_safe_reason_code \
              FROM tally_snapshot_window_attempts WHERE id = ?1",
         )
         .bind(&attempt.attempt_id)
         .fetch_one(&repository.pool)
         .await
         .expect("read abandoned attempt");
-        assert_eq!(stored, ("abandoned".to_string(), Some(4_000), None, None));
-        assert!(matches!(
-            repository
-                .abandon_snapshot_window_attempt(&attempt, 4_001)
-                .await,
-            Err(MirrorError::WindowAttemptClosed)
-        ));
+        assert_eq!(
+            stored,
+            (
+                "abandoned".to_string(),
+                Some(3_000),
+                None,
+                None,
+                Some("local_clock_moved_backwards".to_string()),
+            )
+        );
+        let replayed = repository
+            .abandon_snapshot_window_attempt(&attempt, 4_001)
+            .await
+            .expect("lost acknowledgement replays persisted abandonment evidence");
+        assert_eq!(replayed, abandonment);
         assert!(matches!(
             repository
                 .complete_snapshot_window_attempt(&attempt, 4_001, json!({}))
@@ -4900,6 +5029,80 @@ mod tests {
         .execute(&repository.pool)
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn implicit_begin_abandonment_replays_cumulative_clock_evidence() {
+        let (repository, snapshot, company) = seeded_repository().await;
+        let batch_id =
+            begin_batch(&repository, &snapshot, &company, "window-begin-clock-run").await;
+        let first = repository
+            .begin_snapshot_window_attempt(BeginSnapshotWindowAttemptInput {
+                batch_id: batch_id.clone(),
+                window_id: "voucher:clock-window".to_string(),
+                started_at_unix_ms: 5_000,
+            })
+            .await
+            .unwrap();
+        assert!(first.prior_abandonment.is_none());
+        let second = repository
+            .begin_snapshot_window_attempt(BeginSnapshotWindowAttemptInput {
+                batch_id: batch_id.clone(),
+                window_id: "voucher:clock-window".to_string(),
+                started_at_unix_ms: 4_000,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            second.prior_abandonment,
+            Some(AbandonSnapshotWindowAttemptResult {
+                completed_at_unix_ms: 5_000,
+                local_clock_moved_backwards: true,
+            })
+        );
+        let third = repository
+            .begin_snapshot_window_attempt(BeginSnapshotWindowAttemptInput {
+                batch_id,
+                window_id: "voucher:clock-window".to_string(),
+                started_at_unix_ms: 6_000,
+            })
+            .await
+            .unwrap();
+        assert_eq!(third.prior_abandonment, second.prior_abandonment);
+        assert_eq!(third.attempt.attempt_ordinal, 3);
+    }
+
+    #[tokio::test]
+    async fn window_completion_clamps_and_reloads_clock_rollback_evidence() {
+        let (repository, snapshot, company) = seeded_repository().await;
+        let batch_id = begin_batch(
+            &repository,
+            &snapshot,
+            &company,
+            "window-complete-clock-run",
+        )
+        .await;
+        let attempt = begin_window_attempt(&repository, &batch_id, 5_000).await;
+        repository
+            .stage_snapshot_window_membership(
+                &attempt,
+                unavailable_membership("voucher\0clock", HASH_A, "Clock"),
+            )
+            .await
+            .unwrap();
+        let completion = repository
+            .complete_snapshot_window_attempt(&attempt, 4_999, json!({}))
+            .await
+            .expect("completion clamps rollback instead of stranding the run");
+        assert!(completion.local_clock_moved_backwards);
+        assert_eq!(completion.completed_at_unix_ms, 5_000);
+        assert_eq!(
+            repository
+                .load_latest_completed_window_receipt(&batch_id, &attempt.window_id)
+                .await
+                .unwrap(),
+            Some(completion)
+        );
     }
 
     #[tokio::test]
@@ -4993,16 +5196,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn window_completion_rejects_pre_start_time_and_begin_handles_clock_rollback() {
+    async fn window_completion_clamps_pre_start_time_and_begin_handles_clock_rollback() {
         let (repository, snapshot, company) = seeded_repository().await;
         let batch_id = begin_batch(&repository, &snapshot, &company, "window-clock-run").await;
         let first = begin_window_attempt(&repository, &batch_id, 5_000).await;
-        assert!(matches!(
-            repository
-                .complete_snapshot_window_attempt(&first, 4_999, json!({}))
-                .await,
-            Err(MirrorError::InvalidInput("window_attempt_completed_at"))
-        ));
+        let completion = repository
+            .complete_snapshot_window_attempt(&first, 4_999, json!({}))
+            .await
+            .expect("pre-start completion is clamped with durable rollback evidence");
+        assert_eq!(completion.receipt.completed_at_unix_ms, 5_000);
+        assert!(completion.local_clock_moved_backwards);
         let second = begin_window_attempt(&repository, &batch_id, 4_000).await;
         let first_terminal = sqlx::query_as::<_, (String, i64)>(
             "SELECT state, completed_at_unix_ms FROM tally_snapshot_window_attempts WHERE id = ?1",
@@ -5011,7 +5214,7 @@ mod tests {
         .fetch_one(&repository.pool)
         .await
         .expect("read clock-rollback abandonment");
-        assert_eq!(first_terminal, ("abandoned".to_string(), 5_000));
+        assert_eq!(first_terminal, ("complete".to_string(), 5_000));
         assert!(sqlx::query(
             "UPDATE tally_snapshot_window_attempts \
              SET state = 'abandoned', completed_at_unix_ms = 3999 WHERE id = ?1",
@@ -5153,7 +5356,7 @@ mod tests {
         .await
         .unwrap();
 
-        repository.migrate().await.expect("upgrade v9 through v11");
+        repository.migrate().await.expect("upgrade v9 through v12");
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 10",
@@ -5166,6 +5369,15 @@ mod tests {
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 11",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 12",
             )
             .fetch_one(&repository.pool)
             .await
@@ -5195,13 +5407,13 @@ mod tests {
         .await
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11)",
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 10);
+        assert_eq!(migration_count, 11);
         let snapshot_state_table = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM sqlite_master \
              WHERE type = 'table' AND name = 'tally_snapshot_run_states'",

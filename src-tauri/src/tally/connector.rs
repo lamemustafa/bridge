@@ -527,12 +527,88 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::OnceLock;
-    use tally_protocol_simulator::{Fixture, ProductStatus, ScenarioPlan, SequenceSimulator};
+    use std::{net::SocketAddr, sync::OnceLock};
+    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        task::JoinHandle,
+    };
 
     fn simulator_test_lock() -> &'static tokio::sync::Mutex<()> {
         static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    async fn spawn_method_routed_server(
+        post_responses: Vec<String>,
+    ) -> (SocketAddr, JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind routed Tally server");
+        let address = listener.local_addr().expect("routed server address");
+        let worker = tokio::spawn(async move {
+            let mut post_responses = post_responses.into_iter();
+            let mut posts_remaining = post_responses.len();
+            let mut methods = Vec::new();
+            while posts_remaining > 0 {
+                let (mut socket, _) = listener.accept().await.expect("accept routed request");
+                let mut request = Vec::new();
+                let (header_end, content_length) = loop {
+                    let mut buffer = [0_u8; 8 * 1024];
+                    let read = socket.read(&mut buffer).await.expect("read routed request");
+                    assert!(read > 0, "routed request closed before its headers");
+                    request.extend_from_slice(&buffer[..read]);
+                    assert!(
+                        request.len() <= 256 * 1024,
+                        "routed request exceeded test bound"
+                    );
+                    let Some(header_end) = request
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|position| position + 4)
+                    else {
+                        continue;
+                    };
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= header_end.saturating_add(content_length) {
+                        break (header_end, content_length);
+                    }
+                };
+                let request_line = String::from_utf8_lossy(&request[..header_end])
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                let method = request_line.split_whitespace().next().unwrap_or_default();
+                methods.push(method.to_string());
+                let body = if method == "GET" {
+                    "<RESPONSE>TallyPrime Server is Running</RESPONSE>".to_string()
+                } else {
+                    assert_eq!(request.len(), header_end + content_length);
+                    posts_remaining -= 1;
+                    post_responses.next().expect("next routed POST response")
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write routed response");
+            }
+            methods
+        });
+        (address, worker)
     }
 
     #[test]
@@ -698,18 +774,14 @@ mod tests {
         let duplicate_company_xml = format!(
             r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company A</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company B</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>"#
         );
-        let simulator = SequenceSimulator::spawn(vec![
-            ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime)),
-            ScenarioPlan::new(Fixture::SyntheticXml(duplicate_company_xml)),
-        ])
-        .expect("spawn duplicate-company simulator");
+        let (address, server) = spawn_method_routed_server(vec![duplicate_company_xml]).await;
         let config = TallyConfig {
-            host: simulator.address().ip().to_string(),
-            port: simulator.address().port(),
+            host: address.ip().to_string(),
+            port: address.port(),
         };
         let company = CompanyRef {
             identity: company_source_identity(
-                &format!("tally_xml_http:http://{}", simulator.address()),
+                &format!("tally_xml_http:http://{address}"),
                 company_guid,
             ),
             display_name: "Synthetic Company A".to_string(),
@@ -737,10 +809,8 @@ mod tests {
             error,
             TallyError::Protocol { code } if code == "company_identity_ambiguous"
         ));
-        let requests = simulator.finish().expect("finish duplicate simulator");
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].method, "GET");
-        assert_eq!(requests[1].method, "POST");
+        let methods = server.await.expect("join routed Tally server");
+        assert_eq!(methods, ["GET", "POST"]);
     }
 
     #[tokio::test]
@@ -755,39 +825,27 @@ mod tests {
                 r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{schema}" OBJECTTYPE="{object_type}" NAME="Synthetic Company" GUID="{company_guid}" RECORDCOUNT="0"/></BODY></ENVELOPE>"#
             )
         };
-        let mut plans = vec![
-            ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime)),
-            ScenarioPlan::new(Fixture::SyntheticXml(company_xml.clone())),
-        ];
+        let mut post_responses = vec![company_xml.clone()];
         for _ in 0..2 {
-            plans.extend([
-                ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime)),
-                ScenarioPlan::new(Fixture::SyntheticXml(company_xml.clone())),
-                ScenarioPlan::new(Fixture::SyntheticXml(empty_export(
-                    bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA,
-                    "GROUP",
-                ))),
-                ScenarioPlan::new(Fixture::SyntheticXml(empty_export(
-                    bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA,
-                    "LEDGER",
-                ))),
-                ScenarioPlan::new(Fixture::SyntheticXml(empty_export(
+            post_responses.extend([
+                company_xml.clone(),
+                empty_export(bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA, "GROUP"),
+                empty_export(bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA, "LEDGER"),
+                empty_export(
                     bridge_tally_protocol::BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
                     "VOUCHERTYPE",
-                ))),
-                ScenarioPlan::new(Fixture::SyntheticXml(empty_export(
+                ),
+                empty_export(
                     bridge_tally_protocol::BRIDGE_VOUCHER_EXPORT_SCHEMA,
                     "VOUCHER",
-                ))),
+                ),
             ]);
         }
-        plans.push(ScenarioPlan::new(Fixture::SyntheticXml(
-            company_xml.clone(),
-        )));
-        let simulator = SequenceSimulator::spawn(plans).expect("spawn sequence simulator");
+        post_responses.push(company_xml.clone());
+        let (address, server) = spawn_method_routed_server(post_responses).await;
         let config = TallyConfig {
-            host: simulator.address().ip().to_string(),
-            port: simulator.address().port(),
+            host: address.ip().to_string(),
+            port: address.port(),
         };
         let runtime = TallyRuntime::default();
         let (review_id, observed_at_unix_ms, reviewed) = runtime
@@ -800,7 +858,7 @@ mod tests {
 
         let company = CompanyRef {
             identity: company_source_identity(
-                &format!("tally_xml_http:http://{}", simulator.address()),
+                &format!("tally_xml_http:http://{address}"),
                 company_guid,
             ),
             display_name: "Synthetic Company".to_string(),
@@ -864,19 +922,21 @@ mod tests {
         assert_eq!(discovered.len(), 1);
         assert_eq!(discovered[0].identity, connector.company.identity);
 
-        let requests = simulator.finish().expect("finish sequence simulator");
-        assert_eq!(requests.len(), 15);
+        let methods = server.await.expect("join routed Tally server");
+        assert!(methods
+            .iter()
+            .all(|method| method == "GET" || method == "POST"));
         assert_eq!(
-            requests
+            methods
                 .iter()
-                .filter(|request| request.method == "GET")
+                .filter(|method| method.as_str() == "GET")
                 .count(),
             3
         );
         assert_eq!(
-            requests
+            methods
                 .iter()
-                .filter(|request| request.method == "POST")
+                .filter(|method| method.as_str() == "POST")
                 .count(),
             12
         );

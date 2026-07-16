@@ -285,7 +285,7 @@ pub(crate) struct CommitBatchParts {
 }
 
 impl CommitBatchInput {
-    fn reconciled(parts: CommitBatchParts) -> Self {
+    pub(in crate::sync) fn reconciled(parts: CommitBatchParts) -> Self {
         Self { parts }
     }
 

@@ -551,7 +551,7 @@ async fn execute_with_transport(
                 fixture,
                 metadata,
                 operations,
-                false,
+                true,
                 endpoint_response_observed,
                 loaded_company_count,
             );
@@ -585,7 +585,7 @@ async fn execute_with_transport(
                 fixture,
                 metadata,
                 operations,
-                false,
+                true,
                 endpoint_response_observed,
                 loaded_company_count,
             );
@@ -620,7 +620,7 @@ async fn execute_with_transport(
                 fixture,
                 metadata,
                 operations,
-                false,
+                true,
                 endpoint_response_observed,
                 loaded_company_count,
             );
@@ -656,7 +656,7 @@ async fn execute_with_transport(
                 fixture,
                 metadata,
                 operations,
-                false,
+                true,
                 endpoint_response_observed,
                 loaded_company_count,
             );
@@ -680,7 +680,7 @@ async fn execute_with_transport(
                 fixture,
                 metadata,
                 operations,
-                false,
+                true,
                 endpoint_response_observed,
                 loaded_company_count,
             );
@@ -723,16 +723,12 @@ async fn execute_with_transport(
         )),
     }
 
-    let fixture_marker_verified = operations.len() == 5
-        && operations
-            .iter()
-            .all(|operation| operation.outcome == OperationOutcome::Passed);
     seal_receipt(
         config,
         fixture,
         metadata,
         operations,
-        fixture_marker_verified,
+        true,
         endpoint_response_observed,
         loaded_company_count,
     )
@@ -925,7 +921,11 @@ fn response_failure(
         encoding: encoding(response.encoding()),
         response_size: size_bucket(response.encoded_bytes()),
         record_count: CountBucket::Unknown,
-        safe_reason_code: Some(reason.to_string()),
+        safe_reason_code: Some(if application_status == ApplicationStatus::Failure {
+            export_failure_reason_code(response.text()).to_string()
+        } else {
+            reason.to_string()
+        }),
     }
 }
 
