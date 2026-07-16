@@ -1,13 +1,10 @@
 pub mod audit;
+pub mod encrypted;
 pub mod migrations;
 pub mod outbox;
 pub mod schema;
+pub mod tally_incremental;
+pub mod tally_mirror;
+pub mod tally_write_store;
 
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-
-pub async fn connect(database_url: &str) -> anyhow::Result<SqlitePool> {
-    Ok(SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect(database_url)
-        .await?)
-}
+pub use encrypted::{connect_encrypted, resolve_mirror_key, MirrorKeyStore, OsMirrorKeyStore};
