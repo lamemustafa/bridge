@@ -9,6 +9,14 @@ Bridge uses separate outcome (`completed`, `failed`, `cancelled`, or
 freshness (`fresh`, `stale`, or `never_verified`) states. Capability states are
 `supported`, `unsupported`, `unknown`, and `not_configured`.
 
+A structurally valid, identity-bound execution of the sealed Core Accounting
+profile is recorded as observed `unknown` with the stable reason
+`sealed_profile_executed`. That exact evidence may authorize a snapshot
+attempt, but it never promotes absent or coincidentally populated fields to
+supported. The run's reconciliation and proof remain responsible for a
+Partial or Verified result. Canary rows are qualification evidence only and
+are re-fetched after the durable run start before they can enter snapshot data.
+
 A verified proof requires all planned windows, stable identities, canonical
 hashes, count invariants, and pack-specific reconciliation. Warnings may
 describe unavailable secondary comparisons, but a known completeness or

@@ -65,6 +65,13 @@ verified run now owns the current checkpoint; the pending run's receipt facts re
 verifiable. Checkpoint advancement at the original commit still requires equality with the checkpoint
 observed before extraction inside the same SQLite write transaction.
 
+If a reconciled `CommitPending` run loses that checkpoint compare-and-swap,
+Bridge replaces the stale advancing decision with a durable non-advancing
+Failed proof carrying `snapshot_checkpoint_changed`. It closes the staging
+batch and all open attempts while preserving the winning checkpoint. Pending
+Failed and Cancelled decisions never participate in checkpoint CAS and retain
+their original outcome and reason even if another run advances the live head.
+
 If the wall clock moves backwards during a terminal path, Bridge clamps the completion timestamp to
 the durable batch start and records `local_clock_moved_backwards`. The repository independently
 rejects any commit whose completion precedes its batch start, so an impossible negative-duration

@@ -31,6 +31,7 @@ use crate::sync::reconciliation::{
     ReconciliationDecision, ReconciliationError, ReconciliationInput, ReconciliationMismatch,
     ReportTieOutEvidence, SourceStabilityCheck, TerminalKind, WindowEvidence,
 };
+use crate::tally::core_snapshot_start_authorized;
 
 const SNAPSHOT_STATE_VERSION: u16 = 5;
 const LEGACY_SNAPSHOT_STATE_VERSION_V3: u16 = 3;
@@ -1951,8 +1952,7 @@ where
             Ok(probe) => {
                 let pack_supported = probe.reachable
                     && probe.profile.packs.get(&plan.pack).is_some_and(|evidence| {
-                        evidence.state == CapabilityState::Supported
-                            && evidence.confidence == EvidenceConfidence::Observed
+                        snapshot_pack_start_authorized(plan.pack, evidence)
                     })
                     && probe
                         .profile
@@ -2565,8 +2565,7 @@ where
             Ok(probe)
                 if probe.reachable
                     && probe.profile.packs.get(&plan.pack).is_some_and(|evidence| {
-                        evidence.state == CapabilityState::Supported
-                            && evidence.confidence == EvidenceConfidence::Observed
+                        snapshot_pack_start_authorized(plan.pack, evidence)
                     })
                     && probe
                         .profile
@@ -2614,10 +2613,37 @@ where
     async fn finish_terminal(
         &self,
         plan: &SnapshotPlan,
-        mut state: DurableSnapshotState,
+        state: DurableSnapshotState,
         kind: TerminalKind,
         safe_reason_code: &str,
     ) -> Result<SnapshotRunResult, SnapshotError> {
+        let (state, decision, pending_kind) = self
+            .prepare_terminal_decision(plan, state, kind, safe_reason_code)
+            .await?;
+        self.commit_decision(
+            plan,
+            state,
+            decision,
+            pending_kind,
+            Some(safe_reason_code.to_string()),
+        )
+        .await
+    }
+
+    async fn prepare_terminal_decision(
+        &self,
+        plan: &SnapshotPlan,
+        mut state: DurableSnapshotState,
+        kind: TerminalKind,
+        safe_reason_code: &str,
+    ) -> Result<
+        (
+            DurableSnapshotState,
+            ReconciliationDecision,
+            PendingDecisionKind,
+        ),
+        SnapshotError,
+    > {
         self.abandon_open_window_attempts(&mut state).await?;
         state.gap_codes.insert(safe_reason_code.to_string());
         let batch_id = state
@@ -2650,24 +2676,48 @@ where
             TerminalKind::Failed => PendingDecisionKind::Failed,
             TerminalKind::Cancelled => PendingDecisionKind::Cancelled,
         };
-        self.commit_decision(
-            plan,
-            state,
-            decision,
-            pending_kind,
-            Some(safe_reason_code.to_string()),
-        )
-        .await
+        Ok((state, decision, pending_kind))
     }
 
     async fn commit_decision(
+        &self,
+        plan: &SnapshotPlan,
+        state: DurableSnapshotState,
+        decision: ReconciliationDecision,
+        kind: PendingDecisionKind,
+        safe_reason_code: Option<String>,
+    ) -> Result<SnapshotRunResult, SnapshotError> {
+        let (state, decision) = self
+            .stage_commit_decision(plan, state, decision, kind, safe_reason_code)
+            .await?;
+        match self
+            .mirror
+            .commit_batch(decision.mirror_commit.clone())
+            .await
+        {
+            Ok(receipt) => {
+                verify_commit_receipt(&state, &decision.proof, &receipt)?;
+                self.finish_committed_state(state, decision.proof, receipt)
+                    .await
+            }
+            Err(MirrorError::BatchClosed) => {
+                self.resolve_closed_batch(plan, state, decision.proof).await
+            }
+            Err(MirrorError::ConcurrentCheckpoint) => {
+                self.finish_checkpoint_conflict(plan, state).await
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn stage_commit_decision(
         &self,
         plan: &SnapshotPlan,
         mut state: DurableSnapshotState,
         mut decision: ReconciliationDecision,
         kind: PendingDecisionKind,
         safe_reason_code: Option<String>,
-    ) -> Result<SnapshotRunResult, SnapshotError> {
+    ) -> Result<(DurableSnapshotState, ReconciliationDecision), SnapshotError> {
         decision
             .mirror_commit
             .bind_expected_checkpoint(state.checkpoint_before.clone());
@@ -2721,6 +2771,35 @@ where
             expected_receipt_facts_sha256: Some(expected_receipt_facts_sha256),
         });
         self.state_store.save(&mut state).await?;
+        Ok((state, decision))
+    }
+
+    async fn finish_checkpoint_conflict(
+        &self,
+        plan: &SnapshotPlan,
+        mut state: DurableSnapshotState,
+    ) -> Result<SnapshotRunResult, SnapshotError> {
+        // The reconciled decision stored in CommitPending is no longer authoritative once its
+        // checkpoint CAS loses. Replace it with a non-advancing terminal decision so the durable
+        // state and staging batch cannot continue advertising a resumable run.
+        state.pending_commit = None;
+        let (state, decision, pending_kind) = self
+            .prepare_terminal_decision(
+                plan,
+                state,
+                TerminalKind::Failed,
+                "snapshot_checkpoint_changed",
+            )
+            .await?;
+        let (state, decision) = self
+            .stage_commit_decision(
+                plan,
+                state,
+                decision,
+                pending_kind,
+                Some("snapshot_checkpoint_changed".to_string()),
+            )
+            .await?;
         match self
             .mirror
             .commit_batch(decision.mirror_commit.clone())
@@ -2734,7 +2813,11 @@ where
             Err(MirrorError::BatchClosed) => {
                 self.resolve_closed_batch(plan, state, decision.proof).await
             }
-            Err(MirrorError::ConcurrentCheckpoint) => Err(SnapshotError::ConcurrentCheckpoint),
+            // A non-advancing terminal proof never participates in checkpoint CAS. Reaching this
+            // branch would mean the repository contract regressed.
+            Err(MirrorError::ConcurrentCheckpoint) => Err(SnapshotError::StateInvariant(
+                "terminal_checkpoint_conflict",
+            )),
             Err(error) => Err(error.into()),
         }
     }
@@ -2815,8 +2898,10 @@ where
                 Utc::now().timestamp_millis(),
             )
             .await?;
-        if freshness.checkpoint_token != state.checkpoint_before {
-            return Err(SnapshotError::ConcurrentCheckpoint);
+        if pending.intended_checkpoint.is_some()
+            && freshness.checkpoint_token != state.checkpoint_before
+        {
+            return self.finish_checkpoint_conflict(plan, state).await;
         }
         self.commit_decision(
             plan,
@@ -3010,6 +3095,19 @@ fn set_window_phase(
     progress.phase = window_phase;
     state.set_phase(snapshot_phase, Some(planned.id.clone()));
     Ok(())
+}
+
+fn snapshot_pack_start_authorized(
+    pack: CapabilityPackId,
+    evidence: &bridge_tally_core::CapabilityEvidence,
+) -> bool {
+    match pack {
+        CapabilityPackId::CoreAccounting => core_snapshot_start_authorized(evidence),
+        _ => {
+            evidence.state == CapabilityState::Supported
+                && evidence.confidence == EvidenceConfidence::Observed
+        }
+    }
 }
 
 fn terminal_kind(error: &TallyError) -> TerminalKind {
@@ -3208,9 +3306,9 @@ mod tests {
             packs: BTreeMap::from([(
                 CapabilityPackId::CoreAccounting,
                 CapabilityEvidence {
-                    state: CapabilityState::Supported,
+                    state: CapabilityState::Unknown,
                     confidence: EvidenceConfidence::Observed,
-                    safe_reason_code: None,
+                    safe_reason_code: Some("sealed_profile_executed".to_string()),
                 },
             )]),
         }
@@ -4415,6 +4513,429 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_commit_pending_checkpoint_terminalizes_and_closes_staging_batch() {
+        let (pool, mirror, store, plan) = setup().await;
+        let checkpoint_before = seed_verified_checkpoint(&mirror, &plan).await;
+        let batch_id = mirror
+            .begin_batch(BeginBatchInput {
+                run_id: plan.run_id.clone(),
+                capability_snapshot_id: plan.capability_snapshot_id.clone(),
+                company_id: plan.mirror_company_id.clone(),
+                pack_id: pack_code(plan.pack).to_string(),
+                pack_schema_major: plan.pack_schema_version.major,
+                pack_schema_minor: plan.pack_schema_version.minor,
+                source_transport: plan.source_transport.clone(),
+                source_release: None,
+                requested_from_yyyymmdd: Some("20260701".to_string()),
+                requested_to_yyyymmdd: Some("20260731".to_string()),
+                started_at_unix_ms: plan.started_at_unix_ms,
+            })
+            .await
+            .unwrap();
+        let lost_ack_attempt = mirror
+            .begin_snapshot_window_attempt(BeginSnapshotWindowAttemptInput {
+                batch_id: batch_id.clone(),
+                window_id: plan.windows[0].id.clone(),
+                started_at_unix_ms: plan.started_at_unix_ms + 1,
+            })
+            .await
+            .unwrap();
+        let freshness_before = mirror
+            .freshness(
+                &plan.mirror_company_id,
+                pack_code(plan.pack),
+                plan.started_at_unix_ms,
+            )
+            .await
+            .unwrap();
+        let mut pending =
+            DurableSnapshotState::new(&plan, core_freshness(freshness_before.state)).unwrap();
+        pending.batch_id = Some(batch_id.clone());
+        pending.checkpoint_before = Some(checkpoint_before.clone());
+        pending.gap_codes.insert("earlier_safe_gap".to_string());
+        pending.set_phase(SnapshotPhase::CommitPending, None);
+        pending.pending_commit = Some(PendingCommit {
+            kind: PendingDecisionKind::Reconciled,
+            completed_at_unix_ms: plan.started_at_unix_ms + 100,
+            safe_reason_code: None,
+            intended_checkpoint: Some("full:losing-run".to_string()),
+            // The stale decision is deliberately replaced before receipt verification.
+            expected_receipt_facts_sha256: Some("a".repeat(64)),
+        });
+        store.save(&mut pending).await.unwrap();
+
+        let winning_batch = mirror
+            .begin_batch(BeginBatchInput {
+                run_id: "checkpoint-winning-run".to_string(),
+                capability_snapshot_id: plan.capability_snapshot_id.clone(),
+                company_id: plan.mirror_company_id.clone(),
+                pack_id: pack_code(plan.pack).to_string(),
+                pack_schema_major: plan.pack_schema_version.major,
+                pack_schema_minor: plan.pack_schema_version.minor,
+                source_transport: plan.source_transport.clone(),
+                source_release: None,
+                requested_from_yyyymmdd: None,
+                requested_to_yyyymmdd: None,
+                started_at_unix_ms: plan.started_at_unix_ms + 200,
+            })
+            .await
+            .unwrap();
+        mirror
+            .commit_batch(CommitBatchInput::test_only(CommitBatchParts {
+                batch_id: winning_batch,
+                proof_contract_version: 1,
+                outcome: RunOutcome::Completed,
+                verification: VerificationState::Verified,
+                completed_at_unix_ms: plan.started_at_unix_ms + 300,
+                record_counts_sha256: None,
+                snapshot_sha256: Some("b".repeat(64)),
+                expected_checkpoint_before: Some(checkpoint_before.clone()),
+                checkpoint_after: Some("full:winning-run".to_string()),
+                freshness_target_seconds: 300,
+                gap_codes: Vec::new(),
+                warning_codes: Vec::new(),
+            }))
+            .await
+            .unwrap();
+
+        let connector = FakeConnector {
+            batch: Mutex::new(VecDeque::new()),
+            company: plan.company.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect("a losing checkpoint CAS becomes a durable terminal proof");
+
+        assert_eq!(result.state.progress.phase, SnapshotPhase::Failed);
+        assert!(!result.receipt.checkpoint_advanced);
+        assert!(result
+            .proof
+            .gaps
+            .iter()
+            .any(|gap| gap.safe_reason_code == "snapshot_checkpoint_changed"));
+        assert!(result
+            .proof
+            .gaps
+            .iter()
+            .any(|gap| gap.safe_reason_code == "earlier_safe_gap"));
+        assert!(connector.requests.lock().unwrap().is_empty());
+        let ledger_receipt = mirror
+            .historical_commit_receipt_for_batch(&batch_id, &plan.run_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            ledger_receipt.facts.checkpoint_before,
+            Some(checkpoint_before)
+        );
+        assert_eq!(ledger_receipt.facts.checkpoint_after, None);
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM tally_observation_batches WHERE id = ?1",
+            )
+            .bind(&batch_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "failed"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM tally_snapshot_window_attempts WHERE id = ?1",
+            )
+            .bind(&lost_ack_attempt.attempt_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "abandoned"
+        );
+        let persisted = store.load(&plan.resume_key).await.unwrap().unwrap();
+        assert_eq!(persisted.progress.phase, SnapshotPhase::Failed);
+        assert!(persisted.pending_commit.is_none());
+        assert_eq!(
+            mirror
+                .freshness(
+                    &plan.mirror_company_id,
+                    pack_code(plan.pack),
+                    plan.started_at_unix_ms + 400,
+                )
+                .await
+                .unwrap()
+                .checkpoint_token
+                .as_deref(),
+            Some("full:winning-run")
+        );
+    }
+
+    #[tokio::test]
+    async fn immediate_checkpoint_cas_loss_terminalizes_instead_of_returning_resumable_error() {
+        let (pool, mirror, store, plan) = setup().await;
+        let checkpoint_before = seed_verified_checkpoint(&mirror, &plan).await;
+        let batch_id = mirror
+            .begin_batch(BeginBatchInput {
+                run_id: plan.run_id.clone(),
+                capability_snapshot_id: plan.capability_snapshot_id.clone(),
+                company_id: plan.mirror_company_id.clone(),
+                pack_id: pack_code(plan.pack).to_string(),
+                pack_schema_major: plan.pack_schema_version.major,
+                pack_schema_minor: plan.pack_schema_version.minor,
+                source_transport: plan.source_transport.clone(),
+                source_release: None,
+                requested_from_yyyymmdd: None,
+                requested_to_yyyymmdd: None,
+                started_at_unix_ms: plan.started_at_unix_ms,
+            })
+            .await
+            .unwrap();
+        let lost_ack_attempt = mirror
+            .begin_snapshot_window_attempt(BeginSnapshotWindowAttemptInput {
+                batch_id: batch_id.clone(),
+                window_id: plan.windows[0].id.clone(),
+                started_at_unix_ms: plan.started_at_unix_ms + 1,
+            })
+            .await
+            .unwrap();
+        let mut state = DurableSnapshotState::new(&plan, Freshness::Fresh).unwrap();
+        state.batch_id = Some(batch_id.clone());
+        state.checkpoint_before = Some(checkpoint_before.clone());
+
+        let winning_batch = mirror
+            .begin_batch(BeginBatchInput {
+                run_id: "immediate-checkpoint-winner".to_string(),
+                capability_snapshot_id: plan.capability_snapshot_id.clone(),
+                company_id: plan.mirror_company_id.clone(),
+                pack_id: pack_code(plan.pack).to_string(),
+                pack_schema_major: plan.pack_schema_version.major,
+                pack_schema_minor: plan.pack_schema_version.minor,
+                source_transport: plan.source_transport.clone(),
+                source_release: None,
+                requested_from_yyyymmdd: None,
+                requested_to_yyyymmdd: None,
+                started_at_unix_ms: plan.started_at_unix_ms + 100,
+            })
+            .await
+            .unwrap();
+        mirror
+            .commit_batch(CommitBatchInput::test_only(CommitBatchParts {
+                batch_id: winning_batch,
+                proof_contract_version: 1,
+                outcome: RunOutcome::Completed,
+                verification: VerificationState::Verified,
+                completed_at_unix_ms: plan.started_at_unix_ms + 200,
+                record_counts_sha256: None,
+                snapshot_sha256: Some("d".repeat(64)),
+                expected_checkpoint_before: Some(checkpoint_before),
+                checkpoint_after: Some("full:immediate-winner".to_string()),
+                freshness_target_seconds: 300,
+                gap_codes: Vec::new(),
+                warning_codes: Vec::new(),
+            }))
+            .await
+            .unwrap();
+
+        let record_counts = BTreeMap::new();
+        let losing_decision = ReconciliationDecision {
+            proof: ProofManifest {
+                proof_contract_version: 3,
+                run_id: plan.run_id.clone(),
+                source_identity: plan.company.identity.clone(),
+                pack: plan.pack,
+                pack_schema_version: plan.pack_schema_version,
+                outcome: bridge_tally_core::RunOutcome::Completed,
+                verification: bridge_tally_core::VerificationState::Verified,
+                freshness: Freshness::Fresh,
+                started_at_unix_ms: plan.started_at_unix_ms,
+                completed_at_unix_ms: Some(plan.started_at_unix_ms + 250),
+                record_counts: record_counts.clone(),
+                snapshot_sha256: Some("e".repeat(64)),
+                gaps: Vec::new(),
+            },
+            mirror_commit: CommitBatchInput::test_only(CommitBatchParts {
+                batch_id: batch_id.clone(),
+                proof_contract_version: 3,
+                outcome: RunOutcome::Completed,
+                verification: VerificationState::Verified,
+                completed_at_unix_ms: plan.started_at_unix_ms + 250,
+                record_counts_sha256: Some(proof_record_counts_sha256(&record_counts)),
+                snapshot_sha256: Some("e".repeat(64)),
+                expected_checkpoint_before: None,
+                checkpoint_after: Some("full:immediate-loser".to_string()),
+                freshness_target_seconds: 300,
+                gap_codes: Vec::new(),
+                warning_codes: Vec::new(),
+            }),
+            safe_mismatches: Vec::new(),
+        };
+        let connector = FakeConnector {
+            batch: Mutex::new(VecDeque::new()),
+            company: plan.company.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .commit_decision(
+                &plan,
+                state,
+                losing_decision,
+                PendingDecisionKind::Reconciled,
+                None,
+            )
+            .await
+            .expect("an immediate CAS loss is replaced by a terminal local proof");
+
+        assert_eq!(result.state.progress.phase, SnapshotPhase::Failed);
+        assert!(result
+            .proof
+            .gaps
+            .iter()
+            .any(|gap| gap.safe_reason_code == "snapshot_checkpoint_changed"));
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM tally_observation_batches WHERE id = ?1",
+            )
+            .bind(&batch_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "failed"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM tally_snapshot_window_attempts WHERE id = ?1",
+            )
+            .bind(&lost_ack_attempt.attempt_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "abandoned"
+        );
+        assert_eq!(
+            mirror
+                .freshness(
+                    &plan.mirror_company_id,
+                    pack_code(plan.pack),
+                    plan.started_at_unix_ms + 300,
+                )
+                .await
+                .unwrap()
+                .checkpoint_token
+                .as_deref(),
+            Some("full:immediate-winner")
+        );
+    }
+
+    async fn assert_nonadvancing_pending_outcome_survives_checkpoint_advance(
+        source_error: TallyError,
+        expected_phase: SnapshotPhase,
+        expected_reason: &str,
+    ) {
+        let (_, mirror, store, mut plan) = setup().await;
+        plan.resume_key = format!("resume-preserve-{expected_reason}");
+        plan.run_id = format!("run-preserve-{expected_reason}");
+        let checkpoint_before = seed_verified_checkpoint(&mirror, &plan).await;
+        let connector = FakeConnector {
+            batch: Mutex::new(VecDeque::from([Err(source_error)])),
+            company: plan.company.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        let crash_store = FailAfterFirstCommitPendingStore {
+            inner: store.clone(),
+            failed: AtomicBool::new(false),
+        };
+        FullSnapshotEngine::new(&mirror, &crash_store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect_err("inject crash after the original terminal decision is durable");
+        let pending = store.load(&plan.resume_key).await.unwrap().unwrap();
+        assert_eq!(pending.progress.phase, SnapshotPhase::CommitPending);
+        assert!(pending.pending_commit.as_ref().is_some_and(|commit| {
+            commit.intended_checkpoint.is_none()
+                && commit.safe_reason_code.as_deref() == Some(expected_reason)
+        }));
+
+        let winning_batch = mirror
+            .begin_batch(BeginBatchInput {
+                run_id: format!("winner-after-{expected_reason}"),
+                capability_snapshot_id: plan.capability_snapshot_id.clone(),
+                company_id: plan.mirror_company_id.clone(),
+                pack_id: pack_code(plan.pack).to_string(),
+                pack_schema_major: plan.pack_schema_version.major,
+                pack_schema_minor: plan.pack_schema_version.minor,
+                source_transport: plan.source_transport.clone(),
+                source_release: None,
+                requested_from_yyyymmdd: None,
+                requested_to_yyyymmdd: None,
+                started_at_unix_ms: plan.started_at_unix_ms + 200,
+            })
+            .await
+            .unwrap();
+        let winning_checkpoint = format!("full:winner-after-{expected_reason}");
+        mirror
+            .commit_batch(CommitBatchInput::test_only(CommitBatchParts {
+                batch_id: winning_batch,
+                proof_contract_version: 1,
+                outcome: RunOutcome::Completed,
+                verification: VerificationState::Verified,
+                completed_at_unix_ms: plan.started_at_unix_ms + 300,
+                record_counts_sha256: None,
+                snapshot_sha256: Some("c".repeat(64)),
+                expected_checkpoint_before: Some(checkpoint_before),
+                checkpoint_after: Some(winning_checkpoint.clone()),
+                freshness_target_seconds: 300,
+                gap_codes: Vec::new(),
+                warning_codes: Vec::new(),
+            }))
+            .await
+            .unwrap();
+
+        let resumed = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect("a non-advancing terminal decision is independent of the live checkpoint");
+        assert_eq!(resumed.state.progress.phase, expected_phase);
+        assert!(resumed
+            .proof
+            .gaps
+            .iter()
+            .any(|gap| gap.safe_reason_code == expected_reason));
+        assert!(!resumed
+            .proof
+            .gaps
+            .iter()
+            .any(|gap| gap.safe_reason_code == "snapshot_checkpoint_changed"));
+        assert_eq!(
+            mirror
+                .freshness(
+                    &plan.mirror_company_id,
+                    pack_code(plan.pack),
+                    plan.started_at_unix_ms + 400,
+                )
+                .await
+                .unwrap()
+                .checkpoint_token,
+            Some(winning_checkpoint)
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_and_cancelled_pending_outcomes_survive_checkpoint_advance() {
+        assert_nonadvancing_pending_outcome_survives_checkpoint_advance(
+            TallyError::Unsupported {
+                code: "endpoint_circuit_open".to_string(),
+            },
+            SnapshotPhase::Failed,
+            "endpoint_circuit_open",
+        )
+        .await;
+        assert_nonadvancing_pending_outcome_survives_checkpoint_advance(
+            TallyError::Cancelled,
+            SnapshotPhase::Cancelled,
+            "run_cancelled",
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn closed_commit_pending_recovers_historical_receipt_after_checkpoint_advances() {
         let (_, mirror, store, plan) = setup().await;
         let first_batch = mirror
@@ -4804,7 +5325,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn snapshot_without_reported_source_count_is_partial_and_idempotent() {
+    async fn sealed_empty_canary_authorizes_truthful_partial_and_is_idempotent() {
         let (pool, mirror, store, plan) = setup().await;
         let connector = FakeConnector {
             batch: Mutex::new(VecDeque::from([Ok(

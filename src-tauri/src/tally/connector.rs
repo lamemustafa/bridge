@@ -12,10 +12,8 @@ use bridge_tally_protocol::{
 };
 use bridge_tally_transport::TallyTransportError;
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-use super::capability_packs::CapabilityPackRegistry;
 use super::runtime::{TallyRuntimeControlError, TallyRuntimeReadError};
 use super::{tdl_engine, TallyConfig, TallyRuntime};
 
@@ -39,7 +37,6 @@ pub struct RuntimeTallyConnector {
     config: TallyConfig,
     company: CompanyRef,
     canary_context: RequestContext,
-    canary_window: Arc<Mutex<Option<CanonicalPackWindow>>>,
     cancellation: CancellationToken,
 }
 
@@ -62,7 +59,6 @@ impl RuntimeTallyConnector {
             config,
             company,
             canary_context,
-            canary_window: Arc::new(Mutex::new(None)),
             cancellation: CancellationToken::new(),
         })
     }
@@ -88,28 +84,6 @@ impl RuntimeTallyConnector {
             )
             .await
             .map_err(map_transport_error)
-    }
-
-    fn cached_canary_window(&self) -> Result<Option<CanonicalPackWindow>, TallyError> {
-        self.canary_window
-            .lock()
-            .map(|window| window.clone())
-            .map_err(|_| protocol_error("canary_cache_unavailable"))
-    }
-
-    fn store_canary_window(&self, window: CanonicalPackWindow) -> Result<(), TallyError> {
-        *self
-            .canary_window
-            .lock()
-            .map_err(|_| protocol_error("canary_cache_unavailable"))? = Some(window);
-        Ok(())
-    }
-
-    fn take_canary_window(&self) -> Result<Option<CanonicalPackWindow>, TallyError> {
-        self.canary_window
-            .lock()
-            .map(|mut window| window.take())
-            .map_err(|_| protocol_error("canary_cache_unavailable"))
     }
 
     async fn extract_core_window(
@@ -204,36 +178,12 @@ impl RuntimeTallyConnector {
 #[async_trait::async_trait]
 impl TallyConnector for RuntimeTallyConnector {
     async fn probe(&self) -> Result<ProbeResult, TallyError> {
-        let cached_canary = self.cached_canary_window()?;
-        let mut result = match &cached_canary {
-            Some(_) => match self
-                .runtime
-                .cached_probe(&self.config)
-                .map_err(|_| protocol_error("capability_cache_unavailable"))?
-            {
-                Some(probe) => probe,
-                None => self
-                    .runtime
-                    .probe(self.config.clone())
-                    .await
-                    .map_err(map_transport_error)?,
-            },
-            None => self
-                .runtime
-                .probe(self.config.clone())
-                .await
-                .map_err(map_transport_error)?,
-        };
-        let canary_result = match cached_canary {
-            Some(window) => Ok(window),
-            None => match self.extract_core_window(&self.canary_context).await {
-                Ok(window) => {
-                    self.store_canary_window(window.clone())?;
-                    Ok(window)
-                }
-                Err(error) => Err(error),
-            },
-        };
+        let mut result = self
+            .runtime
+            .probe(self.config.clone())
+            .await
+            .map_err(map_transport_error)?;
+        let canary_result = self.extract_core_window(&self.canary_context).await;
         let core_evidence = match canary_result {
             Ok(window) => core_canary_capability(&window),
             Err(error) => CapabilityEvidence {
@@ -312,11 +262,9 @@ impl TallyConnector for RuntimeTallyConnector {
         &self,
         context: &RequestContext,
     ) -> Result<CanonicalPackWindow, TallyError> {
-        if context == &self.canary_context {
-            if let Some(window) = self.take_canary_window()? {
-                return Ok(window);
-            }
-        }
+        // Capability probes happen before a durable run receives its started_at timestamp.
+        // Always perform a new source read here, including for the same canary context, so
+        // pre-run observations can never enter the snapshot as if they were run data.
         self.extract_core_window(context).await
     }
 
@@ -346,7 +294,7 @@ impl TallyConnector for RuntimeTallyConnector {
                 ),
                 move |xml| {
                     parse_ledger_period_balance_report(xml).is_ok_and(|parsed| {
-                        parsed.context.company_guid == validation_company_guid
+                        company_guids_equal(&parsed.context.company_guid, &validation_company_guid)
                             && parsed.context.from_yyyymmdd == validation_from
                             && parsed.context.to_yyyymmdd == validation_to
                             && parsed.context.ordinary_books_requested
@@ -356,8 +304,10 @@ impl TallyConnector for RuntimeTallyConnector {
             .await?;
         let parsed = parse_ledger_period_balance_report(&xml)
             .map_err(|_| protocol_error("period_report_invalid"))?;
-        if parsed.context.company_guid != self.company.identity.company_guid
-            || parsed.context.from_yyyymmdd != context.window.from_yyyymmdd
+        if !company_guids_equal(
+            &parsed.context.company_guid,
+            &self.company.identity.company_guid,
+        ) || parsed.context.from_yyyymmdd != context.window.from_yyyymmdd
             || parsed.context.to_yyyymmdd != context.window.to_yyyymmdd
             || !parsed.context.ordinary_books_requested
         {
@@ -394,118 +344,29 @@ impl TallyConnector for RuntimeTallyConnector {
 }
 
 fn core_canary_capability(window: &CanonicalPackWindow) -> CapabilityEvidence {
-    let PackBatch::CoreAccounting(batch) = &window.batch else {
+    let PackBatch::CoreAccounting(_) = &window.batch else {
         return observed_core_capability(
             CapabilityState::Unknown,
             "sealed_profile_executed_unexpected_pack",
         );
     };
-    let mut observed = std::collections::BTreeSet::new();
-    let mut record = |object_type: &str, field: &str| {
-        observed.insert((object_type.to_string(), field.to_string()));
-    };
+    // A successful extraction proves that every sealed export parsed and matched the pinned
+    // company. Returned rows cannot prove that optional fields work when absent, nor that a field
+    // observed in this particular date window is supported generally. Keep one stable, truthful
+    // execution receipt regardless of incidental row population.
+    observed_core_capability(CapabilityState::Unknown, "sealed_profile_executed")
+}
 
-    if !batch.groups.is_empty() {
-        record("group", "source_id");
-        record("group", "name");
-    }
-    if batch
-        .groups
-        .iter()
-        .any(|group| group.parent_source_id.is_some())
-    {
-        record("group", "parent_source_id");
-    }
-    if !batch.ledgers.is_empty() {
-        record("ledger", "source_id");
-        record("ledger", "name");
-    }
-    if batch
-        .ledgers
-        .iter()
-        .any(|ledger| ledger.parent_source_id.is_some())
-    {
-        record("ledger", "parent_source_id");
-    }
-    if batch
-        .ledgers
-        .iter()
-        .any(|ledger| ledger.opening_balance.is_some())
-    {
-        record("ledger", "opening_balance");
-    }
-    if !batch.voucher_types.is_empty() {
-        record("voucher_type", "source_id");
-        record("voucher_type", "name");
-    }
-    if !batch.vouchers.is_empty() {
-        record("voucher", "source_id");
-        record("voucher", "date_yyyymmdd");
-        record("voucher", "voucher_type_source_id");
-        record("voucher", "cancelled");
-        record("voucher", "optional");
-    }
-    if batch
-        .vouchers
-        .iter()
-        .any(|voucher| voucher.voucher_number.is_some())
-    {
-        record("voucher", "voucher_number");
-    }
-    let mut derived_entry_identity_observed = false;
-    if !batch.ledger_entries.is_empty() {
-        let entry_identity_observed = window.record_evidence.as_deref().is_some_and(|evidence| {
-            batch.ledger_entries.iter().all(|entry| {
-                evidence.iter().any(|record| {
-                    if record.object_type.as_str() != "ledger_entry"
-                        || record.source_id.as_str() != entry.source_id
-                    {
-                        return false;
-                    }
-                    if record.identity_kind == bridge_tally_core::SourceIdentityKind::Fallback {
-                        let derived = entry
-                            .source_id
-                            .starts_with("bridge-derived:ledger-entry:v1:");
-                        derived_entry_identity_observed |= derived;
-                        derived
-                    } else {
-                        true
-                    }
-                })
-            })
-        });
-        if entry_identity_observed {
-            record("ledger_entry", "source_id");
-        }
-        record("ledger_entry", "voucher_source_id");
-        record("ledger_entry", "ledger_source_id");
-        record("ledger_entry", "amount");
-        record("ledger_entry", "polarity");
-    }
-
-    let descriptor = CapabilityPackRegistry::descriptor(CapabilityPackId::CoreAccounting);
-    if descriptor.required_fields.iter().all(|required| {
-        observed.contains(&(required.object_type.to_string(), required.field.to_string()))
-    }) {
-        observed_core_capability(
-            CapabilityState::Supported,
-            if derived_entry_identity_observed {
-                "all_required_pack_fields_observed_with_derived_entry_identity"
-            } else {
-                "all_required_pack_fields_observed"
-            },
-        )
-    } else if observed.is_empty() {
-        observed_core_capability(
-            CapabilityState::Unknown,
-            "sealed_profile_executed_no_required_fields_observed",
-        )
-    } else {
-        observed_core_capability(
-            CapabilityState::Unknown,
-            "sealed_profile_executed_incomplete_field_coverage",
-        )
-    }
+/// Returns whether a fresh, identity-bound execution of the sealed Core Accounting profile is
+/// sufficient to start a snapshot attempt.
+///
+/// `Unknown` is deliberately required: a successful sealed execution authorizes a run, but does
+/// not claim that fields absent from the returned rows are supported. Reconciliation retains this
+/// evidence and can therefore finish partial/unverified.
+pub fn core_snapshot_start_authorized(evidence: &CapabilityEvidence) -> bool {
+    evidence.state == CapabilityState::Unknown
+        && evidence.confidence == EvidenceConfidence::Observed
+        && evidence.safe_reason_code.as_deref() == Some("sealed_profile_executed")
 }
 
 fn observed_core_capability(state: CapabilityState, reason: &str) -> CapabilityEvidence {
@@ -534,6 +395,10 @@ pub fn company_source_identity(lineage: &str, company_guid: &str) -> SourceIdent
         company_guid: canonical_guid,
         observed_fingerprint: hex_lower(&digest.finalize()),
     }
+}
+
+fn company_guids_equal(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
 }
 
 fn map_transport_error(error: anyhow::Error) -> TallyError {
@@ -633,6 +498,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator};
 
     #[test]
     fn company_source_identity_is_stable_across_guid_casing() {
@@ -663,9 +529,10 @@ mod tests {
         assert_eq!(evidence.state, CapabilityState::Unknown);
         assert_eq!(
             evidence.safe_reason_code.as_deref(),
-            Some("sealed_profile_executed_no_required_fields_observed")
+            Some("sealed_profile_executed")
         );
         assert_eq!(evidence.confidence, EvidenceConfidence::Observed);
+        assert!(core_snapshot_start_authorized(&evidence));
     }
 
     #[test]
@@ -686,12 +553,13 @@ mod tests {
         assert_eq!(evidence.state, CapabilityState::Unknown);
         assert_eq!(
             evidence.safe_reason_code.as_deref(),
-            Some("sealed_profile_executed_incomplete_field_coverage")
+            Some("sealed_profile_executed")
         );
+        assert!(core_snapshot_start_authorized(&evidence));
     }
 
     #[test]
-    fn fully_populated_canary_accepts_only_bound_derived_entry_identity() {
+    fn fully_populated_canary_does_not_overclaim_field_support() {
         let entry_source_id = "bridge-derived:ledger-entry:v1:synthetic".to_string();
         let window = CanonicalPackWindow {
             batch: PackBatch::CoreAccounting(bridge_tally_core::CoreAccountingBatch {
@@ -747,22 +615,132 @@ mod tests {
 
         let evidence = core_canary_capability(&window);
 
-        assert_eq!(evidence.state, CapabilityState::Supported);
-        assert_eq!(
-            evidence.safe_reason_code.as_deref(),
-            Some("all_required_pack_fields_observed_with_derived_entry_identity")
-        );
-
-        let mut unbound = window;
-        unbound.record_evidence.as_mut().unwrap()[0].source_id =
-            bridge_tally_core::SourceRecordId::parse("unbound-fallback-entry").unwrap();
-        let evidence = core_canary_capability(&unbound);
-
         assert_eq!(evidence.state, CapabilityState::Unknown);
         assert_eq!(
             evidence.safe_reason_code.as_deref(),
-            Some("sealed_profile_executed_incomplete_field_coverage")
+            Some("sealed_profile_executed")
         );
+        assert!(core_snapshot_start_authorized(&evidence));
+    }
+
+    #[test]
+    fn failed_or_unobserved_canary_cannot_authorize_snapshot_start() {
+        for evidence in [
+            CapabilityEvidence {
+                state: CapabilityState::Unknown,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: Some("voucher_export_invalid".to_string()),
+            },
+            CapabilityEvidence {
+                state: CapabilityState::Unknown,
+                confidence: EvidenceConfidence::Unknown,
+                safe_reason_code: Some("sealed_profile_executed".to_string()),
+            },
+            CapabilityEvidence {
+                state: CapabilityState::Supported,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: Some("release_claimed_support".to_string()),
+            },
+        ] {
+            assert!(!core_snapshot_start_authorized(&evidence));
+        }
+    }
+
+    #[test]
+    fn period_report_company_guid_matching_is_ascii_case_insensitive_only() {
+        assert!(company_guids_equal(
+            "4C42A771-AbCd-4DeF-8AbC-001122AaBbCc",
+            "4c42a771-abcd-4def-8abc-001122aabbcc"
+        ));
+        assert!(!company_guids_equal("company-guid-a", "company-guid-b"));
+        assert!(!company_guids_equal("company-guid", " company-guid "));
+    }
+
+    #[tokio::test]
+    async fn same_context_snapshot_read_does_not_reuse_pre_run_canary_rows() {
+        let company_guid = "synthetic-company-guid";
+        let empty_export = |schema: &str, object_type: &str| {
+            format!(
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{schema}" OBJECTTYPE="{object_type}" NAME="Synthetic Company" GUID="{company_guid}" RECORDCOUNT="0"/></BODY></ENVELOPE>"#
+            )
+        };
+        let second_group = format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{}" OBJECTTYPE="GROUP" NAME="Synthetic Company" GUID="{company_guid}" RECORDCOUNT="1"/><GROUP NAME="Post-start Assets" GUID="post-start-group"><PARENT></PARENT></GROUP></BODY></ENVELOPE>"#,
+            bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA
+        );
+        let plans = [
+            empty_export(bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA, "GROUP"),
+            empty_export(bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA, "LEDGER"),
+            empty_export(
+                bridge_tally_protocol::BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
+                "VOUCHERTYPE",
+            ),
+            empty_export(
+                bridge_tally_protocol::BRIDGE_VOUCHER_EXPORT_SCHEMA,
+                "VOUCHER",
+            ),
+            second_group,
+            empty_export(bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA, "LEDGER"),
+            empty_export(
+                bridge_tally_protocol::BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
+                "VOUCHERTYPE",
+            ),
+            empty_export(
+                bridge_tally_protocol::BRIDGE_VOUCHER_EXPORT_SCHEMA,
+                "VOUCHER",
+            ),
+        ]
+        .into_iter()
+        .map(Fixture::SyntheticXml)
+        .map(ScenarioPlan::new)
+        .collect();
+        let simulator = SequenceSimulator::spawn(plans).expect("spawn sequence simulator");
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{}", simulator.address()),
+                company_guid,
+            ),
+            display_name: "Synthetic Company".to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-canary-lifecycle".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let connector = RuntimeTallyConnector::new(
+            TallyRuntime::default(),
+            TallyConfig {
+                host: simulator.address().ip().to_string(),
+                port: simulator.address().port(),
+            },
+            company,
+            context.clone(),
+        )
+        .unwrap();
+
+        let pre_run_canary = connector.extract_core_window(&context).await.unwrap();
+        let PackBatch::CoreAccounting(pre_run_batch) = pre_run_canary.batch else {
+            panic!("expected core canary batch");
+        };
+        assert!(pre_run_batch.groups.is_empty());
+
+        let snapshot_window = connector.read_pack_window(&context).await.unwrap();
+        let PackBatch::CoreAccounting(snapshot_batch) = snapshot_window.batch else {
+            panic!("expected core snapshot batch");
+        };
+        assert_eq!(snapshot_batch.groups.len(), 1);
+        assert_eq!(snapshot_batch.groups[0].source_id, "post-start-group");
+
+        let requests = simulator.finish().expect("finish sequence simulator");
+        assert_eq!(requests.len(), 8);
+        assert!(requests.iter().all(|request| request.method == "POST"));
     }
 
     #[test]
