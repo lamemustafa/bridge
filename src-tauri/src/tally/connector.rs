@@ -503,14 +503,15 @@ pub fn source_lineage(config: &TallyConfig) -> Result<String, TallyError> {
 }
 
 pub fn company_source_identity(lineage: &str, company_guid: &str) -> SourceIdentity {
+    let canonical_guid = company_guid.to_ascii_lowercase();
     let mut digest = Sha256::new();
     digest.update(b"bridge-tally-company-observation-v1\0");
     digest.update(lineage.as_bytes());
     digest.update(b"\0");
-    digest.update(company_guid.as_bytes());
+    digest.update(canonical_guid.as_bytes());
     SourceIdentity {
         bridge_source_lineage: lineage.to_string(),
-        company_guid: company_guid.to_string(),
+        company_guid: canonical_guid,
         observed_fingerprint: hex_lower(&digest.finalize()),
     }
 }
@@ -612,6 +613,24 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn company_source_identity_is_stable_across_guid_casing() {
+        let lowercase = company_source_identity(
+            "tally_xml_http:http://127.0.0.1:9000",
+            "4c42a771-abcd-4def-8abc-001122aabbcc",
+        );
+        let mixed_case = company_source_identity(
+            "tally_xml_http:http://127.0.0.1:9000",
+            "4C42A771-AbCd-4DeF-8AbC-001122AaBbCc",
+        );
+
+        assert_eq!(mixed_case, lowercase);
+        assert_eq!(
+            mixed_case.company_guid,
+            "4c42a771-abcd-4def-8abc-001122aabbcc"
+        );
+    }
 
     #[test]
     fn empty_sealed_canary_stays_unknown() {
