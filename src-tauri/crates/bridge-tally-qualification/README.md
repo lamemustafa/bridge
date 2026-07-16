@@ -31,7 +31,8 @@ cargo run --locked --release -p bridge-tally-qualification -- run ci-smoke targe
 ```
 
 Supported scenario names are `ci-smoke`, `small-1k`, `medium-50k`,
-`large-500k`, and `deep-voucher`. The 50k and 500k cases are explicitly
-windowed corpora, never one enormous Tally response. Debug or hosted-runner
-measurements are diagnostic only. No baseline comparator or performance budget
-exists in schema v1.
+`large-500k`, and `large-voucher`. The deprecated `deep-voucher` spelling is
+accepted as an alias for `large-voucher`; no parser-depth claim is made. The
+50k and 500k cases are explicitly windowed corpora, never one enormous Tally
+response. Debug or hosted-runner measurements are diagnostic only. No baseline
+comparator or performance budget exists in schema v1.

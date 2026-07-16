@@ -134,11 +134,13 @@ fn controller(
     let mut samples = Vec::with_capacity(usize::from(sample_count));
     for ordinal in 0..sample_count {
         let child = run_worker(&executable, &input_path, scenario.worker_timeout())?;
-        if !child.status.success()
-            || child.stdout.len() > MAX_CHILD_OUTPUT_BYTES
+        if child.stdout.len() > MAX_CHILD_OUTPUT_BYTES
             || child.stderr.len() > MAX_CHILD_OUTPUT_BYTES
         {
             return Err("worker_failed");
+        }
+        if !child.status.success() {
+            return Err(classify_worker_failure(&child.stderr));
         }
         let result: WorkerResult =
             serde_json::from_slice(&child.stdout).map_err(|_| "worker_output_invalid")?;
@@ -179,6 +181,38 @@ fn controller(
         .persist(output)
         .map_err(|_| "receipt_replace_failed")?;
     Ok(())
+}
+
+fn classify_worker_failure(stderr: &[u8]) -> &'static str {
+    let Ok(message) = std::str::from_utf8(stderr) else {
+        return "worker_failed";
+    };
+    let Some(code) = message
+        .lines()
+        .find_map(|line| line.strip_prefix("bridge_tally_qualification_failed:"))
+    else {
+        return "worker_failed";
+    };
+    match code {
+        "worker_input_read_failed" => "worker_input_read_failed",
+        "worker_input_too_large" => "worker_input_too_large",
+        "worker_input_invalid" => "worker_input_invalid",
+        "window_read_failed" => "window_read_failed",
+        "window_size_limit" => "window_size_limit",
+        "window_manifest_mismatch" => "window_manifest_mismatch",
+        "window_decode_failed" => "window_decode_failed",
+        "window_parse_failed" => "window_parse_failed",
+        "parsed_record_count_mismatch" => "parsed_record_count_mismatch",
+        "parsed_count_overflow" => "parsed_count_overflow",
+        "parsed_entry_count_mismatch" => "parsed_entry_count_mismatch",
+        "parsed_semantics_mismatch" => "parsed_semantics_mismatch",
+        "elapsed_overflow" => "elapsed_overflow",
+        "zero_elapsed" => "zero_elapsed",
+        "worker_output_invalid" => "worker_output_invalid",
+        "worker_output_too_large" => "worker_output_too_large",
+        "worker_output_failed" => "worker_output_failed",
+        _ => "worker_failed",
+    }
 }
 
 fn run_worker(
@@ -484,6 +518,60 @@ fn peak_resident_bytes() -> Option<(u64, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ci_smoke_generated_window_is_consumable_by_reviewed_parser() {
+        let spec = Scenario::CiSmoke.corpus(7);
+        let (bytes, generated) =
+            generate_voucher_window(Vec::new(), spec.window(0).unwrap()).unwrap();
+        let decoded =
+            decode_tally_text_bytes_limited(&bytes, RESPONSE_LIMIT_BYTES as usize).unwrap();
+        let parsed = parse_voucher_source_records_with_evidence(&decoded.text).unwrap();
+        assert_eq!(parsed.records.len(), generated.record_count as usize);
+        assert_eq!(
+            parsed
+                .records
+                .iter()
+                .map(|record| record.record.ledger_entries.len() as u64)
+                .sum::<u64>(),
+            generated.ledger_entry_count
+        );
+    }
+
+    #[test]
+    fn large_voucher_alias_is_schema_valid_and_consumable() {
+        assert_eq!(
+            Scenario::parse("deep-voucher"),
+            Some(Scenario::LargeVoucher)
+        );
+        assert_eq!(
+            Scenario::parse("large-voucher"),
+            Some(Scenario::LargeVoucher)
+        );
+        let spec = Scenario::LargeVoucher.corpus(7);
+        assert_eq!(spec.nesting_depth, 0);
+        let (bytes, generated) =
+            generate_voucher_window(Vec::new(), spec.window(0).unwrap()).unwrap();
+        let decoded =
+            decode_tally_text_bytes_limited(&bytes, RESPONSE_LIMIT_BYTES as usize).unwrap();
+        let parsed = parse_voucher_source_records_with_evidence(&decoded.text).unwrap();
+        assert_eq!(parsed.records.len(), 1);
+        assert_eq!(generated.ledger_entry_count, 256);
+        assert_eq!(parsed.records[0].record.ledger_entries.len(), 256);
+    }
+
+    #[test]
+    fn worker_failure_classification_is_allowlisted() {
+        assert_eq!(
+            classify_worker_failure(b"bridge_tally_qualification_failed:window_parse_failed\n"),
+            "window_parse_failed"
+        );
+        assert_eq!(
+            classify_worker_failure(b"bridge_tally_qualification_failed:secret-value\n"),
+            "worker_failed"
+        );
+        assert_eq!(classify_worker_failure(&[0xff]), "worker_failed");
+    }
 
     #[test]
     fn maximum_window_manifest_fits_the_dedicated_worker_input_cap() {
