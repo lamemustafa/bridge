@@ -24,7 +24,8 @@ current source.
   remains usable without displaying stale company data.
 - Snapshot lifecycle probes no longer replace interactive setup-review state;
   restart admission uses the exact sealed Core receipt, and ambiguous duplicate
-  live company identities fail before any snapshot read.
+  live company identities fail before any snapshot read with their concrete
+  terminal proof reason preserved.
 
 ### Added
 

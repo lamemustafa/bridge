@@ -3136,6 +3136,8 @@ fn tally_error_code(error: &TallyError) -> &'static str {
             "capability_cache_unavailable" => "capability_cache_unavailable",
             "capability_probe_required" => "capability_probe_required",
             "company_export_invalid" => "company_export_invalid",
+            "company_identity_ambiguous" => "company_identity_ambiguous",
+            "company_identity_not_found" => "company_identity_not_found",
             "group_export_invalid" => "group_export_invalid",
             "http_status_failure" => "http_status_failure",
             "ledger_export_invalid" => "ledger_export_invalid",
@@ -5669,6 +5671,18 @@ mod tests {
                     code: "company_identity_mismatch".to_string(),
                 },
                 "company_identity_mismatch",
+            ),
+            (
+                TallyError::Protocol {
+                    code: "company_identity_not_found".to_string(),
+                },
+                "company_identity_not_found",
+            ),
+            (
+                TallyError::Protocol {
+                    code: "company_identity_ambiguous".to_string(),
+                },
+                "company_identity_ambiguous",
             ),
             (
                 TallyError::Unsupported {
