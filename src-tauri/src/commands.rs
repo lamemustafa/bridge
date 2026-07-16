@@ -1487,7 +1487,7 @@ pub async fn resume_tally_core_snapshot(
         );
     }
     if !mirror
-        .capability_snapshot_matches_plan(
+        .core_snapshot_resume_evidence_matches_plan(
             &plan.capability_snapshot_id,
             &plan.mirror_company_id,
             plan.capability_profile_version,

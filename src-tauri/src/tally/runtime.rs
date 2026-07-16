@@ -621,6 +621,25 @@ impl TallyRuntime {
         Ok((review_id, observed_at_unix_ms, result))
     }
 
+    /// Observe the endpoint for snapshot admission without creating or replacing
+    /// an interactive setup review. Snapshot start and end probes are lifecycle
+    /// evidence, not user-reviewed setup state, so they must remain uncached.
+    pub(crate) async fn snapshot_probe_with_observation(
+        &self,
+        config: TallyConfig,
+    ) -> anyhow::Result<(i64, TallyProbeResult)> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        let result = self
+            .execute(
+                config,
+                ReadOperation::Capability,
+                ReadRetryPolicy::SINGLE_ATTEMPT,
+                |client| async move { client.probe().await },
+            )
+            .await?;
+        Ok((chrono::Utc::now().timestamp_millis(), result))
+    }
+
     pub async fn probe(&self, config: TallyConfig) -> anyhow::Result<TallyProbeResult> {
         self.probe_with_observation(config)
             .await

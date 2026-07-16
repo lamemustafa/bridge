@@ -9,6 +9,7 @@ use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
 
 use crate::sync::reconciliation::CommitBatchInput;
+use crate::tally::core_snapshot_start_authorized_codes;
 
 const MIRROR_MIGRATION_V2: &str = include_str!("migrations/0002_tally_mirror.sql");
 const MIRROR_MIGRATION_V3: &str = include_str!("migrations/0003_tally_safe_writes.sql");
@@ -847,6 +848,65 @@ impl TallyMirrorRepository {
         })
     }
 
+    /// Validates the encrypted capability receipt used by Core Accounting restart recovery.
+    ///
+    /// This is deliberately Core-specific. Other packs keep their own `Supported + Observed`
+    /// authorization semantics, while Core resumes only from the exact sealed-profile execution
+    /// receipt accepted by a fresh start.
+    pub async fn core_snapshot_resume_evidence_matches_plan(
+        &self,
+        snapshot_id: &str,
+        company_id: &str,
+        profile_version: u16,
+        product: &str,
+        release: Option<&str>,
+        mode: Option<&str>,
+    ) -> Result<bool, MirrorError> {
+        validate_nonempty(snapshot_id, 128, "capability_snapshot_id")?;
+        validate_nonempty(company_id, 128, "company_id")?;
+        if profile_version == 0 {
+            return Err(MirrorError::InvalidInput("profile_version"));
+        }
+        validate_nonempty(product, 128, "product")?;
+        validate_optional_text(release, 128, "release")?;
+        validate_optional_text(mode, 64, "mode")?;
+        let evidence = sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT pack.capability_state, pack.confidence, pack.safe_reason_code \
+             FROM tally_capability_snapshots AS snapshot \
+             JOIN tally_companies AS company ON company.endpoint_id = snapshot.endpoint_id \
+             JOIN tally_capability_items AS pack ON pack.snapshot_id = snapshot.id \
+             WHERE snapshot.id = ?1 AND company.id = ?2 \
+               AND snapshot.profile_version = ?3 AND snapshot.product = ?4 \
+               AND snapshot.release IS ?5 AND snapshot.mode IS ?6 \
+               AND EXISTS (SELECT 1 FROM tally_capability_items AS transport \
+                 WHERE transport.snapshot_id = snapshot.id \
+                   AND transport.capability_kind = 'transport' \
+                   AND transport.capability_key = 'xml_http' \
+                   AND transport.capability_state = 'supported' \
+                   AND transport.confidence = 'observed') \
+               AND pack.capability_kind = 'pack' \
+               AND pack.capability_key = 'core_accounting'",
+        )
+        .bind(snapshot_id)
+        .bind(company_id)
+        .bind(i64::from(profile_version))
+        .bind(product)
+        .bind(release)
+        .bind(mode)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(
+            evidence.is_some_and(|(state, confidence, safe_reason_code)| {
+                core_snapshot_start_authorized_codes(
+                    &state,
+                    &confidence,
+                    safe_reason_code.as_deref(),
+                )
+            }),
+        )
+    }
+
+    /// Retains the ordinary observed-support contract used by non-snapshot capability flows.
     pub async fn capability_snapshot_matches_plan(
         &self,
         snapshot_id: &str,
@@ -3005,6 +3065,7 @@ fn validate_export_code(value: &str) -> Result<(), MirrorError> {
                 | "capability_profile_changed"
                 | "capability_profile_drift_check_unavailable"
                 | "capability_profile_changed_during_run"
+                | "company_identity_ambiguous"
                 | "company_identity_not_found"
                 | "complete_source_count_disagreement"
                 | "duplicate_record_across_windows"
@@ -3884,6 +3945,21 @@ mod tests {
     async fn seed_repository(
         repository: TallyMirrorRepository,
     ) -> (TallyMirrorRepository, CapabilitySnapshotRef, CompanyRef) {
+        seed_repository_with_core_evidence(
+            repository,
+            CapabilityState::Supported,
+            Confidence::Observed,
+            None,
+        )
+        .await
+    }
+
+    async fn seed_repository_with_core_evidence(
+        repository: TallyMirrorRepository,
+        core_state: CapabilityState,
+        core_confidence: Confidence,
+        core_reason: Option<&str>,
+    ) -> (TallyMirrorRepository, CapabilitySnapshotRef, CompanyRef) {
         let snapshot = repository
             .save_capability_snapshot(CapabilitySnapshotInput {
                 canonical_origin: "http://127.0.0.1:9000".to_string(),
@@ -3904,9 +3980,9 @@ mod tests {
                     CapabilityItemInput {
                         kind: CapabilityKind::Pack,
                         key: "core_accounting".to_string(),
-                        state: CapabilityState::Supported,
-                        confidence: Confidence::Observed,
-                        safe_reason_code: None,
+                        state: core_state,
+                        confidence: core_confidence,
+                        safe_reason_code: core_reason.map(str::to_string),
                     },
                 ],
             })
@@ -3930,6 +4006,14 @@ mod tests {
 
     async fn seeded_repository() -> (TallyMirrorRepository, CapabilitySnapshotRef, CompanyRef) {
         seed_repository(repository().await).await
+    }
+
+    async fn seeded_repository_with_core_evidence(
+        state: CapabilityState,
+        confidence: Confidence,
+        reason: Option<&str>,
+    ) -> (TallyMirrorRepository, CapabilitySnapshotRef, CompanyRef) {
+        seed_repository_with_core_evidence(repository().await, state, confidence, reason).await
     }
 
     fn reviewed_setup_input(review_commitment_sha256: &str) -> ReviewedSetupInput {
@@ -5320,10 +5404,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capability_resume_binding_requires_exact_profile_and_observed_authority() {
-        let (repository, snapshot, company) = seeded_repository().await;
-        assert!(repository
+    async fn commit_pending_restart_accepts_only_exact_sealed_core_evidence() {
+        let (ordinary, ordinary_snapshot, ordinary_company) = seeded_repository().await;
+        assert!(ordinary
             .capability_snapshot_matches_plan(
+                &ordinary_snapshot.id,
+                &ordinary_company.id,
+                1,
+                "TallyPrime",
+                None,
+                Some("Education"),
+            )
+            .await
+            .expect("ordinary observed-support contract remains available to other flows"));
+
+        let (repository, snapshot, company) = seeded_repository_with_core_evidence(
+            CapabilityState::Unknown,
+            Confidence::Observed,
+            Some("sealed_profile_executed"),
+        )
+        .await;
+        assert!(repository
+            .core_snapshot_resume_evidence_matches_plan(
                 &snapshot.id,
                 &company.id,
                 1,
@@ -5332,9 +5434,45 @@ mod tests {
                 Some("Education"),
             )
             .await
-            .expect("validate exact capability evidence"));
+            .expect("CommitPending restart accepts exact sealed Core evidence"));
+
+        for (state, confidence, reason) in [
+            (
+                CapabilityState::Supported,
+                Confidence::Observed,
+                "sealed_profile_executed",
+            ),
+            (
+                CapabilityState::Unknown,
+                Confidence::Inferred,
+                "sealed_profile_executed",
+            ),
+            (
+                CapabilityState::Unknown,
+                Confidence::Observed,
+                "some_other_observation",
+            ),
+        ] {
+            let (altered, altered_snapshot, altered_company) =
+                seeded_repository_with_core_evidence(state, confidence, Some(reason)).await;
+            assert!(
+                !altered
+                    .core_snapshot_resume_evidence_matches_plan(
+                        &altered_snapshot.id,
+                        &altered_company.id,
+                        1,
+                        "TallyPrime",
+                        None,
+                        Some("Education"),
+                    )
+                    .await
+                    .expect("reject altered persisted Core evidence"),
+                "resume must reject state={state:?}, confidence={confidence:?}, reason={reason}"
+            );
+        }
+
         assert!(!repository
-            .capability_snapshot_matches_plan(
+            .core_snapshot_resume_evidence_matches_plan(
                 &snapshot.id,
                 &company.id,
                 1,

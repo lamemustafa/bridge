@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, Building2, Cable, CircleHelp, Cloud, Database, FileText, FolderOpen, KeyRound, Play, RefreshCw, ShieldCheck, UploadCloud } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { clearCompanyScopedState, reconcileProbeCompanySelection } from "./tally-company-selection";
+import { applyProbeCompanySelectionTransition, clearCompanyScopedState } from "./tally-company-selection";
 import "./styles.css";
 
 type TallyConfig = {
@@ -909,24 +909,31 @@ function App() {
     try {
       const result = await invoke<TallyProbeResult>("probe_tally", { config });
       if (resultsVersion === tallyResultsVersion.current) {
-        setStatus(result.connection);
-        setPassport(result.profile);
-        setProfileSha256(result.profile_sha256);
-        setReviewId(result.review_id);
-        setReviewCommitmentSha256(result.review_commitment_sha256);
-        setSelectedReadScope(result.selected_read_scope ?? null);
-        setPassportSnapshotId(result.passport_snapshot_id ?? null);
         const liveCompanies = result.companies.map((company) => ({
           ...company,
           canonical_endpoint: result.canonical_origin,
           last_observed_at_unix_ms: result.observed_at_unix_ms,
         }));
         const nextLiveCompanyKeys = liveCompanies.map(tallyCompanyKey);
-        const selection = reconcileProbeCompanySelection(selectedCompany, nextLiveCompanyKeys);
-        setCompanies((current) => mergeTallyCompanies(liveCompanies, current));
-        setLiveCompanyKeys(nextLiveCompanyKeys);
+        const selection = applyProbeCompanySelectionTransition(
+          selectedCompany,
+          nextLiveCompanyKeys,
+          {
+            clearDroppedCompanyScope: clearSelectedCompanyScope,
+            installProbeState: () => {
+              setStatus(result.connection);
+              setPassport(result.profile);
+              setProfileSha256(result.profile_sha256);
+              setReviewId(result.review_id);
+              setReviewCommitmentSha256(result.review_commitment_sha256);
+              setSelectedReadScope(result.selected_read_scope ?? null);
+              setPassportSnapshotId(result.passport_snapshot_id ?? null);
+              setCompanies((current) => mergeTallyCompanies(liveCompanies, current));
+              setLiveCompanyKeys(nextLiveCompanyKeys);
+            },
+          },
+        );
         setSelectedCompany(selection.selectedCompany);
-        if (selection.dropped) clearSelectedCompanyScope();
         void refreshPersistedCompanyProfiles();
       }
     } catch (error) {

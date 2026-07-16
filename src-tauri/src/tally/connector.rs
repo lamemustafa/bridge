@@ -173,41 +173,30 @@ impl RuntimeTallyConnector {
 
         build_core_window(context, groups, ledgers, voucher_types, vouchers)
     }
-}
 
-#[async_trait::async_trait]
-impl TallyConnector for RuntimeTallyConnector {
-    async fn probe(&self) -> Result<ProbeResult, TallyError> {
-        let mut result = self
+    async fn snapshot_probe(&self) -> Result<ProbeResult, TallyError> {
+        let (_, mut result) = self
             .runtime
-            .probe(self.config.clone())
+            .snapshot_probe_with_observation(self.config.clone())
             .await
             .map_err(map_transport_error)?;
-        let canary_result = self.extract_core_window(&self.canary_context).await;
-        let core_evidence = match canary_result {
-            Ok(window) => core_canary_capability(&window),
-            Err(error) => CapabilityEvidence {
-                state: CapabilityState::Unknown,
-                confidence: EvidenceConfidence::Observed,
-                safe_reason_code: Some(capability_failure_code(&error)),
-            },
-        };
-        result
-            .profile
-            .packs
-            .insert(CapabilityPackId::CoreAccounting, core_evidence);
-        Ok(ProbeResult {
-            reachable: result.connection.reachable,
-            profile: result.profile,
-        })
-    }
-
-    async fn probe_fresh(&self) -> Result<ProbeResult, TallyError> {
-        let mut result = self
-            .runtime
-            .probe(self.config.clone())
-            .await
-            .map_err(map_transport_error)?;
+        let matching_companies = result
+            .companies
+            .iter()
+            .filter(|company| {
+                company.guid.as_deref().is_some_and(|guid| {
+                    company_guids_equal(guid, &self.company.identity.company_guid)
+                })
+            })
+            .take(2)
+            .count();
+        if matching_companies != 1 {
+            return Err(protocol_error(if matching_companies == 0 {
+                "company_identity_not_found"
+            } else {
+                "company_identity_ambiguous"
+            }));
+        }
         let core_evidence = match self.extract_core_window(&self.canary_context).await {
             Ok(window) => core_canary_capability(&window),
             Err(error) => CapabilityEvidence {
@@ -225,15 +214,22 @@ impl TallyConnector for RuntimeTallyConnector {
             profile: result.profile,
         })
     }
+}
+
+#[async_trait::async_trait]
+impl TallyConnector for RuntimeTallyConnector {
+    async fn probe(&self) -> Result<ProbeResult, TallyError> {
+        self.snapshot_probe().await
+    }
+
+    async fn probe_fresh(&self) -> Result<ProbeResult, TallyError> {
+        self.snapshot_probe().await
+    }
 
     async fn discover_companies(&self) -> Result<Vec<CompanyRef>, TallyError> {
-        let origin = self
-            .runtime
-            .cached_probe(&self.config)
-            .map_err(|_| protocol_error("capability_cache_unavailable"))?;
-        if origin.is_none() {
-            return Err(protocol_error("capability_probe_required"));
-        }
+        // A reviewed setup consumes its interactive probe cache before the snapshot starts.
+        // Runtime discovery is a fresh, validated company-list read and must not depend on or
+        // recreate that single-use UI authority.
         let lineage = source_lineage(&self.config)?;
         let companies = parse_companies(
             &self
@@ -364,9 +360,42 @@ fn core_canary_capability(window: &CanonicalPackWindow) -> CapabilityEvidence {
 /// not claim that fields absent from the returned rows are supported. Reconciliation retains this
 /// evidence and can therefore finish partial/unverified.
 pub fn core_snapshot_start_authorized(evidence: &CapabilityEvidence) -> bool {
-    evidence.state == CapabilityState::Unknown
-        && evidence.confidence == EvidenceConfidence::Observed
-        && evidence.safe_reason_code.as_deref() == Some("sealed_profile_executed")
+    core_snapshot_start_authorized_codes(
+        capability_state_code(evidence.state),
+        evidence_confidence_code(evidence.confidence),
+        evidence.safe_reason_code.as_deref(),
+    )
+}
+
+/// Storage-level form of [`core_snapshot_start_authorized`]. Persisted restart evidence must use
+/// this predicate too, so a resume cannot accidentally drift back to the broader `Supported +
+/// Observed` convention used by other capability packs.
+pub(crate) fn core_snapshot_start_authorized_codes(
+    state: &str,
+    confidence: &str,
+    safe_reason_code: Option<&str>,
+) -> bool {
+    state == "unknown"
+        && confidence == "observed"
+        && safe_reason_code == Some("sealed_profile_executed")
+}
+
+fn capability_state_code(state: CapabilityState) -> &'static str {
+    match state {
+        CapabilityState::Supported => "supported",
+        CapabilityState::Unsupported => "unsupported",
+        CapabilityState::Unknown => "unknown",
+        CapabilityState::NotConfigured => "not_configured",
+    }
+}
+
+fn evidence_confidence_code(confidence: EvidenceConfidence) -> &'static str {
+    match confidence {
+        EvidenceConfidence::Documented => "documented",
+        EvidenceConfidence::Observed => "observed",
+        EvidenceConfidence::Inferred => "inferred",
+        EvidenceConfidence::Unknown => "unknown",
+    }
 }
 
 fn observed_core_capability(state: CapabilityState, reason: &str) -> CapabilityEvidence {
@@ -498,7 +527,13 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator};
+    use std::sync::OnceLock;
+    use tally_protocol_simulator::{Fixture, ProductStatus, ScenarioPlan, SequenceSimulator};
+
+    fn simulator_test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
 
     #[test]
     fn company_source_identity_is_stable_across_guid_casing() {
@@ -657,7 +692,199 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn duplicate_company_snapshot_probe_stops_before_core_exports() {
+        let _simulator_guard = simulator_test_lock().lock().await;
+        let company_guid = "synthetic-company-guid";
+        let duplicate_company_xml = format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company A</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company B</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>"#
+        );
+        let simulator = SequenceSimulator::spawn(vec![
+            ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime)),
+            ScenarioPlan::new(Fixture::SyntheticXml(duplicate_company_xml)),
+        ])
+        .expect("spawn duplicate-company simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{}", simulator.address()),
+                company_guid,
+            ),
+            display_name: "Synthetic Company A".to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-ambiguous-company-probe".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let connector =
+            RuntimeTallyConnector::new(TallyRuntime::default(), config, company, context).unwrap();
+
+        let error = connector
+            .probe()
+            .await
+            .expect_err("ambiguous company identity must stop the canary");
+        assert!(matches!(
+            error,
+            TallyError::Protocol { code } if code == "company_identity_ambiguous"
+        ));
+        let requests = simulator.finish().expect("finish duplicate simulator");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(requests[1].method, "POST");
+    }
+
+    #[tokio::test]
+    async fn snapshot_start_and_end_probes_preserve_setup_review_and_read_transport_freshly() {
+        let _simulator_guard = simulator_test_lock().lock().await;
+        let company_guid = "synthetic-company-guid";
+        let company_xml = format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>"#
+        );
+        let empty_export = |schema: &str, object_type: &str| {
+            format!(
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{schema}" OBJECTTYPE="{object_type}" NAME="Synthetic Company" GUID="{company_guid}" RECORDCOUNT="0"/></BODY></ENVELOPE>"#
+            )
+        };
+        let mut plans = vec![
+            ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime)),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_xml.clone())),
+        ];
+        for _ in 0..2 {
+            plans.extend([
+                ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime)),
+                ScenarioPlan::new(Fixture::SyntheticXml(company_xml.clone())),
+                ScenarioPlan::new(Fixture::SyntheticXml(empty_export(
+                    bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA,
+                    "GROUP",
+                ))),
+                ScenarioPlan::new(Fixture::SyntheticXml(empty_export(
+                    bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA,
+                    "LEDGER",
+                ))),
+                ScenarioPlan::new(Fixture::SyntheticXml(empty_export(
+                    bridge_tally_protocol::BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
+                    "VOUCHERTYPE",
+                ))),
+                ScenarioPlan::new(Fixture::SyntheticXml(empty_export(
+                    bridge_tally_protocol::BRIDGE_VOUCHER_EXPORT_SCHEMA,
+                    "VOUCHER",
+                ))),
+            ]);
+        }
+        plans.push(ScenarioPlan::new(Fixture::SyntheticXml(
+            company_xml.clone(),
+        )));
+        let simulator = SequenceSimulator::spawn(plans).expect("spawn sequence simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+        let (review_id, observed_at_unix_ms, reviewed) = runtime
+            .probe_with_observation(config.clone())
+            .await
+            .expect("install interactive setup review");
+        assert!(reviewed.connection.reachable);
+        let reviewed_company_count = reviewed.companies.len();
+        let reviewed_product = reviewed.profile.product.clone();
+
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{}", simulator.address()),
+                company_guid,
+            ),
+            display_name: "Synthetic Company".to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-uncached-probes".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let connector =
+            RuntimeTallyConnector::new(runtime.clone(), config.clone(), company, context).unwrap();
+
+        let start = connector.probe().await.expect("snapshot start probe");
+        let end = connector.probe_fresh().await.expect("snapshot end probe");
+        let start_evidence = start
+            .profile
+            .packs
+            .get(&CapabilityPackId::CoreAccounting)
+            .unwrap();
+        assert!(
+            core_snapshot_start_authorized(start_evidence),
+            "start evidence was {start_evidence:?}"
+        );
+        let end_evidence = end
+            .profile
+            .packs
+            .get(&CapabilityPackId::CoreAccounting)
+            .unwrap();
+        assert!(
+            core_snapshot_start_authorized(end_evidence),
+            "end evidence was {end_evidence:?}"
+        );
+
+        let mut preserved = runtime
+            .reserve_cached_probe_fresh(&config, &review_id, 300_000)
+            .expect("review cache remains readable")
+            .expect("snapshot probes preserve interactive review");
+        assert_eq!(preserved.review_id(), review_id);
+        assert_eq!(preserved.observed_at_unix_ms(), observed_at_unix_ms);
+        assert_eq!(preserved.result().companies.len(), reviewed_company_count);
+        assert_eq!(preserved.result().profile.product, reviewed_product);
+        assert!(preserved.release().expect("release preserved review"));
+
+        let mut consumed = runtime
+            .reserve_cached_probe_fresh(&config, &review_id, 300_000)
+            .expect("review cache remains reservable")
+            .expect("preserved review is still present");
+        assert!(consumed.consume().expect("consume setup review"));
+        assert!(runtime.cached_probe(&config).unwrap().is_none());
+        let discovered = connector
+            .discover_companies()
+            .await
+            .expect("snapshot discovery is independent of consumed setup review");
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].identity, connector.company.identity);
+
+        let requests = simulator.finish().expect("finish sequence simulator");
+        assert_eq!(requests.len(), 15);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.method == "GET")
+                .count(),
+            3
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.method == "POST")
+                .count(),
+            12
+        );
+    }
+
+    #[tokio::test]
     async fn same_context_snapshot_read_does_not_reuse_pre_run_canary_rows() {
+        let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "synthetic-company-guid";
         let empty_export = |schema: &str, object_type: &str| {
             format!(

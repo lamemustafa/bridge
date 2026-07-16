@@ -2010,19 +2010,28 @@ where
             }
         };
         match companies {
-            Ok(companies)
-                if companies
+            Ok(companies) => {
+                // Setup rejects ambiguous case-insensitive GUID matches. Preserve that invariant
+                // at execution time: after setup, Tally may load another company that resolves to
+                // the same canonical identity, and selecting either by display name would no
+                // longer establish which company supplied the proof-bound records.
+                let matching_identities = companies
                     .iter()
-                    .any(|company| company.identity == plan.company.identity) => {}
-            Ok(_) => {
-                return self
-                    .finish_terminal(
-                        plan,
-                        state,
-                        TerminalKind::Failed,
-                        "company_identity_not_found",
-                    )
-                    .await;
+                    .filter(|company| company.identity == plan.company.identity)
+                    .take(2)
+                    .count();
+                if matching_identities == 1 {
+                    // Exactly one live company remains bound to the reviewed identity.
+                } else {
+                    let reason = if matching_identities == 0 {
+                        "company_identity_not_found"
+                    } else {
+                        "company_identity_ambiguous"
+                    };
+                    return self
+                        .finish_terminal(plan, state, TerminalKind::Failed, reason)
+                        .await;
+                }
             }
             Err(error) => {
                 let code = tally_error_code(&error);
@@ -3373,6 +3382,10 @@ mod tests {
         inner: FakeConnector,
     }
 
+    struct AmbiguousCompanyConnector {
+        inner: FakeConnector,
+    }
+
     #[async_trait]
     impl SnapshotStateStore for HeartbeatCountingStore {
         async fn load(
@@ -3558,6 +3571,28 @@ mod tests {
                     PackBatch::CoreAccounting(CoreAccountingBatch::default()),
                 ))
             })
+        }
+    }
+
+    #[async_trait]
+    impl TallyConnector for AmbiguousCompanyConnector {
+        async fn probe(&self) -> Result<ProbeResult, TallyError> {
+            self.inner.probe().await
+        }
+
+        async fn probe_fresh(&self) -> Result<ProbeResult, TallyError> {
+            self.inner.probe_fresh().await
+        }
+
+        async fn discover_companies(&self) -> Result<Vec<CompanyRef>, TallyError> {
+            Ok(vec![self.inner.company.clone(), self.inner.company.clone()])
+        }
+
+        async fn read_pack_window(
+            &self,
+            context: &RequestContext,
+        ) -> Result<CanonicalPackWindow, TallyError> {
+            self.inner.read_pack_window(context).await
         }
     }
 
@@ -5322,6 +5357,31 @@ mod tests {
             Err(SnapshotError::ResumePlanUnavailable)
         ));
         assert!(connector.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicate_live_company_identity_fails_before_any_snapshot_read() {
+        let (_, mirror, store, plan) = setup().await;
+        let connector = AmbiguousCompanyConnector {
+            inner: FakeConnector {
+                batch: Mutex::new(VecDeque::new()),
+                company: plan.company.clone(),
+                requests: Mutex::new(Vec::new()),
+            },
+        };
+
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect("an ambiguous live identity becomes a durable terminal result");
+
+        assert_eq!(result.state.progress.phase, SnapshotPhase::Failed);
+        assert!(result
+            .proof
+            .gaps
+            .iter()
+            .any(|gap| gap.safe_reason_code == "company_identity_ambiguous"));
+        assert!(connector.inner.requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

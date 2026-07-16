@@ -21,6 +21,10 @@ and case-folded observed company GUID. This lets the live GUID-bearing record
 recover the persisted mirror ID after restart without exposing the stored GUID,
 guessing from a display name, or merging the same GUID across endpoints.
 
+Execution revalidates that exactly one currently loaded company resolves to the
+reviewed identity. Zero matches fail as missing; two or more matches fail as
+ambiguous before Bridge reads or stages any snapshot records.
+
 ## Consequences
 
 Renames do not silently create a new company when a durable ID is available.
