@@ -1,10 +1,14 @@
 # Bridge × Tally: Trustworthy Integration Research and Codex Execution Plan
 
-**Repository:** `lamemustafa/bridge`  
-**Research date:** 2026-07-14  
-**Target:** Bridge 0.2.x, React 19 + TypeScript, Rust/Tauri 2, SQLite  
-**Primary Tally target:** TallyPrime  
-**Compatibility target:** Tally.ERP 9 only where the existing XML path continues to work safely  
+**Repository:** `lamemustafa/bridge`
+
+**Research date:** 2026-07-14
+
+**Target:** Bridge 0.2.x, React 19 + TypeScript, Rust/Tauri 2, SQLite
+
+**Primary Tally target:** TallyPrime
+
+**Compatibility target:** Tally.ERP 9 only where the existing XML path continues to work safely
 **Testing constraint:** The available real Tally installation is an Education edition; no license restriction may be bypassed or worked around.
 
 ---
@@ -621,8 +625,9 @@ Each PR must follow `AGENTS.md`, the repository review checklist, rollback/migra
 
 ### PR 00 — Tally trust contract and ADRs
 
-**Branch:** `chore/tally-truth-contract`  
-**Risk:** low  
+**Branch:** `chore/tally-truth-contract`
+
+**Risk:** low
 **Purpose:** Freeze the correctness contract before implementation.
 
 #### Deliverables
@@ -657,8 +662,9 @@ Each PR must follow `AGENTS.md`, the repository review checklist, rollback/migra
 
 ### PR 01 — Shared Tally runtime and real global serialization
 
-**Branch:** `fix/tally-shared-runtime`  
-**Risk:** high correctness / low product surface  
+**Branch:** `fix/tally-shared-runtime`
+
+**Risk:** high correctness / low product surface
 **Purpose:** Ensure there is one queue and one HTTP client per endpoint.
 
 #### Code changes
@@ -711,8 +717,9 @@ consumption authority is immutable.
 
 ### PR 02 — Protocol envelope, encoding, validation, and typed errors
 
-**Branch:** `fix/tally-protocol-contract`  
-**Risk:** high  
+**Branch:** `fix/tally-protocol-contract`
+
+**Risk:** high
 **Purpose:** Stop treating HTTP 200 and parseable rows as proof of Tally success.
 
 #### Code changes
@@ -752,8 +759,9 @@ consumption authority is immutable.
 
 ### PR 03 — Deterministic Tally simulator and fixture corpus
 
-**Branch:** `chore/tally-simulator`  
-**Risk:** low runtime / high leverage  
+**Branch:** `chore/tally-simulator`
+
+**Risk:** low runtime / high leverage
 **Purpose:** Make integration reliability reproducible for every contributor.
 
 #### Deliverables
@@ -812,8 +820,9 @@ consumption authority is immutable.
 
 ### PR 04 — Capability Passport and safe setup wizard
 
-**Branch:** `feat/tally-capability-passport`  
-**Risk:** medium  
+**Branch:** `feat/tally-capability-passport`
+
+**Risk:** medium
 **Purpose:** Replace “reachable” with an evidence-based compatibility profile.
 
 #### Probe categories
@@ -914,8 +923,9 @@ correctness, writes, and public release support remain `Unknown`. See
 
 ### PR 05 — Canonical identities, exact amounts, and versioned migrations
 
-**Branch:** `feat/tally-canonical-model`  
-**Risk:** high data model  
+**Branch:** `feat/tally-canonical-model`
+
+**Risk:** high data model
 **Purpose:** Build a trustworthy local mirror foundation.
 
 #### Code changes
@@ -951,8 +961,9 @@ correctness, writes, and public release support remain `Unknown`. See
 
 ### PR 06 — Atomic, resumable full snapshot pipeline
 
-**Branch:** `feat/tally-snapshot-sync`  
-**Risk:** high  
+**Branch:** `feat/tally-snapshot-sync`
+
+**Risk:** high
 **Purpose:** Move from button fetches to a durable sync protocol.
 
 #### Pipeline
@@ -1022,8 +1033,9 @@ the next PR06 resilience/performance slice.
 
 ### PR 07 — Incremental sync and deletion awareness
 
-**Branch:** `feat/tally-incremental-sync`  
-**Risk:** high  
+**Branch:** `feat/tally-incremental-sync`
+
+**Risk:** high
 **Purpose:** Reduce work without sacrificing completeness.
 
 #### Rules
@@ -1048,8 +1060,9 @@ the next PR06 resilience/performance slice.
 
 ### PR 08 — Accounting reconciliation and Proof of Sync
 
-**Branch:** `feat/tally-proof-of-sync`  
-**Risk:** high accounting  
+**Branch:** `feat/tally-proof-of-sync`
+
+**Risk:** high accounting
 **Purpose:** Make completeness and accounting validity visible.
 
 #### Reconciliation layers
@@ -1090,8 +1103,9 @@ the next PR06 resilience/performance slice.
 
 ### PR 09 — Operator-grade Tally UX
 
-**Branch:** `feat/tally-operator-console`  
-**Risk:** medium  
+**Branch:** `feat/tally-operator-console`
+
+**Risk:** medium
 **Purpose:** Replace raw fetch controls with a reliable operational workflow.
 
 #### Screens
@@ -1153,8 +1167,9 @@ that evidence.
 
 ### PR 10 — JSONEX negotiated path with semantic shadowing
 
-**Branch:** `feat/tally-jsonex-transport`  
-**Risk:** medium/high  
+**Branch:** `feat/tally-jsonex-transport`
+
+**Risk:** medium/high
 **Purpose:** Add a version-gated, read-only JSONEX candidate path and the
 evidence needed to qualify an exact scope against XML. No comparator result
 enables JSONEX by itself.
@@ -1298,8 +1313,9 @@ schema remain prerequisites for extraction.
 
 ### PR 11 — Safe write sandbox and exact import results
 
-**Branch:** `feat/tally-safe-import-sandbox`  
-**Risk:** very high  
+**Branch:** `feat/tally-safe-import-sandbox`
+
+**Risk:** very high
 **Purpose:** Introduce write capability without endangering real books.
 
 #### Preconditions
@@ -1374,8 +1390,9 @@ Draft
 
 ### PR 12 — Mapping, conflict, outbox, and recovery
 
-**Branch:** `feat/tally-write-orchestration`  
-**Risk:** very high  
+**Branch:** `feat/tally-write-orchestration`
+
+**Risk:** very high
 **Purpose:** Build controlled two-way workflows only after reads are trustworthy.
 
 #### Features
@@ -1411,8 +1428,9 @@ Draft
 
 ### PR 13 — Observability, support bundle, and performance budgets
 
-**Branch:** `feat/tally-observability`  
-**Risk:** medium  
+**Branch:** `feat/tally-observability`
+
+**Risk:** medium
 **Purpose:** Make reliability measurable without exposing books.
 
 #### Telemetry
@@ -1582,8 +1600,9 @@ existing PR13B1 receipt is not retroactively granted runtime-cap authority.
 
 ### PR 14 — Compatibility matrix, live validation harness, and release gates
 
-**Branch:** `chore/tally-compatibility-matrix`  
-**Risk:** medium  
+**Branch:** `chore/tally-compatibility-matrix`
+
+**Risk:** medium
 **Purpose:** Turn “supported” into reproducible evidence.
 
 #### Matrix dimensions
@@ -1670,8 +1689,9 @@ A release may not broaden its support claim unless the matrix has current eviden
 
 ### PR 15 — Portable read runtime, typed retry, and runtime telemetry
 
-**Branch:** `feat/tally-portable-read-runtime`  
-**Risk:** medium  
+**Branch:** `feat/tally-portable-read-runtime`
+
+**Risk:** medium
 **Purpose:** Make endpoint execution deterministic and observable before adding
 another product pack.
 
