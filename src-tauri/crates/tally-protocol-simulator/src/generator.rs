@@ -256,6 +256,7 @@ fn write_voucher_xml<W: io::Write>(
             spec.entries_per_voucher
         )
         .expect("writing to String cannot fail");
+        voucher.push_str("<LEDGERENTRIES>");
         for _ in 0..spec.nesting_depth {
             voucher.push_str("<BRIDGESYNTHETICNEST>");
         }
@@ -275,7 +276,7 @@ fn write_voucher_xml<W: io::Write>(
         for _ in 0..spec.nesting_depth {
             voucher.push_str("</BRIDGESYNTHETICNEST>");
         }
-        voucher.push_str("</VOUCHER>");
+        voucher.push_str("</LEDGERENTRIES></VOUCHER>");
         if let Some(digest) = semantic_digest.as_deref_mut() {
             semantic_field(digest, b"record_index", record.to_string().as_bytes());
             semantic_field(digest, b"source_id", guid.as_bytes());
@@ -362,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn generation_is_deterministic_and_parser_valid() {
+    fn generation_is_deterministic_with_expected_xml_shape() {
         let spec = VoucherCorpusSpec {
             total_records: 2,
             records_per_window: 2,
@@ -395,10 +396,10 @@ mod tests {
             seed: 7,
         };
         let (_, generated) = generate_voucher_window(Vec::new(), spec.window(0).unwrap()).unwrap();
-        assert_eq!(generated.wire_bytes, 36_614);
+        assert_eq!(generated.wire_bytes, 38_164);
         assert_eq!(
             generated.sha256,
-            "77a235136269fcf0109397e9082ef2e2265fd9b307acecf95d9653fef366243c"
+            "fde2fda2ca5df0468ca95a1f7e7f184ee311ee2bcc43e7d771109031762ead2a"
         );
 
         let changed_seed = VoucherCorpusSpec { seed: 8, ..spec };

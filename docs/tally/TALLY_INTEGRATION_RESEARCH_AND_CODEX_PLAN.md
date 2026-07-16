@@ -1515,10 +1515,10 @@ database, resume, UI, benchmark, and budget evidence remain unavailable.
 The first performance-evidence slice is a portable repository-synthetic parser
 qualification harness. A bounded generator streams deterministic UTF-8 voucher
 windows to temporary files before measurement. Closed scenarios cover a CI
-smoke, 1k vouchers, windowed 50k and 500k corpora, and deep-voucher
-characterization using 256 repository-synthetic wrappers and 256 ledger
-entries. The wrapper shape is not claimed to be native Tally XML or a parser
-depth limit. The generator rejects a window above the existing 32 MiB
+smoke, 1k vouchers, windowed 50k and 500k corpora, and a large-voucher
+characterization using 256 ledger entries and bounded text width. The legacy
+`deep-voucher` CLI spelling remains an alias but establishes no parser-depth
+claim. The generator rejects a window above the existing 32 MiB
 encoded-body ceiling before touching the destination and records exact emitted
 records, ledger entries, bytes, per-window hashes, and a manifest hash.
 

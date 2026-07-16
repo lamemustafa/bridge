@@ -53,7 +53,7 @@ pub enum Scenario {
     Small1k,
     Medium50k,
     Large500k,
-    DeepVoucher,
+    LargeVoucher,
 }
 
 impl Scenario {
@@ -63,7 +63,7 @@ impl Scenario {
             Self::Small1k => corpus(1_000, 1_000, 2, 16, 0, seed),
             Self::Medium50k => corpus(50_000, 1_000, 2, 16, 0, seed),
             Self::Large500k => corpus(500_000, 1_000, 2, 16, 0, seed),
-            Self::DeepVoucher => corpus(1, 1, 256, 256, 256, seed),
+            Self::LargeVoucher => corpus(1, 1, 256, 256, 0, seed),
         }
     }
 
@@ -73,7 +73,7 @@ impl Scenario {
             "small-1k" => Some(Self::Small1k),
             "medium-50k" => Some(Self::Medium50k),
             "large-500k" => Some(Self::Large500k),
-            "deep-voucher" => Some(Self::DeepVoucher),
+            "large-voucher" | "deep-voucher" => Some(Self::LargeVoucher),
             _ => None,
         }
     }
@@ -81,7 +81,7 @@ impl Scenario {
     pub fn worker_timeout(self) -> std::time::Duration {
         match self {
             Self::CiSmoke => std::time::Duration::from_secs(60),
-            Self::Small1k | Self::DeepVoucher => std::time::Duration::from_secs(120),
+            Self::Small1k | Self::LargeVoucher => std::time::Duration::from_secs(120),
             Self::Medium50k => std::time::Duration::from_secs(600),
             Self::Large500k => std::time::Duration::from_secs(1_800),
         }
