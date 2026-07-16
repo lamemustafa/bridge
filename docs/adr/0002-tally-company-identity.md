@@ -23,7 +23,9 @@ guessing from a display name, or merging the same GUID across endpoints.
 
 Execution revalidates that exactly one currently loaded company resolves to the
 reviewed identity. Zero matches fail as missing; two or more matches fail as
-ambiguous before Bridge reads or stages any snapshot records.
+ambiguous before Bridge reads or stages any snapshot records. Durable terminal
+proofs preserve those concrete missing/ambiguous codes instead of collapsing
+identity drift into a generic protocol failure.
 
 ## Consequences
 
