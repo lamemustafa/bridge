@@ -51,6 +51,112 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
       - run: node scripts/check-dependency-inventory.mjs --rust
 
+  tally-portable:
+    name: Tally portable core
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.96.0
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Test portable Tally truth layer
+        working-directory: src-tauri
+        run: >-
+          cargo test --locked
+          -p bridge-tally-canonical
+          -p bridge-tally-compatibility
+          -p bridge-tally-core
+          -p bridge-tally-incremental
+          -p bridge-tally-live-read
+          -p bridge-tally-observability
+          -p bridge-tally-protocol
+          -p bridge-tally-qualification
+          -p bridge-tally-read-transport
+          -p bridge-tally-runtime
+          -p bridge-tally-transport
+          -p bridge-tally-write
+          -p tally-protocol-simulator
+      - name: Test disabled protocol evidence features
+        working-directory: src-tauri
+        run: >-
+          cargo test --locked -p bridge-tally-protocol
+          --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
+      - name: Test isolated native outstandings qualification path
+        working-directory: src-tauri
+        run: |
+          cargo test --locked -p bridge-tally-compatibility --features bills-native-outstandings-probe-receipt
+          cargo test --locked -p bridge-tally-read-transport --features bills-native-outstandings-probe-transport
+          cargo test --locked -p bridge-tally-live-read --features bills-native-outstandings-probe-runner -- --test-threads=1
+      - name: Lint portable Tally truth layer
+        working-directory: src-tauri
+        run: >-
+          cargo clippy --locked
+          -p bridge-tally-canonical
+          -p bridge-tally-compatibility
+          -p bridge-tally-core
+          -p bridge-tally-incremental
+          -p bridge-tally-live-read
+          -p bridge-tally-observability
+          -p bridge-tally-protocol
+          -p bridge-tally-qualification
+          -p bridge-tally-read-transport
+          -p bridge-tally-runtime
+          -p bridge-tally-transport
+          -p bridge-tally-write
+          -p tally-protocol-simulator
+          --all-targets -- -D warnings
+      - name: Lint disabled protocol evidence features
+        working-directory: src-tauri
+        run: >-
+          cargo clippy --locked -p bridge-tally-protocol
+          --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
+          --all-targets -- -D warnings
+      - name: Lint isolated native outstandings qualification path
+        working-directory: src-tauri
+        run: |
+          cargo clippy --locked -p bridge-tally-compatibility --features bills-native-outstandings-probe-receipt --all-targets -- -D warnings
+          cargo clippy --locked -p bridge-tally-read-transport --features bills-native-outstandings-probe-transport --all-targets -- -D warnings
+          cargo clippy --locked -p bridge-tally-live-read --features bills-native-outstandings-probe-runner --all-targets -- -D warnings
+      - name: Produce parser-only synthetic qualification smoke receipt
+        working-directory: src-tauri
+        run: >-
+          cargo run --locked --release -p bridge-tally-qualification --
+          run ci-smoke target/tally-qualification-smoke.json 7 3
+      - name: Enforce exact Tally compatibility claims
+        working-directory: src-tauri
+        run: >-
+          cargo run --locked -p bridge-tally-compatibility --
+          gate
+          ../docs/tally/compatibility/compatibility-matrix.json
+          ../docs/tally/compatibility/compatibility-surface.json
+          ../docs/tally/compatibility/trusted-evidence-keys.json
+          ../docs/tally/compatibility/evidence
+          ..
+      - name: Reject generated Tally matrix drift
+        working-directory: src-tauri
+        run: >-
+          cargo run --locked -p bridge-tally-compatibility --
+          check-matrix-markdown
+          ../docs/tally/compatibility/compatibility-matrix.json
+          ../docs/tally/support-matrix.md
+      - name: Enforce no-write live-read dependency boundary
+        run: node scripts/check-tally-live-read-boundary.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tally-parser-qualification-smoke
+          path: src-tauri/target/tally-qualification-smoke.json
+          if-no-files-found: error
+          retention-days: 7
+
   native:
     name: Native checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -72,9 +178,30 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri -> target
-      - run: cargo check --locked --manifest-path src-tauri/Cargo.toml
-      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
-      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Provision pinned Perl for vendored SQLCipher/OpenSSL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install strawberryperl --version=5.42.2.1 --yes --no-progress
+          Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe'
+          Add-Content -Path $env:GITHUB_ENV -Value 'LIBCLANG_PATH=C:\Program Files\LLVM\bin'
+          & 'C:\Strawberry\perl\bin\perl.exe' -MLocale::Maketext::Simple -e "print qq(Perl prerequisite ready\n)"
+          if (-not (Test-Path -LiteralPath 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'libclang.dll prerequisite missing' }
+      - run: cargo check --locked --manifest-path src-tauri/Cargo.toml --workspace
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace
+      - name: Test isolated native outstandings qualification feature
+        working-directory: src-tauri
+        run: >-
+          cargo test --locked -p bridge-tally-live-read
+          --features bills-native-outstandings-probe-runner
+          --all-targets -- --test-threads=1
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
+      - name: Lint isolated native outstandings qualification feature
+        working-directory: src-tauri
+        run: >-
+          cargo clippy --locked -p bridge-tally-live-read
+          --features bills-native-outstandings-probe-runner
+          --all-targets -- -D warnings
 
   bundle-smoke:
     name: Bundle smoke (${{ matrix.os }})
@@ -101,6 +228,15 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri -> target
+      - name: Provision pinned Perl for vendored SQLCipher/OpenSSL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install strawberryperl --version=5.42.2.1 --yes --no-progress
+          Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe'
+          Add-Content -Path $env:GITHUB_ENV -Value 'LIBCLANG_PATH=C:\Program Files\LLVM\bin'
+          & 'C:\Strawberry\perl\bin\perl.exe' -MLocale::Maketext::Simple -e "print qq(Perl prerequisite ready\n)"
+          if (-not (Test-Path -LiteralPath 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'libclang.dll prerequisite missing' }
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm run license:all
       - run: corepack pnpm run tauri:build

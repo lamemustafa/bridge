@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "fixture_id": "education-small-v1",
+  "dataset_tier": "synthetic_small",
+  "company_marker": "BRIDGE-PR14-SYNTHETIC-019f605f-e6cf-77b2-ac95-31722887a911",
+  "ledger_sentinel": "BRIDGE-LEDGER-019f605f-e6cf-77b2-ac95-31722887a911",
+  "voucher_number_sentinel": "BRIDGE-VOUCHER-019f605f-e6cf-77b2-ac95-31722887a911",
+  "empty_voucher_range": {
+    "from_yyyymmdd": "20260403",
+    "to_yyyymmdd": "20260403"
+  },
+  "populated_voucher_range": {
+    "from_yyyymmdd": "20260401",
+    "to_yyyymmdd": "20260402"
+  },
+  "minimum_ledger_count": 1,
+  "maximum_ledger_count": 100,
+  "minimum_populated_voucher_count": 1,
+  "maximum_populated_voucher_count": 20
+}

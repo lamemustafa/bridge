@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "repository_root": "..",
+  "fixture_manifest": "../docs/tally/compatibility/fixtures/education-native-outstandings-v0.json",
+  "scenario_id": "education-to-date-20260731",
+  "endpoint_family": "ipv4",
+  "port": 9000,
+  "product": "unknown",
+  "release": "unknown",
+  "mode": "unknown",
+  "locale": "unknown",
+  "configured_tdl_count": null,
+  "configured_add_on_count": null,
+  "expected_company_identity_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "expected_party_identity_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "identity_registration_id": "unregistered",
+  "identity_registration_reviewed": false,
+  "no_customer_data_attested": false,
+  "ui_before_observation": "../.bridge-live/native-outstandings-ui-before.json",
+  "ui_after_observation": "../.bridge-live/native-outstandings-ui-after.json"
+}

@@ -1,0 +1,71 @@
+# ADR 0005: Tally snapshot recovery authority
+
+Status: Accepted (2026-07-15)
+
+## Decision
+
+An interrupted Tally snapshot may resume only from an encrypted durable row that binds an immutable
+plan, run identity, generation, and state payload. One worker owns a time-bounded lease. Every state
+write is generation compare-and-swap protected, and terminal rows are append-only evidence.
+
+The immutable plan includes the company identity and display-name selector, endpoint-bound capability
+snapshot, product, release, mode, transport, pack schema, query profiles, filters, and windows. Resume
+re-runs the read-only canary with the stored query context and requires the exact observed capability
+profile. A renamed company starts a new run rather than mutating an interrupted plan.
+
+State v4 introduced a closed adaptive-window policy and a separate exact one-day capability
+canary. The caller's root windows remain immutable. If and only if a voucher-window response reaches
+the typed response-size limit, Bridge calendar-midpoint-splits that leaf, records the parent/children
+and policy in the row-hashed state, and generation-CAS persists the graph before dispatching either
+child. Child identities bind the parent, query profile, filter commitment, and exact range. A one-day
+overflow or configured leaf-limit exhaustion fails closed without changing the previous checkpoint.
+Oversized masters, timeouts, parse failures, application failures, and cancellations cannot trigger a
+split. Legacy v3 states remain inspectable but are not restart-resumable under the new policy.
+
+Current v5 state retains that exact adaptive graph but moves per-record membership into normalized,
+encrypted SQLite window attempts. Durable state stores only the owner-bound attempt or completed
+receipt, count, and hash commitments; it never embeds the full identity map. Both v3 and v4
+nonterminal rows remain inspectable for operators but are not resumable as v5 runs because the
+normalized membership authority cannot be reconstructed truthfully.
+
+Record staging accepts a replay only when every stored provenance, canonical payload, exact-decimal,
+AlterID, validation, and rejection fact matches. Generated observation ID and local observation time
+are deliberately excluded. Thus a crash after insert but before state-key persistence resumes as an
+exact idempotent acknowledgement; changed content is an explicit conflict and cannot advance a
+checkpoint.
+
+The worker renews its lease before and after every connector call and every 30 seconds while a call is
+in flight, as well as immediately before local reconciliation and commit authority. A heartbeat is
+bound to the exact owner, run, and state generation and cannot revive an expired lease; ordinary state
+saves also reject an expired lease. Cancellation is polled during connector calls and rechecked at the
+same post-staging boundaries. If it is observed before `CommitPending` is durably established, Bridge
+commits a Cancelled proof without advancing the checkpoint instead of allowing a stale Completed or
+Partial outcome.
+
+The native app's ordinary Tally HTTP path now incrementally decodes UTF-8/BOM and UTF-16LE/BE chunks,
+computes encoded and decoded hashes, and enforces both caps without retaining a second complete wire
+body. Exact-wire qualification keeps its separate byte-preserving API. Current XML parsers still
+require the complete decoded string; one-pass record-sink parsing and chunk-transaction staging remain
+a later PR06 slice and are not claimed by this decision.
+
+Before mirror commit, the durable `CommitPending` row stores a SHA-256 commitment to the complete
+expected ledger facts: run and batch identity, capability/company/pack binding, outcome, verification,
+timestamps, provenance-backed accepted, rejected, and provenance-unavailable counts, snapshot hash,
+checkpoint before/after, gaps, and warnings.
+After a crash, only a hash-valid immutable proof-ledger receipt matching that commitment can make the
+run terminal. Checkpoint advancement separately requires equality with the checkpoint observed before
+extraction inside the same SQLite write transaction.
+
+Failed and cancelled proofs carry the complete accumulated safe gap set, while the proof-ledger
+receipt also carries the complete warning set. Crash recovery reconstructs those same deterministic
+sets from the durable state, so job status, proof output, and immutable ledger evidence cannot diverge.
+
+## Consequences
+
+- A crash can be retried without inventing a new plan or proof receipt.
+- Concurrent workers and concurrent verified runs fail closed instead of overwriting authority.
+- Legacy v3 and v4 rows without v5 normalized membership receipts are inspectable but not resumable.
+- Duplicate legacy snapshot run IDs block migration with an explicit diagnostic; Bridge never chooses
+  one recovery row silently.
+- The row hash is corruption evidence, not a keyed authenticity claim against an authorized database
+  writer. SQLCipher and local credential controls remain part of the trust boundary.

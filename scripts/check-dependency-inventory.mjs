@@ -8,6 +8,22 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const modes = new Set(process.argv.slice(2));
 const checkFrontend = modes.size === 0 || modes.has("--frontend");
 const checkRust = modes.size === 0 || modes.has("--rust");
+const firstPartyRustPackages = new Set([
+  "bridge",
+  "bridge-tally-canonical",
+  "bridge-tally-compatibility",
+  "bridge-tally-core",
+  "bridge-tally-incremental",
+  "bridge-tally-live-read",
+  "bridge-tally-observability",
+  "bridge-tally-protocol",
+  "bridge-tally-qualification",
+  "bridge-tally-read-transport",
+  "bridge-tally-runtime",
+  "bridge-tally-transport",
+  "bridge-tally-write",
+  "tally-protocol-simulator",
+]);
 
 if ([...modes].some((mode) => !["--frontend", "--rust"].includes(mode))) {
   throw new Error("Usage: check-dependency-inventory.mjs [--frontend] [--rust]");
@@ -114,7 +130,7 @@ if (checkRust) {
     );
     for (const line of tree.split(/\r?\n/)) {
       const match = line.match(/^([A-Za-z0-9_.+-]+) v(\d+\.\d+\.\d+(?:[+-][^\s]+)?)/);
-      if (match && match[1] !== "bridge") {
+      if (match && !firstPartyRustPackages.has(match[1])) {
         expected.add(`${match[1]} ${match[2]}`);
       }
     }

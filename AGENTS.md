@@ -31,8 +31,10 @@ This document defines agent-level expectations and review responsibilities for t
   supersedes public issue/PR creation until coordinated disclosure is safe.
 - PRs that touch existing workflows must include rollback notes and migration compatibility.
 - Keep issue triage actionable:
-  - assign one area label (tally / dsc / documents / infra / security)
-  - set severity (`P1` urgent / `P2` production / `P3` medium / `P4` cleanup)
+  - assign exactly one area label (`area:tally`, `area:dsc`,
+    `area:documents`, `area:infra`, or `area:security`)
+  - set one bug severity label (`severity:p1` urgent / `severity:p2`
+    production impact / `severity:p3` medium / `severity:p4` cleanup)
   - avoid open "wip" tasks without acceptance evidence.
 - If regression was introduced by a specific PR, link it explicitly in the rectify issue and include it in the fix PR summary.
 - For non-security production regressions, use a dedicated fix branch and label (`type:rectify`).

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "fixture_id": "education-native-outstandings-v0",
+  "scenario_id": "education-to-date-20260731",
+  "phase": "before",
+  "evidence_complete": false,
+  "captured_unix_ms": 0,
+  "screenshot_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "context": {
+    "company_marker": "BRIDGE-PR18-NATIVE-OUTSTANDINGS-COMPANY-019f605f-e6cf-77b2-ac95-31722887a911",
+    "party_marker": "BRIDGE-PR18-NATIVE-OUTSTANDINGS-PARTY-019f605f-e6cf-77b2-ac95-31722887a911",
+    "to_date": "20260731",
+    "report_name": "Ledger Outstandings",
+    "report_mode": "detailed"
+  },
+  "visible_columns": {
+    "opening": false,
+    "pending": false,
+    "due": false,
+    "overdue": false
+  },
+  "ordered_projection_fields": [
+    "row_index",
+    "row_kind",
+    "display_date_text",
+    "reference_text",
+    "opening_amount_text",
+    "pending_amount_text",
+    "due_date_text",
+    "overdue_text",
+    "voucher_details_text",
+    "dr_cr_text"
+  ],
+  "ordered_projection": [],
+  "inv_001_settled_reference_observation": "unobserved",
+  "operator_attests_no_tally_interaction_until_after_capture": false
+}

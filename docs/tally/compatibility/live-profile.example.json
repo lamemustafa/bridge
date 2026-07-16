@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "repository_root": "..",
+  "fixture_manifest": "../docs/tally/compatibility/fixtures/education-small-v1.json",
+  "endpoint_family": "ipv4",
+  "port": 9000,
+  "product": "unknown",
+  "release": "unknown",
+  "mode": "unknown",
+  "odbc_state": "unknown",
+  "locale": "unknown",
+  "no_customer_data_attested": false
+}
