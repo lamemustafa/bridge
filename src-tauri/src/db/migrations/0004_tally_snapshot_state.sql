@@ -14,4 +14,3 @@ CREATE INDEX IF NOT EXISTS idx_tally_snapshot_run_states_run
 
 INSERT OR IGNORE INTO tally_schema_migrations(version, description, applied_at_unix_ms)
 VALUES (4, 'durable resumable Tally snapshot run state', 0);
-
