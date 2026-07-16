@@ -1,0 +1,36 @@
+[package]
+name = "bridge-tally-live-read"
+version = "0.1.0"
+description = "Explicit-consent, read-only live Tally compatibility observation controller"
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
+edition = "2021"
+rust-version = "1.96"
+
+[features]
+default = []
+bills-native-outstandings-probe-runner = [
+  "bridge-tally-compatibility/bills-native-outstandings-probe-receipt",
+  "bridge-tally-protocol/bills-native-outstandings-probe",
+  "bridge-tally-read-transport/bills-native-outstandings-probe-transport",
+]
+
+[[bin]]
+name = "bridge-tally-native-outstandings-probe"
+path = "src/bin/native_outstandings_probe.rs"
+required-features = ["bills-native-outstandings-probe-runner"]
+
+[dependencies]
+bridge-tally-compatibility = { path = "../bridge-tally-compatibility" }
+bridge-tally-protocol = { path = "../bridge-tally-protocol" }
+bridge-tally-read-transport = { path = "../bridge-tally-read-transport" }
+getrandom = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+tally-protocol-simulator = { path = "../tally-protocol-simulator" }

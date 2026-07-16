@@ -1,0 +1,20 @@
+[package]
+name = "bridge-tally-transport"
+version = "0.1.0"
+description = "Portable, loopback-only bounded HTTP transport for Bridge Tally integration"
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
+edition = "2021"
+rust-version = "1.96"
+
+[dependencies]
+bridge-tally-protocol = { path = "../bridge-tally-protocol" }
+reqwest = { version = "0.12", features = ["stream"] }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.11"
+thiserror = "2"
+
+[dev-dependencies]
+tally-protocol-simulator = { path = "../tally-protocol-simulator" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

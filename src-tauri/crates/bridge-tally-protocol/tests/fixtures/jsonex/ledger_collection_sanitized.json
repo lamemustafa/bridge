@@ -1,0 +1,73 @@
+{
+  "status": "1",
+  "data": {
+    "metadata": {
+      "is_mst_dep_type": true,
+      "mst_dep_type": "8"
+    },
+    "collection": [
+      {
+        "metadata": {
+          "type": "Ledger",
+          "name": "BRIDGE SYNTHETIC LEDGER A",
+          "reservedname": ""
+        },
+        "parent": {
+          "type": "String",
+          "value": "BRIDGE SYNTHETIC GROUP"
+        },
+        "closingbalance": {
+          "type": "Amount",
+          "value": "-243900.00"
+        },
+        "onaccountvalue": {
+          "type": "Amount",
+          "value": ""
+        },
+        "tbalopening": {
+          "type": "Amount",
+          "value": "0.00"
+        },
+        "closingonacctvalue": {
+          "type": "Amount",
+          "value": ""
+        },
+        "closingdronacctvalue": {
+          "type": "Logical",
+          "value": false
+        },
+        "ledopeningbalance": {
+          "type": "Amount",
+          "value": "0.00"
+        },
+        "languagename": [
+          {
+            "name": [
+              {
+                "metadata": true,
+                "type": "String"
+              },
+              "BRIDGE SYNTHETIC LEDGER A",
+              "ब्रिज सिंथेटिक खाता"
+            ],
+            "languageid": {
+              "type": "Number",
+              "value": " 1033"
+            }
+          }
+        ]
+      },
+      {
+        "metadata": {
+          "type": "Ledger",
+          "name": "BRIDGE SYNTHETIC LEDGER B",
+          "reservedname": ""
+        },
+        "closingbalance": {
+          "type": "Amount",
+          "value": ""
+        }
+      }
+    ]
+  }
+}

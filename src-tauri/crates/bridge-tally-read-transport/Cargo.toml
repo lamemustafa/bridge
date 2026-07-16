@@ -1,0 +1,23 @@
+[package]
+name = "bridge-tally-read-transport"
+version = "0.1.0"
+description = "Closed read-only HTTP adapter for Bridge Tally qualification profiles"
+license = "Apache-2.0"
+repository = "https://github.com/lamemustafa/bridge"
+publish = false
+edition = "2021"
+rust-version = "1.96"
+
+[features]
+default = []
+bills-native-outstandings-probe-transport = ["bridge-tally-protocol/bills-native-outstandings-probe"]
+
+[dependencies]
+bridge-tally-protocol = { path = "../bridge-tally-protocol" }
+bridge-tally-transport = { path = "../bridge-tally-transport" }
+thiserror = "2"
+sha2 = "0.11"
+
+[dev-dependencies]
+tally-protocol-simulator = { path = "../tally-protocol-simulator" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
