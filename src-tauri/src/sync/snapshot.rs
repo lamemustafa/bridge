@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{File, OpenOptions};
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -1003,6 +1006,8 @@ pub enum SnapshotError {
     StateMigrationMissing,
     #[error("another worker owns the durable snapshot lease")]
     LeaseUnavailable,
+    #[error("durable snapshot process lock failed")]
+    LeaseIo(#[source] std::io::Error),
     #[error("the durable snapshot generation changed concurrently")]
     StateConflict,
     #[error("snapshot state operation failed")]
@@ -1030,6 +1035,7 @@ pub trait SnapshotStateStore: Send + Sync {
 pub struct SqliteSnapshotStateStore {
     pool: SqlitePool,
     lease_owner: Option<String>,
+    process_leases: Arc<Mutex<BTreeMap<String, File>>>,
 }
 
 impl SqliteSnapshotStateStore {
@@ -1037,6 +1043,7 @@ impl SqliteSnapshotStateStore {
         Self {
             pool,
             lease_owner: None,
+            process_leases: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -1050,7 +1057,93 @@ impl SqliteSnapshotStateStore {
         Ok(Self {
             pool,
             lease_owner: Some(lease_owner),
+            process_leases: Arc::new(Mutex::new(BTreeMap::new())),
         })
+    }
+
+    async fn process_lease_path(&self, resume_key: &str) -> Result<Option<PathBuf>, SnapshotError> {
+        let database_path = sqlx::query_scalar::<_, String>(
+            "SELECT file FROM pragma_database_list WHERE name = 'main'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(SnapshotError::StateStore)?;
+        if database_path.is_empty() {
+            // SQLite in-memory databases have no cross-process identity. Their test-only lease
+            // behavior therefore retains the bounded UTC fallback below.
+            return Ok(None);
+        }
+        let database_path = PathBuf::from(database_path);
+        let file_name = database_path.file_name().ok_or_else(|| {
+            SnapshotError::LeaseIo(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "snapshot database path has no file name",
+            ))
+        })?;
+        let mut lock_name = file_name.to_os_string();
+        lock_name.push(format!(
+            ".snapshot-{}.lock",
+            sha256_bytes(resume_key.as_bytes())
+        ));
+        Ok(Some(database_path.with_file_name(lock_name)))
+    }
+
+    async fn acquire_process_lease(&self, resume_key: &str) -> Result<bool, SnapshotError> {
+        let Some(lock_path) = self.process_lease_path(resume_key).await? else {
+            return Ok(false);
+        };
+        let mut leases = self
+            .process_leases
+            .lock()
+            .map_err(|_| SnapshotError::LeaseUnavailable)?;
+        if leases.contains_key(resume_key) {
+            return Ok(true);
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)
+            .map_err(SnapshotError::LeaseIo)?;
+        match file.try_lock() {
+            Ok(()) => {
+                leases.insert(resume_key.to_string(), file);
+                Ok(true)
+            }
+            Err(error) => {
+                let error: std::io::Error = error.into();
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    Err(SnapshotError::LeaseUnavailable)
+                } else {
+                    Err(SnapshotError::LeaseIo(error))
+                }
+            }
+        }
+    }
+
+    fn holds_process_lease(&self, resume_key: &str) -> Result<bool, SnapshotError> {
+        self.process_leases
+            .lock()
+            .map(|leases| leases.contains_key(resume_key))
+            .map_err(|_| SnapshotError::LeaseUnavailable)
+    }
+
+    async fn required_process_lease(&self, resume_key: &str) -> Result<bool, SnapshotError> {
+        let file_backed = self.process_lease_path(resume_key).await?.is_some();
+        let held = self.holds_process_lease(resume_key)?;
+        if file_backed && !held {
+            return Err(SnapshotError::LeaseUnavailable);
+        }
+        Ok(held)
+    }
+
+    fn drop_process_lease(&self, resume_key: &str) -> Result<(), SnapshotError> {
+        self.process_leases
+            .lock()
+            .map_err(|_| SnapshotError::LeaseUnavailable)?
+            .remove(resume_key);
+        Ok(())
     }
 
     pub async fn migrate(&self) -> Result<(), SnapshotError> {
@@ -1141,19 +1234,40 @@ impl SqliteSnapshotStateStore {
             .as_deref()
             .ok_or(SnapshotError::LeaseUnavailable)?;
         let now = Utc::now().timestamp_millis();
-        let result = sqlx::query(
-            "UPDATE tally_snapshot_run_states SET lease_owner = ?1, \
-               lease_expires_at_unix_ms = ?2 \
-             WHERE resume_key = ?3 AND (lease_owner IS NULL OR lease_owner = ?1 OR \
-               lease_expires_at_unix_ms <= ?4)",
-        )
-        .bind(owner)
-        .bind(now.saturating_add(WORKER_LEASE_TTL_MS))
-        .bind(resume_key)
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(SnapshotError::StateStore)?;
+        let process_locked = self.acquire_process_lease(resume_key).await?;
+        let result = if process_locked {
+            // The kernel releases this lock when a worker crashes. Once acquired, an old UTC
+            // expiry cannot strand a restart after a wall-clock rollback, and a live owner
+            // cannot be stolen regardless of timestamp movement.
+            sqlx::query(
+                "UPDATE tally_snapshot_run_states SET lease_owner = ?1, \
+                   lease_expires_at_unix_ms = ?2 WHERE resume_key = ?3",
+            )
+            .bind(owner)
+            .bind(now.saturating_add(WORKER_LEASE_TTL_MS))
+            .bind(resume_key)
+            .execute(&self.pool)
+            .await
+        } else {
+            sqlx::query(
+                "UPDATE tally_snapshot_run_states SET lease_owner = ?1, \
+                   lease_expires_at_unix_ms = ?2 \
+                 WHERE resume_key = ?3 AND (lease_owner IS NULL OR lease_owner = ?1 OR \
+                   lease_expires_at_unix_ms <= ?4)",
+            )
+            .bind(owner)
+            .bind(now.saturating_add(WORKER_LEASE_TTL_MS))
+            .bind(resume_key)
+            .bind(now)
+            .execute(&self.pool)
+            .await
+        }
+        .map_err(|error| {
+            if process_locked {
+                let _ = self.drop_process_lease(resume_key);
+            }
+            SnapshotError::StateStore(error)
+        })?;
         if result.rows_affected() == 1 {
             return Ok(true);
         }
@@ -1167,6 +1281,9 @@ impl SqliteSnapshotStateStore {
         if exists == 0 {
             Ok(false)
         } else {
+            if process_locked {
+                self.drop_process_lease(resume_key)?;
+            }
             Err(SnapshotError::LeaseUnavailable)
         }
     }
@@ -1186,6 +1303,7 @@ impl SqliteSnapshotStateStore {
         .execute(&self.pool)
         .await
         .map_err(SnapshotError::StateStore)?;
+        self.drop_process_lease(resume_key)?;
         Ok(())
     }
 
@@ -1255,6 +1373,9 @@ impl SnapshotStateStore for SqliteSnapshotStateStore {
             .as_deref()
             .ok_or(SnapshotError::LeaseUnavailable)?;
         state.validate_invariants()?;
+        // File-backed stores must prove kernel-level ownership even for the first insert. This
+        // keeps direct callers from bypassing claim() and manufacturing a live-looking DB lease.
+        let process_locked = self.required_process_lease(&state.resume_key).await?;
         let expected_generation = state.generation;
         let next_generation = expected_generation
             .checked_add(1)
@@ -1298,6 +1419,27 @@ impl SnapshotStateStore for SqliteSnapshotStateStore {
             .bind(now)
             .execute(&self.pool)
             .await
+        } else if process_locked {
+            sqlx::query(
+                "UPDATE tally_snapshot_run_states SET generation = ?1, state_sha256 = ?2, \
+                   state_json = ?3, row_sha256 = ?4, lease_owner = ?5, \
+                   lease_expires_at_unix_ms = ?6, updated_at_unix_ms = ?7 \
+                 WHERE resume_key = ?8 AND run_id = ?9 AND generation = ?10 \
+                   AND lease_owner = ?11",
+            )
+            .bind(i64::try_from(next_generation).map_err(|_| SnapshotError::StateConflict)?)
+            .bind(&state_sha256)
+            .bind(&state_json)
+            .bind(&row_sha256)
+            .bind((!terminal).then_some(owner))
+            .bind((!terminal).then_some(now.saturating_add(WORKER_LEASE_TTL_MS)))
+            .bind(now)
+            .bind(&state.resume_key)
+            .bind(&state.run_id)
+            .bind(i64::try_from(expected_generation).map_err(|_| SnapshotError::StateConflict)?)
+            .bind(owner)
+            .execute(&self.pool)
+            .await
         } else {
             sqlx::query(
                 "UPDATE tally_snapshot_run_states SET generation = ?1, state_sha256 = ?2, \
@@ -1333,6 +1475,11 @@ impl SnapshotStateStore for SqliteSnapshotStateStore {
             return Err(SnapshotError::StateConflict);
         }
         state.row_integrity_bound = true;
+        if terminal && process_locked {
+            // Terminal state clears the DB owner in the same write; release the matching kernel
+            // lock promptly rather than relying on the coordinator task to drop its store.
+            self.drop_process_lease(&state.resume_key)?;
+        }
         Ok(())
     }
 
@@ -1345,20 +1492,23 @@ impl SnapshotStateStore for SqliteSnapshotStateStore {
             return Err(SnapshotError::StateInvariant("heartbeat_state"));
         }
         let now = Utc::now().timestamp_millis();
-        let result = sqlx::query(
+        let process_locked = self.required_process_lease(&state.resume_key).await?;
+        let mut query = sqlx::query(
             "UPDATE tally_snapshot_run_states SET lease_expires_at_unix_ms = ?1 \
              WHERE resume_key = ?2 AND run_id = ?3 AND generation = ?4 \
-               AND lease_owner = ?5 AND lease_expires_at_unix_ms > ?6",
+               AND lease_owner = ?5 AND (?6 OR lease_expires_at_unix_ms > ?7)",
         )
         .bind(now.saturating_add(WORKER_LEASE_TTL_MS))
         .bind(&state.resume_key)
         .bind(&state.run_id)
         .bind(i64::try_from(state.generation).map_err(|_| SnapshotError::StateConflict)?)
         .bind(owner)
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(SnapshotError::StateStore)?;
+        .bind(process_locked);
+        query = query.bind(now);
+        let result = query
+            .execute(&self.pool)
+            .await
+            .map_err(SnapshotError::StateStore)?;
         if result.rows_affected() != 1 {
             return Err(SnapshotError::LeaseUnavailable);
         }
@@ -3028,8 +3178,8 @@ mod tests {
         BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
     };
     use bridge_tally_transport::{TransportPolicy, XML_REQUEST_MAX_BYTES};
-    use sqlx::sqlite::SqlitePoolOptions;
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator};
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use tally_protocol_simulator::{Fixture, ResponseFraming, ScenarioPlan, SequenceSimulator};
 
     use crate::db::tally_mirror::{
         CapabilityItemInput, CapabilityKind, CapabilitySnapshotInput, CompanyInput, Confidence,
@@ -3598,6 +3748,39 @@ mod tests {
         (pool, mirror, store, plan)
     }
 
+    async fn setup_file_backed_lease_store() -> (
+        tempfile::TempDir,
+        SqlitePool,
+        SqliteSnapshotStateStore,
+        SnapshotPlan,
+    ) {
+        let (_, _, _, plan) = setup().await;
+        let directory = tempfile::tempdir().unwrap();
+        let options = SqliteConnectOptions::new()
+            .filename(directory.path().join("snapshot-lease.sqlite3"))
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect_with(options)
+            .await
+            .unwrap();
+        let mirror = TallyMirrorRepository::new(pool.clone());
+        mirror.migrate().await.unwrap();
+        let store =
+            SqliteSnapshotStateStore::for_worker(pool.clone(), "synthetic-file-worker".to_string())
+                .unwrap();
+        store.migrate().await.unwrap();
+        (directory, pool, store, plan)
+    }
+
     #[test]
     fn adaptive_midpoint_split_is_calendar_exact_and_deterministic() {
         let leap = ReadWindow {
@@ -3726,7 +3909,8 @@ mod tests {
             ))),
             ScenarioPlan::new(Fixture::Oversized {
                 minimum_bytes: TEST_RESPONSE_LIMIT + 1,
-            }),
+            })
+            .with_framing(ResponseFraming::ConnectionClose),
         ])
         .unwrap();
         let config = TallyConfig {
@@ -3764,10 +3948,11 @@ mod tests {
             failed: AtomicBool::new(false),
         };
 
-        let error = FullSnapshotEngine::new(&mirror, &crash_store, &connector)
+        let result = FullSnapshotEngine::new(&mirror, &crash_store, &connector)
             .run(&plan, &AtomicCancellation::default())
-            .await
-            .expect_err("stop after the split graph is durably persisted");
+            .await;
+        let requests = simulator.finish().unwrap();
+        let error = result.expect_err("stop after the split graph is durably persisted");
         assert!(matches!(
             error,
             SnapshotError::StateInvariant("injected_crash_after_split_commit")
@@ -3783,7 +3968,6 @@ mod tests {
                 .count(),
             2
         );
-        let requests = simulator.finish().unwrap();
         assert_eq!(requests.len(), 4);
         assert!(requests.iter().all(|request| request.request_processed));
     }
@@ -5059,6 +5243,77 @@ mod tests {
             SqliteSnapshotStateStore::for_worker(pool, "synthetic-contending-worker".to_string())
                 .unwrap();
         assert!(contender.claim(&plan.resume_key).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn file_backed_restart_reclaims_future_utc_lease_after_clock_rollback() {
+        let (_directory, pool, crashed_worker, plan) = setup_file_backed_lease_store().await;
+        let mut state = DurableSnapshotState::new(&plan, Freshness::NeverVerified).unwrap();
+        assert!(matches!(
+            crashed_worker.save(&mut state).await,
+            Err(SnapshotError::LeaseUnavailable)
+        ));
+        assert_eq!(state.generation, 0);
+        assert!(!crashed_worker.claim(&plan.resume_key).await.unwrap());
+        crashed_worker.save(&mut state).await.unwrap();
+        sqlx::query(
+            "UPDATE tally_snapshot_run_states SET lease_expires_at_unix_ms = ?1 \
+             WHERE resume_key = ?2",
+        )
+        .bind(i64::MAX)
+        .bind(&plan.resume_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Dropping the worker models a process crash: the kernel releases its advisory lock,
+        // even though the durable UTC expiry is now arbitrarily far in the future.
+        drop(crashed_worker);
+        let restarted_worker =
+            SqliteSnapshotStateStore::for_worker(pool, "synthetic-restarted-worker".to_string())
+                .unwrap();
+        assert!(restarted_worker.claim(&plan.resume_key).await.unwrap());
+        let mut recovered = restarted_worker
+            .load(&plan.resume_key)
+            .await
+            .unwrap()
+            .unwrap();
+        restarted_worker.heartbeat(&recovered).await.unwrap();
+        recovered
+            .warning_codes
+            .insert("restart_reclaimed".to_string());
+        restarted_worker.save(&mut recovered).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn file_backed_live_owner_cannot_be_stolen_when_utc_lease_is_expired() {
+        let (_directory, pool, live_worker, plan) = setup_file_backed_lease_store().await;
+        assert!(!live_worker.claim(&plan.resume_key).await.unwrap());
+        let mut state = DurableSnapshotState::new(&plan, Freshness::NeverVerified).unwrap();
+        live_worker.save(&mut state).await.unwrap();
+        sqlx::query(
+            "UPDATE tally_snapshot_run_states SET lease_expires_at_unix_ms = ?1 \
+             WHERE resume_key = ?2",
+        )
+        .bind(i64::MIN)
+        .bind(&plan.resume_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let contender =
+            SqliteSnapshotStateStore::for_worker(pool, "synthetic-live-contender".to_string())
+                .unwrap();
+        assert!(matches!(
+            contender.claim(&plan.resume_key).await,
+            Err(SnapshotError::LeaseUnavailable)
+        ));
+        // Wall-clock jumps also cannot make the actual owner lose save authority.
+        live_worker.heartbeat(&state).await.unwrap();
+        state
+            .warning_codes
+            .insert("live_owner_retained".to_string());
+        live_worker.save(&mut state).await.unwrap();
     }
 
     #[tokio::test]

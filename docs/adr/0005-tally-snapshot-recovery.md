@@ -34,13 +34,18 @@ are deliberately excluded. Thus a crash after insert but before state-key persis
 exact idempotent acknowledgement; changed content is an explicit conflict and cannot advance a
 checkpoint.
 
-The worker renews its lease before and after every connector call and every 30 seconds while a call is
-in flight, as well as immediately before local reconciliation and commit authority. A heartbeat is
-bound to the exact owner, run, and state generation and cannot revive an expired lease; ordinary state
-saves also reject an expired lease. Cancellation is polled during connector calls and rechecked at the
-same post-staging boundaries. If it is observed before `CommitPending` is durably established, Bridge
-commits a Cancelled proof without advancing the checkpoint instead of allowing a stale Completed or
-Partial outcome.
+For a file-backed mirror, each run also owns a per-resume-key kernel advisory lock beside the database.
+The operating system releases that lock when the worker or process exits. This lock is the live-owner
+authority: a restarted process can reclaim a durable row even when the wall clock moved backwards and
+left a far-future UTC expiry, while a live process cannot be displaced even when its stored expiry looks
+old. File-backed save and heartbeat operations require the lock as well as exact owner/run/generation
+equality. In-memory test databases have no cross-process identity and retain the bounded UTC fallback.
+
+The worker renews its diagnostic UTC lease before and after every connector call and every 30 seconds
+while a call is in flight, as well as immediately before local reconciliation and commit authority.
+Cancellation is polled during connector calls and rechecked at the same post-staging boundaries. If it
+is observed before `CommitPending` is durably established, Bridge commits a Cancelled proof without
+advancing the checkpoint instead of allowing a stale Completed or Partial outcome.
 
 The native app's ordinary Tally HTTP path now incrementally decodes UTF-8/BOM and UTF-16LE/BE chunks,
 computes encoded and decoded hashes, and enforces both caps without retaining a second complete wire

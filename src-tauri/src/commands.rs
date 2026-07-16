@@ -1,6 +1,6 @@
 use crate::db::tally_incremental::IncrementalFoundationEvidence;
 use crate::db::tally_mirror::{
-    selected_read_scope_commitment_sha256, CapabilityItemInput,
+    company_profile_correlation_key, selected_read_scope_commitment_sha256, CapabilityItemInput,
     CapabilityKind as MirrorCapabilityKind, CapabilitySnapshotInput,
     CapabilityState as MirrorCapabilityState, Confidence, FreshnessState,
     LocalReconciliationMismatch, ProofSummary, RedactedProofExport, ReviewedSetupInput,
@@ -258,10 +258,15 @@ pub async fn probe_tally(
         } else {
             "unknown"
         };
+        let correlation_key = company
+            .guid
+            .as_deref()
+            .map(|guid| company_profile_correlation_key(&canonical_origin, guid));
         companies.push(PersistedTallyCompany {
             name: company.name,
             guid: company.guid,
             mirror_company_id: None,
+            correlation_key,
             identity_confidence,
         });
     }
@@ -947,12 +952,17 @@ pub async fn save_tally_setup(
                     "Verify encrypted storage, then retry this reviewed scope while it is fresh.",
                 )
             })?;
+        let correlation_key = company
+            .guid
+            .as_deref()
+            .map(|guid| company_profile_correlation_key(&canonical_origin, guid));
         Ok(SavedTallySetup {
             passport_snapshot_id: saved.snapshot.id,
             canonical_origin,
             observed_at_unix_ms,
             company: PersistedTallyCompany {
                 name: company.name,
+                correlation_key,
                 guid: company.guid,
                 mirror_company_id: Some(saved.company.id),
                 identity_confidence: "observed",
@@ -998,6 +1008,7 @@ pub struct PersistedTallyCompany {
     pub name: String,
     pub guid: Option<String>,
     pub mirror_company_id: Option<String>,
+    pub correlation_key: Option<String>,
     pub identity_confidence: &'static str,
 }
 
@@ -1920,6 +1931,7 @@ mod tests {
                 name: "Synthetic Company".to_string(),
                 guid: Some("synthetic-guid".to_string()),
                 mirror_company_id: Some("company-1".to_string()),
+                correlation_key: Some("c".repeat(64)),
                 identity_confidence: "observed",
             },
             review_cleanup_warning: None,

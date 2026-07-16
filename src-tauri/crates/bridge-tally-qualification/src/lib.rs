@@ -337,8 +337,8 @@ impl MemoryEvidence {
                     && matches!(
                         method,
                         "windows_get_process_memory_info_peak_working_set_bytes"
-                            | "macos_getrusage_ru_maxrss_kib_normalized_to_bytes"
-                            | "unix_getrusage_ru_maxrss_kib_normalized_to_bytes"
+                            | "macos_getrusage_ru_maxrss_bytes"
+                            | "linux_getrusage_ru_maxrss_kib_normalized_to_bytes"
                     )
             }
             (None, None, None, None, Some(reason)) => {
@@ -714,8 +714,8 @@ fn memory_method_matches_os(memory: &MemoryEvidence, target_os: &str) -> bool {
     match memory.method.as_deref() {
         None => memory.unavailable_reason.is_some(),
         Some("windows_get_process_memory_info_peak_working_set_bytes") => target_os == "windows",
-        Some("macos_getrusage_ru_maxrss_kib_normalized_to_bytes") => target_os == "macos",
-        Some("unix_getrusage_ru_maxrss_kib_normalized_to_bytes") => target_os == "linux",
+        Some("macos_getrusage_ru_maxrss_bytes") => target_os == "macos",
+        Some("linux_getrusage_ru_maxrss_kib_normalized_to_bytes") => target_os == "linux",
         Some(_) => false,
     }
 }
@@ -877,7 +877,7 @@ mod tests {
     #[test]
     fn memory_method_must_match_the_receipt_os() {
         let wrong_method = if std::env::consts::OS == "windows" {
-            "macos_getrusage_ru_maxrss_kib_normalized_to_bytes"
+            "macos_getrusage_ru_maxrss_bytes"
         } else {
             "windows_get_process_memory_info_peak_working_set_bytes"
         };

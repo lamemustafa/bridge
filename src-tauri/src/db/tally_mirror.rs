@@ -314,6 +314,7 @@ pub struct PersistedCompanyProfile {
     pub name: String,
     pub guid_observed: bool,
     pub mirror_company_id: String,
+    pub correlation_key: String,
     pub identity_confidence: String,
     pub canonical_endpoint: String,
     pub last_observed_at_unix_ms: i64,
@@ -708,7 +709,7 @@ impl TallyMirrorRepository {
         .fetch_one(&mut *transaction)
         .await?;
         let rows = sqlx::query(
-            "SELECT c.id, c.display_name, c.identity_confidence, \
+            "SELECT c.id, c.display_name, c.company_guid, c.identity_confidence, \
              c.last_observed_at_unix_ms, e.canonical_origin \
              FROM tally_companies AS c \
              JOIN tally_endpoints AS e ON e.id = c.endpoint_id \
@@ -723,12 +724,18 @@ impl TallyMirrorRepository {
         let profiles = rows
             .into_iter()
             .map(|row| {
+                let canonical_endpoint: String = row.try_get("canonical_origin")?;
+                let company_guid: String = row.try_get("company_guid")?;
                 Ok(PersistedCompanyProfile {
                     name: row.try_get("display_name")?,
                     guid_observed: true,
                     mirror_company_id: row.try_get("id")?,
+                    correlation_key: company_profile_correlation_key(
+                        &canonical_endpoint,
+                        &company_guid,
+                    ),
                     identity_confidence: row.try_get("identity_confidence")?,
-                    canonical_endpoint: row.try_get("canonical_origin")?,
+                    canonical_endpoint,
                     last_observed_at_unix_ms: row.try_get("last_observed_at_unix_ms")?,
                 })
             })
@@ -2895,6 +2902,20 @@ impl TallyMirrorRepository {
         }
         Ok(result)
     }
+}
+
+/// Returns an opaque, stable join key for the same observed company at the same endpoint.
+/// The key deliberately does not expose the locally persisted Tally GUID.
+pub(crate) fn company_profile_correlation_key(
+    canonical_origin: &str,
+    company_guid: &str,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"bridge.tally.company-profile-correlation/1\0");
+    digest.update(canonical_origin.as_bytes());
+    digest.update(b"\0");
+    digest.update(company_guid.to_ascii_lowercase().as_bytes());
+    hex_digest(digest.finalize())
 }
 
 fn finish_redacted_export(
@@ -5473,6 +5494,24 @@ mod tests {
         assert_eq!(count, 1);
     }
 
+    #[test]
+    fn company_profile_correlation_is_casefolded_scoped_and_opaque() {
+        let first =
+            company_profile_correlation_key("http://127.0.0.1:9000", "SENSITIVE-COMPANY-GUID");
+        let same =
+            company_profile_correlation_key("http://127.0.0.1:9000", "sensitive-company-guid");
+        let other_endpoint =
+            company_profile_correlation_key("http://127.0.0.1:9001", "sensitive-company-guid");
+        let other_company =
+            company_profile_correlation_key("http://127.0.0.1:9000", "other-company-guid");
+
+        assert_eq!(first, same);
+        assert_ne!(first, other_endpoint);
+        assert_ne!(first, other_company);
+        assert_eq!(first.len(), 64);
+        assert!(!first.contains("sensitive"));
+    }
+
     #[tokio::test]
     async fn persisted_profiles_only_return_observed_stable_company_pins() {
         let (repository, snapshot, observed) = seeded_repository().await;
@@ -5500,6 +5539,10 @@ mod tests {
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].mirror_company_id, observed.id);
         assert!(profiles[0].guid_observed);
+        assert_eq!(
+            profiles[0].correlation_key,
+            company_profile_correlation_key("http://127.0.0.1:9000", "company-guid-1")
+        );
         assert_eq!(profiles[0].identity_confidence, "observed");
         assert_eq!(profiles[0].canonical_endpoint, "http://127.0.0.1:9000");
     }
