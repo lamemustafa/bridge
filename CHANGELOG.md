@@ -26,6 +26,10 @@ current source.
   restart admission uses the exact sealed Core receipt, and ambiguous duplicate
   live company identities fail before any snapshot read with their concrete
   terminal proof reason preserved.
+- Snapshot recovery now durably replays backward-clock abandonment evidence,
+  enforces a 100,000-record aggregate hydration ceiling, and recovers an exact
+  already-committed receipt from compact hash-bound proof authority without
+  rehydrating canonical membership.
 
 ### Added
 
@@ -68,6 +72,10 @@ current source.
 - Losing checkpoint compare-and-swap decisions terminalize as durable failed
   proofs and close staging attempts instead of remaining falsely resumable;
   unrelated checkpoint advances do not rewrite Failed or Cancelled outcomes.
+- Compatibility claims now require verified synthetic-fixture identity before
+  an explicit parsed Tally application rejection can establish `Unsupported`;
+  fixture, context, sentinel, parser, malformed-response, and transport
+  failures remain fail-closed observations rather than incompatibility claims.
 - Updated the XML parsing graph and removed unused Linux-only dialog
   dependencies from the supported Windows and macOS build graph.
 - Updated the Tauri runtime to 2.11.5 and tauri-runtime-wry to 2.11.4.

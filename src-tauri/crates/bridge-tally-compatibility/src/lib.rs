@@ -359,8 +359,7 @@ impl LiveCompatibilityReceipt {
             previous = Some(operation.profile);
             validate_operation(operation)?;
         }
-        let marker = self
-            .operations
+        self.operations
             .iter()
             .find(|operation| operation.profile == ReadProfileId::XmlSyntheticFixtureMarkerV1)
             .ok_or_else(|| invalid("fixture_marker_operation_missing"))?;
@@ -375,9 +374,6 @@ impl LiveCompatibilityReceipt {
             let required = [
                 ReadProfileId::XmlCompanyEnumerationV1,
                 ReadProfileId::XmlSyntheticFixtureMarkerV1,
-                ReadProfileId::XmlLedgerReadV1,
-                ReadProfileId::XmlVoucherEmptyRangeV1,
-                ReadProfileId::XmlVoucherPopulatedRangeV1,
             ];
             if required.iter().any(|profile| {
                 !self.operations.iter().any(|operation| {
@@ -394,7 +390,7 @@ impl LiveCompatibilityReceipt {
         {
             return Err(invalid("receipt_authority_invalid"));
         }
-        if marker.outcome != OperationOutcome::Passed {
+        if !self.fixture_marker_verified {
             for operation in &self.operations {
                 if matches!(
                     operation.profile,
@@ -547,7 +543,10 @@ fn validate_operation(operation: &OperationEvidence) -> Result<(), Compatibility
                 .ok_or_else(|| invalid("operation_reason_missing"))?;
             validate_safe_code(reason)?;
         }
-        _ => {
+        OperationOutcome::Unsupported => {
+            return Err(invalid("unsupported_operation_signature_unavailable"));
+        }
+        OperationOutcome::Failed | OperationOutcome::Inconclusive => {
             let reason = operation
                 .safe_reason_code
                 .as_deref()
@@ -1151,17 +1150,10 @@ fn validate_receipt_for_claim(
             }
         }
         ClaimLevel::Unsupported => {
-            let has_observed_failure = claim.required_profiles.iter().any(|profile| {
-                operations.get(profile).is_some_and(|operation| {
-                    matches!(
-                        operation.outcome,
-                        OperationOutcome::Failed | OperationOutcome::Unsupported
-                    ) && operation.application_status != ApplicationStatus::NotApplicable
-                })
-            });
-            if !has_observed_failure {
-                return Err(gate("unsupported_claim_failure_not_observed"));
+            if !receipt.fixture_marker_verified {
+                return Err(gate("fixture_marker_contract_not_verified"));
             }
+            return Err(gate("unsupported_claim_signature_unavailable"));
         }
         ClaimLevel::Unknown => return Err(gate("unknown_claim_reached_evidence_validation")),
     }
@@ -1455,6 +1447,85 @@ mod tests {
         .unwrap()
     }
 
+    fn trust(signing: &SigningKey) -> TrustedEvidenceKeys {
+        TrustedEvidenceKeys {
+            schema_version: TRUST_MANIFEST_SCHEMA_VERSION,
+            keys: vec![TrustedEvidenceKey {
+                key_id: "release-evidence-1".to_string(),
+                public_key_hex: hex::encode(signing.verifying_key().to_bytes()),
+                valid_from_unix_ms: NOW - 100_000,
+                valid_until_unix_ms: NOW + 100_000,
+                revoked_at_unix_ms: None,
+            }],
+        }
+    }
+
+    fn attestation(
+        receipt: &LiveCompatibilityReceipt,
+        surface: &CompatibilitySurfaceManifest,
+        signing: &SigningKey,
+    ) -> ReviewedEvidenceAttestation {
+        let mut value = ReviewedEvidenceAttestation {
+            schema_version: ATTESTATION_SCHEMA_VERSION,
+            evidence_id: "evidence-1".to_string(),
+            receipt_sha256: receipt.receipt_sha256.clone(),
+            compatibility_surface_sha256: surface.manifest_sha256.clone(),
+            reviewed_at_unix_ms: NOW - 1_000,
+            expires_at_unix_ms: NOW + 50_000,
+            review_commit_sha: COMMIT.to_string(),
+            review_url: "https://github.com/lamemustafa/bridge/pull/1".to_string(),
+            key_id: "release-evidence-1".to_string(),
+            signature_hex: "00".repeat(64),
+        };
+        value.signature_hex = hex::encode(signing.sign(&value.signing_bytes().unwrap()).to_bytes());
+        value
+    }
+
+    fn unsupported_manifest(
+        surface: &CompatibilitySurfaceManifest,
+        required_profile: ReadProfileId,
+    ) -> SupportClaimsManifest {
+        SupportClaimsManifest {
+            schema_version: SUPPORT_MANIFEST_SCHEMA_VERSION,
+            bridge_commit_sha: COMMIT.to_string(),
+            compatibility_surface_sha256: surface.manifest_sha256.clone(),
+            claims: vec![SupportClaim {
+                claim_id: "unsupported-exact-scope".to_string(),
+                level: ClaimLevel::Unsupported,
+                promotion_eligible: false,
+                product: ProductFamily::TallyPrime,
+                release: "7.1".to_string(),
+                mode: TallyMode::Education,
+                platform: Platform::Windows,
+                architecture: Architecture::X86_64,
+                transport: TransportProfile::XmlHttp,
+                endpoint_family: LoopbackFamily::Ipv4,
+                odbc_state: OdbcState::Disabled,
+                company_state: CompanyLoadState::One,
+                locale: LocaleProfile::EnglishIndia,
+                encoding: TextEncoding::Utf8,
+                dataset_tier: DatasetTier::SyntheticSmall,
+                fixture_manifest_sha256: Some(SHA.to_string()),
+                required_profiles: vec![required_profile],
+                max_evidence_age_days: 30,
+                evidence_id: Some("evidence-1".to_string()),
+            }],
+        }
+    }
+
+    fn not_attempted_operation(profile: ReadProfileId) -> OperationEvidence {
+        OperationEvidence {
+            profile,
+            template_sha256: SHA.to_string(),
+            outcome: OperationOutcome::NotAttempted,
+            application_status: ApplicationStatus::NotApplicable,
+            encoding: TextEncoding::Unknown,
+            response_size: SizeBucket::Zero,
+            record_count: CountBucket::Unknown,
+            safe_reason_code: Some("fixture_not_verified".to_string()),
+        }
+    }
+
     #[test]
     fn receipt_round_trip_is_bounded_private_and_checksum_bound() {
         let receipt = receipt(SHA);
@@ -1735,6 +1806,233 @@ mod tests {
             )
             .unwrap_err(),
             gate("attestation_key_inactive")
+        );
+    }
+
+    #[test]
+    fn unsupported_claims_remain_disabled_without_a_profile_specific_signature() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+        let surface = CompatibilitySurfaceManifest {
+            schema_version: SURFACE_SCHEMA_VERSION,
+            files: vec![SurfaceFile {
+                path: "surface.txt".to_string(),
+                sha256: sha256_file(&temp.path().join("surface.txt")).unwrap(),
+            }],
+            manifest_sha256: String::new(),
+        }
+        .seal()
+        .unwrap();
+        let signing = SigningKey::from_bytes(&[9_u8; 32]);
+        let trust = trust(&signing);
+
+        let mut invented_unsupported = receipt(&surface.manifest_sha256);
+        invented_unsupported.receipt_sha256.clear();
+        let ledger = invented_unsupported
+            .operations
+            .iter_mut()
+            .find(|operation| operation.profile == ReadProfileId::XmlLedgerReadV1)
+            .unwrap();
+        ledger.outcome = OperationOutcome::Unsupported;
+        ledger.application_status = ApplicationStatus::Failure;
+        ledger.safe_reason_code = Some("tally_export_rejected".to_string());
+        assert_eq!(
+            invented_unsupported.seal().unwrap_err(),
+            invalid("unsupported_operation_signature_unavailable")
+        );
+
+        let mut later_failure = receipt(&surface.manifest_sha256);
+        later_failure.receipt_sha256.clear();
+        let ledger = later_failure
+            .operations
+            .iter_mut()
+            .find(|operation| operation.profile == ReadProfileId::XmlLedgerReadV1)
+            .unwrap();
+        ledger.outcome = OperationOutcome::Failed;
+        ledger.application_status = ApplicationStatus::Failure;
+        ledger.safe_reason_code = Some("tally_export_rejected".to_string());
+        for profile in [
+            ReadProfileId::XmlVoucherEmptyRangeV1,
+            ReadProfileId::XmlVoucherPopulatedRangeV1,
+        ] {
+            let operation = later_failure
+                .operations
+                .iter_mut()
+                .find(|operation| operation.profile == profile)
+                .unwrap();
+            *operation = not_attempted_operation(profile);
+        }
+        let later_failure = later_failure.seal().unwrap();
+        let later_attestation = attestation(&later_failure, &surface, &signing);
+        let ledger_manifest = unsupported_manifest(&surface, ReadProfileId::XmlLedgerReadV1);
+        assert_eq!(
+            enforce_support_gate(
+                &ledger_manifest,
+                &surface,
+                &trust,
+                std::slice::from_ref(&later_failure),
+                std::slice::from_ref(&later_attestation),
+                temp.path(),
+                NOW,
+            )
+            .unwrap_err(),
+            gate("unsupported_claim_signature_unavailable")
+        );
+
+        for (reason, application_status, transport_failure) in [
+            (
+                "ledger_fixture_or_context_invalid",
+                ApplicationStatus::Success,
+                false,
+            ),
+            (
+                "ledger_response_malformed",
+                ApplicationStatus::Unrecognized,
+                false,
+            ),
+            (
+                "transport_connection_reset",
+                ApplicationStatus::NotApplicable,
+                true,
+            ),
+        ] {
+            let mut non_authoritative = receipt(&surface.manifest_sha256);
+            non_authoritative.receipt_sha256.clear();
+            let ledger = non_authoritative
+                .operations
+                .iter_mut()
+                .find(|operation| operation.profile == ReadProfileId::XmlLedgerReadV1)
+                .unwrap();
+            ledger.outcome = OperationOutcome::Failed;
+            ledger.application_status = application_status;
+            ledger.safe_reason_code = Some(reason.to_string());
+            if transport_failure {
+                ledger.encoding = TextEncoding::Unknown;
+                ledger.response_size = SizeBucket::Zero;
+            }
+            for profile in [
+                ReadProfileId::XmlVoucherEmptyRangeV1,
+                ReadProfileId::XmlVoucherPopulatedRangeV1,
+            ] {
+                let operation = non_authoritative
+                    .operations
+                    .iter_mut()
+                    .find(|operation| operation.profile == profile)
+                    .unwrap();
+                *operation = not_attempted_operation(profile);
+            }
+            let non_authoritative = non_authoritative.seal().unwrap();
+            let non_authoritative_attestation = attestation(&non_authoritative, &surface, &signing);
+            assert_eq!(
+                enforce_support_gate(
+                    &ledger_manifest,
+                    &surface,
+                    &trust,
+                    std::slice::from_ref(&non_authoritative),
+                    std::slice::from_ref(&non_authoritative_attestation),
+                    temp.path(),
+                    NOW,
+                )
+                .unwrap_err(),
+                if transport_failure {
+                    gate("receipt_claim_scope_mismatch")
+                } else {
+                    gate("unsupported_claim_signature_unavailable")
+                },
+                "non-authoritative failure was accepted: {reason}"
+            );
+        }
+
+        let mut wrong_fixture = later_failure.clone();
+        wrong_fixture.receipt_sha256.clear();
+        wrong_fixture.fixture_manifest_sha256 = "c".repeat(64);
+        let wrong_fixture = wrong_fixture.seal().unwrap();
+        let wrong_attestation = attestation(&wrong_fixture, &surface, &signing);
+        assert_eq!(
+            enforce_support_gate(
+                &ledger_manifest,
+                &surface,
+                &trust,
+                std::slice::from_ref(&wrong_fixture),
+                std::slice::from_ref(&wrong_attestation),
+                temp.path(),
+                NOW,
+            )
+            .unwrap_err(),
+            gate("receipt_claim_scope_mismatch")
+        );
+
+        let mut missing_fixture = receipt(&surface.manifest_sha256);
+        missing_fixture.receipt_sha256.clear();
+        missing_fixture.fixture_marker_verified = false;
+        for profile in [
+            ReadProfileId::XmlSyntheticFixtureMarkerV1,
+            ReadProfileId::XmlLedgerReadV1,
+            ReadProfileId::XmlVoucherEmptyRangeV1,
+            ReadProfileId::XmlVoucherPopulatedRangeV1,
+        ] {
+            let operation = missing_fixture
+                .operations
+                .iter_mut()
+                .find(|operation| operation.profile == profile)
+                .unwrap();
+            *operation = not_attempted_operation(profile);
+        }
+        let missing_fixture = missing_fixture.seal().unwrap();
+        let missing_attestation = attestation(&missing_fixture, &surface, &signing);
+        assert_eq!(
+            enforce_support_gate(
+                &ledger_manifest,
+                &surface,
+                &trust,
+                std::slice::from_ref(&missing_fixture),
+                std::slice::from_ref(&missing_attestation),
+                temp.path(),
+                NOW,
+            )
+            .unwrap_err(),
+            gate("fixture_marker_contract_not_verified")
+        );
+
+        let mut marker_failure = receipt(&surface.manifest_sha256);
+        marker_failure.receipt_sha256.clear();
+        marker_failure.fixture_marker_verified = false;
+        let marker = marker_failure
+            .operations
+            .iter_mut()
+            .find(|operation| operation.profile == ReadProfileId::XmlSyntheticFixtureMarkerV1)
+            .unwrap();
+        marker.outcome = OperationOutcome::Failed;
+        marker.application_status = ApplicationStatus::Failure;
+        marker.safe_reason_code = Some("synthetic_fixture_unverified".to_string());
+        for profile in [
+            ReadProfileId::XmlLedgerReadV1,
+            ReadProfileId::XmlVoucherEmptyRangeV1,
+            ReadProfileId::XmlVoucherPopulatedRangeV1,
+        ] {
+            let operation = marker_failure
+                .operations
+                .iter_mut()
+                .find(|operation| operation.profile == profile)
+                .unwrap();
+            *operation = not_attempted_operation(profile);
+        }
+        let marker_failure = marker_failure.seal().unwrap();
+        let marker_attestation = attestation(&marker_failure, &surface, &signing);
+        let marker_manifest =
+            unsupported_manifest(&surface, ReadProfileId::XmlSyntheticFixtureMarkerV1);
+        assert_eq!(
+            enforce_support_gate(
+                &marker_manifest,
+                &surface,
+                &trust,
+                std::slice::from_ref(&marker_failure),
+                std::slice::from_ref(&marker_attestation),
+                temp.path(),
+                NOW,
+            )
+            .unwrap_err(),
+            gate("fixture_marker_contract_not_verified")
         );
     }
 

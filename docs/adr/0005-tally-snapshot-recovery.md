@@ -28,6 +28,18 @@ receipt, count, and hash commitments; it never embeds the full identity map. Bot
 nonterminal rows remain inspectable for operators but are not resumable as v5 runs because the
 normalized membership authority cannot be reconstructed truthfully.
 
+Before final reconciliation, Bridge sums the hash-bound `member_count` values in completed v5
+receipts without hydrating their canonical maps. The run fails closed with
+`reconciliation_record_budget_exceeded` above 100,000 aggregate records, including on restart and
+for a previously staged reconciled decision. Validated record-key and digest length limits make
+that count a deterministic transient-memory ceiling. Reconciliation moves, rather than clones,
+the hydrated maps, and normalized SQLite membership remains the only restart authority.
+`CommitPending` also persists the compact reconciled proof, never the canonical membership map.
+Recovery verifies an already-written immutable receipt against that proof without hydration. If no
+receipt exists, an over-budget pending decision is replaced by the same non-advancing Failed proof
+as an immediate over-budget run. Legacy v5 pending rows without the compact proof can still retry
+within the bound; an already-committed legacy row fails explicitly rather than inventing authority.
+
 Record staging accepts a replay only when every stored provenance, canonical payload, exact-decimal,
 AlterID, validation, and rejection fact matches. Generated observation ID and local observation time
 are deliberately excluded. Thus a crash after insert but before state-key persistence resumes as an

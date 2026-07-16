@@ -51,10 +51,19 @@ cargo run --locked -p bridge-tally-compatibility -- gate \
 ```
 
 `Observed` and `supported` require every required operation to pass the full
-fixture sentinel contract. `Unsupported` requires an actual required-profile
-failure observed in a response; an unreachable port or absent evidence is not
-unsupported. JSONEX, large-dataset, no-company, and UTF-16 cells are currently
-non-promotable and remain `unknown` until their qualification paths exist.
+fixture sentinel contract. `Unsupported` requires the synthetic fixture
+identity to be verified first and an explicit, profile-specific unsupported
+signature to be reviewed and implemented. No such signature currently exists,
+so live receipts cannot promote any `Unsupported` claim. In particular, a
+generic Tally `STATUS=0` rejection can also mean malformed TDL, permissions, or
+a transient condition and remains `Failed` evidence. Fixture, context, or
+sentinel mismatches; parser or malformed-response failures; transport failures;
+a missing or mismatched fixture; failure of the marker check itself; an
+unreachable port; and absent evidence are likewise not unsupported. Those
+observations remain fail-closed rather than being promoted into product
+incompatibility. JSONEX, large-dataset, no-company, and UTF-16 cells are
+currently non-promotable and remain `unknown` until their qualification paths
+exist.
 
 The standalone live controller is documented in
 [`live-education-runbook.md`](./live-education-runbook.md). It dispatches only
