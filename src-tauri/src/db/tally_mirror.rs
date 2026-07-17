@@ -91,6 +91,8 @@ pub enum MirrorError {
     ObservationConflict,
     #[error("the snapshot window attempt is no longer open")]
     WindowAttemptClosed,
+    #[error("the observation batch still owns open snapshot window attempts")]
+    OpenWindowAttempts,
     #[error("the replayed snapshot window membership conflicts with immutable stored content")]
     WindowMembershipConflict,
     #[error("a previously staged snapshot window membership disappeared")]
@@ -437,6 +439,12 @@ pub struct BeginSnapshotWindowAttemptResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AbandonSnapshotWindowAttemptResult {
     pub completed_at_unix_ms: i64,
+    pub local_clock_moved_backwards: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotWindowAttemptCleanupResult {
+    pub completed_at_floor: Option<i64>,
     pub local_clock_moved_backwards: bool,
 }
 
@@ -1837,6 +1845,58 @@ impl TallyMirrorRepository {
         })
     }
 
+    pub async fn abandon_open_snapshot_window_attempts_for_batch(
+        &self,
+        batch_id: &str,
+        observed_completed_at_unix_ms: i64,
+    ) -> Result<SnapshotWindowAttemptCleanupResult, MirrorError> {
+        validate_nonempty(batch_id, 128, "window_attempt_batch_id")?;
+        if observed_completed_at_unix_ms <= 0 {
+            return Err(MirrorError::InvalidInput("window_attempt_completed_at"));
+        }
+        let mut transaction = self.pool.begin().await?;
+        acquire_mirror_write_lock(&mut transaction).await?;
+        let batch_exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_observation_batches WHERE id = ?1",
+        )
+        .bind(batch_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if batch_exists != 1 {
+            return Err(MirrorError::NotFound);
+        }
+        sqlx::query(
+            "UPDATE tally_snapshot_window_attempts SET state = 'abandoned', \
+               completed_at_unix_ms = MAX(started_at_unix_ms, ?1), \
+               terminal_safe_reason_code = CASE WHEN started_at_unix_ms > ?1 \
+                 THEN 'local_clock_moved_backwards' ELSE NULL END \
+             WHERE batch_id = ?2 AND state = 'open'",
+        )
+        .bind(observed_completed_at_unix_ms)
+        .bind(batch_id)
+        .execute(&mut *transaction)
+        .await?;
+        // Keep timeline and gap evidence independent. The floor covers every terminal attempt,
+        // including a normal-clock orphan completed after an already-staged pending decision;
+        // the rollback flag is the cumulative durable ANY of the reviewed terminal reason.
+        let aggregate = sqlx::query(
+            "SELECT MAX(completed_at_unix_ms) AS completed_at_floor, \
+               COALESCE(MAX(CASE WHEN terminal_safe_reason_code = \
+                 'local_clock_moved_backwards' THEN 1 ELSE 0 END), 0) AS clock_rollback \
+             FROM tally_snapshot_window_attempts \
+             WHERE batch_id = ?1 AND state IN ('abandoned', 'complete')",
+        )
+        .bind(batch_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let result = SnapshotWindowAttemptCleanupResult {
+            completed_at_floor: aggregate.try_get("completed_at_floor")?,
+            local_clock_moved_backwards: aggregate.try_get::<i64, _>("clock_rollback")? != 0,
+        };
+        transaction.commit().await?;
+        Ok(result)
+    }
+
     pub async fn stage_snapshot_window_memberships(
         &self,
         attempt: &SnapshotWindowAttemptRef,
@@ -2353,19 +2413,19 @@ impl TallyMirrorRepository {
             return Err(MirrorError::VerificationInvariant);
         }
 
-        // Close every owner-bound attempt in the same transaction as the batch. This also
-        // catches the lost-ack window after attempt creation but before its durable state ref save.
-        sqlx::query(
-            "UPDATE tally_snapshot_window_attempts SET state = 'abandoned', \
-             completed_at_unix_ms = MAX(started_at_unix_ms, ?1), \
-             terminal_safe_reason_code = CASE WHEN started_at_unix_ms > ?1 \
-               THEN 'local_clock_moved_backwards' ELSE NULL END \
-             WHERE batch_id = ?2 AND state = 'open'",
+        // Proof construction must consume cleanup evidence before this transaction. Refuse to
+        // silently close an attempt here: doing so would let an immutable proof omit evidence
+        // discovered only after its hash was staged.
+        let open_attempt_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_snapshot_window_attempts \
+             WHERE batch_id = ?1 AND state = 'open'",
         )
-        .bind(input.completed_at_unix_ms)
         .bind(&input.batch_id)
-        .execute(&mut *transaction)
+        .fetch_one(&mut *transaction)
         .await?;
+        if open_attempt_count != 0 {
+            return Err(MirrorError::OpenWindowAttempts);
+        }
 
         let run_id: String = batch.try_get("run_id")?;
         let capability_snapshot_id: String = batch.try_get("capability_snapshot_id")?;
@@ -5138,7 +5198,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminal_commit_closes_orphan_attempt_and_binds_unavailable_count() {
+    async fn commit_rejects_open_attempt_until_proof_bound_cleanup_completes() {
         let (repository, snapshot, company) = seeded_repository().await;
         let run_id = "orphan-window-terminal-run";
         let batch_id = begin_batch(&repository, &snapshot, &company, run_id).await;
@@ -5151,23 +5211,42 @@ mod tests {
             .await
             .expect("stage unavailable orphan membership");
 
-        let receipt = repository
-            .commit_batch(CommitBatchInput::test_only(CommitBatchParts {
-                batch_id: batch_id.clone(),
-                proof_contract_version: 2,
-                outcome: RunOutcome::Failed,
-                verification: VerificationState::Unverified,
-                completed_at_unix_ms: 4_000,
-                record_counts_sha256: None,
-                snapshot_sha256: None,
-                expected_checkpoint_before: None,
-                checkpoint_after: None,
-                freshness_target_seconds: 60,
-                gap_codes: vec!["record_provenance_unavailable".to_string()],
-                warning_codes: Vec::new(),
-            }))
+        let input = CommitBatchInput::test_only(CommitBatchParts {
+            batch_id: batch_id.clone(),
+            proof_contract_version: 2,
+            outcome: RunOutcome::Failed,
+            verification: VerificationState::Unverified,
+            completed_at_unix_ms: 4_000,
+            record_counts_sha256: None,
+            snapshot_sha256: None,
+            expected_checkpoint_before: None,
+            checkpoint_after: None,
+            freshness_target_seconds: 60,
+            gap_codes: vec!["record_provenance_unavailable".to_string()],
+            warning_codes: Vec::new(),
+        });
+        assert!(matches!(
+            repository.commit_batch(input.clone()).await,
+            Err(MirrorError::OpenWindowAttempts)
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM tally_snapshot_window_attempts WHERE id = ?1",
+            )
+            .bind(&attempt.attempt_id)
+            .fetch_one(&repository.pool)
             .await
-            .expect("terminal commit closes every open attempt");
+            .unwrap(),
+            "open"
+        );
+        repository
+            .abandon_open_snapshot_window_attempts_for_batch(&batch_id, 4_000)
+            .await
+            .expect("proof preparation closes attempts before commit");
+        let receipt = repository
+            .commit_batch(input)
+            .await
+            .expect("commit succeeds only after explicit evidence-bearing cleanup");
         assert_eq!(receipt.facts.provenance_unavailable_records, 1);
         assert_eq!(
             sqlx::query_scalar::<_, String>(

@@ -1657,6 +1657,11 @@ enum ConnectorAwait<T> {
     Cancelled,
 }
 
+struct CleanupDecisionEvidence {
+    gap_changed: bool,
+    completed_at_floor: Option<i64>,
+}
+
 impl<'a, S, C> FullSnapshotEngine<'a, S, C>
 where
     S: SnapshotStateStore,
@@ -1687,6 +1692,30 @@ where
             observed_completed_at_unix_ms < started_at_unix_ms,
         );
         observed_completed_at_unix_ms.max(started_at_unix_ms)
+    }
+
+    async fn close_open_attempts_before_decision(
+        &self,
+        state: &mut DurableSnapshotState,
+    ) -> Result<CleanupDecisionEvidence, SnapshotError> {
+        let already_recorded = state.gap_codes.contains("local_clock_moved_backwards");
+        let batch_id = state
+            .batch_id
+            .clone()
+            .ok_or(SnapshotError::StateInvariant("batch_id"))?;
+        let cleanup = self
+            .mirror
+            .abandon_open_snapshot_window_attempts_for_batch(
+                &batch_id,
+                Utc::now().timestamp_millis(),
+            )
+            .await?;
+        Self::record_local_clock_rollback(state, cleanup.local_clock_moved_backwards);
+        Ok(CleanupDecisionEvidence {
+            gap_changed: !already_recorded
+                && state.gap_codes.contains("local_clock_moved_backwards"),
+            completed_at_floor: cleanup.completed_at_floor,
+        })
     }
 
     pub fn new(mirror: &'a TallyMirrorRepository, state_store: &'a S, connector: &'a C) -> Self {
@@ -2702,11 +2731,15 @@ where
                 .await;
         }
         self.state_store.heartbeat(&state).await?;
+        let cleanup = self.close_open_attempts_before_decision(&mut state).await?;
         self.hydrate_completed_window_records(&mut state).await?;
+        let observed_completed_at_unix_ms = Utc::now()
+            .timestamp_millis()
+            .max(cleanup.completed_at_floor.unwrap_or(i64::MIN));
         let completed_at_unix_ms = Self::clamp_run_completion(
             &mut state,
             plan.started_at_unix_ms,
-            Utc::now().timestamp_millis(),
+            observed_completed_at_unix_ms,
         );
         let decision = reconciliation_decision(plan, &mut state, completed_at_unix_ms)?;
         if cancellation.is_cancelled() {
@@ -2753,16 +2786,20 @@ where
         ),
         SnapshotError,
     > {
+        let cleanup = self.close_open_attempts_before_decision(&mut state).await?;
         self.abandon_open_window_attempts(&mut state).await?;
         state.gap_codes.insert(safe_reason_code.to_string());
         let batch_id = state
             .batch_id
             .clone()
             .ok_or(SnapshotError::StateInvariant("batch_id"))?;
+        let observed_completed_at_unix_ms = Utc::now()
+            .timestamp_millis()
+            .max(cleanup.completed_at_floor.unwrap_or(i64::MIN));
         let completed_at = Self::clamp_run_completion(
             &mut state,
             plan.started_at_unix_ms,
-            Utc::now().timestamp_millis(),
+            observed_completed_at_unix_ms,
         );
         let record_counts = terminal_record_counts(
             self.mirror
@@ -2946,9 +2983,85 @@ where
             .pending_commit
             .clone()
             .ok_or(SnapshotError::StateInvariant("pending_commit"))?;
+        let batch_id = state
+            .batch_id
+            .clone()
+            .ok_or(SnapshotError::StateInvariant("batch_id"))?;
+        let committed_receipt = match self
+            .mirror
+            .historical_commit_receipt_for_batch(&batch_id, &plan.run_id)
+            .await
+        {
+            Ok(receipt) => Some(receipt),
+            Err(MirrorError::NotFound) => None,
+            Err(error) => return Err(error.into()),
+        };
         let budget_exceeded = pending.kind == PendingDecisionKind::Reconciled
             && reconciliation_record_budget_exceeded(&state)?;
-        let persisted_decision = persisted_reconciled_decision(plan, &state, &pending)?;
+        if let Some(receipt) = committed_receipt {
+            let decision =
+                if let Some(decision) = persisted_reconciled_decision(plan, &state, &pending)? {
+                    decision
+                } else if budget_exceeded {
+                    return Err(SnapshotError::StateInvariant(
+                        "legacy_committed_reconciliation_record_budget",
+                    ));
+                } else {
+                    match pending.kind {
+                        PendingDecisionKind::Reconciled => {
+                            self.hydrate_completed_window_records(&mut state).await?;
+                            reconciliation_decision(plan, &mut state, pending.completed_at_unix_ms)?
+                        }
+                        PendingDecisionKind::Failed | PendingDecisionKind::Cancelled => {
+                            let record_counts = terminal_record_counts(
+                                self.mirror
+                                    .batch_observation_counts(&batch_id, &plan.run_id)
+                                    .await?,
+                            )?;
+                            build_terminal_proof(
+                                batch_id.clone(),
+                                plan.run_id.clone(),
+                                plan.company.identity.clone(),
+                                plan.pack,
+                                plan.pack_schema_version,
+                                plan.started_at_unix_ms,
+                                pending.completed_at_unix_ms,
+                                state.freshness_before,
+                                plan.freshness_target_seconds,
+                                if pending.kind == PendingDecisionKind::Cancelled {
+                                    TerminalKind::Cancelled
+                                } else {
+                                    TerminalKind::Failed
+                                },
+                                pending
+                                    .safe_reason_code
+                                    .clone()
+                                    .ok_or(SnapshotError::StateInvariant("terminal_reason"))?,
+                                state.gap_codes.clone(),
+                                state.warning_codes.clone(),
+                                record_counts,
+                            )
+                        }
+                    }
+                };
+            verify_commit_receipt(&state, &decision.proof, &receipt)?;
+            return self
+                .finish_committed_state(state, decision.proof, receipt)
+                .await;
+        }
+
+        let cleanup = self.close_open_attempts_before_decision(&mut state).await?;
+        let rebuilt_completed_at_unix_ms = pending
+            .completed_at_unix_ms
+            .max(plan.started_at_unix_ms)
+            .max(cleanup.completed_at_floor.unwrap_or(i64::MIN));
+        let cleanup_changed_decision =
+            cleanup.gap_changed || rebuilt_completed_at_unix_ms != pending.completed_at_unix_ms;
+        let persisted_decision = if cleanup_changed_decision {
+            None
+        } else {
+            persisted_reconciled_decision(plan, &state, &pending)?
+        };
         let decision = if let Some(decision) = persisted_decision {
             Some(decision)
         } else if budget_exceeded {
@@ -2957,7 +3070,7 @@ where
             Some(match pending.kind {
                 PendingDecisionKind::Reconciled => {
                     self.hydrate_completed_window_records(&mut state).await?;
-                    reconciliation_decision(plan, &mut state, pending.completed_at_unix_ms)?
+                    reconciliation_decision(plan, &mut state, rebuilt_completed_at_unix_ms)?
                 }
                 PendingDecisionKind::Failed | PendingDecisionKind::Cancelled => {
                     let batch_id = state
@@ -2976,7 +3089,7 @@ where
                         plan.pack,
                         plan.pack_schema_version,
                         plan.started_at_unix_ms,
-                        pending.completed_at_unix_ms,
+                        rebuilt_completed_at_unix_ms,
                         state.freshness_before,
                         plan.freshness_target_seconds,
                         if pending.kind == PendingDecisionKind::Cancelled {
@@ -2996,26 +3109,10 @@ where
             })
         };
 
-        let batch_id = state
-            .batch_id
-            .as_deref()
-            .ok_or(SnapshotError::StateInvariant("batch_id"))?;
-        match self
-            .mirror
-            .historical_commit_receipt_for_batch(batch_id, &plan.run_id)
-            .await
-        {
-            Ok(receipt) => {
-                let decision = decision.ok_or(SnapshotError::StateInvariant(
-                    "legacy_committed_reconciliation_record_budget",
-                ))?;
-                verify_commit_receipt(&state, &decision.proof, &receipt)?;
-                return self
-                    .finish_committed_state(state, decision.proof, receipt)
-                    .await;
-            }
-            Err(MirrorError::NotFound) => {}
-            Err(error) => return Err(error.into()),
+        if cleanup_changed_decision {
+            // The staged hash/proof predates newly recovered cleanup evidence. No immutable
+            // receipt exists, so discard only the uncommitted decision and stage its rebuilt form.
+            state.pending_commit = None;
         }
         if budget_exceeded {
             // No immutable receipt exists, so replacing the uncommitted advancing decision cannot
@@ -5102,6 +5199,21 @@ mod tests {
             .await
             .unwrap();
 
+        let connector = FakeConnector {
+            batch: Mutex::new(VecDeque::new()),
+            company: plan.company.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        let engine = FullSnapshotEngine::new(&mirror, &store, &connector);
+        let cleanup = engine
+            .close_open_attempts_before_decision(&mut state)
+            .await
+            .expect("proof preparation closes the lost-ack attempt");
+        assert!(!cleanup.gap_changed);
+        assert!(
+            cleanup.completed_at_floor >= Some(plan.started_at_unix_ms + 1),
+            "the reconciled decision must be built after the orphan completion floor"
+        );
         let record_counts = BTreeMap::new();
         let losing_decision = ReconciliationDecision {
             proof: ProofManifest {
@@ -5135,12 +5247,7 @@ mod tests {
             }),
             safe_mismatches: Vec::new(),
         };
-        let connector = FakeConnector {
-            batch: Mutex::new(VecDeque::new()),
-            company: plan.company.clone(),
-            requests: Mutex::new(Vec::new()),
-        };
-        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+        let result = engine
             .commit_decision(
                 &plan,
                 state,
@@ -5197,7 +5304,7 @@ mod tests {
         expected_phase: SnapshotPhase,
         expected_reason: &str,
     ) {
-        let (_, mirror, store, mut plan) = setup().await;
+        let (pool, mirror, store, mut plan) = setup().await;
         plan.resume_key = format!("resume-preserve-{expected_reason}");
         plan.run_id = format!("run-preserve-{expected_reason}");
         let checkpoint_before = seed_verified_checkpoint(&mirror, &plan).await;
@@ -5220,6 +5327,24 @@ mod tests {
             commit.intended_checkpoint.is_none()
                 && commit.safe_reason_code.as_deref() == Some(expected_reason)
         }));
+        let original_pending_completed_at = pending
+            .pending_commit
+            .as_ref()
+            .unwrap()
+            .completed_at_unix_ms;
+        let orphan_started_at = original_pending_completed_at.saturating_add(1);
+        let orphan = mirror
+            .begin_snapshot_window_attempt(BeginSnapshotWindowAttemptInput {
+                batch_id: pending.batch_id.clone().unwrap(),
+                window_id: plan.windows[0].id.clone(),
+                started_at_unix_ms: orphan_started_at,
+            })
+            .await
+            .expect("inject normal-clock orphan after pending decision")
+            .attempt;
+        while Utc::now().timestamp_millis() < orphan_started_at {
+            tokio::task::yield_now().await;
+        }
 
         let winning_batch = mirror
             .begin_batch(BeginBatchInput {
@@ -5271,6 +5396,25 @@ mod tests {
             .gaps
             .iter()
             .any(|gap| gap.safe_reason_code == "snapshot_checkpoint_changed"));
+        assert!(!resumed
+            .proof
+            .gaps
+            .iter()
+            .any(|gap| gap.safe_reason_code == "local_clock_moved_backwards"));
+        assert!(
+            resumed.proof.completed_at_unix_ms.unwrap() > original_pending_completed_at,
+            "normal-clock orphan completion floor must rebuild the pending decision"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM tally_snapshot_window_attempts WHERE id = ?1",
+            )
+            .bind(orphan.attempt_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "abandoned"
+        );
         assert_eq!(
             mirror
                 .freshness(
@@ -5612,6 +5756,18 @@ mod tests {
             .gaps
             .iter()
             .any(|gap| gap.safe_reason_code == "local_clock_moved_backwards"));
+        assert!(
+            result.proof.completed_at_unix_ms.unwrap_or_default() >= future_attempt_start,
+            "proof completion cannot precede the orphan attempt completion floor"
+        );
+        let immutable_receipt = mirror
+            .historical_commit_receipt_for_batch(
+                result.state.batch_id.as_deref().unwrap(),
+                &plan.run_id,
+            )
+            .await
+            .unwrap();
+        assert!(immutable_receipt.facts.completed_at_unix_ms >= future_attempt_start);
         assert!(connector.requests.lock().unwrap().is_empty());
         let stored_attempt = sqlx::query_as::<_, (String, i64)>(
             "SELECT state, completed_at_unix_ms FROM tally_snapshot_window_attempts WHERE id = ?1",
@@ -5707,6 +5863,92 @@ mod tests {
             .gaps
             .iter()
             .any(|gap| gap.safe_reason_code == "local_clock_moved_backwards"));
+    }
+
+    #[tokio::test]
+    async fn early_cancellation_recovers_orphan_begin_clock_evidence_before_proof() {
+        let (pool, mirror, store, mut plan) = setup().await;
+        plan.resume_key = "resume-orphan-begin-early-cancel".to_string();
+        plan.run_id = "run-orphan-begin-early-cancel".to_string();
+        let batch_id = mirror
+            .begin_batch(BeginBatchInput {
+                run_id: plan.run_id.clone(),
+                capability_snapshot_id: plan.capability_snapshot_id.clone(),
+                company_id: plan.mirror_company_id.clone(),
+                pack_id: pack_code(plan.pack).to_string(),
+                pack_schema_major: plan.pack_schema_version.major,
+                pack_schema_minor: plan.pack_schema_version.minor,
+                source_transport: plan.source_transport.clone(),
+                source_release: plan.source_release.clone(),
+                requested_from_yyyymmdd: Some(plan.windows[0].range.from_yyyymmdd.clone()),
+                requested_to_yyyymmdd: Some(plan.windows[0].range.to_yyyymmdd.clone()),
+                started_at_unix_ms: plan.started_at_unix_ms,
+            })
+            .await
+            .unwrap();
+        let future_attempt_start = Utc::now()
+            .timestamp_millis()
+            .saturating_add(24 * 60 * 60 * 1_000);
+        let orphan = mirror
+            .begin_snapshot_window_attempt(BeginSnapshotWindowAttemptInput {
+                batch_id: batch_id.clone(),
+                window_id: plan.windows[0].id.clone(),
+                started_at_unix_ms: future_attempt_start,
+            })
+            .await
+            .expect("attempt commit succeeds before its state-ref save")
+            .attempt;
+        let mut durable = DurableSnapshotState::new(&plan, Freshness::NeverVerified).unwrap();
+        durable.batch_id = Some(batch_id);
+        let window_id = plan.windows[0].id.clone();
+        durable.windows.get_mut(&window_id).unwrap().phase = WindowPhase::Validating;
+        durable.set_phase(SnapshotPhase::Validate, Some(window_id));
+        store.save(&mut durable).await.unwrap();
+
+        let cancellation = AtomicCancellation::default();
+        cancellation.cancel();
+        let connector = FakeConnector {
+            batch: Mutex::new(VecDeque::new()),
+            company: plan.company.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &cancellation)
+            .await
+            .expect("orphan cleanup precedes the earliest terminal decision");
+
+        assert_eq!(result.state.progress.phase, SnapshotPhase::Cancelled);
+        assert!(result
+            .proof
+            .gaps
+            .iter()
+            .any(|gap| gap.safe_reason_code == "local_clock_moved_backwards"));
+        assert!(result.proof.completed_at_unix_ms.unwrap() >= future_attempt_start);
+        let immutable_receipt = mirror
+            .historical_commit_receipt_for_batch(
+                result.state.batch_id.as_deref().unwrap(),
+                &plan.run_id,
+            )
+            .await
+            .unwrap();
+        assert!(immutable_receipt.facts.completed_at_unix_ms >= future_attempt_start);
+        assert!(connector.requests.lock().unwrap().is_empty());
+        let stored = sqlx::query_as::<_, (String, i64, Option<String>)>(
+            "SELECT state, completed_at_unix_ms, terminal_safe_reason_code \
+             FROM tally_snapshot_window_attempts WHERE id = ?1",
+        )
+        .bind(orphan.attempt_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            stored,
+            (
+                "abandoned".to_string(),
+                future_attempt_start,
+                Some("local_clock_moved_backwards".to_string()),
+            )
+        );
     }
 
     #[tokio::test]
