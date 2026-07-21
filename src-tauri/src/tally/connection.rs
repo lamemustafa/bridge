@@ -1298,7 +1298,7 @@ mod tests {
             probe.profile.transports[&TransportId::XmlHttp]
                 .safe_reason_code
                 .as_deref(),
-            Some("xml_export_shape_unrecognized")
+            Some("direct_company_report_untrusted")
         );
         assert_eq!(
             probe.profile.features[&CapabilityFeatureId::CompanyRead].state,
