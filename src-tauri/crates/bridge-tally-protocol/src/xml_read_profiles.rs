@@ -92,6 +92,7 @@ impl ValidatedDateRange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadOnlyProfileId {
     CompanyListV1,
+    StandardLedgerIdentityV1,
     LedgersV1,
     VouchersV2,
     VouchersV3,
@@ -101,6 +102,7 @@ impl ReadOnlyProfileId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::CompanyListV1 => "company_list_v1",
+            Self::StandardLedgerIdentityV1 => "standard_ledger_identity_v1",
             Self::LedgersV1 => "ledgers_v1",
             Self::VouchersV2 => "vouchers_v2",
             Self::VouchersV3 => "vouchers_v3",
@@ -113,6 +115,7 @@ impl ReadOnlyProfileId {
     pub fn template_sha256(self) -> String {
         let template = match self {
             Self::CompanyListV1 => render_company_list(),
+            Self::StandardLedgerIdentityV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
             Self::LedgersV1 => render_ledgers(TEMPLATE_COMPANY),
             Self::VouchersV2 => render_vouchers(TEMPLATE_COMPANY, TEMPLATE_FROM, TEMPLATE_TO),
             Self::VouchersV3 => {
@@ -126,6 +129,13 @@ impl ReadOnlyProfileId {
 #[derive(Debug, Clone, Copy)]
 pub enum ReadOnlyProfile<'a> {
     CompanyListV1,
+    /// A narrow compatibility bootstrap for Tally responders that reject
+    /// Bridge's custom report profile but accept the documented built-in
+    /// `List of Ledgers` collection. Its output is parsed only for repeated
+    /// computed company context; ledger data is discarded.
+    StandardLedgerIdentityV1 {
+        company: &'a ValidatedCompanyName,
+    },
     LedgersV1 {
         company: &'a ValidatedCompanyName,
     },
@@ -143,6 +153,7 @@ impl ReadOnlyProfile<'_> {
     pub fn id(self) -> ReadOnlyProfileId {
         match self {
             Self::CompanyListV1 => ReadOnlyProfileId::CompanyListV1,
+            Self::StandardLedgerIdentityV1 { .. } => ReadOnlyProfileId::StandardLedgerIdentityV1,
             Self::LedgersV1 { .. } => ReadOnlyProfileId::LedgersV1,
             Self::VouchersV2 { .. } => ReadOnlyProfileId::VouchersV2,
             Self::VouchersV3 { .. } => ReadOnlyProfileId::VouchersV3,
@@ -156,6 +167,9 @@ impl ReadOnlyProfile<'_> {
     pub fn render(self) -> String {
         match self {
             Self::CompanyListV1 => render_company_list(),
+            Self::StandardLedgerIdentityV1 { company } => {
+                render_standard_ledger_identity(company.as_str())
+            }
             Self::LedgersV1 { company } => render_ledgers(company.as_str()),
             Self::VouchersV2 { company, range } => {
                 render_vouchers(company.as_str(), range.from_yyyymmdd(), range.to_yyyymmdd())
@@ -180,6 +194,10 @@ pub mod compatibility {
 
     pub fn ledgers_request(company: &str) -> String {
         super::render_ledgers(company)
+    }
+
+    pub fn standard_ledger_identity_request(company: &str) -> String {
+        super::render_standard_ledger_identity(company)
     }
 
     pub fn vouchers_request(company: &str, from: &str, to: &str) -> String {
@@ -247,6 +265,43 @@ fn render_company_list() -> String {
     </BODY>
 </ENVELOPE>
 "#
+    .trim()
+    .to_string()
+}
+
+fn render_standard_ledger_identity(company: &str) -> String {
+    format!(
+        r#"
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>EXPORT</TALLYREQUEST>
+        <TYPE>COLLECTION</TYPE>
+        <ID>List of Ledgers</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                <SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY>
+            </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="List of Ledgers" ISMODIFY="Yes">
+                        <NATIVEMETHOD>Name</NATIVEMETHOD>
+                        <NATIVEMETHOD>GUID</NATIVEMETHOD>
+                        <NATIVEMETHOD>Parent</NATIVEMETHOD>
+                        <COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>
+                        <COMPUTE>BRIDGECOMPANYNAME:##SVCurrentCompany</COMPUTE>
+                    </COLLECTION>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"#,
+        xml_escape(company)
+    )
     .trim()
     .to_string()
 }
@@ -555,9 +610,10 @@ mod tests {
     fn profiles<'a>(
         company: &'a ValidatedCompanyName,
         range: &'a ValidatedDateRange,
-    ) -> [ReadOnlyProfile<'a>; 4] {
+    ) -> [ReadOnlyProfile<'a>; 5] {
         [
             ReadOnlyProfile::CompanyListV1,
+            ReadOnlyProfile::StandardLedgerIdentityV1 { company },
             ReadOnlyProfile::LedgersV1 { company },
             ReadOnlyProfile::VouchersV2 { company, range },
             ReadOnlyProfile::VouchersV3 { company, range },
@@ -624,6 +680,14 @@ mod tests {
         assert_eq!(escaped.matches("<TALLYREQUEST>").count(), 1);
         assert!(!escaped.contains("<TALLYREQUEST>IMPORT"));
         assert!(escaped.contains("&lt;/SVCURRENTCOMPANY&gt;"));
+
+        let bootstrap = ReadOnlyProfile::StandardLedgerIdentityV1 {
+            company: &injection,
+        }
+        .render();
+        assert_eq!(bootstrap.matches("<TALLYREQUEST>").count(), 1);
+        assert!(!bootstrap.contains("<TALLYREQUEST>IMPORT"));
+        assert!(bootstrap.contains("&lt;/SVCURRENTCOMPANY&gt;"));
     }
 
     #[test]
@@ -632,6 +696,10 @@ mod tests {
             (
                 ReadOnlyProfileId::CompanyListV1,
                 "d5c134051e1d298a278e27284fbb5ab1a9d00e0006a70f9777c4e38cebbb16de",
+            ),
+            (
+                ReadOnlyProfileId::StandardLedgerIdentityV1,
+                "e3aa5a36e7a42fd895ed34c818036bfb7ee3528c116697707ec49ae8ac682aad",
             ),
             (
                 ReadOnlyProfileId::LedgersV1,
@@ -659,6 +727,10 @@ mod tests {
         assert_eq!(
             compatibility::company_list_request(),
             ReadOnlyProfile::CompanyListV1.render()
+        );
+        assert_eq!(
+            compatibility::standard_ledger_identity_request(company.as_str()),
+            ReadOnlyProfile::StandardLedgerIdentityV1 { company: &company }.render()
         );
         assert_eq!(
             compatibility::ledgers_request(company.as_str()),

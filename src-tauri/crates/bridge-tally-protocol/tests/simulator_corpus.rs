@@ -4,12 +4,13 @@ use bridge_tally_protocol::{
     parse_group_source_records_with_evidence, parse_import_result,
     parse_ledger_source_records_with_evidence, parse_ledgers, parse_ledgers_with_evidence,
     parse_selected_voucher_source_records_with_evidence,
-    parse_voucher_source_records_with_evidence, parse_voucher_type_source_records_with_evidence,
-    parse_vouchers, parse_vouchers_with_evidence, validate_exact_selected_export_structure,
-    verify_company_context, verify_selected_voucher_window_context, ParsedSourceIdentityKind,
-    TallyExportStatus, BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA,
-    BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA, BRIDGE_VOUCHER_EXPORT_SCHEMA,
-    BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA, MAX_INTERACTIVE_DISCOVERY_COMPANIES,
+    parse_standard_ledger_identity_observation, parse_voucher_source_records_with_evidence,
+    parse_voucher_type_source_records_with_evidence, parse_vouchers, parse_vouchers_with_evidence,
+    validate_exact_selected_export_structure, verify_company_context,
+    verify_selected_voucher_window_context, ParsedSourceIdentityKind, TallyExportStatus,
+    BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
+    BRIDGE_VOUCHER_EXPORT_SCHEMA, BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
+    MAX_INTERACTIVE_DISCOVERY_COMPANIES,
 };
 use sha2::{Digest, Sha256};
 use tally_protocol_simulator::{
@@ -612,6 +613,48 @@ fn interactive_company_discovery_stops_before_materializing_an_oversized_listing
     let error = parse_companies_for_interactive_discovery(&format!("<ENVELOPE>{rows}</ENVELOPE>"))
         .expect_err("untrusted discovery must stop at the display ceiling");
     assert!(error.to_string().contains("listing limit exceeded"));
+}
+
+#[test]
+fn standard_ledger_identity_bootstrap_requires_repeated_scoped_context() {
+    let row = |tag: &str, guid: &str| {
+        format!(
+            r#"<{tag} NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">Primary</PARENT><BRIDGECOMPANYGUID TYPE="String">{guid}</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></{tag}>"#
+        )
+    };
+    let document = |rows: String| {
+        format!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\">{rows}</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+    };
+
+    let observed = parse_standard_ledger_identity_observation(
+        &document(row("SyntheticLedger", "company-guid")),
+        "Synthetic Company",
+    )
+    .expect("strict scoped bootstrap response");
+    assert_eq!(observed.company_guid, "company-guid");
+    assert_eq!(observed.ledger_count, 1);
+
+    assert!(parse_standard_ledger_identity_observation(
+        &document(format!(
+            "{}{}",
+            row("SyntheticLedgerOne", "company-guid"),
+            row("SyntheticLedgerTwo", "other-company-guid")
+        )),
+        "Synthetic Company",
+    )
+    .is_err());
+    assert!(parse_standard_ledger_identity_observation(
+        &document(row("SyntheticLedger", "company-guid")),
+        "Other Company",
+    )
+    .is_err());
+    assert!(parse_standard_ledger_identity_observation(
+        "<ENVELOPE><COLLECTION /></ENVELOPE>",
+        "Synthetic Company",
+    )
+    .is_err());
 }
 
 #[test]

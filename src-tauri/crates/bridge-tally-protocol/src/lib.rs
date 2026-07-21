@@ -35,6 +35,7 @@ pub const BRIDGE_VOUCHER_EXPORT_SCHEMA: &str = "bridge.tally.vouchers/2";
 pub const BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA: &str = "bridge.tally.vouchers/3";
 pub const BRIDGE_LEDGER_PERIOD_BALANCE_SCHEMA: &str = "bridge.tally.ledger-period-balances/1";
 pub const MAX_INTERACTIVE_DISCOVERY_COMPANIES: usize = 100;
+pub const MAX_STANDARD_LEDGER_IDENTITY_ROWS: usize = 1_000;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TallyEnvelope<T> {
@@ -46,6 +47,12 @@ pub struct TallyEnvelope<T> {
 pub struct TallyCompany {
     pub name: String,
     pub guid: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardLedgerIdentityObservation {
+    pub company_guid: String,
+    pub ledger_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -761,6 +768,209 @@ pub fn parse_companies_with_evidence(xml: &str) -> anyhow::Result<ParsedExport<T
 pub fn parse_companies_for_interactive_discovery(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
     validate_company_list_response(xml)?;
     parse_company_rows_with_limit(xml, Some(MAX_INTERACTIVE_DISCOVERY_COMPANIES))
+}
+
+/// Validates the fixed, documented `List of Ledgers` collection used only to
+/// bootstrap a scoped company identity on responders that reject Bridge's
+/// custom report profile. Ledger names, balances, and identities are inspected
+/// in memory only and never returned by this parser.
+pub fn parse_standard_ledger_identity_observation(
+    xml: &str,
+    expected_company_name: &str,
+) -> anyhow::Result<StandardLedgerIdentityObservation> {
+    validate_export_response(xml)?;
+    let expected_company_name = normalized_bootstrap_context(expected_company_name)?;
+    let mut reader = configured_reader(xml);
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut ledger_count = 0_usize;
+    let mut company_guid = None::<String>;
+    loop {
+        match reader.read_event()? {
+            Event::Start(element)
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"]) =>
+            {
+                if ledger_count >= MAX_STANDARD_LEDGER_IDENTITY_ROWS {
+                    anyhow::bail!(
+                        "standard ledger identity collection exceeded the safe row limit"
+                    );
+                }
+                let observed = parse_standard_ledger_identity_row(&mut reader, &element)?;
+                if observed.company_name != expected_company_name {
+                    anyhow::bail!(
+                        "standard ledger identity collection did not confirm the requested company"
+                    );
+                }
+                if let Some(previous) = &company_guid {
+                    if previous != &observed.company_guid {
+                        anyhow::bail!("standard ledger identity collection contained inconsistent company context");
+                    }
+                } else {
+                    company_guid = Some(observed.company_guid);
+                }
+                ledger_count += 1;
+            }
+            Event::Start(element) => path.push(element.name().as_ref().to_ascii_uppercase()),
+            Event::Empty(_element)
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"]) =>
+            {
+                anyhow::bail!("standard ledger identity collection contained an empty row");
+            }
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !path.is_empty() {
+        anyhow::bail!("standard ledger identity collection ended before its root closed");
+    }
+    Ok(StandardLedgerIdentityObservation {
+        company_guid: company_guid.ok_or_else(|| {
+            anyhow::anyhow!(
+                "standard ledger identity collection did not return a usable ledger row"
+            )
+        })?,
+        ledger_count: ledger_count as u64,
+    })
+}
+
+struct StandardLedgerIdentityRow {
+    company_name: String,
+    company_guid: String,
+}
+
+fn parse_standard_ledger_identity_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> anyhow::Result<StandardLedgerIdentityRow> {
+    validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
+    let row_name = element.name().as_ref().to_ascii_uppercase();
+    let mut company_name = None;
+    let mut company_guid = None;
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) => {
+                let child_name = child.name().as_ref().to_ascii_uppercase();
+                match child_name.as_slice() {
+                    b"BRIDGECOMPANYNAME" => {
+                        validate_only_attributes(&child, &[b"TYPE"])?;
+                        set_bootstrap_context_once(
+                            &mut company_name,
+                            normalized_bootstrap_context(&read_required_text(
+                                reader,
+                                child.name(),
+                            )?)?,
+                            "company name",
+                        )?;
+                    }
+                    b"BRIDGECOMPANYGUID" => {
+                        validate_only_attributes(&child, &[b"TYPE"])?;
+                        set_bootstrap_context_once(
+                            &mut company_guid,
+                            normalized_bootstrap_context(&read_required_text(
+                                reader,
+                                child.name(),
+                            )?)?,
+                            "company GUID",
+                        )?;
+                    }
+                    b"GUID" | b"PARENT" => {
+                        validate_only_attributes(&child, &[b"TYPE"])?;
+                        let _ = read_required_text(reader, child.name())?;
+                    }
+                    b"LANGUAGENAME.LIST" => skip_standard_ledger_identity_child(
+                        reader,
+                        child.name().as_ref().to_ascii_uppercase(),
+                    )?,
+                    _ => anyhow::bail!(
+                        "standard ledger identity collection contained an unexpected row field"
+                    ),
+                }
+            }
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(&row_name) => break,
+            Event::Empty(_) => {
+                anyhow::bail!("standard ledger identity collection contained an empty row field")
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("standard ledger identity collection contained unexpected row text")
+            }
+            Event::CData(_) | Event::DocType(_) | Event::PI(_) => {
+                anyhow::bail!(
+                    "standard ledger identity collection contained a forbidden XML construct"
+                )
+            }
+            Event::Eof => {
+                anyhow::bail!("standard ledger identity collection row ended before closing")
+            }
+            _ => {}
+        }
+    }
+    Ok(StandardLedgerIdentityRow {
+        company_name: company_name.ok_or_else(|| {
+            anyhow::anyhow!("standard ledger identity collection omitted computed company name")
+        })?,
+        company_guid: company_guid.ok_or_else(|| {
+            anyhow::anyhow!("standard ledger identity collection omitted computed company GUID")
+        })?,
+    })
+}
+
+fn skip_standard_ledger_identity_child(
+    reader: &mut Reader<&[u8]>,
+    expected_name: Vec<u8>,
+) -> anyhow::Result<()> {
+    let mut depth = 1_u32;
+    loop {
+        match reader.read_event()? {
+            Event::Start(_) => {
+                depth = depth.checked_add(1).ok_or_else(|| {
+                    anyhow::anyhow!("standard ledger identity nesting exceeded limits")
+                })?
+            }
+            Event::End(end) => {
+                depth = depth.checked_sub(1).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "standard ledger identity collection closed an unexpected field"
+                    )
+                })?;
+                if depth == 0 {
+                    if !end.name().as_ref().eq_ignore_ascii_case(&expected_name) {
+                        anyhow::bail!(
+                            "standard ledger identity collection closed an unexpected field"
+                        );
+                    }
+                    return Ok(());
+                }
+            }
+            Event::DocType(_) | Event::PI(_) => {
+                anyhow::bail!(
+                    "standard ledger identity collection contained a forbidden XML construct"
+                )
+            }
+            Event::Eof => {
+                anyhow::bail!("standard ledger identity collection field ended before closing")
+            }
+            _ => {}
+        }
+    }
+}
+
+fn normalized_bootstrap_context(value: &str) -> anyhow::Result<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 255 || value.chars().any(char::is_control) {
+        anyhow::bail!("standard ledger identity collection contained an invalid company context");
+    }
+    Ok(value.to_string())
+}
+
+fn set_bootstrap_context_once(
+    slot: &mut Option<String>,
+    value: String,
+    label: &str,
+) -> anyhow::Result<()> {
+    if slot.replace(value).is_some() {
+        anyhow::bail!("standard ledger identity collection repeated computed {label}");
+    }
+    Ok(())
 }
 
 fn parse_company_rows(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {

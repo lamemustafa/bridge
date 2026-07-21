@@ -19,6 +19,15 @@ without relaxing the `HEADER/STATUS=1` requirement for ledger, voucher, or
 other accounting exports. An empty or malformed direct response remains
 `Unknown`; it never proves a loaded company, a complete read, or a capability.
 
+For an operator-selected name from this listing, Bridge may offer **Verify for
+setup**. That separate read re-enumerates the direct report and then sends one
+fixed, read-only `List of Ledgers` collection request scoped to the name. It
+requires `HEADER/STATUS=1`, bounded rows, and identical computed company name
+and GUID context on every inspected row. Ledger rows are discarded. This is a
+strict local setup observation only: it does not authenticate the responder or
+prove completeness, the custom Bridge ledger profile, sync eligibility, or any
+write capability. The direct report's GUID is never used as setup authority.
+
 ## Prepare a disposable fixture
 
 Use no customer or personal data. In Tally Education, create or load a
