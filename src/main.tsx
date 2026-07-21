@@ -645,6 +645,7 @@ function App() {
   const [companies, setCompanies] = React.useState<TallyCompany[]>([]);
   const [untrustedDiscoveredCompanies, setUntrustedDiscoveredCompanies] = React.useState<TallyCompany[]>([]);
   const [untrustedDiscoveryError, setUntrustedDiscoveryError] = React.useState<OperatorError | null>(null);
+  const [untrustedDiscoveryCompleted, setUntrustedDiscoveryCompleted] = React.useState(false);
   const [selectedCompany, setSelectedCompany] = React.useState("");
   const [liveCompanyKeys, setLiveCompanyKeys] = React.useState<string[]>([]);
   const [persistedCompanyProfileTotal, setPersistedCompanyProfileTotal] = React.useState(0);
@@ -837,6 +838,7 @@ function App() {
     setLiveCompanyKeys([]);
     setUntrustedDiscoveredCompanies([]);
     setUntrustedDiscoveryError(null);
+    setUntrustedDiscoveryCompleted(false);
     clearSensitiveDiagnostics();
     setDraft(null);
     setCompanyError(null);
@@ -963,10 +965,12 @@ function App() {
     setTallyAction("discover");
     setUntrustedDiscoveryError(null);
     setUntrustedDiscoveredCompanies([]);
+    setUntrustedDiscoveryCompleted(false);
     try {
       const discovered = await invoke<TallyCompany[]>("fetch_tally_companies", { config });
       if (resultsVersion === tallyResultsVersion.current) {
         setUntrustedDiscoveredCompanies(discovered);
+        setUntrustedDiscoveryCompleted(true);
       }
     } catch (error) {
       if (resultsVersion === tallyResultsVersion.current) {
@@ -1963,7 +1967,9 @@ function App() {
               <p role="status" aria-live="polite" className="section-note">
                 {untrustedDiscoveredCompanies.length > 0
                   ? `${untrustedDiscoveredCompanies.length} local company names listed, unverified.`
-                  : untrustedDiscoveryError ? "No local company names retained." : "No local company names listed yet."}
+                  : untrustedDiscoveryError ? "No local company names retained."
+                    : untrustedDiscoveryCompleted ? "No local company names were returned; the unverified listing completed."
+                      : "No local company names listed yet."}
               </p>
               {untrustedDiscoveredCompanies.length > 0 && (
                 <ul aria-label="Unverified local company names">

@@ -598,7 +598,7 @@ fn limit_interactive_discovery_companies(
 ) -> anyhow::Result<Vec<TallyCompany>> {
     if companies.len() > MAX_INTERACTIVE_DISCOVERY_COMPANIES {
         anyhow::bail!(
-            "Tally returned more than {MAX_INTERACTIVE_DISCOVERY_COMPANIES} local companies; the unverified listing was not retained"
+            "interactive discovery listing limit exceeded: Tally returned more than {MAX_INTERACTIVE_DISCOVERY_COMPANIES} local companies; the unverified listing was not retained"
         );
     }
     Ok(companies)
