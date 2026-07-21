@@ -740,18 +740,31 @@ fn standard_ledger_identity_ignores_nonessential_ledger_fields() {
         .expect("identity proof depends only on repeated company context");
     assert_eq!(observed.company_guid, "company-guid");
     assert!(parse_standard_ledger_catalog(document, "Synthetic Company", "company-guid").is_err());
+    assert!(parse_standard_ledger_identity_observation(
+        &document.replace(r#"GUID TYPE="String""#, r#"GUID UNEXPECTED="value""#),
+        "Synthetic Company",
+    )
+    .is_err());
 }
 
 #[test]
 fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_checks() {
-    let parent = "p".repeat(1025);
-    let document = format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">{parent}</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#
-    );
-    let catalog = parse_standard_ledger_catalog(&document, "Synthetic Company", "company-guid")
-        .expect("catalog retains the context-bound ledger while omitting unsafe parent text");
+    for parent in ["p".repeat(1025), "Primary\u{202e}spoof".to_string()] {
+        let document = format!(
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">{parent}</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        let catalog = parse_standard_ledger_catalog(&document, "Synthetic Company", "company-guid")
+            .expect("catalog retains the context-bound ledger while omitting unsafe parent text");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].name, "synthetic-ledger");
+        assert_eq!(catalog[0].parent, None);
+    }
+
+    let self_closing_parent = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String"/><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let catalog =
+        parse_standard_ledger_catalog(self_closing_parent, "Synthetic Company", "company-guid")
+            .expect("a self-closing blank parent is safely omitted");
     assert_eq!(catalog.len(), 1);
-    assert_eq!(catalog[0].name, "synthetic-ledger");
     assert_eq!(catalog[0].parent, None);
 }
 

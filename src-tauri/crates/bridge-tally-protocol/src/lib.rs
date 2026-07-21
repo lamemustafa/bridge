@@ -938,10 +938,13 @@ fn parse_standard_ledger_identity_row(
                             anyhow::bail!("standard ledger collection repeated ledger name");
                         }
                     }
-                    b"NAME" => skip_standard_ledger_identity_child(
-                        reader,
-                        child.name().as_ref().to_ascii_uppercase(),
-                    )?,
+                    b"NAME" => {
+                        validate_only_attributes(&child, &[b"TYPE"])?;
+                        skip_standard_ledger_identity_child(
+                            reader,
+                            child.name().as_ref().to_ascii_uppercase(),
+                        )?;
+                    }
                     b"BRIDGECOMPANYNAME" => {
                         validate_only_attributes(&child, &[b"TYPE"])?;
                         set_bootstrap_context_once(
@@ -976,10 +979,13 @@ fn parse_standard_ledger_identity_row(
                             anyhow::bail!("standard ledger collection repeated ledger GUID");
                         }
                     }
-                    b"GUID" => skip_standard_ledger_identity_child(
-                        reader,
-                        child.name().as_ref().to_ascii_uppercase(),
-                    )?,
+                    b"GUID" => {
+                        validate_only_attributes(&child, &[b"TYPE"])?;
+                        skip_standard_ledger_identity_child(
+                            reader,
+                            child.name().as_ref().to_ascii_uppercase(),
+                        )?;
+                    }
                     b"PARENT" if include_ledger_name => {
                         validate_only_attributes(&child, &[b"TYPE"])?;
                         if parent_seen {
@@ -989,10 +995,13 @@ fn parse_standard_ledger_identity_row(
                         parent = read_optional_text(reader, child.name())?
                             .and_then(|value| safe_standard_ledger_parent(&value));
                     }
-                    b"PARENT" => skip_standard_ledger_identity_child(
-                        reader,
-                        child.name().as_ref().to_ascii_uppercase(),
-                    )?,
+                    b"PARENT" => {
+                        validate_only_attributes(&child, &[b"TYPE"])?;
+                        skip_standard_ledger_identity_child(
+                            reader,
+                            child.name().as_ref().to_ascii_uppercase(),
+                        )?;
+                    }
                     b"LANGUAGENAME.LIST" => skip_standard_ledger_identity_child(
                         reader,
                         child.name().as_ref().to_ascii_uppercase(),
@@ -1003,6 +1012,15 @@ fn parse_standard_ledger_identity_row(
                 }
             }
             Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(&row_name) => break,
+            Event::Empty(child)
+                if include_ledger_name && child.name().as_ref().eq_ignore_ascii_case(b"PARENT") =>
+            {
+                validate_only_attributes(&child, &[b"TYPE"])?;
+                if parent_seen {
+                    anyhow::bail!("standard ledger collection repeated ledger parent");
+                }
+                parent_seen = true;
+            }
             Event::Empty(_) => {
                 anyhow::bail!("standard ledger identity collection contained an empty row field")
             }
@@ -1083,7 +1101,7 @@ fn normalized_standard_value(value: &str, label: &str) -> anyhow::Result<String>
 
 fn normalized_standard_ledger_name(value: &str) -> anyhow::Result<String> {
     let value = value.trim();
-    if value.is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
+    if value.is_empty() || value.len() > 512 || value.chars().any(unsafe_display_character) {
         anyhow::bail!("standard ledger collection contained an invalid ledger name");
     }
     Ok(value.to_string())
@@ -1091,10 +1109,18 @@ fn normalized_standard_ledger_name(value: &str) -> anyhow::Result<String> {
 
 fn safe_standard_ledger_parent(value: &str) -> Option<String> {
     let value = value.trim();
-    if value.is_empty() || value.len() > 1024 || value.chars().any(char::is_control) {
+    if value.is_empty() || value.len() > 1024 || value.chars().any(unsafe_display_character) {
         return None;
     }
     Some(value.to_string())
+}
+
+fn unsafe_display_character(value: char) -> bool {
+    value.is_control()
+        || matches!(
+            value,
+            '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}'
+        )
 }
 
 fn set_bootstrap_context_once(
