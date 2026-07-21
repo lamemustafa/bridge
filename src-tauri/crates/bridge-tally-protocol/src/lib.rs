@@ -34,6 +34,7 @@ pub const BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA: &str = "bridge.tally.voucher-types/
 pub const BRIDGE_VOUCHER_EXPORT_SCHEMA: &str = "bridge.tally.vouchers/2";
 pub const BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA: &str = "bridge.tally.vouchers/3";
 pub const BRIDGE_LEDGER_PERIOD_BALANCE_SCHEMA: &str = "bridge.tally.ledger-period-balances/1";
+pub const MAX_INTERACTIVE_DISCOVERY_COMPANIES: usize = 100;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TallyEnvelope<T> {
@@ -759,10 +760,17 @@ pub fn parse_companies_with_evidence(xml: &str) -> anyhow::Result<ParsedExport<T
 /// evidence that requires Tally's shaped `HEADER/STATUS=1` success response.
 pub fn parse_companies_for_interactive_discovery(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
     validate_company_list_response(xml)?;
-    parse_company_rows(xml)
+    parse_company_rows_with_limit(xml, Some(MAX_INTERACTIVE_DISCOVERY_COMPANIES))
 }
 
 fn parse_company_rows(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
+    parse_company_rows_with_limit(xml, None)
+}
+
+fn parse_company_rows_with_limit(
+    xml: &str,
+    max_records: Option<usize>,
+) -> anyhow::Result<Vec<TallyCompany>> {
     let mut reader = configured_reader(xml);
     let mut records = Vec::new();
     loop {
@@ -770,6 +778,11 @@ fn parse_company_rows(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
             Event::Start(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"COMPANYINFO") =>
             {
+                if max_records.is_some_and(|limit| records.len() >= limit) {
+                    anyhow::bail!(
+                        "interactive discovery listing limit exceeded: Tally returned more than {MAX_INTERACTIVE_DISCOVERY_COMPANIES} local companies; the unverified listing was not retained"
+                    );
+                }
                 records.push(parse_company_info(&mut reader)?);
             }
             Event::Eof => break,
