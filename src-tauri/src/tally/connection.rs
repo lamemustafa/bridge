@@ -205,7 +205,7 @@ impl TallyClient {
         let mut companies = Vec::new();
 
         let xml_evidence = match self.post_xml(tdl_engine::company_list_request()).await {
-            Ok(xml) => match xml_parser::parse_companies_for_interactive_discovery(&xml) {
+            Ok(xml) => match xml_parser::parse_companies(&xml) {
                 Ok(discovered) => {
                     connection.reachable = true;
                     if connection.error.is_some() {
@@ -1011,7 +1011,7 @@ mod tests {
         let server = tokio::spawn(async move {
             for body in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
-                "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>",
             ] {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let mut request = [0_u8; 8192];
@@ -1091,6 +1091,96 @@ mod tests {
                 CapabilityState::Unknown
             );
         }
+    }
+
+    #[tokio::test]
+    async fn interactive_company_fetch_accepts_the_strict_direct_report_variant() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            let body = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
+            let (mut socket, _) = listener.accept().await.expect("accept Tally request");
+            let mut request = [0_u8; 8192];
+            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
+            assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write Tally response");
+        });
+
+        let companies = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client")
+        .fetch_companies()
+        .await
+        .expect("interactive company discovery accepts the exact direct form");
+        server.await.expect("synthetic Tally server task");
+
+        assert_eq!(companies.len(), 1);
+        assert_eq!(companies[0].guid.as_deref(), Some("guid-1"));
+    }
+
+    #[tokio::test]
+    async fn capability_probe_does_not_promote_a_direct_company_report() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            for body in [
+                "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
+                "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
+            ] {
+                let (mut socket, _) = listener.accept().await.expect("accept Tally request");
+                let mut request = [0_u8; 8192];
+                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
+                assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write Tally response");
+            }
+        });
+
+        let probe = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client")
+        .probe()
+        .await
+        .expect("probe synthetic Tally endpoint");
+        server.await.expect("synthetic Tally server task");
+
+        assert!(probe.connection.reachable);
+        assert!(probe.companies.is_empty());
+        assert_eq!(
+            probe.profile.transports[&TransportId::XmlHttp].state,
+            CapabilityState::Unknown
+        );
+        assert_eq!(
+            probe.profile.transports[&TransportId::XmlHttp]
+                .safe_reason_code
+                .as_deref(),
+            Some("xml_export_shape_unrecognized")
+        );
+        assert_eq!(
+            probe.profile.features[&CapabilityFeatureId::CompanyRead].state,
+            CapabilityState::Unknown
+        );
     }
 
     #[tokio::test]
