@@ -721,6 +721,17 @@ fn standard_ledger_catalog_returns_only_context_bound_names_and_parents() {
 }
 
 #[test]
+fn standard_ledger_catalog_accepts_the_discovery_guid_length_boundary() {
+    let company_guid = "g".repeat(256);
+    let document = format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">Primary</PARENT><BRIDGECOMPANYGUID TYPE="String">{company_guid}</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#
+    );
+    let catalog = parse_standard_ledger_catalog(&document, "Synthetic Company", &company_guid)
+        .expect("catalog accepts a company GUID valid at the discovery boundary");
+    assert_eq!(catalog.len(), 1);
+}
+
+#[test]
 fn standard_ledger_identity_keeps_supporting_child_name_responses() {
     let document = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger RESERVEDNAME=""><NAME TYPE="String">synthetic-ledger</NAME><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">Primary</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#;
     let observed = parse_standard_ledger_identity_observation(document, "Synthetic Company")

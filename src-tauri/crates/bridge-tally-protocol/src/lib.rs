@@ -843,7 +843,7 @@ pub fn parse_standard_ledger_catalog(
 ) -> anyhow::Result<Vec<TallyLedger>> {
     validate_export_response(xml)?;
     let expected_company_name = normalized_standard_value(expected_company_name, "company name")?;
-    let expected_company_guid = normalized_standard_value(expected_company_guid, "company GUID")?;
+    let expected_company_guid = normalized_standard_company_guid(expected_company_guid)?;
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
     let mut rows = Vec::new();
@@ -963,10 +963,10 @@ fn parse_standard_ledger_identity_row(
                         validate_only_attributes(&child, &[b"TYPE"])?;
                         set_bootstrap_context_once(
                             &mut company_guid,
-                            normalized_standard_value(
-                                &read_required_text(reader, child.name())?,
-                                "company GUID",
-                            )?,
+                            normalized_standard_company_guid(&read_required_text(
+                                reader,
+                                child.name(),
+                            )?)?,
                             "company GUID",
                         )?;
                     }
@@ -1106,6 +1106,14 @@ fn normalized_standard_ledger_name(value: &str) -> anyhow::Result<String> {
     let value = value.trim();
     if value.is_empty() || value.len() > 512 || value.chars().any(unsafe_display_character) {
         anyhow::bail!("standard ledger collection contained an invalid ledger name");
+    }
+    Ok(value.to_string())
+}
+
+fn normalized_standard_company_guid(value: &str) -> anyhow::Result<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+        anyhow::bail!("standard ledger collection contained an invalid company GUID");
     }
     Ok(value.to_string())
 }
