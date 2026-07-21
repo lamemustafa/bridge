@@ -177,7 +177,7 @@ impl RuntimeTallyConnector {
     async fn snapshot_probe(&self) -> Result<ProbeResult, TallyError> {
         let (_, mut result) = self
             .runtime
-            .snapshot_probe_with_observation(self.config.clone())
+            .snapshot_probe_with_observation(self.config.clone(), &self.company.display_name)
             .await
             .map_err(map_transport_error)?;
         let matching_companies = result
@@ -811,6 +811,76 @@ mod tests {
         ));
         let methods = server.await.expect("join routed Tally server");
         assert_eq!(methods, ["GET", "POST"]);
+    }
+
+    #[tokio::test]
+    async fn direct_company_snapshot_probe_reverifies_scoped_identity_before_core_exports() {
+        let _simulator_guard = simulator_test_lock().lock().await;
+        let direct = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>direct-guid-must-not-escape</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
+        let standard = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\"><SyntheticLedger NAME=\"synthetic-ledger\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">ledger-guid</GUID><PARENT TYPE=\"String\">Primary</PARENT><BRIDGECOMPANYGUID TYPE=\"String\">scoped-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE=\"String\">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>";
+        let empty_export = |schema: &str, object_type: &str| {
+            format!(
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{schema}" OBJECTTYPE="{object_type}" NAME="Synthetic Company" GUID="scoped-guid" RECORDCOUNT="0"/></BODY></ENVELOPE>"#
+            )
+        };
+        let (address, server) = spawn_method_routed_server(vec![
+            direct.to_string(),
+            direct.to_string(),
+            standard.to_string(),
+            empty_export(bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA, "GROUP"),
+            empty_export(bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA, "LEDGER"),
+            empty_export(
+                bridge_tally_protocol::BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
+                "VOUCHERTYPE",
+            ),
+            empty_export(
+                bridge_tally_protocol::BRIDGE_VOUCHER_EXPORT_SCHEMA,
+                "VOUCHER",
+            ),
+        ])
+        .await;
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{address}"),
+                "scoped-guid",
+            ),
+            display_name: "Synthetic Company".to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-direct-company-snapshot-probe".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let connector =
+            RuntimeTallyConnector::new(TallyRuntime::default(), config, company, context).unwrap();
+
+        let probe = connector
+            .probe()
+            .await
+            .expect("scoped re-verification should admit the snapshot probe");
+        assert!(core_snapshot_start_authorized(
+            probe
+                .profile
+                .packs
+                .get(&CapabilityPackId::CoreAccounting)
+                .unwrap()
+        ));
+        let methods = server.await.expect("join routed Tally server");
+        assert_eq!(
+            methods,
+            ["GET", "POST", "POST", "POST", "POST", "POST", "POST", "POST"]
+        );
     }
 
     #[tokio::test]

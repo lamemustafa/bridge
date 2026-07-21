@@ -429,6 +429,31 @@ impl Default for TallyRuntime {
     }
 }
 
+fn apply_scoped_standard_identity(result: &mut TallyProbeResult, company: TallyCompany) {
+    result.companies = vec![company];
+    for feature in [
+        bridge_tally_core::CapabilityFeatureId::LoadedCompanies,
+        bridge_tally_core::CapabilityFeatureId::StableCompanyIdentity,
+    ] {
+        result.profile.features.insert(
+            feature,
+            bridge_tally_core::CapabilityEvidence {
+                state: bridge_tally_core::CapabilityState::Supported,
+                confidence: bridge_tally_core::EvidenceConfidence::Observed,
+                safe_reason_code: Some("scoped_standard_identity_observed".to_string()),
+            },
+        );
+    }
+    result.profile.transports.insert(
+        bridge_tally_core::TransportId::XmlHttp,
+        bridge_tally_core::CapabilityEvidence {
+            state: bridge_tally_core::CapabilityState::Supported,
+            confidence: bridge_tally_core::EvidenceConfidence::Observed,
+            safe_reason_code: Some("standard_ledger_identity_profile_observed".to_string()),
+        },
+    );
+}
+
 impl TallyRuntime {
     #[cfg(test)]
     pub(crate) fn with_transport_policy(policy: bridge_tally_transport::TransportPolicy) -> Self {
@@ -654,28 +679,7 @@ impl TallyRuntime {
                 },
             )
             .await?;
-        result.companies = vec![company];
-        for feature in [
-            bridge_tally_core::CapabilityFeatureId::LoadedCompanies,
-            bridge_tally_core::CapabilityFeatureId::StableCompanyIdentity,
-        ] {
-            result.profile.features.insert(
-                feature,
-                bridge_tally_core::CapabilityEvidence {
-                    state: bridge_tally_core::CapabilityState::Supported,
-                    confidence: bridge_tally_core::EvidenceConfidence::Observed,
-                    safe_reason_code: Some("scoped_standard_identity_observed".to_string()),
-                },
-            );
-        }
-        result.profile.transports.insert(
-            bridge_tally_core::TransportId::XmlHttp,
-            bridge_tally_core::CapabilityEvidence {
-                state: bridge_tally_core::CapabilityState::Supported,
-                confidence: bridge_tally_core::EvidenceConfidence::Observed,
-                safe_reason_code: Some("standard_ledger_identity_profile_observed".to_string()),
-            },
-        );
+        apply_scoped_standard_identity(&mut result, company);
         let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
         let review_id = uuid::Uuid::new_v4().to_string();
         let mut cache = session
@@ -701,16 +705,36 @@ impl TallyRuntime {
     pub(crate) async fn snapshot_probe_with_observation(
         &self,
         config: TallyConfig,
+        expected_company_name: &str,
     ) -> anyhow::Result<(i64, TallyProbeResult)> {
         let _lease = self.begin_ordinary_read(&config)?;
-        let result = self
+        let mut result = self
             .execute(
-                config,
+                config.clone(),
                 ReadOperation::Capability,
                 ReadRetryPolicy::SINGLE_ATTEMPT,
                 |client| async move { client.probe().await },
             )
             .await?;
+        if result.companies.is_empty() {
+            let expected_company_name = expected_company_name.to_string();
+            let company = self
+                .execute(
+                    config,
+                    ReadOperation::Capability,
+                    ReadRetryPolicy::SINGLE_ATTEMPT,
+                    move |client| {
+                        let expected_company_name = expected_company_name.clone();
+                        async move {
+                            client
+                                .bootstrap_direct_company(&expected_company_name)
+                                .await
+                        }
+                    },
+                )
+                .await?;
+            apply_scoped_standard_identity(&mut result, company);
+        }
         Ok((chrono::Utc::now().timestamp_millis(), result))
     }
 
