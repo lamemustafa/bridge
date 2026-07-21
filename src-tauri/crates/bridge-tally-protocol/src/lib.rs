@@ -1,9 +1,10 @@
 //! Portable decoding and strict application-level parsing for Tally responses.
 //!
 //! This crate has no HTTP, database, native-library, or Tauri dependency. HTTP
-//! success must be checked separately. Every accounting export parser requires
-//! Tally application `STATUS=1`; company discovery additionally accepts one
-//! strict, direct report shape for documented compatibility.
+//! success must be checked separately. Every parser that produces durable or
+//! qualification evidence requires Tally application `STATUS=1`; interactive
+//! company discovery additionally accepts one strict, direct report shape for
+//! documented compatibility.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -747,8 +748,21 @@ pub fn parse_companies(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
 }
 
 pub fn parse_companies_with_evidence(xml: &str) -> anyhow::Result<ParsedExport<TallyCompany>> {
-    validate_company_list_response(xml)?;
+    validate_export_response(xml)?;
     let evidence = scan_export_evidence(xml)?;
+    let records = parse_company_rows(xml)?;
+    Ok(ParsedExport { records, evidence })
+}
+
+/// Parses the observed direct company-report form for an interactive setup
+/// probe. This must not be used for qualification, synchronization, or other
+/// evidence that requires Tally's shaped `HEADER/STATUS=1` success response.
+pub fn parse_companies_for_interactive_discovery(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
+    validate_company_list_response(xml)?;
+    parse_company_rows(xml)
+}
+
+fn parse_company_rows(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
     let mut reader = configured_reader(xml);
     let mut records = Vec::new();
     loop {
@@ -762,7 +776,7 @@ pub fn parse_companies_with_evidence(xml: &str) -> anyhow::Result<ParsedExport<T
             _ => {}
         }
     }
-    Ok(ParsedExport { records, evidence })
+    Ok(records)
 }
 
 pub fn parse_group_source_records_with_evidence(
@@ -2138,7 +2152,7 @@ fn validate_direct_company_list_response(xml: &str) -> anyhow::Result<()> {
             Event::CData(text) if !text.decode()?.trim().is_empty() => {
                 anyhow::bail!("Tally direct company response contained unexpected structural CDATA")
             }
-            Event::DocType(_) | Event::PI(_) => {
+            Event::Comment(_) | Event::DocType(_) | Event::PI(_) => {
                 anyhow::bail!("Tally direct company response contained a forbidden XML construct")
             }
             Event::Eof => break,
@@ -2166,7 +2180,7 @@ fn validate_direct_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<()
                 if std::mem::replace(&mut name_seen, true) {
                     anyhow::bail!("Tally direct company response repeated the company name")
                 }
-                read_required_text(reader, element.name())?;
+                read_direct_company_identity_text(reader, element.name())?;
             }
             Event::Start(element)
                 if element
@@ -2178,7 +2192,7 @@ fn validate_direct_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<()
                 if std::mem::replace(&mut guid_seen, true) {
                     anyhow::bail!("Tally direct company response repeated the company identity")
                 }
-                read_required_text(reader, element.name())?;
+                read_direct_company_identity_text(reader, element.name())?;
             }
             Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(b"COMPANYINFO") => {
                 break
@@ -2189,7 +2203,7 @@ fn validate_direct_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<()
             Event::Text(text) if !text.decode()?.trim().is_empty() => {
                 anyhow::bail!("Tally direct company record contained unexpected text")
             }
-            Event::CData(_) | Event::DocType(_) | Event::PI(_) => {
+            Event::Comment(_) | Event::CData(_) | Event::DocType(_) | Event::PI(_) => {
                 anyhow::bail!("Tally direct company record contained a forbidden XML construct")
             }
             Event::Eof => {
@@ -2202,6 +2216,37 @@ fn validate_direct_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<()
         anyhow::bail!("Tally direct company response omitted a required company identity field")
     }
     Ok(())
+}
+
+fn read_direct_company_identity_text(
+    reader: &mut Reader<&[u8]>,
+    name: QName<'_>,
+) -> anyhow::Result<()> {
+    let mut saw_text = false;
+    loop {
+        match reader.read_event()? {
+            Event::Text(text) => {
+                if saw_text || text.decode()?.trim().is_empty() {
+                    anyhow::bail!(
+                        "Tally direct company identity field was not one non-empty text value"
+                    )
+                }
+                saw_text = true;
+            }
+            Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(name.as_ref()) => {
+                if !saw_text {
+                    anyhow::bail!("Tally direct company identity field was empty")
+                }
+                return Ok(());
+            }
+            Event::Eof => {
+                anyhow::bail!("Tally direct company response ended before an identity field closed")
+            }
+            _ => anyhow::bail!(
+                "Tally direct company identity field contained a forbidden XML construct"
+            ),
+        }
+    }
 }
 
 fn configured_reader(xml: &str) -> Reader<&[u8]> {

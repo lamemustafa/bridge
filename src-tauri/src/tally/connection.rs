@@ -205,7 +205,7 @@ impl TallyClient {
         let mut companies = Vec::new();
 
         let xml_evidence = match self.post_xml(tdl_engine::company_list_request()).await {
-            Ok(xml) => match xml_parser::parse_companies(&xml) {
+            Ok(xml) => match xml_parser::parse_companies_for_interactive_discovery(&xml) {
                 Ok(discovered) => {
                     connection.reachable = true;
                     if connection.error.is_some() {
@@ -416,7 +416,7 @@ impl TallyClient {
 
     pub async fn fetch_companies(&self) -> anyhow::Result<Vec<TallyCompany>> {
         let xml = self.post_xml(tdl_engine::company_list_request()).await?;
-        xml_parser::parse_companies(&xml)
+        xml_parser::parse_companies_for_interactive_discovery(&xml)
     }
 
     pub async fn fetch_ledgers(
