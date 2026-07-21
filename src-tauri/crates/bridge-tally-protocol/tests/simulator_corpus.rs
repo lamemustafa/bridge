@@ -91,7 +91,7 @@ fn selected_voucher_v3_binds_exact_window_and_rejects_structural_siblings() {
     );
     validate_exact_selected_export_structure(&xml, "VOUCHER").unwrap();
     let parsed = parse_selected_voucher_source_records_with_evidence(&xml).unwrap();
-    verify_company_context(&parsed.evidence, "COMPANY-GUID").unwrap();
+    verify_company_context(&parsed.evidence, "company-guid").unwrap();
     verify_selected_voucher_window_context(&parsed.evidence, "20260701", "20260731").unwrap();
     assert!(
         verify_selected_voucher_window_context(&parsed.evidence, "20260702", "20260731").is_err()
@@ -678,7 +678,7 @@ fn standard_ledger_catalog_returns_only_context_bound_names_and_parents() {
             "company-guid",
         )),
         "Synthetic Company",
-        "company-guid",
+        "COMPANY-GUID",
     )
     .expect("strict catalog response");
     assert_eq!(catalog.len(), 1);
@@ -752,6 +752,7 @@ fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_che
     for parent in [
         "p".repeat(1025),
         "Primary\u{061c}spoof".to_string(),
+        "Primary\u{206a}spoof".to_string(),
         "Primary\u{202e}spoof".to_string(),
     ] {
         let document = format!(
@@ -772,6 +773,12 @@ fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_che
     assert_eq!(catalog[0].parent, None);
     assert!(parse_standard_ledger_catalog(
         &self_closing_parent.replace("synthetic-ledger", "synthetic\u{061c}ledger"),
+        "Synthetic Company",
+        "company-guid",
+    )
+    .is_err());
+    assert!(parse_standard_ledger_catalog(
+        &self_closing_parent.replace("synthetic-ledger", "synthetic\u{206a}ledger"),
         "Synthetic Company",
         "company-guid",
     )

@@ -859,7 +859,9 @@ pub fn parse_standard_ledger_catalog(
                 }
                 let observed = parse_standard_ledger_identity_row(&mut reader, &element, true)?;
                 if observed.company_name != expected_company_name
-                    || observed.company_guid != expected_company_guid
+                    || !observed
+                        .company_guid
+                        .eq_ignore_ascii_case(&expected_company_guid)
                 {
                     anyhow::bail!("standard ledger catalog did not confirm the selected company");
                 }
@@ -869,7 +871,8 @@ pub fn parse_standard_ledger_catalog(
                 let ledger_guid = observed.ledger_guid.ok_or_else(|| {
                     anyhow::anyhow!("standard ledger catalog omitted ledger GUID")
                 })?;
-                if !seen_names.insert(ledger_name.to_lowercase()) || !seen_guids.insert(ledger_guid)
+                if !seen_names.insert(ledger_name.to_lowercase())
+                    || !seen_guids.insert(ledger_guid.to_ascii_lowercase())
                 {
                     anyhow::bail!("standard ledger catalog contained duplicate ledger identity");
                 }
@@ -1119,7 +1122,7 @@ fn unsafe_display_character(value: char) -> bool {
     value.is_control()
         || matches!(
             value,
-            '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}'
+            '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}'
         )
 }
 
