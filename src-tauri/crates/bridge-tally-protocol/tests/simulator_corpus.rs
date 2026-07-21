@@ -3,7 +3,7 @@ use bridge_tally_protocol::{
     parse_companies_for_interactive_discovery, parse_companies_with_evidence,
     parse_group_source_records_with_evidence, parse_import_result,
     parse_ledger_source_records_with_evidence, parse_ledgers, parse_ledgers_with_evidence,
-    parse_selected_voucher_source_records_with_evidence,
+    parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, parse_voucher_source_records_with_evidence,
     parse_voucher_type_source_records_with_evidence, parse_vouchers, parse_vouchers_with_evidence,
     validate_exact_selected_export_structure, verify_company_context,
@@ -91,7 +91,7 @@ fn selected_voucher_v3_binds_exact_window_and_rejects_structural_siblings() {
     );
     validate_exact_selected_export_structure(&xml, "VOUCHER").unwrap();
     let parsed = parse_selected_voucher_source_records_with_evidence(&xml).unwrap();
-    verify_company_context(&parsed.evidence, "COMPANY-GUID").unwrap();
+    verify_company_context(&parsed.evidence, "company-guid").unwrap();
     verify_selected_voucher_window_context(&parsed.evidence, "20260701", "20260731").unwrap();
     assert!(
         verify_selected_voucher_window_context(&parsed.evidence, "20260702", "20260731").is_err()
@@ -653,6 +653,145 @@ fn standard_ledger_identity_bootstrap_requires_repeated_scoped_context() {
     assert!(parse_standard_ledger_identity_observation(
         "<ENVELOPE><COLLECTION /></ENVELOPE>",
         "Synthetic Company",
+    )
+    .is_err());
+}
+
+#[test]
+fn standard_ledger_catalog_returns_only_context_bound_names_and_parents() {
+    let row = |tag: &str, name: &str, ledger_guid: &str, company_guid: &str| {
+        format!(
+            r#"<{tag} NAME="{name}" RESERVEDNAME=""><GUID TYPE="String">{ledger_guid}</GUID><PARENT TYPE="String">Primary</PARENT><BRIDGECOMPANYGUID TYPE="String">{company_guid}</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></{tag}>"#
+        )
+    };
+    let document = |rows: String| {
+        format!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\">{rows}</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+    };
+
+    let catalog = parse_standard_ledger_catalog(
+        &document(row(
+            "SyntheticLedger",
+            "synthetic-ledger",
+            "ledger-guid",
+            "company-guid",
+        )),
+        "Synthetic Company",
+        "COMPANY-GUID",
+    )
+    .expect("strict catalog response");
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].name, "synthetic-ledger");
+    assert_eq!(catalog[0].parent.as_deref(), Some("Primary"));
+    assert_eq!(catalog[0].party_gstin, None);
+    assert_eq!(catalog[0].opening_balance, None);
+
+    assert!(parse_standard_ledger_catalog(
+        &document(row(
+            "SyntheticLedger",
+            "synthetic-ledger",
+            "ledger-guid",
+            "other-company-guid"
+        )),
+        "Synthetic Company",
+        "company-guid",
+    )
+    .is_err());
+    assert!(parse_standard_ledger_catalog(
+        &document(format!(
+            "{}{}",
+            row(
+                "SyntheticLedgerOne",
+                "first-ledger",
+                "duplicate-guid",
+                "company-guid"
+            ),
+            row(
+                "SyntheticLedgerTwo",
+                "second-ledger",
+                "duplicate-guid",
+                "company-guid"
+            )
+        )),
+        "Synthetic Company",
+        "company-guid",
+    )
+    .is_err());
+}
+
+#[test]
+fn standard_ledger_catalog_accepts_the_discovery_guid_length_boundary() {
+    let company_guid = "g".repeat(256);
+    let document = format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">Primary</PARENT><BRIDGECOMPANYGUID TYPE="String">{company_guid}</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#
+    );
+    let catalog = parse_standard_ledger_catalog(&document, "Synthetic Company", &company_guid)
+        .expect("catalog accepts a company GUID valid at the discovery boundary");
+    assert_eq!(catalog.len(), 1);
+}
+
+#[test]
+fn standard_ledger_identity_keeps_supporting_child_name_responses() {
+    let document = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger RESERVEDNAME=""><NAME TYPE="String">synthetic-ledger</NAME><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">Primary</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let observed = parse_standard_ledger_identity_observation(document, "Synthetic Company")
+        .expect("child-name standard identity remains a valid setup observation");
+    assert_eq!(observed.company_guid, "company-guid");
+
+    let catalog = parse_standard_ledger_catalog(document, "Synthetic Company", "company-guid")
+        .expect("child-name standard catalog remains a valid compatibility preview");
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].name, "synthetic-ledger");
+}
+
+#[test]
+fn standard_ledger_identity_ignores_nonessential_ledger_fields() {
+    let document = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger RESERVEDNAME=""><GUID TYPE="String"></GUID><PARENT TYPE="String"></PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let observed = parse_standard_ledger_identity_observation(document, "Synthetic Company")
+        .expect("identity proof depends only on repeated company context");
+    assert_eq!(observed.company_guid, "company-guid");
+    assert!(parse_standard_ledger_catalog(document, "Synthetic Company", "company-guid").is_err());
+    assert!(parse_standard_ledger_identity_observation(
+        &document.replace(r#"GUID TYPE="String""#, r#"GUID UNEXPECTED="value""#),
+        "Synthetic Company",
+    )
+    .is_err());
+}
+
+#[test]
+fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_checks() {
+    for parent in [
+        "p".repeat(1025),
+        "Primary\u{061c}spoof".to_string(),
+        "Primary\u{206a}spoof".to_string(),
+        "Primary\u{202e}spoof".to_string(),
+    ] {
+        let document = format!(
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">{parent}</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        let catalog = parse_standard_ledger_catalog(&document, "Synthetic Company", "company-guid")
+            .expect("catalog retains the context-bound ledger while omitting unsafe parent text");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].name, "synthetic-ledger");
+        assert_eq!(catalog[0].parent, None);
+    }
+
+    let self_closing_parent = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String"/><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let catalog =
+        parse_standard_ledger_catalog(self_closing_parent, "Synthetic Company", "company-guid")
+            .expect("a self-closing blank parent is safely omitted");
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].parent, None);
+    assert!(parse_standard_ledger_catalog(
+        &self_closing_parent.replace("synthetic-ledger", "synthetic\u{061c}ledger"),
+        "Synthetic Company",
+        "company-guid",
+    )
+    .is_err());
+    assert!(parse_standard_ledger_catalog(
+        &self_closing_parent.replace("synthetic-ledger", "synthetic\u{206a}ledger"),
+        "Synthetic Company",
+        "company-guid",
     )
     .is_err());
 }

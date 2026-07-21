@@ -60,6 +60,7 @@ pub fn run() {
             commands::tally_telemetry_preview,
             commands::fetch_tally_companies,
             commands::fetch_tally_ledgers,
+            commands::fetch_standard_tally_ledger_catalog,
             commands::fetch_tally_vouchers,
             commands::prepare_gst_return_draft,
             commands::detect_dsc_token,

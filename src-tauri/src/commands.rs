@@ -1706,6 +1706,31 @@ pub async fn fetch_tally_ledgers(
 }
 
 #[tauri::command]
+pub async fn fetch_standard_tally_ledger_catalog(
+    request: CompanyRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<Vec<TallyLedger>, TallyCommandError> {
+    validate_company_name(&request.company).map_err(|message| {
+        tally_command_error(
+            "company_selection_invalid",
+            "Tally application",
+            message,
+            "after_change",
+            false,
+            "Select the intended GUID-bearing company and repeat the read-only action.",
+        )
+    })?;
+    runtime
+        .fetch_standard_ledger_catalog(
+            request.config,
+            request.company,
+            request.expected_company_guid,
+        )
+        .await
+        .map_err(tally_runtime_command_error)
+}
+
+#[tauri::command]
 pub async fn fetch_tally_vouchers(
     request: VoucherRequest,
     runtime: State<'_, TallyRuntime>,

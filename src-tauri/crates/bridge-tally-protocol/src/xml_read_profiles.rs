@@ -93,6 +93,7 @@ impl ValidatedDateRange {
 pub enum ReadOnlyProfileId {
     CompanyListV1,
     StandardLedgerIdentityV1,
+    StandardLedgerCatalogV1,
     LedgersV1,
     VouchersV2,
     VouchersV3,
@@ -103,6 +104,7 @@ impl ReadOnlyProfileId {
         match self {
             Self::CompanyListV1 => "company_list_v1",
             Self::StandardLedgerIdentityV1 => "standard_ledger_identity_v1",
+            Self::StandardLedgerCatalogV1 => "standard_ledger_catalog_v1",
             Self::LedgersV1 => "ledgers_v1",
             Self::VouchersV2 => "vouchers_v2",
             Self::VouchersV3 => "vouchers_v3",
@@ -116,6 +118,7 @@ impl ReadOnlyProfileId {
         let template = match self {
             Self::CompanyListV1 => render_company_list(),
             Self::StandardLedgerIdentityV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
+            Self::StandardLedgerCatalogV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
             Self::LedgersV1 => render_ledgers(TEMPLATE_COMPANY),
             Self::VouchersV2 => render_vouchers(TEMPLATE_COMPANY, TEMPLATE_FROM, TEMPLATE_TO),
             Self::VouchersV3 => {
@@ -136,6 +139,12 @@ pub enum ReadOnlyProfile<'a> {
     StandardLedgerIdentityV1 {
         company: &'a ValidatedCompanyName,
     },
+    /// A scoped compatibility catalog that returns only ledger names and
+    /// parents after independently validating the repeated company context.
+    /// It is not the custom Bridge ledger export and cannot qualify a sync.
+    StandardLedgerCatalogV1 {
+        company: &'a ValidatedCompanyName,
+    },
     LedgersV1 {
         company: &'a ValidatedCompanyName,
     },
@@ -154,6 +163,7 @@ impl ReadOnlyProfile<'_> {
         match self {
             Self::CompanyListV1 => ReadOnlyProfileId::CompanyListV1,
             Self::StandardLedgerIdentityV1 { .. } => ReadOnlyProfileId::StandardLedgerIdentityV1,
+            Self::StandardLedgerCatalogV1 { .. } => ReadOnlyProfileId::StandardLedgerCatalogV1,
             Self::LedgersV1 { .. } => ReadOnlyProfileId::LedgersV1,
             Self::VouchersV2 { .. } => ReadOnlyProfileId::VouchersV2,
             Self::VouchersV3 { .. } => ReadOnlyProfileId::VouchersV3,
@@ -168,6 +178,9 @@ impl ReadOnlyProfile<'_> {
         match self {
             Self::CompanyListV1 => render_company_list(),
             Self::StandardLedgerIdentityV1 { company } => {
+                render_standard_ledger_identity(company.as_str())
+            }
+            Self::StandardLedgerCatalogV1 { company } => {
                 render_standard_ledger_identity(company.as_str())
             }
             Self::LedgersV1 { company } => render_ledgers(company.as_str()),
@@ -197,6 +210,10 @@ pub mod compatibility {
     }
 
     pub fn standard_ledger_identity_request(company: &str) -> String {
+        super::render_standard_ledger_identity(company)
+    }
+
+    pub fn standard_ledger_catalog_request(company: &str) -> String {
         super::render_standard_ledger_identity(company)
     }
 
@@ -610,10 +627,11 @@ mod tests {
     fn profiles<'a>(
         company: &'a ValidatedCompanyName,
         range: &'a ValidatedDateRange,
-    ) -> [ReadOnlyProfile<'a>; 5] {
+    ) -> [ReadOnlyProfile<'a>; 6] {
         [
             ReadOnlyProfile::CompanyListV1,
             ReadOnlyProfile::StandardLedgerIdentityV1 { company },
+            ReadOnlyProfile::StandardLedgerCatalogV1 { company },
             ReadOnlyProfile::LedgersV1 { company },
             ReadOnlyProfile::VouchersV2 { company, range },
             ReadOnlyProfile::VouchersV3 { company, range },
@@ -702,6 +720,10 @@ mod tests {
                 "e3aa5a36e7a42fd895ed34c818036bfb7ee3528c116697707ec49ae8ac682aad",
             ),
             (
+                ReadOnlyProfileId::StandardLedgerCatalogV1,
+                "e3aa5a36e7a42fd895ed34c818036bfb7ee3528c116697707ec49ae8ac682aad",
+            ),
+            (
                 ReadOnlyProfileId::LedgersV1,
                 "aec4ffa397fde63e82ead885f70e1327d2b5f542d7ee167e291a2e86524c17b0",
             ),
@@ -731,6 +753,10 @@ mod tests {
         assert_eq!(
             compatibility::standard_ledger_identity_request(company.as_str()),
             ReadOnlyProfile::StandardLedgerIdentityV1 { company: &company }.render()
+        );
+        assert_eq!(
+            compatibility::standard_ledger_catalog_request(company.as_str()),
+            ReadOnlyProfile::StandardLedgerCatalogV1 { company: &company }.render()
         );
         assert_eq!(
             compatibility::ledgers_request(company.as_str()),
