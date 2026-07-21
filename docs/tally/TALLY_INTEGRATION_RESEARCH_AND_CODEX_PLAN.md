@@ -1322,6 +1322,10 @@ schema remain prerequisites for extraction.
 
 - Explicit user opt-in.
 - Synthetic company selected.
+- A fresh, GUID-bound local fixture enrollment records the operator's
+  disposable-company and backup acknowledgements. The enrollment is only a
+  first-canary candidate gate: it does not claim write support or authorize a
+  generic payload.
 - Capability Passport does not mark write as unsupported.
 - Exact payload preview.
 - Validation passes.
@@ -1351,6 +1355,11 @@ Draft
 - Re-read verification is required for `Verified`.
 - Duplicate submission tests prove idempotency or block auto-retry.
 - No production-company write test is part of ordinary CI.
+- The first live write may establish observed write capability only after one
+  sealed synthetic-ledger canary has both a parser-derived import receipt and
+  an exact company-bound readback. A timeout, a stale selection, or a missing
+  receipt leaves capability `Unknown`; Bridge must not relabel a preflight or
+  fixture enrollment as an observed write.
 
 #### Current rectification status (2026-07-15)
 

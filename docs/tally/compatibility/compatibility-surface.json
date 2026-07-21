@@ -6,6 +6,10 @@
       "sha256": "5cbddb9c052f54e9b69c40ce779dc6885390d86510267fe0be7ed6c47d31f0db"
     },
     {
+      "path": "docs/adr/0004-tally-write-safety.md",
+      "sha256": "366b028f37a5c94146d76d3823d6f991ee4ca360a9d3fe390509fe63e2da5932"
+    },
+    {
       "path": "docs/adr/0005-tally-snapshot-recovery.md",
       "sha256": "ba5fd3abd12a6cc64acba939e75fc6a2cdc101bcd2c105affe07c7a95557abc6"
     },
@@ -23,7 +27,7 @@
     },
     {
       "path": "docs/tally/TALLY_INTEGRATION_RESEARCH_AND_CODEX_PLAN.md",
-      "sha256": "e035243a7f5a9f3b78e1fd2f800b9da979777f5ad402e15ec892c514bf9e7610"
+      "sha256": "a520779ea4c7a96839700c231c8dc13f202391e02e950b554ff4188f45a4fce9"
     },
     {
       "path": "docs/tally/compatibility/README.md",
@@ -342,5 +346,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "57b2ad886180c71f18e158c166201ffb0bf1d3a8afc48f446a96bf3a8d7be7fd"
+  "manifest_sha256": "0837a04c50b2f9ece55777c99a704137b1f781c28040bd9bb558a96d52a30b99"
 }

@@ -11,6 +11,16 @@ small batches, exact validation and preview commitments, approval evidence, a
 durable idempotency reservation, parser-derived Tally counters, and a strict
 company-bound read-after-write verification.
 
+The first live write has a deliberately narrower rule. Before write capability
+can honestly be recorded as observed, Bridge may prepare one sealed synthetic
+ledger-canary *candidate* only after a fresh, GUID-bound company check and a
+local fixture enrollment that records the operator's disposable-company and
+backup acknowledgements. Candidate status is not general write authorization,
+does not enable arbitrary payloads or batch writes, and never upgrades the
+Capability Passport. Only a parser-derived import receipt together with the
+exact, company-bound readback can create observed write evidence. Until then,
+including after a timeout, support remains unknown.
+
 The lifecycle is draft, validate, preview, approve, arm, send, parse, verify,
 and then verified/partial/failed/outcome-unknown. A timeout or connection loss
 after bytes may have been sent is outcome-unknown and is never retried
@@ -40,4 +50,7 @@ public byte getter or transport adapter, and every prepared write remains
 ineligible for dispatch. Legacy durable rows created by the earlier
 caller-attested recovery contract remain readable but cannot be promoted to a
 success/recovery terminal state. A later migration must persist the opaque
-derived commitments separately before runtime wiring is considered.
+derived commitments separately before runtime wiring is considered. Fixture
+enrollment is local, explicit, and revocable; it stores only durable local
+commitments and safe status. It is not proof that a company is disposable, is
+not a Tally write, and is insufficient to arm a generic write path.
