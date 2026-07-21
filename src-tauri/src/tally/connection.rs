@@ -205,48 +205,43 @@ impl TallyClient {
         let mut companies = Vec::new();
 
         let xml_evidence = match self.post_xml(tdl_engine::company_list_request()).await {
-            Ok(xml) => match xml_parser::export_status(&xml) {
-                Ok(xml_parser::TallyExportStatus::Success) => {
+            Ok(xml) => match xml_parser::parse_companies(&xml) {
+                Ok(discovered) => {
                     connection.reachable = true;
                     if connection.error.is_some() {
                         connection.error = Some("status_heuristic_unavailable".to_string());
                     }
-                    match xml_parser::parse_companies(&xml) {
-                        Ok(discovered) => match normalize_discovered_companies(discovered) {
-                            Ok(normalized) => {
-                                companies = normalized;
-                                CapabilityEvidence {
-                                    state: CapabilityState::Supported,
-                                    confidence: EvidenceConfidence::Observed,
-                                    safe_reason_code: None,
-                                }
-                            }
-                            Err(()) => CapabilityEvidence {
-                                state: CapabilityState::Unknown,
+                    match normalize_discovered_companies(discovered) {
+                        Ok(normalized) => {
+                            companies = normalized;
+                            CapabilityEvidence {
+                                state: CapabilityState::Supported,
                                 confidence: EvidenceConfidence::Observed,
-                                safe_reason_code: Some("company_identity_invalid".to_string()),
-                            },
-                        },
-                        Err(_) => CapabilityEvidence {
+                                safe_reason_code: None,
+                            }
+                        }
+                        Err(()) => CapabilityEvidence {
                             state: CapabilityState::Unknown,
                             confidence: EvidenceConfidence::Observed,
-                            safe_reason_code: Some("xml_export_shape_unrecognized".to_string()),
+                            safe_reason_code: Some("company_identity_invalid".to_string()),
                         },
                     }
                 }
-                Ok(xml_parser::TallyExportStatus::Failure) => CapabilityEvidence {
-                    // A shaped failure is an endpoint claim, not responder
-                    // authenticity or proof that the read profile works.
-                    state: CapabilityState::Unknown,
-                    confidence: EvidenceConfidence::Observed,
-                    safe_reason_code: Some(
-                        xml_parser::export_failure_reason_code(&xml).to_string(),
-                    ),
-                },
-                Err(_) => CapabilityEvidence {
-                    state: CapabilityState::Unknown,
-                    confidence: EvidenceConfidence::Observed,
-                    safe_reason_code: Some("xml_export_shape_unrecognized".to_string()),
+                Err(_) => match xml_parser::export_status(&xml) {
+                    Ok(xml_parser::TallyExportStatus::Failure) => CapabilityEvidence {
+                        // A shaped failure is an endpoint claim, not responder
+                        // authenticity or proof that the read profile works.
+                        state: CapabilityState::Unknown,
+                        confidence: EvidenceConfidence::Observed,
+                        safe_reason_code: Some(
+                            xml_parser::export_failure_reason_code(&xml).to_string(),
+                        ),
+                    },
+                    _ => CapabilityEvidence {
+                        state: CapabilityState::Unknown,
+                        confidence: EvidenceConfidence::Observed,
+                        safe_reason_code: Some("xml_export_shape_unrecognized".to_string()),
+                    },
                 },
             },
             Err(error) => return Err(error),
@@ -1016,7 +1011,7 @@ mod tests {
         let server = tokio::spawn(async move {
             for body in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
-                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>",
+                "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
             ] {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let mut request = [0_u8; 8192];

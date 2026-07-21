@@ -746,7 +746,7 @@ pub fn parse_companies(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
 }
 
 pub fn parse_companies_with_evidence(xml: &str) -> anyhow::Result<ParsedExport<TallyCompany>> {
-    validate_export_response(xml)?;
+    validate_company_list_response(xml)?;
     let evidence = scan_export_evidence(xml)?;
     let mut reader = configured_reader(xml);
     let mut records = Vec::new();
@@ -2078,6 +2078,129 @@ fn validate_export_response(xml: &str) -> anyhow::Result<()> {
             anyhow::bail!("Tally reported that the export request failed")
         }
     }
+}
+
+/// Tally's standard XML messaging response carries `HEADER/STATUS`, but report
+/// exports may emit a direct report body beneath `ENVELOPE`. Company discovery
+/// is the sole compatibility exception: it accepts that direct form only when
+/// it is an exact, complete sequence of unwrapped company rows. Accounting
+/// exports deliberately continue to require the standard success header.
+fn validate_company_list_response(xml: &str) -> anyhow::Result<()> {
+    match export_status(xml) {
+        Ok(TallyExportStatus::Success) => Ok(()),
+        Ok(TallyExportStatus::Failure) => {
+            anyhow::bail!("Tally reported that the export request failed")
+        }
+        Err(_) => validate_direct_company_list_response(xml),
+    }
+}
+
+fn validate_direct_company_list_response(xml: &str) -> anyhow::Result<()> {
+    let mut reader = configured_reader(xml);
+    let mut saw_envelope = false;
+    let mut envelope_closed = false;
+    let mut company_rows = 0_u64;
+    loop {
+        match reader.read_event()? {
+            Event::Start(element) if !saw_envelope => {
+                if !element.name().as_ref().eq_ignore_ascii_case(b"ENVELOPE") {
+                    anyhow::bail!("Tally direct company response root must be ENVELOPE");
+                }
+                validate_only_attributes(&element, &[])?;
+                saw_envelope = true;
+            }
+            Event::Start(element)
+                if saw_envelope
+                    && !envelope_closed
+                    && element.name().as_ref().eq_ignore_ascii_case(b"COMPANYINFO") =>
+            {
+                validate_only_attributes(&element, &[])?;
+                validate_direct_company_info(&mut reader)?;
+                company_rows = company_rows.saturating_add(1);
+            }
+            Event::End(element)
+                if saw_envelope
+                    && !envelope_closed
+                    && element.name().as_ref().eq_ignore_ascii_case(b"ENVELOPE") =>
+            {
+                envelope_closed = true;
+            }
+            Event::Start(_) | Event::Empty(_) => {
+                anyhow::bail!("Tally direct company response contained an unexpected element")
+            }
+            Event::End(_) => {
+                anyhow::bail!("Tally direct company response closed an unexpected element")
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("Tally direct company response contained unexpected structural text")
+            }
+            Event::CData(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("Tally direct company response contained unexpected structural CDATA")
+            }
+            Event::DocType(_) | Event::PI(_) => {
+                anyhow::bail!("Tally direct company response contained a forbidden XML construct")
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !saw_envelope || !envelope_closed || company_rows == 0 {
+        anyhow::bail!("Tally direct company response was incomplete")
+    }
+    Ok(())
+}
+
+fn validate_direct_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<()> {
+    let mut name_seen = false;
+    let mut guid_seen = false;
+    loop {
+        match reader.read_event()? {
+            Event::Start(element)
+                if element
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"COMPANYNAMEFIELD") =>
+            {
+                validate_only_attributes(&element, &[])?;
+                if std::mem::replace(&mut name_seen, true) {
+                    anyhow::bail!("Tally direct company response repeated the company name")
+                }
+                read_required_text(reader, element.name())?;
+            }
+            Event::Start(element)
+                if element
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"COMPANYGUIDFIELD") =>
+            {
+                validate_only_attributes(&element, &[])?;
+                if std::mem::replace(&mut guid_seen, true) {
+                    anyhow::bail!("Tally direct company response repeated the company identity")
+                }
+                read_required_text(reader, element.name())?;
+            }
+            Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(b"COMPANYINFO") => {
+                break
+            }
+            Event::Start(_) | Event::Empty(_) => {
+                anyhow::bail!("Tally direct company record contained an unexpected field")
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("Tally direct company record contained unexpected text")
+            }
+            Event::CData(_) | Event::DocType(_) | Event::PI(_) => {
+                anyhow::bail!("Tally direct company record contained a forbidden XML construct")
+            }
+            Event::Eof => {
+                anyhow::bail!("Tally direct company response ended before COMPANYINFO closed")
+            }
+            _ => {}
+        }
+    }
+    if !name_seen || !guid_seen {
+        anyhow::bail!("Tally direct company response omitted a required company identity field")
+    }
+    Ok(())
 }
 
 fn configured_reader(xml: &str) -> Reader<&[u8]> {

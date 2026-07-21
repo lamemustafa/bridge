@@ -7,6 +7,18 @@ configured on the selected loopback port. Official prerequisites describe a
 loaded company, HTTP POST, port configuration, and supported encodings:
 <https://help.tallysolutions.com/pre-requisites-for-integrations/>.
 
+## Direct company-report response variant
+
+Some Tally report exports return a direct company list as
+`ENVELOPE -> COMPANYINFO -> COMPANYNAMEFIELD/COMPANYGUIDFIELD`, without the
+usual response `HEADER/STATUS` wrapper. Bridge admits this variant only for
+initial company discovery, and only when every direct row is complete and the
+response has no wrappers, attributes, unexpected fields, or structural text.
+This makes the endpoint check usable on that observed Education response shape
+without relaxing the `HEADER/STATUS=1` requirement for ledger, voucher, or
+other accounting exports. An empty or malformed direct response remains
+`Unknown`; it never proves a loaded company, a complete read, or a capability.
+
 ## Prepare a disposable fixture
 
 Use no customer or personal data. In Tally Education, create or load a
