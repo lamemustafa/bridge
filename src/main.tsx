@@ -348,7 +348,7 @@ type SelectedDocumentPath = {
 };
 
 type View = "dashboard" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
-type TallyAction = "probe" | "qualify" | "save" | "ledgers" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
+type TallyAction = "probe" | "discover" | "qualify" | "save" | "ledgers" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
 const MIRROR_PAGE_LIMIT = 25;
@@ -643,6 +643,8 @@ function App() {
   const [runtimeSessions, setRuntimeSessions] = React.useState<TallyRuntimeSnapshot[]>([]);
   const [runtimeError, setRuntimeError] = React.useState<OperatorError | null>(null);
   const [companies, setCompanies] = React.useState<TallyCompany[]>([]);
+  const [untrustedDiscoveredCompanies, setUntrustedDiscoveredCompanies] = React.useState<TallyCompany[]>([]);
+  const [untrustedDiscoveryError, setUntrustedDiscoveryError] = React.useState<OperatorError | null>(null);
   const [selectedCompany, setSelectedCompany] = React.useState("");
   const [liveCompanyKeys, setLiveCompanyKeys] = React.useState<string[]>([]);
   const [persistedCompanyProfileTotal, setPersistedCompanyProfileTotal] = React.useState(0);
@@ -833,6 +835,8 @@ function App() {
     setSelectedReadScope(null);
     setPassportSnapshotId(null);
     setLiveCompanyKeys([]);
+    setUntrustedDiscoveredCompanies([]);
+    setUntrustedDiscoveryError(null);
     clearSensitiveDiagnostics();
     setDraft(null);
     setCompanyError(null);
@@ -947,6 +951,26 @@ function App() {
         setPassportSnapshotId(null);
         setLiveCompanyKeys([]);
         setDashboardError(toOperatorError(error));
+      }
+    } finally {
+      setTallyAction(null);
+      void refreshRuntime();
+    }
+  }
+
+  async function discoverUntrustedCompanies() {
+    const resultsVersion = tallyResultsVersion.current;
+    setTallyAction("discover");
+    setUntrustedDiscoveryError(null);
+    setUntrustedDiscoveredCompanies([]);
+    try {
+      const discovered = await invoke<TallyCompany[]>("fetch_tally_companies", { config });
+      if (resultsVersion === tallyResultsVersion.current) {
+        setUntrustedDiscoveredCompanies(discovered);
+      }
+    } catch (error) {
+      if (resultsVersion === tallyResultsVersion.current) {
+        setUntrustedDiscoveryError(toOperatorError(error));
       }
     } finally {
       setTallyAction(null);
@@ -1923,6 +1947,30 @@ function App() {
             </article>
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
+
+            <article className="panel wide">
+              <div className="panel-heading">
+                <div>
+                  <h2>Local company listing (unverified)</h2>
+                  <p className="panel-description">A compatibility listing only. It cannot establish company identity, be selected, be saved, qualify reads, start sync, or permit writes.</p>
+                </div>
+                <button className="secondary-action" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={snapshotActive || tallyAction !== null}>
+                  {tallyAction === "discover" ? "Listing local companies..." : "List local companies (unverified)"}
+                </button>
+              </div>
+              <p className="privacy-warning" role="note">Names are displayed locally and are not persisted. Run Check Tally Endpoint before treating any company as verified evidence.</p>
+              {untrustedDiscoveryError && <TallyErrorNotice message={untrustedDiscoveryError} />}
+              <p role="status" aria-live="polite" className="section-note">
+                {untrustedDiscoveredCompanies.length > 0
+                  ? `${untrustedDiscoveredCompanies.length} local company names listed, unverified.`
+                  : untrustedDiscoveryError ? "No local company names retained." : "No local company names listed yet."}
+              </p>
+              {untrustedDiscoveredCompanies.length > 0 && (
+                <ul aria-label="Unverified local company names">
+                  {untrustedDiscoveredCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => <li key={`${company.name}-${index}`}>{company.name}</li>)}
+                </ul>
+              )}
+            </article>
 
             <article className="panel wide">
               <div className="panel-heading">
