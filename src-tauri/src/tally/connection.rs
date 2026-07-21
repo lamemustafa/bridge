@@ -17,9 +17,10 @@ use bridge_tally_core::{
     EvidenceConfidence, TransportId,
 };
 use bridge_tally_protocol::{
-    parse_ledger_source_records_with_evidence, parse_selected_voucher_source_records_with_evidence,
-    verify_selected_voucher_window_context, TallyTextEncoding, BRIDGE_LEDGER_EXPORT_SCHEMA,
-    BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
+    parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
+    parse_selected_voucher_source_records_with_evidence,
+    parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
+    TallyTextEncoding, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
 };
 use bridge_tally_transport::{
     canonical_loopback_origin as transport_canonical_origin, TallyEndpointConfig,
@@ -237,6 +238,17 @@ impl TallyClient {
                             xml_parser::export_failure_reason_code(&xml).to_string(),
                         ),
                     },
+                    _ if parse_companies_for_interactive_discovery(&xml).is_ok() => {
+                        connection.reachable = true;
+                        if connection.error.is_some() {
+                            connection.error = Some("status_heuristic_unavailable".to_string());
+                        }
+                        CapabilityEvidence {
+                            state: CapabilityState::Unknown,
+                            confidence: EvidenceConfidence::Observed,
+                            safe_reason_code: Some("direct_company_report_untrusted".to_string()),
+                        }
+                    }
                     _ => CapabilityEvidence {
                         state: CapabilityState::Unknown,
                         confidence: EvidenceConfidence::Observed,
@@ -419,6 +431,38 @@ impl TallyClient {
         let companies = xml_parser::parse_companies_for_interactive_discovery(&xml)?;
         normalize_discovered_companies(companies).map_err(|_| {
             anyhow::anyhow!("Tally returned an invalid company identity for interactive discovery")
+        })
+    }
+
+    /// Re-enumerates an untrusted direct report, then proves one user-chosen
+    /// name with a separate shaped standard collection response. The direct
+    /// report's GUID is deliberately discarded; only the collection's computed
+    /// context may construct the returned company identity.
+    pub async fn bootstrap_direct_company(
+        &self,
+        candidate_name: &str,
+    ) -> anyhow::Result<TallyCompany> {
+        let candidate_name = normalize_company_name(candidate_name)
+            .map_err(|_| anyhow::anyhow!("Tally direct company candidate was invalid"))?;
+        let discovered = self.fetch_companies().await?;
+        let candidates = discovered
+            .into_iter()
+            .filter(|company| company.name == candidate_name)
+            .collect::<Vec<_>>();
+        let [candidate] = candidates.as_slice() else {
+            anyhow::bail!("Tally direct company candidate was absent or ambiguous");
+        };
+        let xml = self
+            .post_xml(tdl_engine::standard_ledger_identity_request(
+                &candidate.name,
+            ))
+            .await?;
+        let observed = parse_standard_ledger_identity_observation(&xml, &candidate.name)?;
+        let guid = normalize_company_guid(&observed.company_guid)
+            .map_err(|_| anyhow::anyhow!("Tally standard ledger identity was invalid"))?;
+        Ok(TallyCompany {
+            name: candidate.name.clone(),
+            guid: Some(guid),
         })
     }
 
@@ -1171,6 +1215,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn direct_company_bootstrap_uses_only_the_shaped_collection_identity() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let direct = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>direct-guid-must-not-escape</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
+        let standard = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\"><SyntheticLedger NAME=\"synthetic-ledger\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">ledger-guid</GUID><PARENT TYPE=\"String\">Primary</PARENT><BRIDGECOMPANYGUID TYPE=\"String\">scoped-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE=\"String\">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>";
+        let server = tokio::spawn(async move {
+            for body in [direct, standard] {
+                let (mut socket, _) = listener.accept().await.expect("accept Tally request");
+                let mut request = [0_u8; 8192];
+                assert!(socket.read(&mut request).await.expect("read Tally request") > 0);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write Tally response");
+            }
+        });
+
+        let company = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client")
+        .bootstrap_direct_company("Synthetic Company")
+        .await
+        .expect("strict scoped bootstrap should succeed");
+        server.await.expect("synthetic Tally server task");
+
+        assert_eq!(company.name, "Synthetic Company");
+        assert_eq!(company.guid.as_deref(), Some("scoped-guid"));
+    }
+
+    #[tokio::test]
     async fn capability_probe_does_not_promote_a_direct_company_report() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -1216,7 +1298,7 @@ mod tests {
             probe.profile.transports[&TransportId::XmlHttp]
                 .safe_reason_code
                 .as_deref(),
-            Some("xml_export_shape_unrecognized")
+            Some("direct_company_report_untrusted")
         );
         assert_eq!(
             probe.profile.features[&CapabilityFeatureId::CompanyRead].state,

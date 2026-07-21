@@ -29,6 +29,10 @@ type TallyCompany = {
   last_observed_at_unix_ms?: number;
 };
 
+type UntrustedCompanyCandidate = {
+  name: string;
+};
+
 type TallyCommandErrorEnvelope = {
   code: string;
   category: string;
@@ -348,7 +352,7 @@ type SelectedDocumentPath = {
 };
 
 type View = "dashboard" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
-type TallyAction = "probe" | "discover" | "qualify" | "save" | "ledgers" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
+type TallyAction = "probe" | "discover" | "bootstrap" | "qualify" | "save" | "ledgers" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
 const MIRROR_PAGE_LIMIT = 25;
@@ -398,6 +402,9 @@ const CAPABILITY_REASON_LABELS: Record<string, string> = {
   configuration_not_observed: "Bridge did not inspect this optional transport's configuration.",
   company_identity_invalid: "The company result contained an invalid or unsafe identity field.",
   company_identity_ambiguous: "Two or more returned companies shared the same normalized GUID.",
+  direct_company_report_untrusted: "Tally returned a direct company report without the normal success wrapper. Its names remain unverified until separately checked.",
+  standard_ledger_identity_profile_observed: "A strict, scoped standard ledger collection observed one local company identity. It does not establish completeness, sync eligibility, or write support.",
+  scoped_standard_identity_observed: "A strict, scoped local company identity was observed. Responder authenticity and accounting completeness remain unestablished.",
   practical_limit_not_measured: "No live workload has established a practical response limit for this endpoint.",
   selected_read_probe_not_run: "This selected read was not run by the connection probe.",
   selected_ledger_read_empty_observed: "The exact selected ledger profile returned a valid empty response; source emptiness is not claimed.",
@@ -643,7 +650,7 @@ function App() {
   const [runtimeSessions, setRuntimeSessions] = React.useState<TallyRuntimeSnapshot[]>([]);
   const [runtimeError, setRuntimeError] = React.useState<OperatorError | null>(null);
   const [companies, setCompanies] = React.useState<TallyCompany[]>([]);
-  const [untrustedDiscoveredCompanies, setUntrustedDiscoveredCompanies] = React.useState<TallyCompany[]>([]);
+  const [untrustedDiscoveredCompanies, setUntrustedDiscoveredCompanies] = React.useState<UntrustedCompanyCandidate[]>([]);
   const [untrustedDiscoveryError, setUntrustedDiscoveryError] = React.useState<OperatorError | null>(null);
   const [untrustedDiscoveryCompleted, setUntrustedDiscoveryCompleted] = React.useState(false);
   const [selectedCompany, setSelectedCompany] = React.useState("");
@@ -967,7 +974,7 @@ function App() {
     setUntrustedDiscoveredCompanies([]);
     setUntrustedDiscoveryCompleted(false);
     try {
-      const discovered = await invoke<TallyCompany[]>("fetch_tally_companies", { config });
+      const discovered = await invoke<UntrustedCompanyCandidate[]>("fetch_tally_companies", { config });
       if (resultsVersion === tallyResultsVersion.current) {
         setUntrustedDiscoveredCompanies(discovered);
         setUntrustedDiscoveryCompleted(true);
@@ -976,6 +983,49 @@ function App() {
       if (resultsVersion === tallyResultsVersion.current) {
         setUntrustedDiscoveryError(toOperatorError(error));
       }
+    } finally {
+      setTallyAction(null);
+      void refreshRuntime();
+    }
+  }
+
+  async function bootstrapDirectCompany(candidateName: string) {
+    const resultsVersion = tallyResultsVersion.current;
+    setTallyAction("bootstrap");
+    setCompanyError(null);
+    try {
+      const result = await invoke<TallyProbeResult>("bootstrap_direct_tally_company", {
+        request: { config, candidate_name: candidateName },
+      });
+      if (resultsVersion !== tallyResultsVersion.current) return;
+      const liveCompanies = result.companies.map((company) => ({
+        ...company,
+        canonical_endpoint: result.canonical_origin,
+        last_observed_at_unix_ms: result.observed_at_unix_ms,
+      }));
+      const nextLiveCompanyKeys = liveCompanies.map(tallyCompanyKey);
+      const selection = applyProbeCompanySelectionTransition(
+        selectedCompany,
+        nextLiveCompanyKeys,
+        {
+          clearDroppedCompanyScope: clearSelectedCompanyScope,
+          installProbeState: () => {
+            setStatus(result.connection);
+            setPassport(result.profile);
+            setProfileSha256(result.profile_sha256);
+            setReviewId(result.review_id);
+            setReviewCommitmentSha256(result.review_commitment_sha256);
+            setSelectedReadScope(result.selected_read_scope ?? null);
+            setPassportSnapshotId(result.passport_snapshot_id ?? null);
+            setCompanies((current) => mergeTallyCompanies(liveCompanies, current));
+            setLiveCompanyKeys(nextLiveCompanyKeys);
+          },
+        },
+      );
+      setSelectedCompany(selection.selectedCompany);
+      void refreshPersistedCompanyProfiles();
+    } catch (error) {
+      if (resultsVersion === tallyResultsVersion.current) setCompanyError(toOperatorError(error));
     } finally {
       setTallyAction(null);
       void refreshRuntime();
@@ -1956,7 +2006,7 @@ function App() {
               <div className="panel-heading">
                 <div>
                   <h2>Local company listing (unverified)</h2>
-                  <p className="panel-description">A compatibility listing only. It cannot establish company identity, be selected, be saved, qualify reads, start sync, or permit writes.</p>
+                  <p className="panel-description">A compatibility listing only. Use Verify for setup to run a separate strict, scoped local observation; the listing itself cannot establish identity, sync eligibility, or write permission.</p>
                 </div>
                 <button className="secondary-action" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={snapshotActive || tallyAction !== null}>
                   {tallyAction === "discover" ? "Listing local companies..." : "List local companies (unverified)"}
@@ -1973,7 +2023,14 @@ function App() {
               </p>
               {untrustedDiscoveredCompanies.length > 0 && (
                 <ul aria-label="Unverified local company names">
-                  {untrustedDiscoveredCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => <li key={`${company.name}-${index}`}>{company.name}</li>)}
+                  {untrustedDiscoveredCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => (
+                    <li key={`${company.name}-${index}`}>
+                      <span>{company.name}</span>
+                      <button className="secondary-action" type="button" onClick={() => void bootstrapDirectCompany(company.name)} disabled={snapshotActive || tallyAction !== null}>
+                        {tallyAction === "bootstrap" ? "Verifying..." : "Verify for setup"}
+                      </button>
+                    </li>
+                  ))}
                 </ul>
               )}
             </article>

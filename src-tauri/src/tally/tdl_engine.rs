@@ -2,6 +2,12 @@ pub fn company_list_request() -> String {
     bridge_tally_protocol::xml_read_profiles::compatibility::company_list_request()
 }
 
+pub fn standard_ledger_identity_request(company: &str) -> String {
+    bridge_tally_protocol::xml_read_profiles::compatibility::standard_ledger_identity_request(
+        company,
+    )
+}
+
 #[cfg(test)]
 fn legacy_company_list_request() -> String {
     r#"

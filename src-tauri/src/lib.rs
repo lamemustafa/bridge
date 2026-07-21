@@ -43,6 +43,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::check_tally_connection,
             commands::probe_tally,
+            commands::bootstrap_direct_tally_company,
             commands::qualify_selected_tally_reads,
             commands::save_tally_setup,
             commands::tally_persisted_company_profiles,

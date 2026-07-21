@@ -231,6 +231,15 @@ pub async fn probe_tally(
         .probe_with_observation(config)
         .await
         .map_err(tally_runtime_command_error)?;
+    persisted_tally_probe_result(review_id, canonical_origin, observed_at_unix_ms, probe)
+}
+
+fn persisted_tally_probe_result(
+    review_id: String,
+    canonical_origin: String,
+    observed_at_unix_ms: i64,
+    probe: crate::tally::TallyProbeResult,
+) -> Result<PersistedTallyProbeResult, TallyCommandError> {
     let profile_sha256 = capability_profile_sha256(&probe.profile).map_err(|_| {
         tally_command_error(
             "capability_profile_commitment_failed",
@@ -1607,11 +1616,52 @@ fn feature_key(feature: bridge_tally_core::CapabilityFeatureId) -> &'static str 
 pub async fn fetch_tally_companies(
     config: TallyConfig,
     runtime: State<'_, TallyRuntime>,
-) -> Result<Vec<TallyCompany>, TallyCommandError> {
+) -> Result<Vec<UntrustedCompanyCandidate>, TallyCommandError> {
     runtime
         .fetch_companies(config)
         .await
+        .map(|companies| {
+            companies
+                .into_iter()
+                .map(|company| UntrustedCompanyCandidate { name: company.name })
+                .collect()
+        })
         .map_err(tally_runtime_command_error)
+}
+
+#[derive(Debug, Serialize)]
+pub struct UntrustedCompanyCandidate {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BootstrapDirectCompanyRequest {
+    pub config: TallyConfig,
+    pub candidate_name: String,
+}
+
+#[tauri::command]
+pub async fn bootstrap_direct_tally_company(
+    request: BootstrapDirectCompanyRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<PersistedTallyProbeResult, TallyCommandError> {
+    let canonical_origin = EndpointKey::from_config(&request.config)
+        .map(|endpoint| endpoint.as_str().to_string())
+        .map_err(|_| {
+            tally_command_error(
+                "endpoint_configuration_invalid",
+                "Endpoint configuration",
+                "Tally endpoint validation failed",
+                "after_change",
+                false,
+                "Use localhost or a loopback IP and a port from 1 to 65535, then try verification again.",
+            )
+        })?;
+    let (review_id, observed_at_unix_ms, probe) = runtime
+        .bootstrap_direct_company_with_observation(request.config, request.candidate_name)
+        .await
+        .map_err(tally_runtime_command_error)?;
+    persisted_tally_probe_result(review_id, canonical_origin, observed_at_unix_ms, probe)
 }
 
 #[derive(Debug, Deserialize)]

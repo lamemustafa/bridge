@@ -429,6 +429,31 @@ impl Default for TallyRuntime {
     }
 }
 
+fn apply_scoped_standard_identity(result: &mut TallyProbeResult, company: TallyCompany) {
+    result.companies = vec![company];
+    for feature in [
+        bridge_tally_core::CapabilityFeatureId::LoadedCompanies,
+        bridge_tally_core::CapabilityFeatureId::StableCompanyIdentity,
+    ] {
+        result.profile.features.insert(
+            feature,
+            bridge_tally_core::CapabilityEvidence {
+                state: bridge_tally_core::CapabilityState::Supported,
+                confidence: bridge_tally_core::EvidenceConfidence::Observed,
+                safe_reason_code: Some("scoped_standard_identity_observed".to_string()),
+            },
+        );
+    }
+    result.profile.transports.insert(
+        bridge_tally_core::TransportId::XmlHttp,
+        bridge_tally_core::CapabilityEvidence {
+            state: bridge_tally_core::CapabilityState::Supported,
+            confidence: bridge_tally_core::EvidenceConfidence::Observed,
+            safe_reason_code: Some("standard_ledger_identity_profile_observed".to_string()),
+        },
+    );
+}
+
 impl TallyRuntime {
     #[cfg(test)]
     pub(crate) fn with_transport_policy(policy: bridge_tally_transport::TransportPolicy) -> Self {
@@ -621,22 +646,95 @@ impl TallyRuntime {
         Ok((review_id, observed_at_unix_ms, result))
     }
 
+    /// Establishes one setup-review candidate only after the direct listing is
+    /// re-read and a separate shaped standard ledger collection confirms its
+    /// computed name/GUID context. This never upgrades the direct listing
+    /// itself into evidence.
+    pub async fn bootstrap_direct_company_with_observation(
+        &self,
+        config: TallyConfig,
+        candidate_name: String,
+    ) -> anyhow::Result<(String, i64, TallyProbeResult)> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        let session = self.session(config.clone())?;
+        let mut result = self
+            .execute(
+                config.clone(),
+                ReadOperation::Capability,
+                ReadRetryPolicy::SINGLE_ATTEMPT,
+                |client| async move { client.probe().await },
+            )
+            .await?;
+        if !result.companies.is_empty() {
+            anyhow::bail!("Tally direct company bootstrap was not required");
+        }
+        let company = self
+            .execute(
+                config,
+                ReadOperation::Capability,
+                ReadRetryPolicy::SINGLE_ATTEMPT,
+                move |client| {
+                    let candidate_name = candidate_name.clone();
+                    async move { client.bootstrap_direct_company(&candidate_name).await }
+                },
+            )
+            .await?;
+        apply_scoped_standard_identity(&mut result, company);
+        let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
+        let review_id = uuid::Uuid::new_v4().to_string();
+        let mut cache = session
+            .cached_probe
+            .write()
+            .map_err(|_| anyhow::anyhow!("Tally capability cache is unavailable"))?;
+        if cache.as_ref().is_some_and(|probe| probe.reserved) {
+            anyhow::bail!("Tally reviewed setup save is in progress");
+        }
+        *cache = Some(CachedProbe {
+            review_id: review_id.clone(),
+            observed_at_unix_ms,
+            freshness_origin_unix_ms: observed_at_unix_ms,
+            result: result.clone(),
+            reserved: false,
+        });
+        Ok((review_id, observed_at_unix_ms, result))
+    }
+
     /// Observe the endpoint for snapshot admission without creating or replacing
     /// an interactive setup review. Snapshot start and end probes are lifecycle
     /// evidence, not user-reviewed setup state, so they must remain uncached.
     pub(crate) async fn snapshot_probe_with_observation(
         &self,
         config: TallyConfig,
+        expected_company_name: &str,
     ) -> anyhow::Result<(i64, TallyProbeResult)> {
         let _lease = self.begin_ordinary_read(&config)?;
-        let result = self
+        let mut result = self
             .execute(
-                config,
+                config.clone(),
                 ReadOperation::Capability,
                 ReadRetryPolicy::SINGLE_ATTEMPT,
                 |client| async move { client.probe().await },
             )
             .await?;
+        if result.companies.is_empty() {
+            let expected_company_name = expected_company_name.to_string();
+            let company = self
+                .execute(
+                    config,
+                    ReadOperation::Capability,
+                    ReadRetryPolicy::SINGLE_ATTEMPT,
+                    move |client| {
+                        let expected_company_name = expected_company_name.clone();
+                        async move {
+                            client
+                                .bootstrap_direct_company(&expected_company_name)
+                                .await
+                        }
+                    },
+                )
+                .await?;
+            apply_scoped_standard_identity(&mut result, company);
+        }
         Ok((chrono::Utc::now().timestamp_millis(), result))
     }
 
