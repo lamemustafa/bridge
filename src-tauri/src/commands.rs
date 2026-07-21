@@ -138,6 +138,15 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
             true,
             "Keep the result unverified and inspect redacted diagnostics before retrying.",
         )
+    } else if lower.contains("interactive discovery listing limit exceeded") {
+        (
+            "untrusted_discovery_limit_exceeded",
+            "Discovery listing",
+            "The unverified local company listing exceeded Bridge's display safety limit.",
+            "after_change",
+            true,
+            "Reduce the locally listed companies or use a strict probe for reviewed company evidence.",
+        )
     } else if lower.contains("company") {
         (
             "tally_company_context_failed",
@@ -1902,6 +1911,12 @@ mod tests {
             tally_runtime_command_error(anyhow::anyhow!("endpoint queue deadline exceeded"));
         assert_eq!(queue_deadline.code, "tally_runtime_temporarily_unavailable");
         assert!(queue_deadline.local_state_changed);
+
+        let discovery_limit = tally_runtime_command_error(anyhow::anyhow!(
+            "interactive discovery listing limit exceeded: synthetic company response"
+        ));
+        assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
+        assert_eq!(discovery_limit.category, "Discovery listing");
     }
 
     #[test]
