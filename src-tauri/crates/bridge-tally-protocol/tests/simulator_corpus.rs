@@ -721,6 +721,41 @@ fn standard_ledger_catalog_returns_only_context_bound_names_and_parents() {
 }
 
 #[test]
+fn standard_ledger_identity_keeps_supporting_child_name_responses() {
+    let document = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger RESERVEDNAME=""><NAME TYPE="String">synthetic-ledger</NAME><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">Primary</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let observed = parse_standard_ledger_identity_observation(document, "Synthetic Company")
+        .expect("child-name standard identity remains a valid setup observation");
+    assert_eq!(observed.company_guid, "company-guid");
+
+    let catalog = parse_standard_ledger_catalog(document, "Synthetic Company", "company-guid")
+        .expect("child-name standard catalog remains a valid compatibility preview");
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].name, "synthetic-ledger");
+}
+
+#[test]
+fn standard_ledger_identity_ignores_nonessential_ledger_fields() {
+    let document = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger RESERVEDNAME=""><GUID TYPE="String"></GUID><PARENT TYPE="String"></PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let observed = parse_standard_ledger_identity_observation(document, "Synthetic Company")
+        .expect("identity proof depends only on repeated company context");
+    assert_eq!(observed.company_guid, "company-guid");
+    assert!(parse_standard_ledger_catalog(document, "Synthetic Company", "company-guid").is_err());
+}
+
+#[test]
+fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_checks() {
+    let parent = "p".repeat(1025);
+    let document = format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">{parent}</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#
+    );
+    let catalog = parse_standard_ledger_catalog(&document, "Synthetic Company", "company-guid")
+        .expect("catalog retains the context-bound ledger while omitting unsafe parent text");
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].name, "synthetic-ledger");
+    assert_eq!(catalog[0].parent, None);
+}
+
+#[test]
 fn incomplete_or_invalid_imports_are_rejected() {
     assert!(parse_import_result("<RESPONSE><CREATED>1</CREATED></RESPONSE>").is_err());
     assert!(parse_import_result("<RESPONSE><CREATED>1</CREATED>").is_err());

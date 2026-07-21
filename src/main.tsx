@@ -2231,7 +2231,7 @@ function App() {
                   <span>{formatPreviewCount(ledgers.length)}</span>
                 </div>
                 {ledgerPreviewKind === "compatible_catalog" && (
-                  <p className="panel-description">Standard profile <code>standard_ledger_catalog_v1</code>: names and parents only. This is a compatibility preview, not a complete export, qualified read, or sync-ready result.</p>
+                  <p className="panel-description">Standard profile <code>standard_ledger_catalog_v1</code>: names and safely representable parents only. This is a compatibility preview, not a complete export, qualified read, or sync-ready result.</p>
                 )}
                 {ledgers.length === 0 ? (
                   <div className="empty-state compact">

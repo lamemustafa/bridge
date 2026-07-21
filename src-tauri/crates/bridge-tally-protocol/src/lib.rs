@@ -779,7 +779,7 @@ pub fn parse_standard_ledger_identity_observation(
     expected_company_name: &str,
 ) -> anyhow::Result<StandardLedgerIdentityObservation> {
     validate_export_response(xml)?;
-    let expected_company_name = normalized_bootstrap_context(expected_company_name)?;
+    let expected_company_name = normalized_standard_value(expected_company_name, "company name")?;
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
     let mut ledger_count = 0_usize;
@@ -794,7 +794,7 @@ pub fn parse_standard_ledger_identity_observation(
                         "standard ledger identity collection exceeded the safe row limit"
                     );
                 }
-                let observed = parse_standard_ledger_identity_row(&mut reader, &element)?;
+                let observed = parse_standard_ledger_identity_row(&mut reader, &element, false)?;
                 if observed.company_name != expected_company_name {
                     anyhow::bail!(
                         "standard ledger identity collection did not confirm the requested company"
@@ -842,8 +842,8 @@ pub fn parse_standard_ledger_catalog(
     expected_company_guid: &str,
 ) -> anyhow::Result<Vec<TallyLedger>> {
     validate_export_response(xml)?;
-    let expected_company_name = normalized_bootstrap_context(expected_company_name)?;
-    let expected_company_guid = normalized_bootstrap_context(expected_company_guid)?;
+    let expected_company_name = normalized_standard_value(expected_company_name, "company name")?;
+    let expected_company_guid = normalized_standard_value(expected_company_guid, "company GUID")?;
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
     let mut rows = Vec::new();
@@ -857,20 +857,25 @@ pub fn parse_standard_ledger_catalog(
                 if rows.len() >= MAX_STANDARD_LEDGER_IDENTITY_ROWS {
                     anyhow::bail!("standard ledger catalog exceeded the safe row limit");
                 }
-                let observed = parse_standard_ledger_identity_row(&mut reader, &element)?;
+                let observed = parse_standard_ledger_identity_row(&mut reader, &element, true)?;
                 if observed.company_name != expected_company_name
                     || observed.company_guid != expected_company_guid
                 {
                     anyhow::bail!("standard ledger catalog did not confirm the selected company");
                 }
-                if !seen_names.insert(observed.ledger_name.to_lowercase())
-                    || !seen_guids.insert(observed.ledger_guid)
+                let ledger_name = observed.ledger_name.ok_or_else(|| {
+                    anyhow::anyhow!("standard ledger catalog omitted ledger name")
+                })?;
+                let ledger_guid = observed.ledger_guid.ok_or_else(|| {
+                    anyhow::anyhow!("standard ledger catalog omitted ledger GUID")
+                })?;
+                if !seen_names.insert(ledger_name.to_lowercase()) || !seen_guids.insert(ledger_guid)
                 {
                     anyhow::bail!("standard ledger catalog contained duplicate ledger identity");
                 }
                 rows.push(TallyLedger {
-                    name: observed.ledger_name,
-                    parent: Some(observed.parent),
+                    name: ledger_name,
+                    parent: observed.parent,
                     party_gstin: None,
                     opening_balance: None,
                 });
@@ -894,38 +899,57 @@ pub fn parse_standard_ledger_catalog(
 struct StandardLedgerIdentityRow {
     company_name: String,
     company_guid: String,
-    ledger_name: String,
-    ledger_guid: String,
-    parent: String,
+    ledger_name: Option<String>,
+    ledger_guid: Option<String>,
+    parent: Option<String>,
 }
 
 fn parse_standard_ledger_identity_row(
     reader: &mut Reader<&[u8]>,
     element: &quick_xml::events::BytesStart<'_>,
+    include_ledger_name: bool,
 ) -> anyhow::Result<StandardLedgerIdentityRow> {
     validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
-    let ledger_name = normalized_bootstrap_context(
-        &attr_value(reader, element, b"NAME")
-            .ok_or_else(|| anyhow::anyhow!("standard ledger collection omitted ledger name"))?,
-    )?;
+    let mut ledger_name = include_ledger_name
+        .then(|| attr_value(reader, element, b"NAME"))
+        .flatten()
+        .map(|value| normalized_standard_ledger_name(&value))
+        .transpose()?;
     let row_name = element.name().as_ref().to_ascii_uppercase();
     let mut company_name = None;
     let mut company_guid = None;
     let mut ledger_guid = None;
     let mut parent = None;
+    let mut parent_seen = false;
     loop {
         match reader.read_event()? {
             Event::Start(child) => {
                 let child_name = child.name().as_ref().to_ascii_uppercase();
                 match child_name.as_slice() {
+                    b"NAME" if include_ledger_name => {
+                        validate_only_attributes(&child, &[b"TYPE"])?;
+                        if ledger_name
+                            .replace(normalized_standard_ledger_name(&read_required_text(
+                                reader,
+                                child.name(),
+                            )?)?)
+                            .is_some()
+                        {
+                            anyhow::bail!("standard ledger collection repeated ledger name");
+                        }
+                    }
+                    b"NAME" => skip_standard_ledger_identity_child(
+                        reader,
+                        child.name().as_ref().to_ascii_uppercase(),
+                    )?,
                     b"BRIDGECOMPANYNAME" => {
                         validate_only_attributes(&child, &[b"TYPE"])?;
                         set_bootstrap_context_once(
                             &mut company_name,
-                            normalized_bootstrap_context(&read_required_text(
-                                reader,
-                                child.name(),
-                            )?)?,
+                            normalized_standard_value(
+                                &read_required_text(reader, child.name())?,
+                                "company name",
+                            )?,
                             "company name",
                         )?;
                     }
@@ -933,37 +957,42 @@ fn parse_standard_ledger_identity_row(
                         validate_only_attributes(&child, &[b"TYPE"])?;
                         set_bootstrap_context_once(
                             &mut company_guid,
-                            normalized_bootstrap_context(&read_required_text(
-                                reader,
-                                child.name(),
-                            )?)?,
+                            normalized_standard_value(
+                                &read_required_text(reader, child.name())?,
+                                "company GUID",
+                            )?,
                             "company GUID",
                         )?;
                     }
-                    b"GUID" => {
+                    b"GUID" if include_ledger_name => {
                         validate_only_attributes(&child, &[b"TYPE"])?;
                         if ledger_guid
-                            .replace(normalized_bootstrap_context(&read_required_text(
-                                reader,
-                                child.name(),
-                            )?)?)
+                            .replace(normalized_standard_value(
+                                &read_required_text(reader, child.name())?,
+                                "ledger GUID",
+                            )?)
                             .is_some()
                         {
                             anyhow::bail!("standard ledger collection repeated ledger GUID");
                         }
                     }
-                    b"PARENT" => {
+                    b"GUID" => skip_standard_ledger_identity_child(
+                        reader,
+                        child.name().as_ref().to_ascii_uppercase(),
+                    )?,
+                    b"PARENT" if include_ledger_name => {
                         validate_only_attributes(&child, &[b"TYPE"])?;
-                        if parent
-                            .replace(normalized_bootstrap_context(&read_required_text(
-                                reader,
-                                child.name(),
-                            )?)?)
-                            .is_some()
-                        {
+                        if parent_seen {
                             anyhow::bail!("standard ledger collection repeated ledger parent");
                         }
+                        parent_seen = true;
+                        parent = read_optional_text(reader, child.name())?
+                            .and_then(|value| safe_standard_ledger_parent(&value));
                     }
+                    b"PARENT" => skip_standard_ledger_identity_child(
+                        reader,
+                        child.name().as_ref().to_ascii_uppercase(),
+                    )?,
                     b"LANGUAGENAME.LIST" => skip_standard_ledger_identity_child(
                         reader,
                         child.name().as_ref().to_ascii_uppercase(),
@@ -999,10 +1028,8 @@ fn parse_standard_ledger_identity_row(
             anyhow::anyhow!("standard ledger identity collection omitted computed company GUID")
         })?,
         ledger_name,
-        ledger_guid: ledger_guid
-            .ok_or_else(|| anyhow::anyhow!("standard ledger collection omitted ledger GUID"))?,
-        parent: parent
-            .ok_or_else(|| anyhow::anyhow!("standard ledger collection omitted ledger parent"))?,
+        ledger_guid,
+        parent,
     })
 }
 
@@ -1046,12 +1073,28 @@ fn skip_standard_ledger_identity_child(
     }
 }
 
-fn normalized_bootstrap_context(value: &str) -> anyhow::Result<String> {
+fn normalized_standard_value(value: &str, label: &str) -> anyhow::Result<String> {
     let value = value.trim();
     if value.is_empty() || value.len() > 255 || value.chars().any(char::is_control) {
-        anyhow::bail!("standard ledger identity collection contained an invalid company context");
+        anyhow::bail!("standard ledger collection contained an invalid {label}");
     }
     Ok(value.to_string())
+}
+
+fn normalized_standard_ledger_name(value: &str) -> anyhow::Result<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
+        anyhow::bail!("standard ledger collection contained an invalid ledger name");
+    }
+    Ok(value.to_string())
+}
+
+fn safe_standard_ledger_parent(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 1024 || value.chars().any(char::is_control) {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 fn set_bootstrap_context_once(

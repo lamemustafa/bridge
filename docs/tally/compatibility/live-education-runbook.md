@@ -37,7 +37,9 @@ identity observation, then requires `HEADER/STATUS=1`, a maximum of 1,000
 rows, and the exact verified company name and GUID on every row. Repeated
 normalized ledger names or source GUIDs stop the read.
 
-Only ledger names and parents reach the on-screen, display-capped preview.
+Only ledger names and safely representable parents reach the on-screen,
+display-capped preview; a blank or unsafe parent is omitted rather than
+displayed or inferred.
 Source GUIDs are used only in memory to validate scope and uniqueness; raw XML,
 balances, GSTINs, and contact fields are not returned. This is an explicit
 compatibility catalog—not a fallback for Bridge's ledger export, a complete
