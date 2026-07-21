@@ -9,7 +9,7 @@ use bridge_tally_protocol::{
     verify_company_context, verify_selected_voucher_window_context, ParsedSourceIdentityKind,
     TallyExportStatus, BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA,
     BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA, BRIDGE_VOUCHER_EXPORT_SCHEMA,
-    BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
+    BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA, MAX_INTERACTIVE_DISCOVERY_COMPANIES,
 };
 use sha2::{Digest, Sha256};
 use tally_protocol_simulator::{
@@ -602,6 +602,16 @@ fn direct_company_report_response_is_narrowly_admitted_without_status_header() {
         "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>BRIDGE DIRECT SYNTHETIC BOOK</COMPANYNAMEFIELD><COMPANYGUIDFIELD>00000000-0000-4000-8000-000000000099</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
     )
     .is_err());
+}
+
+#[test]
+fn interactive_company_discovery_stops_before_materializing_an_oversized_listing() {
+    let rows = (0..=MAX_INTERACTIVE_DISCOVERY_COMPANIES)
+        .map(|index| format!("<COMPANYINFO><COMPANYNAMEFIELD>Synthetic {index}</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-{index}</COMPANYGUIDFIELD></COMPANYINFO>"))
+        .collect::<String>();
+    let error = parse_companies_for_interactive_discovery(&format!("<ENVELOPE>{rows}</ENVELOPE>"))
+        .expect_err("untrusted discovery must stop at the display ceiling");
+    assert!(error.to_string().contains("listing limit exceeded"));
 }
 
 #[test]
