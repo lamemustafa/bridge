@@ -775,6 +775,34 @@ impl TallyRuntime {
         .await
     }
 
+    /// Fetches the limited, documented standard collection response used for
+    /// compatibility diagnostics. This is intentionally separate from the
+    /// Bridge ledger export: it returns only ledger names and parents and is
+    /// never eligible for qualification or synchronization.
+    pub async fn fetch_standard_ledger_catalog(
+        &self,
+        config: TallyConfig,
+        company: String,
+        expected_company_guid: String,
+    ) -> anyhow::Result<Vec<TallyLedger>> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        self.execute(
+            config,
+            ReadOperation::MasterExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let company = company.clone();
+                let expected_company_guid = expected_company_guid.clone();
+                async move {
+                    client
+                        .fetch_standard_ledger_catalog(&company, &expected_company_guid)
+                        .await
+                }
+            },
+        )
+        .await
+    }
+
     pub async fn qualify_selected_ledgers(
         &self,
         config: TallyConfig,

@@ -8,6 +8,12 @@ pub fn standard_ledger_identity_request(company: &str) -> String {
     )
 }
 
+pub fn standard_ledger_catalog_request(company: &str) -> String {
+    bridge_tally_protocol::xml_read_profiles::compatibility::standard_ledger_catalog_request(
+        company,
+    )
+}
+
 #[cfg(test)]
 fn legacy_company_list_request() -> String {
     r#"

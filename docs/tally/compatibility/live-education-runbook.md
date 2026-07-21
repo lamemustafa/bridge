@@ -28,6 +28,22 @@ strict local setup observation only: it does not authenticate the responder or
 prove completeness, the custom Bridge ledger profile, sync eligibility, or any
 write capability. The direct report's GUID is never used as setup authority.
 
+## Compatible ledger catalog preview
+
+When the selected company has already been verified for setup, the diagnostic
+screen can issue the separately named `standard_ledger_catalog_v1` profile. It
+uses the same fixed documented `List of Ledgers` collection shape as the setup
+identity observation, then requires `HEADER/STATUS=1`, a maximum of 1,000
+rows, and the exact verified company name and GUID on every row. Repeated
+normalized ledger names or source GUIDs stop the read.
+
+Only ledger names and parents reach the on-screen, display-capped preview.
+Source GUIDs are used only in memory to validate scope and uniqueness; raw XML,
+balances, GSTINs, and contact fields are not returned. This is an explicit
+compatibility catalog—not a fallback for Bridge's ledger export, a complete
+accounting export, a qualified profile, persistence evidence, or a sync-ready
+result. It makes no write, import, telemetry, or snapshot request.
+
 ## Prepare a disposable fixture
 
 Use no customer or personal data. In Tally Education, create or load a

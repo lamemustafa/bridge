@@ -18,7 +18,7 @@ use bridge_tally_core::{
 };
 use bridge_tally_protocol::{
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
-    parse_selected_voucher_source_records_with_evidence,
+    parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
     TallyTextEncoding, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
 };
@@ -475,6 +475,20 @@ impl TallyClient {
         let parsed = xml_parser::parse_ledgers_with_evidence(&xml)?;
         xml_parser::verify_company_context(&parsed.evidence, expected_company_guid)?;
         Ok(parsed.records)
+    }
+
+    /// Reads the documented standard ledger collection as an explicitly limited
+    /// compatibility catalog. It is not a fallback for Bridge's custom export
+    /// and cannot establish snapshot, voucher, or write capability.
+    pub async fn fetch_standard_ledger_catalog(
+        &self,
+        company: &str,
+        expected_company_guid: &str,
+    ) -> anyhow::Result<Vec<TallyLedger>> {
+        let xml = self
+            .post_xml(tdl_engine::standard_ledger_catalog_request(company))
+            .await?;
+        parse_standard_ledger_catalog(&xml, company, expected_company_guid)
     }
 
     pub async fn qualify_selected_ledgers(

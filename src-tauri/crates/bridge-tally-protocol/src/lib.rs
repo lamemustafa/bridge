@@ -833,9 +833,70 @@ pub fn parse_standard_ledger_identity_observation(
     })
 }
 
+/// Parses the documented `List of Ledgers` collection as a deliberately
+/// limited interactive catalog. The source GUIDs prove row uniqueness and
+/// company scope in memory only; callers receive no GUIDs or raw XML.
+pub fn parse_standard_ledger_catalog(
+    xml: &str,
+    expected_company_name: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<Vec<TallyLedger>> {
+    validate_export_response(xml)?;
+    let expected_company_name = normalized_bootstrap_context(expected_company_name)?;
+    let expected_company_guid = normalized_bootstrap_context(expected_company_guid)?;
+    let mut reader = configured_reader(xml);
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut rows = Vec::new();
+    let mut seen_names = HashSet::new();
+    let mut seen_guids = HashSet::new();
+    loop {
+        match reader.read_event()? {
+            Event::Start(element)
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"]) =>
+            {
+                if rows.len() >= MAX_STANDARD_LEDGER_IDENTITY_ROWS {
+                    anyhow::bail!("standard ledger catalog exceeded the safe row limit");
+                }
+                let observed = parse_standard_ledger_identity_row(&mut reader, &element)?;
+                if observed.company_name != expected_company_name
+                    || observed.company_guid != expected_company_guid
+                {
+                    anyhow::bail!("standard ledger catalog did not confirm the selected company");
+                }
+                if !seen_names.insert(observed.ledger_name.to_lowercase())
+                    || !seen_guids.insert(observed.ledger_guid)
+                {
+                    anyhow::bail!("standard ledger catalog contained duplicate ledger identity");
+                }
+                rows.push(TallyLedger {
+                    name: observed.ledger_name,
+                    parent: Some(observed.parent),
+                    party_gstin: None,
+                    opening_balance: None,
+                });
+            }
+            Event::Start(element) => path.push(element.name().as_ref().to_ascii_uppercase()),
+            Event::Empty(_) if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"]) => {
+                anyhow::bail!("standard ledger catalog contained an empty row");
+            }
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if path.is_empty() && !rows.is_empty() {
+        Ok(rows)
+    } else {
+        anyhow::bail!("standard ledger catalog did not return usable rows")
+    }
+}
+
 struct StandardLedgerIdentityRow {
     company_name: String,
     company_guid: String,
+    ledger_name: String,
+    ledger_guid: String,
+    parent: String,
 }
 
 fn parse_standard_ledger_identity_row(
@@ -843,9 +904,15 @@ fn parse_standard_ledger_identity_row(
     element: &quick_xml::events::BytesStart<'_>,
 ) -> anyhow::Result<StandardLedgerIdentityRow> {
     validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
+    let ledger_name = normalized_bootstrap_context(
+        &attr_value(reader, element, b"NAME")
+            .ok_or_else(|| anyhow::anyhow!("standard ledger collection omitted ledger name"))?,
+    )?;
     let row_name = element.name().as_ref().to_ascii_uppercase();
     let mut company_name = None;
     let mut company_guid = None;
+    let mut ledger_guid = None;
+    let mut parent = None;
     loop {
         match reader.read_event()? {
             Event::Start(child) => {
@@ -873,9 +940,29 @@ fn parse_standard_ledger_identity_row(
                             "company GUID",
                         )?;
                     }
-                    b"GUID" | b"PARENT" => {
+                    b"GUID" => {
                         validate_only_attributes(&child, &[b"TYPE"])?;
-                        let _ = read_required_text(reader, child.name())?;
+                        if ledger_guid
+                            .replace(normalized_bootstrap_context(&read_required_text(
+                                reader,
+                                child.name(),
+                            )?)?)
+                            .is_some()
+                        {
+                            anyhow::bail!("standard ledger collection repeated ledger GUID");
+                        }
+                    }
+                    b"PARENT" => {
+                        validate_only_attributes(&child, &[b"TYPE"])?;
+                        if parent
+                            .replace(normalized_bootstrap_context(&read_required_text(
+                                reader,
+                                child.name(),
+                            )?)?)
+                            .is_some()
+                        {
+                            anyhow::bail!("standard ledger collection repeated ledger parent");
+                        }
                     }
                     b"LANGUAGENAME.LIST" => skip_standard_ledger_identity_child(
                         reader,
@@ -911,6 +998,11 @@ fn parse_standard_ledger_identity_row(
         company_guid: company_guid.ok_or_else(|| {
             anyhow::anyhow!("standard ledger identity collection omitted computed company GUID")
         })?,
+        ledger_name,
+        ledger_guid: ledger_guid
+            .ok_or_else(|| anyhow::anyhow!("standard ledger collection omitted ledger GUID"))?,
+        parent: parent
+            .ok_or_else(|| anyhow::anyhow!("standard ledger collection omitted ledger parent"))?,
     })
 }
 

@@ -3,7 +3,7 @@ use bridge_tally_protocol::{
     parse_companies_for_interactive_discovery, parse_companies_with_evidence,
     parse_group_source_records_with_evidence, parse_import_result,
     parse_ledger_source_records_with_evidence, parse_ledgers, parse_ledgers_with_evidence,
-    parse_selected_voucher_source_records_with_evidence,
+    parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, parse_voucher_source_records_with_evidence,
     parse_voucher_type_source_records_with_evidence, parse_vouchers, parse_vouchers_with_evidence,
     validate_exact_selected_export_structure, verify_company_context,
@@ -653,6 +653,69 @@ fn standard_ledger_identity_bootstrap_requires_repeated_scoped_context() {
     assert!(parse_standard_ledger_identity_observation(
         "<ENVELOPE><COLLECTION /></ENVELOPE>",
         "Synthetic Company",
+    )
+    .is_err());
+}
+
+#[test]
+fn standard_ledger_catalog_returns_only_context_bound_names_and_parents() {
+    let row = |tag: &str, name: &str, ledger_guid: &str, company_guid: &str| {
+        format!(
+            r#"<{tag} NAME="{name}" RESERVEDNAME=""><GUID TYPE="String">{ledger_guid}</GUID><PARENT TYPE="String">Primary</PARENT><BRIDGECOMPANYGUID TYPE="String">{company_guid}</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></{tag}>"#
+        )
+    };
+    let document = |rows: String| {
+        format!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\">{rows}</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+    };
+
+    let catalog = parse_standard_ledger_catalog(
+        &document(row(
+            "SyntheticLedger",
+            "synthetic-ledger",
+            "ledger-guid",
+            "company-guid",
+        )),
+        "Synthetic Company",
+        "company-guid",
+    )
+    .expect("strict catalog response");
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].name, "synthetic-ledger");
+    assert_eq!(catalog[0].parent.as_deref(), Some("Primary"));
+    assert_eq!(catalog[0].party_gstin, None);
+    assert_eq!(catalog[0].opening_balance, None);
+
+    assert!(parse_standard_ledger_catalog(
+        &document(row(
+            "SyntheticLedger",
+            "synthetic-ledger",
+            "ledger-guid",
+            "other-company-guid"
+        )),
+        "Synthetic Company",
+        "company-guid",
+    )
+    .is_err());
+    assert!(parse_standard_ledger_catalog(
+        &document(format!(
+            "{}{}",
+            row(
+                "SyntheticLedgerOne",
+                "first-ledger",
+                "duplicate-guid",
+                "company-guid"
+            ),
+            row(
+                "SyntheticLedgerTwo",
+                "second-ledger",
+                "duplicate-guid",
+                "company-guid"
+            )
+        )),
+        "Synthetic Company",
+        "company-guid",
     )
     .is_err());
 }

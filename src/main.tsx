@@ -352,7 +352,7 @@ type SelectedDocumentPath = {
 };
 
 type View = "dashboard" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
-type TallyAction = "probe" | "discover" | "bootstrap" | "qualify" | "save" | "ledgers" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
+type TallyAction = "probe" | "discover" | "bootstrap" | "qualify" | "save" | "ledgers" | "catalog" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
 const MIRROR_PAGE_LIMIT = 25;
@@ -659,6 +659,7 @@ function App() {
   const [persistedCompanyProfilesLoaded, setPersistedCompanyProfilesLoaded] = React.useState(0);
   const [persistedCompanyProfilesTruncated, setPersistedCompanyProfilesTruncated] = React.useState(false);
   const [ledgers, setLedgers] = React.useState<TallyLedger[]>([]);
+  const [ledgerPreviewKind, setLedgerPreviewKind] = React.useState<"bridge" | "compatible_catalog" | null>(null);
   const [vouchers, setVouchers] = React.useState<TallyVoucher[]>([]);
   const [voucherFrom, setVoucherFrom] = React.useState(currentFinancialYear.from);
   const [voucherTo, setVoucherTo] = React.useState(currentFinancialYear.to);
@@ -864,6 +865,7 @@ function App() {
     diagnosticsRequestVersion.current += 1;
     setDiagnosticsRevealed(false);
     setLedgers([]);
+    setLedgerPreviewKind(null);
     setVouchers([]);
   }
 
@@ -1390,6 +1392,45 @@ function App() {
       });
       if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
         setLedgers(result);
+        setLedgerPreviewKind("bridge");
+      }
+    } catch (error) {
+      if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
+        setCompanyError(toOperatorError(error));
+      }
+    } finally {
+      setTallyAction(null);
+    }
+  }
+
+  async function fetchStandardLedgerCatalog() {
+    if (!diagnosticsRevealed) {
+      setCompanyError("Reveal sensitive diagnostics before requesting ledger data.");
+      return;
+    }
+    if (!selectedCompany) {
+      setCompanyError("Select a company before fetching the compatible ledger catalog.");
+      return;
+    }
+
+    const selected = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
+    const expectedCompanyGuid = selected?.guid;
+    if (!expectedCompanyGuid) {
+      setCompanyError("This company has no observed stable GUID. Bridge will not accept company-scoped records without identity proof.");
+      return;
+    }
+
+    const resultsVersion = tallyResultsVersion.current;
+    const requestVersion = diagnosticsRequestVersion.current;
+    setTallyAction("catalog");
+    setCompanyError(null);
+    try {
+      const result = await invoke<TallyLedger[]>("fetch_standard_tally_ledger_catalog", {
+        request: { config, company: selected?.name ?? "", expected_company_guid: expectedCompanyGuid },
+      });
+      if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
+        setLedgers(result);
+        setLedgerPreviewKind("compatible_catalog");
       }
     } catch (error) {
       if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
@@ -2173,6 +2214,9 @@ function App() {
                 <button onClick={fetchLedgers} disabled={tallyAction !== null || !selectedCompanyLive || !diagnosticsRevealed}>
                   <RefreshCw size={18} /> {tallyAction === "ledgers" ? "Reading..." : "Preview ledgers"}
                 </button>
+                <button className="secondary-action" onClick={fetchStandardLedgerCatalog} disabled={tallyAction !== null || !selectedCompanyLive || !diagnosticsRevealed}>
+                  <RefreshCw size={18} /> {tallyAction === "catalog" ? "Reading catalog..." : "Preview compatible ledger catalog"}
+                </button>
                 <label>From<input type="date" value={voucherFrom} onChange={(event) => { setVoucherFrom(event.target.value); setVouchers([]); diagnosticsRequestVersion.current += 1; tallyResultsVersion.current += 1; }} /></label>
                 <label>To<input type="date" value={voucherTo} onChange={(event) => { setVoucherTo(event.target.value); setVouchers([]); diagnosticsRequestVersion.current += 1; tallyResultsVersion.current += 1; }} /></label>
                 <button onClick={fetchVouchers} disabled={tallyAction !== null || !selectedCompanyLive || !diagnosticsRevealed}>
@@ -2183,9 +2227,12 @@ function App() {
               <section className="grid data-grid">
               <article className="panel">
                 <div className="panel-heading">
-                  <h2>Ledgers</h2>
+                  <h2>{ledgerPreviewKind === "compatible_catalog" ? "Compatible ledger catalog" : "Ledgers"}</h2>
                   <span>{formatPreviewCount(ledgers.length)}</span>
                 </div>
+                {ledgerPreviewKind === "compatible_catalog" && (
+                  <p className="panel-description">Standard profile <code>standard_ledger_catalog_v1</code>: names and parents only. This is a compatibility preview, not a complete export, qualified read, or sync-ready result.</p>
+                )}
                 {ledgers.length === 0 ? (
                   <div className="empty-state compact">
                     <strong>No ledgers fetched yet</strong>
@@ -2198,8 +2245,8 @@ function App() {
                         <tr>
                           <th>Name</th>
                           <th>Parent</th>
-                          <th>GSTIN</th>
-                          <th>Balance</th>
+                          {ledgerPreviewKind !== "compatible_catalog" && <th>GSTIN</th>}
+                          {ledgerPreviewKind !== "compatible_catalog" && <th>Balance</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -2207,8 +2254,8 @@ function App() {
                           <tr key={`${ledger.parent || ""}-${ledger.name}`}>
                             <td>{diagnosticsRevealed ? ledger.name : "Hidden"}</td>
                             <td>{diagnosticsRevealed ? ledger.parent || "-" : "Hidden"}</td>
-                            <td>{diagnosticsRevealed ? ledger.party_gstin || "-" : "Hidden"}</td>
-                            <td>{diagnosticsRevealed ? ledger.opening_balance || "-" : "Hidden"}</td>
+                            {ledgerPreviewKind !== "compatible_catalog" && <td>{diagnosticsRevealed ? ledger.party_gstin || "-" : "Hidden"}</td>}
+                            {ledgerPreviewKind !== "compatible_catalog" && <td>{diagnosticsRevealed ? ledger.opening_balance || "-" : "Hidden"}</td>}
                           </tr>
                         ))}
                       </tbody>
