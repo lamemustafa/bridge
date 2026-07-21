@@ -749,7 +749,11 @@ fn standard_ledger_identity_ignores_nonessential_ledger_fields() {
 
 #[test]
 fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_checks() {
-    for parent in ["p".repeat(1025), "Primary\u{202e}spoof".to_string()] {
+    for parent in [
+        "p".repeat(1025),
+        "Primary\u{061c}spoof".to_string(),
+        "Primary\u{202e}spoof".to_string(),
+    ] {
         let document = format!(
             r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">{parent}</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#
         );
@@ -766,6 +770,12 @@ fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_che
             .expect("a self-closing blank parent is safely omitted");
     assert_eq!(catalog.len(), 1);
     assert_eq!(catalog[0].parent, None);
+    assert!(parse_standard_ledger_catalog(
+        &self_closing_parent.replace("synthetic-ledger", "synthetic\u{061c}ledger"),
+        "Synthetic Company",
+        "company-guid",
+    )
+    .is_err());
 }
 
 #[test]
