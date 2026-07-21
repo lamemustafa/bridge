@@ -1,5 +1,6 @@
 use bridge_tally_protocol::{
     decode_xml_bytes, decode_xml_bytes_limited, export_status, parse_companies,
+    parse_companies_for_interactive_discovery, parse_companies_with_evidence,
     parse_group_source_records_with_evidence, parse_import_result,
     parse_ledger_source_records_with_evidence, parse_ledgers, parse_ledgers_with_evidence,
     parse_selected_voucher_source_records_with_evidence,
@@ -576,20 +577,23 @@ fn legacy_company_and_voucher_api_shapes_are_preserved() {
 
 #[test]
 fn direct_company_report_response_is_narrowly_admitted_without_status_header() {
-    let companies = parse_companies(
-        r#"<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>BRIDGE DIRECT SYNTHETIC BOOK</COMPANYNAMEFIELD><COMPANYGUIDFIELD>00000000-0000-4000-8000-000000000099</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>"#,
-    )
-    .unwrap();
+    let direct = r#"<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>BRIDGE DIRECT SYNTHETIC BOOK</COMPANYNAMEFIELD><COMPANYGUIDFIELD>00000000-0000-4000-8000-000000000099</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>"#;
+    let companies = parse_companies_for_interactive_discovery(direct).unwrap();
     assert_eq!(companies.len(), 1);
     assert_eq!(companies[0].name, "BRIDGE DIRECT SYNTHETIC BOOK");
+    assert!(parse_companies(direct).is_err());
+    assert!(parse_companies_with_evidence(direct).is_err());
 
     for xml in [
         "<ENVELOPE/>",
         "<ENVELOPE><BODY><COMPANYINFO><COMPANYNAMEFIELD>BRIDGE DIRECT SYNTHETIC BOOK</COMPANYNAMEFIELD><COMPANYGUIDFIELD>00000000-0000-4000-8000-000000000099</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>",
         "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>BRIDGE DIRECT SYNTHETIC BOOK</COMPANYNAMEFIELD><COMPANYNAMEFIELD>duplicate</COMPANYNAMEFIELD><COMPANYGUIDFIELD>00000000-0000-4000-8000-000000000099</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
         "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>BRIDGE DIRECT SYNTHETIC BOOK</COMPANYNAMEFIELD><COMPANYGUIDFIELD>00000000-0000-4000-8000-000000000099</COMPANYGUIDFIELD><UNEXPECTED>value</UNEXPECTED></COMPANYINFO></ENVELOPE>",
+        "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD><UNEXPECTED/>BRIDGE DIRECT SYNTHETIC BOOK</COMPANYNAMEFIELD><COMPANYGUIDFIELD>00000000-0000-4000-8000-000000000099</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
+        "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD><![CDATA[BRIDGE DIRECT SYNTHETIC BOOK]]></COMPANYNAMEFIELD><COMPANYGUIDFIELD>00000000-0000-4000-8000-000000000099</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
+        "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>BRIDGE DIRECT SYNTHETIC BOOK<!-- comment --></COMPANYNAMEFIELD><COMPANYGUIDFIELD>00000000-0000-4000-8000-000000000099</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
     ] {
-        assert!(parse_companies(xml).is_err(), "must reject {xml}");
+        assert!(parse_companies_for_interactive_discovery(xml).is_err(), "must reject {xml}");
     }
 
     assert!(parse_ledgers(
