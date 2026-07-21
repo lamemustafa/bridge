@@ -299,7 +299,7 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "96a3b0c9758fd28b0656bc68c6fc93660e653275291f6fa631cc6c015c3ee703"
+      "sha256": "edcbf7008737a5711a0972aec66682f7d34663bac804733e6e07585374528286"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
@@ -331,7 +331,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "1d8a6d3235aa3fd3997650f6d234189feafa7338a4c6ccc41af9eb25e2dab5e4"
+      "sha256": "527eee7860fd3046887d4b9b9b772614992b0a5ad5d0e5b9aff88633cc450297"
     },
     {
       "path": "src/styles.css",
@@ -342,5 +342,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "ce110619e7d65ca3f811bde7698ccd8a6d45ddc9a318e4f10a2ef4d2d340bc89"
+  "manifest_sha256": "51bf33ce5ede8d6a1539beeb24fae8cb18e009f80a4e03fe3f3d9e6eaa46d659"
 }

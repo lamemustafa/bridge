@@ -27,6 +27,7 @@ use bridge_tally_transport::{
 };
 
 pub type TallyConfig = TallyEndpointConfig;
+const MAX_INTERACTIVE_DISCOVERY_COMPANIES: usize = 100;
 
 #[derive(Debug, Clone, Serialize)]
 pub enum TallyProduct {
@@ -416,7 +417,11 @@ impl TallyClient {
 
     pub async fn fetch_companies(&self) -> anyhow::Result<Vec<TallyCompany>> {
         let xml = self.post_xml(tdl_engine::company_list_request()).await?;
-        xml_parser::parse_companies_for_interactive_discovery(&xml)
+        let companies = xml_parser::parse_companies_for_interactive_discovery(&xml)?;
+        let companies = normalize_discovered_companies(companies).map_err(|_| {
+            anyhow::anyhow!("Tally returned an invalid company identity for interactive discovery")
+        })?;
+        limit_interactive_discovery_companies(companies)
     }
 
     pub async fn fetch_ledgers(
@@ -588,6 +593,17 @@ fn normalize_discovered_companies(companies: Vec<TallyCompany>) -> Result<Vec<Ta
         .collect()
 }
 
+fn limit_interactive_discovery_companies(
+    companies: Vec<TallyCompany>,
+) -> anyhow::Result<Vec<TallyCompany>> {
+    if companies.len() > MAX_INTERACTIVE_DISCOVERY_COMPANIES {
+        anyhow::bail!(
+            "Tally returned more than {MAX_INTERACTIVE_DISCOVERY_COMPANIES} local companies; the unverified listing was not retained"
+        );
+    }
+    Ok(companies)
+}
+
 fn unique_company_guids(companies: &[TallyCompany]) -> bool {
     let mut seen = BTreeSet::new();
     companies.iter().all(|company| {
@@ -736,8 +752,9 @@ fn detect_product(text: &str) -> TallyProduct {
 mod tests {
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
-        normalize_discovered_companies, tally_endpoint, unique_company_guids, TallyClient,
-        TallyConfig, TallyProduct,
+        limit_interactive_discovery_companies, normalize_discovered_companies, tally_endpoint,
+        unique_company_guids, TallyClient, TallyConfig, TallyProduct,
+        MAX_INTERACTIVE_DISCOVERY_COMPANIES,
     };
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TransportId,
@@ -805,6 +822,19 @@ mod tests {
             }])
             .is_err()
         );
+    }
+
+    #[test]
+    fn interactive_discovery_rejects_results_above_the_display_ceiling() {
+        let companies = (0..=MAX_INTERACTIVE_DISCOVERY_COMPANIES)
+            .map(|index| crate::tally::TallyCompany {
+                name: format!("Synthetic Company {index}"),
+                guid: Some(format!("guid-{index}")),
+            })
+            .collect();
+        let error = limit_interactive_discovery_companies(companies)
+            .expect_err("untrusted discovery must not retain an oversized result");
+        assert!(error.to_string().contains("not retained"));
     }
 
     #[test]
@@ -1100,7 +1130,7 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let body = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
+            let body = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
             let mut request = [0_u8; 8192];
             let bytes_read = socket.read(&mut request).await.expect("read Tally request");
@@ -1126,6 +1156,44 @@ mod tests {
         server.await.expect("synthetic Tally server task");
 
         assert_eq!(companies.len(), 1);
+        assert_eq!(companies[0].name, "Synthetic Company");
+        assert_eq!(companies[0].guid.as_deref(), Some("guid-1"));
+    }
+
+    #[tokio::test]
+    async fn interactive_company_fetch_normalizes_a_shaped_success_response() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            let body = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>";
+            let (mut socket, _) = listener.accept().await.expect("accept Tally request");
+            let mut request = [0_u8; 8192];
+            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
+            assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write Tally response");
+        });
+
+        let companies = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client")
+        .fetch_companies()
+        .await
+        .expect("standard company discovery normalizes identities");
+        server.await.expect("synthetic Tally server task");
+
+        assert_eq!(companies.len(), 1);
+        assert_eq!(companies[0].name, "Synthetic Company");
         assert_eq!(companies[0].guid.as_deref(), Some("guid-1"));
     }
 
