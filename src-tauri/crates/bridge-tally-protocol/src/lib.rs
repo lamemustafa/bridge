@@ -1,8 +1,9 @@
 //! Portable decoding and strict application-level parsing for Tally responses.
 //!
 //! This crate has no HTTP, database, native-library, or Tauri dependency. HTTP
-//! success must be checked separately; every export parser still requires Tally
-//! application `STATUS=1`.
+//! success must be checked separately. Every accounting export parser requires
+//! Tally application `STATUS=1`; company discovery additionally accepts one
+//! strict, direct report shape for documented compatibility.
 
 use std::{
     collections::{HashMap, HashSet},
