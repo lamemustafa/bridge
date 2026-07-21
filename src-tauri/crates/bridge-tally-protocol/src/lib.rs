@@ -2226,7 +2226,9 @@ fn read_direct_company_identity_text(
     loop {
         match reader.read_event()? {
             Event::Text(text) => {
-                if saw_text || text.decode()?.trim().is_empty() {
+                let decoded = text.decode()?;
+                let unescaped = quick_xml::escape::unescape(&decoded)?;
+                if saw_text || unescaped.trim().is_empty() {
                     anyhow::bail!(
                         "Tally direct company identity field was not one non-empty text value"
                     )
