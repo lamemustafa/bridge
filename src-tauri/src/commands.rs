@@ -6,7 +6,7 @@ use crate::db::tally_mirror::{
     LocalReconciliationMismatch, ProofSummary, RedactedProofExport, ReviewedSetupInput,
     SelectedReadObservationCommitmentMaterial, SelectedReadObservationInput,
     SelectedReadScopeCommitmentMaterial, SelectedReadScopeInput, SourceIdentityInput,
-    TallyMirrorRepository,
+    TallyMirrorRepository, WriteFixtureEnrollmentInput, WriteFixtureEnrollmentStatus,
 };
 use crate::gst::{GstDraftRequest, GstReturnDraft};
 use crate::sync::coordinator::{SnapshotCoordinator, SnapshotJobStatus};
@@ -782,6 +782,32 @@ pub struct SavedTallySetup {
     pub review_cleanup_warning: Option<&'static str>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EnrollTallyWriteFixtureRequest {
+    pub config: TallyConfig,
+    pub expected_review_id: String,
+    pub expected_review_commitment_sha256: String,
+    pub mirror_company_id: String,
+    pub selected_company_guid: String,
+    pub disposable_company_attested: bool,
+    pub no_customer_data_attested: bool,
+    pub backup_guidance_acknowledged: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TallyWriteFixtureCompanyRequest {
+    pub mirror_company_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TallyWriteFixtureEnrollmentResponse {
+    #[serde(flatten)]
+    pub status: WriteFixtureEnrollmentStatus,
+    pub tally_requests_attempted: u8,
+    pub tally_writes_attempted: u8,
+    pub review_cleanup_warning: Option<&'static str>,
+}
+
 #[tauri::command]
 pub async fn save_tally_setup(
     request: SaveTallySetupRequest,
@@ -1020,6 +1046,187 @@ fn reconcile_review_cleanup(
         )),
         Err(error) => Err(error),
     }
+}
+
+#[tauri::command]
+pub async fn enroll_tally_write_fixture(
+    request: EnrollTallyWriteFixtureRequest,
+    mirror: State<'_, TallyMirrorRepository>,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<TallyWriteFixtureEnrollmentResponse, TallyCommandError> {
+    let canonical_origin = EndpointKey::from_config(&request.config)
+        .map(|endpoint| endpoint.as_str().to_string())
+        .map_err(|_| {
+            tally_command_error(
+                "endpoint_configuration_invalid",
+                "Endpoint configuration",
+                "Tally endpoint validation failed",
+                "after_change",
+                false,
+                "Use the reviewed loopback endpoint and probe again.",
+            )
+        })?;
+    let mut reservation = runtime
+        .reserve_cached_probe_fresh(
+            &request.config,
+            &request.expected_review_id,
+            SETUP_PROBE_MAX_AGE_MS,
+        )
+        .map_err(tally_runtime_command_error)?
+        .ok_or_else(|| {
+            tally_command_error(
+                "reviewed_probe_expired",
+                "Operation",
+                "The reviewed Capability Passport is missing or older than five minutes.",
+                "safe",
+                false,
+                "Probe again, review the exact Passport and company scope, then enroll.",
+            )
+        })?;
+    let observed_at_unix_ms = reservation.observed_at_unix_ms();
+    let probe = reservation.result().clone();
+    let result: Result<TallyWriteFixtureEnrollmentResponse, TallyCommandError> = async {
+        if request.expected_review_commitment_sha256
+            != reviewed_probe_commitment_sha256(
+                &request.expected_review_id, &canonical_origin, observed_at_unix_ms, &probe,
+            ).map_err(|_| tally_command_error(
+                "reviewed_probe_commitment_failed", "Operation",
+                "The cached endpoint, Passport, and company scope could not be verified.",
+                "safe", false, "Probe again before enrolling a fixture.",
+            ))?
+        {
+            return Err(tally_command_error(
+                "reviewed_probe_changed", "Operation",
+                "The reviewed Capability Passport no longer matches the cached probe.",
+                "safe", false, "Probe again and review the replacement Passport before enrolling.",
+            ));
+        }
+        let selected_guid = normalize_company_guid(&request.selected_company_guid).map_err(|_| {
+            tally_command_error(
+                "stable_company_identity_required", "Tally application",
+                "The selected company does not have an observed stable GUID.",
+                "after_change", false, "Select a GUID-bearing company from the current probe.",
+            )
+        })?;
+        let matching_companies = probe.companies.iter().filter(|company| {
+            company.guid.as_deref().is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
+        }).count();
+        if matching_companies != 1 {
+            return Err(tally_command_error(
+                if matching_companies == 0 { "reviewed_company_scope_changed" } else { "company_identity_ambiguous" },
+                "Tally application",
+                "The selected company identity is not uniquely present in the reviewed probe.",
+                "safe", false, "Probe again and select one GUID-bearing company from the current result.",
+            ));
+        }
+        if probe.profile.features.get(&CapabilityFeatureId::Write)
+            .is_some_and(|evidence| evidence.state == CapabilityState::Unsupported)
+        {
+            return Err(tally_command_error(
+                "write_capability_unsupported", "Tally application",
+                "The reviewed Passport marks Tally write capability unsupported.",
+                "safe", false, "Do not enroll this scope for a write canary.",
+            ));
+        }
+        let pin = mirror.snapshot_source_pin(&request.mirror_company_id).await.map_err(|_| {
+            tally_command_error(
+                "persisted_company_scope_required", "Operation",
+                "A persisted observed company pin is required before fixture enrollment.",
+                "safe", false, "Save the reviewed company scope, then probe and enroll while it is fresh.",
+            )
+        })?;
+        if pin.canonical_origin != canonical_origin || !pin.company_guid.eq_ignore_ascii_case(&selected_guid) {
+            return Err(tally_command_error(
+                "persisted_company_scope_changed", "Tally application",
+                "The persisted company pin does not match the fresh reviewed company identity.",
+                "safe", false, "Probe again and save the selected company scope before enrolling.",
+            ));
+        }
+        let enrollment = mirror.enroll_write_fixture(WriteFixtureEnrollmentInput {
+            company_id: request.mirror_company_id.clone(),
+            review_commitment_sha256: request.expected_review_commitment_sha256.clone(),
+            disposable_company_attested: request.disposable_company_attested,
+            no_customer_data_attested: request.no_customer_data_attested,
+            backup_guidance_acknowledged: request.backup_guidance_acknowledged,
+            enrolled_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+        }).await.map_err(|_| tally_command_error(
+            "fixture_enrollment_store_failed", "Operation",
+            "The local write-fixture enrollment could not be stored.",
+            "safe", false, "Verify the three confirmations and local encrypted storage, then retry the fresh review.",
+        ))?;
+        let status = mirror.write_fixture_enrollment_status(&request.mirror_company_id).await.map_err(|_| {
+            tally_command_error("fixture_enrollment_status_unavailable", "Operation", "The local fixture status could not be read after enrollment.", "after_change", true, "Restart Bridge and inspect the local fixture status before any future canary.")
+        })?;
+        debug_assert!(!enrollment.id.is_empty());
+        Ok(TallyWriteFixtureEnrollmentResponse {
+            status,
+            tally_requests_attempted: 0,
+            tally_writes_attempted: 0,
+            review_cleanup_warning: None,
+        })
+    }.await;
+    let cleanup_succeeded = if result.is_ok() {
+        reservation.consume().unwrap_or(false)
+    } else {
+        reservation.release().unwrap_or(false)
+    };
+    match result {
+        Ok(mut response) => {
+            if !cleanup_succeeded {
+                response.review_cleanup_warning = Some("review_cache_cleanup_failed_after_fixture_enrollment");
+            }
+            Ok(response)
+        }
+        Err(_) if !cleanup_succeeded => Err(tally_command_error(
+            "fixture_enrollment_retry_state_uncertain", "Operation",
+            "The local fixture enrollment did not complete cleanly and the reviewed cache could not be released.",
+            "after_change", true, "Restart Bridge, probe again, and inspect local fixture status before retrying.",
+        )),
+        Err(error) => Err(error),
+    }
+}
+
+#[tauri::command]
+pub async fn tally_write_fixture_enrollment_status(
+    request: TallyWriteFixtureCompanyRequest,
+    mirror: State<'_, TallyMirrorRepository>,
+) -> Result<WriteFixtureEnrollmentStatus, TallyCommandError> {
+    mirror
+        .write_fixture_enrollment_status(&request.mirror_company_id)
+        .await
+        .map_err(|_| {
+            tally_command_error(
+                "fixture_enrollment_status_unavailable",
+                "Operation",
+                "The local fixture status is unavailable.",
+                "safe",
+                false,
+                "Save a reviewed company scope before checking fixture status.",
+            )
+        })
+}
+
+#[tauri::command]
+pub async fn revoke_tally_write_fixture_enrollment(
+    request: TallyWriteFixtureCompanyRequest,
+    mirror: State<'_, TallyMirrorRepository>,
+) -> Result<WriteFixtureEnrollmentStatus, TallyCommandError> {
+    mirror
+        .revoke_write_fixture_enrollment(
+            &request.mirror_company_id,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await
+        .map_err(|_| {
+            tally_command_error(
+                "fixture_enrollment_revoke_failed",
+                "Operation",
+                "The local fixture enrollment could not be revoked.",
+                "safe",
+                false,
+                "Check the saved company scope and retry; no Tally request was made.",
+            )
+        })
 }
 
 #[derive(Debug, Serialize)]
