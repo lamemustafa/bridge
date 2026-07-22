@@ -1,7 +1,12 @@
 use super::{ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger};
 use super::{TallyProbeResult, TallyVoucher};
-use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
+use crate::tally::connection::{
+    canonical_loopback_origin, LedgerCanaryReadbackXml, SelectedReadObservation,
+};
 use crate::tally::connector::SealedReadRequest;
+use bridge_tally_protocol::xml_read_profiles::{
+    ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
+};
 use bridge_tally_runtime::{
     BodyBytesObservation, EndpointCircuitState, EndpointIdentity, EndpointRuntimeSnapshot,
     PortableReadRuntime, ReadAttempt, ReadExecutionError, ReadFailureClass, ReadOperation,
@@ -796,6 +801,45 @@ impl TallyRuntime {
                 async move {
                     client
                         .fetch_standard_ledger_catalog(&company, &expected_company_guid)
+                        .await
+                }
+            },
+        )
+        .await
+    }
+
+    /// Executes one sealed, serial canary readback. This remains a read-only
+    /// internal primitive for the future write coordinator; it never exposes
+    /// response XML to commands, the UI, or persistence.
+    #[allow(
+        dead_code,
+        reason = "the sealed runtime seam is intentionally staged before the write coordinator"
+    )]
+    pub(crate) async fn fetch_ledger_canary_readback(
+        &self,
+        config: TallyConfig,
+        company: ValidatedCompanyName,
+        ledger_name: ValidatedCanaryLedgerName,
+        identity_query_sha256: ValidatedIdentityQuerySha256,
+        expected_company_guid: String,
+    ) -> anyhow::Result<LedgerCanaryReadbackXml> {
+        self.execute(
+            config,
+            ReadOperation::MasterExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let company = company.clone();
+                let ledger_name = ledger_name.clone();
+                let identity_query_sha256 = identity_query_sha256.clone();
+                let expected_company_guid = expected_company_guid.clone();
+                async move {
+                    client
+                        .fetch_ledger_canary_readback(
+                            company,
+                            ledger_name,
+                            identity_query_sha256,
+                            &expected_company_guid,
+                        )
                         .await
                 }
             },

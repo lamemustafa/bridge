@@ -18,8 +18,13 @@ use bridge_tally_core::{
 };
 use bridge_tally_protocol::{
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
-    parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
-    parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
+    parse_ledger_write_readback_with_evidence, parse_selected_voucher_source_records_with_evidence,
+    parse_standard_ledger_catalog, parse_standard_ledger_identity_observation,
+    verify_company_context, verify_selected_voucher_window_context,
+    xml_read_profiles::{
+        ReadOnlyProfile, ValidatedCanaryLedgerName, ValidatedCompanyName,
+        ValidatedIdentityQuerySha256,
+    },
     TallyTextEncoding, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
 };
 use bridge_tally_transport::{
@@ -28,6 +33,30 @@ use bridge_tally_transport::{
 };
 
 pub type TallyConfig = TallyEndpointConfig;
+
+/// An exact, validated write-canary readback. Its XML remains crate-private to
+/// the future write coordinator and is never returned to the UI or persisted.
+#[allow(
+    dead_code,
+    reason = "the sealed runtime seam is intentionally staged before the write coordinator"
+)]
+pub(crate) struct LedgerCanaryReadbackXml(String);
+
+impl LedgerCanaryReadbackXml {
+    #[allow(
+        dead_code,
+        reason = "only the future crate-internal write coordinator may inspect sealed XML"
+    )]
+    pub(crate) fn as_xml(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for LedgerCanaryReadbackXml {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("LedgerCanaryReadbackXml([redacted])")
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub enum TallyProduct {
@@ -477,6 +506,38 @@ impl TallyClient {
         Ok(parsed.records)
     }
 
+    /// Executes the closed canary-readback profile and admits its response only
+    /// when the company, query commitment, and at-most-one exact ledger agree.
+    #[allow(
+        dead_code,
+        reason = "the sealed runtime seam is intentionally staged before the write coordinator"
+    )]
+    pub(crate) async fn fetch_ledger_canary_readback(
+        &self,
+        company: ValidatedCompanyName,
+        ledger_name: ValidatedCanaryLedgerName,
+        identity_query_sha256: ValidatedIdentityQuerySha256,
+        expected_company_guid: &str,
+    ) -> anyhow::Result<LedgerCanaryReadbackXml> {
+        let xml = self
+            .post_xml(
+                ReadOnlyProfile::LedgerCanaryReadbackV1 {
+                    company: &company,
+                    ledger_name: &ledger_name,
+                    identity_query_sha256: &identity_query_sha256,
+                }
+                .render(),
+            )
+            .await?;
+        validate_ledger_canary_readback(
+            &xml,
+            ledger_name.as_str(),
+            identity_query_sha256.as_str(),
+            expected_company_guid,
+        )?;
+        Ok(LedgerCanaryReadbackXml(xml))
+    }
+
     /// Reads the documented standard ledger collection as an explicitly limited
     /// compatibility catalog. It is not a fallback for Bridge's custom export
     /// and cannot establish snapshot, voucher, or write capability.
@@ -718,6 +779,40 @@ fn validate_selected_ledgers(
     Ok(())
 }
 
+#[allow(
+    dead_code,
+    reason = "the sealed runtime seam is intentionally staged before the write coordinator"
+)]
+fn validate_ledger_canary_readback(
+    xml: &str,
+    expected_ledger_name: &str,
+    expected_identity_query_sha256: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<()> {
+    let parsed = parse_ledger_write_readback_with_evidence(xml)?;
+    verify_company_context(&parsed.evidence, expected_company_guid)?;
+    if parsed
+        .evidence
+        .company_context
+        .as_ref()
+        .and_then(|context| context.query_identity_set_sha256.as_deref())
+        != Some(expected_identity_query_sha256)
+    {
+        anyhow::bail!("Tally canary readback query commitment did not match the request");
+    }
+    if parsed.records.len() > 1 {
+        anyhow::bail!("Tally canary readback returned more than one ledger");
+    }
+    if parsed
+        .records
+        .first()
+        .is_some_and(|record| record.record.name != expected_ledger_name)
+    {
+        anyhow::bail!("Tally canary readback ledger name did not match the request");
+    }
+    Ok(())
+}
+
 fn verify_selected_company_name(
     evidence: &bridge_tally_protocol::ExportEvidence,
     expected_name: &str,
@@ -797,8 +892,8 @@ fn detect_product(text: &str) -> TallyProduct {
 mod tests {
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
-        normalize_discovered_companies, tally_endpoint, unique_company_guids, TallyClient,
-        TallyConfig, TallyProduct,
+        normalize_discovered_companies, tally_endpoint, unique_company_guids,
+        validate_ledger_canary_readback, TallyClient, TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TransportId,
@@ -806,6 +901,45 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    const CANARY_QUERY_DIGEST: &str =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn canary_readback(ledger_name: &str, company_guid: &str, query_digest: &str) -> String {
+        format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="bridge.tally.ledger-write-readback/1" OBJECTTYPE="LEDGER" NAME="BRIDGE SYNTHETIC BOOK" GUID="{company_guid}" RECORDCOUNT="1" QUERYIDENTITYSETSHA256="{query_digest}"/><LEDGER REMOTEID="bridge-canary-remote-id" NAME="{ledger_name}"><PARENT>BRIDGE SYNTHETIC GROUP</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></BODY></ENVELOPE>"#
+        )
+    }
+
+    #[test]
+    fn canary_readback_requires_exact_company_commitment_and_ledger_name() {
+        let ledger_name = "BRIDGE-CANARY-LEDGER-001";
+        let xml = canary_readback(ledger_name, "company-guid", CANARY_QUERY_DIGEST);
+        validate_ledger_canary_readback(&xml, ledger_name, CANARY_QUERY_DIGEST, "company-guid")
+            .expect("exact synthetic canary readback is accepted");
+
+        assert!(validate_ledger_canary_readback(
+            &xml,
+            "BRIDGE-CANARY-LEDGER-002",
+            CANARY_QUERY_DIGEST,
+            "company-guid",
+        )
+        .is_err());
+        assert!(validate_ledger_canary_readback(
+            &xml,
+            ledger_name,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "company-guid",
+        )
+        .is_err());
+        assert!(validate_ledger_canary_readback(
+            &xml,
+            ledger_name,
+            CANARY_QUERY_DIGEST,
+            "other-company-guid",
+        )
+        .is_err());
+    }
 
     #[test]
     fn detects_tallyprime_status() {
