@@ -269,13 +269,6 @@ pub struct WriteAuthorization {
     approved_wire_sha256: String,
     approved_intended_state_sha256: String,
     approved_identity_query_sha256: String,
-    mode: WriteAuthorizationMode,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WriteAuthorizationMode {
-    ObservedCapability,
-    CanaryBootstrap,
 }
 
 impl std::fmt::Debug for WriteAuthorization {
@@ -294,36 +287,14 @@ impl std::fmt::Debug for WriteAuthorization {
 pub fn authorize_synthetic_write(
     request: WriteAuthorizationRequest,
 ) -> Result<WriteAuthorization, QualificationError> {
-    authorize_synthetic_write_with_mode(request, WriteAuthorizationMode::ObservedCapability)
-}
-
-/// Authorizes only a first, namespaced fixture canary. It never grants normal
-/// write authority: preparation binds this mode to exactly one ledger create.
-pub fn authorize_synthetic_canary_bootstrap(
-    request: WriteAuthorizationRequest,
-) -> Result<WriteAuthorization, QualificationError> {
-    authorize_synthetic_write_with_mode(request, WriteAuthorizationMode::CanaryBootstrap)
-}
-
-fn authorize_synthetic_write_with_mode(
-    request: WriteAuthorizationRequest,
-    mode: WriteAuthorizationMode,
-) -> Result<WriteAuthorization, QualificationError> {
     if !request.explicit_opt_in {
         return Err(QualificationError::ExplicitOptInRequired);
     }
     if !request.synthetic_company_confirmed {
         return Err(QualificationError::SyntheticCompanyRequired);
     }
-    if mode == WriteAuthorizationMode::ObservedCapability
-        && request.capability != WriteCapability::Observed
-    {
+    if request.capability != WriteCapability::Observed {
         return Err(QualificationError::ObservedCapabilityRequired);
-    }
-    if mode == WriteAuthorizationMode::CanaryBootstrap
-        && request.capability == WriteCapability::Unsupported
-    {
-        return Err(QualificationError::UnsupportedCanaryBootstrap);
     }
     if !request.backup_guidance_acknowledged {
         return Err(QualificationError::BackupAcknowledgementRequired);
@@ -354,7 +325,6 @@ fn authorize_synthetic_write_with_mode(
         approved_wire_sha256: request.approved_wire_sha256,
         approved_intended_state_sha256: request.approved_intended_state_sha256,
         approved_identity_query_sha256: request.approved_identity_query_sha256,
-        mode,
     })
 }
 
@@ -807,10 +777,6 @@ pub enum QualificationError {
     NoOpMutation,
     #[error("controlled ledger create requires an explicit parent")]
     CreateParentRequired,
-    #[error("first canary bootstrap must be one BRIDGE-CANARY ledger create")]
-    CanaryBootstrapSingleCreateRequired,
-    #[error("first canary bootstrap is unavailable for an unsupported endpoint")]
-    UnsupportedCanaryBootstrap,
     #[error("clearing controlled ledger field is not yet qualified: {0}")]
     UnsupportedFieldClear(&'static str),
     #[error("preflight readback did not exactly match the declared before state")]
@@ -937,16 +903,6 @@ pub fn prepare_ledger_import(
 ) -> Result<PreparedLedgerImport, QualificationError> {
     if mutations.is_empty() || mutations.len() > MAX_LEDGER_WRITE_BATCH {
         return Err(QualificationError::InvalidBatchSize);
-    }
-    if authorization.mode == WriteAuthorizationMode::CanaryBootstrap {
-        let [mutation] = mutations.as_slice() else {
-            return Err(QualificationError::CanaryBootstrapSingleCreateRequired);
-        };
-        if mutation.operation != LedgerOperation::Create
-            || !mutation.after.name.starts_with("BRIDGE-CANARY-")
-        {
-            return Err(QualificationError::CanaryBootstrapSingleCreateRequired);
-        }
     }
     if authorization.company_guid != company.guid {
         return Err(QualificationError::SyntheticCompanyRequired);

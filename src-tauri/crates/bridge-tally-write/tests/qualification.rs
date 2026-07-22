@@ -1,8 +1,8 @@
 use bridge_tally_write::{
-    authorize_synthetic_canary_bootstrap, authorize_synthetic_write, prepare_ledger_import,
-    preview_ledger_import, IdempotencyRegistry, LedgerMutation, LedgerState, PreparedLedgerImport,
-    QualificationError, SourceLineage, SyntheticCompany, WriteAuthorizationRequest,
-    WriteCapability, WriteOutcome, MAX_LEDGER_WRITE_BATCH,
+    authorize_synthetic_write, prepare_ledger_import, preview_ledger_import, IdempotencyRegistry,
+    LedgerMutation, LedgerState, PreparedLedgerImport, QualificationError, SourceLineage,
+    SyntheticCompany, WriteAuthorizationRequest, WriteCapability, WriteOutcome,
+    MAX_LEDGER_WRITE_BATCH,
 };
 
 const COMPANY_GUID: &str = "00000000-0000-4000-8000-000000000001";
@@ -132,95 +132,6 @@ fn authorization_gates_are_mandatory() {
     assert_eq!(
         authorize_synthetic_write(request).unwrap_err(),
         QualificationError::BackupAcknowledgementRequired
-    );
-}
-
-#[test]
-fn canary_bootstrap_is_single_namespaced_create_only() {
-    let company = company();
-    let canary = vec![create(REMOTE_ID, state("BRIDGE-CANARY-LEDGER-001", "0"), 1)];
-    let preview = preview_ledger_import(&company, &canary, "mapping-v1").unwrap();
-    let request = WriteAuthorizationRequest {
-        explicit_opt_in: true,
-        synthetic_company_confirmed: true,
-        company_guid: COMPANY_GUID.to_owned(),
-        capability: WriteCapability::Unknown,
-        backup_guidance_acknowledged: true,
-        approval_evidence_sha256: HASH.to_owned(),
-        approved_wire_sha256: preview.wire_digest().as_hex().to_owned(),
-        approved_intended_state_sha256: preview.intended_state_digest().as_hex().to_owned(),
-        approved_identity_query_sha256: preview.identity_query_digest().as_hex().to_owned(),
-        idempotency_key: "bootstrap-key".to_owned(),
-        outbox_id: "bootstrap-outbox".to_owned(),
-        mapping_version: "mapping-v1".to_owned(),
-    };
-    prepare_ledger_import(
-        company.clone(),
-        canary,
-        authorize_synthetic_canary_bootstrap(request.clone()).unwrap(),
-        &mut IdempotencyRegistry::default(),
-    )
-    .expect("one reviewed namespaced canary may proceed to later qualification");
-
-    let ordinary = vec![create(REMOTE_ID, state("ORDINARY LEDGER", "0"), 1)];
-    let ordinary_preview = preview_ledger_import(&company, &ordinary, "mapping-v1").unwrap();
-    let mut ordinary_request = request.clone();
-    ordinary_request.approved_wire_sha256 = ordinary_preview.wire_digest().as_hex().to_owned();
-    ordinary_request.approved_intended_state_sha256 =
-        ordinary_preview.intended_state_digest().as_hex().to_owned();
-    ordinary_request.approved_identity_query_sha256 =
-        ordinary_preview.identity_query_digest().as_hex().to_owned();
-    assert_eq!(
-        prepare_ledger_import(
-            company.clone(),
-            ordinary,
-            authorize_synthetic_canary_bootstrap(ordinary_request).unwrap(),
-            &mut IdempotencyRegistry::default(),
-        )
-        .unwrap_err(),
-        QualificationError::CanaryBootstrapSingleCreateRequired
-    );
-
-    let two_canaries = vec![
-        create(REMOTE_ID, state("BRIDGE-CANARY-LEDGER-001", "0"), 1),
-        create(
-            "bridge-synthetic-ledger-002",
-            state("BRIDGE-CANARY-LEDGER-002", "0"),
-            2,
-        ),
-    ];
-    assert_eq!(
-        prepare_ledger_import(
-            company.clone(),
-            two_canaries,
-            authorize_synthetic_canary_bootstrap(request.clone()).unwrap(),
-            &mut IdempotencyRegistry::default(),
-        )
-        .unwrap_err(),
-        QualificationError::CanaryBootstrapSingleCreateRequired
-    );
-
-    let canary_alter = vec![alter(
-        REMOTE_ID,
-        state("BRIDGE-CANARY-LEDGER-001", "0"),
-        state("BRIDGE-CANARY-LEDGER-001", "1"),
-    )];
-    assert_eq!(
-        prepare_ledger_import(
-            company,
-            canary_alter,
-            authorize_synthetic_canary_bootstrap(request.clone()).unwrap(),
-            &mut IdempotencyRegistry::default(),
-        )
-        .unwrap_err(),
-        QualificationError::CanaryBootstrapSingleCreateRequired
-    );
-
-    let mut unsupported = request;
-    unsupported.capability = WriteCapability::Unsupported;
-    assert_eq!(
-        authorize_synthetic_canary_bootstrap(unsupported).unwrap_err(),
-        QualificationError::UnsupportedCanaryBootstrap
     );
 }
 
