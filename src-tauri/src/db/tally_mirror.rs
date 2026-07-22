@@ -36,6 +36,8 @@ const MIRROR_MIGRATION_V15: &str =
     include_str!("migrations/0015_tally_write_canary_reservation.sql");
 const MIRROR_MIGRATION_V16: &str =
     include_str!("migrations/0016_tally_write_canary_payload_binding.sql");
+const MIRROR_MIGRATION_V17: &str =
+    include_str!("migrations/0017_tally_write_canary_preflight_attempt.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -416,6 +418,21 @@ pub struct ActiveWriteCanaryPayloadBindingInput {
     pub wire_sha256: String,
     pub intended_state_sha256: String,
     pub identity_query_sha256: String,
+}
+
+/// A one-time, durable claim to run the sealed preflight read for the exact
+/// canary binding. It is intentionally not an authority to dispatch a write.
+#[derive(Debug, Clone)]
+pub struct BeginWriteCanaryPreflightInput {
+    pub binding: ActiveWriteCanaryPayloadBindingInput,
+    pub started_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteCanaryPreflightAttemptRef {
+    pub id: String,
+    pub payload_binding_id: String,
+    pub started_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1281,6 +1298,92 @@ impl TallyMirrorRepository {
         })
     }
 
+    /// Atomically consumes the one available preflight-read attempt for an
+    /// active, exact canary binding. The caller receives no write capability;
+    /// this records only the durable precondition for a future sealed
+    /// readback. A second call is rejected rather than retried automatically.
+    pub async fn begin_write_canary_preflight(
+        &self,
+        input: BeginWriteCanaryPreflightInput,
+    ) -> Result<WriteCanaryPreflightAttemptRef, MirrorError> {
+        let binding = input.binding;
+        validate_nonempty(&binding.company_id, 128, "fixture_company_id")?;
+        validate_sha256(&binding.review_commitment_sha256)?;
+        validate_nonempty(&binding.reservation_id, 128, "canary_reservation_id")?;
+        validate_sha256(&binding.reservation_payload_sha256)?;
+        validate_sha256(&binding.wire_sha256)?;
+        validate_sha256(&binding.intended_state_sha256)?;
+        validate_sha256(&binding.identity_query_sha256)?;
+        if input.started_at_unix_ms <= 0 {
+            return Err(MirrorError::InvalidInput("canary_preflight_started_at"));
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        // SQLite starts deferred transactions. Take its write lock before
+        // checking revocation and claiming the only preflight attempt so those
+        // decisions cannot race one another.
+        sqlx::query("UPDATE tally_schema_migrations SET version = version WHERE version = 4")
+            .execute(&mut *transaction)
+            .await?;
+        let payload_binding_id = sqlx::query_scalar::<_, String>(
+            r#"
+                SELECT binding.id
+                FROM tally_write_canary_payload_bindings AS binding
+                JOIN tally_write_canary_reservations AS reservation
+                  ON reservation.id = binding.reservation_id
+                JOIN tally_write_fixture_enrollments AS enrollment
+                  ON enrollment.id = reservation.enrollment_id
+                WHERE binding.reservation_id = ?1
+                  AND enrollment.company_id = ?2
+                  AND enrollment.review_commitment_sha256 = ?3
+                  AND reservation.reservation_payload_sha256 = ?4
+                  AND binding.wire_sha256 = ?5
+                  AND binding.intended_state_sha256 = ?6
+                  AND binding.identity_query_sha256 = ?7
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM tally_write_fixture_revocations AS revocation
+                    WHERE revocation.enrollment_id = enrollment.id
+                  )
+            "#,
+        )
+        .bind(&binding.reservation_id)
+        .bind(&binding.company_id)
+        .bind(&binding.review_commitment_sha256)
+        .bind(&binding.reservation_payload_sha256)
+        .bind(&binding.wire_sha256)
+        .bind(&binding.intended_state_sha256)
+        .bind(&binding.identity_query_sha256)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(MirrorError::InvalidInput(
+            "canary_payload_binding_not_active",
+        ))?;
+        let attempt_id = Uuid::new_v4().to_string();
+        let inserted = sqlx::query(
+            "INSERT INTO tally_write_canary_preflight_attempts( \
+               id, payload_binding_id, contract_version, started_at_unix_ms \
+             ) VALUES (?1, ?2, 1, ?3) ON CONFLICT(payload_binding_id) DO NOTHING",
+        )
+        .bind(&attempt_id)
+        .bind(&payload_binding_id)
+        .bind(input.started_at_unix_ms)
+        .execute(&mut *transaction)
+        .await?
+        .rows_affected();
+        if inserted != 1 {
+            return Err(MirrorError::InvalidInput(
+                "canary_preflight_attempt_already_started",
+            ));
+        }
+        transaction.commit().await?;
+        Ok(WriteCanaryPreflightAttemptRef {
+            id: attempt_id,
+            payload_binding_id,
+            started_at_unix_ms: input.started_at_unix_ms,
+        })
+    }
+
     pub async fn write_fixture_enrollment_status(
         &self,
         company_id: &str,
@@ -1664,9 +1767,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let write_canary_preflight_attempt_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 17",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if write_canary_preflight_attempt_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V17)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -5230,7 +5343,7 @@ mod tests {
             company_id: saved.company.id.clone(),
             review_commitment_sha256: HASH_B.to_string(),
             reservation_id: reservation.id.clone(),
-            reservation_payload_sha256,
+            reservation_payload_sha256: reservation_payload_sha256.clone(),
             wire_sha256: HASH_A.to_string(),
             intended_state_sha256: HASH_B.to_string(),
             identity_query_sha256: HASH_A.to_string(),
@@ -5281,6 +5394,35 @@ mod tests {
                 "canary_payload_binding_not_active"
             ))
         ));
+        let preflight_input = BeginWriteCanaryPreflightInput {
+            binding: active_binding.clone(),
+            started_at_unix_ms: 5_500,
+        };
+        let preflight = repository
+            .begin_write_canary_preflight(preflight_input.clone())
+            .await
+            .expect("claim the one sealed preflight attempt");
+        assert_eq!(preflight.payload_binding_id, first.id);
+        assert!(matches!(
+            repository
+                .begin_write_canary_preflight(preflight_input)
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_preflight_attempt_already_started"
+            ))
+        ));
+        assert!(sqlx::query(
+            "UPDATE tally_write_canary_preflight_attempts SET started_at_unix_ms = 1"
+        )
+        .execute(&repository.pool)
+        .await
+        .is_err());
+        assert!(
+            sqlx::query("DELETE FROM tally_write_canary_preflight_attempts")
+                .execute(&repository.pool)
+                .await
+                .is_err()
+        );
         let mut changed = input;
         changed.identity_query_sha256 = HASH_B.to_string();
         assert!(matches!(
@@ -5307,6 +5449,25 @@ mod tests {
         assert!(matches!(
             repository
                 .active_write_canary_payload_binding(active_binding)
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_payload_binding_not_active"
+            ))
+        ));
+        assert!(matches!(
+            repository
+                .begin_write_canary_preflight(BeginWriteCanaryPreflightInput {
+                    binding: ActiveWriteCanaryPayloadBindingInput {
+                        company_id: saved.company.id.clone(),
+                        review_commitment_sha256: HASH_B.to_string(),
+                        reservation_id: reservation.id.clone(),
+                        reservation_payload_sha256: reservation_payload_sha256.clone(),
+                        wire_sha256: HASH_A.to_string(),
+                        intended_state_sha256: HASH_B.to_string(),
+                        identity_query_sha256: HASH_A.to_string(),
+                    },
+                    started_at_unix_ms: 6_500,
+                })
                 .await,
             Err(MirrorError::InvalidInput(
                 "canary_payload_binding_not_active"
@@ -6579,13 +6740,13 @@ mod tests {
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 15);
+        assert_eq!(migration_count, 16);
         let snapshot_state_table = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM sqlite_master \
              WHERE type = 'table' AND name = 'tally_snapshot_run_states'",
