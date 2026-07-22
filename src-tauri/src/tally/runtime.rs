@@ -823,6 +823,7 @@ impl TallyRuntime {
         identity_query_sha256: ValidatedIdentityQuerySha256,
         expected_company_guid: String,
     ) -> anyhow::Result<LedgerCanaryReadbackXml> {
+        let _lease = self.begin_ordinary_read(&config)?;
         self.execute(
             config,
             ReadOperation::MasterExport,
