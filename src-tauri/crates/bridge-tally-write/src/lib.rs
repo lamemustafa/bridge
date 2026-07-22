@@ -18,6 +18,12 @@ use thiserror::Error;
 pub const MAX_LEDGER_WRITE_BATCH: usize = 10;
 pub const LEDGER_WRITE_PROJECTION: &str = "bridge.tally.ledger-write-state/1";
 pub const LEDGER_READBACK_PROFILE: &str = BRIDGE_LEDGER_WRITE_READBACK_SCHEMA;
+pub const FIXTURE_CANARY_MAPPING_VERSION: &str = "bridge.fixture-canary/v1";
+pub const FIXTURE_CANARY_LEDGER_NAME: &str = "BRIDGE-CANARY-LEDGER-V1";
+
+const FIXTURE_CANARY_REMOTE_ID: &str = "bridge-fixture-canary-ledger-v1";
+const FIXTURE_CANARY_PARENT: &str = "Indirect Expenses";
+const FIXTURE_CANARY_OPENING_BALANCE: &str = "0";
 
 macro_rules! digest_type {
     ($name:ident) => {
@@ -271,6 +277,61 @@ pub struct WriteAuthorization {
     approved_identity_query_sha256: String,
 }
 
+/// The only authority that can prepare the initial fixture canary.
+///
+/// Unlike `WriteAuthorizationRequest`, it deliberately has no capability
+/// field: the canary establishes the first observed write capability. It is
+/// still unusable without an external durable reservation and exact preview
+/// commitments, both of which are checked by the application coordinator
+/// before any future transport is introduced.
+#[derive(Debug, Clone)]
+pub struct FixtureCanaryAuthorizationRequest {
+    pub explicit_opt_in: bool,
+    pub synthetic_company_confirmed: bool,
+    pub company_guid: String,
+    pub backup_guidance_acknowledged: bool,
+    pub review_commitment_sha256: String,
+    pub reservation_id: String,
+    pub reservation_payload_sha256: String,
+    pub approved_wire_sha256: String,
+    pub approved_intended_state_sha256: String,
+    pub approved_identity_query_sha256: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Clone)]
+pub struct FixtureCanaryAuthorization {
+    authorization: WriteAuthorization,
+    reservation_id: String,
+    reservation_payload_sha256: String,
+    review_commitment_sha256: String,
+}
+
+impl std::fmt::Debug for FixtureCanaryAuthorization {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FixtureCanaryAuthorization")
+            .field("reservation_id", &"<redacted>")
+            .field("reservation_payload_sha256", &"<redacted>")
+            .field("review_commitment_sha256", &"<redacted>")
+            .finish()
+    }
+}
+
+impl FixtureCanaryAuthorization {
+    pub fn reservation_id(&self) -> &str {
+        &self.reservation_id
+    }
+
+    pub fn reservation_payload_sha256(&self) -> &str {
+        &self.reservation_payload_sha256
+    }
+
+    pub fn review_commitment_sha256(&self) -> &str {
+        &self.review_commitment_sha256
+    }
+}
+
 impl std::fmt::Debug for WriteAuthorization {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -325,6 +386,57 @@ pub fn authorize_synthetic_write(
         approved_wire_sha256: request.approved_wire_sha256,
         approved_intended_state_sha256: request.approved_intended_state_sha256,
         approved_identity_query_sha256: request.approved_identity_query_sha256,
+    })
+}
+
+/// Builds the distinct authority for one fixture-defined canary. No caller can
+/// supply a ledger mutation, mapping version, or observed write capability.
+pub fn authorize_fixture_canary(
+    request: FixtureCanaryAuthorizationRequest,
+) -> Result<FixtureCanaryAuthorization, QualificationError> {
+    if !request.explicit_opt_in {
+        return Err(QualificationError::ExplicitOptInRequired);
+    }
+    if !request.synthetic_company_confirmed {
+        return Err(QualificationError::SyntheticCompanyRequired);
+    }
+    if !request.backup_guidance_acknowledged {
+        return Err(QualificationError::BackupAcknowledgementRequired);
+    }
+    validate_value(&request.company_guid, "company_guid")?;
+    validate_sha256(
+        &request.review_commitment_sha256,
+        "review_commitment_sha256",
+    )?;
+    validate_value(&request.reservation_id, "reservation_id")?;
+    validate_sha256(
+        &request.reservation_payload_sha256,
+        "reservation_payload_sha256",
+    )?;
+    validate_sha256(&request.approved_wire_sha256, "approved_wire_sha256")?;
+    validate_sha256(
+        &request.approved_intended_state_sha256,
+        "approved_intended_state_sha256",
+    )?;
+    validate_sha256(
+        &request.approved_identity_query_sha256,
+        "approved_identity_query_sha256",
+    )?;
+    validate_value(&request.idempotency_key, "idempotency_key")?;
+    Ok(FixtureCanaryAuthorization {
+        authorization: WriteAuthorization {
+            company_guid: request.company_guid,
+            approval_evidence_sha256: request.review_commitment_sha256.clone(),
+            idempotency_key: request.idempotency_key,
+            outbox_id: format!("fixture-canary:{}", request.reservation_id),
+            mapping_version: FIXTURE_CANARY_MAPPING_VERSION.to_owned(),
+            approved_wire_sha256: request.approved_wire_sha256,
+            approved_intended_state_sha256: request.approved_intended_state_sha256,
+            approved_identity_query_sha256: request.approved_identity_query_sha256,
+        },
+        reservation_id: request.reservation_id,
+        reservation_payload_sha256: request.reservation_payload_sha256,
+        review_commitment_sha256: request.review_commitment_sha256,
     })
 }
 
@@ -976,6 +1088,40 @@ pub fn prepare_ledger_import(
         approval_evidence_digest,
         identity_query_digest,
     })
+}
+
+/// Returns the one immutable ledger create used to qualify a disposable
+/// fixture. The canary deliberately carries no GSTIN and a zero balance.
+pub fn fixture_canary_ledger_mutation() -> Result<LedgerMutation, QualificationError> {
+    LedgerMutation::create(
+        FIXTURE_CANARY_REMOTE_ID,
+        LedgerState::new(
+            FIXTURE_CANARY_LEDGER_NAME,
+            Some(FIXTURE_CANARY_PARENT.to_owned()),
+            None,
+            Some(FIXTURE_CANARY_OPENING_BALANCE.to_owned()),
+        )?,
+        SourceLineage::new(
+            "bridge-fixture-canary",
+            FIXTURE_CANARY_REMOTE_ID,
+            FIXTURE_CANARY_MAPPING_VERSION,
+        )?,
+    )
+}
+
+/// Prepares exactly one fixture canary. It has no caller-supplied mutation or
+/// mapping escape hatch and remains dispatch-ineligible.
+pub fn prepare_fixture_canary_ledger_import(
+    company: SyntheticCompany,
+    authorization: FixtureCanaryAuthorization,
+    registry: &mut IdempotencyRegistry,
+) -> Result<PreparedLedgerImport, QualificationError> {
+    prepare_ledger_import(
+        company,
+        vec![fixture_canary_ledger_mutation()?],
+        authorization.authorization,
+        registry,
+    )
 }
 
 fn projection(

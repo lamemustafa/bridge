@@ -34,6 +34,8 @@ const MIRROR_MIGRATION_V14_ALREADY_SEQUENCED: &str =
     include_str!("migrations/0014_tally_write_fixture_revocation_sequence_existing.sql");
 const MIRROR_MIGRATION_V15: &str =
     include_str!("migrations/0015_tally_write_canary_reservation.sql");
+const MIRROR_MIGRATION_V16: &str =
+    include_str!("migrations/0016_tally_write_canary_payload_binding.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -380,6 +382,24 @@ pub struct WriteCanaryReservationRef {
     pub id: String,
     pub enrollment_id: String,
     pub reserved_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct WriteCanaryPayloadBindingInput {
+    pub company_id: String,
+    pub review_commitment_sha256: String,
+    pub reservation_id: String,
+    pub wire_sha256: String,
+    pub intended_state_sha256: String,
+    pub identity_query_sha256: String,
+    pub bound_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteCanaryPayloadBindingRef {
+    pub id: String,
+    pub reservation_id: String,
+    pub bound_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1093,6 +1113,98 @@ impl TallyMirrorRepository {
         Ok(result)
     }
 
+    /// Atomically binds the only reserved canary slot to its exact immutable
+    /// wire, intended-state, and readback-query commitments.
+    pub async fn bind_write_canary_payload(
+        &self,
+        input: WriteCanaryPayloadBindingInput,
+    ) -> Result<WriteCanaryPayloadBindingRef, MirrorError> {
+        validate_nonempty(&input.company_id, 128, "fixture_company_id")?;
+        validate_sha256(&input.review_commitment_sha256)?;
+        validate_nonempty(&input.reservation_id, 128, "canary_reservation_id")?;
+        validate_sha256(&input.wire_sha256)?;
+        validate_sha256(&input.intended_state_sha256)?;
+        validate_sha256(&input.identity_query_sha256)?;
+        if input.bound_at_unix_ms <= 0 {
+            return Err(MirrorError::InvalidInput("canary_payload_bound_at"));
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        // Serialize the active-enrollment check and binding insert so a
+        // revocation cannot race an otherwise valid payload commitment.
+        sqlx::query("UPDATE tally_schema_migrations SET version = version WHERE version = 4")
+            .execute(&mut *transaction)
+            .await?;
+        let reservation_exists = sqlx::query_scalar::<_, i64>(
+            r#"
+                SELECT COUNT(*)
+                FROM tally_write_canary_reservations AS reservation
+                JOIN tally_write_fixture_enrollments AS enrollment
+                  ON enrollment.id = reservation.enrollment_id
+                WHERE reservation.id = ?1
+                  AND enrollment.company_id = ?2
+                  AND enrollment.review_commitment_sha256 = ?3
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM tally_write_fixture_revocations AS revocation
+                    WHERE revocation.enrollment_id = enrollment.id
+                  )
+            "#,
+        )
+        .bind(&input.reservation_id)
+        .bind(&input.company_id)
+        .bind(&input.review_commitment_sha256)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if reservation_exists != 1 {
+            return Err(MirrorError::InvalidInput("canary_reservation_not_active"));
+        }
+        sqlx::query(
+            r#"
+                INSERT INTO tally_write_canary_payload_bindings(
+                  id, reservation_id, wire_sha256, intended_state_sha256, identity_query_sha256,
+                  contract_version, bound_at_unix_ms
+                ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)
+                ON CONFLICT(reservation_id) DO NOTHING
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&input.reservation_id)
+        .bind(&input.wire_sha256)
+        .bind(&input.intended_state_sha256)
+        .bind(&input.identity_query_sha256)
+        .bind(input.bound_at_unix_ms)
+        .execute(&mut *transaction)
+        .await?;
+        let binding = sqlx::query(
+            r#"
+                SELECT id, wire_sha256, intended_state_sha256, identity_query_sha256,
+                       bound_at_unix_ms
+                FROM tally_write_canary_payload_bindings
+                WHERE reservation_id = ?1
+            "#,
+        )
+        .bind(&input.reservation_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let existing_wire_sha256: String = binding.try_get("wire_sha256")?;
+        let existing_intended_state_sha256: String = binding.try_get("intended_state_sha256")?;
+        let existing_identity_query_sha256: String = binding.try_get("identity_query_sha256")?;
+        if existing_wire_sha256 != input.wire_sha256
+            || existing_intended_state_sha256 != input.intended_state_sha256
+            || existing_identity_query_sha256 != input.identity_query_sha256
+        {
+            return Err(MirrorError::InvalidInput("canary_payload_already_bound"));
+        }
+        let result = WriteCanaryPayloadBindingRef {
+            id: binding.try_get("id")?,
+            reservation_id: input.reservation_id,
+            bound_at_unix_ms: binding.try_get("bound_at_unix_ms")?,
+        };
+        transaction.commit().await?;
+        Ok(result)
+    }
+
     pub async fn write_fixture_enrollment_status(
         &self,
         company_id: &str,
@@ -1466,9 +1578,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let write_canary_payload_binding_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 16",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if write_canary_payload_binding_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V16)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -4996,6 +5118,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn write_canary_payload_binding_is_exact_immutable_and_fixture_bound() {
+        let repository = repository().await;
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("persist observed company before binding a canary payload");
+        repository
+            .enroll_write_fixture(WriteFixtureEnrollmentInput {
+                company_id: saved.company.id.clone(),
+                review_commitment_sha256: HASH_B.to_string(),
+                disposable_company_attested: true,
+                no_customer_data_attested: true,
+                backup_guidance_acknowledged: true,
+                enrolled_at_unix_ms: 3_000,
+            })
+            .await
+            .expect("enroll the disposable fixture");
+        let reservation = repository
+            .reserve_write_canary(WriteCanaryReservationInput {
+                company_id: saved.company.id.clone(),
+                review_commitment_sha256: HASH_B.to_string(),
+                reserved_at_unix_ms: 4_000,
+            })
+            .await
+            .expect("reserve the only canary slot");
+        let input = WriteCanaryPayloadBindingInput {
+            company_id: saved.company.id.clone(),
+            review_commitment_sha256: HASH_B.to_string(),
+            reservation_id: reservation.id.clone(),
+            wire_sha256: HASH_A.to_string(),
+            intended_state_sha256: HASH_B.to_string(),
+            identity_query_sha256: HASH_A.to_string(),
+            bound_at_unix_ms: 5_000,
+        };
+        let first = repository
+            .bind_write_canary_payload(input.clone())
+            .await
+            .expect("bind the exact canary commitments");
+        assert_eq!(
+            repository
+                .bind_write_canary_payload(input.clone())
+                .await
+                .expect("replay the exact payload binding safely"),
+            first
+        );
+        let mut changed = input;
+        changed.identity_query_sha256 = HASH_B.to_string();
+        assert!(matches!(
+            repository.bind_write_canary_payload(changed).await,
+            Err(MirrorError::InvalidInput("canary_payload_already_bound"))
+        ));
+        assert!(
+            sqlx::query("UPDATE tally_write_canary_payload_bindings SET bound_at_unix_ms = 1")
+                .execute(&repository.pool)
+                .await
+                .is_err()
+        );
+        assert!(
+            sqlx::query("DELETE FROM tally_write_canary_payload_bindings")
+                .execute(&repository.pool)
+                .await
+                .is_err()
+        );
+
+        repository
+            .revoke_write_fixture_enrollment(&saved.company.id, 6_000)
+            .await
+            .expect("revoke fixture before a second binding");
+        assert!(matches!(
+            repository
+                .bind_write_canary_payload(WriteCanaryPayloadBindingInput {
+                    company_id: saved.company.id,
+                    review_commitment_sha256: HASH_B.to_string(),
+                    reservation_id: reservation.id,
+                    wire_sha256: HASH_A.to_string(),
+                    intended_state_sha256: HASH_B.to_string(),
+                    identity_query_sha256: HASH_A.to_string(),
+                    bound_at_unix_ms: 7_000,
+                })
+                .await,
+            Err(MirrorError::InvalidInput("canary_reservation_not_active"))
+        ));
+    }
+
+    #[tokio::test]
     async fn v13_fixture_revocations_upgrade_to_durable_sequence() {
         let repository = repository_through_v13().await;
         let saved = repository
@@ -6245,13 +6452,13 @@ mod tests {
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 14);
+        assert_eq!(migration_count, 15);
         let snapshot_state_table = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM sqlite_master \
              WHERE type = 'table' AND name = 'tally_snapshot_run_states'",
@@ -6297,12 +6504,12 @@ mod tests {
         let write_fixture_tables = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
              'tally_write_fixture_enrollments', 'tally_write_fixture_revocations', \
-             'tally_write_canary_reservations')",
+             'tally_write_canary_reservations', 'tally_write_canary_payload_bindings')",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count durable write fixture tables");
-        assert_eq!(write_fixture_tables, 3);
+        assert_eq!(write_fixture_tables, 4);
         let normalized_staging_tables = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
              'tally_snapshot_window_attempts', 'tally_snapshot_window_memberships')",
