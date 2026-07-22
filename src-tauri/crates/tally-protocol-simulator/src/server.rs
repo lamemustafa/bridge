@@ -339,6 +339,9 @@ fn read_request(
                     ));
                 }
                 request.extend_from_slice(&buffer[..read]);
+                if started.elapsed() >= deadline {
+                    return Err(incomplete_request_timeout(&request));
+                }
                 if request_complete(&request) {
                     break;
                 }
@@ -355,19 +358,23 @@ fn read_request(
                 if started.elapsed() < deadline {
                     continue;
                 }
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!(
-                        "synthetic request body was incomplete (received {}, expected {:?})",
-                        request.len(),
-                        expected_request_bytes(&request)
-                    ),
-                ));
+                return Err(incomplete_request_timeout(&request));
             }
             Err(error) => return Err(error),
         }
     }
     Ok(request)
+}
+
+fn incomplete_request_timeout(request: &[u8]) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!(
+            "synthetic request body was incomplete (received {}, expected {:?})",
+            request.len(),
+            expected_request_bytes(request)
+        ),
+    )
 }
 
 fn request_complete(request: &[u8]) -> bool {
@@ -513,6 +520,43 @@ fn sleep_cancellable(duration: Duration, cancelled: &AtomicBool) -> bool {
             return false;
         }
         thread::sleep((deadline - now).min(Duration::from_millis(5)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_request_enforces_deadline_while_a_peer_drip_feeds_bytes() {
+        let listener = bind_loopback_listener().expect("bind loopback listener");
+        let address = listener.local_addr().expect("read listener address");
+        let writer = thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).expect("connect loopback listener");
+            stream.set_nodelay(true).expect("disable Nagle buffering");
+            for _ in 0..10 {
+                if stream.write_all(b"x").is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(15));
+            }
+        });
+        let (mut stream, _) = listener.accept().expect("accept loopback peer");
+        stream
+            .set_read_timeout(Some(Duration::from_millis(25)))
+            .expect("set read poll timeout");
+        let cancelled = AtomicBool::new(false);
+        let started = Instant::now();
+
+        let error = read_request(&mut stream, &cancelled, Duration::from_millis(70))
+            .expect_err("incomplete drip feed must not outlive its deadline");
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "deadline enforcement must stay bounded"
+        );
+        writer.join().expect("drip-feed writer does not panic");
     }
 }
 
