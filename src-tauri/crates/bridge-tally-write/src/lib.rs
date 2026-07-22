@@ -567,6 +567,51 @@ pub struct PreparedLedgerImport {
     identity_query_digest: IdentityQueryDigest,
 }
 
+/// A fixed fixture canary preview that deliberately has no progression to
+/// preflight, transport, receipt processing, or readback. A future dispatcher
+/// must perform a fresh durable binding lookup in the application layer before
+/// it can construct its separately reviewed execution contract.
+#[derive(Clone)]
+pub struct PreparedFixtureCanary {
+    prepared: PreparedLedgerImport,
+}
+
+impl std::fmt::Debug for PreparedFixtureCanary {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PreparedFixtureCanary")
+            .field("wire_digest", self.prepared.wire_digest())
+            .field(
+                "intended_state_digest",
+                self.prepared.intended_state_digest(),
+            )
+            .field(
+                "identity_query_digest",
+                self.prepared.identity_query_digest(),
+            )
+            .field("dispatch_eligible", &false)
+            .finish()
+    }
+}
+
+impl PreparedFixtureCanary {
+    pub fn wire_digest(&self) -> &WirePayloadDigest {
+        self.prepared.wire_digest()
+    }
+
+    pub fn intended_state_digest(&self) -> &IntendedStateDigest {
+        self.prepared.intended_state_digest()
+    }
+
+    pub fn identity_query_digest(&self) -> &IdentityQueryDigest {
+        self.prepared.identity_query_digest()
+    }
+
+    pub const fn dispatch_eligible(&self) -> bool {
+        false
+    }
+}
+
 impl std::fmt::Debug for PreparedLedgerImport {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -1160,19 +1205,21 @@ pub fn fixture_canary_ledger_mutation() -> Result<LedgerMutation, QualificationE
     )
 }
 
-/// Prepares exactly one fixture canary. It has no caller-supplied mutation or
-/// mapping escape hatch and remains dispatch-ineligible.
+/// Prepares exactly one fixed, non-dispatchable fixture-canary preview. It has
+/// no caller-supplied mutation or mapping escape hatch, and its returned type
+/// intentionally cannot progress into the generic import lifecycle.
 pub fn prepare_fixture_canary_ledger_import(
     company: SyntheticCompany,
     authorization: FixtureCanaryAuthorization,
     registry: &mut IdempotencyRegistry,
-) -> Result<PreparedLedgerImport, QualificationError> {
-    prepare_ledger_import(
+) -> Result<PreparedFixtureCanary, QualificationError> {
+    let prepared = prepare_ledger_import(
         company,
         vec![fixture_canary_ledger_mutation()?],
         authorization.authorization,
         registry,
-    )
+    )?;
+    Ok(PreparedFixtureCanary { prepared })
 }
 
 fn projection(

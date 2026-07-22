@@ -389,6 +389,7 @@ pub struct WriteCanaryPayloadBindingInput {
     pub company_id: String,
     pub review_commitment_sha256: String,
     pub reservation_id: String,
+    pub reservation_payload_sha256: String,
     pub wire_sha256: String,
     pub intended_state_sha256: String,
     pub identity_query_sha256: String,
@@ -1122,6 +1123,7 @@ impl TallyMirrorRepository {
         validate_nonempty(&input.company_id, 128, "fixture_company_id")?;
         validate_sha256(&input.review_commitment_sha256)?;
         validate_nonempty(&input.reservation_id, 128, "canary_reservation_id")?;
+        validate_sha256(&input.reservation_payload_sha256)?;
         validate_sha256(&input.wire_sha256)?;
         validate_sha256(&input.intended_state_sha256)?;
         validate_sha256(&input.identity_query_sha256)?;
@@ -1144,6 +1146,7 @@ impl TallyMirrorRepository {
                 WHERE reservation.id = ?1
                   AND enrollment.company_id = ?2
                   AND enrollment.review_commitment_sha256 = ?3
+                  AND reservation.reservation_payload_sha256 = ?4
                   AND NOT EXISTS (
                     SELECT 1
                     FROM tally_write_fixture_revocations AS revocation
@@ -1154,6 +1157,7 @@ impl TallyMirrorRepository {
         .bind(&input.reservation_id)
         .bind(&input.company_id)
         .bind(&input.review_commitment_sha256)
+        .bind(&input.reservation_payload_sha256)
         .fetch_one(&mut *transaction)
         .await?;
         if reservation_exists != 1 {
@@ -5143,15 +5147,31 @@ mod tests {
             })
             .await
             .expect("reserve the only canary slot");
+        let reservation_payload_sha256 = sqlx::query_scalar::<_, String>(
+            "SELECT reservation_payload_sha256 FROM tally_write_canary_reservations WHERE id = ?1",
+        )
+        .bind(&reservation.id)
+        .fetch_one(&repository.pool)
+        .await
+        .expect("load immutable reservation payload commitment");
         let input = WriteCanaryPayloadBindingInput {
             company_id: saved.company.id.clone(),
             review_commitment_sha256: HASH_B.to_string(),
             reservation_id: reservation.id.clone(),
+            reservation_payload_sha256,
             wire_sha256: HASH_A.to_string(),
             intended_state_sha256: HASH_B.to_string(),
             identity_query_sha256: HASH_A.to_string(),
             bound_at_unix_ms: 5_000,
         };
+        let mut mismatched_reservation = input.clone();
+        mismatched_reservation.reservation_payload_sha256 = HASH_A.to_string();
+        assert!(matches!(
+            repository
+                .bind_write_canary_payload(mismatched_reservation)
+                .await,
+            Err(MirrorError::InvalidInput("canary_reservation_not_active"))
+        ));
         let first = repository
             .bind_write_canary_payload(input.clone())
             .await
@@ -5192,6 +5212,7 @@ mod tests {
                     company_id: saved.company.id,
                     review_commitment_sha256: HASH_B.to_string(),
                     reservation_id: reservation.id,
+                    reservation_payload_sha256: HASH_A.to_string(),
                     wire_sha256: HASH_A.to_string(),
                     intended_state_sha256: HASH_B.to_string(),
                     identity_query_sha256: HASH_A.to_string(),
