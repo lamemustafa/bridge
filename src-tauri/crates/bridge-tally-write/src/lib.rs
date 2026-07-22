@@ -1073,10 +1073,13 @@ fn build_import_xml(company: &SyntheticCompany, mutations: &[LedgerMutation]) ->
     for mutation in mutations {
         xml.push_str("<LEDGER REMOTEID=\"");
         push_xml_attribute(&mut xml, &mutation.remote_id);
-        if let Some(before) = &mutation.before {
-            xml.push_str("\" NAME=\"");
-            push_xml_attribute(&mut xml, &before.name);
-        }
+        let selector_name = mutation
+            .before
+            .as_ref()
+            .map(|before| &before.name)
+            .unwrap_or(&mutation.after.name);
+        xml.push_str("\" NAME=\"");
+        push_xml_attribute(&mut xml, selector_name);
         xml.push_str("\" ACTION=\"");
         xml.push_str(mutation.operation.tally_action());
         xml.push_str("\">");
@@ -1198,8 +1201,8 @@ mod tests {
         let xml = build_import_xml(&company, &[mutation]);
         assert!(xml.contains("BRIDGE &amp; BOOK"));
         assert!(xml.contains("remote-&quot;&lt;&amp;"));
-        assert!(xml.contains("ACTION=\"Create\"><NAME>LEDGER &lt;&amp;</NAME>"));
-        assert!(!xml.contains("NAME=\"LEDGER &lt;&amp;\""));
+        assert!(xml
+            .contains("NAME=\"LEDGER &lt;&amp;\" ACTION=\"Create\"><NAME>LEDGER &lt;&amp;</NAME>"));
     }
 
     #[test]
