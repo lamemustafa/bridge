@@ -32,6 +32,8 @@ const MIRROR_MIGRATION_V14: &str =
     include_str!("migrations/0014_tally_write_fixture_revocation_sequence.sql");
 const MIRROR_MIGRATION_V14_ALREADY_SEQUENCED: &str =
     include_str!("migrations/0014_tally_write_fixture_revocation_sequence_existing.sql");
+const MIRROR_MIGRATION_V15: &str =
+    include_str!("migrations/0015_tally_write_canary_reservation.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -364,6 +366,20 @@ pub struct WriteFixtureEnrollmentStatus {
 pub struct WriteFixtureEnrollmentRef {
     pub id: String,
     pub enrolled_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct WriteCanaryReservationInput {
+    pub company_id: String,
+    pub review_commitment_sha256: String,
+    pub reserved_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteCanaryReservationRef {
+    pub id: String,
+    pub enrollment_id: String,
+    pub reserved_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -986,6 +1002,97 @@ impl TallyMirrorRepository {
         })
     }
 
+    /// Atomically consumes the one canary slot for an active, reviewed fixture.
+    /// A replay with the same reviewed commitment returns the same reservation;
+    /// a different commitment can never allocate a second slot.
+    pub async fn reserve_write_canary(
+        &self,
+        input: WriteCanaryReservationInput,
+    ) -> Result<WriteCanaryReservationRef, MirrorError> {
+        validate_nonempty(&input.company_id, 128, "fixture_company_id")?;
+        validate_sha256(&input.review_commitment_sha256)?;
+        if input.reserved_at_unix_ms <= 0 {
+            return Err(MirrorError::InvalidInput("canary_reserved_at"));
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        // SQLite starts deferred transactions. Acquire its write lock before
+        // observing an enrollment so concurrent callers serialize around the
+        // single durable reservation rather than racing into a lock error.
+        sqlx::query("UPDATE tally_schema_migrations SET version = version WHERE version = 4")
+            .execute(&mut *transaction)
+            .await?;
+        let enrollment = sqlx::query(
+            "SELECT enrollment.id AS enrollment_id, enrollment.enrollment_payload_sha256, \
+             company.id AS company_id, endpoint.canonical_origin, company.company_guid \
+             FROM tally_write_fixture_enrollments AS enrollment \
+             JOIN tally_companies AS company ON company.id = enrollment.company_id \
+             JOIN tally_endpoints AS endpoint ON endpoint.id = company.endpoint_id \
+             WHERE enrollment.company_id = ?1 \
+               AND enrollment.review_commitment_sha256 = ?2 \
+               AND company.identity_confidence = 'observed' \
+               AND company.company_guid IS NOT NULL \
+               AND TRIM(company.company_guid) <> '' \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM tally_write_fixture_revocations AS revocation \
+                 WHERE revocation.enrollment_id = enrollment.id \
+               )",
+        )
+        .bind(&input.company_id)
+        .bind(&input.review_commitment_sha256)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(MirrorError::InvalidInput("fixture_enrollment_not_active"))?;
+        let enrollment_id: String = enrollment.try_get("enrollment_id")?;
+        let enrollment_payload_sha256: String = enrollment.try_get("enrollment_payload_sha256")?;
+        let company_id: String = enrollment.try_get("company_id")?;
+        let canonical_origin: String = enrollment.try_get("canonical_origin")?;
+        let company_guid: String = enrollment.try_get("company_guid")?;
+        let company_guid_ascii_casefolded = company_guid.to_ascii_lowercase();
+        let reservation_payload_sha256 =
+            canary_reservation_payload_sha256(&CanaryReservationCommitment {
+                schema: "bridge.tally.write-canary-reservation/1",
+                enrollment_id: &enrollment_id,
+                enrollment_payload_sha256: &enrollment_payload_sha256,
+                company_id: &company_id,
+                canonical_origin: &canonical_origin,
+                company_guid_ascii_casefolded: &company_guid_ascii_casefolded,
+                review_commitment_sha256: &input.review_commitment_sha256,
+                contract_version: 1,
+            })?;
+
+        sqlx::query(
+            "INSERT INTO tally_write_canary_reservations( \
+               id, enrollment_id, reservation_payload_sha256, contract_version, reserved_at_unix_ms \
+             ) VALUES (?1, ?2, ?3, 1, ?4) \
+             ON CONFLICT(enrollment_id) DO NOTHING",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&enrollment_id)
+        .bind(&reservation_payload_sha256)
+        .bind(input.reserved_at_unix_ms)
+        .execute(&mut *transaction)
+        .await?;
+        let reservation = sqlx::query(
+            "SELECT id, reservation_payload_sha256, reserved_at_unix_ms \
+             FROM tally_write_canary_reservations WHERE enrollment_id = ?1",
+        )
+        .bind(&enrollment_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let existing_payload_sha256: String = reservation.try_get("reservation_payload_sha256")?;
+        if existing_payload_sha256 != reservation_payload_sha256 {
+            return Err(MirrorError::InvalidInput("canary_slot_already_reserved"));
+        }
+        let result = WriteCanaryReservationRef {
+            id: reservation.try_get("id")?,
+            enrollment_id,
+            reserved_at_unix_ms: reservation.try_get("reserved_at_unix_ms")?,
+        };
+        transaction.commit().await?;
+        Ok(result)
+    }
+
     pub async fn write_fixture_enrollment_status(
         &self,
         company_id: &str,
@@ -1349,9 +1456,19 @@ impl TallyMirrorRepository {
             .execute(&mut *transaction)
             .await?;
         }
+        let write_canary_reservation_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 15",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if write_canary_reservation_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V15)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -4305,6 +4422,24 @@ fn fixture_enrollment_payload_sha256(
 }
 
 #[derive(Serialize)]
+struct CanaryReservationCommitment<'a> {
+    schema: &'static str,
+    enrollment_id: &'a str,
+    enrollment_payload_sha256: &'a str,
+    company_id: &'a str,
+    canonical_origin: &'a str,
+    company_guid_ascii_casefolded: &'a str,
+    review_commitment_sha256: &'a str,
+    contract_version: u16,
+}
+
+fn canary_reservation_payload_sha256(
+    material: &CanaryReservationCommitment<'_>,
+) -> Result<String, MirrorError> {
+    sha256_json(material)
+}
+
+#[derive(Serialize)]
 struct FixtureRevocationCommitment<'a> {
     schema: &'static str,
     enrollment_id: &'a str,
@@ -4777,6 +4912,84 @@ mod tests {
                 .is_err()
         );
         assert!(sqlx::query("DELETE FROM tally_write_fixture_revocations")
+            .execute(&repository.pool)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn write_canary_reservation_is_fixture_bound_single_use_and_revocable() {
+        let repository = repository().await;
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("persist observed company before reserving a canary");
+        repository
+            .enroll_write_fixture(WriteFixtureEnrollmentInput {
+                company_id: saved.company.id.clone(),
+                review_commitment_sha256: HASH_B.to_string(),
+                disposable_company_attested: true,
+                no_customer_data_attested: true,
+                backup_guidance_acknowledged: true,
+                enrolled_at_unix_ms: 3_000,
+            })
+            .await
+            .expect("enroll the disposable fixture");
+
+        let reservation_input = WriteCanaryReservationInput {
+            company_id: saved.company.id.clone(),
+            review_commitment_sha256: HASH_B.to_string(),
+            reserved_at_unix_ms: 4_000,
+        };
+        let first = repository
+            .reserve_write_canary(reservation_input.clone())
+            .await
+            .expect("reserve the single canary slot");
+        let replay = repository
+            .reserve_write_canary(reservation_input)
+            .await
+            .expect("replay the exact reservation safely");
+        assert_eq!(replay, first);
+
+        assert!(matches!(
+            repository
+                .reserve_write_canary(WriteCanaryReservationInput {
+                    company_id: saved.company.id.clone(),
+                    review_commitment_sha256: HASH_A.to_string(),
+                    reserved_at_unix_ms: 5_000,
+                })
+                .await,
+            Err(MirrorError::InvalidInput("fixture_enrollment_not_active"))
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tally_write_canary_reservations")
+                .fetch_one(&repository.pool)
+                .await
+                .expect("count durable canary reservations"),
+            1
+        );
+
+        repository
+            .revoke_write_fixture_enrollment(&saved.company.id, 6_000)
+            .await
+            .expect("revoke the fixture before any dispatch");
+        assert!(matches!(
+            repository
+                .reserve_write_canary(WriteCanaryReservationInput {
+                    company_id: saved.company.id,
+                    review_commitment_sha256: HASH_B.to_string(),
+                    reserved_at_unix_ms: 7_000,
+                })
+                .await,
+            Err(MirrorError::InvalidInput("fixture_enrollment_not_active"))
+        ));
+        assert!(
+            sqlx::query("UPDATE tally_write_canary_reservations SET reserved_at_unix_ms = 1")
+                .execute(&repository.pool)
+                .await
+                .is_err()
+        );
+        assert!(sqlx::query("DELETE FROM tally_write_canary_reservations")
             .execute(&repository.pool)
             .await
             .is_err());
@@ -6031,13 +6244,14 @@ mod tests {
         .await
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)",
+            "SELECT COUNT(*) FROM tally_schema_migrations \
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 11);
+        assert_eq!(migration_count, 14);
         let snapshot_state_table = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM sqlite_master \
              WHERE type = 'table' AND name = 'tally_snapshot_run_states'",
@@ -6080,6 +6294,15 @@ mod tests {
         .await
         .expect("count reviewed-setup consumption table");
         assert_eq!(reviewed_setup_consumption_tables, 1);
+        let write_fixture_tables = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
+             'tally_write_fixture_enrollments', 'tally_write_fixture_revocations', \
+             'tally_write_canary_reservations')",
+        )
+        .fetch_one(&repository.pool)
+        .await
+        .expect("count durable write fixture tables");
+        assert_eq!(write_fixture_tables, 3);
         let normalized_staging_tables = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
              'tally_snapshot_window_attempts', 'tally_snapshot_window_memberships')",

@@ -298,12 +298,16 @@
       "sha256": "48f6a803038dd7ce7fb36f8509920c7b286e26e99b0ca0c270f73c4e37aee414"
     },
     {
+      "path": "src-tauri/src/db/migrations/0015_tally_write_canary_reservation.sql",
+      "sha256": "7e3ee96082c5a23516fcbe9e6f43966da1fae65cf0e3e1daeff8cb90139bcd5f"
+    },
+    {
       "path": "src-tauri/src/db/tally_incremental.rs",
       "sha256": "bac2c859de102cf1e558f669dee0445a9406e95ee9923b6f52bd498ee768e73b"
     },
     {
       "path": "src-tauri/src/db/tally_mirror.rs",
-      "sha256": "6645bddc38b1c7b53522e7b6782ed377b61dca2e90fea2e6f1aef3065a98ca72"
+      "sha256": "0896c5bc04833c1ae1169186b97f704548673b035d71407076252d5a71f12cb7"
     },
     {
       "path": "src-tauri/src/db/tally_write_store.rs",
@@ -374,5 +378,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "37a41940c7e2c360acd07e05cdcd30a29b772ca13d53159ab489301a050490b0"
+  "manifest_sha256": "e0215d001b62a293c9da5cb778038ec66c88e8c5846dff2326e731ea5aa4a954"
 }
