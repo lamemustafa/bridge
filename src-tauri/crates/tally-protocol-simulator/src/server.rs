@@ -12,11 +12,13 @@ use std::{
 use crate::{Delivery, ResponseContentEncoding, ResponseFraming, ScenarioPlan, WireEncoding};
 use sha2::{Digest, Sha256};
 
-// Full workspace runs can briefly starve the simulator thread while Windows links or scans
+// Full workspace runs can briefly starve the simulator thread while native jobs link or scan
 // several test binaries in parallel. Keep the synthetic peer patient enough that scheduler
-// delay is not misclassified as a Tally transport failure; cancellation still wakes accept.
+// delay is not misclassified as a Tally transport failure, while polling keeps cancellation
+// responsive when a client disconnects before completing its request.
 const ACCEPT_DEADLINE: Duration = Duration::from_secs(30);
-const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(2);
+const REQUEST_READ_DEADLINE: Duration = Duration::from_secs(30);
+const REQUEST_READ_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_REQUEST_BYTES: usize = 128 * 1024;
 pub const MAX_SEQUENCE_REQUESTS: usize = 64;
 
@@ -210,9 +212,18 @@ fn serve_request(
             Err(error) => return Err(error),
         };
         stream.set_nodelay(true)?;
-        stream.set_read_timeout(Some(REQUEST_READ_TIMEOUT))?;
+        stream.set_read_timeout(Some(REQUEST_READ_POLL_INTERVAL))?;
         stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-        match read_request(&mut stream) {
+        let remaining_read_deadline = REQUEST_READ_DEADLINE
+            .checked_sub(started.elapsed())
+            .filter(|deadline| !deadline.is_zero())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "simulator request deadline elapsed",
+                )
+            })?;
+        match read_request(&mut stream, cancelled, remaining_read_deadline) {
             Ok(request) if request.is_empty() && !cancelled.load(Ordering::Acquire) => continue,
             Ok(request) => break (stream, request),
             Err(_) if cancelled.load(Ordering::Acquire) => break (stream, Vec::new()),
@@ -309,9 +320,14 @@ fn finish_complete_response(stream: &mut TcpStream, cancelled: bool) -> io::Resu
     Ok(())
 }
 
-fn read_request(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
+fn read_request(
+    stream: &mut TcpStream,
+    cancelled: &AtomicBool,
+    deadline: Duration,
+) -> io::Result<Vec<u8>> {
     let mut request = Vec::new();
     let mut buffer = [0_u8; 4096];
+    let started = Instant::now();
     loop {
         match stream.read(&mut buffer) {
             Ok(0) => break,
@@ -333,6 +349,12 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
                 ) =>
             {
+                if cancelled.load(Ordering::Acquire) {
+                    return Ok(request);
+                }
+                if started.elapsed() < deadline {
+                    continue;
+                }
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     format!(
