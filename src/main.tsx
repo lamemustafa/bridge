@@ -901,13 +901,11 @@ function App() {
     setFixtureBackupGuidanceAcknowledged(false);
     clearCompanyScopedState({
       clearQualifiedReadReview: () => {
-        if (selectedReadScope) {
-          setPassport(null);
-          setProfileSha256(null);
-          setReviewId(null);
-          setReviewCommitmentSha256(null);
-          setSelectedReadScope(null);
-        }
+        setPassport(null);
+        setProfileSha256(null);
+        setReviewId(null);
+        setReviewCommitmentSha256(null);
+        setSelectedReadScope(null);
       },
       clearPassportSnapshot: () => setPassportSnapshotId(null),
       clearSensitiveDiagnostics,
@@ -1053,7 +1051,10 @@ function App() {
           },
         },
       );
-      setSelectedCompany(selection.selectedCompany);
+      const verifiedCompanyKey = liveCompanies.length === 1 && liveCompanies[0].guid
+        ? tallyCompanyKey(liveCompanies[0])
+        : selection.selectedCompany;
+      setSelectedCompany(verifiedCompanyKey);
       void refreshPersistedCompanyProfiles();
     } catch (error) {
       if (resultsVersion === tallyResultsVersion.current) setCompanyError(toOperatorError(error));
