@@ -179,7 +179,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/xml_read_profiles.rs",
-      "sha256": "4a3af2f3ab0a5e56848d30541a9f4d43859def65014a5af03a8c4f787c9e3658"
+      "sha256": "cd89c1c200534c961d55a11a8a279c9008fbdc3936ecb1970b99cb3776ecf267"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/tests/simulator_corpus.rs",
@@ -362,5 +362,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "6e1275cdd90acebd5f2205069c4c4efed29498d1915ba9dd41f9e037295eea5f"
+  "manifest_sha256": "4af73dde3130e886e54d969d1bf66f32f6697ba31c560353ebe90ae56050031c"
 }
