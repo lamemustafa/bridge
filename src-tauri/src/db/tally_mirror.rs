@@ -994,6 +994,7 @@ impl TallyMirrorRepository {
                ON revocation.enrollment_id = enrollment.id \
              WHERE enrollment.company_id = ?1 \
              ORDER BY (revocation.enrollment_id IS NULL) DESC, \
+                      revocation.revoked_at_unix_ms DESC, \
                       enrollment.enrolled_at_unix_ms DESC, enrollment.id DESC LIMIT 1",
         )
         .bind(company_id)
@@ -1039,22 +1040,23 @@ impl TallyMirrorRepository {
         }
         let mut transaction = self.pool.begin().await?;
         let row = sqlx::query(
-            "SELECT enrollment.id, enrollment.enrollment_payload_sha256, revocation.revoked_at_unix_ms \
+            "SELECT enrollment.id, enrollment.enrollment_payload_sha256, \
+                    enrollment.enrolled_at_unix_ms, revocation.revoked_at_unix_ms \
              FROM tally_write_fixture_enrollments AS enrollment \
              LEFT JOIN tally_write_fixture_revocations AS revocation \
                ON revocation.enrollment_id = enrollment.id \
              WHERE enrollment.company_id = ?1 \
              ORDER BY (revocation.enrollment_id IS NULL) DESC, \
+                      revocation.revoked_at_unix_ms DESC, \
                       enrollment.enrolled_at_unix_ms DESC, enrollment.id DESC LIMIT 1",
         )
         .bind(company_id)
         .fetch_optional(&mut *transaction)
         .await?
         .ok_or(MirrorError::NotFound)?;
-        if row
-            .try_get::<Option<i64>, _>("revoked_at_unix_ms")?
-            .is_none()
-        {
+        let enrolled_at_unix_ms: i64 = row.try_get("enrolled_at_unix_ms")?;
+        let existing_revocation: Option<i64> = row.try_get("revoked_at_unix_ms")?;
+        let status = if existing_revocation.is_none() {
             let enrollment_id: String = row.try_get("id")?;
             let enrollment_payload_sha256: String = row.try_get("enrollment_payload_sha256")?;
             let revocation_payload_sha256 = fixture_revocation_payload_sha256(
@@ -1073,9 +1075,24 @@ impl TallyMirrorRepository {
             .bind(revoked_at_unix_ms)
             .execute(&mut *transaction)
             .await?;
-        }
+            WriteFixtureEnrollmentStatus {
+                fixture_state: "revoked",
+                enrolled_at_unix_ms: Some(enrolled_at_unix_ms),
+                revoked_at_unix_ms: Some(revoked_at_unix_ms),
+                candidate_gate: "not_enrolled",
+                write_capability: "unknown",
+            }
+        } else {
+            WriteFixtureEnrollmentStatus {
+                fixture_state: "revoked",
+                enrolled_at_unix_ms: Some(enrolled_at_unix_ms),
+                revoked_at_unix_ms: existing_revocation,
+                candidate_gate: "not_enrolled",
+                write_capability: "unknown",
+            }
+        };
         transaction.commit().await?;
-        self.write_fixture_enrollment_status(company_id).await
+        Ok(status)
     }
 
     /// Validates the encrypted capability receipt used by Core Accounting restart recovery.
@@ -4633,6 +4650,7 @@ mod tests {
             .expect("append local revocation");
         assert_eq!(revoked.fixture_state, "revoked");
         assert_eq!(revoked.candidate_gate, "not_enrolled");
+        assert_eq!(revoked.revoked_at_unix_ms, Some(5_000));
         assert_eq!(
             repository
                 .revoke_write_fixture_enrollment(&saved.company.id, 6_000)
@@ -4662,14 +4680,18 @@ mod tests {
                 .fixture_state,
             "active"
         );
-        assert_eq!(
-            repository
-                .revoke_write_fixture_enrollment(&saved.company.id, 7_000)
-                .await
-                .expect("revoke the active enrollment despite clock rollback")
-                .fixture_state,
-            "revoked"
-        );
+        let final_revocation = repository
+            .revoke_write_fixture_enrollment(&saved.company.id, 7_000)
+            .await
+            .expect("revoke the active enrollment despite clock rollback");
+        assert_eq!(final_revocation.fixture_state, "revoked");
+        assert_eq!(final_revocation.revoked_at_unix_ms, Some(7_000));
+        let latest_revoked = repository
+            .write_fixture_enrollment_status(&saved.company.id)
+            .await
+            .expect("latest revoked evidence uses revocation ordering");
+        assert_eq!(latest_revoked.fixture_state, "revoked");
+        assert_eq!(latest_revoked.revoked_at_unix_ms, Some(7_000));
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tally_write_fixture_revocations")
                 .fetch_one(&repository.pool)
