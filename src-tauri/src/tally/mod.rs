@@ -1,3 +1,8 @@
+#[allow(
+    dead_code,
+    reason = "the sealed coordinator is intentionally staged before its command layer"
+)]
+pub(crate) mod canary_preflight;
 pub mod capability_packs;
 pub mod connection;
 pub mod connector;
