@@ -1,9 +1,9 @@
 use bridge_tally_write::{
     authorize_fixture_canary, authorize_synthetic_write, fixture_canary_ledger_mutation,
     prepare_fixture_canary_ledger_import, prepare_ledger_import, preview_ledger_import,
-    FixtureCanaryAuthorization, FixtureCanaryAuthorizationRequest, IdempotencyRegistry,
-    LedgerMutation, LedgerState, PreparedLedgerImport, QualificationError, SourceLineage,
-    SyntheticCompany, WriteAuthorizationRequest, WriteCapability, WriteOutcome,
+    verify_fixture_canary_preflight, FixtureCanaryAuthorization, FixtureCanaryAuthorizationRequest,
+    IdempotencyRegistry, LedgerMutation, LedgerState, PreparedLedgerImport, QualificationError,
+    SourceLineage, SyntheticCompany, WriteAuthorizationRequest, WriteCapability, WriteOutcome,
     FIXTURE_CANARY_MAPPING_VERSION, MAX_LEDGER_WRITE_BATCH,
 };
 
@@ -242,6 +242,11 @@ fn fixture_canary_is_fixed_reservation_bound_and_dispatch_ineligible() {
         prepare_fixture_canary_ledger_import(synthetic_company, authorization, &mut registry)
             .expect("prepare exact fixture canary");
     assert!(!prepared.dispatch_eligible());
+    let query = prepared.identity_query_digest().as_hex().to_owned();
+    let evidence =
+        verify_fixture_canary_preflight(&prepared, &export(COMPANY_GUID, PROFILE, &query, "", 0))
+            .expect("derive sealed absence evidence");
+    assert!(!evidence.dispatch_eligible());
 
     let mut mismatched_request = FixtureCanaryAuthorizationRequest {
         explicit_opt_in: true,

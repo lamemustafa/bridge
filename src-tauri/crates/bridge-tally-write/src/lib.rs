@@ -567,10 +567,10 @@ pub struct PreparedLedgerImport {
     identity_query_digest: IdentityQueryDigest,
 }
 
-/// A fixed fixture canary preview that deliberately has no progression to
-/// preflight, transport, receipt processing, or readback. A future dispatcher
-/// must perform a fresh durable binding lookup in the application layer before
-/// it can construct its separately reviewed execution contract.
+/// A fixed fixture canary preview that deliberately has no progression into
+/// the generic import lifecycle. A separately reviewed coordinator may derive
+/// sealed, non-dispatchable preflight evidence from an exact readback, but it
+/// can never obtain a transport, receipt, or generic qualified-import state.
 #[derive(Clone)]
 pub struct PreparedFixtureCanary {
     prepared: PreparedLedgerImport,
@@ -610,6 +610,57 @@ impl PreparedFixtureCanary {
     pub const fn dispatch_eligible(&self) -> bool {
         false
     }
+}
+
+/// Digest-only proof that the fixed fixture canary is absent before a possible
+/// write. It is not a dispatch authorization and cannot enter the generic
+/// import lifecycle.
+#[derive(Clone)]
+pub struct FixtureCanaryPreflightEvidence {
+    readback_state_digest: ReadbackStateDigest,
+    identity_coverage_digest: IdentityCoverageDigest,
+}
+
+impl std::fmt::Debug for FixtureCanaryPreflightEvidence {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FixtureCanaryPreflightEvidence")
+            .field("readback_state_digest", &self.readback_state_digest)
+            .field("identity_coverage_digest", &self.identity_coverage_digest)
+            .field("dispatch_eligible", &false)
+            .finish()
+    }
+}
+
+impl FixtureCanaryPreflightEvidence {
+    pub fn readback_state_digest(&self) -> &ReadbackStateDigest {
+        &self.readback_state_digest
+    }
+
+    pub fn identity_coverage_digest(&self) -> &IdentityCoverageDigest {
+        &self.identity_coverage_digest
+    }
+
+    pub const fn dispatch_eligible(&self) -> bool {
+        false
+    }
+}
+
+/// Validates a sealed fixture-canary readback and derives only its digest
+/// evidence. The caller must keep the XML sealed; this function neither
+/// exposes it nor returns any write-capable object.
+pub fn verify_fixture_canary_preflight(
+    prepared: &PreparedFixtureCanary,
+    readback_xml: &str,
+) -> Result<FixtureCanaryPreflightEvidence, QualificationError> {
+    let observed = parse_readback(&prepared.prepared, readback_xml)?;
+    if observed.projections != prepared.prepared.expected_before {
+        return Err(QualificationError::PreflightMismatch);
+    }
+    Ok(FixtureCanaryPreflightEvidence {
+        readback_state_digest: observed.state_digest,
+        identity_coverage_digest: observed.coverage_digest,
+    })
 }
 
 impl std::fmt::Debug for PreparedLedgerImport {

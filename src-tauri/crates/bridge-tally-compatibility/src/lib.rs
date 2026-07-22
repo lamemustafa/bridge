@@ -19,7 +19,9 @@ pub const SUPPORT_MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub const TRUST_MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub const ATTESTATION_SCHEMA_VERSION: u16 = 1;
 pub const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
-pub const MAX_SURFACE_FILES: usize = 96;
+/// Bounded high enough for the additive Tally safety-migration chain while
+/// still rejecting an unexpectedly broad attestation surface.
+pub const MAX_SURFACE_FILES: usize = 128;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
