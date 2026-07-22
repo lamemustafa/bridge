@@ -167,6 +167,23 @@ impl LedgerMutation {
         if before == after {
             return Err(QualificationError::NoOpMutation);
         }
+        for (before, after, field) in [
+            (before.parent.as_ref(), after.parent.as_ref(), "parent"),
+            (
+                before.party_gstin.as_ref(),
+                after.party_gstin.as_ref(),
+                "party_gstin",
+            ),
+            (
+                before.opening_balance.as_ref(),
+                after.opening_balance.as_ref(),
+                "opening_balance",
+            ),
+        ] {
+            if before.is_some() && after.is_none() {
+                return Err(QualificationError::UnsupportedFieldClear(field));
+            }
+        }
         Self::new(
             LedgerOperation::Alter,
             remote_id.into(),
@@ -755,6 +772,8 @@ pub enum QualificationError {
     MissingIdempotencyReservation,
     #[error("controlled ledger alter must change at least one verified field")]
     NoOpMutation,
+    #[error("clearing controlled ledger field is not yet qualified: {0}")]
+    UnsupportedFieldClear(&'static str),
     #[error("preflight readback did not exactly match the declared before state")]
     PreflightMismatch,
     #[error("Tally import receipt was invalid")]
@@ -1054,11 +1073,21 @@ fn build_import_xml(company: &SyntheticCompany, mutations: &[LedgerMutation]) ->
     for mutation in mutations {
         xml.push_str("<LEDGER REMOTEID=\"");
         push_xml_attribute(&mut xml, &mutation.remote_id);
-        xml.push_str("\" NAME=\"");
-        push_xml_attribute(&mut xml, &mutation.after.name);
+        if let Some(before) = &mutation.before {
+            xml.push_str("\" NAME=\"");
+            push_xml_attribute(&mut xml, &before.name);
+        }
         xml.push_str("\" ACTION=\"");
         xml.push_str(mutation.operation.tally_action());
         xml.push_str("\">");
+        if mutation.operation == LedgerOperation::Create
+            || mutation
+                .before
+                .as_ref()
+                .is_some_and(|before| before.name != mutation.after.name)
+        {
+            push_element(&mut xml, "NAME", &mutation.after.name);
+        }
         if let Some(value) = &mutation.after.parent {
             push_element(&mut xml, "PARENT", value);
         }
@@ -1169,6 +1198,24 @@ mod tests {
         let xml = build_import_xml(&company, &[mutation]);
         assert!(xml.contains("BRIDGE &amp; BOOK"));
         assert!(xml.contains("remote-&quot;&lt;&amp;"));
-        assert!(xml.contains("LEDGER &lt;&amp;"));
+        assert!(xml.contains("ACTION=\"Create\"><NAME>LEDGER &lt;&amp;</NAME>"));
+        assert!(!xml.contains("NAME=\"LEDGER &lt;&amp;\""));
+    }
+
+    #[test]
+    fn private_wire_builder_uses_existing_name_to_select_a_rename() {
+        let company = SyntheticCompany::new("BRIDGE SYNTHETIC BOOK", "company-guid").unwrap();
+        let mutation = LedgerMutation::alter(
+            "bridge-remote-id",
+            LedgerState::new("OLD LEDGER", None, None, None).unwrap(),
+            LedgerState::new("NEW LEDGER", None, None, None).unwrap(),
+            SourceLineage::new("synthetic", "record", "v1").unwrap(),
+        )
+        .unwrap();
+
+        let xml = build_import_xml(&company, &[mutation]);
+
+        assert!(xml.contains("NAME=\"OLD LEDGER\" ACTION=\"Alter\"><NAME>NEW LEDGER</NAME>"));
+        assert!(!xml.contains("NAME=\"NEW LEDGER\" ACTION=\"Alter\""));
     }
 }

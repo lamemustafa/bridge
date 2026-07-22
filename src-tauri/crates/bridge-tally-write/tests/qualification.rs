@@ -454,6 +454,34 @@ fn invalid_decimal_gstin_limits_duplicates_noops_and_replays_are_rejected() {
             .unwrap_err(),
         QualificationError::NoOpMutation
     );
+    for (before, after, field) in [
+        (
+            LedgerState::new(
+                "BRIDGE",
+                Some("BRIDGE SYNTHETIC GROUP".to_owned()),
+                None,
+                None,
+            )
+            .unwrap(),
+            LedgerState::new("BRIDGE", None, None, None).unwrap(),
+            "parent",
+        ),
+        (
+            LedgerState::new("BRIDGE", None, Some("29ABCDE1234F1Z5".to_owned()), None).unwrap(),
+            LedgerState::new("BRIDGE", None, None, None).unwrap(),
+            "party_gstin",
+        ),
+        (
+            LedgerState::new("BRIDGE", None, None, Some("0".to_owned())).unwrap(),
+            LedgerState::new("BRIDGE", None, None, None).unwrap(),
+            "opening_balance",
+        ),
+    ] {
+        assert_eq!(
+            LedgerMutation::alter(REMOTE_ID, before, after, lineage(1)).unwrap_err(),
+            QualificationError::UnsupportedFieldClear(field)
+        );
+    }
     let duplicate = create(REMOTE_ID, unchanged.clone(), 1);
     let mut registry = IdempotencyRegistry::default();
     assert_eq!(
