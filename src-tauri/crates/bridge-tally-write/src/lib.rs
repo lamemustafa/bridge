@@ -249,7 +249,7 @@ pub enum WriteCapability {
     Unsupported,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WriteAuthorizationRequest {
     pub explicit_opt_in: bool,
     pub synthetic_company_confirmed: bool,
@@ -263,6 +263,32 @@ pub struct WriteAuthorizationRequest {
     pub idempotency_key: String,
     pub outbox_id: String,
     pub mapping_version: String,
+}
+
+impl std::fmt::Debug for WriteAuthorizationRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WriteAuthorizationRequest")
+            .field("explicit_opt_in", &self.explicit_opt_in)
+            .field(
+                "synthetic_company_confirmed",
+                &self.synthetic_company_confirmed,
+            )
+            .field("company_guid", &"<redacted>")
+            .field("capability", &self.capability)
+            .field(
+                "backup_guidance_acknowledged",
+                &self.backup_guidance_acknowledged,
+            )
+            .field("approval_evidence_sha256", &"<redacted>")
+            .field("approved_wire_sha256", &"<redacted>")
+            .field("approved_intended_state_sha256", &"<redacted>")
+            .field("approved_identity_query_sha256", &"<redacted>")
+            .field("idempotency_key", &"<redacted>")
+            .field("outbox_id", &"<redacted>")
+            .field("mapping_version", &self.mapping_version)
+            .finish()
+    }
 }
 
 #[derive(Clone)]
@@ -284,7 +310,7 @@ pub struct WriteAuthorization {
 /// still unusable without an external durable reservation and exact preview
 /// commitments, both of which are checked by the application coordinator
 /// before any future transport is introduced.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FixtureCanaryAuthorizationRequest {
     pub explicit_opt_in: bool,
     pub synthetic_company_confirmed: bool,
@@ -297,6 +323,31 @@ pub struct FixtureCanaryAuthorizationRequest {
     pub approved_intended_state_sha256: String,
     pub approved_identity_query_sha256: String,
     pub idempotency_key: String,
+}
+
+impl std::fmt::Debug for FixtureCanaryAuthorizationRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FixtureCanaryAuthorizationRequest")
+            .field("explicit_opt_in", &self.explicit_opt_in)
+            .field(
+                "synthetic_company_confirmed",
+                &self.synthetic_company_confirmed,
+            )
+            .field("company_guid", &"<redacted>")
+            .field(
+                "backup_guidance_acknowledged",
+                &self.backup_guidance_acknowledged,
+            )
+            .field("review_commitment_sha256", &"<redacted>")
+            .field("reservation_id", &"<redacted>")
+            .field("reservation_payload_sha256", &"<redacted>")
+            .field("approved_wire_sha256", &"<redacted>")
+            .field("approved_intended_state_sha256", &"<redacted>")
+            .field("approved_identity_query_sha256", &"<redacted>")
+            .field("idempotency_key", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Clone)]

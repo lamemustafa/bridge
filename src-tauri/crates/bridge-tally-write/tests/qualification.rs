@@ -162,6 +162,54 @@ fn authorization_gates_are_mandatory() {
 }
 
 #[test]
+fn authorization_requests_redact_fixture_and_commitment_values_in_debug_output() {
+    let synthetic_company = company();
+    let generic_mutation = create(REMOTE_ID, state("BRIDGE LEDGER", "10.00"), 1);
+    let generic_preview =
+        preview_ledger_import(&synthetic_company, &[generic_mutation], "mapping-v1")
+            .expect("preview generic authorization request");
+    let generic = WriteAuthorizationRequest {
+        explicit_opt_in: true,
+        synthetic_company_confirmed: true,
+        company_guid: COMPANY_GUID.to_owned(),
+        capability: WriteCapability::Observed,
+        backup_guidance_acknowledged: true,
+        approval_evidence_sha256: HASH.to_owned(),
+        approved_wire_sha256: generic_preview.wire_digest().as_hex().to_owned(),
+        approved_intended_state_sha256: generic_preview.intended_state_digest().as_hex().to_owned(),
+        approved_identity_query_sha256: generic_preview.identity_query_digest().as_hex().to_owned(),
+        idempotency_key: "fixture-sensitive-key".to_owned(),
+        outbox_id: "fixture-sensitive-outbox".to_owned(),
+        mapping_version: "mapping-v1".to_owned(),
+    };
+    let fixture = FixtureCanaryAuthorizationRequest {
+        explicit_opt_in: true,
+        synthetic_company_confirmed: true,
+        company_guid: COMPANY_GUID.to_owned(),
+        backup_guidance_acknowledged: true,
+        review_commitment_sha256: HASH.to_owned(),
+        reservation_id: "fixture-sensitive-reservation".to_owned(),
+        reservation_payload_sha256: HASH.to_owned(),
+        approved_wire_sha256: HASH.to_owned(),
+        approved_intended_state_sha256: HASH.to_owned(),
+        approved_identity_query_sha256: HASH.to_owned(),
+        idempotency_key: "fixture-sensitive-key".to_owned(),
+    };
+    let generic_debug = format!("{generic:?}");
+    let fixture_debug = format!("{fixture:?}");
+    for secret in [
+        COMPANY_GUID,
+        HASH,
+        "fixture-sensitive-key",
+        "fixture-sensitive-outbox",
+        "fixture-sensitive-reservation",
+    ] {
+        assert!(!generic_debug.contains(secret));
+        assert!(!fixture_debug.contains(secret));
+    }
+}
+
+#[test]
 fn fixture_canary_is_fixed_reservation_bound_and_dispatch_ineligible() {
     let synthetic_company = company();
     let first = fixture_canary_ledger_mutation().expect("construct fixed canary");

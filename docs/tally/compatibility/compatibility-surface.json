@@ -223,11 +223,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/src/lib.rs",
-      "sha256": "0c85e092e600ba8e5f3209a2acf84c77eb5924e39ff87a70e51f54932fe02115"
+      "sha256": "3b0c837cb0989b938008fc4f75000f443c16282ad7f695bac5192be3b6ab4a0b"
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/tests/qualification.rs",
-      "sha256": "ccf53bff7ca0374de7b618440e5c242a50ffb75a7f6753f5ec8a602f02d58f13"
+      "sha256": "4838444725d79098e219488062d99dec845953eb6c40302b9bffc625cd94e3aa"
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/Cargo.toml",
@@ -382,5 +382,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "89cdbfbe6012502caf81f8dba13c9f4196aa796f788870bced4c0141332bc9ff"
+  "manifest_sha256": "88bf44e61097c2de500f3a7199d35f9763115cb380d1705e341b986bbf485ccd"
 }
