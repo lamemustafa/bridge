@@ -37,13 +37,11 @@ function companyScopedState() {
 function cleanupFor(state) {
   return {
     clearQualifiedReadReview: () => {
-      if (state.selectedReadScope) {
-        state.passport = null;
-        state.profileSha256 = null;
-        state.reviewId = null;
-        state.reviewCommitmentSha256 = null;
-        state.selectedReadScope = null;
-      }
+      state.passport = null;
+      state.profileSha256 = null;
+      state.reviewId = null;
+      state.reviewCommitmentSha256 = null;
+      state.selectedReadScope = null;
     },
     clearPassportSnapshot: () => { state.passportSnapshotId = null; },
     clearSensitiveDiagnostics: () => {
@@ -140,6 +138,19 @@ test("a manual company selection clears the existing review and all company-scop
   assert.equal(state.proofPreviewRequestVersion, 8);
   assert.equal(state.snapshotSelectionVersion, 12);
   assert.equal(state.tallyResultsVersion, 14);
+});
+
+test("a manual company selection clears an unqualified probe review", () => {
+  const state = companyScopedState();
+  state.selectedReadScope = null;
+
+  clearCompanyScopedState(cleanupFor(state));
+
+  assert.equal(state.passport, null);
+  assert.equal(state.profileSha256, null);
+  assert.equal(state.reviewId, null);
+  assert.equal(state.reviewCommitmentSha256, null);
+  assert.equal(state.selectedReadScope, null);
 });
 
 test("a selected company retained by the probe is not reported as dropped", () => {
