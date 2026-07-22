@@ -523,6 +523,12 @@ fn sleep_cancellable(duration: Duration, cancelled: &AtomicBool) -> bool {
     }
 }
 
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,10 +564,4 @@ mod tests {
         );
         writer.join().expect("drip-feed writer does not panic");
     }
-}
-
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
 }
