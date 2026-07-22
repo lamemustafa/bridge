@@ -28,6 +28,8 @@ const MIRROR_MIGRATION_V12: &str =
     include_str!("migrations/0012_tally_window_terminal_evidence.sql");
 const MIRROR_MIGRATION_V13: &str =
     include_str!("migrations/0013_tally_write_fixture_enrollment.sql");
+const MIRROR_MIGRATION_V14: &str =
+    include_str!("migrations/0014_tally_write_fixture_revocation_sequence.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -1066,8 +1068,9 @@ impl TallyMirrorRepository {
             )?;
             sqlx::query(
                 "INSERT INTO tally_write_fixture_revocations(\
-                   id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms\
-                 ) VALUES (?1, ?2, ?3, 'operator_revoked', ?4)",
+                   event_sequence, id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms\
+                 ) VALUES ((SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM tally_write_fixture_revocations), \
+                           ?1, ?2, ?3, 'operator_revoked', ?4)",
             )
             .bind(Uuid::new_v4().to_string())
             .bind(enrollment_id)
@@ -1323,9 +1326,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let write_fixture_revocation_sequence_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 14",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if write_fixture_revocation_sequence_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V14)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -4373,6 +4386,44 @@ mod tests {
         TallyMirrorRepository::new(pool)
     }
 
+    async fn repository_through_v13() -> TallyMirrorRepository {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect to v13 in-memory SQLite");
+        let mut transaction = pool.begin().await.expect("begin v13 migration");
+        for migration in [
+            MIRROR_MIGRATION_V2,
+            MIRROR_MIGRATION_V3,
+            MIRROR_MIGRATION_V4,
+            MIRROR_MIGRATION_V5,
+            MIRROR_MIGRATION_V6,
+            MIRROR_MIGRATION_V7,
+            MIRROR_MIGRATION_V8,
+            MIRROR_MIGRATION_V9,
+            MIRROR_MIGRATION_V10,
+            MIRROR_MIGRATION_V11,
+            MIRROR_MIGRATION_V12,
+            MIRROR_MIGRATION_V13,
+        ] {
+            sqlx::raw_sql(migration)
+                .execute(&mut *transaction)
+                .await
+                .expect("apply migration through v13");
+        }
+        transaction.commit().await.expect("commit v13 schema");
+        TallyMirrorRepository::new(pool)
+    }
+
     async fn seed_repository(
         repository: TallyMirrorRepository,
     ) -> (TallyMirrorRepository, CapabilitySnapshotRef, CompanyRef) {
@@ -4716,6 +4767,63 @@ mod tests {
             .execute(&repository.pool)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn v13_fixture_revocations_upgrade_to_durable_sequence() {
+        let repository = repository_through_v13().await;
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("seed observed company for legacy fixture evidence");
+        sqlx::query(
+            "INSERT INTO tally_write_fixture_enrollments(\
+               id, company_id, review_commitment_sha256, enrollment_payload_sha256, \
+               contract_version, disposable_company_attested, no_customer_data_attested, \
+               backup_guidance_acknowledged, enrolled_at_unix_ms\
+             ) VALUES ('legacy-enrollment', ?1, ?2, ?3, 1, 1, 1, 1, 3000)",
+        )
+        .bind(&saved.company.id)
+        .bind(HASH_B)
+        .bind(HASH_A)
+        .execute(&repository.pool)
+        .await
+        .expect("seed legacy enrollment");
+        sqlx::query(
+            "INSERT INTO tally_write_fixture_revocations(\
+               id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms\
+             ) VALUES ('legacy-revocation', 'legacy-enrollment', ?1, 'operator_revoked', 4000)",
+        )
+        .bind(HASH_B)
+        .execute(&repository.pool)
+        .await
+        .expect("seed legacy revocation");
+
+        repository
+            .migrate()
+            .await
+            .expect("upgrade fixture revocation evidence from v13 to v14");
+        let status = repository
+            .write_fixture_enrollment_status(&saved.company.id)
+            .await
+            .expect("read upgraded legacy fixture status");
+        assert_eq!(status.fixture_state, "revoked");
+        assert_eq!(status.revoked_at_unix_ms, Some(4_000));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT event_sequence FROM tally_write_fixture_revocations WHERE id = 'legacy-revocation'",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read durable backfilled sequence"),
+            1
+        );
+        assert!(sqlx::query(
+            "UPDATE tally_write_fixture_revocations SET event_sequence = 2 WHERE id = 'legacy-revocation'",
+        )
+        .execute(&repository.pool)
+        .await
+        .is_err());
     }
 
     #[tokio::test]

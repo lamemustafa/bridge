@@ -18,8 +18,7 @@ CREATE TABLE IF NOT EXISTS tally_write_fixture_enrollments (
 );
 
 CREATE TABLE IF NOT EXISTS tally_write_fixture_revocations (
-  event_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-  id TEXT NOT NULL UNIQUE,
+  id TEXT PRIMARY KEY,
   enrollment_id TEXT NOT NULL UNIQUE,
   revocation_payload_sha256 TEXT NOT NULL CHECK (
     length(revocation_payload_sha256) = 64 AND

@@ -275,7 +275,11 @@
     },
     {
       "path": "src-tauri/src/db/migrations/0013_tally_write_fixture_enrollment.sql",
-      "sha256": "402aa279eaeacf8e9eaed2fa5fd8d4c5e4bb696f7c4f15aae6df7ce710c8819e"
+      "sha256": "8e63b553b85d59bb10b149eb2b3497504e4e443690228cb2975ce325d9e84168"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0014_tally_write_fixture_revocation_sequence.sql",
+      "sha256": "9b8b5e4148c24e102c395b4d052050f24f53099f5d7477abf10fb0a3a8d18daf"
     },
     {
       "path": "src-tauri/src/db/tally_incremental.rs",
@@ -283,7 +287,7 @@
     },
     {
       "path": "src-tauri/src/db/tally_mirror.rs",
-      "sha256": "b2a880bbf9e44712e6249e1df8174a79274df9eb67e0cf12e8bd1d3d838eda2c"
+      "sha256": "93c4c6bcc659f9e5c9d121b6cb5c241bb168351142bc15af08bddd94dbefef74"
     },
     {
       "path": "src-tauri/src/db/tally_write_store.rs",
@@ -354,5 +358,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "0ede64ed6ea69bb8dcf44e647d4a189c81a31e7d3d20b083b3aea0d0c05ef677"
+  "manifest_sha256": "c7ea4688defca043e9070f958e359582a9cd1f7ad946321fc8285052f14db2f3"
 }
