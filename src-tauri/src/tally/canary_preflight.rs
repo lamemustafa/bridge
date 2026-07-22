@@ -11,6 +11,7 @@ use bridge_tally_write::{
     verify_fixture_canary_preflight, FixtureCanaryPreflightEvidence, PreparedFixtureCanary,
     FIXTURE_CANARY_LEDGER_NAME,
 };
+use chrono::Utc;
 
 use crate::{
     db::tally_mirror::{
@@ -29,7 +30,6 @@ pub(crate) struct SealedCanaryPreflightRequest {
     pub identity_query_sha256: ValidatedIdentityQuerySha256,
     pub expected_company_guid: String,
     pub binding: BeginWriteCanaryPreflightInput,
-    pub verified_at_unix_ms: i64,
 }
 
 /// Claims the durable preflight slot, performs exactly one sealed read, and
@@ -70,7 +70,7 @@ pub(crate) async fn run_sealed_canary_preflight(
             attempt_id: attempt.id,
             readback_state_sha256: evidence.readback_state_digest().as_hex().to_owned(),
             identity_coverage_sha256: evidence.identity_coverage_digest().as_hex().to_owned(),
-            verified_at_unix_ms: request.verified_at_unix_ms,
+            verified_at_unix_ms: Utc::now().timestamp_millis(),
         })
         .await?)
 }
