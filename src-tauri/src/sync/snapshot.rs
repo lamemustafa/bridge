@@ -3651,7 +3651,9 @@ mod tests {
         CapabilityItemInput, CapabilityKind, CapabilitySnapshotInput, CompanyInput, Confidence,
         RunOutcome, SourceIdentityInput, VerificationState,
     };
-    use crate::tally::{RuntimeTallyConnector, TallyConfig, TallyRuntime};
+    use crate::tally::{
+        connector::simulator_test_lock, RuntimeTallyConnector, TallyConfig, TallyRuntime,
+    };
 
     use super::*;
 
@@ -4444,6 +4446,7 @@ mod tests {
     #[tokio::test]
     async fn simulator_transport_limit_splits_only_the_voucher_window_before_child_dispatch() {
         const TEST_RESPONSE_LIMIT: usize = 4 * 1024;
+        let _simulator_guard = simulator_test_lock().lock().await;
         let (_, mirror, store, mut plan) = setup().await;
         plan.resume_key = "resume-transport-adaptive-split".to_string();
         plan.run_id = "run-transport-adaptive-split".to_string();
@@ -4511,12 +4514,12 @@ mod tests {
         let result = FullSnapshotEngine::new(&mirror, &crash_store, &connector)
             .run(&plan, &AtomicCancellation::default())
             .await;
-        let requests = simulator.finish().unwrap();
         let error = result.expect_err("stop after the split graph is durably persisted");
         assert!(matches!(
             error,
             SnapshotError::StateInvariant("injected_crash_after_split_commit")
         ));
+        let requests = simulator.finish().unwrap();
         let persisted = store.load(&plan.resume_key).await.unwrap().unwrap();
         assert_eq!(persisted.windows.len(), 3);
         assert!(persisted.windows[&root.id].split.is_some());

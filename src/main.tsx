@@ -110,6 +110,20 @@ type SavedTallySetup = {
   review_cleanup_warning?: "review_cache_cleanup_failed_after_save";
 };
 
+type TallyWriteFixtureEnrollmentStatus = {
+  fixture_state: "not_enrolled" | "active" | "revoked";
+  enrolled_at_unix_ms?: number;
+  revoked_at_unix_ms?: number;
+  candidate_gate: "not_enrolled" | "enrolled";
+  write_capability: "unknown";
+};
+
+type TallyWriteFixtureEnrollmentResponse = TallyWriteFixtureEnrollmentStatus & {
+  tally_requests_attempted: number;
+  tally_writes_attempted: number;
+  review_cleanup_warning?: "review_cache_cleanup_failed_after_fixture_enrollment";
+};
+
 type TallyProofSummary = {
   integrity_state: "entry_hash_valid";
   run_id: string;
@@ -352,7 +366,7 @@ type SelectedDocumentPath = {
 };
 
 type View = "dashboard" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
-type TallyAction = "probe" | "discover" | "bootstrap" | "qualify" | "save" | "ledgers" | "catalog" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
+type TallyAction = "probe" | "discover" | "bootstrap" | "qualify" | "save" | "fixture_enroll" | "fixture_revoke" | "ledgers" | "catalog" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
 const MIRROR_PAGE_LIMIT = 25;
@@ -666,6 +680,11 @@ function App() {
   const [qualificationFrom, setQualificationFrom] = React.useState(currentQualificationWindow.from);
   const [qualificationTo, setQualificationTo] = React.useState(currentQualificationWindow.to);
   const [companyError, setCompanyError] = React.useState<OperatorError | null>(null);
+  const [fixtureStatus, setFixtureStatus] = React.useState<TallyWriteFixtureEnrollmentStatus | null>(null);
+  const [fixtureStatusError, setFixtureStatusError] = React.useState<string | null>(null);
+  const [fixtureDisposableAttested, setFixtureDisposableAttested] = React.useState(false);
+  const [fixtureNoCustomerDataAttested, setFixtureNoCustomerDataAttested] = React.useState(false);
+  const [fixtureBackupGuidanceAcknowledged, setFixtureBackupGuidanceAcknowledged] = React.useState(false);
   const [syncEvidence, setSyncEvidence] = React.useState<TallySyncEvidence | null>(null);
   const [syncEvidenceError, setSyncEvidenceError] = React.useState<OperatorError | null>(null);
   const [proofPreview, setProofPreview] = React.useState<RedactedProofPreview | null>(null);
@@ -850,6 +869,11 @@ function App() {
     clearSensitiveDiagnostics();
     setDraft(null);
     setCompanyError(null);
+    setFixtureStatus(null);
+    setFixtureStatusError(null);
+    setFixtureDisposableAttested(false);
+    setFixtureNoCustomerDataAttested(false);
+    setFixtureBackupGuidanceAcknowledged(false);
     setSyncEvidence(null);
     setSyncEvidenceError(null);
     setProofPreview(null);
@@ -870,6 +894,11 @@ function App() {
   }
 
   function clearSelectedCompanyScope() {
+    setFixtureStatus(null);
+    setFixtureStatusError(null);
+    setFixtureDisposableAttested(false);
+    setFixtureNoCustomerDataAttested(false);
+    setFixtureBackupGuidanceAcknowledged(false);
     clearCompanyScopedState({
       clearQualifiedReadReview: () => {
         if (selectedReadScope) {
@@ -1136,6 +1165,91 @@ function App() {
       }
     } finally {
       setTallyAction((current) => current === "save" ? null : current);
+    }
+  }
+
+  async function enrollWriteFixture() {
+    const company = companies.find((candidate) => tallyCompanyKey(candidate) === selectedCompany);
+    if (!reviewId || !reviewCommitmentSha256 || !company?.mirror_company_id || !company.guid || !selectedCompanyLive) {
+      setCompanyError("Probe again, select the persisted GUID-bearing company, and review it before locally enrolling a synthetic fixture.");
+      return;
+    }
+    if (!fixtureDisposableAttested || !fixtureNoCustomerDataAttested || !fixtureBackupGuidanceAcknowledged) {
+      setCompanyError("Confirm all three safeguards before enrolling the synthetic fixture.");
+      return;
+    }
+    const resultsVersion = tallyResultsVersion.current;
+    const reviewedCompanyKey = tallyCompanyKey(company);
+    const expectedReviewId = reviewId;
+    setTallyAction("fixture_enroll");
+    setCompanyError(null);
+    try {
+      const result = await invoke<TallyWriteFixtureEnrollmentResponse>("enroll_tally_write_fixture", {
+        request: {
+          config,
+          expected_review_id: reviewId,
+          expected_review_commitment_sha256: reviewCommitmentSha256,
+          mirror_company_id: company.mirror_company_id,
+          selected_company_guid: company.guid,
+          disposable_company_attested: fixtureDisposableAttested,
+          no_customer_data_attested: fixtureNoCustomerDataAttested,
+          backup_guidance_acknowledged: fixtureBackupGuidanceAcknowledged,
+        },
+      });
+      if (resultsVersion !== tallyResultsVersion.current || reviewedCompanyKey !== selectedCompany || expectedReviewId !== reviewId) return;
+      setFixtureStatus(result);
+      setFixtureDisposableAttested(false);
+      setFixtureNoCustomerDataAttested(false);
+      setFixtureBackupGuidanceAcknowledged(false);
+      setReviewId(null);
+      setReviewCommitmentSha256(null);
+      if (result.review_cleanup_warning) {
+        setCompanyError("The local fixture enrollment was saved, but its one-time in-memory review token could not be cleaned up. Restart Bridge before probing or enrolling another fixture.");
+      }
+    } catch (error) {
+      if (resultsVersion === tallyResultsVersion.current) setCompanyError(toOperatorError(error));
+    } finally {
+      setTallyAction((current) => current === "fixture_enroll" ? null : current);
+    }
+  }
+
+  async function revokeWriteFixture() {
+    const company = companies.find((candidate) => tallyCompanyKey(candidate) === selectedCompany);
+    if (!company?.mirror_company_id) {
+      setCompanyError("Select a persisted company before revoking its local fixture enrollment.");
+      return;
+    }
+    const resultsVersion = tallyResultsVersion.current;
+    const companyKey = tallyCompanyKey(company);
+    setTallyAction("fixture_revoke");
+    setCompanyError(null);
+    try {
+      const status = await invoke<TallyWriteFixtureEnrollmentStatus>("revoke_tally_write_fixture_enrollment", {
+        request: { mirror_company_id: company.mirror_company_id },
+      });
+      if (resultsVersion !== tallyResultsVersion.current || companyKey !== selectedCompany) return;
+      setFixtureStatus(status);
+    } catch (error) {
+      if (resultsVersion === tallyResultsVersion.current) setCompanyError(toOperatorError(error));
+    } finally {
+      setTallyAction((current) => current === "fixture_revoke" ? null : current);
+    }
+  }
+
+  async function refreshWriteFixtureStatus(mirrorCompanyId: string) {
+    setFixtureStatus(null);
+    setFixtureStatusError(null);
+    try {
+      const status = await invoke<TallyWriteFixtureEnrollmentStatus>("tally_write_fixture_enrollment_status", {
+        request: { mirror_company_id: mirrorCompanyId },
+      });
+      const current = companies.find((candidate) => tallyCompanyKey(candidate) === selectedCompany);
+      if (current?.mirror_company_id === mirrorCompanyId) setFixtureStatus(status);
+    } catch {
+      const current = companies.find((candidate) => tallyCompanyKey(candidate) === selectedCompany);
+      if (current?.mirror_company_id === mirrorCompanyId) {
+        setFixtureStatusError("Bridge could not read the local fixture state. Retry before changing this local gate.");
+      }
     }
   }
 
@@ -1731,6 +1845,25 @@ function App() {
   const gstDraftComplete = draft !== null && draft.missing_fields.length === 0;
   const selectedCompanyRecord = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
   const selectedCompanyLive = !!selectedCompanyRecord && liveCompanyKeys.includes(tallyCompanyKey(selectedCompanyRecord));
+  React.useEffect(() => {
+    const mirrorCompanyId = selectedCompanyRecord?.mirror_company_id;
+    setFixtureStatus(null);
+    setFixtureStatusError(null);
+    if (!mirrorCompanyId) return;
+    let cancelled = false;
+    void invoke<TallyWriteFixtureEnrollmentStatus>("tally_write_fixture_enrollment_status", {
+      request: { mirror_company_id: mirrorCompanyId },
+    })
+      .then((status) => {
+        if (!cancelled) setFixtureStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setFixtureStatusError("Bridge could not read the local fixture state. Retry before changing this local gate.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCompanyRecord?.mirror_company_id]);
   const selectedRecentSnapshotRuns = selectedCompanyRecord?.mirror_company_id
     ? recentSnapshotRuns.filter((run) => run.mirror_company_id === selectedCompanyRecord.mirror_company_id)
     : [];
@@ -2181,6 +2314,78 @@ function App() {
                     {passportSnapshotId ? "Reviewed scope saved" : "Save reviewed company scope"}
                   </button>
                   <p className="section-note">This explicit save atomically stores the current Passport, the selected company pin, and any exact selected-read scope evidence. Probing and qualification alone do not write local setup state or anything to Tally.</p>
+                  <section className="qualification-panel" aria-label="Synthetic write-canary fixture">
+                    <h3>Synthetic write-canary fixture</h3>
+                    <p className="section-note">This is a local, revocable enrollment gate for a future canary. It sends no Tally request, performs no Tally write, and leaves write capability Unknown.</p>
+                    <dl>
+                      <div><dt>Local fixture state</dt><dd>{fixtureStatusError ? "Unavailable" : fixtureStatus ? formatIdentifier(fixtureStatus.fixture_state) : "Checking local state"}</dd></div>
+                      <div><dt>Candidate gate</dt><dd>{fixtureStatus ? formatIdentifier(fixtureStatus.candidate_gate) : "Not checked"}</dd></div>
+                      <div><dt>Enrolled locally</dt><dd>{formatRuntimeTime(fixtureStatus?.enrolled_at_unix_ms)}</dd></div>
+                      <div><dt>Revoked locally</dt><dd>{formatRuntimeTime(fixtureStatus?.revoked_at_unix_ms)}</dd></div>
+                      <div><dt>Write capability</dt><dd>Unknown</dd></div>
+                    </dl>
+                    {fixtureStatusError && (
+                      <div className="toolbar secondary-toolbar">
+                        <p className="privacy-warning" role="note">{fixtureStatusError}</p>
+                        {selectedCompanyRecord?.mirror_company_id && (
+                          <button className="secondary-action" type="button" onClick={() => {
+                            const mirrorCompanyId = selectedCompanyRecord?.mirror_company_id;
+                            if (mirrorCompanyId) void refreshWriteFixtureStatus(mirrorCompanyId);
+                          }} disabled={tallyAction !== null || snapshotActive}>
+                            Retry local fixture status
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={fixtureDisposableAttested}
+                        disabled={tallyAction !== null || snapshotActive || fixtureStatus?.fixture_state === "active"}
+                        onChange={(event) => setFixtureDisposableAttested(event.target.checked)}
+                      />
+                      This is a dedicated disposable synthetic company.
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={fixtureNoCustomerDataAttested}
+                        disabled={tallyAction !== null || snapshotActive || fixtureStatus?.fixture_state === "active"}
+                        onChange={(event) => setFixtureNoCustomerDataAttested(event.target.checked)}
+                      />
+                      No customer, personal, or production data will be used.
+                    </label>
+                    <p className="section-note">Backup guidance: before any later canary, create an offline backup, record how to restore it, and verify the restore path on a separate copy. If that is not possible, leave the next acknowledgement unchecked and do not proceed.</p>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={fixtureBackupGuidanceAcknowledged}
+                        disabled={tallyAction !== null || snapshotActive || fixtureStatus?.fixture_state === "active"}
+                        onChange={(event) => setFixtureBackupGuidanceAcknowledged(event.target.checked)}
+                      />
+                      I have acknowledged the backup guidance before any later canary.
+                    </label>
+                    <div className="toolbar secondary-toolbar">
+                      <button
+                        className="secondary-action"
+                        type="button"
+                        onClick={() => void enrollWriteFixture()}
+                        disabled={snapshotActive || tallyAction !== null || !fixtureStatus || !!fixtureStatusError || fixtureStatus.fixture_state === "active" || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyLive || !selectedCompanyRecord?.mirror_company_id || !selectedCompanyRecord?.guid || !fixtureDisposableAttested || !fixtureNoCustomerDataAttested || !fixtureBackupGuidanceAcknowledged}
+                      >
+                        {tallyAction === "fixture_enroll" ? "Enrolling locally..." : "Enroll local synthetic fixture"}
+                      </button>
+                      <button
+                        className="secondary-action"
+                        type="button"
+                        onClick={() => void revokeWriteFixture()}
+                        disabled={snapshotActive || tallyAction !== null || !fixtureStatus || !!fixtureStatusError || fixtureStatus.fixture_state !== "active" || !selectedCompanyRecord?.mirror_company_id}
+                      >
+                        {tallyAction === "fixture_revoke" ? "Revoking locally..." : "Revoke local fixture enrollment"}
+                      </button>
+                    </div>
+                    <p className="section-note">An existing demo company is not automatically eligible: operator attestation is a gate, not proof of disposability. Revocation only changes this local gate; it does not alter Tally.</p>
+                    {!reviewId || !reviewCommitmentSha256 ? <p className="section-note">Next: run a fresh Probe and review the selected company before local enrollment. Saving a reviewed company scope consumes its earlier review.</p> : null}
+                  </section>
                   <button className="secondary-action" type="button" onClick={() => { setView("mirror"); void refreshSyncEvidence(true); }} disabled={!selectedCompanyRecord?.mirror_company_id}>Open Sync runs and Proof</button>
                 </div>
               )}

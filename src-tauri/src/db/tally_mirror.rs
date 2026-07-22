@@ -26,6 +26,12 @@ const MIRROR_MIGRATION_V11: &str =
     include_str!("migrations/0011_tally_proof_record_counts_digest.sql");
 const MIRROR_MIGRATION_V12: &str =
     include_str!("migrations/0012_tally_window_terminal_evidence.sql");
+const MIRROR_MIGRATION_V13: &str =
+    include_str!("migrations/0013_tally_write_fixture_enrollment.sql");
+const MIRROR_MIGRATION_V14: &str =
+    include_str!("migrations/0014_tally_write_fixture_revocation_sequence.sql");
+const MIRROR_MIGRATION_V14_ALREADY_SEQUENCED: &str =
+    include_str!("migrations/0014_tally_write_fixture_revocation_sequence_existing.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -333,6 +339,31 @@ pub struct PersistedCompanyProfilePage {
     pub total_profiles: u64,
     pub limit: u32,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WriteFixtureEnrollmentInput {
+    pub company_id: String,
+    pub review_commitment_sha256: String,
+    pub disposable_company_attested: bool,
+    pub no_customer_data_attested: bool,
+    pub backup_guidance_acknowledged: bool,
+    pub enrolled_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WriteFixtureEnrollmentStatus {
+    pub fixture_state: &'static str,
+    pub enrolled_at_unix_ms: Option<i64>,
+    pub revoked_at_unix_ms: Option<i64>,
+    pub candidate_gate: &'static str,
+    pub write_capability: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteFixtureEnrollmentRef {
+    pub id: String,
+    pub enrolled_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -885,6 +916,190 @@ impl TallyMirrorRepository {
         })
     }
 
+    pub async fn enroll_write_fixture(
+        &self,
+        input: WriteFixtureEnrollmentInput,
+    ) -> Result<WriteFixtureEnrollmentRef, MirrorError> {
+        validate_nonempty(&input.company_id, 128, "fixture_company_id")?;
+        validate_sha256(&input.review_commitment_sha256)?;
+        if !input.disposable_company_attested
+            || !input.no_customer_data_attested
+            || !input.backup_guidance_acknowledged
+            || input.enrolled_at_unix_ms <= 0
+        {
+            return Err(MirrorError::InvalidInput("fixture_attestation"));
+        }
+        let pin = self.snapshot_source_pin(&input.company_id).await?;
+        let payload_sha256 = fixture_enrollment_payload_sha256(&FixtureEnrollmentCommitment {
+            schema: "bridge.tally.write-fixture-enrollment/1",
+            review_commitment_sha256: &input.review_commitment_sha256,
+            company_id: &pin.company_id,
+            canonical_origin: &pin.canonical_origin,
+            company_guid_ascii_casefolded: &pin.company_guid.to_ascii_lowercase(),
+            contract_version: 1,
+            disposable_company_attested: true,
+            no_customer_data_attested: true,
+            backup_guidance_acknowledged: true,
+        })?;
+
+        let mut transaction = self.pool.begin().await?;
+        if let Some(row) = sqlx::query(
+            "SELECT id, enrollment_payload_sha256, enrolled_at_unix_ms \
+             FROM tally_write_fixture_enrollments WHERE review_commitment_sha256 = ?1",
+        )
+        .bind(&input.review_commitment_sha256)
+        .fetch_optional(&mut *transaction)
+        .await?
+        {
+            let existing_payload: String = row.try_get("enrollment_payload_sha256")?;
+            if existing_payload != payload_sha256 {
+                return Err(MirrorError::InvalidInput(
+                    "fixture_review_commitment_reused",
+                ));
+            }
+            let result = WriteFixtureEnrollmentRef {
+                id: row.try_get("id")?,
+                enrolled_at_unix_ms: row.try_get("enrolled_at_unix_ms")?,
+            };
+            transaction.commit().await?;
+            return Ok(result);
+        }
+        let id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO tally_write_fixture_enrollments(\
+               id, company_id, review_commitment_sha256, enrollment_payload_sha256, \
+               contract_version, disposable_company_attested, no_customer_data_attested, \
+               backup_guidance_acknowledged, enrolled_at_unix_ms\
+             ) VALUES (?1, ?2, ?3, ?4, 1, 1, 1, 1, ?5)",
+        )
+        .bind(&id)
+        .bind(&pin.company_id)
+        .bind(&input.review_commitment_sha256)
+        .bind(payload_sha256)
+        .bind(input.enrolled_at_unix_ms)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(WriteFixtureEnrollmentRef {
+            id,
+            enrolled_at_unix_ms: input.enrolled_at_unix_ms,
+        })
+    }
+
+    pub async fn write_fixture_enrollment_status(
+        &self,
+        company_id: &str,
+    ) -> Result<WriteFixtureEnrollmentStatus, MirrorError> {
+        validate_nonempty(company_id, 128, "fixture_company_id")?;
+        let row = sqlx::query(
+            "SELECT enrollment.enrolled_at_unix_ms, revocation.revoked_at_unix_ms \
+             FROM tally_write_fixture_enrollments AS enrollment \
+             LEFT JOIN tally_write_fixture_revocations AS revocation \
+               ON revocation.enrollment_id = enrollment.id \
+             WHERE enrollment.company_id = ?1 \
+             ORDER BY (revocation.enrollment_id IS NULL) DESC, \
+                      revocation.event_sequence DESC, \
+                      enrollment.enrolled_at_unix_ms DESC, enrollment.id DESC LIMIT 1",
+        )
+        .bind(company_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            None => Ok(WriteFixtureEnrollmentStatus {
+                fixture_state: "not_enrolled",
+                enrolled_at_unix_ms: None,
+                revoked_at_unix_ms: None,
+                candidate_gate: "not_enrolled",
+                write_capability: "unknown",
+            }),
+            Some(row) => {
+                let revoked_at_unix_ms: Option<i64> = row.try_get("revoked_at_unix_ms")?;
+                Ok(WriteFixtureEnrollmentStatus {
+                    fixture_state: if revoked_at_unix_ms.is_some() {
+                        "revoked"
+                    } else {
+                        "active"
+                    },
+                    enrolled_at_unix_ms: Some(row.try_get("enrolled_at_unix_ms")?),
+                    revoked_at_unix_ms,
+                    candidate_gate: if revoked_at_unix_ms.is_some() {
+                        "not_enrolled"
+                    } else {
+                        "enrolled"
+                    },
+                    write_capability: "unknown",
+                })
+            }
+        }
+    }
+
+    pub async fn revoke_write_fixture_enrollment(
+        &self,
+        company_id: &str,
+        revoked_at_unix_ms: i64,
+    ) -> Result<WriteFixtureEnrollmentStatus, MirrorError> {
+        validate_nonempty(company_id, 128, "fixture_company_id")?;
+        if revoked_at_unix_ms <= 0 {
+            return Err(MirrorError::InvalidInput("fixture_revoked_at"));
+        }
+        let mut transaction = self.pool.begin().await?;
+        let row = sqlx::query(
+            "SELECT enrollment.id, enrollment.enrollment_payload_sha256, \
+                    enrollment.enrolled_at_unix_ms, revocation.revoked_at_unix_ms \
+             FROM tally_write_fixture_enrollments AS enrollment \
+             LEFT JOIN tally_write_fixture_revocations AS revocation \
+               ON revocation.enrollment_id = enrollment.id \
+             WHERE enrollment.company_id = ?1 \
+             ORDER BY (revocation.enrollment_id IS NULL) DESC, \
+                      revocation.event_sequence DESC, \
+                      enrollment.enrolled_at_unix_ms DESC, enrollment.id DESC LIMIT 1",
+        )
+        .bind(company_id)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(MirrorError::NotFound)?;
+        let enrolled_at_unix_ms: i64 = row.try_get("enrolled_at_unix_ms")?;
+        let existing_revocation: Option<i64> = row.try_get("revoked_at_unix_ms")?;
+        let status = if existing_revocation.is_none() {
+            let enrollment_id: String = row.try_get("id")?;
+            let enrollment_payload_sha256: String = row.try_get("enrollment_payload_sha256")?;
+            let revocation_payload_sha256 = fixture_revocation_payload_sha256(
+                &enrollment_id,
+                &enrollment_payload_sha256,
+                revoked_at_unix_ms,
+            )?;
+            sqlx::query(
+                "INSERT INTO tally_write_fixture_revocations(\
+                   event_sequence, id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms\
+                 ) VALUES ((SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM tally_write_fixture_revocations), \
+                           ?1, ?2, ?3, 'operator_revoked', ?4)",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(enrollment_id)
+            .bind(revocation_payload_sha256)
+            .bind(revoked_at_unix_ms)
+            .execute(&mut *transaction)
+            .await?;
+            WriteFixtureEnrollmentStatus {
+                fixture_state: "revoked",
+                enrolled_at_unix_ms: Some(enrolled_at_unix_ms),
+                revoked_at_unix_ms: Some(revoked_at_unix_ms),
+                candidate_gate: "not_enrolled",
+                write_capability: "unknown",
+            }
+        } else {
+            WriteFixtureEnrollmentStatus {
+                fixture_state: "revoked",
+                enrolled_at_unix_ms: Some(enrolled_at_unix_ms),
+                revoked_at_unix_ms: existing_revocation,
+                candidate_gate: "not_enrolled",
+                write_capability: "unknown",
+            }
+        };
+        transaction.commit().await?;
+        Ok(status)
+    }
+
     /// Validates the encrypted capability receipt used by Core Accounting restart recovery.
     ///
     /// This is deliberately Core-specific. Other packs keep their own `Supported + Observed`
@@ -1103,9 +1318,40 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let write_fixture_enrollment_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 13",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if write_fixture_enrollment_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V13)
+                .execute(&mut *transaction)
+                .await?;
+        }
+        let write_fixture_revocation_sequence_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 14",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if write_fixture_revocation_sequence_installed == 0 {
+            let event_sequence_exists = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM pragma_table_info('tally_write_fixture_revocations') \
+                 WHERE name = 'event_sequence'",
+            )
+            .fetch_one(&mut *transaction)
+            .await?
+                != 0;
+            sqlx::raw_sql(if event_sequence_exists {
+                MIRROR_MIGRATION_V14_ALREADY_SEQUENCED
+            } else {
+                MIRROR_MIGRATION_V14
+            })
+            .execute(&mut *transaction)
+            .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -4039,6 +4285,48 @@ fn sha256_json(value: &impl Serialize) -> Result<String, MirrorError> {
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+#[derive(Serialize)]
+struct FixtureEnrollmentCommitment<'a> {
+    schema: &'static str,
+    review_commitment_sha256: &'a str,
+    company_id: &'a str,
+    canonical_origin: &'a str,
+    company_guid_ascii_casefolded: &'a str,
+    contract_version: u16,
+    disposable_company_attested: bool,
+    no_customer_data_attested: bool,
+    backup_guidance_acknowledged: bool,
+}
+
+fn fixture_enrollment_payload_sha256(
+    material: &FixtureEnrollmentCommitment<'_>,
+) -> Result<String, MirrorError> {
+    sha256_json(material)
+}
+
+#[derive(Serialize)]
+struct FixtureRevocationCommitment<'a> {
+    schema: &'static str,
+    enrollment_id: &'a str,
+    enrollment_payload_sha256: &'a str,
+    safe_reason_code: &'static str,
+    revoked_at_unix_ms: i64,
+}
+
+fn fixture_revocation_payload_sha256(
+    enrollment_id: &str,
+    enrollment_payload_sha256: &str,
+    revoked_at_unix_ms: i64,
+) -> Result<String, MirrorError> {
+    sha256_json(&FixtureRevocationCommitment {
+        schema: "bridge.tally.write-fixture-revocation/1",
+        enrollment_id,
+        enrollment_payload_sha256,
+        safe_reason_code: "operator_revoked",
+        revoked_at_unix_ms,
+    })
+}
+
 fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
     bytes
         .as_ref()
@@ -4108,6 +4396,44 @@ mod tests {
                 .expect("apply migration through v9");
         }
         transaction.commit().await.expect("commit v9 schema");
+        TallyMirrorRepository::new(pool)
+    }
+
+    async fn repository_through_v13() -> TallyMirrorRepository {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect to v13 in-memory SQLite");
+        let mut transaction = pool.begin().await.expect("begin v13 migration");
+        for migration in [
+            MIRROR_MIGRATION_V2,
+            MIRROR_MIGRATION_V3,
+            MIRROR_MIGRATION_V4,
+            MIRROR_MIGRATION_V5,
+            MIRROR_MIGRATION_V6,
+            MIRROR_MIGRATION_V7,
+            MIRROR_MIGRATION_V8,
+            MIRROR_MIGRATION_V9,
+            MIRROR_MIGRATION_V10,
+            MIRROR_MIGRATION_V11,
+            MIRROR_MIGRATION_V12,
+            MIRROR_MIGRATION_V13,
+        ] {
+            sqlx::raw_sql(migration)
+                .execute(&mut *transaction)
+                .await
+                .expect("apply migration through v13");
+        }
+        transaction.commit().await.expect("commit v13 schema");
         TallyMirrorRepository::new(pool)
     }
 
@@ -4338,6 +4664,225 @@ mod tests {
         .execute(&repository.pool)
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn write_fixture_enrollment_is_idempotent_revocable_and_identity_safe() {
+        let repository = repository().await;
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("persist observed company pin before local fixture enrollment");
+        let input = WriteFixtureEnrollmentInput {
+            company_id: saved.company.id.clone(),
+            review_commitment_sha256: HASH_B.to_string(),
+            disposable_company_attested: true,
+            no_customer_data_attested: true,
+            backup_guidance_acknowledged: true,
+            enrolled_at_unix_ms: 3_000,
+        };
+
+        let first = repository
+            .enroll_write_fixture(input.clone())
+            .await
+            .expect("locally enroll synthetic fixture");
+        let replay = repository
+            .enroll_write_fixture(input.clone())
+            .await
+            .expect("exact fixture enrollment replay is idempotent");
+        assert_eq!(replay, first);
+
+        let active = repository
+            .write_fixture_enrollment_status(&saved.company.id)
+            .await
+            .expect("read safe local fixture status");
+        assert_eq!(active.fixture_state, "active");
+        assert_eq!(active.candidate_gate, "enrolled");
+        assert_eq!(active.write_capability, "unknown");
+        let serialized = serde_json::to_string(&active).expect("serialize safe status");
+        assert!(!serialized.contains("Synthetic Reviewed Company"));
+        assert!(!serialized.contains("reviewed-company-guid"));
+
+        let mut competing = input;
+        competing.review_commitment_sha256 = HASH_A.to_string();
+        competing.enrolled_at_unix_ms = 4_000;
+        assert!(repository.enroll_write_fixture(competing).await.is_err());
+
+        let revoked = repository
+            .revoke_write_fixture_enrollment(&saved.company.id, 5_000)
+            .await
+            .expect("append local revocation");
+        assert_eq!(revoked.fixture_state, "revoked");
+        assert_eq!(revoked.candidate_gate, "not_enrolled");
+        assert_eq!(revoked.revoked_at_unix_ms, Some(5_000));
+        assert_eq!(
+            repository
+                .revoke_write_fixture_enrollment(&saved.company.id, 6_000)
+                .await
+                .expect("repeat revocation is local and idempotent"),
+            revoked
+        );
+
+        let renewed = repository
+            .enroll_write_fixture(WriteFixtureEnrollmentInput {
+                company_id: saved.company.id.clone(),
+                review_commitment_sha256: HASH_A.to_string(),
+                disposable_company_attested: true,
+                no_customer_data_attested: true,
+                backup_guidance_acknowledged: true,
+                // Deliberately older than the revoked enrollment: wall clocks can roll back.
+                enrolled_at_unix_ms: 2_000,
+            })
+            .await
+            .expect("a freshly reviewed fixture may enroll after revocation");
+        assert_ne!(renewed.id, first.id);
+        assert_eq!(
+            repository
+                .write_fixture_enrollment_status(&saved.company.id)
+                .await
+                .expect("active enrollment wins over historical timestamp ordering")
+                .fixture_state,
+            "active"
+        );
+        let final_revocation = repository
+            .revoke_write_fixture_enrollment(&saved.company.id, 1_000)
+            .await
+            .expect("revoke the active enrollment despite clock rollback");
+        assert_eq!(final_revocation.fixture_state, "revoked");
+        assert_eq!(final_revocation.revoked_at_unix_ms, Some(1_000));
+        let latest_revoked = repository
+            .write_fixture_enrollment_status(&saved.company.id)
+            .await
+            .expect("latest revoked evidence uses revocation ordering");
+        assert_eq!(latest_revoked.fixture_state, "revoked");
+        assert_eq!(latest_revoked.revoked_at_unix_ms, Some(1_000));
+        assert_eq!(
+            repository
+                .revoke_write_fixture_enrollment(&saved.company.id, 500)
+                .await
+                .expect("repeat revocation reports the latest committed evidence"),
+            latest_revoked
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tally_write_fixture_revocations")
+                .fetch_one(&repository.pool)
+                .await
+                .expect("count immutable revocations"),
+            2
+        );
+        assert!(
+            sqlx::query("UPDATE tally_write_fixture_enrollments SET enrolled_at_unix_ms = 1")
+                .execute(&repository.pool)
+                .await
+                .is_err()
+        );
+        assert!(sqlx::query("DELETE FROM tally_write_fixture_revocations")
+            .execute(&repository.pool)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn v13_fixture_revocations_upgrade_to_durable_sequence() {
+        let repository = repository_through_v13().await;
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("seed observed company for legacy fixture evidence");
+        sqlx::query(
+            "INSERT INTO tally_write_fixture_enrollments(\
+               id, company_id, review_commitment_sha256, enrollment_payload_sha256, \
+               contract_version, disposable_company_attested, no_customer_data_attested, \
+               backup_guidance_acknowledged, enrolled_at_unix_ms\
+             ) VALUES ('legacy-enrollment', ?1, ?2, ?3, 1, 1, 1, 1, 3000)",
+        )
+        .bind(&saved.company.id)
+        .bind(HASH_B)
+        .bind(HASH_A)
+        .execute(&repository.pool)
+        .await
+        .expect("seed legacy enrollment");
+        sqlx::query(
+            "INSERT INTO tally_write_fixture_revocations(\
+               id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms\
+             ) VALUES ('legacy-revocation', 'legacy-enrollment', ?1, 'operator_revoked', 4000)",
+        )
+        .bind(HASH_B)
+        .execute(&repository.pool)
+        .await
+        .expect("seed legacy revocation");
+
+        repository
+            .migrate()
+            .await
+            .expect("upgrade fixture revocation evidence from v13 to v14");
+        let status = repository
+            .write_fixture_enrollment_status(&saved.company.id)
+            .await
+            .expect("read upgraded legacy fixture status");
+        assert_eq!(status.fixture_state, "revoked");
+        assert_eq!(status.revoked_at_unix_ms, Some(4_000));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT event_sequence FROM tally_write_fixture_revocations WHERE id = 'legacy-revocation'",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read durable backfilled sequence"),
+            1
+        );
+        assert!(sqlx::query(
+            "UPDATE tally_write_fixture_revocations SET event_sequence = 2 WHERE id = 'legacy-revocation'",
+        )
+        .execute(&repository.pool)
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn already_sequenced_v13_fixture_revocations_upgrade_idempotently() {
+        let repository = repository_through_v13().await;
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("seed observed company for already-sequenced v13 fixture evidence");
+        // Emulate the pre-merge v13 schema that already carried this column.
+        sqlx::query(
+            "ALTER TABLE tally_write_fixture_revocations \
+             ADD COLUMN event_sequence INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&repository.pool)
+        .await
+        .expect("add pre-existing legacy event sequence");
+
+        repository
+            .migrate()
+            .await
+            .expect("upgrade already-sequenced v13 schema without duplicate column");
+        repository
+            .enroll_write_fixture(WriteFixtureEnrollmentInput {
+                company_id: saved.company.id.clone(),
+                review_commitment_sha256: HASH_B.to_string(),
+                disposable_company_attested: true,
+                no_customer_data_attested: true,
+                backup_guidance_acknowledged: true,
+                enrolled_at_unix_ms: 3_000,
+            })
+            .await
+            .expect("enroll after already-sequenced upgrade");
+        repository
+            .revoke_write_fixture_enrollment(&saved.company.id, 4_000)
+            .await
+            .expect("revoke after already-sequenced upgrade");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT event_sequence FROM tally_write_fixture_revocations LIMIT 1",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read durable sequence after alternate upgrade path"),
+            1
+        );
     }
 
     #[tokio::test]
