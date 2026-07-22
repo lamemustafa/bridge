@@ -197,7 +197,13 @@ fn alter_approval_binds_the_exact_declared_before_state() {
 fn prepared_import_is_deterministic_and_bytes_are_not_publicly_exposed() {
     let mutation = create(
         "bridge-&-identity",
-        LedgerState::new("BRIDGE <SYNTHETIC>", None, None, Some("0".to_owned())).unwrap(),
+        LedgerState::new(
+            "BRIDGE <SYNTHETIC>",
+            Some("BRIDGE SYNTHETIC GROUP".to_owned()),
+            None,
+            Some("0".to_owned()),
+        )
+        .unwrap(),
         1,
     );
     let mut first_registry = IdempotencyRegistry::default();
@@ -447,6 +453,12 @@ fn invalid_decimal_gstin_limits_duplicates_noops_and_replays_are_rejected() {
     assert_eq!(
         LedgerState::new("BRIDGE", None, Some("not-a-gstin".to_owned()), None).unwrap_err(),
         QualificationError::InvalidField("party_gstin")
+    );
+    let parentless = LedgerState::new("BRIDGE", None, None, None)
+        .expect("a parentless state remains usable as an alter snapshot");
+    assert_eq!(
+        LedgerMutation::create(REMOTE_ID, parentless, lineage(1)).unwrap_err(),
+        QualificationError::CreateParentRequired
     );
     let unchanged = state("BRIDGE", "0");
     assert_eq!(

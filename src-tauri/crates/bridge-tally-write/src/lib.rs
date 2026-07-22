@@ -149,6 +149,9 @@ impl LedgerMutation {
         after: LedgerState,
         source_lineage: SourceLineage,
     ) -> Result<Self, QualificationError> {
+        if after.parent.is_none() {
+            return Err(QualificationError::CreateParentRequired);
+        }
         Self::new(
             LedgerOperation::Create,
             remote_id.into(),
@@ -772,6 +775,8 @@ pub enum QualificationError {
     MissingIdempotencyReservation,
     #[error("controlled ledger alter must change at least one verified field")]
     NoOpMutation,
+    #[error("controlled ledger create requires an explicit parent")]
+    CreateParentRequired,
     #[error("clearing controlled ledger field is not yet qualified: {0}")]
     UnsupportedFieldClear(&'static str),
     #[error("preflight readback did not exactly match the declared before state")]
@@ -1194,7 +1199,13 @@ mod tests {
         let company = SyntheticCompany::new("BRIDGE & BOOK", "company-guid").unwrap();
         let mutation = LedgerMutation::create(
             "remote-\"<&",
-            LedgerState::new("LEDGER <&", None, None, Some("0".to_owned())).unwrap(),
+            LedgerState::new(
+                "LEDGER <&",
+                Some("PARENT <&".to_owned()),
+                None,
+                Some("0".to_owned()),
+            )
+            .unwrap(),
             SourceLineage::new("synthetic", "record", "v1").unwrap(),
         )
         .unwrap();
@@ -1203,6 +1214,7 @@ mod tests {
         assert!(xml.contains("remote-&quot;&lt;&amp;"));
         assert!(xml
             .contains("NAME=\"LEDGER &lt;&amp;\" ACTION=\"Create\"><NAME>LEDGER &lt;&amp;</NAME>"));
+        assert!(xml.contains("<PARENT>PARENT &lt;&amp;</PARENT>"));
     }
 
     #[test]
