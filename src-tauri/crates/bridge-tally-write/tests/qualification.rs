@@ -1,8 +1,10 @@
 use bridge_tally_write::{
-    authorize_synthetic_write, prepare_ledger_import, preview_ledger_import, IdempotencyRegistry,
+    authorize_fixture_canary, authorize_synthetic_write, fixture_canary_ledger_mutation,
+    prepare_fixture_canary_ledger_import, prepare_ledger_import, preview_ledger_import,
+    FixtureCanaryAuthorization, FixtureCanaryAuthorizationRequest, IdempotencyRegistry,
     LedgerMutation, LedgerState, PreparedLedgerImport, QualificationError, SourceLineage,
     SyntheticCompany, WriteAuthorizationRequest, WriteCapability, WriteOutcome,
-    MAX_LEDGER_WRITE_BATCH,
+    FIXTURE_CANARY_MAPPING_VERSION, MAX_LEDGER_WRITE_BATCH,
 };
 
 const COMPANY_GUID: &str = "00000000-0000-4000-8000-000000000001";
@@ -69,6 +71,30 @@ fn prepare(
     prepare_ledger_import(company, mutations, authorization, registry)
 }
 
+fn fixture_authorization(
+    company: &SyntheticCompany,
+    reservation_id: &str,
+    idempotency_key: &str,
+) -> FixtureCanaryAuthorization {
+    let mutation = fixture_canary_ledger_mutation().unwrap();
+    let preview =
+        preview_ledger_import(company, &[mutation], FIXTURE_CANARY_MAPPING_VERSION).unwrap();
+    authorize_fixture_canary(FixtureCanaryAuthorizationRequest {
+        explicit_opt_in: true,
+        synthetic_company_confirmed: true,
+        company_guid: COMPANY_GUID.to_owned(),
+        backup_guidance_acknowledged: true,
+        review_commitment_sha256: HASH.to_owned(),
+        reservation_id: reservation_id.to_owned(),
+        reservation_payload_sha256: HASH.to_owned(),
+        approved_wire_sha256: preview.wire_digest().as_hex().to_owned(),
+        approved_intended_state_sha256: preview.intended_state_digest().as_hex().to_owned(),
+        approved_identity_query_sha256: preview.identity_query_digest().as_hex().to_owned(),
+        idempotency_key: idempotency_key.to_owned(),
+    })
+    .unwrap()
+}
+
 fn export(
     company_guid: &str,
     schema: &str,
@@ -132,6 +158,117 @@ fn authorization_gates_are_mandatory() {
     assert_eq!(
         authorize_synthetic_write(request).unwrap_err(),
         QualificationError::BackupAcknowledgementRequired
+    );
+}
+
+#[test]
+fn authorization_requests_redact_fixture_and_commitment_values_in_debug_output() {
+    let synthetic_company = company();
+    let generic_mutation = create(REMOTE_ID, state("BRIDGE LEDGER", "10.00"), 1);
+    let generic_preview =
+        preview_ledger_import(&synthetic_company, &[generic_mutation], "mapping-v1")
+            .expect("preview generic authorization request");
+    let generic = WriteAuthorizationRequest {
+        explicit_opt_in: true,
+        synthetic_company_confirmed: true,
+        company_guid: COMPANY_GUID.to_owned(),
+        capability: WriteCapability::Observed,
+        backup_guidance_acknowledged: true,
+        approval_evidence_sha256: HASH.to_owned(),
+        approved_wire_sha256: generic_preview.wire_digest().as_hex().to_owned(),
+        approved_intended_state_sha256: generic_preview.intended_state_digest().as_hex().to_owned(),
+        approved_identity_query_sha256: generic_preview.identity_query_digest().as_hex().to_owned(),
+        idempotency_key: "fixture-sensitive-key".to_owned(),
+        outbox_id: "fixture-sensitive-outbox".to_owned(),
+        mapping_version: "mapping-v1".to_owned(),
+    };
+    let fixture = FixtureCanaryAuthorizationRequest {
+        explicit_opt_in: true,
+        synthetic_company_confirmed: true,
+        company_guid: COMPANY_GUID.to_owned(),
+        backup_guidance_acknowledged: true,
+        review_commitment_sha256: HASH.to_owned(),
+        reservation_id: "fixture-sensitive-reservation".to_owned(),
+        reservation_payload_sha256: HASH.to_owned(),
+        approved_wire_sha256: HASH.to_owned(),
+        approved_intended_state_sha256: HASH.to_owned(),
+        approved_identity_query_sha256: HASH.to_owned(),
+        idempotency_key: "fixture-sensitive-key".to_owned(),
+    };
+    let generic_debug = format!("{generic:?}");
+    let fixture_debug = format!("{fixture:?}");
+    for secret in [
+        COMPANY_GUID,
+        HASH,
+        "fixture-sensitive-key",
+        "fixture-sensitive-outbox",
+        "fixture-sensitive-reservation",
+    ] {
+        assert!(!generic_debug.contains(secret));
+        assert!(!fixture_debug.contains(secret));
+    }
+}
+
+#[test]
+fn fixture_canary_is_fixed_reservation_bound_and_dispatch_ineligible() {
+    let synthetic_company = company();
+    let first = fixture_canary_ledger_mutation().expect("construct fixed canary");
+    let second = fixture_canary_ledger_mutation().expect("construct fixed canary replay");
+    let first_preview =
+        preview_ledger_import(&synthetic_company, &[first], FIXTURE_CANARY_MAPPING_VERSION)
+            .unwrap();
+    let second_preview = preview_ledger_import(
+        &synthetic_company,
+        &[second],
+        FIXTURE_CANARY_MAPPING_VERSION,
+    )
+    .unwrap();
+    assert_eq!(
+        first_preview.wire_digest().as_hex(),
+        second_preview.wire_digest().as_hex()
+    );
+    assert_eq!(
+        first_preview.intended_state_digest().as_hex(),
+        second_preview.intended_state_digest().as_hex()
+    );
+
+    let authorization =
+        fixture_authorization(&synthetic_company, "fixture-reservation-1", "fixture-key-1");
+    assert_eq!(authorization.reservation_id(), "fixture-reservation-1");
+    assert_eq!(authorization.reservation_payload_sha256(), HASH);
+    assert_eq!(authorization.review_commitment_sha256(), HASH);
+    let mut registry = IdempotencyRegistry::default();
+    let prepared =
+        prepare_fixture_canary_ledger_import(synthetic_company, authorization, &mut registry)
+            .expect("prepare exact fixture canary");
+    assert!(!prepared.dispatch_eligible());
+
+    let mut mismatched_request = FixtureCanaryAuthorizationRequest {
+        explicit_opt_in: true,
+        synthetic_company_confirmed: true,
+        company_guid: COMPANY_GUID.to_owned(),
+        backup_guidance_acknowledged: true,
+        review_commitment_sha256: HASH.to_owned(),
+        reservation_id: "fixture-reservation-2".to_owned(),
+        reservation_payload_sha256: HASH.to_owned(),
+        approved_wire_sha256: HASH.to_owned(),
+        approved_intended_state_sha256: HASH.to_owned(),
+        approved_identity_query_sha256: HASH.to_owned(),
+        idempotency_key: "fixture-key-2".to_owned(),
+    };
+    assert_eq!(
+        prepare_fixture_canary_ledger_import(
+            company(),
+            authorize_fixture_canary(mismatched_request.clone()).unwrap(),
+            &mut IdempotencyRegistry::default(),
+        )
+        .unwrap_err(),
+        QualificationError::ApprovalMismatch
+    );
+    mismatched_request.explicit_opt_in = false;
+    assert_eq!(
+        authorize_fixture_canary(mismatched_request).unwrap_err(),
+        QualificationError::ExplicitOptInRequired
     );
 }
 
