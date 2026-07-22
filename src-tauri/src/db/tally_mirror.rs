@@ -30,6 +30,8 @@ const MIRROR_MIGRATION_V13: &str =
     include_str!("migrations/0013_tally_write_fixture_enrollment.sql");
 const MIRROR_MIGRATION_V14: &str =
     include_str!("migrations/0014_tally_write_fixture_revocation_sequence.sql");
+const MIRROR_MIGRATION_V14_ALREADY_SEQUENCED: &str =
+    include_str!("migrations/0014_tally_write_fixture_revocation_sequence_existing.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -1332,9 +1334,20 @@ impl TallyMirrorRepository {
         .fetch_one(&mut *transaction)
         .await?;
         if write_fixture_revocation_sequence_installed == 0 {
-            sqlx::raw_sql(MIRROR_MIGRATION_V14)
-                .execute(&mut *transaction)
-                .await?;
+            let event_sequence_exists = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM pragma_table_info('tally_write_fixture_revocations') \
+                 WHERE name = 'event_sequence'",
+            )
+            .fetch_one(&mut *transaction)
+            .await?
+                != 0;
+            sqlx::raw_sql(if event_sequence_exists {
+                MIRROR_MIGRATION_V14_ALREADY_SEQUENCED
+            } else {
+                MIRROR_MIGRATION_V14
+            })
+            .execute(&mut *transaction)
+            .await?;
         }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
@@ -4824,6 +4837,52 @@ mod tests {
         .execute(&repository.pool)
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn already_sequenced_v13_fixture_revocations_upgrade_idempotently() {
+        let repository = repository_through_v13().await;
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("seed observed company for already-sequenced v13 fixture evidence");
+        // Emulate the pre-merge v13 schema that already carried this column.
+        sqlx::query(
+            "ALTER TABLE tally_write_fixture_revocations \
+             ADD COLUMN event_sequence INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&repository.pool)
+        .await
+        .expect("add pre-existing legacy event sequence");
+
+        repository
+            .migrate()
+            .await
+            .expect("upgrade already-sequenced v13 schema without duplicate column");
+        repository
+            .enroll_write_fixture(WriteFixtureEnrollmentInput {
+                company_id: saved.company.id.clone(),
+                review_commitment_sha256: HASH_B.to_string(),
+                disposable_company_attested: true,
+                no_customer_data_attested: true,
+                backup_guidance_acknowledged: true,
+                enrolled_at_unix_ms: 3_000,
+            })
+            .await
+            .expect("enroll after already-sequenced upgrade");
+        repository
+            .revoke_write_fixture_enrollment(&saved.company.id, 4_000)
+            .await
+            .expect("revoke after already-sequenced upgrade");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT event_sequence FROM tally_write_fixture_revocations LIMIT 1",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read durable sequence after alternate upgrade path"),
+            1
+        );
     }
 
     #[tokio::test]

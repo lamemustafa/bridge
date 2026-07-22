@@ -525,19 +525,22 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
+pub(crate) fn simulator_test_lock() -> &'static tokio::sync::Mutex<()> {
+    use std::sync::OnceLock;
+
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::{net::SocketAddr, sync::OnceLock};
+    use std::net::SocketAddr;
     use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         task::JoinHandle,
     };
-
-    fn simulator_test_lock() -> &'static tokio::sync::Mutex<()> {
-        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-    }
 
     async fn spawn_method_routed_server(
         post_responses: Vec<String>,
