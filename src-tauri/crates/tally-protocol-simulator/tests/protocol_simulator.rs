@@ -71,6 +71,40 @@ fn bounded_sequence_serves_plans_in_exact_request_order() {
 }
 
 #[test]
+fn delayed_request_body_within_deadline_is_not_abandoned() {
+    let simulator =
+        Simulator::spawn(ScenarioPlan::new(Fixture::ExportStatusOne)).expect("spawn simulator");
+    let address = simulator.address();
+    let response = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut stream = TcpStream::connect(address)?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream.write_all(
+            b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nConnection: close\r\n\r\n",
+        )?;
+        // A native CI runner can pause a request producer after its TCP connection is accepted.
+        // The simulator must retain that connection long enough to receive its bounded body.
+        std::thread::sleep(Duration::from_millis(2100));
+        stream.write_all(b"body")?;
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response)?;
+        Ok(response)
+    })
+    .join()
+    .expect("delayed request thread does not panic");
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            simulator.cancel();
+            panic!("delayed request is still processed: {error}");
+        }
+    };
+    let observed = simulator.finish().expect("finish delayed simulator");
+    assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+    assert!(observed.request_processed);
+    assert_eq!(observed.request_body_bytes, 4);
+}
+
+#[test]
 fn sequence_request_count_is_fail_closed() {
     assert!(SequenceSimulator::spawn(Vec::new()).is_err());
     assert!(SequenceSimulator::spawn(
