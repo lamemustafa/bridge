@@ -994,7 +994,7 @@ impl TallyMirrorRepository {
                ON revocation.enrollment_id = enrollment.id \
              WHERE enrollment.company_id = ?1 \
              ORDER BY (revocation.enrollment_id IS NULL) DESC, \
-                      revocation.revoked_at_unix_ms DESC, \
+                      revocation.event_sequence DESC, \
                       enrollment.enrolled_at_unix_ms DESC, enrollment.id DESC LIMIT 1",
         )
         .bind(company_id)
@@ -1047,7 +1047,7 @@ impl TallyMirrorRepository {
                ON revocation.enrollment_id = enrollment.id \
              WHERE enrollment.company_id = ?1 \
              ORDER BY (revocation.enrollment_id IS NULL) DESC, \
-                      revocation.revoked_at_unix_ms DESC, \
+                      revocation.event_sequence DESC, \
                       enrollment.enrolled_at_unix_ms DESC, enrollment.id DESC LIMIT 1",
         )
         .bind(company_id)
@@ -4681,17 +4681,24 @@ mod tests {
             "active"
         );
         let final_revocation = repository
-            .revoke_write_fixture_enrollment(&saved.company.id, 7_000)
+            .revoke_write_fixture_enrollment(&saved.company.id, 1_000)
             .await
             .expect("revoke the active enrollment despite clock rollback");
         assert_eq!(final_revocation.fixture_state, "revoked");
-        assert_eq!(final_revocation.revoked_at_unix_ms, Some(7_000));
+        assert_eq!(final_revocation.revoked_at_unix_ms, Some(1_000));
         let latest_revoked = repository
             .write_fixture_enrollment_status(&saved.company.id)
             .await
             .expect("latest revoked evidence uses revocation ordering");
         assert_eq!(latest_revoked.fixture_state, "revoked");
-        assert_eq!(latest_revoked.revoked_at_unix_ms, Some(7_000));
+        assert_eq!(latest_revoked.revoked_at_unix_ms, Some(1_000));
+        assert_eq!(
+            repository
+                .revoke_write_fixture_enrollment(&saved.company.id, 500)
+                .await
+                .expect("repeat revocation reports the latest committed evidence"),
+            latest_revoked
+        );
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tally_write_fixture_revocations")
                 .fetch_one(&repository.pool)
