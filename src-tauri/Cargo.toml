@@ -10,6 +10,11 @@ edition = "2021"
 rust-version = "1.96"
 default-run = "bridge"
 
+[features]
+# Deliberately disabled in shipped builds. This feature stages the sealed,
+# one-send fixture-canary runtime behind a separately reviewed command layer.
+fixture-canary-runtime-dispatch = ["bridge-tally-write/fixture-canary-runtime-dispatch"]
+
 [workspace]
 members = [
   ".",

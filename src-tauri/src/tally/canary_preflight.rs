@@ -1,7 +1,8 @@
-//! Sealed, read-only orchestration for the first synthetic write canary.
+//! Sealed orchestration for the first synthetic write canary.
 //!
-//! This module deliberately stops after recording preflight evidence. It has
-//! no import request, retry, receipt, or dispatch API.
+//! Ordinary builds stop after digest-only preflight evidence. The separately
+//! disabled runtime feature adds one closed, one-send coordinator with no UI
+//! command, generic payload API, or retry behavior.
 
 use anyhow::{bail, Result};
 use bridge_tally_protocol::xml_read_profiles::{
@@ -15,9 +16,10 @@ use chrono::Utc;
 
 use crate::{
     db::tally_mirror::{
-        ActiveWriteCanaryPayloadBindingInput, ActiveWriteCanaryPreflightEvidenceInput,
-        BeginWriteCanaryDispatchInput, BeginWriteCanaryPreflightInput, TallyMirrorRepository,
-        WriteCanaryDispatchAttemptRef, WriteCanaryFinalVerdictInput, WriteCanaryFinalVerdictRef,
+        ActiveWriteCanaryDispatchAttemptInput, ActiveWriteCanaryPayloadBindingInput,
+        ActiveWriteCanaryPreflightEvidenceInput, BeginWriteCanaryDispatchInput,
+        BeginWriteCanaryPreflightInput, TallyMirrorRepository, WriteCanaryDispatchAttemptRef,
+        WriteCanaryFinalVerdictInput, WriteCanaryFinalVerdictRef,
         WriteCanaryPreflightEvidenceInput, WriteCanaryPreflightEvidenceRef,
     },
     tally::{TallyConfig, TallyRuntime},
@@ -58,6 +60,19 @@ pub(crate) struct SealedCanaryFinalVerdictRequest {
     pub ledger_name: ValidatedCanaryLedgerName,
     pub identity_query_sha256: ValidatedIdentityQuerySha256,
     pub verdict: WriteCanaryFinalVerdictInput,
+}
+
+/// All inputs needed for the closed, one-send synthetic canary runtime. This
+/// is crate-private and feature-gated; there is intentionally no Tauri command
+/// or UI route that can invoke it in this change.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+pub(crate) struct SealedCanaryRuntimeDispatchRequest {
+    pub config: TallyConfig,
+    pub company: ValidatedCompanyName,
+    pub ledger_name: ValidatedCanaryLedgerName,
+    pub identity_query_sha256: ValidatedIdentityQuerySha256,
+    pub expected_company_guid: String,
+    pub dispatch: BeginWriteCanaryDispatchInput,
 }
 
 /// Claims the durable preflight slot, performs exactly one sealed read, and
@@ -145,6 +160,59 @@ pub(crate) async fn claim_sealed_canary_dispatch(
     }
     Ok(repository
         .begin_write_canary_dispatch_attempt(request.dispatch)
+        .await?)
+}
+
+/// Consumes the durable dispatch claim before the single HTTP request, then
+/// records a digest-only final verdict after an exact closed readback. There
+/// is no retry, recovery resend, raw XML return, persistence hook, command, or
+/// user-facing route. Any failure after the claim is deliberately terminal for
+/// this canary attempt.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+pub(crate) async fn run_sealed_canary_runtime_dispatch(
+    repository: &TallyMirrorRepository,
+    runtime: &TallyRuntime,
+    request: SealedCanaryRuntimeDispatchRequest,
+    prepared: PreparedFixtureCanary,
+) -> Result<WriteCanaryFinalVerdictRef> {
+    let dispatch_claim = claim_sealed_canary_dispatch(
+        repository,
+        SealedCanaryDispatchClaimRequest {
+            ledger_name: request.ledger_name.clone(),
+            identity_query_sha256: request.identity_query_sha256.clone(),
+            dispatch: request.dispatch.clone(),
+        },
+        &prepared,
+    )
+    .await?;
+
+    let receipt = runtime
+        .dispatch_fixture_canary_once(request.config.clone(), prepared.seal_for_dispatch()?)
+        .await?;
+    receipt.validate_receipt()?;
+    let readback = runtime
+        .fetch_ledger_canary_readback(
+            request.config,
+            request.company,
+            request.ledger_name,
+            request.identity_query_sha256,
+            request.expected_company_guid,
+        )
+        .await?;
+    let observation = receipt.observe_with_readback(readback.as_xml())?;
+    let verdict = WriteCanaryFinalVerdictInput {
+        dispatch: ActiveWriteCanaryDispatchAttemptInput {
+            evidence: request.dispatch.evidence,
+            dispatch_attempt_id: dispatch_claim.id,
+            claimed_at_unix_ms: dispatch_claim.claimed_at_unix_ms,
+        },
+        import_response_sha256: observation.import_response_digest().as_hex().to_owned(),
+        readback_state_sha256: observation.readback_state_digest().as_hex().to_owned(),
+        identity_coverage_sha256: observation.identity_coverage_digest().as_hex().to_owned(),
+        recorded_at_unix_ms: Utc::now().timestamp_millis(),
+    };
+    Ok(repository
+        .record_write_canary_final_verdict(verdict)
         .await?)
 }
 

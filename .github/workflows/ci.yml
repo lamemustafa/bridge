@@ -146,6 +146,12 @@ jobs:
         run: >-
           cargo test --locked -p bridge-tally-protocol
           --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
+      - name: Test sealed canary runtime dispatch feature
+        working-directory: src-tauri
+        run: >-
+          cargo test --locked -p bridge --lib
+          --features fixture-canary-runtime-dispatch
+          sealed_fixture_canary_dispatch_posts_exactly_once_without_xml_escape
       - name: Test isolated native outstandings qualification path
         working-directory: src-tauri
         run: |
@@ -176,6 +182,12 @@ jobs:
           cargo clippy --locked -p bridge-tally-protocol
           --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
           --all-targets -- -D warnings
+      - name: Lint sealed canary runtime dispatch feature
+        working-directory: src-tauri
+        run: >-
+          cargo clippy --locked -p bridge --lib
+          --features fixture-canary-runtime-dispatch
+          -- -D warnings
       - name: Lint isolated native outstandings qualification path
         working-directory: src-tauri
         run: |

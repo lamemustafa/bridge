@@ -13,6 +13,10 @@ use bridge_tally_runtime::{
     ReadRetryPolicy, TELEMETRY_PREVIEW_SCHEMA,
 };
 use bridge_tally_transport::TallyTransportError;
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+use bridge_tally_write::{
+    FixtureCanaryDispatchError, SealedFixtureCanaryDispatch, SealedFixtureCanaryReceipt,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::future::Future;
@@ -526,6 +530,37 @@ impl TallyRuntime {
     {
         self.execute_cancellable(config, None, operation_class, retry, operation)
             .await
+    }
+
+    /// Issues one sealed fixture-canary import through an existing endpoint
+    /// session. Unlike every read path, this bypasses the read retry runtime:
+    /// a consumed dispatch claim must never cause a second HTTP request.
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    pub(crate) async fn dispatch_fixture_canary_once(
+        &self,
+        config: TallyConfig,
+        capsule: SealedFixtureCanaryDispatch,
+    ) -> Result<SealedFixtureCanaryReceipt, FixtureCanaryDispatchError> {
+        let session = self
+            .session(config)
+            .map_err(|_| FixtureCanaryDispatchError::RuntimeUnavailable)?;
+        let _request = session
+            .begin_request()
+            .map_err(|_| FixtureCanaryDispatchError::RuntimeUnavailable)?;
+        match session
+            .client
+            .dispatch_sealed_fixture_canary_once(capsule)
+            .await
+        {
+            Ok(receipt) => {
+                session.record_result(HealthOutcome::TransportSuccess);
+                Ok(receipt)
+            }
+            Err(error) => {
+                session.record_result(HealthOutcome::TransportFailure);
+                Err(error)
+            }
+        }
     }
 
     async fn execute_cancellable<T, F, Fut>(

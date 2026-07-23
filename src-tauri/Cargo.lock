@@ -563,6 +563,7 @@ version = "0.1.0"
 dependencies = [
  "bridge-tally-core",
  "bridge-tally-protocol",
+ "bridge-tally-transport",
  "serde",
  "serde_json",
  "sha2 0.11.0",
