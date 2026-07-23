@@ -231,7 +231,10 @@ jobs:
     # check is deliberately skipped only for frontend- and documentation-only PRs.
     if: github.event_name != 'pull_request' || needs.changes.outputs.native == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Windows native provisioning and a cold Rust workspace build can consume
+    # most of the validation budget; reserve time for mandatory cache cleanup
+    # after all compile, test, and lint gates have completed.
+    timeout-minutes: 35
     permissions:
       contents: read
     strategy:
