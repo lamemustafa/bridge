@@ -118,6 +118,20 @@ test("an automatic probe drop clears old company state before installing a usabl
   );
 });
 
+test("discovery requested after a dropped selection remains current after cleanup", () => {
+  const state = companyScopedState();
+  const probeResultsVersion = state.tallyResultsVersion;
+
+  applyProbeCompanySelectionTransition("old-company", [], {
+    clearDroppedCompanyScope: () => clearCompanyScopedState(cleanupFor(state)),
+    installProbeState: () => {},
+  });
+  const discoveryResultsVersion = state.tallyResultsVersion;
+
+  assert.notEqual(probeResultsVersion, state.tallyResultsVersion);
+  assert.equal(discoveryResultsVersion, state.tallyResultsVersion);
+});
+
 test("a manual company selection clears the existing review and all company-scoped state", () => {
   const state = companyScopedState();
 

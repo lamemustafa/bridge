@@ -79,7 +79,7 @@
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
-      "sha256": "a8f1ba11dcd975f3eb0358992179c691fcf6a74617bb101f50602da7b8057fd8"
+      "sha256": "95fba10a4ffed1db0ea1f539578eb2eb4334f0c6fa8dba38c051cc1a4cfebbb3"
     },
     {
       "path": "src-tauri/Cargo.lock",
@@ -419,7 +419,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "b383ed9b39cd6abd11501616e2387fe63aec107f00c402ed60b3a34e90ade54b"
+      "sha256": "919190e826f06940fbe2640c8e453f2e04de1262a6ad3e41f28430b8467491c2"
     },
     {
       "path": "src/styles.css",
@@ -430,5 +430,5 @@
       "sha256": "dd033010711ca01a7a395a531285c6ef187a359640a156cbc8da7281e11a39ea"
     }
   ],
-  "manifest_sha256": "da2b848422d7738688ce1835430b07639cd67ac98c9ab0cb35425fea02465fd9"
+  "manifest_sha256": "5c8d498284805f92bf5c0b8c2804ceb90e54f1e0fa97c21a53d5fd3f30541117"
 }

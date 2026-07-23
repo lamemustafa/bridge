@@ -985,14 +985,15 @@ function App() {
         setUntrustedDiscoveryError(null);
         setUntrustedDiscoveryCompleted(false);
         if (result.profile.transports.xml_http?.safe_reason_code === "direct_company_report_untrusted") {
+          const discoveryResultsVersion = tallyResultsVersion.current;
           try {
             const discovered = await invoke<UntrustedCompanyCandidate[]>("fetch_tally_companies", { config });
-            if (resultsVersion === tallyResultsVersion.current) {
+            if (discoveryResultsVersion === tallyResultsVersion.current) {
               setUntrustedDiscoveredCompanies(discovered);
               setUntrustedDiscoveryCompleted(true);
             }
           } catch (error) {
-            if (resultsVersion === tallyResultsVersion.current) {
+            if (discoveryResultsVersion === tallyResultsVersion.current) {
               setUntrustedDiscoveryError(toOperatorError(error));
             }
           }
