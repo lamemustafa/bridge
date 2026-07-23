@@ -312,10 +312,11 @@ fn sealed_fixture_dispatch_capsule_is_explicit_one_use_and_redacted() {
     )
     .expect("prepare fixed fixture canary");
 
+    let approved_wire_digest = prepared.wire_digest().clone();
     let capsule: SealedFixtureCanaryDispatch = prepared
         .seal_for_dispatch()
         .expect("seal exact fixed fixture canary payload");
-    assert_eq!(capsule.wire_digest(), prepared.wire_digest());
+    assert_eq!(capsule.wire_digest(), &approved_wire_digest);
     let debug = format!("{capsule:?}");
     assert!(debug.contains("[redacted]"));
     assert!(!debug.contains("BRIDGE-CANARY-LEDGER-V1"));

@@ -571,7 +571,6 @@ pub struct PreparedLedgerImport {
 /// the generic import lifecycle. A separately reviewed coordinator may derive
 /// sealed, non-dispatchable preflight evidence from an exact readback, but it
 /// can never obtain a transport, receipt, or generic qualified-import state.
-#[derive(Clone)]
 pub struct PreparedFixtureCanary {
     prepared: PreparedLedgerImport,
 }
@@ -653,7 +652,7 @@ impl PreparedFixtureCanary {
     /// opted-in dispatch-seam build. The normal Bridge build cannot name this
     /// type or invoke this method.
     #[cfg(feature = "fixture-canary-dispatch-seam")]
-    pub fn seal_for_dispatch(&self) -> Result<SealedFixtureCanaryDispatch, QualificationError> {
+    pub fn seal_for_dispatch(self) -> Result<SealedFixtureCanaryDispatch, QualificationError> {
         let wire_xml = build_import_xml(&self.prepared.company, &self.prepared.mutations);
         let wire_digest = WirePayloadDigest(domain_digest(
             b"bridge.tally.ledger-import-wire/1\0",
@@ -664,7 +663,7 @@ impl PreparedFixtureCanary {
         }
         Ok(SealedFixtureCanaryDispatch {
             wire_xml,
-            wire_digest: self.prepared.wire_digest.clone(),
+            wire_digest: self.prepared.wire_digest,
         })
     }
 }
