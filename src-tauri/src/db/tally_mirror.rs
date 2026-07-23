@@ -1606,6 +1606,11 @@ impl TallyMirrorRepository {
         sqlx::query("UPDATE tally_schema_migrations SET version = version WHERE version = 4")
             .execute(&mut *transaction)
             .await?;
+        if input.claimed_at_unix_ms < evidence.verified_at_unix_ms {
+            return Err(MirrorError::InvalidInput(
+                "canary_dispatch_claim_before_evidence",
+            ));
+        }
         let attempt_id = Uuid::new_v4().to_string();
         let inserted = sqlx::query(
             "INSERT INTO tally_write_canary_dispatch_attempts( \
@@ -5732,6 +5737,17 @@ mod tests {
                 .await,
             Err(MirrorError::InvalidInput(
                 "canary_preflight_evidence_not_active"
+            ))
+        ));
+        assert!(matches!(
+            repository
+                .begin_write_canary_dispatch_attempt(BeginWriteCanaryDispatchInput {
+                    evidence: evidence_gate.clone(),
+                    claimed_at_unix_ms: 5_749,
+                })
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_dispatch_claim_before_evidence"
             ))
         ));
         let dispatch = repository
