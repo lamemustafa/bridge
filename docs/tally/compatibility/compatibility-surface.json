@@ -3,7 +3,11 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "82d494e0bd68051ce0858b0f7f4f47da8666e583fb27b947a36f82435c749e36"
+      "sha256": "245124719902bbf22eeeec4da5e911168fd3eb9f138a28cb29dc65b3f60c7ea0"
+    },
+    {
+      "path": ".github/workflows/dependency-security.yml",
+      "sha256": "c9cd4394235a82bda9149cd77c8c5bff81f3d4ad8091fc2022e536776f03dd9f"
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
@@ -402,5 +406,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "8b103247549e683b9a5b232a9245a9ce6cb873f5c66c46185f6565fd1510882d"
+  "manifest_sha256": "4d23b5c3808cae3ddd2ecea86ae407ce4dfbe9586cbfe1f76236223c37a76238"
 }
