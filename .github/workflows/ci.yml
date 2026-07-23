@@ -12,6 +12,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Determine bundle scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      bundle: ${{ steps.scope.outputs.bundle }}
+      native: ${{ steps.scope.outputs.native }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo 'bundle=true' >> "$GITHUB_OUTPUT"
+            echo 'native=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$PR_BASE_SHA"
+          else
+            base="$BEFORE_SHA"
+          fi
+
+          # A new branch has no useful predecessor. Keep the conservative path.
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            echo 'bundle=true' >> "$GITHUB_OUTPUT"
+            echo 'native=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files="$(git diff --name-only "$base" "$GITHUB_SHA")"
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|rust-toolchain\.toml|src-tauri/)'; then
+            echo 'native=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'native=false' >> "$GITHUB_OUTPUT"
+          fi
+
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|package\.json|pnpm-lock\.yaml|\.node-version|vite\.config\.ts|tsconfig\.json|postcss\.config\.js|index\.html|src/|src-tauri/(Cargo\.lock|Cargo\.toml|.*/Cargo\.toml|tauri\.conf\.json|build\.rs|icons/)|LICENSE$|NOTICE$|THIRD_PARTY_LICENSES\.txt$|THIRD_PARTY_LICENSES_RUST\.txt$|scripts/(check-license-metadata\.mjs|check-dependency-inventory\.mjs|check-windows-bundle-resources\.ps1|check-macos-bundle-resources\.mjs)$)'; then
+            echo 'bundle=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'bundle=false' >> "$GITHUB_OUTPUT"
+          fi
+
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest
@@ -159,6 +214,10 @@ jobs:
 
   native:
     name: Native checks (${{ matrix.os }})
+    needs: changes
+    # Rust/Tauri changes always receive Windows and macOS coverage on PRs. The
+    # check is deliberately skipped only for frontend- and documentation-only PRs.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.native == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -178,15 +237,18 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri -> target
-      - name: Provision pinned Perl for vendored SQLCipher/OpenSSL
+      - name: Set up Windows native prerequisites
+        id: windows-native-prerequisites
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-native
+        with:
+          save-cache: true
+      - name: Record Windows prerequisite cache state
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install strawberryperl --version=5.42.2.1 --yes --no-progress
-          Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe'
-          Add-Content -Path $env:GITHUB_ENV -Value 'LIBCLANG_PATH=C:\Program Files\LLVM\bin'
-          & 'C:\Strawberry\perl\bin\perl.exe' -MLocale::Maketext::Simple -e "print qq(Perl prerequisite ready\n)"
-          if (-not (Test-Path -LiteralPath 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'libclang.dll prerequisite missing' }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native prerequisites'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-native-prerequisites.outputs.cache-hit }}`'
       - run: cargo check --locked --manifest-path src-tauri/Cargo.toml --workspace
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace
       - name: Test isolated native outstandings qualification feature
@@ -205,6 +267,10 @@ jobs:
 
   bundle-smoke:
     name: Bundle smoke (${{ matrix.os }})
+    needs: changes
+    # Bundle output is validated for packaging-relevant pull requests and every
+    # master/manual run. Rust/Tauri PRs retain the native platform matrix above.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.bundle == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -228,15 +294,16 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri -> target
-      - name: Provision pinned Perl for vendored SQLCipher/OpenSSL
+      - name: Set up Windows native prerequisites
+        id: windows-bundle-prerequisites
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-native
+      - name: Record Windows prerequisite cache state
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install strawberryperl --version=5.42.2.1 --yes --no-progress
-          Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe'
-          Add-Content -Path $env:GITHUB_ENV -Value 'LIBCLANG_PATH=C:\Program Files\LLVM\bin'
-          & 'C:\Strawberry\perl\bin\perl.exe' -MLocale::Maketext::Simple -e "print qq(Perl prerequisite ready\n)"
-          if (-not (Test-Path -LiteralPath 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'libclang.dll prerequisite missing' }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native prerequisites'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-bundle-prerequisites.outputs.cache-hit }}`'
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm run license:all
       - run: corepack pnpm run tauri:build
