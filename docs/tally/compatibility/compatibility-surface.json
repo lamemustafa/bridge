@@ -371,7 +371,7 @@
     },
     {
       "path": "src-tauri/src/tally/canary_preflight_read_coordinator.rs",
-      "sha256": "bdf3478daac5ec7766eca665df5d6f339ed3f74bd3fb882fd58ca46ad06be4f9"
+      "sha256": "69cfe208c427193f1f49d4685f76573ce9fc75b41fecc23fa8f98a61a0f145d6"
     },
     {
       "path": "src-tauri/src/tally/canary_runtime_dispatch_coordinator.rs",
@@ -383,7 +383,7 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "1dfd5c158a7c6b81ba3245b9077a9c023f6b16f20326917c140d2569f00aac9f"
+      "sha256": "f47f8e3150ff99e099945ead8988ae269c9bc74a928d15293dbcafe0a050bc9f"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
@@ -430,5 +430,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "2aa6d7a4b86dcd900458ba1abd08d0cb10b4baaeac0e594458742f1184376813"
+  "manifest_sha256": "f115012bd3542db48db4eb69869e5ed3eb5d4abfc9b56926a3ae6b009ef2c80b"
 }
