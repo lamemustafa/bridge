@@ -1,0 +1,48 @@
+name: Setup Windows native prerequisites
+description: Restore or provision the pinned Perl and LLVM prerequisites used by vendored SQLCipher/OpenSSL.
+
+inputs:
+  save-cache:
+    description: Save the restored distribution when this is a trusted non-PR run.
+    required: false
+    default: "false"
+
+outputs:
+  cache-hit:
+    description: Whether the pinned Strawberry Perl distribution was restored from an exact cache key.
+    value: ${{ steps.strawberry-perl.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # This directory only contains the pinned Strawberry Perl distribution. It
+    # deliberately excludes credentials and is saved only from trusted pushes.
+    - name: Restore pinned Strawberry Perl
+      id: strawberry-perl
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: 'C:\Strawberry'
+        key: bridge-windows-strawberryperl-5.42.2.1-v1
+
+    - name: Provision pinned Perl for vendored SQLCipher/OpenSSL
+      if: steps.strawberry-perl.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: choco install strawberryperl --version=5.42.2.1 --yes --no-progress
+
+    - name: Configure native build prerequisites
+      shell: pwsh
+      run: |
+        Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe'
+        Add-Content -Path $env:GITHUB_ENV -Value 'LIBCLANG_PATH=C:\Program Files\LLVM\bin'
+        & 'C:\Strawberry\perl\bin\perl.exe' -MLocale::Maketext::Simple -e "print qq(Perl prerequisite ready\n)"
+        if (-not (Test-Path -LiteralPath 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'libclang.dll prerequisite missing' }
+
+    # Pull-request cache entries are scoped to the merge ref. Saving only from
+    # trusted pushes prevents executable cache contents from being introduced by
+    # an untrusted contributor while still serving the default-branch cache to PRs.
+    - name: Save pinned Strawberry Perl
+      if: inputs.save-cache == 'true' && steps.strawberry-perl.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: 'C:\Strawberry'
+        key: bridge-windows-strawberryperl-5.42.2.1-v1
