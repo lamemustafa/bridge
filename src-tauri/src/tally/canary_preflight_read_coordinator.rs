@@ -11,6 +11,7 @@ use crate::{
     tally::{
         canary_preflight::{run_sealed_canary_preflight, SealedCanaryPreflightRequest},
         canary_preflight_preparation::PreparedSealedCanaryPreflight,
+        connection::canonical_loopback_origin,
         TallyConfig, TallyRuntime,
     },
 };
@@ -32,6 +33,9 @@ pub(crate) struct SealedCanaryPreflightReadCoordinatorResult {
     pub verified_at_unix_ms: i64,
 }
 
+fn validate_preflight_config(config: &TallyConfig) -> Result<()> {
+    canonical_loopback_origin(config).map(|_| ())
+}
 fn digest_only_result(
     evidence: WriteCanaryPreflightEvidenceRef,
 ) -> SealedCanaryPreflightReadCoordinatorResult {
@@ -49,6 +53,9 @@ pub(crate) async fn run_prepared_sealed_canary_preflight_read(
     runtime: &TallyRuntime,
     request: SealedCanaryPreflightReadCoordinatorRequest,
 ) -> Result<SealedCanaryPreflightReadCoordinatorResult> {
+    // Reject malformed or non-loopback configuration before consuming the
+    // irreversible one-time preflight claim.
+    validate_preflight_config(&request.config)?;
     let PreparedSealedCanaryPreflight {
         company,
         expected_company_guid,
@@ -79,9 +86,18 @@ pub(crate) async fn run_prepared_sealed_canary_preflight_read(
 
 #[cfg(test)]
 mod tests {
-    use super::digest_only_result;
+    use super::{digest_only_result, validate_preflight_config};
     use crate::db::tally_mirror::WriteCanaryPreflightEvidenceRef;
+    use crate::tally::TallyConfig;
 
+    #[test]
+    fn malformed_loopback_configuration_fails_before_preflight_claim() {
+        assert!(validate_preflight_config(&TallyConfig {
+            host: "example.invalid".to_owned(),
+            port: 9000,
+        })
+        .is_err());
+    }
     #[test]
     fn coordinator_result_contains_only_evidence_metadata() {
         let result = digest_only_result(WriteCanaryPreflightEvidenceRef {
