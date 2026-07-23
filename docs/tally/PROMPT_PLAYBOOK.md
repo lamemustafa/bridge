@@ -219,9 +219,12 @@ Must still hold after this phase:
    except where canary claims were removed.
 8. Mirror encryption: SQLCipher init path unchanged; no plaintext DB.
 9. No DSC/document/AXAL behavioural diff (git diff scoped check).
-10. Absence-of-ceremony proof: `grep -ri "FIXTURE_CANARY\|dispatch-seam\|
-    attestation" src-tauri src docs/tally` returns only archived-migration
-    and changelog references.
+10. Absence-of-ceremony proof: scope the grep to implementation only, because
+    the planning docs legitimately discuss the removal. Run
+    `grep -ri "FIXTURE_CANARY\|dispatch-seam\|attestation" src-tauri src
+    docs/tally/compatibility docs/adr` (i.e. code + evidence/ADR docs,
+    NOT the roadmap/playbook/plan `.md` files) and expect only
+    archived-migration and changelog references.
 ```
 
 ---
@@ -240,11 +243,16 @@ GST tax lines, inventory lines, cost-centre allocations. You cannot verify
 what you cannot read back — this phase gates every write phase.
 
 Implement:
-1. Extend the voucher read profile (new versioned profile, do not mutate
-   BRIDGE Voucher Export V2; create V3): FETCH NARRATION, party ledger
-   name, PARTYGSTIN, address list, BILLALLOCATIONS.LIST,
-   ALLINVENTORYENTRIES.LIST (+ batch/godown), LEDGERENTRIES.LIST with GST
-   rate/classification fields, COSTCENTREALLOCATIONS.LIST.
+1. Extend the voucher read profile with a NEW version. NOTE: `bridge.tally.
+   vouchers/2` (BRIDGE Voucher Export V2) AND `bridge.tally.vouchers/3`
+   (BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA, the scope-bound selected-read
+   profile, pinned by a CHECK constraint in migration 0007) are both taken.
+   Allocate the next free version — `bridge.tally.vouchers/4` (BRIDGE Voucher
+   Export V4) — and migrate any stored profile identity as needed; do not
+   mutate V2 or V3. FETCH NARRATION, party ledger name, PARTYGSTIN, address
+   list, BILLALLOCATIONS.LIST, ALLINVENTORYENTRIES.LIST (+ batch/godown),
+   LEDGERENTRIES.LIST with GST rate/classification fields,
+   COSTCENTREALLOCATIONS.LIST.
 2. Extend ledger/master profiles similarly (contact, GSTIN, addresses,
    opening-bill allocations).
 3. Wire the existing feature-gated IndiaTax and Bills/Outstandings parser
@@ -304,9 +312,9 @@ Hunt specifically for:
 5. Bounded-resource regressions: new list explosions (AllInventoryEntries
    on huge vouchers) versus the 32 MiB response cap — is there a paging or
    windowing story? Does a capped response get honestly labeled Partial?
-6. Profile versioning: V2 mutated instead of V3 added; compatibility
-   surface hashes not regenerated; old checkpoints silently reinterpreted
-   as V3 data without a forced re-baseline.
+6. Profile versioning: V2 or V3 mutated instead of the new V4 added;
+   compatibility surface hashes not regenerated; old checkpoints silently
+   reinterpreted as V4 data without a forced re-baseline.
 7. Privacy-doc dishonesty: code un-minimizes but privacy-model.md/README
    still claim minimization (or vice versa).
 ```
@@ -326,8 +334,8 @@ Must still hold:
 2. Checkpoint atomicity with the new schema: kill-mid-snapshot test leaves
    the previous verified checkpoint readable and consistent.
 3. Old-profile compatibility: a mirror created pre-migration opens, and
-   the app forces an honest full re-baseline rather than mixing V2/V3 data
-   under one Verified label.
+   the app forces an honest full re-baseline rather than mixing older
+   (V2/V3) and new (V4) voucher data under one Verified label.
 4. Data minimization REMOVAL is complete and consistent: no residual code
    path silently strips narration/GSTIN (grep the old omission tests —
    they must be inverted, not deleted-and-forgotten).
@@ -485,8 +493,14 @@ is simpler), then vouchers (payment/receipt/journal/contra).
 
 Implement — write core (masters):
 1. Outbox state machine in the mirror DB:
-   PENDING → DISPATCHING → {CONFIRMED | REJECTED | OUTCOME_UNKNOWN}
-   OUTCOME_UNKNOWN → probe → {CONFIRMED | PENDING | MANUAL}
+   PENDING → DISPATCHING → {CONFIRMED | CONFIRMED_WITH_DIVERGENCE | REJECTED | OUTCOME_UNKNOWN}
+   OUTCOME_UNKNOWN → probe → {CONFIRMED | CONFIRMED_WITH_DIVERGENCE | PENDING | MANUAL}
+   `CONFIRMED_WITH_DIVERGENCE` is the terminal state when readback (step 4)
+   proves the write landed but Tally normalized/dropped a field vs intent;
+   it is a distinct persisted state, never collapsed into `CONFIRMED`, and it
+   surfaces in the Gap Map. Aggregations that report "posted & clean" must
+   count only `CONFIRMED`; divergence is "posted, review". No auto-retry from
+   this state (the write succeeded).
    Row durably committed (fsync) BEFORE dispatch, carrying: intent digest,
    canonical payload, idempotency key, company GUID, operation kind,
    pre-image AlterID (alters).
@@ -529,9 +543,15 @@ Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
    education-mode and never Verified.
 
 Tests (the non-negotiable five, plus unit coverage):
-- kill -9 mid-dispatch → restart → recovery resolves to exactly-once
-  (probe finds the voucher → CONFIRMED; or absent → re-dispatch), proven
-  by final Tally state in the simulator AND on the licensed lab;
+- crash mid-dispatch → restart → recovery resolves to exactly-once (probe
+  finds the voucher → CONFIRMED; or absent → re-dispatch), proven by final
+  Tally state in the simulator AND on the licensed lab. Use an OS-agnostic
+  crashpoint: a test-only injected panic/abort at the point between "outbox
+  row committed" and "response parsed" is the primary mechanism (runs on the
+  Windows matrix targets). Where an external process kill is used, it must be
+  cross-platform — `taskkill /F /PID` on Windows, `kill -9` on POSIX — and the
+  licensed-lab evidence must record the Windows result specifically, since the
+  compatibility matrix targets Windows;
 - duplicate re-dispatch with edited narration (key destroyed) is still
   caught by the fingerprint check;
 - foreign writer interleaves between import and readback → LASTVCHID
