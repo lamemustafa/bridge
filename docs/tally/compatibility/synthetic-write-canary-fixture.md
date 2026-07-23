@@ -24,6 +24,13 @@ timestamps. It does not store fixture content, company names, GUIDs, backup
 locations, or free text in the enrollment evidence tables. The UI must continue
 to report `write capability: Unknown`.
 
+The normal Bridge build also cannot materialize the canary's import payload. A
+separate disabled build feature provides only a one-use, in-memory, redacted
+payload capsule with no endpoint, HTTP client, retry loop, persistence hook, or
+command. Enabling that feature alone cannot contact Tally; a later reviewed
+dispatch coordinator must bind it to the durable exact preflight evidence and
+one-time dispatch claim before any request can be introduced.
+
 Revocation appends a local `operator_revoked` event. It changes the local
 candidate gate only and never alters Tally. A revoked fixture requires a new
 fresh review and a new complete attestation before it can be enrolled again.

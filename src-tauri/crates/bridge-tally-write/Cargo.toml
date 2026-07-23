@@ -8,6 +8,12 @@ publish = false
 edition = "2021"
 rust-version = "1.96"
 
+[features]
+# This feature is intentionally disabled by Bridge. Enabling it only exposes
+# the sealed, one-use in-memory payload capsule; it does not add HTTP or any
+# Tally transport. A later reviewed coordinator must opt in explicitly.
+fixture-canary-dispatch-seam = []
+
 [dependencies]
 bridge-tally-core = { path = "../bridge-tally-core" }
 bridge-tally-protocol = { path = "../bridge-tally-protocol" }
