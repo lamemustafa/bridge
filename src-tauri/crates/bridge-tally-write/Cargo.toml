@@ -13,10 +13,18 @@ rust-version = "1.96"
 # the sealed, one-use in-memory payload capsule; it does not add HTTP or any
 # Tally transport. A later reviewed coordinator must opt in explicitly.
 fixture-canary-dispatch-seam = []
+# This opt-in adds sealed receipt/error types used by Bridge's private runtime
+# coordinator. This portable crate still has no HTTP client, send function,
+# generic XML callback, or arbitrary payload API.
+fixture-canary-runtime-dispatch = [
+  "fixture-canary-dispatch-seam",
+  "dep:bridge-tally-transport",
+]
 
 [dependencies]
 bridge-tally-core = { path = "../bridge-tally-core" }
 bridge-tally-protocol = { path = "../bridge-tally-protocol" }
+bridge-tally-transport = { path = "../bridge-tally-transport", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"

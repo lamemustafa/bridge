@@ -146,6 +146,11 @@ jobs:
         run: >-
           cargo test --locked -p bridge-tally-protocol
           --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
+      - name: Test sealed canary payload capsule
+        working-directory: src-tauri
+        run: >-
+          cargo test --locked -p bridge-tally-write
+          --features fixture-canary-dispatch-seam
       - name: Test isolated native outstandings qualification path
         working-directory: src-tauri
         run: |
@@ -176,6 +181,12 @@ jobs:
           cargo clippy --locked -p bridge-tally-protocol
           --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
           --all-targets -- -D warnings
+      - name: Lint sealed canary payload capsule
+        working-directory: src-tauri
+        run: >-
+          cargo clippy --locked -p bridge-tally-write
+          --features fixture-canary-dispatch-seam
+          -- -D warnings
       - name: Lint isolated native outstandings qualification path
         working-directory: src-tauri
         run: |
@@ -220,7 +231,10 @@ jobs:
     # check is deliberately skipped only for frontend- and documentation-only PRs.
     if: github.event_name != 'pull_request' || needs.changes.outputs.native == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Windows native provisioning and a cold Rust workspace build can consume
+    # most of the validation budget; reserve time for mandatory cache cleanup
+    # after all compile, test, and lint gates have completed.
+    timeout-minutes: 35
     permissions:
       contents: read
     strategy:
@@ -251,6 +265,17 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native prerequisites'
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-native-prerequisites.outputs.cache-hit }}`'
       - run: cargo check --locked --manifest-path src-tauri/Cargo.toml --workspace
+      - name: Check sealed canary runtime dispatch feature
+        working-directory: src-tauri
+        run: >-
+          cargo check --locked -p bridge --lib
+          --features fixture-canary-runtime-dispatch
+      - name: Test sealed canary runtime dispatch feature
+        working-directory: src-tauri
+        run: >-
+          cargo test --locked -p bridge --lib
+          --features fixture-canary-runtime-dispatch
+          sealed
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace
       - name: Test isolated native outstandings qualification feature
         working-directory: src-tauri
@@ -259,6 +284,12 @@ jobs:
           --features bills-native-outstandings-probe-runner
           --all-targets -- --test-threads=1
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
+      - name: Lint sealed canary runtime dispatch feature
+        working-directory: src-tauri
+        run: >-
+          cargo clippy --locked -p bridge --lib
+          --features fixture-canary-runtime-dispatch
+          -- -D warnings
       - name: Lint isolated native outstandings qualification feature
         working-directory: src-tauri
         run: >-

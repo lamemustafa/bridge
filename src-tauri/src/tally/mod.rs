@@ -3,6 +3,33 @@
     reason = "the sealed coordinator is intentionally staged before its command layer"
 )]
 pub(crate) mod canary_preflight;
+#[allow(
+    dead_code,
+    reason = "the private preflight preparation seam is staged before its command layer"
+)]
+pub(crate) mod canary_preflight_preparation;
+#[allow(
+    dead_code,
+    reason = "the private preflight-read coordinator is staged before its command layer"
+)]
+pub(crate) mod canary_preflight_read_coordinator;
+// This is intentionally feature-gated and has no Tauri command. It performs
+// only local, read-only admission checks before a future separately reviewed
+// runtime-dispatch boundary can be considered.
+#[cfg(feature = "fixture-canary-dispatch-seam")]
+#[allow(
+    dead_code,
+    reason = "the application admission seam is intentionally staged before its command layer"
+)]
+pub(crate) mod canary_dispatch_admission;
+// The dispatch coordinator is compiled only with the explicit non-default
+// runtime feature. A future command boundary still needs separate review.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+#[allow(
+    dead_code,
+    reason = "the runtime coordinator is intentionally staged before its command layer"
+)]
+pub(crate) mod canary_runtime_dispatch_coordinator;
 pub mod capability_packs;
 pub mod connection;
 pub mod connector;
@@ -11,7 +38,7 @@ pub mod runtime;
 pub mod serial_queue;
 pub mod tdl_engine;
 pub mod validators;
-pub mod write_sandbox;
+pub(crate) mod write_sandbox;
 pub mod xml_builder;
 pub mod xml_parser;
 
