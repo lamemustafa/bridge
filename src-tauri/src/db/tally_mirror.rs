@@ -391,6 +391,10 @@ pub struct WriteCanaryReservationInput {
 pub struct WriteCanaryReservationRef {
     pub id: String,
     pub enrollment_id: String,
+    /// Exact immutable commitment needed only by private coordinators to bind
+    /// the fixed canary payload. This reference is never serialized to a UI
+    /// or exposed through a Tauri command.
+    pub reservation_payload_sha256: String,
     pub reserved_at_unix_ms: i64,
 }
 
@@ -1224,6 +1228,7 @@ impl TallyMirrorRepository {
         let result = WriteCanaryReservationRef {
             id: reservation.try_get("id")?,
             enrollment_id,
+            reservation_payload_sha256: existing_payload_sha256,
             reserved_at_unix_ms: reservation.try_get("reserved_at_unix_ms")?,
         };
         transaction.commit().await?;
@@ -5787,13 +5792,18 @@ mod tests {
             })
             .await
             .expect("reserve the only canary slot");
-        let reservation_payload_sha256 = sqlx::query_scalar::<_, String>(
+        let reservation_payload_sha256 = reservation.reservation_payload_sha256.clone();
+        let persisted_reservation_payload_sha256 = sqlx::query_scalar::<_, String>(
             "SELECT reservation_payload_sha256 FROM tally_write_canary_reservations WHERE id = ?1",
         )
         .bind(&reservation.id)
         .fetch_one(&repository.pool)
         .await
         .expect("load immutable reservation payload commitment");
+        assert_eq!(
+            reservation_payload_sha256, persisted_reservation_payload_sha256,
+            "private reservation reference must return the exact durable commitment"
+        );
         let input = WriteCanaryPayloadBindingInput {
             company_id: saved.company.id.clone(),
             review_commitment_sha256: HASH_B.to_string(),
