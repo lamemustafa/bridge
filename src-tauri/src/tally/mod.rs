@@ -3,6 +3,15 @@
     reason = "the sealed coordinator is intentionally staged before its command layer"
 )]
 pub(crate) mod canary_preflight;
+// This is intentionally feature-gated and has no Tauri command. It performs
+// only local, read-only admission checks before a future separately reviewed
+// runtime-dispatch boundary can be considered.
+#[cfg(feature = "fixture-canary-dispatch-seam")]
+#[allow(
+    dead_code,
+    reason = "the application admission seam is intentionally staged before its command layer"
+)]
+pub(crate) mod canary_dispatch_admission;
 pub mod capability_packs;
 pub mod connection;
 pub mod connector;
