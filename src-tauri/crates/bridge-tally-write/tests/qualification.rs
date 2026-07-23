@@ -1,9 +1,10 @@
 use bridge_tally_write::{
     authorize_fixture_canary, authorize_synthetic_write, fixture_canary_ledger_mutation,
     prepare_fixture_canary_ledger_import, prepare_ledger_import, preview_ledger_import,
-    verify_fixture_canary_preflight, FixtureCanaryAuthorization, FixtureCanaryAuthorizationRequest,
-    IdempotencyRegistry, LedgerMutation, LedgerState, PreparedLedgerImport, QualificationError,
-    SourceLineage, SyntheticCompany, WriteAuthorizationRequest, WriteCapability, WriteOutcome,
+    verify_fixture_canary_post_dispatch, verify_fixture_canary_preflight,
+    FixtureCanaryAuthorization, FixtureCanaryAuthorizationRequest, IdempotencyRegistry,
+    LedgerMutation, LedgerState, PreparedLedgerImport, QualificationError, SourceLineage,
+    SyntheticCompany, WriteAuthorizationRequest, WriteCapability, WriteOutcome,
     FIXTURE_CANARY_MAPPING_VERSION, MAX_LEDGER_WRITE_BATCH,
 };
 
@@ -247,6 +248,20 @@ fn fixture_canary_is_fixed_reservation_bound_and_dispatch_ineligible() {
         verify_fixture_canary_preflight(&prepared, &export(COMPANY_GUID, PROFILE, &query, "", 0))
             .expect("derive sealed absence evidence");
     assert!(!evidence.dispatch_eligible());
+    let after = export(
+        COMPANY_GUID,
+        PROFILE,
+        &query,
+        r#"<LEDGER REMOTEID="bridge-fixture-canary-ledger-v1" NAME="BRIDGE-CANARY-LEDGER-V1"><PARENT>Indirect Expenses</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>"#,
+        1,
+    );
+    let verdict = verify_fixture_canary_post_dispatch(&prepared, &receipt(1, 0, 0), &after)
+        .expect("derive sealed exact-applied evidence");
+    assert!(!verdict.dispatch_eligible());
+    assert!(matches!(
+        verify_fixture_canary_post_dispatch(&prepared, &receipt(0, 0, 0), &after),
+        Err(QualificationError::PostDispatchMismatch)
+    ));
 
     let mut mismatched_request = FixtureCanaryAuthorizationRequest {
         explicit_opt_in: true,
