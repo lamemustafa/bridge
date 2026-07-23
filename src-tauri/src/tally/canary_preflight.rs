@@ -113,7 +113,7 @@ pub(crate) async fn run_sealed_canary_preflight(
     request: SealedCanaryPreflightRequest,
     prepared: &PreparedFixtureCanary,
 ) -> Result<SealedCanaryPreflightCompletion> {
-    let binding = &request.binding.binding;
+    let binding = request.binding.binding.clone();
     if binding.wire_sha256 != prepared.wire_digest().as_hex()
         || binding.intended_state_sha256 != prepared.intended_state_digest().as_hex()
         || binding.identity_query_sha256 != prepared.identity_query_digest().as_hex()
@@ -140,7 +140,7 @@ pub(crate) async fn run_sealed_canary_preflight(
     let evidence: FixtureCanaryPreflightEvidence =
         verify_fixture_canary_preflight(prepared, readback.as_xml())?;
     let active_evidence = ActiveWriteCanaryPreflightEvidenceInput {
-        binding: binding.clone(),
+        binding,
         attempt_id: attempt.id.clone(),
         evidence_id: String::new(),
         readback_state_sha256: evidence.readback_state_digest().as_hex().to_owned(),
