@@ -104,8 +104,12 @@ pub(crate) async fn run_sealed_canary_runtime_sequence(
     runtime: &TallyRuntime,
     request: SealedCanaryRuntimeSequenceRequest,
 ) -> Result<SealedCanaryRuntimeCoordinatorResult> {
-    validate_runtime_sequence_config(&request.config)?;
-    let preparation = prepare_sealed_canary_preflight(repository, request.preparation).await?;
+    let canonical_origin = canonical_loopback_origin(&request.config)?;
+    let preparation =
+        prepare_sealed_canary_preflight(repository, request.preparation, &canonical_origin).await?;
+    if preparation.canonical_origin != canonical_origin {
+        bail!("sealed_canary_runtime_sequence_origin_mismatch");
+    }
     let preflight = run_sealed_canary_preflight(
         repository,
         runtime,

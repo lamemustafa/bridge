@@ -63,6 +63,7 @@ pub(crate) async fn run_prepared_sealed_canary_preflight_read(
         identity_query_sha256,
         binding,
         prepared,
+        ..
     } = request.preparation;
     let evidence = run_sealed_canary_preflight(
         repository,

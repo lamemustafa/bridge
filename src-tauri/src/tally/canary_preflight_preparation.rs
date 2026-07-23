@@ -39,6 +39,7 @@ pub(crate) struct PrepareSealedCanaryPreflightRequest {
 /// A private, non-serializable preparation result. The opaque prepared capsule
 /// intentionally has no transport or import API in this build.
 pub(crate) struct PreparedSealedCanaryPreflight {
+    pub canonical_origin: String,
     pub company: ValidatedCompanyName,
     pub expected_company_guid: String,
     pub ledger_name: ValidatedCanaryLedgerName,
@@ -50,6 +51,7 @@ pub(crate) struct PreparedSealedCanaryPreflight {
 /// Every source-derived value that can reject preparation is validated before
 /// the irreversible one-time reservation is consumed.
 struct ValidatedFixedCanary {
+    canonical_origin: String,
     company: SyntheticCompany,
     company_name: ValidatedCompanyName,
     expected_company_guid: String,
@@ -85,6 +87,7 @@ fn validate_fixed_canary(pin: &SnapshotSourcePin) -> Result<ValidatedFixedCanary
     let mutation = fixture_canary_ledger_mutation()?;
     let preview = preview_ledger_import(&company, &[mutation], FIXTURE_CANARY_MAPPING_VERSION)?;
     Ok(ValidatedFixedCanary {
+        canonical_origin: pin.canonical_origin.clone(),
         company,
         company_name: ValidatedCompanyName::new(pin.display_name.clone())?,
         expected_company_guid: pin.company_guid.clone(),
@@ -97,6 +100,9 @@ fn validate_fixed_canary(pin: &SnapshotSourcePin) -> Result<ValidatedFixedCanary
     })
 }
 
+fn source_pin_matches_origin(pin: &SnapshotSourcePin, expected_canonical_origin: &str) -> bool {
+    pin.canonical_origin == expected_canonical_origin
+}
 fn materialize_fixed_preflight(
     request: &PrepareSealedCanaryPreflightRequest,
     fixed_canary: ValidatedFixedCanary,
@@ -131,6 +137,7 @@ fn materialize_fixed_preflight(
     };
 
     Ok(PreparedSealedCanaryPreflight {
+        canonical_origin: fixed_canary.canonical_origin,
         company: fixed_canary.company_name,
         expected_company_guid: fixed_canary.expected_company_guid,
         ledger_name: fixed_canary.ledger_name,
@@ -146,11 +153,15 @@ fn materialize_fixed_preflight(
 pub(crate) async fn prepare_sealed_canary_preflight(
     repository: &TallyMirrorRepository,
     request: PrepareSealedCanaryPreflightRequest,
+    expected_canonical_origin: &str,
 ) -> Result<PreparedSealedCanaryPreflight> {
     validate_operator_assertions(&request)?;
     let pin = repository.snapshot_source_pin(&request.company_id).await?;
     if pin.company_id != request.company_id {
         bail!("sealed_canary_preflight_persisted_company_mismatch");
+    }
+    if !source_pin_matches_origin(&pin, expected_canonical_origin) {
+        bail!("sealed_canary_preflight_origin_mismatch");
     }
     // Validate every caller- and source-dependent fixed payload input before
     // consuming the fixture's irreversible one-time reservation.
@@ -220,6 +231,7 @@ mod tests {
         let preparation = materialize_fixed_preflight(&request, fixed_canary, &reservation())
             .expect("fixed synthetic fixture must prepare");
 
+        assert_eq!(preparation.canonical_origin, pin.canonical_origin);
         assert_eq!(preparation.company.as_str(), pin.display_name);
         assert_eq!(preparation.expected_company_guid, pin.company_guid);
         assert_eq!(preparation.ledger_name.as_str(), FIXTURE_CANARY_LEDGER_NAME);
@@ -264,5 +276,12 @@ mod tests {
         let mut request = request();
         request.review_commitment_sha256 = "not-a-sha256".to_owned();
         assert!(validate_operator_assertions(&request).is_err());
+    }
+
+    #[test]
+    fn source_pin_origin_must_match_before_reservation() {
+        let source = pin("synthetic-company".to_owned());
+        assert!(source_pin_matches_origin(&source, &source.canonical_origin));
+        assert!(!source_pin_matches_origin(&source, "http://127.0.0.1:9001"));
     }
 }

@@ -35,8 +35,9 @@ sequence: it derives the fixed canary only from an enrolled local company pin,
 performs the exact one-time preflight read, repeats durable admission, and then
 consumes the capsule once to POST through Bridge's bounded loopback transport.
 Its raw request and response remain sealed, it has no generic payload API,
-retry loop, persistence hook, UI route, or Tauri command. Loopback validation
-happens before the one-time reservation. The coordinator claims durable exact
+retry loop, persistence hook, UI route, or Tauri command. The canonical loopback
+origin must match the enrolled source pin before the one-time reservation, and is
+rechecked from the prepared fixture before preflight. The coordinator claims durable exact
 preflight evidence before that one request, then performs the closed readback
 and stores only a digest-only final verdict. Any error after the claim is an
 unknown outcome and must not cause a resend.
