@@ -42,6 +42,8 @@ const MIRROR_MIGRATION_V18: &str =
     include_str!("migrations/0018_tally_write_canary_preflight_evidence.sql");
 const MIRROR_MIGRATION_V19: &str =
     include_str!("migrations/0019_tally_write_canary_dispatch_attempt.sql");
+const MIRROR_MIGRATION_V20: &str =
+    include_str!("migrations/0020_tally_write_canary_final_verdict.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -480,6 +482,35 @@ pub struct WriteCanaryDispatchAttemptRef {
     pub id: String,
     pub evidence_id: String,
     pub claimed_at_unix_ms: i64,
+}
+
+/// The complete immutable commitment set a final verdict must re-present.
+/// This lookup remains local and cannot construct, send, or retry a Tally
+/// import.
+#[derive(Debug, Clone)]
+pub struct ActiveWriteCanaryDispatchAttemptInput {
+    pub evidence: ActiveWriteCanaryPreflightEvidenceInput,
+    pub dispatch_attempt_id: String,
+    pub claimed_at_unix_ms: i64,
+}
+
+/// Digest-only record of an exact semantic observation correlated to one
+/// durable dispatch claim. It deliberately stores no raw Tally response,
+/// readback, payload, configuration, or transport detail.
+#[derive(Debug, Clone)]
+pub struct WriteCanaryFinalVerdictInput {
+    pub dispatch: ActiveWriteCanaryDispatchAttemptInput,
+    pub import_response_sha256: String,
+    pub readback_state_sha256: String,
+    pub identity_coverage_sha256: String,
+    pub recorded_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteCanaryFinalVerdictRef {
+    pub id: String,
+    pub dispatch_attempt_id: String,
+    pub recorded_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1636,6 +1667,117 @@ impl TallyMirrorRepository {
         })
     }
 
+    /// Rechecks that one immutable no-send dispatch claim is tied to the exact
+    /// active fixture, payload commitments, and preflight evidence. It is a
+    /// local read only; no Tally transport can be reached through this method.
+    pub async fn active_write_canary_dispatch_attempt(
+        &self,
+        input: ActiveWriteCanaryDispatchAttemptInput,
+    ) -> Result<WriteCanaryDispatchAttemptRef, MirrorError> {
+        validate_nonempty(
+            &input.dispatch_attempt_id,
+            128,
+            "canary_dispatch_attempt_id",
+        )?;
+        if input.claimed_at_unix_ms <= 0 {
+            return Err(MirrorError::InvalidInput("canary_dispatch_claimed_at"));
+        }
+        let evidence = self
+            .active_write_canary_preflight_evidence(input.evidence)
+            .await?;
+        let dispatch = sqlx::query(
+            "SELECT id, evidence_id, claimed_at_unix_ms \
+             FROM tally_write_canary_dispatch_attempts \
+             WHERE id = ?1 AND evidence_id = ?2 AND claimed_at_unix_ms = ?3",
+        )
+        .bind(&input.dispatch_attempt_id)
+        .bind(&evidence.id)
+        .bind(input.claimed_at_unix_ms)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(MirrorError::InvalidInput(
+            "canary_dispatch_attempt_not_active",
+        ))?;
+        Ok(WriteCanaryDispatchAttemptRef {
+            id: dispatch.try_get("id")?,
+            evidence_id: dispatch.try_get("evidence_id")?,
+            claimed_at_unix_ms: dispatch.try_get("claimed_at_unix_ms")?,
+        })
+    }
+
+    /// Persists exactly one immutable, digest-only final verdict for an active
+    /// dispatch claim. Exact replays are safe; any changed observation fails
+    /// closed. This is not a transport or import API.
+    pub async fn record_write_canary_final_verdict(
+        &self,
+        input: WriteCanaryFinalVerdictInput,
+    ) -> Result<WriteCanaryFinalVerdictRef, MirrorError> {
+        validate_sha256(&input.import_response_sha256)?;
+        validate_sha256(&input.readback_state_sha256)?;
+        validate_sha256(&input.identity_coverage_sha256)?;
+        if input.recorded_at_unix_ms <= 0 {
+            return Err(MirrorError::InvalidInput(
+                "canary_final_verdict_recorded_at",
+            ));
+        }
+        let dispatch = self
+            .active_write_canary_dispatch_attempt(input.dispatch)
+            .await?;
+        if input.recorded_at_unix_ms < dispatch.claimed_at_unix_ms {
+            return Err(MirrorError::InvalidInput(
+                "canary_final_verdict_before_dispatch_claim",
+            ));
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("UPDATE tally_schema_migrations SET version = version WHERE version = 4")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            "INSERT INTO tally_write_canary_final_verdicts( \
+               id, dispatch_attempt_id, import_response_sha256, \
+               readback_state_sha256, identity_coverage_sha256, contract_version, \
+               recorded_at_unix_ms \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6) \
+             ON CONFLICT(dispatch_attempt_id) DO NOTHING",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&dispatch.id)
+        .bind(&input.import_response_sha256)
+        .bind(&input.readback_state_sha256)
+        .bind(&input.identity_coverage_sha256)
+        .bind(input.recorded_at_unix_ms)
+        .execute(&mut *transaction)
+        .await?;
+        let verdict = sqlx::query(
+            "SELECT id, import_response_sha256, readback_state_sha256, \
+             identity_coverage_sha256, recorded_at_unix_ms \
+             FROM tally_write_canary_final_verdicts WHERE dispatch_attempt_id = ?1",
+        )
+        .bind(&dispatch.id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let existing_import_response_sha256: String = verdict.try_get("import_response_sha256")?;
+        let existing_readback_state_sha256: String = verdict.try_get("readback_state_sha256")?;
+        let existing_identity_coverage_sha256: String =
+            verdict.try_get("identity_coverage_sha256")?;
+        if existing_import_response_sha256 != input.import_response_sha256
+            || existing_readback_state_sha256 != input.readback_state_sha256
+            || existing_identity_coverage_sha256 != input.identity_coverage_sha256
+        {
+            return Err(MirrorError::InvalidInput(
+                "canary_final_verdict_already_recorded",
+            ));
+        }
+        let result = WriteCanaryFinalVerdictRef {
+            id: verdict.try_get("id")?,
+            dispatch_attempt_id: dispatch.id,
+            recorded_at_unix_ms: verdict.try_get("recorded_at_unix_ms")?,
+        };
+        transaction.commit().await?;
+        Ok(result)
+    }
+
     pub async fn write_fixture_enrollment_status(
         &self,
         company_id: &str,
@@ -2049,9 +2191,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let write_canary_final_verdict_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 20",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if write_canary_final_verdict_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V20)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -5758,6 +5910,59 @@ mod tests {
             .await
             .expect("claim one no-send canary dispatch attempt");
         assert_eq!(dispatch.evidence_id, evidence.id);
+        let final_verdict_input = WriteCanaryFinalVerdictInput {
+            dispatch: ActiveWriteCanaryDispatchAttemptInput {
+                evidence: evidence_gate.clone(),
+                dispatch_attempt_id: dispatch.id.clone(),
+                claimed_at_unix_ms: dispatch.claimed_at_unix_ms,
+            },
+            import_response_sha256: HASH_A.to_string(),
+            readback_state_sha256: HASH_B.to_string(),
+            identity_coverage_sha256: HASH_A.to_string(),
+            recorded_at_unix_ms: 5_850,
+        };
+        let mut early_final_verdict = final_verdict_input.clone();
+        early_final_verdict.recorded_at_unix_ms = 5_799;
+        assert!(matches!(
+            repository
+                .record_write_canary_final_verdict(early_final_verdict)
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_final_verdict_before_dispatch_claim"
+            ))
+        ));
+        let final_verdict = repository
+            .record_write_canary_final_verdict(final_verdict_input.clone())
+            .await
+            .expect("persist digest-only final canary verdict");
+        assert_eq!(final_verdict.dispatch_attempt_id, dispatch.id);
+        assert_eq!(
+            repository
+                .record_write_canary_final_verdict(final_verdict_input.clone())
+                .await
+                .expect("replay exact final verdict safely"),
+            final_verdict
+        );
+        let mut changed_final_verdict = final_verdict_input;
+        changed_final_verdict.import_response_sha256 = HASH_B.to_string();
+        assert!(matches!(
+            repository
+                .record_write_canary_final_verdict(changed_final_verdict)
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_final_verdict_already_recorded"
+            ))
+        ));
+        assert!(sqlx::query(
+            "UPDATE tally_write_canary_final_verdicts SET recorded_at_unix_ms = 1"
+        )
+        .execute(&repository.pool)
+        .await
+        .is_err());
+        assert!(sqlx::query("DELETE FROM tally_write_canary_final_verdicts")
+            .execute(&repository.pool)
+            .await
+            .is_err());
         assert!(matches!(
             repository
                 .begin_write_canary_dispatch_attempt(BeginWriteCanaryDispatchInput {

@@ -318,12 +318,16 @@
       "sha256": "97f089d4d65ee4366699a4d8d30a5caa65824b7dc670fa4b76bf16d57ebd9e72"
     },
     {
+      "path": "src-tauri/src/db/migrations/0020_tally_write_canary_final_verdict.sql",
+      "sha256": "713b5bd58d8f80bf989ea768bf3eec821d1b9baa9e0348285e36271dc61c5d36"
+    },
+    {
       "path": "src-tauri/src/db/tally_incremental.rs",
       "sha256": "bac2c859de102cf1e558f669dee0445a9406e95ee9923b6f52bd498ee768e73b"
     },
     {
       "path": "src-tauri/src/db/tally_mirror.rs",
-      "sha256": "c532d88acaea3e96e50ad9f50d691fa496bd9a1f36ba579f1c14234d742a9a24"
+      "sha256": "dcc4b2afec814f49782017e3dddf32007f9fbaf6f3413c8c5e823915945ce1ce"
     },
     {
       "path": "src-tauri/src/db/tally_write_store.rs",
@@ -347,7 +351,7 @@
     },
     {
       "path": "src-tauri/src/tally/canary_preflight.rs",
-      "sha256": "f8fc57aa0ee616d262109ed83108abcecd6c5081495bbda97fe7a20493071ae1"
+      "sha256": "625201c8d06b950a148bd3f61782f7f455019defb63c0690646af02f9cb8157e"
     },
     {
       "path": "src-tauri/src/tally/capability_packs.rs",
@@ -398,5 +402,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "cc8e2c5be9311a9edc05624ac3c6f680b4cc1c285f1ed296af5037ab6583e58b"
+  "manifest_sha256": "1c18a96a6d40a3ea1e719af194af8fc4ce59625bacc559acbe4e529e0b17810a"
 }
