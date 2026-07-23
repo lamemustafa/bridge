@@ -8,6 +8,11 @@ pub(crate) mod canary_preflight;
     reason = "the private preflight preparation seam is staged before its command layer"
 )]
 pub(crate) mod canary_preflight_preparation;
+#[allow(
+    dead_code,
+    reason = "the private preflight-read coordinator is staged before its command layer"
+)]
+pub(crate) mod canary_preflight_read_coordinator;
 // This is intentionally feature-gated and has no Tauri command. It performs
 // only local, read-only admission checks before a future separately reviewed
 // runtime-dispatch boundary can be considered.

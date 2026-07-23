@@ -882,7 +882,7 @@ fn safe_connection_failure_code(error: &anyhow::Error) -> &'static str {
     }
 }
 
-pub(super) fn canonical_loopback_origin(config: &TallyConfig) -> anyhow::Result<String> {
+pub(crate) fn canonical_loopback_origin(config: &TallyConfig) -> anyhow::Result<String> {
     Ok(transport_canonical_origin(config)?)
 }
 
