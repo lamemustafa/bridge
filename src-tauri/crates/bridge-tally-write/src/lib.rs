@@ -646,6 +646,38 @@ impl FixtureCanaryPreflightEvidence {
     }
 }
 
+/// Digest-only semantic observation for the fixed fixture canary. Receipt and
+/// readback alone cannot correlate an import to a durable dispatch claim, so
+/// this is explicitly not capability evidence or an exact-applied proof.
+#[derive(Clone)]
+pub struct FixtureCanaryPostDispatchObservation {
+    import_response_digest: ImportResponseDigest,
+    readback_state_digest: ReadbackStateDigest,
+    identity_coverage_digest: IdentityCoverageDigest,
+}
+
+impl FixtureCanaryPostDispatchObservation {
+    pub fn import_response_digest(&self) -> &ImportResponseDigest {
+        &self.import_response_digest
+    }
+
+    pub fn readback_state_digest(&self) -> &ReadbackStateDigest {
+        &self.readback_state_digest
+    }
+
+    pub fn identity_coverage_digest(&self) -> &IdentityCoverageDigest {
+        &self.identity_coverage_digest
+    }
+
+    pub const fn dispatch_eligible(&self) -> bool {
+        false
+    }
+
+    pub const fn capability_observed(&self) -> bool {
+        false
+    }
+}
+
 /// Validates a sealed fixture-canary readback and derives only its digest
 /// evidence. The caller must keep the XML sealed; this function neither
 /// exposes it nor returns any write-capable object.
@@ -658,6 +690,32 @@ pub fn verify_fixture_canary_preflight(
         return Err(QualificationError::PreflightMismatch);
     }
     Ok(FixtureCanaryPreflightEvidence {
+        readback_state_digest: observed.state_digest,
+        identity_coverage_digest: observed.coverage_digest,
+    })
+}
+
+/// Parses an exact-looking receipt/readback pair for later correlation. Both
+/// XML inputs stay caller-owned; only digests are returned. A durable sealed
+/// coordinator must bind this observation to one dispatch claim before it can
+/// record a capability or final verdict.
+pub fn observe_fixture_canary_post_dispatch(
+    prepared: &PreparedFixtureCanary,
+    receipt_xml: &str,
+    readback_xml: &str,
+) -> Result<FixtureCanaryPostDispatchObservation, QualificationError> {
+    let receipt = parse_import_receipt(receipt_xml)?;
+    let observed = parse_readback(&prepared.prepared, readback_xml)?;
+    let exact_after = observed.projections == prepared.prepared.expected_after;
+    let exact_counters = receipt.is_clean()
+        && receipt.counters.created == 1
+        && receipt.counters.altered == 0
+        && receipt.counters.deleted == 0;
+    if !exact_after || !exact_counters {
+        return Err(QualificationError::PostDispatchMismatch);
+    }
+    Ok(FixtureCanaryPostDispatchObservation {
+        import_response_digest: receipt.response_digest,
         readback_state_digest: observed.state_digest,
         identity_coverage_digest: observed.coverage_digest,
     })
@@ -1040,6 +1098,8 @@ pub enum QualificationError {
     UnsupportedFieldClear(&'static str),
     #[error("preflight readback did not exactly match the declared before state")]
     PreflightMismatch,
+    #[error("post-dispatch receipt or readback did not exactly apply the fixture canary")]
+    PostDispatchMismatch,
     #[error("Tally import receipt was invalid")]
     InvalidImportReceipt,
     #[error("Tally ledger readback was invalid or outside the expected company/profile")]
