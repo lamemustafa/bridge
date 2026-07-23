@@ -454,6 +454,17 @@ pub struct WriteCanaryPreflightEvidenceRef {
     pub verified_at_unix_ms: i64,
 }
 
+/// The complete durable evidence commitment a future dispatch coordinator must
+/// re-present. Verifying it remains read-only and cannot issue a Tally import.
+#[derive(Debug, Clone)]
+pub struct ActiveWriteCanaryPreflightEvidenceInput {
+    pub binding: ActiveWriteCanaryPayloadBindingInput,
+    pub attempt_id: String,
+    pub evidence_id: String,
+    pub readback_state_sha256: String,
+    pub identity_coverage_sha256: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MirrorExplorerRecord {
     pub local_alias: String,
@@ -1485,6 +1496,80 @@ impl TallyMirrorRepository {
         };
         transaction.commit().await?;
         Ok(result)
+    }
+
+    /// Verifies that immutable evidence belongs to the exact active fixture
+    /// binding and one-time preflight attempt. This does not create a token or
+    /// grant dispatch authority; a later, separately reviewed coordinator
+    /// must still perform its own final check immediately before any import.
+    pub async fn active_write_canary_preflight_evidence(
+        &self,
+        input: ActiveWriteCanaryPreflightEvidenceInput,
+    ) -> Result<WriteCanaryPreflightEvidenceRef, MirrorError> {
+        let binding = input.binding;
+        validate_nonempty(&binding.company_id, 128, "fixture_company_id")?;
+        validate_sha256(&binding.review_commitment_sha256)?;
+        validate_nonempty(&binding.reservation_id, 128, "canary_reservation_id")?;
+        validate_sha256(&binding.reservation_payload_sha256)?;
+        validate_sha256(&binding.wire_sha256)?;
+        validate_sha256(&binding.intended_state_sha256)?;
+        validate_sha256(&binding.identity_query_sha256)?;
+        validate_nonempty(&input.attempt_id, 128, "canary_preflight_attempt_id")?;
+        validate_nonempty(&input.evidence_id, 128, "canary_preflight_evidence_id")?;
+        validate_sha256(&input.readback_state_sha256)?;
+        validate_sha256(&input.identity_coverage_sha256)?;
+
+        let evidence = sqlx::query(
+            r#"
+                SELECT evidence.id, evidence.attempt_id, evidence.verified_at_unix_ms
+                FROM tally_write_canary_preflight_evidence AS evidence
+                JOIN tally_write_canary_preflight_attempts AS attempt
+                  ON attempt.id = evidence.attempt_id
+                JOIN tally_write_canary_payload_bindings AS binding
+                  ON binding.id = attempt.payload_binding_id
+                JOIN tally_write_canary_reservations AS reservation
+                  ON reservation.id = binding.reservation_id
+                JOIN tally_write_fixture_enrollments AS enrollment
+                  ON enrollment.id = reservation.enrollment_id
+                WHERE evidence.id = ?1
+                  AND evidence.attempt_id = ?2
+                  AND evidence.readback_state_sha256 = ?3
+                  AND evidence.identity_coverage_sha256 = ?4
+                  AND binding.reservation_id = ?5
+                  AND enrollment.company_id = ?6
+                  AND enrollment.review_commitment_sha256 = ?7
+                  AND reservation.reservation_payload_sha256 = ?8
+                  AND binding.wire_sha256 = ?9
+                  AND binding.intended_state_sha256 = ?10
+                  AND binding.identity_query_sha256 = ?11
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM tally_write_fixture_revocations AS revocation
+                    WHERE revocation.enrollment_id = enrollment.id
+                  )
+            "#,
+        )
+        .bind(&input.evidence_id)
+        .bind(&input.attempt_id)
+        .bind(&input.readback_state_sha256)
+        .bind(&input.identity_coverage_sha256)
+        .bind(&binding.reservation_id)
+        .bind(&binding.company_id)
+        .bind(&binding.review_commitment_sha256)
+        .bind(&binding.reservation_payload_sha256)
+        .bind(&binding.wire_sha256)
+        .bind(&binding.intended_state_sha256)
+        .bind(&binding.identity_query_sha256)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(MirrorError::InvalidInput(
+            "canary_preflight_evidence_not_active",
+        ))?;
+        Ok(WriteCanaryPreflightEvidenceRef {
+            id: evidence.try_get("id")?,
+            attempt_id: evidence.try_get("attempt_id")?,
+            verified_at_unix_ms: evidence.try_get("verified_at_unix_ms")?,
+        })
     }
 
     pub async fn write_fixture_enrollment_status(
@@ -5556,6 +5641,30 @@ mod tests {
             .record_write_canary_preflight_evidence(evidence_input.clone())
             .await
             .expect("persist digest-only sealed preflight evidence");
+        let evidence_gate = ActiveWriteCanaryPreflightEvidenceInput {
+            binding: active_binding.clone(),
+            attempt_id: preflight.id.clone(),
+            evidence_id: evidence.id.clone(),
+            readback_state_sha256: HASH_A.to_string(),
+            identity_coverage_sha256: HASH_B.to_string(),
+        };
+        assert_eq!(
+            repository
+                .active_write_canary_preflight_evidence(evidence_gate.clone())
+                .await
+                .expect("verify exact active preflight evidence without dispatch"),
+            evidence
+        );
+        let mut changed_evidence_gate = evidence_gate.clone();
+        changed_evidence_gate.identity_coverage_sha256 = HASH_A.to_string();
+        assert!(matches!(
+            repository
+                .active_write_canary_preflight_evidence(changed_evidence_gate)
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_preflight_evidence_not_active"
+            ))
+        ));
         assert_eq!(
             repository
                 .record_write_canary_preflight_evidence(evidence_input.clone())
@@ -5640,6 +5749,14 @@ mod tests {
                 .record_write_canary_preflight_evidence(evidence_input)
                 .await,
             Err(MirrorError::InvalidInput("canary_preflight_not_active"))
+        ));
+        assert!(matches!(
+            repository
+                .active_write_canary_preflight_evidence(evidence_gate)
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_preflight_evidence_not_active"
+            ))
         ));
         assert!(matches!(
             repository

@@ -15,6 +15,7 @@ use chrono::Utc;
 
 use crate::{
     db::tally_mirror::{
+        ActiveWriteCanaryPayloadBindingInput, ActiveWriteCanaryPreflightEvidenceInput,
         BeginWriteCanaryPreflightInput, TallyMirrorRepository, WriteCanaryPreflightEvidenceInput,
         WriteCanaryPreflightEvidenceRef,
     },
@@ -30,6 +31,15 @@ pub(crate) struct SealedCanaryPreflightRequest {
     pub identity_query_sha256: ValidatedIdentityQuerySha256,
     pub expected_company_guid: String,
     pub binding: BeginWriteCanaryPreflightInput,
+}
+
+/// Exact, digest-only evidence required before a future canary import may be
+/// considered. It intentionally contains no Tally configuration, transport,
+/// import payload, retry policy, or dispatch capability.
+pub(crate) struct SealedCanaryPreflightEvidenceGateRequest {
+    pub ledger_name: ValidatedCanaryLedgerName,
+    pub identity_query_sha256: ValidatedIdentityQuerySha256,
+    pub evidence: ActiveWriteCanaryPreflightEvidenceInput,
 }
 
 /// Claims the durable preflight slot, performs exactly one sealed read, and
@@ -72,5 +82,29 @@ pub(crate) async fn run_sealed_canary_preflight(
             identity_coverage_sha256: evidence.identity_coverage_digest().as_hex().to_owned(),
             verified_at_unix_ms: Utc::now().timestamp_millis(),
         })
+        .await?)
+}
+
+/// Rechecks that the supplied immutable preflight evidence is still bound to
+/// the exact prepared fixture canary and active enrollment. This is a
+/// read-only gate for a future separately reviewed import coordinator; it
+/// cannot contact Tally or construct an import request.
+pub(crate) async fn verify_sealed_canary_preflight_evidence(
+    repository: &TallyMirrorRepository,
+    request: SealedCanaryPreflightEvidenceGateRequest,
+    prepared: &PreparedFixtureCanary,
+) -> Result<WriteCanaryPreflightEvidenceRef> {
+    let binding: &ActiveWriteCanaryPayloadBindingInput = &request.evidence.binding;
+    if binding.wire_sha256 != prepared.wire_digest().as_hex()
+        || binding.intended_state_sha256 != prepared.intended_state_digest().as_hex()
+        || binding.identity_query_sha256 != prepared.identity_query_digest().as_hex()
+        || request.identity_query_sha256.as_str() != prepared.identity_query_digest().as_hex()
+        || request.ledger_name.as_str() != FIXTURE_CANARY_LEDGER_NAME
+    {
+        bail!("sealed_canary_preflight_evidence_binding_mismatch");
+    }
+
+    Ok(repository
+        .active_write_canary_preflight_evidence(request.evidence)
         .await?)
 }
