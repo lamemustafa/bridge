@@ -81,7 +81,7 @@ pub(crate) async fn run_prepared_sealed_canary_preflight_read(
         &prepared,
     )
     .await?;
-    Ok(digest_only_result(evidence))
+    Ok(digest_only_result(evidence.evidence))
 }
 
 #[cfg(test)]
