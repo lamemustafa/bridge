@@ -575,15 +575,16 @@ pub struct PreparedFixtureCanary {
     prepared: PreparedLedgerImport,
 }
 
-/// An opaque, single-use in-memory capsule for the fixed fixture-canary XML.
+/// An opaque, non-dispatchable capability capsule for the fixed fixture-canary
+/// payload commitment.
 ///
 /// This is deliberately feature-gated and unavailable to Bridge's normal
 /// build. It carries no transport, endpoint, retry policy, or persistence
-/// hook. A separately reviewed coordinator may consume it exactly once only
-/// after it has claimed durable preflight evidence and a dispatch attempt.
+/// hook, and it does not expose the XML. A separately reviewed runtime
+/// coordinator must bind this capsule to a durable dispatch claim before it
+/// introduces the one-send operation.
 #[cfg(feature = "fixture-canary-dispatch-seam")]
 pub struct SealedFixtureCanaryDispatch {
-    wire_xml: String,
     wire_digest: WirePayloadDigest,
 }
 
@@ -603,13 +604,6 @@ impl std::fmt::Debug for SealedFixtureCanaryDispatch {
 impl SealedFixtureCanaryDispatch {
     pub fn wire_digest(&self) -> &WirePayloadDigest {
         &self.wire_digest
-    }
-
-    /// Transfers the sealed XML to one caller-owned operation without
-    /// returning or persisting it. This method consumes the capsule, has no
-    /// retry behavior, and does not itself make a request.
-    pub fn consume_once<T>(self, operation: impl FnOnce(&str) -> T) -> T {
-        operation(&self.wire_xml)
     }
 }
 
@@ -648,7 +642,7 @@ impl PreparedFixtureCanary {
         false
     }
 
-    /// Materializes the immutable fixture payload only in the separately
+    /// Seals the immutable fixture payload commitment only in the separately
     /// opted-in dispatch-seam build. The normal Bridge build cannot name this
     /// type or invoke this method.
     #[cfg(feature = "fixture-canary-dispatch-seam")]
@@ -662,7 +656,6 @@ impl PreparedFixtureCanary {
             return Err(QualificationError::FixtureCanaryPayloadMismatch);
         }
         Ok(SealedFixtureCanaryDispatch {
-            wire_xml,
             wire_digest: self.prepared.wire_digest,
         })
     }

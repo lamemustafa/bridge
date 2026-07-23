@@ -298,7 +298,7 @@ fn fixture_canary_is_fixed_reservation_bound_and_dispatch_ineligible() {
 
 #[cfg(feature = "fixture-canary-dispatch-seam")]
 #[test]
-fn sealed_fixture_dispatch_capsule_is_explicit_one_use_and_redacted() {
+fn sealed_fixture_dispatch_capability_is_explicit_and_redacted() {
     let synthetic_company = company();
     let authorization = fixture_authorization(
         &synthetic_company,
@@ -319,10 +319,10 @@ fn sealed_fixture_dispatch_capsule_is_explicit_one_use_and_redacted() {
     assert_eq!(capsule.wire_digest(), &approved_wire_digest);
     let debug = format!("{capsule:?}");
     assert!(debug.contains("[redacted]"));
+    assert!(debug.contains("absent"));
     assert!(!debug.contains("BRIDGE-CANARY-LEDGER-V1"));
 
-    let payload_length = capsule.consume_once(str::len);
-    assert!(payload_length > 0);
+    assert_eq!(capsule.wire_digest(), &approved_wire_digest);
 }
 
 #[test]

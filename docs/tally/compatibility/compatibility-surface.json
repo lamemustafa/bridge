@@ -59,7 +59,7 @@
     },
     {
       "path": "docs/tally/compatibility/synthetic-write-canary-fixture.md",
-      "sha256": "ee2d641b1943f92f85eac3b85660e4827c34729591b519f6ad2567e6c9e46a7d"
+      "sha256": "138b7d89149be5bd8b18d76d062b03a737b8df5e40af2e0703ac5371b8ce5ace"
     },
     {
       "path": "docs/tally/support-matrix.md",
@@ -223,11 +223,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/src/lib.rs",
-      "sha256": "0c23adadc32dbb0629851e55157cdbeb32bb05800afbb31e3c3b9ba12029ccd6"
+      "sha256": "361c242ec01e686c99cdfbdf92d9e7cefe87d094f6fb2d478cbebf1a43dae5b2"
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/tests/qualification.rs",
-      "sha256": "bda25fa384c928a2ed7879eda0bb9e93e4be28c858c37e7584971d100ba9298a"
+      "sha256": "6fce830053f833b3e52c209fbd1bbcc130fbd98a8af83851bb35a069cea2d27c"
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/Cargo.toml",
@@ -402,5 +402,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "5aac3c14212be9fffcaaf817115f0c580f04ea25ca988f1c396882c36b657813"
+  "manifest_sha256": "8b103247549e683b9a5b232a9245a9ce6cb873f5c66c46185f6565fd1510882d"
 }
