@@ -14,12 +14,14 @@ use bridge_tally_write::{
 };
 use chrono::Utc;
 
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+use crate::db::tally_mirror::ActiveWriteCanaryDispatchAttemptInput;
+
 use crate::{
     db::tally_mirror::{
-        ActiveWriteCanaryDispatchAttemptInput, ActiveWriteCanaryPayloadBindingInput,
-        ActiveWriteCanaryPreflightEvidenceInput, BeginWriteCanaryDispatchInput,
-        BeginWriteCanaryPreflightInput, TallyMirrorRepository, WriteCanaryDispatchAttemptRef,
-        WriteCanaryFinalVerdictInput, WriteCanaryFinalVerdictRef,
+        ActiveWriteCanaryPayloadBindingInput, ActiveWriteCanaryPreflightEvidenceInput,
+        BeginWriteCanaryDispatchInput, BeginWriteCanaryPreflightInput, TallyMirrorRepository,
+        WriteCanaryDispatchAttemptRef, WriteCanaryFinalVerdictInput, WriteCanaryFinalVerdictRef,
         WriteCanaryPreflightEvidenceInput, WriteCanaryPreflightEvidenceRef,
     },
     tally::{TallyConfig, TallyRuntime},

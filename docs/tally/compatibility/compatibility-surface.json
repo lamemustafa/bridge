@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "86d0a8724f95e2e378ac6546316b48d6cc99680c6a3271f242b0bd814ba20ab4"
+      "sha256": "43aa583eb67ab3a25d2efff991734fd612419b423c85b07d2ca589805c4b3117"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
@@ -83,7 +83,7 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "7e4d0bb34cbe776390734cc35c41f0e1400f3101153e068871953018518318f1"
+      "sha256": "66d3e7fbc5d7883bd1e0047817683aa9bd5dc7fb5b78208d059de4ad8043e6ef"
     },
     {
       "path": "src-tauri/Cargo.toml",
@@ -223,11 +223,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/Cargo.toml",
-      "sha256": "61149873030043977713937be32c5563b0e6df67a711f05a74a9db68358c503d"
+      "sha256": "47749c638f76a06c53a2d4f149cbfafa976d78490d520dcb771204106b9b8661"
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/src/lib.rs",
-      "sha256": "ee3b8b8a948982ae990a0c07fbaa9b909f03bae2aac53210a601908ad97b9acf"
+      "sha256": "a2c17b71036cc4097d9f9f081d3f2a23318825061c4316f7de06482507be595c"
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/tests/qualification.rs",
@@ -355,7 +355,7 @@
     },
     {
       "path": "src-tauri/src/tally/canary_preflight.rs",
-      "sha256": "53320b9bfd47c8c940e6eea9e4a57ff7a4db43a798b404d256307a2bb2e8b5b4"
+      "sha256": "0efb4f96b09816a3b9e4578daa5e1c14c694ea5fd02cebd3f3ae8bf4b40afd49"
     },
     {
       "path": "src-tauri/src/tally/capability_packs.rs",
@@ -363,7 +363,7 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "33168c5bbea21d6628204c85d96a8ebf37f5bfa2a9ec6c1a423fc83cac987cf0"
+      "sha256": "478258cd77a543aa0d691c3fa05cb0b5cee5179296c3e13845aa44bfbd2332ee"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
@@ -406,5 +406,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "61ddfe6669887ea45c278081b71f2f76616c2ee5274007eeba02d0b2512c33cd"
+  "manifest_sha256": "e7b0a8babc14d7247de20c965086de6131add8690105998b69e6d935b7e2f8ba"
 }

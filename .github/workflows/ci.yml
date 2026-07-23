@@ -149,7 +149,7 @@ jobs:
       - name: Test sealed canary runtime dispatch feature
         working-directory: src-tauri
         run: >-
-          cargo test --locked -p bridge --lib
+          cargo test --locked -p bridge-tally-write
           --features fixture-canary-runtime-dispatch
           sealed_fixture_canary_dispatch_posts_exactly_once_without_xml_escape
       - name: Test isolated native outstandings qualification path
@@ -185,7 +185,7 @@ jobs:
       - name: Lint sealed canary runtime dispatch feature
         working-directory: src-tauri
         run: >-
-          cargo clippy --locked -p bridge --lib
+          cargo clippy --locked -p bridge-tally-write
           --features fixture-canary-runtime-dispatch
           -- -D warnings
       - name: Lint isolated native outstandings qualification path
@@ -263,6 +263,11 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native prerequisites'
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-native-prerequisites.outputs.cache-hit }}`'
       - run: cargo check --locked --manifest-path src-tauri/Cargo.toml --workspace
+      - name: Check sealed canary runtime dispatch feature
+        working-directory: src-tauri
+        run: >-
+          cargo check --locked -p bridge --lib
+          --features fixture-canary-runtime-dispatch
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace
       - name: Test isolated native outstandings qualification feature
         working-directory: src-tauri

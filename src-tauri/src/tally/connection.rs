@@ -913,86 +913,17 @@ mod tests {
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TransportId,
     };
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    use bridge_tally_write::{
-        authorize_fixture_canary, fixture_canary_ledger_mutation,
-        prepare_fixture_canary_ledger_import, preview_ledger_import,
-        FixtureCanaryAuthorizationRequest, IdempotencyRegistry, SyntheticCompany,
-        FIXTURE_CANARY_MAPPING_VERSION,
-    };
     use std::time::Duration;
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     const CANARY_QUERY_DIGEST: &str =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    const FIXTURE_COMPANY_GUID: &str = "00000000-0000-4000-8000-000000000001";
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    const FIXTURE_COMMITMENT: &str =
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
     fn canary_readback(ledger_name: &str, company_guid: &str, query_digest: &str) -> String {
         format!(
             r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="bridge.tally.ledger-write-readback/1" OBJECTTYPE="LEDGER" NAME="BRIDGE SYNTHETIC BOOK" GUID="{company_guid}" RECORDCOUNT="1" QUERYIDENTITYSETSHA256="{query_digest}"/><LEDGER REMOTEID="bridge-canary-remote-id" NAME="{ledger_name}"><PARENT>BRIDGE SYNTHETIC GROUP</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></BODY></ENVELOPE>"#
         )
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    fn sealed_fixture_canary() -> bridge_tally_write::PreparedFixtureCanary {
-        let company = SyntheticCompany::new("BRIDGE SYNTHETIC BOOK", FIXTURE_COMPANY_GUID)
-            .expect("synthetic company");
-        let mutation = fixture_canary_ledger_mutation().expect("fixed canary mutation");
-        let preview = preview_ledger_import(&company, &[mutation], FIXTURE_CANARY_MAPPING_VERSION)
-            .expect("fixed canary preview");
-        let authorization = authorize_fixture_canary(FixtureCanaryAuthorizationRequest {
-            explicit_opt_in: true,
-            synthetic_company_confirmed: true,
-            company_guid: FIXTURE_COMPANY_GUID.to_owned(),
-            backup_guidance_acknowledged: true,
-            review_commitment_sha256: FIXTURE_COMMITMENT.to_owned(),
-            reservation_id: "fixture-runtime-dispatch-reservation".to_owned(),
-            reservation_payload_sha256: FIXTURE_COMMITMENT.to_owned(),
-            approved_wire_sha256: preview.wire_digest().as_hex().to_owned(),
-            approved_intended_state_sha256: preview.intended_state_digest().as_hex().to_owned(),
-            approved_identity_query_sha256: preview.identity_query_digest().as_hex().to_owned(),
-            idempotency_key: "fixture-runtime-dispatch-idempotency".to_owned(),
-        })
-        .expect("authorize fixed canary");
-        prepare_fixture_canary_ledger_import(
-            company,
-            authorization,
-            &mut IdempotencyRegistry::default(),
-        )
-        .expect("prepare fixed canary")
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    #[tokio::test]
-    async fn sealed_fixture_canary_dispatch_posts_exactly_once_without_xml_escape() {
-        let simulator = Simulator::spawn(ScenarioPlan::new(Fixture::ImportCounters))
-            .expect("spawn synthetic loopback server");
-        let client = TallyClient::new(TallyConfig {
-            host: simulator.address().ip().to_string(),
-            port: simulator.address().port(),
-        })
-        .expect("construct bounded loopback transport");
-        let capsule = sealed_fixture_canary()
-            .seal_for_dispatch()
-            .expect("seal exact canary");
-        let receipt = client
-            .dispatch_sealed_fixture_canary_once(capsule)
-            .await
-            .expect("single synthetic import response");
-
-        assert!(format!("{receipt:?}").contains("[redacted]"));
-        let observed = simulator.finish().expect("observe one request");
-        assert_eq!(observed.method, "POST");
-        assert_eq!(observed.path, "/");
-        assert!(observed.bytes_received > 0);
     }
 
     #[test]
