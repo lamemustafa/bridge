@@ -47,6 +47,18 @@ pub(crate) struct PreparedSealedCanaryPreflight {
     pub prepared: PreparedFixtureCanary,
 }
 
+/// Every source-derived value that can reject preparation is validated before
+/// the irreversible one-time reservation is consumed.
+struct ValidatedFixedCanary {
+    company: SyntheticCompany,
+    company_name: ValidatedCompanyName,
+    expected_company_guid: String,
+    ledger_name: ValidatedCanaryLedgerName,
+    identity_query_sha256: ValidatedIdentityQuerySha256,
+    wire_sha256: String,
+    intended_state_sha256: String,
+}
+
 fn validate_operator_assertions(request: &PrepareSealedCanaryPreflightRequest) -> Result<()> {
     if !request.explicit_opt_in {
         bail!("sealed_canary_preflight_explicit_opt_in_required");
@@ -57,36 +69,54 @@ fn validate_operator_assertions(request: &PrepareSealedCanaryPreflightRequest) -
     if !request.backup_guidance_acknowledged {
         bail!("sealed_canary_preflight_backup_acknowledgement_required");
     }
+    if request.review_commitment_sha256.len() != 64
+        || !request
+            .review_commitment_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        bail!("sealed_canary_preflight_review_commitment_invalid");
+    }
     Ok(())
+}
+
+fn validate_fixed_canary(pin: &SnapshotSourcePin) -> Result<ValidatedFixedCanary> {
+    let company = SyntheticCompany::new(pin.display_name.clone(), pin.company_guid.clone())?;
+    let mutation = fixture_canary_ledger_mutation()?;
+    let preview = preview_ledger_import(&company, &[mutation], FIXTURE_CANARY_MAPPING_VERSION)?;
+    Ok(ValidatedFixedCanary {
+        company,
+        company_name: ValidatedCompanyName::new(pin.display_name.clone())?,
+        expected_company_guid: pin.company_guid.clone(),
+        ledger_name: ValidatedCanaryLedgerName::new(FIXTURE_CANARY_LEDGER_NAME)?,
+        identity_query_sha256: ValidatedIdentityQuerySha256::new(
+            preview.identity_query_digest().as_hex(),
+        )?,
+        wire_sha256: preview.wire_digest().as_hex().to_owned(),
+        intended_state_sha256: preview.intended_state_digest().as_hex().to_owned(),
+    })
 }
 
 fn materialize_fixed_preflight(
     request: &PrepareSealedCanaryPreflightRequest,
-    pin: &SnapshotSourcePin,
+    fixed_canary: ValidatedFixedCanary,
     reservation: &WriteCanaryReservationRef,
 ) -> Result<PreparedSealedCanaryPreflight> {
-    if pin.company_id != request.company_id {
-        bail!("sealed_canary_preflight_persisted_company_mismatch");
-    }
-
-    let company = SyntheticCompany::new(pin.display_name.clone(), pin.company_guid.clone())?;
-    let mutation = fixture_canary_ledger_mutation()?;
-    let preview = preview_ledger_import(&company, &[mutation], FIXTURE_CANARY_MAPPING_VERSION)?;
     let authorization = authorize_fixture_canary(FixtureCanaryAuthorizationRequest {
         explicit_opt_in: request.explicit_opt_in,
         synthetic_company_confirmed: request.synthetic_company_confirmed,
-        company_guid: pin.company_guid.clone(),
+        company_guid: fixed_canary.expected_company_guid.clone(),
         backup_guidance_acknowledged: request.backup_guidance_acknowledged,
         review_commitment_sha256: request.review_commitment_sha256.clone(),
         reservation_id: reservation.id.clone(),
         reservation_payload_sha256: reservation.reservation_payload_sha256.clone(),
-        approved_wire_sha256: preview.wire_digest().as_hex().to_owned(),
-        approved_intended_state_sha256: preview.intended_state_digest().as_hex().to_owned(),
-        approved_identity_query_sha256: preview.identity_query_digest().as_hex().to_owned(),
+        approved_wire_sha256: fixed_canary.wire_sha256,
+        approved_intended_state_sha256: fixed_canary.intended_state_sha256,
+        approved_identity_query_sha256: fixed_canary.identity_query_sha256.as_str().to_owned(),
         idempotency_key: format!("fixture-canary:{}", reservation.id),
     })?;
     let prepared = prepare_fixture_canary_ledger_import(
-        company,
+        fixed_canary.company,
         authorization,
         &mut IdempotencyRegistry::default(),
     )?;
@@ -101,12 +131,10 @@ fn materialize_fixed_preflight(
     };
 
     Ok(PreparedSealedCanaryPreflight {
-        company: ValidatedCompanyName::new(pin.display_name.clone())?,
-        expected_company_guid: pin.company_guid.clone(),
-        ledger_name: ValidatedCanaryLedgerName::new(FIXTURE_CANARY_LEDGER_NAME)?,
-        identity_query_sha256: ValidatedIdentityQuerySha256::new(
-            binding.identity_query_sha256.clone(),
-        )?,
+        company: fixed_canary.company_name,
+        expected_company_guid: fixed_canary.expected_company_guid,
+        ledger_name: fixed_canary.ledger_name,
+        identity_query_sha256: fixed_canary.identity_query_sha256,
         binding,
         prepared,
     })
@@ -121,6 +149,12 @@ pub(crate) async fn prepare_sealed_canary_preflight(
 ) -> Result<PreparedSealedCanaryPreflight> {
     validate_operator_assertions(&request)?;
     let pin = repository.snapshot_source_pin(&request.company_id).await?;
+    if pin.company_id != request.company_id {
+        bail!("sealed_canary_preflight_persisted_company_mismatch");
+    }
+    // Validate every caller- and source-dependent fixed payload input before
+    // consuming the fixture's irreversible one-time reservation.
+    let fixed_canary = validate_fixed_canary(&pin)?;
     let reservation = repository
         .reserve_write_canary(WriteCanaryReservationInput {
             company_id: request.company_id.clone(),
@@ -128,7 +162,7 @@ pub(crate) async fn prepare_sealed_canary_preflight(
             reserved_at_unix_ms: Utc::now().timestamp_millis(),
         })
         .await?;
-    let preparation = materialize_fixed_preflight(&request, &pin, &reservation)?;
+    let preparation = materialize_fixed_preflight(&request, fixed_canary, &reservation)?;
     repository
         .bind_write_canary_payload(WriteCanaryPayloadBindingInput {
             company_id: preparation.binding.company_id.clone(),
@@ -149,30 +183,41 @@ pub(crate) async fn prepare_sealed_canary_preflight(
 mod tests {
     use super::*;
 
-    #[test]
-    fn preparation_derives_binding_only_from_the_fixed_canary() {
-        let request = PrepareSealedCanaryPreflightRequest {
+    fn request() -> PrepareSealedCanaryPreflightRequest {
+        PrepareSealedCanaryPreflightRequest {
             company_id: "synthetic-company".to_owned(),
             review_commitment_sha256: "a".repeat(64),
             explicit_opt_in: true,
             synthetic_company_confirmed: true,
             backup_guidance_acknowledged: true,
-        };
-        let pin = SnapshotSourcePin {
-            company_id: request.company_id.clone(),
+        }
+    }
+
+    fn pin(company_id: String) -> SnapshotSourcePin {
+        SnapshotSourcePin {
+            company_id,
             endpoint_id: "synthetic-endpoint".to_owned(),
             canonical_origin: "synthetic-origin".to_owned(),
             display_name: "Synthetic Fixture Company".to_owned(),
             company_guid: "synthetic-company-guid".to_owned(),
-        };
-        let reservation = WriteCanaryReservationRef {
+        }
+    }
+
+    fn reservation() -> WriteCanaryReservationRef {
+        WriteCanaryReservationRef {
             id: "synthetic-reservation".to_owned(),
             enrollment_id: "synthetic-enrollment".to_owned(),
             reservation_payload_sha256: "b".repeat(64),
             reserved_at_unix_ms: 1_000,
-        };
+        }
+    }
 
-        let preparation = materialize_fixed_preflight(&request, &pin, &reservation)
+    #[test]
+    fn preparation_derives_binding_only_from_the_fixed_canary() {
+        let request = request();
+        let pin = pin(request.company_id.clone());
+        let fixed_canary = validate_fixed_canary(&pin).expect("fixed source validates");
+        let preparation = materialize_fixed_preflight(&request, fixed_canary, &reservation())
             .expect("fixed synthetic fixture must prepare");
 
         assert_eq!(preparation.company.as_str(), pin.display_name);
@@ -187,10 +232,10 @@ mod tests {
             preparation.binding.review_commitment_sha256,
             request.review_commitment_sha256,
         );
-        assert_eq!(preparation.binding.reservation_id, reservation.id);
+        assert_eq!(preparation.binding.reservation_id, reservation().id);
         assert_eq!(
             preparation.binding.reservation_payload_sha256,
-            reservation.reservation_payload_sha256,
+            reservation().reservation_payload_sha256,
         );
         assert_eq!(
             preparation.binding.wire_sha256,
@@ -200,5 +245,24 @@ mod tests {
             preparation.binding.intended_state_sha256,
             preparation.prepared.intended_state_digest().as_hex(),
         );
+    }
+
+    #[test]
+    fn source_values_that_cannot_materialize_fail_before_reservation() {
+        let request = request();
+        let mut oversized_name = pin(request.company_id.clone());
+        oversized_name.display_name = "n".repeat(256);
+        assert!(validate_fixed_canary(&oversized_name).is_err());
+
+        let mut oversized_guid = pin(request.company_id);
+        oversized_guid.company_guid = "g".repeat(256);
+        assert!(validate_fixed_canary(&oversized_guid).is_err());
+    }
+
+    #[test]
+    fn invalid_review_commitment_fails_before_reservation() {
+        let mut request = request();
+        request.review_commitment_sha256 = "not-a-sha256".to_owned();
+        assert!(validate_operator_assertions(&request).is_err());
     }
 }
