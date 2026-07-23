@@ -251,7 +251,7 @@
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/src/server.rs",
-      "sha256": "8d91ece4f1d8b4958b6dfd1761fbeeae4992d09cc5eac630d58c9e3f6c013527"
+      "sha256": "7c6830ae96c030e2ad499d1f9daf6078cc5777a78c411213f4a659b8b4c81147"
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/tests/protocol_simulator.rs",
@@ -414,5 +414,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "f915b487950812c099a9800fa2bca45b3b655533c0b18619195a6192e480cd7b"
+  "manifest_sha256": "23d8e0a37897b339d32f2ca3dd5b6d6d7b22a04b8bd5059a7137fd741857784e"
 }

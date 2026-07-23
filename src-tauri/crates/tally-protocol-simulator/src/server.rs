@@ -413,16 +413,16 @@ fn has_tally_xml_content_type(request: &[u8]) -> bool {
     let Some(header_end) = find_bytes(request, b"\r\n\r\n") else {
         return false;
     };
-    String::from_utf8_lossy(&request[..header_end])
-        .lines()
-        .skip(1)
-        .any(|line| {
-            let Some((name, value)) = line.split_once(':') else {
-                return false;
-            };
-            name.eq_ignore_ascii_case("content-type")
-                && value.trim().eq_ignore_ascii_case("text/xml; charset=utf-8")
-        })
+    let headers = String::from_utf8_lossy(&request[..header_end]);
+    let mut content_types = headers.lines().skip(1).filter_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-type")
+            .then_some(value.trim())
+    });
+    matches!(
+        (content_types.next(), content_types.next()),
+        (Some(value), None) if value.eq_ignore_ascii_case("text/xml; charset=utf-8")
+    )
 }
 
 fn request_body(request: &[u8]) -> &[u8] {
@@ -560,6 +560,9 @@ mod tests {
         ));
         assert!(!has_tally_xml_content_type(
             b"POST / HTTP/1.1\r\nContent-Type: application/xml; charset=utf-8\r\n\r\n<E />"
+        ));
+        assert!(!has_tally_xml_content_type(
+            b"POST / HTTP/1.1\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Type: application/xml\r\n\r\n<E />"
         ));
     }
 
