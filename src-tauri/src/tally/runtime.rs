@@ -550,18 +550,48 @@ impl TallyRuntime {
             .await
     }
 
-    /// Issues one sealed fixture-canary import through an existing endpoint
-    /// session. Unlike every read path, this bypasses the read retry runtime:
-    /// a consumed dispatch claim must never cause a second HTTP request.
+    /// Acquires the exclusive dispatch lease and verifies the pinned company
+    /// GUID through the sealed readback profile immediately before the import.
+    /// The returned lease must remain held for the sole import and final
+    /// readback; no ordinary Bridge read can interleave with that sequence.
     #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    pub(crate) async fn dispatch_fixture_canary_once(
+    pub(crate) async fn begin_verified_canary_dispatch(
         &self,
         config: TallyConfig,
+        company: ValidatedCompanyName,
+        ledger_name: ValidatedCanaryLedgerName,
+        identity_query_sha256: ValidatedIdentityQuerySha256,
+        expected_company_guid: String,
+    ) -> anyhow::Result<CanaryDispatchLease> {
+        let lease = self.begin_canary_dispatch(&config)?;
+        self.fetch_ledger_canary_readback_under_dispatch(
+            &lease,
+            config,
+            company,
+            ledger_name,
+            identity_query_sha256,
+            expected_company_guid,
+        )
+        .await?;
+        Ok(lease)
+    }
+
+    /// Issues exactly one sealed fixture-canary import while the previously
+    /// verified dispatch lease remains exclusive. Unlike every read path, this
+    /// bypasses retries: a durable dispatch claim permits no second HTTP send.
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    pub(crate) async fn dispatch_fixture_canary_once_under_dispatch(
+        &self,
+        lease: &CanaryDispatchLease,
+        config: &TallyConfig,
         capsule: SealedFixtureCanaryDispatch,
-    ) -> Result<(SealedFixtureCanaryReceipt, CanaryDispatchLease), FixtureCanaryDispatchError> {
-        let lease = self
-            .begin_canary_dispatch(&config)
-            .map_err(|_| FixtureCanaryDispatchError::RuntimeUnavailable)?;
+    ) -> Result<SealedFixtureCanaryReceipt, FixtureCanaryDispatchError> {
+        if EndpointKey::from_config(config)
+            .map(|endpoint| endpoint != lease.session.endpoint)
+            .unwrap_or(true)
+        {
+            return Err(FixtureCanaryDispatchError::RuntimeUnavailable);
+        }
         let session = Arc::clone(&lease.session);
         let _request = session
             .begin_request()
@@ -573,7 +603,7 @@ impl TallyRuntime {
         {
             Ok(receipt) => {
                 session.record_result(HealthOutcome::TransportSuccess);
-                Ok((receipt, lease))
+                Ok(receipt)
             }
             Err(error) => {
                 session.record_result(HealthOutcome::TransportFailure);

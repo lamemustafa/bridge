@@ -11,8 +11,8 @@ rust-version = "1.96"
 default-run = "bridge"
 
 [features]
-# Deliberately disabled in shipped builds. This feature stages the sealed,
-# one-send fixture-canary runtime behind a separately reviewed command layer.
+# Deliberately disabled in shipped builds. This feature enables the separately
+# reviewed, one-send synthetic-canary command boundary and never a generic write API.
 fixture-canary-dispatch-seam = []
 fixture-canary-runtime-dispatch = ["fixture-canary-dispatch-seam"]
 

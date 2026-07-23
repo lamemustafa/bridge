@@ -35,12 +35,22 @@ sequence: it derives the fixed canary only from an enrolled local company pin,
 performs the exact one-time preflight read, repeats durable admission, and then
 consumes the capsule once to POST through Bridge's bounded loopback transport.
 Its raw request and response remain sealed, it has no generic payload API,
-retry loop, persistence hook, UI route, or Tauri command. The canonical loopback
-origin must match the enrolled source pin before the one-time reservation, and is
-rechecked from the prepared fixture before preflight. The coordinator claims durable exact
-preflight evidence before that one request, then performs the closed readback
-and stores only a digest-only final verdict. Any error after the claim is an
-unknown outcome and must not cause a resend.
+retry loop, persistence hook, or UI route. Only a build with the explicit
+non-default `fixture-canary-runtime-dispatch` feature exposes one Tauri command;
+that command accepts no payload, XML, target override, retry choice, evidence,
+or digest and returns only a final-verdict identifier and timestamp. It rechecks
+an explicit disposable-fixture acknowledgement and backup acknowledgement before
+starting the sealed sequence. The canonical loopback origin must match the
+enrolled source pin before the one-time reservation, and is rechecked from the
+prepared fixture before preflight and is revalidated on the exclusive dispatch
+lease immediately before import. The coordinator claims durable exact preflight
+evidence before its four-request sequence: preflight read, same-lease pinned-GUID
+revalidation, one import, and final readback. It stores only a digest-only final
+verdict. A failure before the durable
+dispatch claim is reported truthfully as no Tally import sent (though local
+one-time state may need review). A failure after that claim is an unknown
+outcome: do not retry or send another write; inspect Tally and revoke the
+fixture before a new enrollment.
 
 Revocation appends a local `operator_revoked` event. It changes the local
 candidate gate only and never alters Tally. A revoked fixture requires a new

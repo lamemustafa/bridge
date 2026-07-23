@@ -28,11 +28,21 @@ use crate::{
         TallyConfig, TallyRuntime,
     },
 };
-use anyhow::{bail, Result};
+use anyhow::Result as AnyhowResult;
 use bridge_tally_protocol::xml_read_profiles::{
     ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
 };
 use chrono::Utc;
+
+/// Exact terminal classification for the runtime command boundary. A failure
+/// before the durable dispatch claim cannot have written to Tally; any failure
+/// after that claim is an unknown outcome because one import may have reached
+/// Tally without a recorded final verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SealedCanaryRuntimeSequenceError {
+    PreDispatch,
+    OutcomeUnknown,
+}
 
 /// Exact, sealed inputs for the only runtime-capable coordinator. It has no
 /// raw XML fields, generic request body, retry settings, or caller-selected
@@ -71,7 +81,7 @@ fn digest_only_result(verdict: WriteCanaryFinalVerdictRef) -> SealedCanaryRuntim
     }
 }
 
-fn validate_runtime_sequence_config(config: &TallyConfig) -> Result<()> {
+fn validate_runtime_sequence_config(config: &TallyConfig) -> AnyhowResult<()> {
     canonical_loopback_origin(config).map(|_| ())
 }
 
@@ -103,12 +113,15 @@ pub(crate) async fn run_sealed_canary_runtime_sequence(
     repository: &TallyMirrorRepository,
     runtime: &TallyRuntime,
     request: SealedCanaryRuntimeSequenceRequest,
-) -> Result<SealedCanaryRuntimeCoordinatorResult> {
-    let canonical_origin = canonical_loopback_origin(&request.config)?;
+) -> std::result::Result<SealedCanaryRuntimeCoordinatorResult, SealedCanaryRuntimeSequenceError> {
+    let canonical_origin = canonical_loopback_origin(&request.config)
+        .map_err(|_| SealedCanaryRuntimeSequenceError::PreDispatch)?;
     let preparation =
-        prepare_sealed_canary_preflight(repository, request.preparation, &canonical_origin).await?;
+        prepare_sealed_canary_preflight(repository, request.preparation, &canonical_origin)
+            .await
+            .map_err(|_| SealedCanaryRuntimeSequenceError::PreDispatch)?;
     if preparation.canonical_origin != canonical_origin {
-        bail!("sealed_canary_runtime_sequence_origin_mismatch");
+        return Err(SealedCanaryRuntimeSequenceError::PreDispatch);
     }
     let preflight = run_sealed_canary_preflight(
         repository,
@@ -116,7 +129,8 @@ pub(crate) async fn run_sealed_canary_runtime_sequence(
         into_preflight_request(request.config.clone(), &preparation),
         &preparation.prepared,
     )
-    .await?;
+    .await
+    .map_err(|_| SealedCanaryRuntimeSequenceError::PreDispatch)?;
     run_admitted_sealed_canary_runtime_dispatch(
         repository,
         runtime,
@@ -145,7 +159,7 @@ pub(crate) async fn run_admitted_sealed_canary_runtime_dispatch(
     repository: &TallyMirrorRepository,
     runtime: &TallyRuntime,
     request: SealedCanaryRuntimeCoordinatorRequest,
-) -> Result<SealedCanaryRuntimeCoordinatorResult> {
+) -> std::result::Result<SealedCanaryRuntimeCoordinatorResult, SealedCanaryRuntimeSequenceError> {
     let admission = admit_sealed_canary_runtime_dispatch(
         repository,
         SealedCanaryRuntimeAdmissionRequest {
@@ -156,11 +170,12 @@ pub(crate) async fn run_admitted_sealed_canary_runtime_dispatch(
         },
         &request.prepared,
     )
-    .await?;
+    .await
+    .map_err(|_| SealedCanaryRuntimeSequenceError::PreDispatch)?;
     if admission.preflight_evidence.id != request.dispatch.evidence.evidence_id
         || admission.preflight_evidence.attempt_id != request.dispatch.evidence.attempt_id
     {
-        bail!("sealed_canary_runtime_coordinator_admission_mismatch");
+        return Err(SealedCanaryRuntimeSequenceError::PreDispatch);
     }
 
     let verdict = run_sealed_canary_runtime_dispatch(
@@ -176,7 +191,15 @@ pub(crate) async fn run_admitted_sealed_canary_runtime_dispatch(
         },
         request.prepared,
     )
-    .await?;
+    .await
+    .map_err(|error| match error {
+        crate::tally::canary_preflight::SealedCanaryRuntimeDispatchError::PreDispatch => {
+            SealedCanaryRuntimeSequenceError::PreDispatch
+        }
+        crate::tally::canary_preflight::SealedCanaryRuntimeDispatchError::OutcomeUnknown => {
+            SealedCanaryRuntimeSequenceError::OutcomeUnknown
+        }
+    })?;
     Ok(digest_only_result(verdict))
 }
 

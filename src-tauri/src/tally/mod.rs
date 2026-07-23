@@ -23,7 +23,8 @@ pub(crate) mod canary_preflight_read_coordinator;
 )]
 pub(crate) mod canary_dispatch_admission;
 // The dispatch coordinator is compiled only with the explicit non-default
-// runtime feature. A future command boundary still needs separate review.
+// runtime feature. Its one-use Tauri command boundary is separately feature-gated
+// and exposes only a terminal digest-free receipt.
 #[cfg(feature = "fixture-canary-runtime-dispatch")]
 #[allow(
     dead_code,

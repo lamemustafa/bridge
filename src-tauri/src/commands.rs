@@ -36,6 +36,14 @@ use sha2::{Digest, Sha256};
 use tauri::State;
 use zeroize::Zeroizing;
 
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+use crate::tally::{
+    canary_preflight_preparation::PrepareSealedCanaryPreflightRequest,
+    canary_runtime_dispatch_coordinator::{
+        run_sealed_canary_runtime_sequence, SealedCanaryRuntimeSequenceRequest,
+    },
+};
+
 const MAX_DSC_PIN_BYTES: usize = 128;
 
 #[derive(Debug, Serialize)]
@@ -808,6 +816,32 @@ pub struct TallyWriteFixtureEnrollmentResponse {
     pub review_cleanup_warning: Option<&'static str>,
 }
 
+/// Explicit, non-default operator input for the one synthetic fixture canary.
+/// The command derives its payload solely from the active enrolled company pin;
+/// it accepts neither XML nor a generic write operation.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+#[derive(Debug, Deserialize)]
+pub struct DispatchTallySyntheticCanaryRequest {
+    pub config: TallyConfig,
+    pub mirror_company_id: String,
+    pub review_commitment_sha256: String,
+    pub explicit_dispatch_confirmation: bool,
+    pub synthetic_company_confirmed: bool,
+    pub backup_guidance_acknowledged: bool,
+}
+
+/// Redacted terminal receipt for the one sealed synthetic fixture canary.
+/// No payload, request, response, target, company identity, or digest is
+/// serialized across the Tauri boundary.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+#[derive(Debug, Serialize)]
+pub struct DispatchTallySyntheticCanaryResponse {
+    pub final_verdict_id: String,
+    pub recorded_at_unix_ms: i64,
+    pub tally_requests_attempted: u8,
+    pub tally_writes_attempted: u8,
+}
+
 #[tauri::command]
 pub async fn save_tally_setup(
     request: SaveTallySetupRequest,
@@ -1183,6 +1217,127 @@ pub async fn enroll_tally_write_fixture(
             "after_change", true, "Restart Bridge, probe again, and inspect local fixture status before retrying.",
         )),
         Err(error) => Err(error),
+    }
+}
+
+/// Executes exactly one sealed synthetic fixture canary only in a build that
+/// explicitly enables the non-default runtime-dispatch feature. The durable
+/// sequence reserves the fixed payload, reads its preflight state, consumes one
+/// dispatch claim, sends once, and records only a digest-only verdict. It has
+/// no retry path. A failure before the durable dispatch claim proves no import
+/// was sent; a failure after that claim is an unknown Tally outcome. Neither
+/// case may be retried automatically or manually.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+#[tauri::command]
+pub async fn dispatch_tally_synthetic_canary(
+    request: DispatchTallySyntheticCanaryRequest,
+    mirror: State<'_, TallyMirrorRepository>,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<DispatchTallySyntheticCanaryResponse, TallyCommandError> {
+    EndpointKey::from_config(&request.config).map_err(|_| {
+        tally_command_error(
+            "endpoint_configuration_invalid",
+            "Endpoint configuration",
+            "Tally endpoint validation failed before the synthetic canary started.",
+            "after_change",
+            false,
+            "Use the separately reviewed loopback endpoint, then start a new enrollment review.",
+        )
+    })?;
+    if request.mirror_company_id.trim().is_empty() || request.mirror_company_id.len() > 128 {
+        return Err(tally_command_error(
+            "fixture_company_scope_invalid",
+            "Tally application",
+            "The persisted synthetic fixture scope is invalid.",
+            "after_change",
+            false,
+            "Probe, save, and enroll one GUID-bearing disposable synthetic company before retrying.",
+        ));
+    }
+    if request.review_commitment_sha256.len() != 64
+        || !request
+            .review_commitment_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(tally_command_error(
+            "fixture_review_commitment_invalid",
+            "Operation",
+            "The reviewed synthetic-fixture commitment is invalid.",
+            "after_change",
+            false,
+            "Probe, review, and enroll the disposable synthetic fixture again before attempting a canary.",
+        ));
+    }
+    if !request.explicit_dispatch_confirmation
+        || !request.synthetic_company_confirmed
+        || !request.backup_guidance_acknowledged
+    {
+        return Err(tally_command_error(
+            "synthetic_canary_explicit_confirmation_required",
+            "Operation",
+            "The synthetic canary requires all explicit operator confirmations before it can start.",
+            "safe",
+            false,
+            "Confirm the disposable synthetic company, offline backup guidance, and one-time dispatch action before retrying.",
+        ));
+    }
+
+    let result = run_sealed_canary_runtime_sequence(
+        &mirror,
+        &runtime,
+        SealedCanaryRuntimeSequenceRequest {
+            config: request.config,
+            preparation: PrepareSealedCanaryPreflightRequest {
+                company_id: request.mirror_company_id,
+                review_commitment_sha256: request.review_commitment_sha256,
+                explicit_opt_in: request.explicit_dispatch_confirmation,
+                synthetic_company_confirmed: request.synthetic_company_confirmed,
+                backup_guidance_acknowledged: request.backup_guidance_acknowledged,
+            },
+        },
+    )
+    .await
+    .map_err(|error| match error {
+        crate::tally::canary_runtime_dispatch_coordinator::SealedCanaryRuntimeSequenceError::PreDispatch => {
+            synthetic_canary_pre_dispatch_error()
+        }
+        crate::tally::canary_runtime_dispatch_coordinator::SealedCanaryRuntimeSequenceError::OutcomeUnknown => {
+            synthetic_canary_outcome_unknown_error()
+        }
+    })?;
+
+    Ok(DispatchTallySyntheticCanaryResponse {
+        final_verdict_id: result.final_verdict_id,
+        recorded_at_unix_ms: result.recorded_at_unix_ms,
+        tally_requests_attempted: 4,
+        tally_writes_attempted: 1,
+    })
+}
+
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+fn synthetic_canary_pre_dispatch_error() -> TallyCommandError {
+    TallyCommandError {
+        code: "synthetic_canary_pre_dispatch_failed",
+        category: "Operation",
+        message: "The synthetic canary did not reach its durable dispatch claim. No Tally import was sent.".to_owned(),
+        retry: "after_change",
+        local_state_changed: true,
+        tally_state_may_have_changed: false,
+        remediation: "Inspect the local fixture state and the preflight read result, then revoke the fixture and create a new reviewed enrollment before another canary.",
+    }
+}
+
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+fn synthetic_canary_outcome_unknown_error() -> TallyCommandError {
+    TallyCommandError {
+        code: "synthetic_canary_outcome_unknown",
+        category: "Tally application",
+        message: "The one-time synthetic canary did not return a recorded final verdict. Tally state may have changed; do not retry or send another write.".to_owned(),
+        retry: "never",
+        local_state_changed: true,
+        tally_state_may_have_changed: true,
+        remediation: "Inspect the local fixture status and the dedicated synthetic company in Tally, preserve the result for review, and revoke the fixture before any new enrollment.",
     }
 }
 
@@ -2199,6 +2354,32 @@ mod tests {
         ));
         assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
         assert_eq!(discovery_limit.category, "Discovery listing");
+    }
+
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    #[test]
+    fn synthetic_canary_pre_dispatch_failure_is_truthful_and_redacted() {
+        let error = super::synthetic_canary_pre_dispatch_error();
+        let json = serde_json::to_string(&error).expect("serialize canary error");
+        assert_eq!(error.code, "synthetic_canary_pre_dispatch_failed");
+        assert_eq!(error.retry, "after_change");
+        assert!(error.local_state_changed);
+        assert!(!error.tally_state_may_have_changed);
+        assert!(!json.contains("127.0.0.1"));
+        assert!(!json.contains("xml"));
+    }
+
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    #[test]
+    fn synthetic_canary_failure_is_terminal_and_does_not_expose_transport_detail() {
+        let error = super::synthetic_canary_outcome_unknown_error();
+        let json = serde_json::to_string(&error).expect("serialize canary error");
+        assert_eq!(error.code, "synthetic_canary_outcome_unknown");
+        assert_eq!(error.retry, "never");
+        assert!(error.local_state_changed);
+        assert!(error.tally_state_may_have_changed);
+        assert!(!json.contains("127.0.0.1"));
+        assert!(!json.contains("xml"));
     }
 
     #[test]
