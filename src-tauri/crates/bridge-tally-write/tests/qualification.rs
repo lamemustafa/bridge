@@ -8,6 +8,9 @@ use bridge_tally_write::{
     FIXTURE_CANARY_MAPPING_VERSION, MAX_LEDGER_WRITE_BATCH,
 };
 
+#[cfg(feature = "fixture-canary-dispatch-seam")]
+use bridge_tally_write::SealedFixtureCanaryDispatch;
+
 const COMPANY_GUID: &str = "00000000-0000-4000-8000-000000000001";
 const REMOTE_ID: &str = "bridge-synthetic-ledger-001";
 const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -291,6 +294,35 @@ fn fixture_canary_is_fixed_reservation_bound_and_dispatch_ineligible() {
         authorize_fixture_canary(mismatched_request).unwrap_err(),
         QualificationError::ExplicitOptInRequired
     );
+}
+
+#[cfg(feature = "fixture-canary-dispatch-seam")]
+#[test]
+fn sealed_fixture_dispatch_capability_is_explicit_and_redacted() {
+    let synthetic_company = company();
+    let authorization = fixture_authorization(
+        &synthetic_company,
+        "fixture-dispatch-seam-reservation",
+        "fixture-dispatch-seam-idempotency",
+    );
+    let prepared = prepare_fixture_canary_ledger_import(
+        synthetic_company,
+        authorization,
+        &mut IdempotencyRegistry::default(),
+    )
+    .expect("prepare fixed fixture canary");
+
+    let approved_wire_digest = prepared.wire_digest().clone();
+    let capsule: SealedFixtureCanaryDispatch = prepared
+        .seal_for_dispatch()
+        .expect("seal exact fixed fixture canary payload");
+    assert_eq!(capsule.wire_digest(), &approved_wire_digest);
+    let debug = format!("{capsule:?}");
+    assert!(debug.contains("[redacted]"));
+    assert!(debug.contains("absent"));
+    assert!(!debug.contains("BRIDGE-CANARY-LEDGER-V1"));
+
+    assert_eq!(capsule.wire_digest(), &approved_wire_digest);
 }
 
 #[test]

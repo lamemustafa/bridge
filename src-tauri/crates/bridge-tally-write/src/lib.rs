@@ -571,9 +571,40 @@ pub struct PreparedLedgerImport {
 /// the generic import lifecycle. A separately reviewed coordinator may derive
 /// sealed, non-dispatchable preflight evidence from an exact readback, but it
 /// can never obtain a transport, receipt, or generic qualified-import state.
-#[derive(Clone)]
 pub struct PreparedFixtureCanary {
     prepared: PreparedLedgerImport,
+}
+
+/// An opaque, non-dispatchable capability capsule for the fixed fixture-canary
+/// payload commitment.
+///
+/// This is deliberately feature-gated and unavailable to Bridge's normal
+/// build. It carries no transport, endpoint, retry policy, or persistence
+/// hook, and it does not expose the XML. A separately reviewed runtime
+/// coordinator must bind this capsule to a durable dispatch claim before it
+/// introduces the one-send operation.
+#[cfg(feature = "fixture-canary-dispatch-seam")]
+pub struct SealedFixtureCanaryDispatch {
+    wire_digest: WirePayloadDigest,
+}
+
+#[cfg(feature = "fixture-canary-dispatch-seam")]
+impl std::fmt::Debug for SealedFixtureCanaryDispatch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SealedFixtureCanaryDispatch")
+            .field("wire_digest", &self.wire_digest)
+            .field("payload", &"[redacted]")
+            .field("transport", &"absent")
+            .finish()
+    }
+}
+
+#[cfg(feature = "fixture-canary-dispatch-seam")]
+impl SealedFixtureCanaryDispatch {
+    pub fn wire_digest(&self) -> &WirePayloadDigest {
+        &self.wire_digest
+    }
 }
 
 impl std::fmt::Debug for PreparedFixtureCanary {
@@ -609,6 +640,24 @@ impl PreparedFixtureCanary {
 
     pub const fn dispatch_eligible(&self) -> bool {
         false
+    }
+
+    /// Seals the immutable fixture payload commitment only in the separately
+    /// opted-in dispatch-seam build. The normal Bridge build cannot name this
+    /// type or invoke this method.
+    #[cfg(feature = "fixture-canary-dispatch-seam")]
+    pub fn seal_for_dispatch(self) -> Result<SealedFixtureCanaryDispatch, QualificationError> {
+        let wire_xml = build_import_xml(&self.prepared.company, &self.prepared.mutations);
+        let wire_digest = WirePayloadDigest(domain_digest(
+            b"bridge.tally.ledger-import-wire/1\0",
+            wire_xml.as_bytes(),
+        ));
+        if wire_digest != self.prepared.wire_digest {
+            return Err(QualificationError::FixtureCanaryPayloadMismatch);
+        }
+        Ok(SealedFixtureCanaryDispatch {
+            wire_digest: self.prepared.wire_digest,
+        })
     }
 }
 
@@ -1078,6 +1127,8 @@ pub enum QualificationError {
     BackupAcknowledgementRequired,
     #[error("approval evidence does not bind the exact preview commitments")]
     ApprovalMismatch,
+    #[error("fixture canary payload does not match its approved commitment")]
+    FixtureCanaryPayloadMismatch,
     #[error("controlled ledger write batch must contain between one and ten items")]
     InvalidBatchSize,
     #[error("controlled ledger write input is invalid: {0}")]
