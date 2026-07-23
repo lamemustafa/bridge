@@ -127,6 +127,10 @@ async fn production_transport_decodes_utf16_across_closed_framing_modes() {
         let observed = simulator.finish().expect("finish simulator");
         assert_eq!(observed.method, "POST");
         assert_eq!(observed.path, "/");
+        assert!(
+            observed.request_content_type_is_tally_xml,
+            "Tally's XML gateway requires the documented XML media type"
+        );
         assert!(observed.request_processed);
     }
 }
@@ -174,7 +178,11 @@ async fn decoded_only_transport_streams_all_encodings_without_retaining_wire_bod
         );
         assert_eq!(response.http_status(), 200);
         assert!(!format!("{response:?}").contains("<ENVELOPE>"));
-        simulator.finish().expect("finish decoded-only simulator");
+        let observed = simulator.finish().expect("finish decoded-only simulator");
+        assert!(
+            observed.request_content_type_is_tally_xml,
+            "decoded-only transport must preserve Tally's documented XML media type"
+        );
     }
 }
 

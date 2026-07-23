@@ -26,6 +26,9 @@ pub const MAX_SEQUENCE_REQUESTS: usize = 64;
 pub struct ObservedRequest {
     pub method: String,
     pub path: String,
+    /// Sanitized transport metadata used by integration tests. The simulator
+    /// never retains arbitrary request headers or the request body.
+    pub request_content_type_is_tally_xml: bool,
     pub bytes_received: usize,
     pub request_body_bytes: usize,
     pub request_body_sha256: String,
@@ -241,6 +244,7 @@ fn serve_request(
     let mut observed = ObservedRequest {
         method,
         path,
+        request_content_type_is_tally_xml: has_tally_xml_content_type(&request),
         bytes_received: request.len(),
         request_body_bytes: request_body.len(),
         request_body_sha256: hex::encode(Sha256::digest(request_body)),
@@ -405,6 +409,22 @@ fn request_line(request: &[u8]) -> (String, String) {
     )
 }
 
+fn has_tally_xml_content_type(request: &[u8]) -> bool {
+    let Some(header_end) = find_bytes(request, b"\r\n\r\n") else {
+        return false;
+    };
+    String::from_utf8_lossy(&request[..header_end])
+        .lines()
+        .skip(1)
+        .any(|line| {
+            let Some((name, value)) = line.split_once(':') else {
+                return false;
+            };
+            name.eq_ignore_ascii_case("content-type")
+                && value.trim().eq_ignore_ascii_case("text/xml; charset=utf-8")
+        })
+}
+
 fn request_body(request: &[u8]) -> &[u8] {
     find_bytes(request, b"\r\n\r\n")
         .and_then(|header_end| request.get(header_end + 4..))
@@ -532,6 +552,16 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tally_xml_content_type_classifier_is_exact_and_case_insensitive() {
+        assert!(has_tally_xml_content_type(
+            b"POST / HTTP/1.1\r\ncontent-type: TEXT/XML; CHARSET=UTF-8\r\n\r\n<E />"
+        ));
+        assert!(!has_tally_xml_content_type(
+            b"POST / HTTP/1.1\r\nContent-Type: application/xml; charset=utf-8\r\n\r\n<E />"
+        ));
+    }
 
     #[test]
     fn read_request_enforces_deadline_while_a_peer_drip_feeds_bytes() {
