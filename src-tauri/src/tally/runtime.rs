@@ -349,6 +349,7 @@ impl CachedProbeReservation {
         if !self.armed
             || !Arc::ptr_eq(&self.runtime_identity, &runtime.runtime_identity)
             || self.session.endpoint != EndpointKey::from_config(config)?
+            || self.session.canary_dispatch_active.load(Ordering::Acquire)
         {
             anyhow::bail!("Tally reviewed setup operation ownership changed");
         }
@@ -1135,10 +1136,16 @@ impl TallyRuntime {
             return Ok(None);
         };
         let now = chrono::Utc::now().timestamp_millis();
+        if session.canary_dispatch_active.load(Ordering::Acquire) {
+            anyhow::bail!("sealed canary dispatch is in progress");
+        }
         let mut cache = session
             .cached_probe
             .write()
             .map_err(|_| anyhow::anyhow!("Tally capability cache is unavailable"))?;
+        if session.canary_dispatch_active.load(Ordering::Acquire) {
+            anyhow::bail!("sealed canary dispatch is in progress");
+        }
         if session.active_ordinary_reads.load(Ordering::Acquire) != 0 {
             anyhow::bail!("Tally read operation is already in progress");
         }
@@ -1826,6 +1833,45 @@ mod tests {
                 .begin_canary_dispatch(&config)
                 .expect("dispatch resumes after ordinary read"),
         );
+    }
+
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    #[test]
+    fn sealed_canary_dispatch_lease_excludes_review_reservation_admission() {
+        let runtime = TallyRuntime::default();
+        let config = TallyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9052,
+        };
+        let session = runtime.session(config.clone()).expect("runtime session");
+        let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
+        *session.cached_probe.write().expect("capability cache") = Some(CachedProbe {
+            review_id: "review-canary-lease".to_string(),
+            observed_at_unix_ms,
+            freshness_origin_unix_ms: observed_at_unix_ms,
+            result: synthetic_probe_result(),
+            reserved: false,
+        });
+
+        let dispatch = runtime
+            .begin_canary_dispatch(&config)
+            .expect("admit sealed canary dispatch");
+        assert!(runtime
+            .reserve_cached_probe_fresh(&config, "review-canary-lease", 300_000)
+            .is_err());
+        drop(dispatch);
+
+        let reservation = runtime
+            .reserve_cached_probe_fresh(&config, "review-canary-lease", 300_000)
+            .expect("admit reservation after sealed dispatch")
+            .expect("fresh reviewed probe");
+        session
+            .canary_dispatch_active
+            .store(true, Ordering::Release);
+        assert!(reservation.authorize(&runtime, &config).is_err());
+        session
+            .canary_dispatch_active
+            .store(false, Ordering::Release);
     }
 
     #[test]
