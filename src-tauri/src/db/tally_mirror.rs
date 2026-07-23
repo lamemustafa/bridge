@@ -40,6 +40,8 @@ const MIRROR_MIGRATION_V17: &str =
     include_str!("migrations/0017_tally_write_canary_preflight_attempt.sql");
 const MIRROR_MIGRATION_V18: &str =
     include_str!("migrations/0018_tally_write_canary_preflight_evidence.sql");
+const MIRROR_MIGRATION_V19: &str =
+    include_str!("migrations/0019_tally_write_canary_dispatch_attempt.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -463,6 +465,21 @@ pub struct ActiveWriteCanaryPreflightEvidenceInput {
     pub evidence_id: String,
     pub readback_state_sha256: String,
     pub identity_coverage_sha256: String,
+}
+
+/// A one-time, durable claim that a future reviewed coordinator may consider
+/// dispatching the exact synthetic canary. The claim itself cannot send data.
+#[derive(Debug, Clone)]
+pub struct BeginWriteCanaryDispatchInput {
+    pub evidence: ActiveWriteCanaryPreflightEvidenceInput,
+    pub claimed_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteCanaryDispatchAttemptRef {
+    pub id: String,
+    pub evidence_id: String,
+    pub claimed_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1572,6 +1589,48 @@ impl TallyMirrorRepository {
         })
     }
 
+    /// Atomically consumes the sole no-send dispatch claim after rechecking
+    /// exact immutable preflight evidence and active enrollment. It creates no
+    /// transport capability and a replay fails closed rather than retrying.
+    pub async fn begin_write_canary_dispatch_attempt(
+        &self,
+        input: BeginWriteCanaryDispatchInput,
+    ) -> Result<WriteCanaryDispatchAttemptRef, MirrorError> {
+        if input.claimed_at_unix_ms <= 0 {
+            return Err(MirrorError::InvalidInput("canary_dispatch_claimed_at"));
+        }
+        let evidence = self
+            .active_write_canary_preflight_evidence(input.evidence)
+            .await?;
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("UPDATE tally_schema_migrations SET version = version WHERE version = 4")
+            .execute(&mut *transaction)
+            .await?;
+        let attempt_id = Uuid::new_v4().to_string();
+        let inserted = sqlx::query(
+            "INSERT INTO tally_write_canary_dispatch_attempts( \
+               id, evidence_id, contract_version, claimed_at_unix_ms \
+             ) VALUES (?1, ?2, 1, ?3) ON CONFLICT(evidence_id) DO NOTHING",
+        )
+        .bind(&attempt_id)
+        .bind(&evidence.id)
+        .bind(input.claimed_at_unix_ms)
+        .execute(&mut *transaction)
+        .await?
+        .rows_affected();
+        if inserted != 1 {
+            return Err(MirrorError::InvalidInput(
+                "canary_dispatch_attempt_already_claimed",
+            ));
+        }
+        transaction.commit().await?;
+        Ok(WriteCanaryDispatchAttemptRef {
+            id: attempt_id,
+            evidence_id: evidence.id,
+            claimed_at_unix_ms: input.claimed_at_unix_ms,
+        })
+    }
+
     pub async fn write_fixture_enrollment_status(
         &self,
         company_id: &str,
@@ -1975,9 +2034,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let write_canary_dispatch_attempt_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 19",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if write_canary_dispatch_attempt_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V19)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -5665,6 +5734,31 @@ mod tests {
                 "canary_preflight_evidence_not_active"
             ))
         ));
+        let dispatch = repository
+            .begin_write_canary_dispatch_attempt(BeginWriteCanaryDispatchInput {
+                evidence: evidence_gate.clone(),
+                claimed_at_unix_ms: 5_800,
+            })
+            .await
+            .expect("claim one no-send canary dispatch attempt");
+        assert_eq!(dispatch.evidence_id, evidence.id);
+        assert!(matches!(
+            repository
+                .begin_write_canary_dispatch_attempt(BeginWriteCanaryDispatchInput {
+                    evidence: evidence_gate.clone(),
+                    claimed_at_unix_ms: 5_801,
+                })
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_dispatch_attempt_already_claimed"
+            ))
+        ));
+        assert!(sqlx::query(
+            "UPDATE tally_write_canary_dispatch_attempts SET claimed_at_unix_ms = 1"
+        )
+        .execute(&repository.pool)
+        .await
+        .is_err());
         assert_eq!(
             repository
                 .record_write_canary_preflight_evidence(evidence_input.clone())
