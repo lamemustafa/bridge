@@ -5,7 +5,7 @@ inputs:
   save-cache:
     description: Save the restored distribution when this is a trusted non-PR run.
     required: false
-    default: 'false'
+    default: "false"
 
 outputs:
   cache-hit:
