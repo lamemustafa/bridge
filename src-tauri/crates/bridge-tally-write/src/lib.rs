@@ -12,7 +12,7 @@ use bridge_tally_protocol::{
     TallyImportApplicationStatus, TallyImportResult, BRIDGE_LEDGER_WRITE_READBACK_SCHEMA,
 };
 #[cfg(feature = "fixture-canary-runtime-dispatch")]
-use bridge_tally_transport::{TallyHttpTransport, TallyTransportError};
+use bridge_tally_transport::TallyTransportError;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -586,19 +586,20 @@ pub struct PreparedFixtureCanary {
 /// coordinator must bind this capsule to a durable dispatch claim before it
 /// introduces the one-send operation.
 #[cfg(feature = "fixture-canary-dispatch-seam")]
+#[allow(dead_code)] // Read only by Bridge's private in-crate runtime coordinator.
 pub struct SealedFixtureCanaryDispatch {
-    prepared: PreparedLedgerImport,
-    wire_xml: String,
-    wire_digest: WirePayloadDigest,
+    pub(crate) prepared: PreparedLedgerImport,
+    pub(crate) wire_xml: String,
+    pub(crate) wire_digest: WirePayloadDigest,
 }
 
 /// A one-send canary receipt that remains sealed until it is correlated with
 /// the exact closed readback profile. It never exposes the Tally response.
 #[cfg(feature = "fixture-canary-runtime-dispatch")]
 pub struct SealedFixtureCanaryReceipt {
-    prepared: PreparedLedgerImport,
-    receipt_xml: String,
-    wire_digest: WirePayloadDigest,
+    pub(crate) prepared: PreparedLedgerImport,
+    pub(crate) receipt_xml: String,
+    pub(crate) wire_digest: WirePayloadDigest,
 }
 
 /// Transport failure for the closed synthetic-canary path. A failure consumes
@@ -629,26 +630,6 @@ impl std::fmt::Debug for SealedFixtureCanaryDispatch {
 impl SealedFixtureCanaryDispatch {
     pub fn wire_digest(&self) -> &WirePayloadDigest {
         &self.wire_digest
-    }
-
-    /// Sends the fixed, exact canary once through Bridge's bounded loopback
-    /// transport. Consuming `self` prevents retrying or reusing its payload;
-    /// the raw response remains sealed in the returned receipt.
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    pub async fn dispatch_once(
-        self,
-        transport: &TallyHttpTransport,
-    ) -> Result<SealedFixtureCanaryReceipt, FixtureCanaryDispatchError> {
-        let receipt_xml = transport
-            .post_xml_decoded(self.wire_xml)
-            .await
-            .map_err(FixtureCanaryDispatchError::Transport)?
-            .into_text();
-        Ok(SealedFixtureCanaryReceipt {
-            prepared: self.prepared,
-            receipt_xml,
-            wire_digest: self.wire_digest,
-        })
     }
 }
 
@@ -1683,69 +1664,6 @@ fn domain_digest(domain: &[u8], value: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    use bridge_tally_transport::TallyEndpointConfig;
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator};
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    const FIXTURE_COMPANY_GUID: &str = "00000000-0000-4000-8000-000000000001";
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    const FIXTURE_COMMITMENT: &str =
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    fn sealed_fixture_canary() -> PreparedFixtureCanary {
-        let company = SyntheticCompany::new("BRIDGE SYNTHETIC BOOK", FIXTURE_COMPANY_GUID)
-            .expect("synthetic company");
-        let mutation = fixture_canary_ledger_mutation().expect("fixed canary mutation");
-        let preview = preview_ledger_import(&company, &[mutation], FIXTURE_CANARY_MAPPING_VERSION)
-            .expect("fixed canary preview");
-        let authorization = authorize_fixture_canary(FixtureCanaryAuthorizationRequest {
-            explicit_opt_in: true,
-            synthetic_company_confirmed: true,
-            company_guid: FIXTURE_COMPANY_GUID.to_owned(),
-            backup_guidance_acknowledged: true,
-            review_commitment_sha256: FIXTURE_COMMITMENT.to_owned(),
-            reservation_id: "fixture-runtime-dispatch-reservation".to_owned(),
-            reservation_payload_sha256: FIXTURE_COMMITMENT.to_owned(),
-            approved_wire_sha256: preview.wire_digest().as_hex().to_owned(),
-            approved_intended_state_sha256: preview.intended_state_digest().as_hex().to_owned(),
-            approved_identity_query_sha256: preview.identity_query_digest().as_hex().to_owned(),
-            idempotency_key: "fixture-runtime-dispatch-idempotency".to_owned(),
-        })
-        .expect("authorize fixed canary");
-        prepare_fixture_canary_ledger_import(
-            company,
-            authorization,
-            &mut IdempotencyRegistry::default(),
-        )
-        .expect("prepare fixed canary")
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    #[tokio::test]
-    async fn sealed_fixture_canary_dispatch_posts_exactly_once_without_xml_escape() {
-        let simulator = Simulator::spawn(ScenarioPlan::new(Fixture::ImportCounters))
-            .expect("spawn synthetic loopback server");
-        let transport = TallyHttpTransport::new(TallyEndpointConfig {
-            host: simulator.address().ip().to_string(),
-            port: simulator.address().port(),
-        })
-        .expect("construct bounded loopback transport");
-        let receipt = sealed_fixture_canary()
-            .seal_for_dispatch()
-            .expect("seal exact canary")
-            .dispatch_once(&transport)
-            .await
-            .expect("single synthetic import response");
-
-        assert!(format!("{receipt:?}").contains("[redacted]"));
-        let observed = simulator.finish().expect("observe one request");
-        assert_eq!(observed.method, "POST");
-        assert_eq!(observed.path, "/");
-        assert!(observed.bytes_received > 0);
-    }
 
     #[test]
     fn private_wire_builder_escapes_text_and_attributes() {

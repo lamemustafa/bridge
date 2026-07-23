@@ -398,7 +398,6 @@ dependencies = [
  "bridge-tally-protocol",
  "bridge-tally-runtime",
  "bridge-tally-transport",
- "bridge-tally-write",
  "chrono",
  "cryptoki",
  "getrandom 0.3.4",
@@ -567,9 +566,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "tally-protocol-simulator",
  "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]

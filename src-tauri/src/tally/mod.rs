@@ -11,7 +11,7 @@ pub mod runtime;
 pub mod serial_queue;
 pub mod tdl_engine;
 pub mod validators;
-pub mod write_sandbox;
+pub(crate) mod write_sandbox;
 pub mod xml_builder;
 pub mod xml_parser;
 

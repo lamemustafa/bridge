@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "43aa583eb67ab3a25d2efff991734fd612419b423c85b07d2ca589805c4b3117"
+      "sha256": "85e981e40be27e5b1b67e57a729c4029d00571ebbcf2102a5a8e7101c2dcbd12"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
@@ -83,11 +83,11 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "66d3e7fbc5d7883bd1e0047817683aa9bd5dc7fb5b78208d059de4ad8043e6ef"
+      "sha256": "c573025980bc8666294a5b05dffb14ccc88ce07948be369bed9941baed723a9d"
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "d981c6ea30faeb76a5bd9035be5fade6d9d658de4b49fd3e41fb72d2ca36c9ff"
+      "sha256": "2a74a222c074599dd52b2735b3dfd5a584b50add00c2d6046c1cb1a0cdc1f85c"
     },
     {
       "path": "src-tauri/crates/bridge-tally-canonical/Cargo.toml",
@@ -223,11 +223,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/Cargo.toml",
-      "sha256": "47749c638f76a06c53a2d4f149cbfafa976d78490d520dcb771204106b9b8661"
+      "sha256": "f40eac110a9ef6df2279001db4878c42b4c6795a48613c9ccd513a782506d1c9"
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/src/lib.rs",
-      "sha256": "a2c17b71036cc4097d9f9f081d3f2a23318825061c4316f7de06482507be595c"
+      "sha256": "8eb9dc3b449a239d130ebcf03c15a24ed8985119cf580fc53d29150afaa30cb0"
     },
     {
       "path": "src-tauri/crates/bridge-tally-write/tests/qualification.rs",
@@ -326,12 +326,16 @@
       "sha256": "713b5bd58d8f80bf989ea768bf3eec821d1b9baa9e0348285e36271dc61c5d36"
     },
     {
+      "path": "src-tauri/src/db/migrations/0021_tally_write_canary_preflight_target_binding.sql",
+      "sha256": "b27a3576795def376c46b7cd003244065ebe60f76eeb10b50bf8eb7c744cbe7a"
+    },
+    {
       "path": "src-tauri/src/db/tally_incremental.rs",
       "sha256": "bac2c859de102cf1e558f669dee0445a9406e95ee9923b6f52bd498ee768e73b"
     },
     {
       "path": "src-tauri/src/db/tally_mirror.rs",
-      "sha256": "dcc4b2afec814f49782017e3dddf32007f9fbaf6f3413c8c5e823915945ce1ce"
+      "sha256": "170edbe13e6bb4f2cec32380715ec7d974803c0a63de862b3a7387483bd1aa35"
     },
     {
       "path": "src-tauri/src/db/tally_write_store.rs",
@@ -355,7 +359,7 @@
     },
     {
       "path": "src-tauri/src/tally/canary_preflight.rs",
-      "sha256": "0efb4f96b09816a3b9e4578daa5e1c14c694ea5fd02cebd3f3ae8bf4b40afd49"
+      "sha256": "e997028c1bd412c8ae1ff884e47e26e03a2a9043db1efa604a87319d4bc8b175"
     },
     {
       "path": "src-tauri/src/tally/capability_packs.rs",
@@ -363,7 +367,7 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "478258cd77a543aa0d691c3fa05cb0b5cee5179296c3e13845aa44bfbd2332ee"
+      "sha256": "1dfd5c158a7c6b81ba3245b9077a9c023f6b16f20326917c140d2569f00aac9f"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
@@ -371,11 +375,11 @@
     },
     {
       "path": "src-tauri/src/tally/mod.rs",
-      "sha256": "628f4e94e89ec88fac787151c713a50de3d6f551833c13d98bf96d25b940373a"
+      "sha256": "ec5d92e3dd5edabb064a52f395e12ffe50afc78d6e26f716794a92f37028b631"
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "6d7fab6d1f086e4523d7a550f7d886998306b31abf32e761547c4eee99e7d014"
+      "sha256": "1cff795dcc8329d43bafc4977c514a61f0c4ef448fd2188cc74544e3d9324a6b"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -388,6 +392,10 @@
     {
       "path": "src-tauri/src/tally/validators.rs",
       "sha256": "40976622598bdbfe2567f3fd70adee9ff78f5cd9c7fbc43e1fbac0640ef1523f"
+    },
+    {
+      "path": "src-tauri/src/tally/write_sandbox.rs",
+      "sha256": "2fab7dc59374b38b0a562200332aeaca9c1d39105e329ec5c4505dfebd6d90fe"
     },
     {
       "path": "src-tauri/src/tally/xml_parser.rs",
@@ -406,5 +414,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "e7b0a8babc14d7247de20c965086de6131add8690105998b69e6d935b7e2f8ba"
+  "manifest_sha256": "88ce98d767ccd7b688c284be1cc158bc1df0727355ad38102a1c19ba547f3050"
 }
