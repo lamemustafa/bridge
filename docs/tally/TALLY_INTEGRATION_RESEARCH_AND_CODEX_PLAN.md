@@ -1,5 +1,19 @@
 # Bridge × Tally: Trustworthy Integration Research and Codex Execution Plan
 
+> **SUPERSEDED IN PART (2026-07-24).** The current execution authority is
+> [IMPROVEMENT_PLAN_2026H2.md](./IMPROVEMENT_PLAN_2026H2.md) with
+> [PROMPT_PLAYBOOK.md](./PROMPT_PLAYBOOK.md). Where the two conflict, the
+> 2026H2 plan wins. Specifically superseded here: (a) "writes remain
+> disabled until the dedicated safe-write stage" and the sealed-canary /
+> attestation / dual-compile-flag machinery of PR 11 — replaced by the
+> per-company runtime write allowlist plus readback-verified outbox
+> substrate; (b) the data-minimisation fetch policy of §4.6 — replaced by
+> full-fidelity reads into the encrypted local mirror ("full-fidelity,
+> local, encrypted"); (c) `MAX_LEDGER_WRITE_BATCH = 10` — replaced by
+> batch-size-1 dispatch. The protocol evidence (§2), product principles
+> (§4, except 4.6), architecture (§5), test strategy (§7), threat model
+> (§8), and performance rules (§9) remain in force.
+
 **Repository:** `lamemustafa/bridge`
 
 **Research date:** 2026-07-14
