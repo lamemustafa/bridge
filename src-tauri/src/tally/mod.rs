@@ -12,6 +12,14 @@ pub(crate) mod canary_preflight;
     reason = "the application admission seam is intentionally staged before its command layer"
 )]
 pub(crate) mod canary_dispatch_admission;
+// The dispatch coordinator is compiled only with the explicit non-default
+// runtime feature. A future command boundary still needs separate review.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+#[allow(
+    dead_code,
+    reason = "the runtime coordinator is intentionally staged before its command layer"
+)]
+pub(crate) mod canary_runtime_dispatch_coordinator;
 pub mod capability_packs;
 pub mod connection;
 pub mod connector;
