@@ -8,8 +8,8 @@ use bridge_tally_protocol::xml_read_profiles::{
     ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
 };
 use bridge_tally_write::{
-    verify_fixture_canary_preflight, FixtureCanaryPreflightEvidence, PreparedFixtureCanary,
-    FIXTURE_CANARY_LEDGER_NAME,
+    verify_fixture_canary_preflight, FixtureCanaryPostDispatchObservation,
+    FixtureCanaryPreflightEvidence, PreparedFixtureCanary, FIXTURE_CANARY_LEDGER_NAME,
 };
 use chrono::Utc;
 
@@ -17,8 +17,8 @@ use crate::{
     db::tally_mirror::{
         ActiveWriteCanaryPayloadBindingInput, ActiveWriteCanaryPreflightEvidenceInput,
         BeginWriteCanaryDispatchInput, BeginWriteCanaryPreflightInput, TallyMirrorRepository,
-        WriteCanaryDispatchAttemptRef, WriteCanaryPreflightEvidenceInput,
-        WriteCanaryPreflightEvidenceRef,
+        WriteCanaryDispatchAttemptRef, WriteCanaryFinalVerdictInput, WriteCanaryFinalVerdictRef,
+        WriteCanaryPreflightEvidenceInput, WriteCanaryPreflightEvidenceRef,
     },
     tally::{TallyConfig, TallyRuntime},
 };
@@ -49,6 +49,15 @@ pub(crate) struct SealedCanaryDispatchClaimRequest {
     pub ledger_name: ValidatedCanaryLedgerName,
     pub identity_query_sha256: ValidatedIdentityQuerySha256,
     pub dispatch: BeginWriteCanaryDispatchInput,
+}
+
+/// A final local, digest-only record request. The caller supplies only the
+/// durable commitments plus an already parsed semantic observation; it has no
+/// Tally configuration, raw XML, payload, or transport capability.
+pub(crate) struct SealedCanaryFinalVerdictRequest {
+    pub ledger_name: ValidatedCanaryLedgerName,
+    pub identity_query_sha256: ValidatedIdentityQuerySha256,
+    pub verdict: WriteCanaryFinalVerdictInput,
 }
 
 /// Claims the durable preflight slot, performs exactly one sealed read, and
@@ -136,5 +145,32 @@ pub(crate) async fn claim_sealed_canary_dispatch(
     }
     Ok(repository
         .begin_write_canary_dispatch_attempt(request.dispatch)
+        .await?)
+}
+
+/// Correlates an exact portable observation to one durable dispatch claim and
+/// stores only its digests. This coordinator cannot make a Tally request: a
+/// separately reviewed dispatch path must create the observation first.
+pub(crate) async fn record_sealed_canary_final_verdict(
+    repository: &TallyMirrorRepository,
+    request: SealedCanaryFinalVerdictRequest,
+    prepared: &PreparedFixtureCanary,
+    observation: &FixtureCanaryPostDispatchObservation,
+) -> Result<WriteCanaryFinalVerdictRef> {
+    let binding = &request.verdict.dispatch.evidence.binding;
+    if binding.wire_sha256 != prepared.wire_digest().as_hex()
+        || binding.intended_state_sha256 != prepared.intended_state_digest().as_hex()
+        || binding.identity_query_sha256 != prepared.identity_query_digest().as_hex()
+        || request.identity_query_sha256.as_str() != prepared.identity_query_digest().as_hex()
+        || request.ledger_name.as_str() != FIXTURE_CANARY_LEDGER_NAME
+        || request.verdict.import_response_sha256 != observation.import_response_digest().as_hex()
+        || request.verdict.readback_state_sha256 != observation.readback_state_digest().as_hex()
+        || request.verdict.identity_coverage_sha256
+            != observation.identity_coverage_digest().as_hex()
+    {
+        bail!("sealed_canary_final_verdict_binding_mismatch");
+    }
+    Ok(repository
+        .record_write_canary_final_verdict(request.verdict)
         .await?)
 }
