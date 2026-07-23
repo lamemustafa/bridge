@@ -30,14 +30,17 @@ payload-commitment capsule. Sealing consumes the non-cloneable prepared canary,
 so one prepared instance cannot yield a second capsule; the capsule has no raw
 XML accessor or callback escape hatch.
 
-The separately disabled runtime-dispatch feature adds one constrained handoff:
-the capsule can be consumed once to POST the fixed payload through Bridge's
-bounded loopback transport. Its raw request and response remain sealed, it has
-no generic payload API, retry loop, persistence hook, UI route, or Tauri
-command. The runtime coordinator must claim durable exact preflight evidence
-before that one request, then perform the closed readback and store only a
-digest-only final verdict. Any error after the claim is an unknown outcome and
-must not cause a resend.
+The separately disabled runtime-dispatch feature adds one constrained internal
+sequence: it derives the fixed canary only from an enrolled local company pin,
+performs the exact one-time preflight read, repeats durable admission, and then
+consumes the capsule once to POST through Bridge's bounded loopback transport.
+Its raw request and response remain sealed, it has no generic payload API,
+retry loop, persistence hook, UI route, or Tauri command. The canonical loopback
+origin must match the enrolled source pin before the one-time reservation, and is
+rechecked from the prepared fixture before preflight. The coordinator claims durable exact
+preflight evidence before that one request, then performs the closed readback
+and stores only a digest-only final verdict. Any error after the claim is an
+unknown outcome and must not cause a resend.
 
 Revocation appends a local `operator_revoked` event. It changes the local
 candidate gate only and never alters Tally. A revoked fixture requires a new

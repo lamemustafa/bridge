@@ -65,6 +65,15 @@ pub(crate) struct SealedCanaryPreflightEvidenceGateRequest {
     pub evidence: ActiveWriteCanaryPreflightEvidenceInput,
 }
 
+/// The private handoff from an exact preflight read to the feature-gated
+/// runtime sequence. It retains the complete durable evidence commitment so a
+/// later local admission can verify it exactly; it has no import payload,
+/// transport handle, or raw Tally response.
+pub(crate) struct SealedCanaryPreflightCompletion {
+    pub evidence: WriteCanaryPreflightEvidenceRef,
+    pub active_evidence: ActiveWriteCanaryPreflightEvidenceInput,
+}
+
 /// The final local, no-send claim before a future import coordinator is even
 /// considered. This remains deliberately transport-free.
 pub(crate) struct SealedCanaryDispatchClaimRequest {
@@ -103,8 +112,8 @@ pub(crate) async fn run_sealed_canary_preflight(
     runtime: &TallyRuntime,
     request: SealedCanaryPreflightRequest,
     prepared: &PreparedFixtureCanary,
-) -> Result<WriteCanaryPreflightEvidenceRef> {
-    let binding = &request.binding.binding;
+) -> Result<SealedCanaryPreflightCompletion> {
+    let binding = request.binding.binding.clone();
     if binding.wire_sha256 != prepared.wire_digest().as_hex()
         || binding.intended_state_sha256 != prepared.intended_state_digest().as_hex()
         || binding.identity_query_sha256 != prepared.identity_query_digest().as_hex()
@@ -130,16 +139,32 @@ pub(crate) async fn run_sealed_canary_preflight(
         .await?;
     let evidence: FixtureCanaryPreflightEvidence =
         verify_fixture_canary_preflight(prepared, readback.as_xml())?;
-    Ok(repository
+    let active_evidence = ActiveWriteCanaryPreflightEvidenceInput {
+        binding,
+        attempt_id: attempt.id.clone(),
+        evidence_id: String::new(),
+        readback_state_sha256: evidence.readback_state_digest().as_hex().to_owned(),
+        identity_coverage_sha256: evidence.identity_coverage_digest().as_hex().to_owned(),
+        canonical_endpoint_sha256,
+        company_identity_sha256,
+    };
+    let persisted = repository
         .record_write_canary_preflight_evidence(WriteCanaryPreflightEvidenceInput {
             attempt_id: attempt.id,
-            readback_state_sha256: evidence.readback_state_digest().as_hex().to_owned(),
-            identity_coverage_sha256: evidence.identity_coverage_digest().as_hex().to_owned(),
-            canonical_endpoint_sha256,
-            company_identity_sha256,
+            readback_state_sha256: active_evidence.readback_state_sha256.clone(),
+            identity_coverage_sha256: active_evidence.identity_coverage_sha256.clone(),
+            canonical_endpoint_sha256: active_evidence.canonical_endpoint_sha256.clone(),
+            company_identity_sha256: active_evidence.company_identity_sha256.clone(),
             verified_at_unix_ms: Utc::now().timestamp_millis(),
         })
-        .await?)
+        .await?;
+    Ok(SealedCanaryPreflightCompletion {
+        active_evidence: ActiveWriteCanaryPreflightEvidenceInput {
+            evidence_id: persisted.id.clone(),
+            ..active_evidence
+        },
+        evidence: persisted,
+    })
 }
 
 /// Rechecks that the supplied immutable preflight evidence is still bound to

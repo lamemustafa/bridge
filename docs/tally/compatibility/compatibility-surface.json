@@ -63,7 +63,7 @@
     },
     {
       "path": "docs/tally/compatibility/synthetic-write-canary-fixture.md",
-      "sha256": "dad11fe1c340dece82ce4d46c827751ac04c93f2931a596489f6fb8598be91e0"
+      "sha256": "a32d5ca59ef4282da2864fa14021f0a3b98611175681a0c3234bbda20b722792"
     },
     {
       "path": "docs/tally/support-matrix.md",
@@ -363,19 +363,19 @@
     },
     {
       "path": "src-tauri/src/tally/canary_preflight.rs",
-      "sha256": "e997028c1bd412c8ae1ff884e47e26e03a2a9043db1efa604a87319d4bc8b175"
+      "sha256": "b2921e2d767559bbddb685419cf5b0acd6d210d4f3665af0284e48401951498e"
     },
     {
       "path": "src-tauri/src/tally/canary_preflight_preparation.rs",
-      "sha256": "b63d8e972659572c42c3b909ffddc57bc1acf43d48b625c1c2111a33460cfe3f"
+      "sha256": "c822ab91a45e22b19814ae7005db8e314d402117e63a7b9a3ff0a423fa46a9f9"
     },
     {
       "path": "src-tauri/src/tally/canary_preflight_read_coordinator.rs",
-      "sha256": "69cfe208c427193f1f49d4685f76573ce9fc75b41fecc23fa8f98a61a0f145d6"
+      "sha256": "9f79823ab1a2483b2679a1514555b76ed48c6b25af130bdc7e9b12a31c924715"
     },
     {
       "path": "src-tauri/src/tally/canary_runtime_dispatch_coordinator.rs",
-      "sha256": "86b13cfe32969e5dad99bc11c47648d57e1c9eddb9cf28b0e396be0c2e0a2988"
+      "sha256": "189105dd52260b0750cbe9a888b2b1926f048809cdb20af9b93d6f93e2f1744f"
     },
     {
       "path": "src-tauri/src/tally/capability_packs.rs",
@@ -430,5 +430,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "f115012bd3542db48db4eb69869e5ed3eb5d4abfc9b56926a3ae6b009ef2c80b"
+  "manifest_sha256": "80ebe612868bf9104f94eff3a0d7ff1cec558a65fabc587886b18cedab5b10b7"
 }
