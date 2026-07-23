@@ -104,6 +104,16 @@ pub(crate) struct SealedCanaryRuntimeDispatchRequest {
     pub dispatch: BeginWriteCanaryDispatchInput,
 }
 
+/// Terminal truth classification for the one-send sealed runtime. Errors before
+/// its durable dispatch claim prove that no import was sent; after that claim a
+/// final verdict may be absent even if Tally received the one permitted import.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SealedCanaryRuntimeDispatchError {
+    PreDispatch,
+    OutcomeUnknown,
+}
+
 /// Claims the durable preflight slot, performs exactly one sealed read, and
 /// persists only the resulting digests. Any failure leaves the claim consumed
 /// and cannot progress to a write.
@@ -212,24 +222,26 @@ pub(crate) async fn claim_sealed_canary_dispatch(
         .await?)
 }
 
-/// Consumes the durable dispatch claim before the single HTTP request, then
-/// records a digest-only final verdict after an exact closed readback. There
-/// is no retry, recovery resend, raw XML return, persistence hook, command, or
-/// user-facing route. Any failure after the claim is deliberately terminal for
-/// this canary attempt.
+/// Validates the target commitment, claims the one durable dispatch slot, then
+/// acquires an exclusive lease and revalidates the pinned GUID immediately
+/// before the sole import. That lease remains held through the final readback,
+/// so no Bridge read can interleave between identity verification and import.
+/// There is no retry or resend. Errors through the claim are pre-dispatch;
+/// every later failure is an unknown outcome.
 #[cfg(feature = "fixture-canary-runtime-dispatch")]
 pub(crate) async fn run_sealed_canary_runtime_dispatch(
     repository: &TallyMirrorRepository,
     runtime: &TallyRuntime,
     request: SealedCanaryRuntimeDispatchRequest,
     prepared: PreparedFixtureCanary,
-) -> Result<WriteCanaryFinalVerdictRef> {
+) -> std::result::Result<WriteCanaryFinalVerdictRef, SealedCanaryRuntimeDispatchError> {
     let (canonical_endpoint_sha256, company_identity_sha256) =
-        sealed_target_binding_sha256(&request.config, &request.expected_company_guid)?;
+        sealed_target_binding_sha256(&request.config, &request.expected_company_guid)
+            .map_err(|_| SealedCanaryRuntimeDispatchError::PreDispatch)?;
     if request.dispatch.evidence.canonical_endpoint_sha256 != canonical_endpoint_sha256
         || request.dispatch.evidence.company_identity_sha256 != company_identity_sha256
     {
-        bail!("sealed_canary_dispatch_target_binding_mismatch");
+        return Err(SealedCanaryRuntimeDispatchError::PreDispatch);
     }
     let dispatch_claim = claim_sealed_canary_dispatch(
         repository,
@@ -240,12 +252,32 @@ pub(crate) async fn run_sealed_canary_runtime_dispatch(
         },
         &prepared,
     )
-    .await?;
+    .await
+    .map_err(|_| SealedCanaryRuntimeDispatchError::PreDispatch)?;
 
-    let (receipt, dispatch_lease) = runtime
-        .dispatch_fixture_canary_once(request.config.clone(), prepared.seal_for_dispatch()?)
-        .await?;
-    receipt.validate_receipt()?;
+    let dispatch_lease = runtime
+        .begin_verified_canary_dispatch(
+            request.config.clone(),
+            request.company.clone(),
+            request.ledger_name.clone(),
+            request.identity_query_sha256.clone(),
+            request.expected_company_guid.clone(),
+        )
+        .await
+        .map_err(|_| SealedCanaryRuntimeDispatchError::OutcomeUnknown)?;
+    let receipt = runtime
+        .dispatch_fixture_canary_once_under_dispatch(
+            &dispatch_lease,
+            &request.config,
+            prepared
+                .seal_for_dispatch()
+                .map_err(|_| SealedCanaryRuntimeDispatchError::OutcomeUnknown)?,
+        )
+        .await
+        .map_err(|_| SealedCanaryRuntimeDispatchError::OutcomeUnknown)?;
+    receipt
+        .validate_receipt()
+        .map_err(|_| SealedCanaryRuntimeDispatchError::OutcomeUnknown)?;
     let readback = runtime
         .fetch_ledger_canary_readback_under_dispatch(
             &dispatch_lease,
@@ -255,8 +287,11 @@ pub(crate) async fn run_sealed_canary_runtime_dispatch(
             request.identity_query_sha256,
             request.expected_company_guid,
         )
-        .await?;
-    let observation = receipt.observe_with_readback(readback.as_xml())?;
+        .await
+        .map_err(|_| SealedCanaryRuntimeDispatchError::OutcomeUnknown)?;
+    let observation = receipt
+        .observe_with_readback(readback.as_xml())
+        .map_err(|_| SealedCanaryRuntimeDispatchError::OutcomeUnknown)?;
     let verdict = WriteCanaryFinalVerdictInput {
         dispatch: ActiveWriteCanaryDispatchAttemptInput {
             evidence: request.dispatch.evidence,
@@ -268,9 +303,10 @@ pub(crate) async fn run_sealed_canary_runtime_dispatch(
         identity_coverage_sha256: observation.identity_coverage_digest().as_hex().to_owned(),
         recorded_at_unix_ms: Utc::now().timestamp_millis(),
     };
-    Ok(repository
+    repository
         .record_write_canary_final_verdict(verdict)
-        .await?)
+        .await
+        .map_err(|_| SealedCanaryRuntimeDispatchError::OutcomeUnknown)
 }
 
 /// Correlates an exact portable observation to one durable dispatch claim and

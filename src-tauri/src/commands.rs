@@ -1310,7 +1310,7 @@ pub async fn dispatch_tally_synthetic_canary(
     Ok(DispatchTallySyntheticCanaryResponse {
         final_verdict_id: result.final_verdict_id,
         recorded_at_unix_ms: result.recorded_at_unix_ms,
-        tally_requests_attempted: 3,
+        tally_requests_attempted: 4,
         tally_writes_attempted: 1,
     })
 }

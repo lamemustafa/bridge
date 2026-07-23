@@ -192,7 +192,14 @@ pub(crate) async fn run_admitted_sealed_canary_runtime_dispatch(
         request.prepared,
     )
     .await
-    .map_err(|_| SealedCanaryRuntimeSequenceError::OutcomeUnknown)?;
+    .map_err(|error| match error {
+        crate::tally::canary_preflight::SealedCanaryRuntimeDispatchError::PreDispatch => {
+            SealedCanaryRuntimeSequenceError::PreDispatch
+        }
+        crate::tally::canary_preflight::SealedCanaryRuntimeDispatchError::OutcomeUnknown => {
+            SealedCanaryRuntimeSequenceError::OutcomeUnknown
+        }
+    })?;
     Ok(digest_only_result(verdict))
 }
 

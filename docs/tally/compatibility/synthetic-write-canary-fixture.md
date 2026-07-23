@@ -42,9 +42,11 @@ or digest and returns only a final-verdict identifier and timestamp. It rechecks
 an explicit disposable-fixture acknowledgement and backup acknowledgement before
 starting the sealed sequence. The canonical loopback origin must match the
 enrolled source pin before the one-time reservation, and is rechecked from the
-prepared fixture before preflight. The coordinator claims durable exact preflight
-evidence before its three-request sequence (preflight read, one import, final
-readback) and stores only a digest-only final verdict. A failure before the durable
+prepared fixture before preflight and is revalidated on the exclusive dispatch
+lease immediately before import. The coordinator claims durable exact preflight
+evidence before its four-request sequence: preflight read, same-lease pinned-GUID
+revalidation, one import, and final readback. It stores only a digest-only final
+verdict. A failure before the durable
 dispatch claim is reported truthfully as no Tally import sent (though local
 one-time state may need review). A failure after that claim is an unknown
 outcome: do not retry or send another write; inspect Tally and revoke the
