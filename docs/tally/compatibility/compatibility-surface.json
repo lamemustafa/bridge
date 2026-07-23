@@ -63,7 +63,7 @@
     },
     {
       "path": "docs/tally/compatibility/synthetic-write-canary-fixture.md",
-      "sha256": "a32d5ca59ef4282da2864fa14021f0a3b98611175681a0c3234bbda20b722792"
+      "sha256": "cb79e75ce8e9c1281b9092613ac0703a52e7219df34870fb493519b69ee6c9f5"
     },
     {
       "path": "docs/tally/support-matrix.md",
@@ -87,7 +87,7 @@
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "2a74a222c074599dd52b2735b3dfd5a584b50add00c2d6046c1cb1a0cdc1f85c"
+      "sha256": "e4087a00a9f7d7fe35d4800aeb4e2e7a4d26f4c6e194aa285dcb9ca47152e9b1"
     },
     {
       "path": "src-tauri/crates/bridge-tally-canonical/Cargo.toml",
@@ -259,7 +259,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "123ba26cff15d62a2b2c7aef0cb07ecb1ed78a86ec4ed0b96cdc825e62d324bf"
+      "sha256": "70b8da6114ca42ebebb2bfbe2e7864c0327d2ce59189de56020b6b074de6859b"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -343,7 +343,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "9942f21406efda26c683d0056eac96bef9e38bff0c30f4f1487dfb304c8108a2"
+      "sha256": "9624e6ce79200561ec3d321acb65d15a68f6cdfd916f43f972ae6c6cf8e9290a"
     },
     {
       "path": "src-tauri/src/sync/coordinator.rs",
@@ -375,7 +375,7 @@
     },
     {
       "path": "src-tauri/src/tally/canary_runtime_dispatch_coordinator.rs",
-      "sha256": "189105dd52260b0750cbe9a888b2b1926f048809cdb20af9b93d6f93e2f1744f"
+      "sha256": "fc1e1060e0331fc6f4f5b9af1cf2b1b85226ecb50db10d69ca11a4c108bfd406"
     },
     {
       "path": "src-tauri/src/tally/capability_packs.rs",
@@ -391,7 +391,7 @@
     },
     {
       "path": "src-tauri/src/tally/mod.rs",
-      "sha256": "0a47ef52b70d8ce83b685ff4b1ebb5a4710cc8d2d19cc67bf2a5fae210b707f7"
+      "sha256": "282dc76dc6ce576898681e21e04d3e5a4fabcd109c508bade95dbb9b9a5d2206"
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
@@ -430,5 +430,5 @@
       "sha256": "5a5c6eaaba234c3cbda52dfa040ed3314f79e535f744b87bc14d8d76a2299811"
     }
   ],
-  "manifest_sha256": "80ebe612868bf9104f94eff3a0d7ff1cec558a65fabc587886b18cedab5b10b7"
+  "manifest_sha256": "862d51e8801ae9878f3e8b27595e9945d7c491d3b424f1b85119dff657be1d36"
 }

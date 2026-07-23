@@ -47,6 +47,8 @@ pub fn run() {
             commands::qualify_selected_tally_reads,
             commands::save_tally_setup,
             commands::enroll_tally_write_fixture,
+            #[cfg(feature = "fixture-canary-runtime-dispatch")]
+            commands::dispatch_tally_synthetic_canary,
             commands::tally_write_fixture_enrollment_status,
             commands::revoke_tally_write_fixture_enrollment,
             commands::tally_persisted_company_profiles,
