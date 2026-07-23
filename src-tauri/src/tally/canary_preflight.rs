@@ -16,7 +16,8 @@ use chrono::Utc;
 use crate::{
     db::tally_mirror::{
         ActiveWriteCanaryPayloadBindingInput, ActiveWriteCanaryPreflightEvidenceInput,
-        BeginWriteCanaryPreflightInput, TallyMirrorRepository, WriteCanaryPreflightEvidenceInput,
+        BeginWriteCanaryDispatchInput, BeginWriteCanaryPreflightInput, TallyMirrorRepository,
+        WriteCanaryDispatchAttemptRef, WriteCanaryPreflightEvidenceInput,
         WriteCanaryPreflightEvidenceRef,
     },
     tally::{TallyConfig, TallyRuntime},
@@ -40,6 +41,14 @@ pub(crate) struct SealedCanaryPreflightEvidenceGateRequest {
     pub ledger_name: ValidatedCanaryLedgerName,
     pub identity_query_sha256: ValidatedIdentityQuerySha256,
     pub evidence: ActiveWriteCanaryPreflightEvidenceInput,
+}
+
+/// The final local, no-send claim before a future import coordinator is even
+/// considered. This remains deliberately transport-free.
+pub(crate) struct SealedCanaryDispatchClaimRequest {
+    pub ledger_name: ValidatedCanaryLedgerName,
+    pub identity_query_sha256: ValidatedIdentityQuerySha256,
+    pub dispatch: BeginWriteCanaryDispatchInput,
 }
 
 /// Claims the durable preflight slot, performs exactly one sealed read, and
@@ -106,5 +115,26 @@ pub(crate) async fn verify_sealed_canary_preflight_evidence(
 
     Ok(repository
         .active_write_canary_preflight_evidence(request.evidence)
+        .await?)
+}
+
+/// Consumes one immutable, evidence-gated dispatch claim. It has no Tally
+/// configuration or payload and therefore cannot create a request or write.
+pub(crate) async fn claim_sealed_canary_dispatch(
+    repository: &TallyMirrorRepository,
+    request: SealedCanaryDispatchClaimRequest,
+    prepared: &PreparedFixtureCanary,
+) -> Result<WriteCanaryDispatchAttemptRef> {
+    let binding = &request.dispatch.evidence.binding;
+    if binding.wire_sha256 != prepared.wire_digest().as_hex()
+        || binding.intended_state_sha256 != prepared.intended_state_digest().as_hex()
+        || binding.identity_query_sha256 != prepared.identity_query_digest().as_hex()
+        || request.identity_query_sha256.as_str() != prepared.identity_query_digest().as_hex()
+        || request.ledger_name.as_str() != FIXTURE_CANARY_LEDGER_NAME
+    {
+        bail!("sealed_canary_dispatch_claim_binding_mismatch");
+    }
+    Ok(repository
+        .begin_write_canary_dispatch_attempt(request.dispatch)
         .await?)
 }
