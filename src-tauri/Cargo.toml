@@ -10,6 +10,12 @@ edition = "2021"
 rust-version = "1.96"
 default-run = "bridge"
 
+[features]
+# Deliberately disabled in shipped builds. This feature stages the sealed,
+# one-send fixture-canary runtime behind a separately reviewed command layer.
+fixture-canary-dispatch-seam = []
+fixture-canary-runtime-dispatch = ["fixture-canary-dispatch-seam"]
+
 [workspace]
 members = [
   ".",
@@ -57,7 +63,6 @@ bridge-tally-incremental = { path = "crates/bridge-tally-incremental" }
 bridge-tally-protocol = { path = "crates/bridge-tally-protocol" }
 bridge-tally-runtime = { path = "crates/bridge-tally-runtime" }
 bridge-tally-transport = { path = "crates/bridge-tally-transport" }
-bridge-tally-write = { path = "crates/bridge-tally-write" }
 chrono = { version = "0.4", features = ["serde"] }
 cryptoki = "0.12"
 getrandom = "0.3"

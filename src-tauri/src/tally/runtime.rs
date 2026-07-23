@@ -4,6 +4,10 @@ use crate::tally::connection::{
     canonical_loopback_origin, LedgerCanaryReadbackXml, SelectedReadObservation,
 };
 use crate::tally::connector::SealedReadRequest;
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+use crate::tally::write_sandbox::{
+    FixtureCanaryDispatchError, SealedFixtureCanaryDispatch, SealedFixtureCanaryReceipt,
+};
 use bridge_tally_protocol::xml_read_profiles::{
     ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
 };
@@ -16,7 +20,7 @@ use bridge_tally_transport::TallyTransportError;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -118,6 +122,7 @@ struct TallySession {
     health: Mutex<SessionHealth>,
     cached_probe: RwLock<Option<CachedProbe>>,
     active_ordinary_reads: AtomicU64,
+    canary_dispatch_active: AtomicBool,
 }
 
 impl TallySession {
@@ -131,6 +136,7 @@ impl TallySession {
             health: Mutex::new(SessionHealth::default()),
             cached_probe: RwLock::new(None),
             active_ordinary_reads: AtomicU64::new(0),
+            canary_dispatch_active: AtomicBool::new(false),
         })
     }
 
@@ -149,6 +155,7 @@ impl TallySession {
             health: Mutex::new(SessionHealth::default()),
             cached_probe: RwLock::new(None),
             active_ordinary_reads: AtomicU64::new(0),
+            canary_dispatch_active: AtomicBool::new(false),
         })
     }
 
@@ -267,6 +274,20 @@ struct OrdinaryReadLease {
     session: Arc<TallySession>,
 }
 
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+pub(crate) struct CanaryDispatchLease {
+    session: Arc<TallySession>,
+}
+
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+impl Drop for CanaryDispatchLease {
+    fn drop(&mut self) {
+        self.session
+            .canary_dispatch_active
+            .store(false, Ordering::Release);
+    }
+}
+
 impl Drop for OrdinaryReadLease {
     fn drop(&mut self) {
         self.session
@@ -328,6 +349,7 @@ impl CachedProbeReservation {
         if !self.armed
             || !Arc::ptr_eq(&self.runtime_identity, &runtime.runtime_identity)
             || self.session.endpoint != EndpointKey::from_config(config)?
+            || self.session.canary_dispatch_active.load(Ordering::Acquire)
         {
             anyhow::bail!("Tally reviewed setup operation ownership changed");
         }
@@ -526,6 +548,75 @@ impl TallyRuntime {
     {
         self.execute_cancellable(config, None, operation_class, retry, operation)
             .await
+    }
+
+    /// Issues one sealed fixture-canary import through an existing endpoint
+    /// session. Unlike every read path, this bypasses the read retry runtime:
+    /// a consumed dispatch claim must never cause a second HTTP request.
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    pub(crate) async fn dispatch_fixture_canary_once(
+        &self,
+        config: TallyConfig,
+        capsule: SealedFixtureCanaryDispatch,
+    ) -> Result<(SealedFixtureCanaryReceipt, CanaryDispatchLease), FixtureCanaryDispatchError> {
+        let lease = self
+            .begin_canary_dispatch(&config)
+            .map_err(|_| FixtureCanaryDispatchError::RuntimeUnavailable)?;
+        let session = Arc::clone(&lease.session);
+        let _request = session
+            .begin_request()
+            .map_err(|_| FixtureCanaryDispatchError::RuntimeUnavailable)?;
+        match session
+            .client
+            .dispatch_sealed_fixture_canary_once(capsule)
+            .await
+        {
+            Ok(receipt) => {
+                session.record_result(HealthOutcome::TransportSuccess);
+                Ok((receipt, lease))
+            }
+            Err(error) => {
+                session.record_result(HealthOutcome::TransportFailure);
+                Err(error)
+            }
+        }
+    }
+
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    pub(crate) async fn fetch_ledger_canary_readback_under_dispatch(
+        &self,
+        lease: &CanaryDispatchLease,
+        config: TallyConfig,
+        company: ValidatedCompanyName,
+        ledger_name: ValidatedCanaryLedgerName,
+        identity_query_sha256: ValidatedIdentityQuerySha256,
+        expected_company_guid: String,
+    ) -> anyhow::Result<LedgerCanaryReadbackXml> {
+        if EndpointKey::from_config(&config)? != lease.session.endpoint {
+            anyhow::bail!("sealed canary dispatch endpoint changed before readback");
+        }
+        self.execute(
+            config,
+            ReadOperation::MasterExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let company = company.clone();
+                let ledger_name = ledger_name.clone();
+                let identity_query_sha256 = identity_query_sha256.clone();
+                let expected_company_guid = expected_company_guid.clone();
+                async move {
+                    client
+                        .fetch_ledger_canary_readback(
+                            company,
+                            ledger_name,
+                            identity_query_sha256,
+                            &expected_company_guid,
+                        )
+                        .await
+                }
+            },
+        )
+        .await
     }
 
     async fn execute_cancellable<T, F, Fut>(
@@ -1045,10 +1136,16 @@ impl TallyRuntime {
             return Ok(None);
         };
         let now = chrono::Utc::now().timestamp_millis();
+        if session.canary_dispatch_active.load(Ordering::Acquire) {
+            anyhow::bail!("sealed canary dispatch is in progress");
+        }
         let mut cache = session
             .cached_probe
             .write()
             .map_err(|_| anyhow::anyhow!("Tally capability cache is unavailable"))?;
+        if session.canary_dispatch_active.load(Ordering::Acquire) {
+            anyhow::bail!("sealed canary dispatch is in progress");
+        }
         if session.active_ordinary_reads.load(Ordering::Acquire) != 0 {
             anyhow::bail!("Tally read operation is already in progress");
         }
@@ -1106,6 +1203,9 @@ impl TallyRuntime {
         &self,
         session: Arc<TallySession>,
     ) -> anyhow::Result<OrdinaryReadLease> {
+        if session.canary_dispatch_active.load(Ordering::Acquire) {
+            anyhow::bail!("sealed canary dispatch is in progress");
+        }
         let cache = session
             .cached_probe
             .write()
@@ -1120,7 +1220,53 @@ impl TallyRuntime {
             })
             .map_err(|_| anyhow::anyhow!("Tally read admission capacity is unavailable"))?;
         drop(cache);
+        if session.canary_dispatch_active.load(Ordering::Acquire) {
+            session.active_ordinary_reads.fetch_sub(1, Ordering::AcqRel);
+            anyhow::bail!("sealed canary dispatch is in progress");
+        }
         Ok(OrdinaryReadLease { session })
+    }
+
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    fn begin_canary_dispatch(&self, config: &TallyConfig) -> anyhow::Result<CanaryDispatchLease> {
+        let session = self.session(config.clone())?;
+        if session
+            .canary_dispatch_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            anyhow::bail!("sealed canary dispatch is already in progress");
+        }
+        let admitted = (|| -> anyhow::Result<()> {
+            if session.active_ordinary_reads.load(Ordering::Acquire) != 0 {
+                anyhow::bail!("ordinary Tally read is in progress");
+            }
+            if !session
+                .active_requests
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Tally cancellation registry is unavailable"))?
+                .is_empty()
+            {
+                anyhow::bail!("Tally endpoint request is in progress");
+            }
+            if session
+                .cached_probe
+                .read()
+                .map_err(|_| anyhow::anyhow!("Tally capability cache is unavailable"))?
+                .as_ref()
+                .is_some_and(|probe| probe.reserved)
+            {
+                anyhow::bail!("Tally reviewed setup operation is in progress");
+            }
+            Ok(())
+        })();
+        if let Err(error) = admitted {
+            session
+                .canary_dispatch_active
+                .store(false, Ordering::Release);
+            return Err(error);
+        }
+        Ok(CanaryDispatchLease { session })
     }
 }
 
@@ -1647,6 +1793,85 @@ mod tests {
             .reserve_cached_probe_fresh(&config, "review-pending", 300_000)
             .expect("reserve after pending abort")
             .is_some());
+    }
+
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    #[test]
+    fn sealed_canary_dispatch_lease_excludes_ordinary_reads() {
+        let runtime = TallyRuntime::default();
+        let config = TallyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9050,
+        };
+        let lease = runtime
+            .begin_canary_dispatch(&config)
+            .expect("admit sealed canary dispatch");
+        assert!(runtime.begin_ordinary_read(&config).is_err());
+        drop(lease);
+        drop(
+            runtime
+                .begin_ordinary_read(&config)
+                .expect("read resumes after sealed dispatch"),
+        );
+    }
+
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    #[test]
+    fn ordinary_reads_exclude_sealed_canary_dispatch() {
+        let runtime = TallyRuntime::default();
+        let config = TallyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9051,
+        };
+        let read = runtime
+            .begin_ordinary_read(&config)
+            .expect("admit ordinary read");
+        assert!(runtime.begin_canary_dispatch(&config).is_err());
+        drop(read);
+        drop(
+            runtime
+                .begin_canary_dispatch(&config)
+                .expect("dispatch resumes after ordinary read"),
+        );
+    }
+
+    #[cfg(feature = "fixture-canary-runtime-dispatch")]
+    #[test]
+    fn sealed_canary_dispatch_lease_excludes_review_reservation_admission() {
+        let runtime = TallyRuntime::default();
+        let config = TallyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9052,
+        };
+        let session = runtime.session(config.clone()).expect("runtime session");
+        let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
+        *session.cached_probe.write().expect("capability cache") = Some(CachedProbe {
+            review_id: "review-canary-lease".to_string(),
+            observed_at_unix_ms,
+            freshness_origin_unix_ms: observed_at_unix_ms,
+            result: synthetic_probe_result(),
+            reserved: false,
+        });
+
+        let dispatch = runtime
+            .begin_canary_dispatch(&config)
+            .expect("admit sealed canary dispatch");
+        assert!(runtime
+            .reserve_cached_probe_fresh(&config, "review-canary-lease", 300_000)
+            .is_err());
+        drop(dispatch);
+
+        let reservation = runtime
+            .reserve_cached_probe_fresh(&config, "review-canary-lease", 300_000)
+            .expect("admit reservation after sealed dispatch")
+            .expect("fresh reviewed probe");
+        session
+            .canary_dispatch_active
+            .store(true, Ordering::Release);
+        assert!(reservation.authorize(&runtime, &config).is_err());
+        session
+            .canary_dispatch_active
+            .store(false, Ordering::Release);
     }
 
     #[test]

@@ -1,17 +1,22 @@
-//! Sealed, read-only orchestration for the first synthetic write canary.
+//! Sealed orchestration for the first synthetic write canary.
 //!
-//! This module deliberately stops after recording preflight evidence. It has
-//! no import request, retry, receipt, or dispatch API.
+//! Ordinary builds stop after digest-only preflight evidence. The separately
+//! disabled runtime feature adds one closed, one-send coordinator with no UI
+//! command, generic payload API, or retry behavior.
 
+use crate::tally::write_sandbox::{
+    verify_fixture_canary_preflight, FixtureCanaryPostDispatchObservation,
+    FixtureCanaryPreflightEvidence, PreparedFixtureCanary, FIXTURE_CANARY_LEDGER_NAME,
+};
 use anyhow::{bail, Result};
 use bridge_tally_protocol::xml_read_profiles::{
     ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
 };
-use bridge_tally_write::{
-    verify_fixture_canary_preflight, FixtureCanaryPostDispatchObservation,
-    FixtureCanaryPreflightEvidence, PreparedFixtureCanary, FIXTURE_CANARY_LEDGER_NAME,
-};
 use chrono::Utc;
+use sha2::{Digest, Sha256};
+
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+use crate::db::tally_mirror::ActiveWriteCanaryDispatchAttemptInput;
 
 use crate::{
     db::tally_mirror::{
@@ -20,8 +25,25 @@ use crate::{
         WriteCanaryDispatchAttemptRef, WriteCanaryFinalVerdictInput, WriteCanaryFinalVerdictRef,
         WriteCanaryPreflightEvidenceInput, WriteCanaryPreflightEvidenceRef,
     },
-    tally::{TallyConfig, TallyRuntime},
+    tally::{connection::canonical_loopback_origin, TallyConfig, TallyRuntime},
 };
+
+fn sealed_target_binding_sha256(
+    config: &TallyConfig,
+    expected_company_guid: &str,
+) -> Result<(String, String)> {
+    let endpoint = canonical_loopback_origin(config)?;
+    let endpoint_sha256 = sha256_hex(endpoint.as_bytes());
+    let company_sha256 = sha256_hex(expected_company_guid.to_ascii_lowercase().as_bytes());
+    Ok((endpoint_sha256, company_sha256))
+}
+
+fn sha256_hex(value: &[u8]) -> String {
+    Sha256::digest(value)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// Every value required for one sealed, serial preflight read. This stays
 /// crate-private until a separately reviewed command layer exposes it.
@@ -60,6 +82,19 @@ pub(crate) struct SealedCanaryFinalVerdictRequest {
     pub verdict: WriteCanaryFinalVerdictInput,
 }
 
+/// All inputs needed for the closed, one-send synthetic canary runtime. This
+/// is crate-private and feature-gated; there is intentionally no Tauri command
+/// or UI route that can invoke it in this change.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+pub(crate) struct SealedCanaryRuntimeDispatchRequest {
+    pub config: TallyConfig,
+    pub company: ValidatedCompanyName,
+    pub ledger_name: ValidatedCanaryLedgerName,
+    pub identity_query_sha256: ValidatedIdentityQuerySha256,
+    pub expected_company_guid: String,
+    pub dispatch: BeginWriteCanaryDispatchInput,
+}
+
 /// Claims the durable preflight slot, performs exactly one sealed read, and
 /// persists only the resulting digests. Any failure leaves the claim consumed
 /// and cannot progress to a write.
@@ -82,6 +117,8 @@ pub(crate) async fn run_sealed_canary_preflight(
     let attempt = repository
         .begin_write_canary_preflight(request.binding)
         .await?;
+    let (canonical_endpoint_sha256, company_identity_sha256) =
+        sealed_target_binding_sha256(&request.config, &request.expected_company_guid)?;
     let readback = runtime
         .fetch_ledger_canary_readback(
             request.config,
@@ -98,6 +135,8 @@ pub(crate) async fn run_sealed_canary_preflight(
             attempt_id: attempt.id,
             readback_state_sha256: evidence.readback_state_digest().as_hex().to_owned(),
             identity_coverage_sha256: evidence.identity_coverage_digest().as_hex().to_owned(),
+            canonical_endpoint_sha256,
+            company_identity_sha256,
             verified_at_unix_ms: Utc::now().timestamp_millis(),
         })
         .await?)
@@ -148,6 +187,67 @@ pub(crate) async fn claim_sealed_canary_dispatch(
         .await?)
 }
 
+/// Consumes the durable dispatch claim before the single HTTP request, then
+/// records a digest-only final verdict after an exact closed readback. There
+/// is no retry, recovery resend, raw XML return, persistence hook, command, or
+/// user-facing route. Any failure after the claim is deliberately terminal for
+/// this canary attempt.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+pub(crate) async fn run_sealed_canary_runtime_dispatch(
+    repository: &TallyMirrorRepository,
+    runtime: &TallyRuntime,
+    request: SealedCanaryRuntimeDispatchRequest,
+    prepared: PreparedFixtureCanary,
+) -> Result<WriteCanaryFinalVerdictRef> {
+    let (canonical_endpoint_sha256, company_identity_sha256) =
+        sealed_target_binding_sha256(&request.config, &request.expected_company_guid)?;
+    if request.dispatch.evidence.canonical_endpoint_sha256 != canonical_endpoint_sha256
+        || request.dispatch.evidence.company_identity_sha256 != company_identity_sha256
+    {
+        bail!("sealed_canary_dispatch_target_binding_mismatch");
+    }
+    let dispatch_claim = claim_sealed_canary_dispatch(
+        repository,
+        SealedCanaryDispatchClaimRequest {
+            ledger_name: request.ledger_name.clone(),
+            identity_query_sha256: request.identity_query_sha256.clone(),
+            dispatch: request.dispatch.clone(),
+        },
+        &prepared,
+    )
+    .await?;
+
+    let (receipt, dispatch_lease) = runtime
+        .dispatch_fixture_canary_once(request.config.clone(), prepared.seal_for_dispatch()?)
+        .await?;
+    receipt.validate_receipt()?;
+    let readback = runtime
+        .fetch_ledger_canary_readback_under_dispatch(
+            &dispatch_lease,
+            request.config,
+            request.company,
+            request.ledger_name,
+            request.identity_query_sha256,
+            request.expected_company_guid,
+        )
+        .await?;
+    let observation = receipt.observe_with_readback(readback.as_xml())?;
+    let verdict = WriteCanaryFinalVerdictInput {
+        dispatch: ActiveWriteCanaryDispatchAttemptInput {
+            evidence: request.dispatch.evidence,
+            dispatch_attempt_id: dispatch_claim.id,
+            claimed_at_unix_ms: dispatch_claim.claimed_at_unix_ms,
+        },
+        import_response_sha256: observation.import_response_digest().as_hex().to_owned(),
+        readback_state_sha256: observation.readback_state_digest().as_hex().to_owned(),
+        identity_coverage_sha256: observation.identity_coverage_digest().as_hex().to_owned(),
+        recorded_at_unix_ms: Utc::now().timestamp_millis(),
+    };
+    Ok(repository
+        .record_write_canary_final_verdict(verdict)
+        .await?)
+}
+
 /// Correlates an exact portable observation to one durable dispatch claim and
 /// stores only its digests. This coordinator cannot make a Tally request: a
 /// separately reviewed dispatch path must create the observation first.
@@ -173,4 +273,44 @@ pub(crate) async fn record_sealed_canary_final_verdict(
     Ok(repository
         .record_write_canary_final_verdict(request.verdict)
         .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sealed_target_binding_sha256;
+    use crate::tally::TallyConfig;
+
+    #[test]
+    fn sealed_target_binding_is_canonical_and_target_specific() {
+        let loopback = TallyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9000,
+        };
+        let localhost = TallyConfig {
+            host: "localhost".to_string(),
+            port: 9000,
+        };
+        let different_port = TallyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9001,
+        };
+
+        let binding = sealed_target_binding_sha256(&loopback, "fixture-company-guid")
+            .expect("hash synthetic target binding");
+        assert_eq!(
+            binding,
+            sealed_target_binding_sha256(&localhost, "FIXTURE-COMPANY-GUID")
+                .expect("canonical aliases and GUID case share one binding")
+        );
+        assert_ne!(
+            binding,
+            sealed_target_binding_sha256(&different_port, "fixture-company-guid")
+                .expect("a changed endpoint must not share authority")
+        );
+        assert_ne!(
+            binding,
+            sealed_target_binding_sha256(&loopback, "another-fixture-company-guid")
+                .expect("a changed company must not share authority")
+        );
+    }
 }

@@ -44,6 +44,8 @@ const MIRROR_MIGRATION_V19: &str =
     include_str!("migrations/0019_tally_write_canary_dispatch_attempt.sql");
 const MIRROR_MIGRATION_V20: &str =
     include_str!("migrations/0020_tally_write_canary_final_verdict.sql");
+const MIRROR_MIGRATION_V21: &str =
+    include_str!("migrations/0021_tally_write_canary_preflight_target_binding.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -448,6 +450,8 @@ pub struct WriteCanaryPreflightEvidenceInput {
     pub attempt_id: String,
     pub readback_state_sha256: String,
     pub identity_coverage_sha256: String,
+    pub canonical_endpoint_sha256: String,
+    pub company_identity_sha256: String,
     pub verified_at_unix_ms: i64,
 }
 
@@ -467,6 +471,8 @@ pub struct ActiveWriteCanaryPreflightEvidenceInput {
     pub evidence_id: String,
     pub readback_state_sha256: String,
     pub identity_coverage_sha256: String,
+    pub canonical_endpoint_sha256: String,
+    pub company_identity_sha256: String,
 }
 
 /// A one-time, durable claim that a future reviewed coordinator may consider
@@ -1472,6 +1478,8 @@ impl TallyMirrorRepository {
         validate_nonempty(&input.attempt_id, 128, "canary_preflight_attempt_id")?;
         validate_sha256(&input.readback_state_sha256)?;
         validate_sha256(&input.identity_coverage_sha256)?;
+        validate_sha256(&input.canonical_endpoint_sha256)?;
+        validate_sha256(&input.company_identity_sha256)?;
         if input.verified_at_unix_ms <= 0 {
             return Err(MirrorError::InvalidInput("canary_preflight_verified_at"));
         }
@@ -1511,18 +1519,21 @@ impl TallyMirrorRepository {
         sqlx::query(
             "INSERT INTO tally_write_canary_preflight_evidence( \
                id, attempt_id, readback_state_sha256, identity_coverage_sha256, \
-               contract_version, verified_at_unix_ms \
-             ) VALUES (?1, ?2, ?3, ?4, 1, ?5) ON CONFLICT(attempt_id) DO NOTHING",
+               canonical_endpoint_sha256, company_identity_sha256, contract_version, verified_at_unix_ms \
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7) ON CONFLICT(attempt_id) DO NOTHING",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(&input.attempt_id)
         .bind(&input.readback_state_sha256)
         .bind(&input.identity_coverage_sha256)
+        .bind(&input.canonical_endpoint_sha256)
+        .bind(&input.company_identity_sha256)
         .bind(input.verified_at_unix_ms)
         .execute(&mut *transaction)
         .await?;
         let evidence = sqlx::query(
-            "SELECT id, readback_state_sha256, identity_coverage_sha256, verified_at_unix_ms \
+            "SELECT id, readback_state_sha256, identity_coverage_sha256, canonical_endpoint_sha256, \
+             company_identity_sha256, verified_at_unix_ms \
              FROM tally_write_canary_preflight_evidence WHERE attempt_id = ?1",
         )
         .bind(&input.attempt_id)
@@ -1530,8 +1541,12 @@ impl TallyMirrorRepository {
         .await?;
         let existing_state_sha256: String = evidence.try_get("readback_state_sha256")?;
         let existing_coverage_sha256: String = evidence.try_get("identity_coverage_sha256")?;
+        let existing_endpoint_sha256: String = evidence.try_get("canonical_endpoint_sha256")?;
+        let existing_company_sha256: String = evidence.try_get("company_identity_sha256")?;
         if existing_state_sha256 != input.readback_state_sha256
             || existing_coverage_sha256 != input.identity_coverage_sha256
+            || existing_endpoint_sha256 != input.canonical_endpoint_sha256
+            || existing_company_sha256 != input.company_identity_sha256
         {
             return Err(MirrorError::InvalidInput(
                 "canary_preflight_evidence_already_recorded",
@@ -1566,6 +1581,8 @@ impl TallyMirrorRepository {
         validate_nonempty(&input.evidence_id, 128, "canary_preflight_evidence_id")?;
         validate_sha256(&input.readback_state_sha256)?;
         validate_sha256(&input.identity_coverage_sha256)?;
+        validate_sha256(&input.canonical_endpoint_sha256)?;
+        validate_sha256(&input.company_identity_sha256)?;
 
         let evidence = sqlx::query(
             r#"
@@ -1583,13 +1600,15 @@ impl TallyMirrorRepository {
                   AND evidence.attempt_id = ?2
                   AND evidence.readback_state_sha256 = ?3
                   AND evidence.identity_coverage_sha256 = ?4
-                  AND binding.reservation_id = ?5
-                  AND enrollment.company_id = ?6
-                  AND enrollment.review_commitment_sha256 = ?7
-                  AND reservation.reservation_payload_sha256 = ?8
-                  AND binding.wire_sha256 = ?9
-                  AND binding.intended_state_sha256 = ?10
-                  AND binding.identity_query_sha256 = ?11
+                  AND evidence.canonical_endpoint_sha256 = ?5
+                  AND evidence.company_identity_sha256 = ?6
+                  AND binding.reservation_id = ?7
+                  AND enrollment.company_id = ?8
+                  AND enrollment.review_commitment_sha256 = ?9
+                  AND reservation.reservation_payload_sha256 = ?10
+                  AND binding.wire_sha256 = ?11
+                  AND binding.intended_state_sha256 = ?12
+                  AND binding.identity_query_sha256 = ?13
                   AND NOT EXISTS (
                     SELECT 1
                     FROM tally_write_fixture_revocations AS revocation
@@ -1601,6 +1620,8 @@ impl TallyMirrorRepository {
         .bind(&input.attempt_id)
         .bind(&input.readback_state_sha256)
         .bind(&input.identity_coverage_sha256)
+        .bind(&input.canonical_endpoint_sha256)
+        .bind(&input.company_identity_sha256)
         .bind(&binding.reservation_id)
         .bind(&binding.company_id)
         .bind(&binding.review_commitment_sha256)
@@ -2201,9 +2222,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let write_canary_preflight_target_binding_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 21",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if write_canary_preflight_target_binding_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V21)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -5851,6 +5882,8 @@ mod tests {
             attempt_id: preflight.id.clone(),
             readback_state_sha256: HASH_A.to_string(),
             identity_coverage_sha256: HASH_B.to_string(),
+            canonical_endpoint_sha256: HASH_A.to_string(),
+            company_identity_sha256: HASH_B.to_string(),
             verified_at_unix_ms: 5_750,
         };
         let mut early_evidence = evidence_input.clone();
@@ -5873,6 +5906,8 @@ mod tests {
             evidence_id: evidence.id.clone(),
             readback_state_sha256: HASH_A.to_string(),
             identity_coverage_sha256: HASH_B.to_string(),
+            canonical_endpoint_sha256: HASH_A.to_string(),
+            company_identity_sha256: HASH_B.to_string(),
         };
         assert_eq!(
             repository
@@ -5886,6 +5921,16 @@ mod tests {
         assert!(matches!(
             repository
                 .active_write_canary_preflight_evidence(changed_evidence_gate)
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_preflight_evidence_not_active"
+            ))
+        ));
+        let mut changed_target_gate = evidence_gate.clone();
+        changed_target_gate.canonical_endpoint_sha256 = HASH_B.to_string();
+        assert!(matches!(
+            repository
+                .active_write_canary_preflight_evidence(changed_target_gate)
                 .await,
             Err(MirrorError::InvalidInput(
                 "canary_preflight_evidence_not_active"
@@ -7340,13 +7385,29 @@ mod tests {
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 17);
+        assert_eq!(migration_count, 20);
+        let target_binding_columns = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pragma_table_info('tally_write_canary_preflight_evidence') \
+             WHERE name IN ('canonical_endpoint_sha256', 'company_identity_sha256')",
+        )
+        .fetch_one(&repository.pool)
+        .await
+        .expect("count target-binding columns");
+        assert_eq!(target_binding_columns, 2);
+        let target_binding_trigger = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' \
+             AND name = 'tally_write_canary_preflight_evidence_requires_target_binding'",
+        )
+        .fetch_one(&repository.pool)
+        .await
+        .expect("count target-binding trigger");
+        assert_eq!(target_binding_trigger, 1);
         let snapshot_state_table = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM sqlite_master \
              WHERE type = 'table' AND name = 'tally_snapshot_run_states'",

@@ -11,6 +11,8 @@ use bridge_tally_protocol::{
     parse_import_evidence, parse_ledger_write_readback_with_evidence, ParsedImportEvidence,
     TallyImportApplicationStatus, TallyImportResult, BRIDGE_LEDGER_WRITE_READBACK_SCHEMA,
 };
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+use bridge_tally_transport::TallyTransportError;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -584,8 +586,32 @@ pub struct PreparedFixtureCanary {
 /// coordinator must bind this capsule to a durable dispatch claim before it
 /// introduces the one-send operation.
 #[cfg(feature = "fixture-canary-dispatch-seam")]
+#[allow(dead_code)] // Read only by Bridge's private in-crate runtime coordinator.
 pub struct SealedFixtureCanaryDispatch {
-    wire_digest: WirePayloadDigest,
+    pub(crate) prepared: PreparedLedgerImport,
+    pub(crate) wire_xml: String,
+    pub(crate) wire_digest: WirePayloadDigest,
+}
+
+/// A one-send canary receipt that remains sealed until it is correlated with
+/// the exact closed readback profile. It never exposes the Tally response.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+pub struct SealedFixtureCanaryReceipt {
+    pub(crate) prepared: PreparedLedgerImport,
+    pub(crate) receipt_xml: String,
+    pub(crate) wire_digest: WirePayloadDigest,
+}
+
+/// Transport failure for the closed synthetic-canary path. A failure consumes
+/// the dispatch capsule; callers must treat the outcome as unknown and must
+/// not retry the import.
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+#[derive(Debug, thiserror::Error)]
+pub enum FixtureCanaryDispatchError {
+    #[error("sealed fixture-canary transport failed")]
+    Transport(#[source] TallyTransportError),
+    #[error("sealed fixture-canary runtime is unavailable")]
+    RuntimeUnavailable,
 }
 
 #[cfg(feature = "fixture-canary-dispatch-seam")]
@@ -604,6 +630,42 @@ impl std::fmt::Debug for SealedFixtureCanaryDispatch {
 impl SealedFixtureCanaryDispatch {
     pub fn wire_digest(&self) -> &WirePayloadDigest {
         &self.wire_digest
+    }
+}
+
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+impl std::fmt::Debug for SealedFixtureCanaryReceipt {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SealedFixtureCanaryReceipt")
+            .field("wire_digest", &self.wire_digest)
+            .field("receipt", &"[redacted]")
+            .finish()
+    }
+}
+
+#[cfg(feature = "fixture-canary-runtime-dispatch")]
+impl SealedFixtureCanaryReceipt {
+    /// Rejects a malformed import response before any follow-up readback. The
+    /// parsed counters remain sealed and are checked again with the readback
+    /// when deriving the final digest-only observation.
+    pub fn validate_receipt(&self) -> Result<(), QualificationError> {
+        parse_import_receipt(&self.receipt_xml).map(|_| ())
+    }
+
+    /// Validates the sealed receipt and a caller-owned closed readback, then
+    /// returns only digest evidence. Neither raw XML document can escape.
+    pub fn observe_with_readback(
+        self,
+        readback_xml: &str,
+    ) -> Result<FixtureCanaryPostDispatchObservation, QualificationError> {
+        observe_fixture_canary_post_dispatch(
+            &PreparedFixtureCanary {
+                prepared: self.prepared,
+            },
+            &self.receipt_xml,
+            readback_xml,
+        )
     }
 }
 
@@ -647,16 +709,19 @@ impl PreparedFixtureCanary {
     /// type or invoke this method.
     #[cfg(feature = "fixture-canary-dispatch-seam")]
     pub fn seal_for_dispatch(self) -> Result<SealedFixtureCanaryDispatch, QualificationError> {
-        let wire_xml = build_import_xml(&self.prepared.company, &self.prepared.mutations);
+        let prepared = self.prepared;
+        let wire_xml = build_import_xml(&prepared.company, &prepared.mutations);
         let wire_digest = WirePayloadDigest(domain_digest(
             b"bridge.tally.ledger-import-wire/1\0",
             wire_xml.as_bytes(),
         ));
-        if wire_digest != self.prepared.wire_digest {
+        if wire_digest != prepared.wire_digest {
             return Err(QualificationError::FixtureCanaryPayloadMismatch);
         }
         Ok(SealedFixtureCanaryDispatch {
-            wire_digest: self.prepared.wire_digest,
+            wire_digest: prepared.wire_digest.clone(),
+            prepared,
+            wire_xml,
         })
     }
 }
