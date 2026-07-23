@@ -646,17 +646,17 @@ impl FixtureCanaryPreflightEvidence {
     }
 }
 
-/// Digest-only exact-applied proof for the fixed fixture canary. It can be
-/// derived only from a parsed import receipt and company-bound readback; it is
-/// not a transport capability or a retry authorization.
+/// Digest-only semantic observation for the fixed fixture canary. Receipt and
+/// readback alone cannot correlate an import to a durable dispatch claim, so
+/// this is explicitly not capability evidence or an exact-applied proof.
 #[derive(Clone)]
-pub struct FixtureCanaryPostDispatchEvidence {
+pub struct FixtureCanaryPostDispatchObservation {
     import_response_digest: ImportResponseDigest,
     readback_state_digest: ReadbackStateDigest,
     identity_coverage_digest: IdentityCoverageDigest,
 }
 
-impl FixtureCanaryPostDispatchEvidence {
+impl FixtureCanaryPostDispatchObservation {
     pub fn import_response_digest(&self) -> &ImportResponseDigest {
         &self.import_response_digest
     }
@@ -670,6 +670,10 @@ impl FixtureCanaryPostDispatchEvidence {
     }
 
     pub const fn dispatch_eligible(&self) -> bool {
+        false
+    }
+
+    pub const fn capability_observed(&self) -> bool {
         false
     }
 }
@@ -691,13 +695,15 @@ pub fn verify_fixture_canary_preflight(
     })
 }
 
-/// Validates exact receipt counters and exact after-state for the fixed
-/// canary. Both XML inputs stay caller-owned; only digests are returned.
-pub fn verify_fixture_canary_post_dispatch(
+/// Parses an exact-looking receipt/readback pair for later correlation. Both
+/// XML inputs stay caller-owned; only digests are returned. A durable sealed
+/// coordinator must bind this observation to one dispatch claim before it can
+/// record a capability or final verdict.
+pub fn observe_fixture_canary_post_dispatch(
     prepared: &PreparedFixtureCanary,
     receipt_xml: &str,
     readback_xml: &str,
-) -> Result<FixtureCanaryPostDispatchEvidence, QualificationError> {
+) -> Result<FixtureCanaryPostDispatchObservation, QualificationError> {
     let receipt = parse_import_receipt(receipt_xml)?;
     let observed = parse_readback(&prepared.prepared, readback_xml)?;
     let exact_after = observed.projections == prepared.prepared.expected_after;
@@ -708,7 +714,7 @@ pub fn verify_fixture_canary_post_dispatch(
     if !exact_after || !exact_counters {
         return Err(QualificationError::PostDispatchMismatch);
     }
-    Ok(FixtureCanaryPostDispatchEvidence {
+    Ok(FixtureCanaryPostDispatchObservation {
         import_response_digest: receipt.response_digest,
         readback_state_digest: observed.state_digest,
         identity_coverage_digest: observed.coverage_digest,
