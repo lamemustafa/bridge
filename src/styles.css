@@ -592,6 +592,34 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.company-discovery-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #9bc9b6;
+  border-left: 4px solid #0f766e;
+  border-radius: 8px;
+  background: #f0fdf7;
+  color: #183b2e;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+}
+
+.company-discovery-notice div {
+  display: grid;
+  gap: 4px;
+}
+
+.company-discovery-notice span {
+  color: #416257;
+  line-height: 1.45;
+}
+
+.company-discovery-notice .primary {
+  flex: 0 0 auto;
+}
+
 .operator-question-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1079,9 +1107,15 @@ summary:focus-visible,
   }
 
   .company-context-bar,
+  .company-discovery-notice,
   .company-profile-grid,
   .gap-item {
     grid-template-columns: 1fr;
+  }
+
+  .company-discovery-notice {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   applyProbeCompanySelectionTransition,
+  companyDiscoveryPrompt,
   clearCompanyScopedState,
   reconcileProbeCompanySelection,
 } from "../src/tally-company-selection.ts";
@@ -117,6 +118,20 @@ test("an automatic probe drop clears old company state before installing a usabl
   );
 });
 
+test("discovery requested after a dropped selection remains current after cleanup", () => {
+  const state = companyScopedState();
+  const probeResultsVersion = state.tallyResultsVersion;
+
+  applyProbeCompanySelectionTransition("old-company", [], {
+    clearDroppedCompanyScope: () => clearCompanyScopedState(cleanupFor(state)),
+    installProbeState: () => {},
+  });
+  const discoveryResultsVersion = state.tallyResultsVersion;
+
+  assert.notEqual(probeResultsVersion, state.tallyResultsVersion);
+  assert.equal(discoveryResultsVersion, state.tallyResultsVersion);
+});
+
 test("a manual company selection clears the existing review and all company-scoped state", () => {
   const state = companyScopedState();
 
@@ -162,4 +177,31 @@ test("a selected company retained by the probe is not reported as dropped", () =
     reconcileProbeCompanySelection("", ["new-company"]),
     { selectedCompany: "", dropped: false },
   );
+});
+
+test("a successful probe prompts the operator to explicitly choose a discovered company", () => {
+  assert.deepEqual(companyDiscoveryPrompt("", ["company-a"]), {
+    companyCount: 1,
+    heading: "1 company discovered",
+    detail: "Bridge identified the current Tally company list. Choose one explicitly before reading or saving any company-scoped data.",
+    actionLabel: "Choose company",
+  });
+  assert.deepEqual(companyDiscoveryPrompt("", ["company-a", "company-b"]), {
+    companyCount: 2,
+    heading: "2 companies discovered",
+    detail: "Bridge identified the current Tally company list. Choose one explicitly before reading or saving any company-scoped data.",
+    actionLabel: "Choose company",
+  });
+  assert.equal(companyDiscoveryPrompt("company-a", ["company-a"]), null);
+  assert.equal(companyDiscoveryPrompt("", []), null);
+});
+
+test("a direct compatibility listing prompts verification instead of selecting an untrusted identity", () => {
+  assert.deepEqual(companyDiscoveryPrompt("", [], 1), {
+    companyCount: 1,
+    heading: "1 company listed for verification",
+    detail: "Tally returned a compatibility company listing. Verify the intended company before Bridge treats its identity as evidence or enables company-scoped reads.",
+    actionLabel: "Verify company",
+  });
+  assert.equal(companyDiscoveryPrompt("selected-company", [], 1), null);
 });
