@@ -32,9 +32,12 @@ personal information.
   approvals as soon as a second trusted maintainer is available; do not create
   a policy that can only be satisfied through routine bypasses.
 - Require linear history and these exact status contexts: `Frontend build`,
-  `Rust format`, `Native checks (windows-latest)`,
-  `Native checks (macos-latest)`, `Bundle smoke (windows-latest)`,
-  `Bundle smoke (macos-latest)`, and `GitGuardian Security Checks`.
+  `Rust format`, `Required checks`, `Dependency security`, and
+  `GitGuardian Security Checks`. The `Required checks` aggregate gate
+  transitively covers `Native checks (*)` and `Bundle smoke (*)`; require the
+  gate rather than those individual matrix contexts, because they are
+  path-filtered and report `skipped` on docs-only changes — requiring them
+  directly makes documentation pull requests permanently unmergeable.
 - Enable private vulnerability reporting.
 - Restrict merge permissions to maintainers.
 - Require issue and pull-request templates.

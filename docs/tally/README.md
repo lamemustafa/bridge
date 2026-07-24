@@ -13,9 +13,18 @@ capability from assumption, and a completed request from a verified snapshot.
   current reviewed evidence.
 - [Privacy model](./privacy-model.md) defines what may be retained or included
   in diagnostics.
+- [2026H2 improvement plan](./IMPROVEMENT_PLAN_2026H2.md) is the current
+  execution authority: market research, phase roadmap (unseal → full-fidelity
+  reads → Drift Sentinel → write substrate → product loop), and rulings.
+- [Prompt playbook](./PROMPT_PLAYBOOK.md) holds the per-phase implementation,
+  review/rectification, and change-preservation prompts plus the orchestrator
+  loop; [Execution log](./EXECUTION_LOG.md) and [Backlog](./BACKLOG.md) are its
+  working files.
+- [Licensed-lab qualification checklist](./LICENSED_LAB_QUALIFICATION_CHECKLIST.md)
+  enumerates the per-version probes that must produce compatibility receipts.
 - [Research and execution plan](./TALLY_INTEGRATION_RESEARCH_AND_CODEX_PLAN.md)
-  contains the source research, product model, threat analysis, and staged
-  implementation plan.
+  contains the original source research, product model, threat analysis, and
+  staged implementation plan (superseded in part — see its header note).
 
 The architectural decisions are recorded in:
 
