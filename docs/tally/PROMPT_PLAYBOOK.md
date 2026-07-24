@@ -187,10 +187,18 @@ adversarial review. For each finding, in severity order:
 3. Add a regression test that fails before the fix and passes after.
 4. If a finding is actually invalid, prove it with a test or a code trace
    and mark it REJECTED with evidence — never silently skip it.
+5. Follow the repository defect process (AGENTS.md "Rectification
+   expectations"): for each CONFIRMED non-security defect, open a follow-up
+   `Bug` issue and land the fix as a dedicated `Rectify` PR carrying
+   root-cause and the regression check — do not fold confirmed defects
+   silently into the feature PR. For a suspected vulnerability, credential
+   leak, or sensitive-data exposure, STOP and follow SECURITY.md privately
+   instead (this supersedes public issue/PR creation).
 Re-run the full validation suite. Output: per-finding status
-(FIXED/REJECTED+evidence), tests added, commands run with results.
-Then hand back for another adversarial review pass. The cycle repeats
-until a review pass yields zero CONFIRMED P0/P1 findings.
+(FIXED/REJECTED+evidence), the Bug issue + Rectify PR link per defect,
+tests added, commands run with results. Then hand back for another
+adversarial review pass. The cycle repeats until a review pass yields
+zero CONFIRMED P0/P1 findings.
 ```
 
 ### 2.4 Change-preservation gate prompt
@@ -518,9 +526,19 @@ Implement — write core (masters):
    Field-diff readback vs intent; divergence → CONFIRMED_WITH_DIVERGENCE,
    surfaced in the Gap Map, never silent.
 5. OutcomeUnknown recovery: on restart, DISPATCHING rows → probe by key +
-   fingerprint; found+matching → CONFIRMED; absent → PENDING (safe
-   re-dispatch); alter with foreign AlterID bump → MANUAL. Bounded retries
-   (3, backoff) then MANUAL with evidence.
+   fingerprint. A probe MATCH is not itself a confirmation: run the SAME
+   full field-level readback diff as the normal dispatch path (step 4) and
+   resolve to `CONFIRMED` or `CONFIRMED_WITH_DIVERGENCE` — never promote to
+   `CONFIRMED` on key+fingerprint alone (Tally can retain both identifiers
+   while normalizing/dropping other fields, which would report a divergent
+   write as clean). Re-dispatch ONLY on an unambiguous ABSENCE PROOF that
+   cannot be confused with an edited prior write: because a crash can be
+   followed by a foreign edit that changes the narration and a fingerprint
+   field (so a real prior write matches neither probe), a mere "not found by
+   probe" is inconclusive → stay `OUTCOME_UNKNOWN` or escalate to `MANUAL`,
+   never re-dispatch. Alter with foreign AlterID bump → `MANUAL`. Bounded
+   retries (3, backoff) only from a proven-absent state, then `MANUAL` with
+   evidence.
 
 Implement — voucher writes (after masters CONFIRMED-path is soak-tested):
 6. Voucher Create for payment/receipt/journal/contra with full lines,
@@ -808,7 +826,10 @@ Loop, until stopped:
       RULES.
    b. Run the phase ADVERSARIAL REVIEW prompt on the diff. Reviews must
       be performed by a fresh context that did not write the code.
-   c. If CONFIRMED P0/P1 findings exist: run the RECTIFICATION prompt;
+   c. If CONFIRMED P0/P1 findings exist: run the RECTIFICATION prompt,
+      which (per AGENTS.md) opens a `Bug` issue and lands each non-security
+      defect as its own `Rectify` PR with root-cause + regression check —
+      security-sensitive findings go private via SECURITY.md instead. Then
       return to (b). Hard limit: 4 review/rectify cycles per unit — if
       findings persist after 4, STOP and escalate to the founder with the
       unresolved findings; do not merge, do not descope silently.
