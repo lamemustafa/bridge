@@ -352,3 +352,35 @@ jobs:
           path: src-tauri/target/release/bundle/**
           if-no-files-found: error
           retention-days: 7
+
+  required-checks:
+    name: Required checks
+    # Always runs so it can report a single, stable required status for branch
+    # protection. Passes when every upstream job either succeeded or was
+    # legitimately skipped (e.g. native/bundle skip on docs-only PRs), and fails
+    # if any upstream job failed or was cancelled. Point branch protection at
+    # this context instead of the individual matrix jobs so docs-only PRs are
+    # not blocked by skipped native/bundle checks.
+    if: ${{ always() }}
+    needs: [changes, frontend, rust-format, tally-portable, native, bundle-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Verify no required job failed
+        shell: bash
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NEEDS_JSON"
+          failed="$(
+            printf '%s' "$NEEDS_JSON" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(k for k,v in d.items() if v.get('result') in ('failure','cancelled')))"
+          )"
+          if [[ -n "$failed" ]]; then
+            echo "Required jobs did not pass: $failed"
+            exit 1
+          fi
+          echo "All required jobs succeeded or were legitimately skipped."
