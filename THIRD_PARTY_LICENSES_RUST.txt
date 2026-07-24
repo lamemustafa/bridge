@@ -1159,7 +1159,7 @@ thiserror 1.0.69
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/thiserror
 
-thiserror 2.0.18
+thiserror 2.0.19
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/thiserror
 
@@ -1167,7 +1167,7 @@ thiserror-impl 1.0.69
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/thiserror
 
-thiserror-impl 2.0.18
+thiserror-impl 2.0.19
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/thiserror
 
@@ -9226,9 +9226,9 @@ Apache License 2.0
 - tauri-utils 2.9.3
 - tauri 2.11.5
 - thiserror-impl 1.0.69
-- thiserror-impl 2.0.18
+- thiserror-impl 2.0.19
 - thiserror 1.0.69
-- thiserror 2.0.18
+- thiserror 2.0.19
 - time-core 0.1.9
 - time-macros 0.2.29
 - time 0.3.49
