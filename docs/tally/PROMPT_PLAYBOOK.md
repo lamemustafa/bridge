@@ -38,7 +38,12 @@ SUPERSEDED old rules (do NOT follow these from the older plan doc):
 
 STILL NON-NEGOTIABLE (unchanged):
 - Loopback-only Tally connectivity; redirects blocked; size/time caps.
-- HTTP 200 is never Tally success; require application STATUS=1 parsing.
+- HTTP 200 is never Tally success. Exports require application STATUS=1.
+  Bare `<RESPONSE>` imports report no STATUS and succeed only when the intended
+  counter incremented, ERRORS=0, EXCEPTIONS=0, and no LINEERROR is present.
+  When an import response does report STATUS, STATUS=0 fails regardless of its
+  counters; STATUS=1 never replaces the intended-counter and readback checks
+  (see IMPROVEMENT_PLAN_2026H2.md §8.3 and §8.2).
 - SVCURRENTCOMPANY (company pinning) mandatory on every company-scoped
   request; fail closed on mismatch.
 - Exact decimals only; never floating point for amounts.
@@ -242,27 +247,48 @@ Must still hold after this phase:
 ### 3.1 Implementation prompt
 
 ```text
-PHASE 2: FULL-FIDELITY READS
-Branch series: feat/tally-full-fidelity-*
+PHASE 2: FULL-FIDELITY READS (REVISED 2026-07-29 — collection-based)
+Branch series: feat/tally-collection-reads-*
+
+READ FIRST: IMPROVEMENT_PLAN_2026H2.md §8.9–8.12. This phase was rewritten
+after live evidence showed the custom-report profile family violates the TDL
+identifier rule, depends on unmodelled rendering geometry, and emits a shape
+Bridge's own parser rejects. Do not extend the report design. Replace it.
 
 Mission: the mirror must hold everything a CA needs to review, reconcile,
 and later verify writes: narration, party GSTIN/address, bill allocations,
 GST tax lines, inventory lines, cost-centre allocations. You cannot verify
 what you cannot read back — this phase gates every write phase.
 
+HARD RULE: no `$$` function may reference a TDL identifier containing
+spaces. Add a deterministic static check and remove every violation before
+any profile is dispatched or promoted.
+
 Implement:
-1. Extend the voucher read profile with a NEW version. NOTE: `bridge.tally.
-   vouchers/2` (BRIDGE Voucher Export V2) AND `bridge.tally.vouchers/3`
-   (BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA, the scope-bound selected-read
-   profile, pinned by a CHECK constraint in migration 0007) are both taken.
-   Allocate the next free version — `bridge.tally.vouchers/4` (BRIDGE Voucher
-   Export V4) — and migrate any stored profile identity as needed; do not
-   mutate V2 or V3. FETCH NARRATION, party ledger name, PARTYGSTIN, address
-   list, BILLALLOCATIONS.LIST, ALLINVENTORYENTRIES.LIST (+ batch/godown),
-   LEDGERENTRIES.LIST with GST rate/classification fields,
-   COSTCENTREALLOCATIONS.LIST.
-2. Extend ledger/master profiles similarly (contact, GSTIN, addresses,
-   opening-bill allocations).
+1. Build `bridge.tally.vouchers/4` as a `TYPE=COLLECTION` export, NOT a
+   custom REPORT. `bridge.tally.vouchers/2` and `/3` are taken (the latter
+   pinned by a CHECK constraint in migration 0007); do not mutate either —
+   they are being deleted, not extended. The response shape is
+   `ENVELOPE > HEADER(STATUS) > BODY > DATA > COLLECTION > VOUCHER`, which
+   carries STATUS=1 and preserves the export invariant.
+   FETCH a CURATED list — narration, party ledger name, PARTYGSTIN, bill
+   allocations, inventory entries, ledger entries with GST rate fields,
+   cost-centre allocations. Do NOT use `ALLLEDGERENTRIES.*`: the wildcard
+   also pulls OLDAUDITENTRYIDS/AUDITENTRIES/INTERESTCOLLECTION and measured
+   ~20 KB per voucher (1.5 MB for 75 vouchers), which extrapolates past the
+   32 MiB cap on any real company. Field selection is a size decision.
+2. Build `bridge.tally.ledgers/2` the same way. Delete render_vouchers,
+   render_ledgers, render_ledger_canary_readback and their report-shape
+   parsers once the collection profiles pass. Net diff should be negative.
+3. DATE SCOPING — this is the hardest part and it is a correctness gate.
+   SVFROMDATE/SVTODATE do NOT filter a collection (§8.8); the company period
+   governs and out-of-period objects are invisible. Use a collection
+   `<FILTERS>` clause with a `<SYSTEM TYPE="Formulae">` date predicate —
+   the pattern already exists in render_ledger_canary_readback. A profile
+   claiming a bounded window MUST actually bound it. Required negative test:
+   a voucher outside the requested window is provably absent from the
+   response. Until that test passes, no read-window claim may appear in the
+   matrix, the UI, or ADR 0015.
 3. Wire the existing feature-gated IndiaTax and Bills/Outstandings parser
    packs into the runtime read path as normal (non-default-off) profiles.
 4. Canonical model: extend fail-closed canonicalization for the new KNOWN
@@ -292,8 +318,13 @@ Tests:
   malformed-entity fixture fails closed with a typed error;
 - migration up/down tests.
 
-Exit criterion: clean round-trip diff on the Education instance across all
-wired voucher types; quarantine lane demonstrated on a custom-UDF fixture.
+Exit criterion (revised): on the LIVE Education instance — the collection
+profiles return full-fidelity vouchers and ledgers with STATUS=1; an
+out-of-window voucher is provably excluded by the FILTERS predicate; a
+full-company read either fits the response cap or segments and labels
+itself Partial honestly; the report renderers and report-shape parsers are
+deleted; `grep` finds no `$$` function referencing a spaced name; quarantine
+lane demonstrated on a field the profile does not model.
 ```
 
 ### 3.2 Adversarial review prompt
@@ -325,6 +356,21 @@ Hunt specifically for:
    reinterpreted as V4 data without a forced re-baseline.
 7. Privacy-doc dishonesty: code un-minimizes but privacy-model.md/README
    still claim minimization (or vice versa).
+8. IDENTIFIER-SAFETY REGRESSION (see plan §8.9): any `$$` function
+   referencing a TDL identifier containing spaces, anywhere — including
+   tests, fixtures, the simulator, and dead code. Use a deterministic scan;
+   do not eyeball.
+9. FALSE WINDOW BOUNDING (see plan §8.8): a profile that ECHOES a requested
+   date window without a FILTERS predicate that enforces it. Verify the
+   negative test exists and actually fails when the predicate is removed —
+   a bounding test that passes with the filter deleted is not a test.
+10. Report-shape residue: any surviving parser expecting `ENVELOPE > BODY >
+   LEDGER` or a report response without HEADER/STATUS; any code path that
+   would accept the old shape and silently produce zero rows rather than
+   failing loudly.
+11. Wildcard FETCH creeping back (`ALLLEDGERENTRIES.*` or similar): measured
+   at ~20 KB/voucher, it breaches the 32 MiB cap on any real company. Every
+   fetched field must be named and justified.
 ```
 
 ### 3.3 Rectification prompt

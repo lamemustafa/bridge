@@ -186,3 +186,165 @@ Alter drafts + "Changed in Tally" chips in the Daybook · sales/purchase voucher
 4. **Budget the TallyPrime Silver rental** and stand up the qualification VM (month 2).
 5. Rewrite `docs/tally/privacy-model.md` + README claims ("full-fidelity, local, encrypted") alongside the un-minimization commit.
 6. Line up **one design-partner CA firm** with a licensed TallyPrime for the scratch-company qualification protocol.
+
+---
+
+## 8. Deviations from live evidence — 2026-07-29
+
+First contact with a real Tally. Instance: **TallyPrime Edit Log (EL), Release 7.0, Educational Mode**, Windows 10, ODBC enabled, port 9000, **no TDLs configured**. Reached from the dev machine over an SSH loopback forward. Raw captures in `.bridge-live/captures/` (gitignored).
+
+Where this section conflicts with §§0–7 above, **this section wins**. Nothing here is `Verified` — Education and Edit Log EL are both outside the matrix's promotion rules.
+
+### 8.1 Writes work on Education mode
+
+Three imports succeeded: two `LEDGER ACTION="Create"` and one `VOUCHER ACTION="Create"` (Journal, dated `20260401`), each returning `CREATED=1, ERRORS=0`, the voucher carrying `LASTVCHID=295`.
+
+**Supersedes:** §2.5 ("a licensed instance is a hard prerequisite for a credible write story"), §3.2 Licensed-Tally-timing ("Rent TallyPrime Silver in month 2 — before the first real write ships"), §5 NOW item 4, and §7 item 4. The Education restriction is on the **voucher date** (1st, 2nd, 31st of a month), not on the calendar day of entry — so the write *mechanism* is testable continuously, for free, starting now. A licensed instance remains required to *certify* (`Verified`) but is no longer required to *build or de-risk*. Phase 4 moves earlier; the Silver rental moves later and loses its urgency.
+
+### 8.2 `ERRORS=0` on a failed write — counter-based success detection is unsafe
+
+A voucher dated `20260415` (illegal under Education) was rejected, and the response was:
+
+```
+<LINEERROR>Voucher date is missing for: 'Journal' voucher BRIDGE-PROBE-VCH-002...</LINEERROR>
+<CREATED>0</CREATED>  <ERRORS>0</ERRORS>  <EXCEPTIONS>1</EXCEPTIONS>
+```
+
+**`ERRORS` stayed 0 on a failure.** The signal is `EXCEPTIONS=1` plus `LINEERROR`. Any success test of the form `ERRORS == 0` reports a rejected voucher as posted. Note also that the error text is *wrong*: the date was present, not missing — Tally's message describes neither the real cause nor a usable remediation.
+
+**Adds to §6 write-path invariants:** a dispatch is successful only when the intended counter incremented **and** `ERRORS == 0` **and** `EXCEPTIONS == 0` **and** no `LINEERROR` is present. `LINEERROR` text is untrusted for cause attribution and must never be surfaced as a diagnosis.
+
+### 8.3 Import responses carry no `STATUS` field
+
+Import responses have a bare `<RESPONSE>` root — no `ENVELOPE`, no `HEADER`, no `STATUS`. `bridge-tally-protocol`'s `parse_import_outcome` already accepts this shape correctly (`lib.rs:1991`, extras at `lib.rs:2097`).
+
+**Amends the PROMPT_PLAYBOOK GLOBAL RULES** clause "HTTP 200 is never Tally success; require application STATUS=1 parsing": that rule applies to **exports only**. Imports have no STATUS and are judged by the §8.2 rule. Left unsplit, an implementer will "correct" the parser into rejecting every successful write.
+
+### 8.4 Duplicate voucher creates succeed — there is no natural idempotency
+
+Re-sending the identical voucher payload, same `VOUCHERNUMBER`, produced `CREATED=1, LASTVCHID=296` — **a second voucher**. Tally does not dedupe on voucher number.
+
+**Confirms §3.1.2 as load-bearing rather than defensive:** the UDF `BridgeTxnID` + `(date, amount, ledger-set, voucher-type)` fingerprint is the *only* thing standing between a crash-retry and a duplicated client voucher.
+
+### 8.5 Re-creating an existing master silently becomes an Alter
+
+Re-sending the identical ledger `ACTION="Create"` returned `CREATED=0, ALTERED=1` — no error. A retry silently **overwrites** the existing master with the retry payload, including any defaulted fields.
+
+**Adds to §6:** master creates require a pre-existence read before dispatch, and `CREATED` vs `ALTERED` must persist as distinct outbox outcomes. "No duplicate was made" is not the same as "my create succeeded."
+
+### 8.6 `LASTMID` is 0 on successful master creates; `LASTVCHID` works
+
+Both ledger creates returned `LASTMID=0` despite `CREATED=1`. **Confirms §5.1.4's choice**: masters must be read back by normalized name. `LASTVCHID` is populated for vouchers and usable, still subject to the foreign-writer cross-check.
+
+### 8.7 AlterID high-water marks move — Drift Sentinel's mechanism is sound
+
+Company-level `ALTVCHID 440 → 441` (one voucher created) and `ALTMSTID 253 → 255` (two masters created), correlating exactly with the writes performed. §3.1.7's cheap-probe design is viable on this release.
+
+### 8.8 CONFIRMED DEFECT — the export is bounded by the company period, not by the requested window
+
+Two direct collection exports, one requesting `20260401`–`20260401` and one requesting `20260403`–`20260403`, returned **byte-identical result sets of 75 vouchers across 24 distinct dates spanning `20250401`–`20260302`** — i.e. FY 2025-26, the company's current period. `SVFROMDATE`/`SVTODATE` had no effect at all.
+
+The decisive observation: the Journal voucher created in §8.1, dated `20260401` (FY 2026-27), returned `CREATED=1` with `LASTVCHID=295` and moved `ALTVCHID` — **and does not appear in the export at all.** The period is a hard visibility boundary, not a filter.
+
+Three consequences, in ascending severity:
+
+1. **The selected-read window is fiction.** A 31-day request returns the entire current period. `bridge.tally.vouchers/3` *echoes* the requested window (`$$String:##SVFromDate`) rather than enforcing it, so the response asserts a bound it never applied. This contradicts **ADR 0015**, which asserts V3 is exact-scope evidence bound to "an echoed exact `FROMDATE`/`TODATE` window". That bound has never held.
+
+2. **Back-dated vouchers outside the current period are invisible.** §2.5 claims "date-unbounded scans catch them". False on this release — no scan sees outside the loaded period. Drift Sentinel must drive the period explicitly per FY segment. This makes §3.1.7's segmented-scan design mandatory for *correctness*, not merely for performance as stated.
+
+3. **A successful write can be invisible to its own readback.** This is the dangerous one. Under §5.1.4, `CONFIRMED` requires readback; a write landing outside the current period readbacks as absent → `OUTCOME_UNKNOWN` → the §5.1.5 recovery path probes, finds nothing, and may re-dispatch. §8.4 proves Tally accepts the duplicate. **That is a demonstrated path to duplicating a client's voucher**, found before Phase 4 wrote a line of code.
+
+**Mandatory additions to §6 write-path invariants:** every read profile must set the company period explicitly and assert the returned data's date span against it; a readback that lands outside the asserted period is `MANUAL`, never `OUTCOME_UNKNOWN`, and never re-dispatched. No read-window claim in the matrix, UI, or ADR 0015 is supportable until the profiles carry explicit period control.
+
+### 8.9 Confirmed compatibility defect — V2 cannot produce boundary evidence
+
+D2 sent the exact rendered `bridge.tally.vouchers/2` request (`BRIDGE Voucher Export V2`, company pinned, window `20260403`–`20260403`) to the lab instance. Result: **HTTP 000, 0 bytes, client timeout at 600 seconds.**
+
+A second, earlier dispatch of the same request ran for **3,340 seconds (56 minutes)** before its client gave up, also returning zero bytes. Two independent attempts, 56 minutes and 10 minutes, produced no response at all.
+
+The durable public evidence is limited to the exact request size, HTTP `000`,
+zero response bytes, and the fact that the profile did not complete. The
+operator-side diagnostic record, event signature, and isolation sequence stay
+in gitignored `.bridge-live/`.
+
+The public engineering rule is independent of those private diagnostics:
+
+> No `$$` function may reference a TDL identifier containing spaces.
+
+Four shipped profiles violate that rule. The V2 period-boundary question
+therefore remains unmeasurable with the shipped report profile, while the
+profile defect itself is confirmed. Phase 2 must replace the affected profile
+family rather than extend it.
+
+### 8.10 Blast radius — 4 of 7 read profiles violate the identifier rule
+
+| Profile | Spaced identifier referenced by a `$$` function |
+| --- | --- |
+| `company_list_v1` | no |
+| `standard_ledger_identity_v1` | no |
+| `standard_ledger_catalog_v1` | no |
+| `ledgers_v1` | **yes** |
+| `ledger_canary_readback_v1` | **yes** |
+| `vouchers_v2` | **yes** |
+| `vouchers_v3` | **yes** |
+
+The three conforming profiles are discovery and name-listing surfaces. Every
+profile intended to read accounting rows violates the retained safety rule and
+must remain non-promotable until Phase 2 replaces it.
+
+### 8.11 Why a naming correction alone does not save the report family
+
+Private lab evidence also established two public-safe contract findings:
+
+1. Custom report output depends on rendering geometry that the current profile
+   family does not model explicitly.
+2. The working direct-row response shape omits the `HEADER/STATUS=1` envelope
+   required by Bridge's strict export parser.
+
+The replacement direction is therefore collection-based, not a narrow rename:
+
+| | Custom report (`TYPE=DATA`) | Direct collection (`TYPE=COLLECTION`) |
+| --- | --- | --- |
+| Identifier safety rule | violated by four shipped profiles | no violation observed |
+| Returns `HEADER/STATUS=1` | no | yes |
+| Response shape vs parser | mismatched | matches collection parsers |
+| Voucher fidelity | fields declared individually | curated `FETCH` supports required nested data |
+| Request size | substantially larger | substantially smaller |
+| Existing Bridge precedent | discovery report only | `standard_ledger_identity_v1` |
+
+Collections preserve the export-status invariant and align with existing
+parsers. Replacing `render_vouchers`, `render_ledgers`, and their derivatives
+is the opening move of Phase 2.
+
+### 8.12 Phase 2, revised — collection-based full-fidelity reads
+
+Supersedes §5 NOW item 2 and `PROMPT_PLAYBOOK.md` §3.1. The original phase
+extended a custom-report design that violates the identifier rule, depends on
+unmodelled rendering geometry, and returns a shape Bridge's strict parser
+rejects. Extending it would amplify all three defects.
+
+**Revised mission:** replace the custom-report profile family with `TYPE=COLLECTION` exports carrying full-fidelity `FETCH` lists, and delete the report renderers.
+
+**Design inputs established live on 2026-07-29:**
+
+1. **Response shape.** A collection export returns `ENVELOPE > HEADER(VERSION, STATUS) > BODY > DESC(CMPINFO) + DATA > COLLECTION > VOUCHER|LEDGER`. It carries `STATUS=1`, so the export-side invariant is preserved rather than relaxed. The existing report-shape parsers (`ENVELOPE > BODY > LEDGER`) do not match and must be replaced, not adapted.
+2. **Payload weight is the binding constraint.** A `FETCH` of `ALLLEDGERENTRIES.*` returned **1.5 MB for 75 vouchers — roughly 20 KB per voucher**, because `.*` also pulls `OLDAUDITENTRYIDS`, `AUDITENTRIES`, `INTERESTCOLLECTION` and every other sub-list. Extrapolated to a 100k-voucher company that is ~2 GB against a 32 MiB response cap. **Curated `FETCH` lists, not `.*`, and mandatory segmentation.** Field selection is now a size decision, not only a fidelity decision.
+3. **Date scoping must be solved inside the collection.** `SVFROMDATE`/`SVTODATE` do not filter a collection (§8.8) — the company period governs, and objects outside it are invisible. The TDL mechanism for this is a collection `<FILTERS>` clause with a `<SYSTEM TYPE="Formulae">` predicate; Bridge already uses that pattern in `render_ledger_canary_readback`. A date-bounded read must be proven to actually bound, with a negative test showing an out-of-window voucher is excluded.
+4. **Everything Phase 2 needs is available.** Confirmed present in a single collection response: `NARRATION`, `PARTYLEDGERNAME`, `PARTYGSTIN`, `ALTERID`, `MASTERID`, `GUID`, `REMOTEID`, `VCHKEY`, `ISCANCELLED`, `ISDELETED`, `ALLLEDGERENTRIES.LIST`, `BILLALLOCATIONS.LIST` (464 occurrences), `GSTRATE` (766 occurrences), `ALLINVENTORYENTRIES.LIST`.
+5. **Quarantine matters more, not less.** A collection returns many fields Bridge does not model. The quarantine lane is now the primary mechanism for tolerating that, and the boundary between "unknown field, quarantine" and "unfetched field, ignore" must be explicit.
+
+**Exit criterion (revised):** a date-bounded collection profile returns full-fidelity vouchers from the live Education instance with `STATUS=1`; an out-of-window voucher is provably excluded; a curated `FETCH` keeps a full-company read inside the response cap or segments honestly; the report renderers and their parsers are deleted; and no `$$` function references a spaced name anywhere in the tree.
+
+The operator-side diagnostic record and any vendor disclosure material remain
+only under gitignored `.bridge-live/`. The public plan intentionally records
+no dialog text, failure signature, diagnostic filename, or isolation ladder.
+
+### 8.8-orig (superseded framing, retained for audit)
+
+Two direct collection exports, one requesting `20260401`–`20260401` and one requesting `20260403`–`20260403`, returned **byte-identical result sets of 75 vouchers** spanning 2025-04 to 2026-03. `SVFROMDATE`/`SVTODATE` were ignored entirely by a bare `<COLLECTION><TYPE>Voucher</TYPE>`.
+
+`BRIDGE Voucher Collection V1` (`xml_read_profiles.rs:668`) has exactly that shape — no `<FILTER>`, no `<BELONGSTO>`, no date scoping — and relies solely on the same static variables. `bridge.tally.vouchers/3` **echoes** the requested window (`$$String:##SVFromDate`) rather than enforcing it, so a request would report the window it was asked for while returning the whole book.
+
+If confirmed, this contradicts **ADR 0015**, which asserts `bridge.tally.vouchers/3` is exact-scope evidence bound to "an echoed exact `FROMDATE`/`TODATE` window", and it means the 31-day selected-read bound has never held.
+
+**Not yet confirmed:** the probes used `TYPE=Collection` (direct collection export); Bridge uses `TYPE=Data` with a `REPORT`, whose period context may behave differently. One decisive test — send Bridge's exact V2 request and count distinct dates — settles it. **Until settled, no read-window claim in the matrix, UI, or ADR 0015 is supportable.**
