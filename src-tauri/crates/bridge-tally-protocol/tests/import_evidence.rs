@@ -1,7 +1,112 @@
 use bridge_tally_protocol::{
     parse_import_evidence, parse_import_outcome, parse_import_result,
-    parse_ledger_write_readback_with_evidence, TallyImportApplicationStatus,
+    parse_ledger_write_readback_with_evidence, TallyImportApplicationStatus, TallyImportResult,
 };
+
+const LIVE_EDUCATION_W1_LEDGER: &str =
+    include_str!("fixtures/live_education_w1_ledger_sanitized.xml");
+const LIVE_EDUCATION_W4_VOUCHER: &str =
+    include_str!("fixtures/live_education_w4_voucher_sanitized.xml");
+const LIVE_EDUCATION_W7_BADDATE: &str =
+    include_str!("fixtures/live_education_w7_baddate_sanitized.xml");
+
+#[test]
+fn live_education_import_counter_shapes_are_clean_only_when_the_intended_write_applied() {
+    // Derived from ignored 2026-07-29 live captures. The w7 LINEERROR text is
+    // deliberately redacted; its observed presence is preserved.
+    for xml in [LIVE_EDUCATION_W1_LEDGER, LIVE_EDUCATION_W4_VOUCHER] {
+        let evidence = parse_import_evidence(xml).expect("live success shape parses");
+        assert_eq!(
+            evidence.application_status(),
+            TallyImportApplicationStatus::NotReported
+        );
+        assert_eq!(evidence.counters().created, 1);
+        assert!(evidence.counters().is_clean_success_for(1, 0, 0));
+    }
+
+    let rejected = parse_import_evidence(LIVE_EDUCATION_W7_BADDATE)
+        .expect("failure evidence must remain available for audit");
+    assert_eq!(
+        rejected.application_status(),
+        TallyImportApplicationStatus::NotReported
+    );
+    assert_eq!(rejected.counters().created, 0);
+    assert_eq!(rejected.counters().errors, 0);
+    assert_eq!(rejected.counters().exceptions, 1);
+    assert_eq!(rejected.counters().line_error_count, 1);
+    assert!(rejected.exceptions_were_reported());
+    assert!(
+        !rejected.counters().is_clean_success_for(1, 0, 0),
+        "w7 must reject success despite ERRORS=0"
+    );
+}
+
+#[test]
+fn clean_import_success_requires_each_live_evidence_condition_independently() {
+    let clean = TallyImportResult {
+        created: 1,
+        altered: 0,
+        deleted: 0,
+        ignored: 0,
+        errors: 0,
+        cancelled: 0,
+        exceptions: 0,
+        line_error_count: 0,
+    };
+    assert!(clean.is_clean_success_for(1, 0, 0));
+    assert!(!clean.is_clean_success_for(0, 1, 0));
+
+    let all_zero = TallyImportResult {
+        created: 0,
+        ..clean.clone()
+    };
+    assert!(!all_zero.is_clean_success_for(1, 0, 0));
+    assert!(!all_zero.is_clean_success_for(0, 0, 0));
+
+    let with_errors = TallyImportResult {
+        errors: 1,
+        ..clean.clone()
+    };
+    assert!(!with_errors.is_clean_success_for(1, 0, 0));
+
+    let with_exceptions = TallyImportResult {
+        exceptions: 1,
+        ..clean.clone()
+    };
+    assert!(!with_exceptions.is_clean_success_for(1, 0, 0));
+
+    let with_line_error = TallyImportResult {
+        line_error_count: 1,
+        ..clean
+    };
+    assert!(!with_line_error.is_clean_success_for(1, 0, 0));
+
+    let empty_line_error = parse_import_evidence("<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>0</EXCEPTIONS><LINEERROR></LINEERROR></RESPONSE>")
+        .expect("an empty LINEERROR is still evidence of a reported line error");
+    assert_eq!(empty_line_error.counters().line_error_count, 1);
+    assert!(!empty_line_error.counters().is_clean_success_for(1, 0, 0));
+}
+
+#[test]
+fn wrapped_status_zero_rejects_clean_import_counters() {
+    let xml = "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY><DATA><IMPORTRESULT><CREATED>1</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>0</EXCEPTIONS></IMPORTRESULT></DATA></BODY></ENVELOPE>";
+    let evidence = parse_import_evidence(xml).expect("failure evidence remains parseable");
+    assert_eq!(
+        evidence.application_status(),
+        TallyImportApplicationStatus::Failure
+    );
+    assert!(evidence.counters().is_clean_success_for(1, 0, 0));
+    assert!(
+        parse_import_result(xml).is_err(),
+        "reported STATUS=0 must override otherwise clean counters"
+    );
+}
+
+#[test]
+fn non_numeric_lastvchid_is_rejected_even_when_import_counters_are_clean() {
+    let xml = "<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><DELETED>0</DELETED><LASTVCHID>not-a-number</LASTVCHID><IGNORED>0</IGNORED><ERRORS>0</ERRORS><CANCELLED>0</CANCELLED><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>";
+    assert!(parse_import_evidence(xml).is_err());
+}
 
 #[test]
 fn evidence_binds_counters_response_and_redacted_line_errors() {

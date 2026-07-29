@@ -821,10 +821,7 @@ pub fn observe_fixture_canary_post_dispatch(
     let receipt = parse_import_receipt(receipt_xml)?;
     let observed = parse_readback(&prepared.prepared, readback_xml)?;
     let exact_after = observed.projections == prepared.prepared.expected_after;
-    let exact_counters = receipt.is_clean()
-        && receipt.counters.created == 1
-        && receipt.counters.altered == 0
-        && receipt.counters.deleted == 0;
+    let exact_counters = receipt.is_clean_for(1, 0, 0);
     if !exact_after || !exact_counters {
         return Err(QualificationError::PostDispatchMismatch);
     }
@@ -999,10 +996,9 @@ impl AwaitingLedgerReadback {
             .filter(|mutation| mutation.operation == LedgerOperation::Create)
             .count() as u64;
         let expected_altered = prepared.mutations.len() as u64 - expected_created;
-        let exact_counters = self.receipt.is_clean()
-            && self.receipt.counters.created == expected_created
-            && self.receipt.counters.altered == expected_altered
-            && self.receipt.counters.deleted == 0;
+        let exact_counters = self
+            .receipt
+            .is_clean_for(expected_created, expected_altered, 0);
         let zero_counters = self.receipt.counters.created == 0
             && self.receipt.counters.altered == 0
             && self.receipt.counters.deleted == 0;
@@ -1109,9 +1105,18 @@ impl ParsedImportReceipt {
         &self.line_error_digests
     }
 
-    fn is_clean(&self) -> bool {
+    fn is_clean_for(
+        &self,
+        expected_created: u64,
+        expected_altered: u64,
+        expected_deleted: u64,
+    ) -> bool {
         self.application_status != TallyImportApplicationStatus::Failure
-            && self.counters.is_clean_success()
+            && self.counters.is_clean_success_for(
+                expected_created,
+                expected_altered,
+                expected_deleted,
+            )
     }
 }
 

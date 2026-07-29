@@ -527,13 +527,17 @@ fn production_import_parser_preserves_every_exact_counter() {
     assert_eq!(result.cancelled, 0);
     assert_eq!(result.exceptions, 0);
     assert_eq!(result.line_error_count, 0);
-    assert!(result.is_clean_success());
+    assert!(result.is_clean_success_for(2, 3, 1));
 
     let duplicate = parse_import_result(&Fixture::ImportDuplicate.body()).unwrap();
     assert_eq!(duplicate.ignored, 1);
     assert_eq!(duplicate.errors, 1);
     assert_eq!(duplicate.line_error_count, 1);
-    assert!(!duplicate.is_clean_success());
+    assert!(!duplicate.is_clean_success_for(
+        duplicate.created,
+        duplicate.altered,
+        duplicate.deleted
+    ));
 
     let partial = parse_import_result(&Fixture::ImportPartial.body()).unwrap();
     assert_eq!(partial.created, 1);
