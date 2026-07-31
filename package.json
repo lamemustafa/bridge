@@ -38,15 +38,15 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
-    "lucide-react": "^1.25.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "lucide-react": "^1.27.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
-    "@vitejs/plugin-react": "^6.0.3",
+    "@vitejs/plugin-react": "^6.0.4",
     "typescript": "^7.0.2",
     "vite": "^8.1.5"
   }

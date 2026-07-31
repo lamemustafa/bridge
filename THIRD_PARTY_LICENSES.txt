@@ -32,7 +32,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-lucide-react 1.25.0
+lucide-react 1.27.0
 --------------------
 License: ISC
 Source: https://github.com/lucide-icons/lucide
@@ -53,7 +53,7 @@ LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
 OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 
-react 19.2.7, react-dom 19.2.7, scheduler 0.27.0
+react 19.2.8, react-dom 19.2.8, scheduler 0.27.0
 ------------------------------------------------
 License: MIT
 Source: https://github.com/facebook/react
