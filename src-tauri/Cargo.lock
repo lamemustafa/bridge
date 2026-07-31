@@ -477,6 +477,7 @@ name = "bridge-tally-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bridge-tally-primitives",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -518,11 +519,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bridge-tally-primitives"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "bridge-tally-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bridge-tally-core",
+ "bridge-tally-primitives",
  "quick-xml",
  "serde",
  "serde_json",

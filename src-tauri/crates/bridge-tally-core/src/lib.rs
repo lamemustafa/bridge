@@ -1,9 +1,13 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(crate) use bridge_tally_primitives::exact_arithmetic;
+pub use bridge_tally_primitives::{
+    ExactDecimal, ReadResponseScope, TallyDate, TallyError, MAX_EXACT_DECIMAL_BYTES,
+};
+
 pub mod bills_reconciliation;
-mod exact_arithmetic;
 mod pack_models;
 pub mod reconciliation;
 pub mod report_tie_out;
@@ -14,7 +18,6 @@ pub use pack_models::*;
 pub mod destination;
 
 pub const PROOF_CONTRACT_VERSION: u16 = 3;
-const MAX_EXACT_DECIMAL_BYTES: usize = 256;
 pub const CORE_ACCOUNTING_SCHEMA_VERSION: PackSchemaVersion =
     PackSchemaVersion { major: 3, minor: 0 };
 pub const BILLS_AND_PAYMENTS_SCHEMA_VERSION: PackSchemaVersion =
@@ -133,85 +136,6 @@ pub struct Gap {
     pub field_or_invariant: String,
     pub state: CapabilityState,
     pub safe_reason_code: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct ExactDecimal(String);
-
-impl ExactDecimal {
-    pub fn parse(value: impl Into<String>) -> Result<Self, TallyError> {
-        let value = value.into();
-        let bytes = value.as_bytes();
-        let body = bytes.strip_prefix(b"-").unwrap_or(bytes);
-        let mut sections = body.split(|byte| *byte == b'.');
-        let whole = sections.next().unwrap_or_default();
-        let fractional = sections.next();
-        let valid = bytes.len() <= MAX_EXACT_DECIMAL_BYTES
-            && !whole.is_empty()
-            && whole.iter().all(u8::is_ascii_digit)
-            && fractional
-                .is_none_or(|part| !part.is_empty() && part.iter().all(u8::is_ascii_digit))
-            && sections.next().is_none();
-        if !valid {
-            return Err(TallyError::InvalidData {
-                code: "invalid_exact_decimal".to_string(),
-            });
-        }
-        Ok(Self(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn zero() -> Self {
-        Self("0".to_string())
-    }
-
-    pub fn checked_add(&self, other: &Self) -> Result<Self, TallyError> {
-        let mut total = exact_arithmetic::ExactDecimalAccumulator::default();
-        total.add(self.as_str());
-        total.add(other.as_str());
-        Self::parse(total.canonical_string())
-    }
-
-    pub fn checked_subtract(&self, other: &Self) -> Result<Self, TallyError> {
-        let mut total = exact_arithmetic::ExactDecimalAccumulator::default();
-        total.add(self.as_str());
-        total.subtract(other.as_str());
-        Self::parse(total.canonical_string())
-    }
-
-    pub fn is_zero(&self) -> bool {
-        exact_arithmetic::numeric_equal(self.as_str(), "0")
-    }
-
-    pub fn is_negative(&self) -> bool {
-        exact_arithmetic::is_negative_nonzero(self.as_str())
-    }
-
-    pub fn abs(&self) -> Result<Self, TallyError> {
-        if self.is_negative() {
-            Self::parse(self.as_str().trim_start_matches('-').to_string())
-        } else {
-            Ok(self.clone())
-        }
-    }
-
-    pub fn cmp_magnitude(&self, other: &Self) -> std::cmp::Ordering {
-        exact_arithmetic::magnitude_cmp(self.as_str(), other.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for ExactDecimal {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::parse(value).map_err(serde::de::Error::custom)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -431,29 +355,6 @@ pub struct DeliveryReceipt {
     pub receipt_id: String,
     pub content_sha256: String,
     pub committed: bool,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum TallyError {
-    #[error("Tally is not reachable")]
-    Unreachable,
-    #[error("Tally returned an invalid protocol response ({code})")]
-    Protocol { code: String },
-    #[error("Tally data failed validation ({code})")]
-    InvalidData { code: String },
-    #[error("Capability is unavailable ({code})")]
-    Unsupported { code: String },
-    #[error("Tally read response exceeded the bounded limit ({scope:?})")]
-    ReadResponseTooLarge { scope: ReadResponseScope },
-    #[error("Operation was cancelled")]
-    Cancelled,
-    #[error("The outcome of the write could not be proven")]
-    OutcomeUnknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadResponseScope {
-    VoucherWindow,
 }
 
 #[async_trait]

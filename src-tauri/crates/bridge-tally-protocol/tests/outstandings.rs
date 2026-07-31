@@ -1,4 +1,4 @@
-use bridge_tally_core::TallyDate;
+use bridge_tally_primitives::TallyDate;
 use bridge_tally_protocol::{
     outstandings::{
         assemble_scan, compute_outstandings, parse_company_book_extent, verify_segment_pair,

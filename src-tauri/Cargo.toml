@@ -28,6 +28,7 @@ members = [
   "crates/bridge-tally-incremental",
   "crates/bridge-tally-live-read",
   "crates/bridge-tally-observability",
+  "crates/bridge-tally-primitives",
   "crates/bridge-tally-protocol",
   "crates/bridge-tally-qualification",
   "crates/bridge-tally-read-transport",

@@ -1,6 +1,6 @@
 use std::{fmt, sync::Arc};
 
-use bridge_tally_core::{ExactDecimal, TallyDate};
+use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use serde::Serialize;
 
 use crate::xml_read_profiles::ValidatedCompanyName;

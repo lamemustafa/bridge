@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use bridge_tally_core::{ExactDecimal, TallyDate};
+use bridge_tally_primitives::{ExactDecimal, TallyDate};
 
 use super::{
     AgeingBillCounts, AgeingBuckets, CompleteScan, MoneyValue, OutstandingsError,
@@ -221,7 +221,7 @@ fn civil_day(date: &TallyDate) -> Result<i64, OutstandingsError> {
 
 #[cfg(test)]
 mod tests {
-    use bridge_tally_core::{ExactDecimal, TallyDate};
+    use bridge_tally_primitives::{ExactDecimal, TallyDate};
 
     use crate::{
         outstandings::{

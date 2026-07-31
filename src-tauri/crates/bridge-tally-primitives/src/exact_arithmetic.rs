@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 /// lexemes. It never converts through floating point and treats scale-only
 /// differences and negative zero as numerically equal.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ExactDecimalAccumulator {
+pub struct ExactDecimalAccumulator {
     negative: bool,
     digits: String,
     scale: usize,
@@ -21,26 +21,26 @@ impl Default for ExactDecimalAccumulator {
 }
 
 impl ExactDecimalAccumulator {
-    pub(crate) fn add(&mut self, value: &str) {
+    pub fn add(&mut self, value: &str) {
         let (negative, digits, scale) = decimal_parts(value);
         self.combine(negative, digits, scale);
     }
 
-    pub(crate) fn subtract(&mut self, value: &str) {
+    pub fn subtract(&mut self, value: &str) {
         let (negative, digits, scale) = decimal_parts(value);
         let zero = digits.bytes().all(|digit| digit == b'0');
         self.combine(if zero { false } else { !negative }, digits, scale);
     }
 
-    pub(crate) fn is_zero(&self) -> bool {
+    pub fn is_zero(&self) -> bool {
         self.digits.bytes().all(|digit| digit == b'0')
     }
 
-    pub(crate) fn is_negative_nonzero(&self) -> bool {
+    pub fn is_negative_nonzero(&self) -> bool {
         self.negative && !self.is_zero()
     }
 
-    pub(crate) fn canonical_string(&self) -> String {
+    pub fn canonical_string(&self) -> String {
         let mut value = self.digits.clone();
         if self.scale > 0 {
             if value.len() <= self.scale {
@@ -54,13 +54,13 @@ impl ExactDecimalAccumulator {
         value
     }
 
-    pub(crate) fn equals(&self, value: &str) -> bool {
+    pub fn equals(&self, value: &str) -> bool {
         let mut difference = self.clone();
         difference.subtract(value);
         difference.is_zero()
     }
 
-    fn combine(&mut self, negative: bool, digits: String, scale: usize) {
+    pub fn combine(&mut self, negative: bool, digits: String, scale: usize) {
         let target_scale = self.scale.max(scale);
         let left = aligned_digits(&self.digits, target_scale - self.scale);
         let right = aligned_digits(&digits, target_scale - scale);
@@ -79,7 +79,7 @@ impl ExactDecimalAccumulator {
         self.normalise();
     }
 
-    fn normalise(&mut self) {
+    pub fn normalise(&mut self) {
         self.digits = self.digits.trim_start_matches('0').to_string();
         while self.scale > 0 && self.digits.ends_with('0') {
             self.digits.pop();
@@ -93,20 +93,20 @@ impl ExactDecimalAccumulator {
     }
 }
 
-pub(crate) fn numeric_equal(left: &str, right: &str) -> bool {
+pub fn numeric_equal(left: &str, right: &str) -> bool {
     let mut difference = ExactDecimalAccumulator::default();
     difference.add(left);
     difference.subtract(right);
     difference.is_zero()
 }
 
-pub(crate) fn is_negative_nonzero(value: &str) -> bool {
+pub fn is_negative_nonzero(value: &str) -> bool {
     let mut parsed = ExactDecimalAccumulator::default();
     parsed.add(value);
     parsed.is_negative_nonzero()
 }
 
-pub(crate) fn magnitude_cmp(left: &str, right: &str) -> Ordering {
+pub fn magnitude_cmp(left: &str, right: &str) -> Ordering {
     let (_, left_digits, left_scale) = decimal_parts(left);
     let (_, right_digits, right_scale) = decimal_parts(right);
     let target_scale = left_scale.max(right_scale);
@@ -116,7 +116,7 @@ pub(crate) fn magnitude_cmp(left: &str, right: &str) -> Ordering {
     )
 }
 
-pub(crate) fn same_nonzero_sign(left: &str, right: &str) -> bool {
+pub fn same_nonzero_sign(left: &str, right: &str) -> bool {
     if numeric_equal(left, "0") || numeric_equal(right, "0") {
         return false;
     }
@@ -190,7 +190,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exact_accumulator_handles_scale_sign_large_values_and_negative_zero() {
+    pub fn exact_accumulator_handles_scale_sign_large_values_and_negative_zero() {
         let mut value = ExactDecimalAccumulator::default();
         value.add("999999999999999999999.0010");
         value.add("-999999999999999999999.001");

@@ -733,7 +733,7 @@ mod tests {
         .unwrap();
         let first_voucher = parsed.vouchers[0].clone();
         let mut last_voucher = parsed.vouchers[1].clone();
-        last_voucher.date = bridge_tally_core::TallyDate::parse("20250701").unwrap();
+        last_voucher.date = bridge_tally_primitives::TallyDate::parse("20250701").unwrap();
         let partitions = windows
             .iter()
             .enumerate()
