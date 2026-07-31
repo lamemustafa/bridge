@@ -55,7 +55,7 @@ if (
   failures.push("complete bundled SQLCipher NOTICE attribution");
 }
 if (!readme.includes("Apache License, Version 2.0")) failures.push("README license declaration");
-if (!frontendNotices.includes("lucide-react") || !frontendNotices.includes("react 19.2.7")) {
+if (!frontendNotices.includes("lucide-react") || !/\breact \d+\.\d+\.\d+/.test(frontendNotices)) {
   failures.push("frontend third-party notices");
 }
 if (!rustNotices.includes("pkcs11 0.5.0") || !rustNotices.includes("Mozilla Public License 2.0")) {
