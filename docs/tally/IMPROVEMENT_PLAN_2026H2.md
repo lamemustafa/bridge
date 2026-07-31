@@ -179,23 +179,25 @@ behaviour we have never observed ourselves. Treat the wedge argument as
 provisional until someone re-fetches the vendor page or measures the latency
 directly; do not cite the number onward as established fact.
 
-**Evidence grades within the table.** Mechanism, sync model and documented
-behaviour come from the vendor documentation above. Scale figures ("10k+ CA
-firms", "1M+ installs, 4.2★") are **vendor or app-store marketing claims,
-reproduced as claims, not independently audited.** Complaint patterns are
-**review-signal, not measurement.** Treat the first as citable, the second two
-as directional.
+**Evidence grades within the table.** Only claims supported by the **retrieved
+vendor documentation listed above** — mechanism, sync model, and documented
+behaviour — are citable. The Finsights row and DIY long tail are explicit
+exceptions: their gaps remain uncited, and the Finsights deletion-latency
+figure must not be cited as established fact. Scale figures ("10k+ CA firms",
+"1M+ installs, 4.2★") are **vendor or app-store marketing claims, reproduced
+as claims, not independently audited.** Complaint patterns are **review-signal,
+not measurement.** Treat the latter two as directional.
 
 > **What is held privately, and what does not depend on it.** Competitor
 > *pricing*, a synthesised UX teardown, and a deeper landscape sweep
 > (Zoho/Munim/Open/EnKash/GST connectors/Tally-native remote) live in the
 > private lamemustafa knowledge hub rather than in this public repo, because
-> they are commercially sensitive. **No ruling in this document rests on that
-> private material** — the rulings below follow from the public vendor sources
-> above plus code analysis of this repository, and a contributor without hub
-> access can verify and challenge all of them. Where private research informed
-> a *prioritisation* rather than a finding, it is marked inline as an internal
-> hypothesis — see §2.4.
+> they are commercially sensitive. **The sources and gaps above do not rest on
+> that private material.** Where private research informed a *prioritisation*
+> rather than a finding, it is marked inline as an internal hypothesis — see
+> §2.4. §5 contains separate addendum-derived, unsourced planning hypotheses
+> about hosted-RDP prevalence and the firm-maintained client share; they are
+> explicitly marked there and are not public support for a ruling.
 >
 > **No live-Tally probe record is checked in on this branch.** Do not read the
 > rulings as backed by recorded measurements against a running Tally: the
@@ -257,7 +259,7 @@ Four persona proposals (CA operator, product strategist, protocol engineer, UX d
 6. **Honest freshness UX** — Sync Beacon with dual timestamps; Gap Map reborn as a fix-it list; Truth States compressed to three visual tiers (Verified+time / Attention+reason+fix / Broken+remediation).
 7. **Incremental sync v2** — ALTMSTID/ALTVCHID cheap probe, segmented per-FY/month GUID+AlterID scans (a full-books unbounded export can hang a 500k-voucher Tally at 11am — segment + off-hours + visible progress/cancel), verified-scan-only tombstones, wired to the existing `bridge-tally-incremental` crate (well-shaped, just unwired).
 8. **Kill the ceremony, keep the evidence** — rule adopted verbatim: *no safety mechanism without a demonstrated failure mode it prevents; no capability claim without a receipt.*
-9. **Declared topology honesty** — v1 supports: local single-machine, loaded-company, licensed Tally, no TallyVault, no gateway auth. Tally-on-cloud/RDP (a large and growing install base!), multi-user LAN, gateway-security setups = explicit `Unsupported` Passport states, not silent failures.
+9. **Declared topology honesty** — v1 supports: local single-machine, loaded-company, licensed Tally, no TallyVault, no gateway auth. Tally-on-cloud/RDP (**internal hypothesis: market prevalence is unverified**), multi-user LAN, gateway-security setups = explicit `Unsupported` Passport states, not silent failures.
 
 ### 3.2 Contested → rulings
 | Item | Ruling |
@@ -269,7 +271,7 @@ Four persona proposals (CA operator, product strategist, protocol engineer, UX d
 | Education-mode UX | Passport-detected restriction only. The "reschedule for the 31st" scheduling feature is **deleted** — a test constraint leaking into product design. |
 | Multi-company control tower | Descoped to Later; redesigned around *expected staleness* ("open these 6 companies today" worklist) — a green wall over unloaded companies is the exact silent failure the Truth Layer exists to prevent. |
 | Capability Passport | **Build it, don't sell it.** It's the internal gate, the 10-second "Run connection check" support self-test, and the topology-honesty vehicle. Never leads a pitch. |
-| Remote agent on client machines | **Killed for this horizon** (solo dev cannot operate a fleet product; reputational risk lands on the firm). Drift v1 = firm-maintained books (typically ~half a firm's clients) — enough for the wedge. |
+| Remote agent on client machines | **Killed for this horizon** (solo dev cannot operate a fleet product; reputational risk lands on the firm). Drift v1 = firm-maintained books; whether that segment alone is enough for the wedge is an **unsourced internal hypothesis** to validate with a design partner. |
 
 ### 3.3 Killed (don't build)
 Canary/attestation/dual-flag machinery and 6 of 8 digest newtypes · e-invoice/e-way bill (ClearTax's turf, needs GSP + TDL installs) · connected banking/payments (Tally native) · receivables dunning (CredFlow's company) · mobile dashboards (Biz Analyst's turf; no mobile asset) · AI OCR at scale (arms race vs funded teams; deterministic import covers ~70% provably) · TDL plugin with in-Tally UI · inventory depth/store-keeper flows · Education-mode posting scheduler · Period Freeze as a headline product (stays as plumbing) · bank-statement PDF/OCR parsing (v1) · GSTR-1 prep engine and TDS engine (rules-maintenance tails; revisit after month 12) · "80% time saved"-style unprovable claims and cryptographic-signature marketing language.
@@ -319,8 +321,8 @@ Alter drafts + "Changed in Tally" chips in the Daybook · sales/purchase voucher
 ### Explicitly deferred hooks (design-compatible, no code now)
 - **AXAL/ComplyEaze:** relay the *evidence layer first* (proofs, receipts, drift alerts — small, non-sensitive payloads) via a versioned destination contract before ever moving raw books; preserves the privacy positioning while enabling richer cloud/AI features.
 - **Pulse/WhatsApp:** drift alarms and posting-approval requests as messages (approval flows, not dunning).
-- **Tally-on-cloud topology (addendum 2026-07-24):** hosted-RDP Tally (TallyOnCloud-style providers) is a large and growing install base that v1 declares `Unsupported` in the Passport. The eventual story is a headless Bridge agent running *inside* the hosted VM with the desktop UI attaching to its mirror — architecturally compatible with the loopback-only rule (the agent is loopback-local to Tally). Parked in BACKLOG.md; revisit when a design partner runs hosted Tally, not before GA of the local topology.
-- **Client-maintained books (addendum 2026-07-24):** Drift Sentinel v1 covers firm-maintained books only (~half a typical firm's clients). The remote client-machine agent stays killed for this horizon, but two lighter paths can extend Drift coverage later and are parked in BACKLOG.md: (a) periodic client backup/TCP-file ingestion — diff a restored backup against the checkpoint mirror offline, no software on client machines; (b) the Finsights-style client-invitation model once a cloud relay exists. Neither blocks the wedge.
+- **Tally-on-cloud topology (internal hypothesis; addendum 2026-07-24):** hosted-RDP Tally (TallyOnCloud-style providers) **may be a material install base; its prevalence and growth are unsourced.** v1 declares the topology `Unsupported` in the Passport. The eventual story is a headless Bridge agent running *inside* the hosted VM with the desktop UI attaching to its mirror — architecturally compatible with the loopback-only rule (the agent is loopback-local to Tally). Parked in BACKLOG.md; revisit when a design partner runs hosted Tally, not before GA of the local topology.
+- **Client-maintained books (internal hypothesis; addendum 2026-07-24):** Drift Sentinel v1 covers firm-maintained books only. The estimate that this is **~half a typical firm's clients is unsourced**; whether it is enough for the wedge must be validated with a design partner. The remote client-machine agent stays killed for this horizon, but two lighter paths can extend Drift coverage later and are parked in BACKLOG.md: (a) periodic client backup/TCP-file ingestion — diff a restored backup against the checkpoint mirror offline, no software on client machines; (b) the Finsights-style client-invitation model once a cloud relay exists. Neither blocks the wedge.
 
 ---
 
