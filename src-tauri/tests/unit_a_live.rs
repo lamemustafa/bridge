@@ -60,6 +60,33 @@ async fn unit_a_outstandings_live_exit_check() {
         .get_status_decoded()
         .await
         .expect("post-reconciliation Tally status");
+    // The two instances are NOT interchangeable, despite identical company
+    // identity. Measured 2026-08-01: same GUID, same BooksFrom, same
+    // LastVoucherDate, same ALTVCHID (252) -- but port 9001 carries TEN
+    // bill-wise ledgers with non-zero OPENING balances (over Rs 15 lakh) that
+    // port 9000 does not; only ALTMSTID differs (218 vs 219). Those bills exist
+    // with no voucher, so a voucher-only scan cannot see them and MUST NOT
+    // claim complete outstandings for that book.
+    //
+    // Expecting Complete on 9001 would be demanding a wrong answer. This is
+    // therefore a per-port expectation, not a relaxed one -- and it asserts the
+    // stronger property that the detector fires exactly where opening bills are.
+    if port == 9001 {
+        match result {
+            OutstandingsLoadResult::Partial { reason_code, .. } => {
+                assert_eq!(
+                    reason_code, "ledger_opening_bills_not_covered",
+                    "port 9001 carries ledger-opening bills and must say so"
+                );
+                println!("UNIT_A_LIVE_PARTIAL port={port} reason={reason_code}");
+                return;
+            }
+            OutstandingsLoadResult::Complete { .. } => panic!(
+                "port 9001 has ledger-opening bills a voucher-only scan cannot see; \
+                 completing would under-report outstandings"
+            ),
+        }
+    }
     match result {
         OutstandingsLoadResult::Complete { report, .. } => {
             assert_eq!(report.company_name, EXIT_COMPANY);

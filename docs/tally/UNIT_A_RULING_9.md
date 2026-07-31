@@ -75,6 +75,40 @@ partial*, so "there are bills I cannot see" is an answer it is already built to 
 anyway would produce a plausible, wrong receivables total with no error — the exact failure this
 whole design exists to prevent.
 
+## 3a. The two lab instances are NOT interchangeable — and the detector found it
+
+Re-running the exit check under the current shape produced different answers per port, which
+is how a genuine defect in the recorded assumptions surfaced.
+
+| | port 9000 | port 9001 |
+| --- | --- | --- |
+| GUID | `75f7566d-…d57d` | **identical** |
+| `BooksFrom` / `LastVoucherDate` | 20240401 / 20260702 | **identical** |
+| `ALTVCHID` | 252 | **identical** |
+| `ALTMSTID` | 218 | **219** |
+| Bill-wise ledgers with non-zero opening | **0** | **10**, over ₹15 lakh |
+| Exit check | Complete, matches target | **Partial `ledger_opening_bills_not_covered`** |
+
+The corpus notes describe 9001 as a GUI backup/restore of the same company — "same GUID and
+same AlterIDs" — and therefore a clean control. **That is wrong in a way that matters.** The
+identity is identical and so is the *voucher* high-water; the divergence is entirely on the
+**master** axis, where 9001 carries ledger opening balances 9000 does not.
+
+Two consequences worth stating plainly:
+
+1. **Voucher-axis identity is not book identity.** A sync tracking only `ALTVCHID` would see two
+   identical books. `ALTMSTID` was the only visible signal, and one increment concealed
+   ₹15 lakh of outstandings.
+2. **Ruling 8's "both ports agree" was a false agreement.** The two runs matched because both
+   computations ignored ledger openings — not because the books agree. The port-9000 number is
+   sound; the port-9001 number was never meaningful, and nothing in the previous evidence could
+   have revealed that. The detector revealed it on its first live run.
+
+The exit check now asserts **per port**: 9000 completes at the accepted target, 9001 returns
+`ledger_opening_bills_not_covered`. That is not a relaxation — demanding Complete on 9001 would
+be demanding a wrong answer — and it adds the stronger property that the detector fires exactly
+where opening bills exist and nowhere else.
+
 ## 4. A better approach was looked for, and rejected on evidence
 
 Tally exposes a `Bills` collection that reportedly returns outstanding bills directly, which

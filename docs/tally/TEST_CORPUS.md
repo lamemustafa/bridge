@@ -26,6 +26,15 @@ invalidates results.**
 Both are loaded on port 9000. `Bridge Billwise Lab` also exists on port 9001 as a GUI
 backup/restore of the same company — **same GUID, same AlterIDs** — see §7.
 
+> **CORRECTED 2026-08-01 — the two instances are NOT interchangeable.** Measured: identical
+> GUID, `BooksFrom`, `LastVoucherDate` and `ALTVCHID` (252), but **`ALTMSTID` 218 on 9000 vs
+> 219 on 9001**, and port 9001 carries **10 bill-wise ledgers with non-zero opening balances
+> (over ₹15 lakh)** that port 9000 does not. Those bills have no voucher, so a voucher-only
+> scan cannot see them: 9000 reconciles Complete, 9001 correctly returns Partial
+> `ledger_opening_bills_not_covered`. **Do not treat 9001 as a clean control for 9000**, and do
+> not read matching totals across the two as agreement — see
+> [UNIT_A_RULING_9.md](./UNIT_A_RULING_9.md) §3a.
+
 ---
 
 ## 1. What exists today
