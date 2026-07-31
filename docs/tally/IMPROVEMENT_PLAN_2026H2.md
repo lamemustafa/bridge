@@ -55,11 +55,18 @@
 
 #### Sources for §2.1–2.4
 
-Public vendor documentation behind the claims in this section, listed so any
-contributor can re-check or refresh it. **This list covers every row of the
-§2.1 table — each row has either a citation or an explicitly recorded gap, so
-an omission here is a defect, not an oversight to be inferred.** Two rows are
-gaps; both are called out below.
+Sources behind the claims in §2.1–2.4, listed so any contributor can re-check
+or refresh them. **This block is exhaustive over its stated scope**, so an
+omission is a defect rather than something a reader must infer:
+
+- **§2.1** — every row of the landscape table (8 rows: 6 cited, 2 recorded
+  gaps).
+- **§2.2** — the regulatory claims in takeaway 4 (cited *and corrected*; see
+  below).
+- **§2.3** — the workflow figures ("50–200 companies per firm", hour pools)
+  are **internal estimates from practitioner conversation, not measured or
+  sourced.** The 7th/11th/20th filing rhythm is public GST due-date structure.
+- **§2.4** — prioritisation only, marked inline as an internal hypothesis.
 
 - **Tally native** — [Import data](https://help.tallysolutions.com/import-data-in-tally/),
   [Understanding Excel import & mapping templates](https://help.tallysolutions.com/getting-started-with-importing-data-into-tallyprime/),
@@ -82,6 +89,15 @@ gaps; both are called out below.
   phrase "TDL plugin" used in §2.1 and §3.3. The architecture claim stands;
   the wording in the table is looser than the source.
 - **Finsights** — **gap 1: no verifiable citation. See below.**
+- **Regulatory claims (§2.2.4)** — GST: GSTN's phased GSTR-3B hard-locking
+  advisories, including the [interest-calculation advisory](https://tutorial.gst.gov.in/downloads/news/advisory_on_interest_calculator.pdf)
+  and public summaries of the Table 3 (July 2025) and planned Table 4 ITC
+  locking. MCA: **Companies (Accounts) Amendment Rules, 2021**, notified
+  24-03-2021, audit-trail/edit-log applicable for FYs beginning on or after
+  1 April 2023. **The §2.2.4 claim was checked against these and found wrong;
+  it is corrected in place rather than merely cited.** These are advisory
+  summaries, not the bare-act text — verify against the GSTN advisory and the
+  MCA notification before relying on either commercially.
 - **DIY long tail** — **gap 2: uncited.** The "NIKASH converters, TaxGuru VBA
   recon" examples and the **"6–10 hrs/GSTIN/month VLOOKUP baseline"** have no
   source in this repo. That baseline is the implicit denominator for any
@@ -134,7 +150,7 @@ as directional.
 1. **The on-prem connector is unavoidable and Bridge already is one** — with a stronger engineering base than the connectors CAs complain about.
 2. **Sync trust is the universal open wound.** Every incumbent's worst reviews are trust failures. None can prove completeness, attribute failures, or detect Tally-side edits/deletions promptly.
 3. **Tally native is absorbing adjacent value** (2B recon, banking, AI): pure-reporting and portal-integration plays erode. Data-entry automation, multi-client practice ops, and *evidence about the books* remain defensible.
-4. **Regulatory tailwind with a date:** since Jan 2026, excess ITC vs GSTR-2B auto-flags on the portal; MCA Edit-Log rules make "what changed in the books" a partner-level anxiety.
+4. **Regulatory tailwind — CORRECTED 2026-07-31, the original claim was wrong.** This previously read *"since Jan 2026, excess ITC vs GSTR-2B auto-flags on the portal."* Checking it against public GSTN advisories shows that is wrong on both the date and the mechanism: GSTR-3B hard-locking is phased, **Table 3 (outward liability) has been locked since the July 2025 period**, and **ITC (Table 4) locking is targeted for around July 2026 — announced, not yet in force** — and it is *hard-locking* to GSTR-2B, not an "auto-flag". The January 2026 advisory concerned **interest calculation**, not ITC. The MCA half stands: the **Companies (Accounts) Amendment Rules, 2021** (notified 24-03-2021) require accounting software to record an audit trail and edit log that cannot be disabled, applicable for financial years beginning on or after **1 April 2023** — which does make "what changed in the books" a partner-level anxiety. **Net effect on the argument: the MCA tailwind is real and already in force; the ITC tailwind is a near-term expectation, not a present fact, and must not be sold as one.**
 5. **Education mode:** competitors refuse it (CredFlow). It permits voucher entry only on the 1st/2nd/31st. It is a fine regression rig and an honest Passport state — but nothing can be marked `Verified` from it, and a licensed instance is a hard prerequisite for a credible write story.
 
 ### 2.3 CA workflows that consume the hours
