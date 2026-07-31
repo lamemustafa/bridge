@@ -56,8 +56,18 @@
 #### Sources for §2.1–2.4
 
 Sources behind the claims in §2.1–2.4, listed so any contributor can re-check
-or refresh them. **This block is exhaustive over its stated scope**, so an
-omission is a defect rather than something a reader must infer:
+or refresh them.
+
+> **This block is NOT a complete provenance audit, and an earlier revision
+> wrongly claimed it was.** This document has never been citation-complete;
+> promising exhaustiveness simply moved the defect rather than fixing it. What
+> follows is what has actually been sourced or explicitly marked. The remaining
+> claims — and the rule that any statement about a named competitor's security
+> or data handling must be sourced or removed rather than graded — are tracked
+> in **[issue #103](https://github.com/lamemustafa/bridge/issues/103)**.
+> Treat anything in §§0–4 not covered below as **unsourced until checked.**
+
+Covered here:
 
 - **§2.1** — every row of the landscape table (8 rows: 6 cited, 2 recorded
   gaps).
@@ -65,7 +75,9 @@ omission is a defect rather than something a reader must infer:
   below).
 - **§2.3** — the workflow figures ("50–200 companies per firm", hour pools)
   are **internal estimates from practitioner conversation, not measured or
-  sourced.** The 7th/11th/20th filing rhythm is public GST due-date structure.
+  sourced.** The 7th/11th/20th filing rhythm is **planning shorthand, not a
+  cited due-date table** — it does not state which returns or taxpayer
+  categories it covers, so do not treat it as universal (#103).
 - **§2.4** — prioritisation only, marked inline as an internal hypothesis.
 
 - **Tally native** — [Import data](https://help.tallysolutions.com/import-data-in-tally/),
@@ -73,7 +85,13 @@ omission is a defect rather than something a reader must infer:
   [Import FAQ](https://help.tallysolutions.com/import-data-faq/),
   [Data-exception resolution](https://help.tallysolutions.com/tally-prime/import-data/data-exceptions-resolutions-in-tallyprime/),
   [Auto-create vouchers from bank statements](https://help.tallysolutions.com/auto-create-vouchers/).
+  **Gap:** the row's **GSTR-2B reconciliation** and **7.x AI** claims are
+  uncited, and §3.3 uses the platform-threat assessment to defer GSTR work.
+  Unsourced until checked (#103).
 - **Vyapar TaxOne** — [bank-statement import help](https://taxone.vyapar.com/help/articles/import-the-bank-statement).
+  **Gap:** the scale figures ("10k+ CA firms, 30k+ accountants") and the
+  "scale leader" label have no retrieved vendor page. Unsourced until
+  checked (#103).
 - **Biz Analyst** — [data entry](https://help.bizanalyst.in/features/data-entry/how-to-create-sales-invoice),
   [sync-failure behaviour](https://help.bizanalyst.in/biz-analyst-manual/support/sync-issues/all-figures-showing-0-in-mobile-app),
   [Play Store listing](https://play.google.com/store/apps/details?id=in.bizanalyst) and
@@ -94,7 +112,10 @@ omission is a defect rather than something a reader must infer:
   is the most serious defect this review surfaced**; it is corrected rather
   than merely cited, and the "evidence grades" note below does not license
   claims of this kind.
-- **CredFlow** — [company setup / connector requirements](https://credflow.freshdesk.com/support/solutions/articles/82000909704-how-to-add-company-for-tally-software-).
+- **CredFlow** — [company setup / connector requirements](https://credflow.freshdesk.com/support/solutions/articles/82000909704-how-to-add-company-for-tally-software-),
+  [syncing-issues support folder](https://credflow.freshdesk.com/support/solutions/folders/82000694831)
+  for the sync-reliability complaints that §2.2.2 uses to argue sync trust is
+  the universal open wound.
 - **AI Accountant** — [Tally integration](https://www.aiaccountant.com/blog/tally-integration-with-ai-accountant),
   [chart-of-accounts mapping](https://www.aiaccountant.com/blog/chart-of-accounts-ai-mapping).
 - **ClearTax connector** — [Tally connector installation guide](https://docs.cleartax.in/e-invoicing-v2/userguide/guides-tally-connector/installation-guide-for-tally-connector),
