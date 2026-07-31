@@ -41,9 +41,11 @@ This document defines agent-level expectations and review responsibilities for t
 
 ## Private knowledge hub
 
-A private cross-repo knowledge repository (`brain`) holds material that must **not** live in
-this public repo: vulnerabilities, crash triggers, competitor teardowns, pricing, market
-research, and durable protocol findings. It is cloned as a sibling at `../brain`.
+A private cross-repo knowledge repository (`brain`,
+[github.com/lamemustafa/brain](https://github.com/lamemustafa/brain)) holds material that must
+**not** live in this public repo: vulnerabilities, crash triggers, competitor teardowns,
+pricing, market research, and durable protocol findings. If you have access, it is cloned as a
+sibling at `../brain`; its contribution contract is in that repo's `CONTRIBUTING.md`.
 
 - **Consult before you build.** Before implementing any flow touching Tally, GST, portal auth,
   MCA, or a competitor feature, search it: `grep -rin "<topic>" ../brain/10-domains ../brain/40-decisions`.
