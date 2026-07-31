@@ -65,7 +65,7 @@ bridge-tally-canonical = { path = "crates/bridge-tally-canonical" }
 bridge-tally-incremental = { path = "crates/bridge-tally-incremental" }
 bridge-tally-protocol = { path = "crates/bridge-tally-protocol" }
 bridge-tally-runtime = { path = "crates/bridge-tally-runtime" }
-bridge-tally-transport = { path = "crates/bridge-tally-transport" }
+bridge-tally-transport = { path = "crates/bridge-tally-transport", features = ["outstandings"] }
 chrono = { version = "0.4", features = ["serde"] }
 cryptoki = "0.12"
 getrandom = "0.3"
