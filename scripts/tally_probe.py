@@ -31,8 +31,12 @@ class Resp:
         m=re.search(r'<DATA>(.*)</DATA>',self.body,re.S)
         return m.group(1) if m else ''
     def count(self,tag):
-        """Count real object rows: opening tag WITH attributes, inside DATA only."""
-        return len(re.findall(r'<%s '%tag,self.data))
+        """Count real object rows inside DATA, structurally.
+
+        Matches `<TAG ...>` AND bare `<TAG>`, because Tally emits both. CMPINFO
+        counters are excluded by scanning only the DATA section (see .data).
+        A `'<TAG '` scan silently drops attribute-less rows."""
+        return len(re.findall(r'<%s(?:\s[^>]*)?>'%tag,self.data))
     def dates(self):
         return sorted(set(re.findall(r'<DATE[^>]*>(\d{8})<',self.data)))
     def counters(self):

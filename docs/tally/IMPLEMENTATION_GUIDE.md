@@ -851,9 +851,16 @@ membership (a `$$NumItems` referencing the collection it was defined in) left th
 unresponsive with an *empty reply*. A minimal `Company` collection sent immediately before had
 succeeded, so the instance was healthy.
 
-> The exact reproducing request shape is a **restricted crash trigger** and is kept in the
-> private knowledge hub (`brain/20-security/`), not in this public repo. This section keeps the
-> rule and the reasoning; it does not reproduce the payload.
+> The exact reproducing request shape is a **restricted crash trigger**. It is held privately
+> and is deliberately not named, linked, or pathed here; the location is supplied out-of-band to
+> people with access. This section keeps the rule and the reasoning; it does not reproduce the
+> payload.
+>
+> The self-reference is described in enough detail to *follow* I1 and no further. That is
+> intentional: an invariant nobody can apply protects nothing, and "do not let a collection
+> reference itself in a `$$` function" is unfollowable without saying what self-reference means.
+> What is withheld is the exact TDL, the identifier, and the surrounding request — the parts
+> that turn a rule into a working payload.
 
 **Note the signature is distinct:** *empty reply* means TCP connected and the server closed
 without sending anything — distinct from the connection-refused and indefinite-hang signatures

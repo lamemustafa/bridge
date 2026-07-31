@@ -30,6 +30,33 @@ impl DateBoundaryProfile {
             Self::ModeAgnostic => true,
         }
     }
+
+    /// The greatest date at or before `limit` that this profile accepts as a
+    /// window boundary.
+    ///
+    /// A reporting window must not run past the as-of date. `LastVoucherDate`
+    /// can be later than today when the book contains a future-dated voucher,
+    /// and a window ending there makes `compute_outstandings` reject the whole
+    /// read (as-of may not precede the window end) instead of simply excluding
+    /// future activity. Clamping needs the profile because an Education
+    /// boundary is only legal on day 01, 02 or 31.
+    pub fn latest_boundary_at_or_before(self, limit: &TallyDate) -> Option<TallyDate> {
+        match self {
+            Self::ModeAgnostic => Some(limit.clone()),
+            Self::EducationRestricted => {
+                let text = limit.as_str();
+                let day = text.get(6..8)?.parse::<u32>().ok()?;
+                let clamped = if day >= 31 {
+                    31
+                } else if day >= 2 {
+                    2
+                } else {
+                    1
+                };
+                TallyDate::parse(format!("{}{clamped:02}", text.get(..6)?)).ok()
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

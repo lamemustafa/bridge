@@ -4,7 +4,7 @@ Run AFTER Codex finishes creating the company and has closed all Tally data-entr
 screens (the GUI blocks the XML gateway).
 
 Usage:
-    python3 /tmp/th/verify_corpus.py "Bridge Billwise Lab"
+    python3 scripts/verify-tally-test-corpus.py "Bridge Billwise Lab"
 
 Checks, in order of how expensive the defect is to discover late:
   1. AlterID <-> date ordering   (UNFIXABLE afterwards - determines corpus validity)
@@ -44,7 +44,11 @@ def main():
     d = r.data
     print(f'read: {r.elapsed:.1f}s  {r.nbytes/1048576:.2f} MB  status={r.status}')
 
-    vs = re.findall(r'<VOUCHER .*?</VOUCHER>', d, re.S)
+    # Structural, not a single textual spelling. Tally may emit `<VOUCHER>`
+    # with no attributes, or a newline before the first attribute; a
+    # `'<VOUCHER '` scan drops those rows, and a partially omitted corpus
+    # would then be accepted as calibration evidence.
+    vs = re.findall(r'<VOUCHER(?:\s[^>]*)?>.*?</VOUCHER>', d, re.S)
     rows = []
     for v in vs:
         g = lambda t: (re.search(rf'<{t}[^>]*>([^<]*)</{t}>', v) or type('', (), {'group': lambda s, i: ''})()).group(1)

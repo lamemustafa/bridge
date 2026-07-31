@@ -1165,10 +1165,29 @@ impl TallyRuntime {
                     let extent = client
                         .fetch_company_book_extent(&company, &expected_company_guid)
                         .await?;
+                    // The reporting window must never run past the as-of date.
+                    // A future-dated voucher pushes LastVoucherDate beyond
+                    // today, and a window ending there makes the computation
+                    // reject the entire read rather than simply excluding
+                    // future activity. Clamp through the compatibility profile,
+                    // because an Education boundary is legal only on day
+                    // 01/02/31.
+                    let cutoff = if extent.last_voucher_date() <= &as_of {
+                        extent.last_voucher_date().clone()
+                    } else {
+                        let Some(clamped) = boundary_profile.latest_boundary_at_or_before(&as_of)
+                        else {
+                            return Ok(partial_result("as_of_has_no_valid_window_boundary"));
+                        };
+                        clamped
+                    };
+                    if &cutoff < extent.books_from() {
+                        return Ok(partial_result("as_of_precedes_books_from"));
+                    }
                     let requested = DateWindow::parse(
                         boundary_profile,
                         extent.books_from().as_str(),
-                        extent.last_voucher_date().as_str(),
+                        cutoff.as_str(),
                     )?;
                     let Some(high_water) = extent.voucher_alter_id_high_water() else {
                         return Ok(partial_result(

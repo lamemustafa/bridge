@@ -147,6 +147,43 @@ fn licensed_or_unknown_boundaries_are_permitted_but_i12_still_fails_closed() {
 }
 
 #[test]
+fn a_segment_carrying_another_companys_vouchers_is_rejected() {
+    // SVCURRENTCOMPANY selects by NAME. If a second loaded company shares the
+    // selected name, Tally can answer with that company's vouchers while the
+    // paired company collection still finds the expected GUID among all loaded
+    // companies -- so date and AlterID checks pass and another company's
+    // financial data would be published under the pinned name.
+    //
+    // Every master GUID carries the company GUID as its prefix, so the response
+    // carries its own identity and the segment can be bound to it.
+    let extent = extent();
+    let requested =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20250401", "20260315").unwrap();
+    let foreign = VOUCHERS.replace(COMPANY_GUID, "ffffffff-6aef-4239-a917-87fec0c6215e");
+    assert_ne!(
+        foreign, VOUCHERS,
+        "capture did not carry the company GUID prefix"
+    );
+
+    let result = verify_segment_pair(
+        &foreign,
+        &foreign,
+        extent.company(),
+        requested,
+        full_alter_id_range(),
+    )
+    .expect("a foreign-company segment is an in-band partial result");
+    assert!(
+        matches!(
+            result,
+            SegmentVerification::Partial(partial)
+                if partial.reason_code == "voucher_belongs_to_another_company"
+        ),
+        "a segment from another company must not verify"
+    );
+}
+
+#[test]
 fn company_pin_is_created_only_after_live_identity_matches() {
     let extent = extent();
     assert_eq!(extent.company().name(), COMPANY_NAME);
@@ -433,4 +470,42 @@ fn empty_bill_amount_is_quarantined_and_never_computed_as_zero() {
         compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()),
         Err(OutstandingsError::InvalidAmount)
     );
+}
+
+#[test]
+fn an_as_of_before_the_last_voucher_clamps_to_a_profile_valid_boundary() {
+    // A future-dated voucher pushes LastVoucherDate past today. Without a
+    // clamp the window ends in the future and the whole read is rejected
+    // (as-of may not precede the window end) instead of excluding future
+    // activity.
+    let as_of = TallyDate::parse("20260715").unwrap();
+
+    // Education accepts only day 01/02/31, so the greatest legal boundary at
+    // or before the 15th is the 2nd of the same month.
+    let education = DateBoundaryProfile::EducationRestricted
+        .latest_boundary_at_or_before(&as_of)
+        .expect("an Education boundary exists at or before the 15th");
+    assert_eq!(education.as_str(), "20260702");
+    assert!(education <= as_of, "clamped boundary must not exceed as-of");
+
+    // Mode-agnostic has no day restriction, so the as-of date itself is legal.
+    assert_eq!(
+        DateBoundaryProfile::ModeAgnostic
+            .latest_boundary_at_or_before(&as_of)
+            .unwrap()
+            .as_str(),
+        "20260715"
+    );
+
+    // Day 01 and day 31 are legal Education boundaries and clamp to themselves.
+    for exact in ["20260701", "20260731"] {
+        let date = TallyDate::parse(exact).unwrap();
+        assert_eq!(
+            DateBoundaryProfile::EducationRestricted
+                .latest_boundary_at_or_before(&date)
+                .unwrap()
+                .as_str(),
+            exact
+        );
+    }
 }
