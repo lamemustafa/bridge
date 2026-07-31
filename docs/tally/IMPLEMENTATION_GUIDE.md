@@ -273,11 +273,13 @@ requires a restart.
    The shared numeric boundary is included only by the first range and excluded by the second.
    Scan assembly must prove exact `0..ALTVCHID` coverage before producing `CompleteScan`.
 5. **Every segment is two-dimensional.** Partition the reporting period into narrow date
-   windows whose `SVFROMDATE` / `SVTODATE` remain valid `01` / `02` / `31` boundaries (§2.7),
-   then apply an AlterID range inside each window. A whole-book date period with a narrow
-   AlterID range is still expensive (§2.4b) and is not an admissible segment request.
+   windows, then apply an AlterID range inside each window. Under the detected Educational
+   compatibility profile, `SVFROMDATE` / `SVTODATE` must remain valid `01` / `02` / `31`
+   boundaries (§2.7); licensed or unknown mode permits ordinary calendar boundaries and relies
+   on I12. A whole-book date period with a narrow AlterID range is still expensive (§2.4b) and
+   is not an admissible segment request.
 
-### 2.5b Outstandings-only resource and empty-boundary policy
+### 2.5b Outstandings-only resource and date-axis completeness policy
 
 **OWNER-RULED 2026-07-30.** The wildcard outstandings profile has one narrow response-bound
 exception because a live 1,632-voucher boundary produced approximately 33.6 MiB:
@@ -286,18 +288,63 @@ exception because a live 1,632-voucher boundary produced approximately 33.6 MiB:
 - only the closed `VoucherOutstandingsV1` request type may use a **40 MiB** response cap;
 - the runtime sizing target remains **28 MiB**, derived from multiple comparable completed
   date-plus-AlterID segments using the same wildcard request shape; there is **no production
-  initial width** until the ordered bill-bearing corpus calibrates one, and later ranges may
-  only shrink;
+  initial width** until an ordered, local corpus is large enough that the candidate width
+  actually splits it, and later ranges may only shrink;
 - the transport deadline remains **20 seconds**, with one attempt and no retry.
 
-A paired, byte-stable zero-row response is only an `EmptySegmentCandidate`. It may receive
-exactly one paired wider read consisting of that AlterID range plus the next adjacent AlterID
-range. If the wider pair is identical, contains rows only in the adjacent range, and does not
-contradict the candidate, promote both ranges and **reuse the adjacent rows**;
-do not fetch that adjacent boundary again. Do not retry, widen recursively, or shrink around
-the empty result. Any transport failure, pair mismatch, second empty result, target-date row,
-scope ambiguity, non-single-boundary candidate, or missing in-range adjacent boundary returns
-`Partial` and no totals are computed.
+**OWNER-RULED 2026-07-31.** Completeness is established on the date axis for the whole scan;
+AlterID ranges are only the request-budget axis. A scan is complete only when the deterministic
+date partitions tile `[BooksFrom, LastVoucherDate]` without a gap or overlap, every request is a
+paired live `STATUS=1` response for the GUID-pinned company on the selected endpoint, every
+non-empty response satisfies I12, and each partition's AlterID ranges tile `0..ALTVCHID`.
+
+A paired, byte-stable zero-row AlterID slice is therefore a complete budget slice. An empty date
+partition needs no adjacent non-empty AlterID range: the whole-scan date tiling is its
+completeness witness. Do not reinstate AlterID adjacency as an emptiness proof.
+
+For deletion-sensitive hardening, an optional I5 witness may use one paired, strictly wider
+**date** window. It must return rows, and none may be dated inside the claimed-empty sub-window.
+A contradiction, pair mismatch, empty wider response, I12 failure, transport failure, or
+non-wider scope remains `Partial`.
+
+If `ALTVCHID > 0` but every tiled date partition is empty, the whole-book result is a
+`whole_book_false_empty` contradiction and remains `Partial`. `ALTVCHID = 0` is the distinct,
+genuinely empty-book case and may complete with no voucher rows.
+
+**OWNER-RULED 2026-07-31 (ruling 7).** Width is a deadline-fitting device, not a throughput
+knob. For `D` date partitions, high-water `H`, and width `W`:
+
+```
+segment pairs = D × ceil(H / W)
+total AlterID span scanned = D × H
+```
+
+Changing `W` slices the same total scan into deadline-sized requests; it does not reduce the
+total work. A corpus whose whole `0..ALTVCHID` range fits in one request cannot calibrate a
+production width because no segmentation occurred. Therefore the three Billwise Lab
+`0..252` samples prove repeatability only. Width 252 is a corpus-bound constant for the
+non-default ignored reconciliation harness, not a production policy. Aarav remains invalid for
+sizing because AlterID and date are uncorrelated there; no width can repair that locality defect.
+
+Before the first voucher segment request, compute the planned segment pairs from the extent and
+refuse more than **128 pairs / 256 reads** as typed Partial
+`outstandings_segment_plan_exceeds_budget`. Log `D`, `H`, `W`, and the planned pair count. The
+actual loop must retain the same hard 128-pair cap because adaptive shrinking can increase the
+number of ranges after preflight. Production remains uncalibrated and makes no voucher request;
+only the non-default, corpus-bound exit harness may admit width 252.
+
+Paired-read safety is literal: the extent pair and every voucher pair execute
+`read → /status → read → /status`. A synthetic sequencing regression enforces this. A status
+failure after either data read withholds completion; reads are never batched or retried.
+
+### 2.5c Outstandings as-of date is an input, not book extent
+
+`LastVoucherDate` bounds the scanned data; it is not the ageing date. Deriving as-of from it
+makes a quiet book's debt appear artificially young. Production passes the workstation's current
+calendar date, while deterministic reconciliation passes an explicit fixed date. The existing
+fail-closed rule remains: as-of may not precede the complete scan's end. Changing as-of must not
+change open-bill totals or counts, but it must be allowed to move amounts and counts between
+ageing buckets.
 
 ### 2.6 Completeness must be established by the client — I4
 
@@ -339,6 +386,21 @@ period.
 > span on every read.** If the span exceeds or falls outside the request, the period was not
 > honoured. This is cheap, requires no knowledge of the underlying rule, and survives whatever
 > licensed mode turns out to do differently.
+
+**LIVE CONFIRMATION 2026-07-31.** The Billwise Lab exit harness initially fell back to
+`ModeAgnostic` because it had no cached product/mode evidence. Its partition sequence reached an
+Education-invalid day-3 boundary, and I12 returned typed Partial
+`voucher_outside_requested_window` with no totals. After the non-default, target-bound harness
+carried the owner-attested Educational profile, both ports completed with only 01/02/31
+boundaries. This does not change the unknown/licensed fallback: default production still relies
+on I12 when mode evidence is absent. The current selected-company command does not yet receive
+trusted endpoint-bound mode evidence: persisted company profiles expose endpoint/GUID identity,
+the direct client probe deliberately records `Unknown` / no mode, and stored capability snapshots
+are not bound into this read path. Unit A also excludes coupling this in-memory slice to the
+mirror path. Do not infer mode from the company name, GUID or port, and do not generalise the
+target-bound harness override. Until a reviewed evidence source is selected, this is a
+production-admission limitation: an Educational read using the mode-agnostic fallback remains
+safe because I12 fails closed, but may not finish.
 
 ### 2.8 The four routes to a wrong read — I5
 
