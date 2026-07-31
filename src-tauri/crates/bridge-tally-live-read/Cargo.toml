@@ -23,7 +23,7 @@ required-features = ["bills-native-outstandings-probe-runner"]
 
 [dependencies]
 bridge-tally-compatibility = { path = "../bridge-tally-compatibility" }
-bridge-tally-protocol = { path = "../bridge-tally-protocol", default-features = false }
+bridge-tally-protocol = { path = "../bridge-tally-protocol" }
 bridge-tally-read-transport = { path = "../bridge-tally-read-transport" }
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }

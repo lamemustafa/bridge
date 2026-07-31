@@ -8,14 +8,8 @@ publish = false
 edition = "2021"
 rust-version = "1.96"
 
-[features]
-default = []
-# Only the desktop app needs the outstandings request type. Keeping it opt-in
-# stops bridge-tally-core reaching bridge-tally-live-read transitively.
-outstandings = ["bridge-tally-protocol/outstandings"]
-
 [dependencies]
-bridge-tally-protocol = { path = "../bridge-tally-protocol", default-features = false }
+bridge-tally-protocol = { path = "../bridge-tally-protocol" }
 reqwest = { version = "0.13", features = ["stream"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.11"

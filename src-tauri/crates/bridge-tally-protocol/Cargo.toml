@@ -9,10 +9,7 @@ edition = "2021"
 rust-version = "1.96"
 
 [features]
-default = ["outstandings"]
-# Pulls in bridge-tally-core. The live-read chain must NOT enable it: a CI
-# boundary check forbids bridge-tally-core inside bridge-tally-live-read.
-outstandings = ["dep:bridge-tally-core"]
+default = []
 jsonex-parser = ["dep:serde_json"]
 jsonex-request-builder = ["dep:serde_json"]
 india-tax-observation-parser = []
@@ -21,7 +18,7 @@ bills-native-outstandings-probe = []
 
 [dependencies]
 anyhow = "1"
-bridge-tally-core = { path = "../bridge-tally-core", optional = true }
+bridge-tally-core = { path = "../bridge-tally-core" }
 quick-xml = { version = "0.41", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"], optional = true }

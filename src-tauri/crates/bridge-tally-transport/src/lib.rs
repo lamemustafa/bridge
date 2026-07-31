@@ -7,8 +7,8 @@
 use std::{net::IpAddr, time::Duration};
 
 use bridge_tally_protocol::{
-    decode_tally_text_bytes_limited, TallyTextDecodeError, TallyTextEncoding,
-    TallyTextStreamDecoder,
+    decode_tally_text_bytes_limited, outstandings::VoucherOutstandingsRequestXml,
+    TallyTextDecodeError, TallyTextEncoding, TallyTextStreamDecoder,
 };
 use reqwest::{
     header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE},
@@ -355,13 +355,12 @@ impl TallyHttpTransport {
             .await
     }
 
-    #[cfg(feature = "outstandings")]
     /// Closed exception for the live-verified wildcard outstandings profile.
     /// The general policy remains capped at 32 MiB and the same client keeps
     /// the immutable 20-second request deadline.
     pub async fn post_outstandings_xml_decoded(
         &self,
-        request: bridge_tally_protocol::outstandings::VoucherOutstandingsRequestXml,
+        request: VoucherOutstandingsRequestXml,
     ) -> Result<TallyDecodedHttpResponse, TallyTransportError> {
         self.post_xml_decoded_with_response_limit(
             request.into_xml(),

@@ -25,7 +25,6 @@ pub mod india_tax_observation;
 pub mod jsonex;
 #[cfg(feature = "jsonex-request-builder")]
 pub mod jsonex_request;
-#[cfg(feature = "outstandings")]
 pub mod outstandings;
 pub mod xml_read_profiles;
 
