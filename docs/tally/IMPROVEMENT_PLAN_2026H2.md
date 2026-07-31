@@ -47,7 +47,7 @@
 | **Vyapar TaxOne** (ex-Suvit, absorbed by Vyapar) | Ledgers + vouchers from bank/sales/purchase docs | Desktop connector → XML gateway (manual host/port) | One-way push + reads for GST | Scale leader: claims 10k+ CA firms, 30k+ accountants; AI/OCR ingestion, ledger auto-suggest from history, review-before-post, "zero duplicate entries" marketing |
 | **Finsights** | Vouchers, invoices, stock entries | Desktop connector beside Tally (both must stay open) | Two-way, ~10-min cycles; **Tally deletions propagate only every 24h** | CA-focused; client-invitation model for client-maintained books; unlimited companies |
 | **CredFlow** | Receipts, invoices, quotations, sales orders | Desktop connector; company must be open; **refuses Education-mode Tally** | Two-way | Receivables/dunning company (SMS/WhatsApp/call reminders); sync-reliability complaints |
-| **Biz Analyst** | 10 entry types incl. sales/purchase | Desktop sync agent | Two-way | 1M+ installs, 4.2★ (Play Store listing); complaints: "unending" sync issues, missing fields. **Data handling — claim corrected 2026-07-31, see Sources:** the vendor's privacy policy discloses sharing with group/affiliate entities and third-party service providers including marketing partners, *and* describes encryption measures. An earlier revision of this row asserted "unencrypted data shared with third parties" — that was unsupported and is contradicted by the vendor's own disclosures. Struck. |
+| **Biz Analyst** | 10 entry types incl. sales/purchase | Desktop sync agent | Two-way | 1M+ installs, 4.2★ (Play Store listing); complaints: "unending" sync issues, missing fields. **Data handling — claim withdrawn 2026-07-31, see Sources:** the vendor's privacy policy discloses sharing with group/affiliate entities and third-party service providers including marketing partners. An earlier revision of this row asserted "unencrypted data shared with third parties"; that was **unsupported** and is withdrawn. Whether such transfers are encrypted is **undetermined** — the policy's encryption language is scoped to stored data, and the Play Store data-safety page was not retrieved. No security conclusion is drawn in either direction. |
 | **AI Accountant** | Vouchers, mappings, sales invoices | Local agent; XML for R/W, ODBC for analytics; **AlterID-tracked incremental sync** | Two-way, scheduled | Maker-checker approval, review-before-post with rationale, duplicate/voucher-lock handling; lists custom-TDL/UDF fields as a known break risk |
 | **ClearTax connector** | e-invoice/e-way-bill fields | **TDL plugin inside Tally + connector app (ODBC)**; per-machine installs | Two-way (compliance fields) | Owns e-invoicing; in-Tally UI |
 | **Tally native** (the platform threat) | — | — | — | Built-in GSTR-2B download + recon with granular status buckets (resolution still manual, per-company); TallyPrime 6.0 connected banking; 7.x AI features |
@@ -101,15 +101,28 @@ Covered here:
   **Correction — a claim about this vendor was wrong and has been struck.**
   The row previously asserted that the Play Store data-safety page "admits
   unencrypted data shared with third parties". The vendor's privacy policy
-  states the opposite on encryption — *"including appropriate encryption and
-  physical security measures to guard against unauthorized access to systems
-  where we store personal data"* — while confirming the sharing half:
-  *"We may transfer/share information (personal and non-personal) … with
-  another SiliconVeins group / corporate entities or affiliates"* and *"to any
-  third-party service providers including marketing partners"*. The two facts
-  were conflated into an allegation the sources do not support. **Publishing an
-  unsourced security allegation about a named competitor in a public repository
-  is the most serious defect this review surfaced**; it is corrected rather
+  does not support that, and **neither confirms nor refutes it** — the two
+  disclosures are differently scoped, so state each with its scope and leave
+  the question open:
+  - **Sharing (supported):** *"We may transfer/share information (personal and
+    non-personal) … with another SiliconVeins group / corporate entities or
+    affiliates"* and *"to any third-party service providers including
+    marketing partners"*.
+  - **Encryption (scoped to storage, not to transfers):** *"including
+    appropriate encryption and physical security measures to guard against
+    unauthorized access to systems **where we store personal data**"*. This
+    says nothing about whether data shared with third parties is encrypted.
+  - **Play Store data-safety page:** **not retrieved.** No conclusion drawn.
+
+  So the original allegation is withdrawn as **unsupported**, and the
+  encryption question is left **undetermined** rather than answered in the
+  other direction. A first attempt at this correction claimed the policy
+  "states the opposite" on encryption — that replaced one unsupported
+  vendor-security conclusion with another, and was itself withdrawn.
+  **Publishing an unsourced security allegation about a named competitor in a
+  public repository is the most serious defect this review surfaced**, and
+  over-correcting into the opposite claim is the same defect wearing a
+  friendlier face; it is handled rather
   than merely cited, and the "evidence grades" note below does not license
   claims of this kind.
 - **CredFlow** — [company setup / connector requirements](https://credflow.freshdesk.com/support/solutions/articles/82000909704-how-to-add-company-for-tally-software-),
