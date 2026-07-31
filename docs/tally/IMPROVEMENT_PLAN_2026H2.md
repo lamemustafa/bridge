@@ -1,8 +1,15 @@
 # Bridge × Tally: Market Research & Improvement Plan
 
-**Date:** 2026-07-24 · **Repo:** `lamemustafa/bridge` (audited at PR #78) · **Method:** codebase audit + 24-source verified web research + 4-persona ideation, 2 adversarial critiques, arbiter synthesis
+**Date:** 2026-07-24 · **Repo:** `lamemustafa/bridge` (audited at PR #78) · **Method:** codebase audit + 24-source web-research sweep (claim-level source status in §2.1) + 4-persona ideation, 2 adversarial critiques, arbiter synthesis
 
 > Execution companions: [PROMPT_PLAYBOOK.md](./PROMPT_PLAYBOOK.md) (per-phase implementation/review/rectification/preservation prompts + orchestrator), [EXECUTION_LOG.md](./EXECUTION_LOG.md) (per-PR invariant log), [BACKLOG.md](./BACKLOG.md) (parked scope), [LICENSED_LAB_QUALIFICATION_CHECKLIST.md](./LICENSED_LAB_QUALIFICATION_CHECKLIST.md). Where this plan conflicts with `TALLY_INTEGRATION_RESEARCH_AND_CODEX_PLAN.md`, **this plan wins** (see the supersession note at the top of that file).
+
+> **Research status:** this is a working plan, not a verified research report.
+> Source status is claim-level: only assertions explicitly tied to retrieved
+> documentation in §2.1 are externally citable; recorded gaps, internal
+> estimates, competitive hypotheses, code-analysis observations, and roadmap
+> targets are not. In this document, `Verified` refers only to Bridge's defined
+> runtime qualification state, never to web research or a competitor claim.
 
 ---
 
@@ -10,9 +17,9 @@
 
 **Where Bridge is:** a superbly engineered, read-only Tally evidence console. 13 layered Rust crates, loopback-only transport, strict protocol parsing, atomic checkpointed snapshots into an encrypted SQLCipher mirror, Proof-of-Sync, Gap Map. But: **zero writes possible in any shipped build**, voucher reads deliberately stripped of narration/GSTIN/bill data, every compatibility claim `unknown` with `missing` evidence, and ~30 recent PRs spent on "sealed canary" ceremony for a synthetic write that has never touched a live Tally. The founder's diagnosis is correct: no CA will use it today.
 
-**Where the market is:** every serious competitor (Vyapar TaxOne née Suvit, Finsights, CredFlow, Biz Analyst, AI Accountant) ships the same architecture Bridge already has — a local desktop connector speaking to Tally's XML gateway — and every one of them is drowning in the same complaint: **sync you can't trust** (entries vanishing, duplicates, stale ledgers, 24-hour deletion lag, silent failures). Nobody proves what synced. That is Bridge's thesis, validated — but evidence must sit *under* workflows, not replace them.
+**Market hypothesis:** the sourced landscape identifies several competitors (Vyapar TaxOne née Suvit, Finsights, CredFlow, Biz Analyst, AI Accountant) using local connectors to Tally's XML gateway and reports recurring sync-trust concerns. This is not a universal claim: the Finsights deletion-latency figure and other gaps are explicitly provisional in §2.1. Bridge's thesis is that workflow-level evidence can address this concern; it remains a hypothesis to validate with design partners.
 
-**The plan in one paragraph:** Unseal the write machinery and delete the ceremony (keep the evidence). Restore full-fidelity reads. Ship **Drift Sentinel** — "know every voucher your client changed after you signed off, with before/after" — as the read-only acquisition wedge no competitor has. Rent a licensed TallyPrime in month 2. Then build the write substrate (outbox, batch-of-1, readback-verified posting) and the expansion product: **Excel/CSV → review grid → maker-checker → post → Proof-of-Post**. Realistic solo-dev horizon: wedge in ~3 months, daily-use write product by ~8–10 months.
+**The plan in one paragraph:** Unseal the write machinery and delete the ceremony (keep the evidence). Restore full-fidelity reads. Test **Drift Sentinel** — "know every voucher your client changed after you signed off, with before/after" — as a read-only acquisition wedge whose competitive differentiation is unverified. Rent a licensed TallyPrime in month 2. Then build the write substrate (outbox, batch-of-1, readback-verified posting) and the expansion product: **Excel/CSV → review grid → maker-checker → post → Proof-of-Post**. The solo-dev horizon is a planning estimate: wedge in ~3 months, daily-use write product by ~8–10 months.
 
 **The north-star sentence** (what a partner must be able to say): *"Every entry my juniors post is approved, verified against Tally, and evidenced; and I know within a day if a client edits a voucher I've already signed off."*
 
@@ -38,7 +45,7 @@
 
 ---
 
-## 2. Market research (July 2026, verified claims)
+## 2. Market research (July 2026: sourced claims, gaps, and hypotheses)
 
 ### 2.1 Landscape
 
@@ -280,13 +287,13 @@ Canary/attestation/dual-flag machinery and 6 of 8 digest newtypes · e-invoice/e
 
 ## 4. Strategy
 
-### 4.1 Positioning
+### 4.1 Proposed positioning (hypothesis to validate)
 > For CA/CS firms burned by "sync issues" in every Tally companion app, Bridge is the two-way Tally integration that **proves** every read and write — posted means read-back-verified, and you know when anyone changes the books after you've signed off.
 
-Marketable one-liners: *"Every competitor says 'synced.' Bridge proves it."* · *"Audit-grade sync for the audit profession."*
+Candidate one-liners (validate before external use): *"Bridge makes the evidence behind a sync inspectable."* · *"Audit-grade sync for the audit profession."*
 
 ### 4.2 The wedge and the expansion
-- **Acquisition wedge — Drift Sentinel** (read-only, ships first): "Know, firm-wide, every voucher your client changed after you signed off — with before/after." No incumbent equivalent (Tally's Edit Log can't be queried across companies; Finsights takes 24h to notice deletions). Sells a *liability fear* (closes faster than a time saving), lands inside firms **without asking them to abandon Suvit**, prices per audit client in audit season, and requires none of the unproven write path.
+- **Proposed acquisition wedge — Drift Sentinel** (read-only, ships first): "Know, firm-wide, every voucher your client changed after you signed off — with before/after." Competitive differentiation is **unverified**: Tally's Edit Log and the Finsights deletion-latency claim require primary validation before this is marketed as an incumbent gap. The hypothesis is that it sells a *liability fear* (rather than a time saving), lands inside firms **without asking them to abandon Suvit**, prices per audit client in audit season, and requires none of the unproven write path.
 - **Expansion product — the verified write pipeline**: Excel/CSV import → saved mappings → review grid → maker-checker → serialized post → readback-verified Proof-of-Post. Spends the trust Drift earned.
 - **Cold-start weapon:** Bridge reads 12 months of posted vouchers before ever writing — reverse-engineer narration→ledger mappings from history so suggestions are good on day one (the incumbents' mapping-history moat, neutralized structurally).
 
