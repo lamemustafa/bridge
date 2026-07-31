@@ -42,7 +42,9 @@ A second instance (standard TallyPrime 7.1 EDU) runs on port 9001.
 | Voucher types | 24 + 1 | Original, plus `BRIDGE MANUAL JOURNAL` (manual numbering) |
 
 The generated ledgers carry realistic Indian trade names and valid-format GSTINs across six
-state codes. Vouchers span every Education-legal date from 2024-04 to 2026-03, mixing Sales,
+state codes. Vouchers span every Education-legal date from `20240401` to `20260401`
+(live `LASTVOUCHERDATE`, measured 2026-07-31 port 9000 — an earlier revision said "2026-03"),
+mixing Sales,
 Purchase, Payment and Receipt with 9%+9% CGST/SGST splits and invoice-referencing narrations.
 
 ---
@@ -124,7 +126,7 @@ any future corpus.
 | Ledgers | 13 (10 sundry debtors, bill-by-bill enabled) |
 | Vouchers | 220 — Sales 120 (`INV-0001`…`INV-0120`), Receipts 100 (4 `On Account`) |
 | Allocations | 440 — `New Ref` 120, `Agst Ref` 96, `On Account` 4, **216 named** |
-| Date span | `20240401`…`20260731`, **0 illegal entry dates** |
+| Date span | `20240401`…**`20260702`**, **0 illegal entry dates** |
 | Whole-book wildcard read | **1.4 s / 3.25 MB** |
 
 **Reconciliation target — agreed by two independent methods:**
@@ -137,6 +139,18 @@ any future corpus.
 
 Tally's own *Bills Receivable* export is the authority. The figures above were computed
 **separately, from raw voucher XML**, and matched it exactly. Bridge must match both.
+
+> **The as-of date is a choice, not a property of the book — ruling 7.** The live company
+> extent returns `LASTVOUCHERDATE = 20260702` (measured 2026-07-31, port 9000). An earlier
+> revision of this table said the span ended `20260731`; that was the intended fiscal
+> boundary, never a voucher date. Education restricts voucher dates to day 01/02/31, so
+> July-2026's 18 vouchers sit on `0701`/`0702`.
+>
+> The ageing row above is therefore **ageing as of 31-Jul-2026 against a book that ends
+> 2-Jul-2026**. Bridge cannot derive `31-Jul` from the data and must be given it. Open bills
+> (48) and total receivable (₹45,14,597) are as-of-independent; **only the four ageing
+> buckets move with as-of.** A run that reports as-of `20260702` is not a compute defect —
+> it is the wrong as-of source, and ruling 7 §4 requires as-of to be an explicit input.
 
 #### Acceptance criterion — validate *locality*, not ordering
 
