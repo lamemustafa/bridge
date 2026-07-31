@@ -54,8 +54,8 @@
 | **DIY long tail** | File-based XML import | Gateway of Tally → Import | One-way | NIKASH converters, TaxGuru VBA recon (6–10 hrs/GSTIN/month VLOOKUP baseline) — the actual majority workflow |
 
 > Deeper landscape (Zoho/Munim/Open/EnKash/GST connectors/Tally-native remote),
-> cited competitor pricing, and a public-record UX teardown of the four leading
-> flows are in [MARKET_RESEARCH_ADDENDUM.md](./MARKET_RESEARCH_ADDENDUM.md). Its
+> cited competitor pricing, and a UX teardown of the four leading flows are held
+> privately in the lamemustafa knowledge hub, not in this public repo. Their
 > findings confirm every ruling below and sharpen the UX bets (§ Now/Next).
 
 ### 2.2 Structural takeaways
