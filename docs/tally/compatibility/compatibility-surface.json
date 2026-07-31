@@ -3,11 +3,11 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "92ffd045c08f137022a9e9cf6d6e8e0aaa182076662bee0f93c3428c6d56783e"
+      "sha256": "e6ed3f38019b5a72ebc548ba88c84e4c59522fc65453cc7becaf6704bb6ef0aa"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
-      "sha256": "72fc7e7b5d2839377ff7812eeb744bb8f2dd913f95685a2ac97256bf3ef4c184"
+      "sha256": "7993bc3defa8421bc5da377582d8599fb8ebe90c0473a1426ebd45d4f8a28731"
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
@@ -71,7 +71,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "5aa4c1fee62bfb705260a0aa525ab1efd1dec20b6c1fb39f0d7f976f5f901091"
+      "sha256": "bba4c98cc3c8a7c3e25f05f951fb8334848bb1438688b34addad35d809cd8897"
     },
     {
       "path": "scripts/check-tally-live-read-boundary.mjs",
@@ -430,5 +430,5 @@
       "sha256": "dd033010711ca01a7a395a531285c6ef187a359640a156cbc8da7281e11a39ea"
     }
   ],
-  "manifest_sha256": "acb7e36d01d1057f610c52e0876308c32bdd7022c8280e77221aad5059520e67"
+  "manifest_sha256": "1fcbdc59ea92187a4d68cf9189ed63a4b34390209f8df8e0fbb9336751dbabcb"
 }
