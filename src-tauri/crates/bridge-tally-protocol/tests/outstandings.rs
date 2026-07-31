@@ -1,15 +1,27 @@
 use bridge_tally_primitives::TallyDate;
 use bridge_tally_protocol::{
     outstandings::{
-        assemble_scan, compute_outstandings, parse_company_book_extent, verify_segment_pair,
-        AlterIdRange, DateBoundaryProfile, DateWindow, MoneyValue, NarrowDateWindow,
-        OutstandingsError, ScanResult, SegmentVerification, VoucherAlterIdHighWater,
+        assemble_scan, compute_outstandings, parse_company_book_extent,
+        parse_ledger_opening_coverage, verify_segment_pair, AlterIdRange, DateBoundaryProfile,
+        DateWindow, MoneyValue, NarrowDateWindow, OutstandingsError, ScanResult,
+        SegmentVerification, VoucherAlterIdHighWater,
     },
     xml_read_profiles::ReadOnlyProfile,
 };
 
 const COMPANY_EXTENT: &str = include_str!("fixtures/unit_a_company_extent_live.xml");
-const VOUCHERS: &str = include_str!("fixtures/unit_a_vouchers_wildcard_live.xml");
+const VOUCHERS_LEGACY_SHAPE: &str = include_str!("fixtures/unit_a_vouchers_wildcard_live.xml");
+
+/// The retained wildcard capture predates `ISOPTIONAL` joining the sealed
+/// request's FETCH list, so it carries no such element and the parser now fails
+/// closed on it. Tally returns `<ISOPTIONAL>No</ISOPTIONAL>` for every ordinary
+/// voucher (live-verified 2026-07-31 on both corpora), so this reproduces what
+/// the current request shape would have returned for the same rows. The
+/// optional-voucher behaviour itself is covered by a separate capture that
+/// carries the real field: `unit_a_optional_voucher_live.xml`.
+fn vouchers() -> String {
+    VOUCHERS_LEGACY_SHAPE.replace("<ISDELETED>", "<ISOPTIONAL>No</ISOPTIONAL><ISDELETED>")
+}
 const COMPANY_NAME: &str = "Aarav Trading Company Demo";
 const COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
 
@@ -125,12 +137,16 @@ fn licensed_or_unknown_boundaries_are_permitted_but_i12_still_fails_closed() {
     let extent = extent();
     let requested =
         DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20250401", "20260315").unwrap();
-    let outside = VOUCHERS.replacen(
+    let outside = vouchers().replacen(
         "<DATE TYPE=\"Date\">20250401</DATE>",
         "<DATE TYPE=\"Date\">20260316</DATE>",
         1,
     );
-    assert_ne!(outside, VOUCHERS, "representative live date was not found");
+    assert_ne!(
+        outside,
+        vouchers(),
+        "representative live date was not found"
+    );
     let result = verify_segment_pair(
         &outside,
         &outside,
@@ -159,9 +175,10 @@ fn a_segment_carrying_another_companys_vouchers_is_rejected() {
     let extent = extent();
     let requested =
         DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20250401", "20260315").unwrap();
-    let foreign = VOUCHERS.replace(COMPANY_GUID, "ffffffff-6aef-4239-a917-87fec0c6215e");
+    let foreign = vouchers().replace(COMPANY_GUID, "ffffffff-6aef-4239-a917-87fec0c6215e");
     assert_ne!(
-        foreign, VOUCHERS,
+        foreign,
+        vouchers(),
         "capture did not carry the company GUID prefix"
     );
 
@@ -290,8 +307,8 @@ fn wildcard_live_window_parses_and_computes_exactly() {
     .render();
     assert!(request.contains("<FILTERS>BridgeOutstandingsPartitionV1</FILTERS>"));
     let segment = verify_segment_pair(
-        VOUCHERS,
-        VOUCHERS,
+        &vouchers(),
+        &vouchers(),
         extent.company(),
         window.clone(),
         full_alter_id_range(),
@@ -322,7 +339,10 @@ fn wildcard_live_window_parses_and_computes_exactly() {
     let report = compute_outstandings(&scan, TallyDate::parse("20260302").unwrap())
         .expect("real capture computes exactly");
     assert_eq!(report.source_voucher_count, 75);
-    assert_eq!(report.source_bytes, 1_504_566);
+    // The encoded byte count must equal exactly what was fed in. Asserting the
+    // live capture's own length keeps this meaningful; a literal would silently
+    // encode the ISOPTIONAL shim instead of the capture.
+    assert_eq!(report.source_bytes, vouchers().len());
     assert_eq!(report.receivable_total.as_str(), "223055.4");
     assert_eq!(report.payable_total.as_str(), "295424.8");
     assert_eq!(report.ageing.days_0_30.as_str(), "38420.8");
@@ -341,8 +361,8 @@ fn wildcard_live_capture_preserves_named_bill_type_distribution() {
     )
     .unwrap();
     let segment = verify_segment_pair(
-        VOUCHERS,
-        VOUCHERS,
+        &vouchers(),
+        &vouchers(),
         extent.company(),
         window,
         full_alter_id_range(),
@@ -391,13 +411,13 @@ fn paired_row_difference_is_partial_not_complete() {
         "20260302",
     )
     .unwrap();
-    let changed = VOUCHERS.replacen(
+    let changed = vouchers().replacen(
         "<VOUCHERNUMBER>1</VOUCHERNUMBER>",
         "<VOUCHERNUMBER>changed</VOUCHERNUMBER>",
         1,
     );
     let result = verify_segment_pair(
-        VOUCHERS,
+        &vouchers(),
         &changed,
         extent.company(),
         window,
@@ -416,9 +436,9 @@ fn paired_wire_length_difference_is_partial_even_when_rows_parse_identically() {
         "20260302",
     )
     .unwrap();
-    let changed = VOUCHERS.replacen("<BODY>", "<BODY> ", 1);
+    let changed = vouchers().replacen("<BODY>", "<BODY> ", 1);
     let result = verify_segment_pair(
-        VOUCHERS,
+        &vouchers(),
         &changed,
         extent.company(),
         window,
@@ -437,13 +457,14 @@ fn empty_bill_amount_is_quarantined_and_never_computed_as_zero() {
         "20260302",
     )
     .unwrap();
-    let changed = VOUCHERS.replacen(
+    let changed = vouchers().replacen(
         "<BILLID TYPE=\"Number\"> 29</BILLID>\r\n       <AMOUNT>-76228.00</AMOUNT>",
         "<BILLID TYPE=\"Number\"> 29</BILLID>\r\n       <AMOUNT></AMOUNT>",
         1,
     );
     assert_ne!(
-        changed, VOUCHERS,
+        changed,
+        vouchers(),
         "representative bill amount was not found"
     );
     let segment = verify_segment_pair(
@@ -508,4 +529,122 @@ fn an_as_of_before_the_last_voucher_clamps_to_a_profile_valid_boundary() {
             exact
         );
     }
+}
+
+const OPTIONAL_VOUCHERS: &str = include_str!("fixtures/unit_a_optional_voucher_live.xml");
+
+#[test]
+fn an_optional_agst_ref_does_not_settle_a_bill() {
+    // Live-captured 2026-07-31. Two vouchers against one bill reference:
+    //   1. ISOPTIONAL=No,  BILLTYPE=New Ref   -> opens the bill (posting)
+    //   2. ISOPTIONAL=Yes, BILLTYPE=Agst Ref  -> settles it (NON-posting)
+    //
+    // Tally itself turned the second into `Agst Ref` because the reference
+    // already existed. Optional vouchers "do not get posted" (Tally help), so
+    // Tally's own books still show this bill outstanding. If Bridge counted the
+    // optional allocation it would report the bill as PAID -- understating a
+    // client's receivables, which is worse than inflating them.
+    assert!(
+        OPTIONAL_VOUCHERS.contains("<ISOPTIONAL TYPE=\"Logical\">Yes</ISOPTIONAL>"),
+        "capture must carry a genuinely optional voucher"
+    );
+    assert!(
+        OPTIONAL_VOUCHERS.contains("Agst Ref"),
+        "capture must carry the settling allocation"
+    );
+
+    // The retained extent capture is the same company these vouchers came from.
+    let extent = extent();
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
+    let segment = verify_segment_pair(
+        OPTIONAL_VOUCHERS,
+        OPTIONAL_VOUCHERS,
+        extent.company(),
+        window.clone(),
+        optional_capture_alter_id_range(),
+    )
+    .expect("the optional-voucher capture verifies as a pair");
+    let SegmentVerification::Complete(segment) = segment else {
+        panic!("identical live replies must verify complete")
+    };
+    assert_eq!(segment.vouchers().len(), 2, "both rows must parse");
+    assert_eq!(
+        segment.vouchers().iter().filter(|v| v.optional).count(),
+        1,
+        "exactly one row is optional"
+    );
+
+    let scan = assemble_scan(
+        extent.company().clone(),
+        window,
+        optional_capture_high_water(),
+        vec![SegmentVerification::Complete(segment)],
+    );
+    let ScanResult::Complete(scan) = scan else {
+        panic!("the capture did not assemble as complete")
+    };
+    let report =
+        compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()).expect("computes");
+
+    // The posted Receipt credits the party, so the opened bill sits on the
+    // payable side. It must stay at its posted value. Measured: with the
+    // exclusion removed this reports 19998 -- the optional allocation is
+    // applied on top of the posted one and DOUBLES the balance. Whether a
+    // given optional row doubles or settles depends on its sign; either way a
+    // non-posting voucher moves a number Tally itself does not move.
+    assert_eq!(
+        report.payable_total.as_str(),
+        "9999",
+        "an optional Agst Ref must not settle a posted bill"
+    );
+    assert_eq!(
+        report.receivable_total.as_str(),
+        "0",
+        "nothing is receivable in this capture"
+    );
+}
+
+/// The optional-voucher capture was written into the live Aarav corpus, so its
+/// rows sit at that book's AlterID high-water region (101602 / 101603).
+fn optional_capture_alter_id_range() -> AlterIdRange {
+    AlterIdRange::new(0, 101_603).unwrap()
+}
+
+fn optional_capture_high_water() -> VoucherAlterIdHighWater {
+    VoucherAlterIdHighWater::parse("101603").unwrap()
+}
+
+#[test]
+fn ledger_opening_bills_are_detected_so_a_voucher_only_scan_cannot_claim_complete() {
+    // A bill-wise ledger with a non-zero OPENING balance carries bills that
+    // exist without any voucher. The voucher scan is blind to them, so their
+    // presence must block a Complete claim.
+    let with_openings = concat!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+        "<LEDGER NAME=\"Plain Expense\"><ISBILLWISEON>No</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
+        "<LEDGER NAME=\"Carried Debtor\"><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>-12500.00</OPENINGBALANCE></LEDGER>",
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    let coverage = parse_ledger_opening_coverage(with_openings).expect("ledger collection parses");
+    assert_eq!(coverage.ledgers_seen(), 2);
+    assert_eq!(coverage.bill_wise_openings(), 1);
+    assert!(
+        !coverage.is_fully_covered_by_vouchers(),
+        "an opening bill must block a Complete voucher-only scan"
+    );
+
+    // Bill-wise ON with a zero opening, and a non-bill-wise ledger carrying a
+    // balance, are both fully covered by the voucher scan.
+    let covered = concat!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+        "<LEDGER NAME=\"Tracked, No Opening\"><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>",
+        "<LEDGER NAME=\"Untracked Bank\"><ISBILLWISEON>No</ISBILLWISEON><OPENINGBALANCE>-90000.00</OPENINGBALANCE></LEDGER>",
+        "<LEDGER NAME=\"No Fields\"></LEDGER>",
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    let coverage = parse_ledger_opening_coverage(covered).expect("ledger collection parses");
+    assert_eq!(coverage.ledgers_seen(), 3);
+    assert_eq!(coverage.bill_wise_openings(), 0);
+    assert!(coverage.is_fully_covered_by_vouchers());
 }

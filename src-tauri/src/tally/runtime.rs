@@ -1184,6 +1184,17 @@ impl TallyRuntime {
                     if &cutoff < extent.books_from() {
                         return Ok(partial_result("as_of_precedes_books_from"));
                     }
+                    // One extra paired read, before any voucher segment. Bills
+                    // opened by a ledger's bill-wise OPENING balance exist with
+                    // no voucher at all, so this scan cannot observe them.
+                    // Detect them and refuse to claim Complete rather than
+                    // silently under-report a client's outstandings.
+                    let opening_coverage = client
+                        .fetch_ledger_opening_coverage(extent.company().name())
+                        .await?;
+                    if !opening_coverage.is_fully_covered_by_vouchers() {
+                        return Ok(partial_result("ledger_opening_bills_not_covered"));
+                    }
                     let requested = DateWindow::parse(
                         boundary_profile,
                         extent.books_from().as_str(),

@@ -54,6 +54,20 @@ pub(super) struct RawCompany {
     pub(super) alter_voucher_id: Option<Value>,
 }
 
+#[derive(Deserialize)]
+pub(super) struct RawLedgerMaster {
+    #[serde(rename = "ISBILLWISEON", default)]
+    pub(super) bill_wise_on: Option<Value>,
+    #[serde(rename = "OPENINGBALANCE", default)]
+    pub(super) opening_balance: Option<Value>,
+}
+
+#[derive(Default, Deserialize)]
+pub(super) struct LedgerCollection {
+    #[serde(rename = "LEDGER", default)]
+    pub(super) ledgers: Vec<RawLedgerMaster>,
+}
+
 #[derive(Default, Deserialize)]
 pub(super) struct VoucherCollection {
     #[serde(rename = "VOUCHER", default)]

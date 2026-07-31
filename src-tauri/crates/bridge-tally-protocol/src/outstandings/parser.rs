@@ -6,11 +6,12 @@ use crate::xml_read_profiles::ValidatedCompanyName;
 use super::{
     tolerant_xml::sanitize_invalid_numeric_references,
     wire::{
-        CompanyCollection, Envelope, Header, RawBillAllocation, RawLedgerEntry, RawVoucher,
-        VoucherCollection,
+        CompanyCollection, Envelope, Header, LedgerCollection, RawBillAllocation, RawLedgerEntry,
+        RawVoucher, VoucherCollection,
     },
-    AlterIdRange, BillAllocation, CompanyBookExtent, DateWindow, LedgerEntry, MoneyValue,
-    OutstandingsError, PinnedCompany, Voucher, VoucherAlterId, VoucherAlterIdHighWater,
+    AlterIdRange, BillAllocation, CompanyBookExtent, DateWindow, LedgerEntry,
+    LedgerOpeningCoverage, MoneyValue, OutstandingsError, PinnedCompany, Voucher, VoucherAlterId,
+    VoucherAlterIdHighWater,
 };
 
 pub(super) struct ParsedSegment {
@@ -71,6 +72,45 @@ pub fn parse_company_book_extent(
         last_voucher_date,
         voucher_alter_id_high_water,
     ))
+}
+
+/// Detect bill-wise OPENING balances on ledger masters.
+///
+/// A ledger with bill-wise tracking on and a non-zero opening balance carries
+/// bills that exist without any voucher. A voucher-only scan cannot observe
+/// them, so their presence must block a `Complete` claim rather than silently
+/// under-report.
+pub fn parse_ledger_opening_coverage(
+    xml: &str,
+) -> Result<LedgerOpeningCoverage, OutstandingsError> {
+    require_complete_envelope(xml)?;
+    let sanitized = sanitize_invalid_numeric_references(xml);
+    let parsed: Envelope<LedgerCollection> = quick_xml::de::from_str(&sanitized)
+        .map_err(|_| OutstandingsError::InvalidResponse("ledger_collection_xml_invalid"))?;
+    require_success(&parsed.header)?;
+    let ledgers = parsed.body.data.collection.ledgers;
+    let mut openings = 0usize;
+    for ledger in &ledgers {
+        let bill_wise = ledger
+            .bill_wise_on
+            .as_ref()
+            .map(|value| value.text.trim().eq_ignore_ascii_case("Yes"))
+            .unwrap_or(false);
+        if !bill_wise {
+            continue;
+        }
+        let opening = ledger
+            .opening_balance
+            .as_ref()
+            .map(|value| value.text.trim().to_string())
+            .unwrap_or_default();
+        if !opening.is_empty()
+            && !matches!(parse_money(opening)?, MoneyValue::Exact(ref v) if v.is_zero())
+        {
+            openings += 1;
+        }
+    }
+    Ok(LedgerOpeningCoverage::new(ledgers.len(), openings))
 }
 
 pub(super) fn parse_segment(
@@ -167,10 +207,18 @@ fn convert_voucher(
             .and_then(|value| trimmed_optional(Some(value.text))),
         cancelled: parse_bool(&raw.cancelled.text)?,
         deleted: parse_bool(&raw.deleted.text)?,
-        optional: match raw.optional {
-            Some(value) => parse_bool(&value.text)?,
-            None => false,
-        },
+        // Fail closed. `ISOPTIONAL` is in the sealed request's FETCH list and
+        // Tally returns it on every row (live-verified: both `No` and `Yes`
+        // observed). If it is absent the response does not match the request we
+        // sent, and defaulting to "posting" would re-admit exactly the
+        // non-posting allocations this field exists to exclude.
+        optional: parse_bool(
+            &raw.optional
+                .ok_or(OutstandingsError::InvalidResponse(
+                    "voucher_optional_state_missing",
+                ))?
+                .text,
+        )?,
         ledger_entries: raw
             .ledger_entries
             .into_iter()

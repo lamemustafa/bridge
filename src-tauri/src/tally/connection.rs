@@ -24,9 +24,10 @@ use bridge_tally_core::{
 };
 use bridge_tally_protocol::{
     outstandings::{
-        parse_company_book_extent, verify_segment_pair_with_wire_evidence,
-        voucher_outstandings_request, AlterIdRange, CompanyBookExtent, NarrowDateWindow,
-        PinnedCompany, SegmentVerification, SegmentWireEvidence, VoucherOutstandingsRequestXml,
+        parse_company_book_extent, parse_ledger_opening_coverage,
+        verify_segment_pair_with_wire_evidence, voucher_outstandings_request, AlterIdRange,
+        CompanyBookExtent, LedgerOpeningCoverage, NarrowDateWindow, PinnedCompany,
+        SegmentVerification, SegmentWireEvidence, VoucherOutstandingsRequestXml,
     },
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
     parse_ledger_write_readback_with_evidence, parse_selected_voucher_source_records_with_evidence,
@@ -618,6 +619,35 @@ impl TallyClient {
             .post_xml(tdl_engine::standard_ledger_catalog_request(company))
             .await?;
         parse_standard_ledger_catalog(&xml, company, expected_company_guid)
+    }
+
+    /// One extra paired read per scan: bill-wise OPENING balances live on
+    /// ledger masters, so a voucher-only scan is blind to them.
+    pub async fn fetch_ledger_opening_coverage(
+        &self,
+        company: &str,
+    ) -> anyhow::Result<LedgerOpeningCoverage> {
+        let company_name = ValidatedCompanyName::new(company.to_string())?;
+        let request = ReadOnlyProfile::LedgerOpeningCoverageV1 {
+            company: &company_name,
+        }
+        .render();
+        let first = self.post_xml(request.clone()).await?;
+        self.http
+            .get_status_decoded()
+            .await
+            .context("Tally health check between ledger opening reads failed")?;
+        let second = self.post_xml(request).await?;
+        self.http
+            .get_status_decoded()
+            .await
+            .context("Tally health check after ledger opening reads failed")?;
+        let first = parse_ledger_opening_coverage(&first)?;
+        let second = parse_ledger_opening_coverage(&second)?;
+        if first != second {
+            anyhow::bail!("Tally ledger opening coverage changed between paired reads");
+        }
+        Ok(first)
     }
 
     pub async fn fetch_company_book_extent(

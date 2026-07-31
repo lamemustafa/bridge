@@ -334,6 +334,35 @@ impl fmt::Debug for PinnedCompany {
     }
 }
 
+/// Whether the book carries bill-wise OPENING balances on ledger masters.
+///
+/// Those bills exist without any voucher, so a voucher-only scan cannot see
+/// them and must not claim complete outstandings when they are present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LedgerOpeningCoverage {
+    ledgers_seen: usize,
+    bill_wise_openings: usize,
+}
+
+impl LedgerOpeningCoverage {
+    pub(crate) fn new(ledgers_seen: usize, bill_wise_openings: usize) -> Self {
+        Self {
+            ledgers_seen,
+            bill_wise_openings,
+        }
+    }
+    pub fn ledgers_seen(self) -> usize {
+        self.ledgers_seen
+    }
+    pub fn bill_wise_openings(self) -> usize {
+        self.bill_wise_openings
+    }
+    /// True when a voucher-only scan can still be complete.
+    pub fn is_fully_covered_by_vouchers(self) -> bool {
+        self.bill_wise_openings == 0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanyBookExtent {
     company: PinnedCompany,

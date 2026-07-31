@@ -17,11 +17,12 @@ pub use compute::compute_outstandings;
 pub use model::{
     AgeingBillCounts, AgeingBuckets, AlterIdRange, BillAllocation, CompanyBookExtent, CompleteScan,
     CompleteSegment, DateBoundaryProfile, DateWindow, EmptyDateWindowVerification,
-    EmptyDateWindowWitness, LedgerEntry, MoneyValue, NarrowDateWindow, OutstandingsError,
-    OutstandingsReport, PartialScan, PartyOutstanding, PinnedCompany, ScanResult,
-    SegmentVerification, Voucher, VoucherAlterId, VoucherAlterIdHighWater,
+    EmptyDateWindowWitness, LedgerEntry, LedgerOpeningCoverage, MoneyValue, NarrowDateWindow,
+    OutstandingsError, OutstandingsReport, PartialScan, PartyOutstanding, PinnedCompany,
+    ScanResult, SegmentVerification, Voucher, VoucherAlterId, VoucherAlterIdHighWater,
 };
-pub use parser::parse_company_book_extent;
+pub use parser::{parse_company_book_extent, parse_ledger_opening_coverage};
+pub(crate) use request::render_ledger_opening_coverage;
 pub(crate) use request::{
     render_company_book_extent, render_outstandings_template, render_outstandings_vouchers,
 };

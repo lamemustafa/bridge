@@ -4,6 +4,7 @@ use super::{AlterIdRange, NarrowDateWindow, PinnedCompany};
 enum CollectionName {
     VoucherOutstandingsV1,
     CompanyBookExtentV1,
+    LedgerOpeningCoverageV1,
 }
 
 impl CollectionName {
@@ -11,6 +12,7 @@ impl CollectionName {
         match self {
             Self::VoucherOutstandingsV1 => "BridgeVoucherOutstandingsV1",
             Self::CompanyBookExtentV1 => "BridgeCompanyBookExtentV1",
+            Self::LedgerOpeningCoverageV1 => "BridgeLedgerOpeningCoverageV1",
         }
     }
 }
@@ -19,6 +21,7 @@ impl CollectionName {
 enum ObjectType {
     Voucher,
     Company,
+    Ledger,
 }
 
 impl ObjectType {
@@ -26,6 +29,7 @@ impl ObjectType {
         match self {
             Self::Voucher => "Voucher",
             Self::Company => "Company",
+            Self::Ledger => "Ledger",
         }
     }
 }
@@ -98,6 +102,41 @@ impl CompanyFetchField {
         }
     }
 }
+
+#[derive(Clone, Copy)]
+enum LedgerFetchField {
+    Name,
+    IsBillWiseOn,
+    OpeningBalance,
+}
+
+impl LedgerFetchField {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::IsBillWiseOn => "ISBILLWISEON",
+            Self::OpeningBalance => "OPENINGBALANCE",
+        }
+    }
+}
+
+struct LedgerCollectionDefinition {
+    name: CollectionName,
+    object_type: ObjectType,
+    fetch: &'static [LedgerFetchField],
+}
+
+/// Bill-wise OPENING balances live on the ledger master, not in any voucher.
+/// A voucher-only scan cannot see them, so the scan must at least detect them.
+const LEDGER_OPENING_DEFINITION: LedgerCollectionDefinition = LedgerCollectionDefinition {
+    name: CollectionName::LedgerOpeningCoverageV1,
+    object_type: ObjectType::Ledger,
+    fetch: &[
+        LedgerFetchField::Name,
+        LedgerFetchField::IsBillWiseOn,
+        LedgerFetchField::OpeningBalance,
+    ],
+};
 
 /// Closed definitions have no function or compute-expression slot. A caller
 /// cannot spell `$$NumItems`, name the enclosing collection, or attach a
@@ -275,6 +314,27 @@ pub(crate) fn render_company_book_extent(company: &str) -> String {
         company = xml_escape(company),
         object_type = COMPANY_EXTENT_DEFINITION.object_type.as_str(),
         fetch = render_company_fetch(COMPANY_EXTENT_DEFINITION.fetch),
+    )
+}
+
+pub(crate) fn render_ledger_opening_coverage(company: &str) -> String {
+    format!(
+        r#"<ENVELOPE>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>{collection}</ID></HEADER>
+  <BODY><DESC>
+    <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES>
+    <TDL><TDLMESSAGE><COLLECTION NAME="{collection}" ISMODIFY="No"><TYPE>{object_type}</TYPE><FETCH>{fetch}</FETCH></COLLECTION></TDLMESSAGE></TDL>
+  </DESC></BODY>
+</ENVELOPE>"#,
+        collection = LEDGER_OPENING_DEFINITION.name.as_str(),
+        company = xml_escape(company),
+        object_type = LEDGER_OPENING_DEFINITION.object_type.as_str(),
+        fetch = LEDGER_OPENING_DEFINITION
+            .fetch
+            .iter()
+            .map(|field| field.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
     )
 }
 

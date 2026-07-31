@@ -10,8 +10,8 @@ use std::fmt;
 use sha2::{Digest, Sha256};
 
 use crate::outstandings::{
-    render_company_book_extent, render_outstandings_template, render_outstandings_vouchers,
-    AlterIdRange, NarrowDateWindow, PinnedCompany,
+    render_company_book_extent, render_ledger_opening_coverage, render_outstandings_template,
+    render_outstandings_vouchers, AlterIdRange, NarrowDateWindow, PinnedCompany,
 };
 use crate::{BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_LEDGER_WRITE_READBACK_SCHEMA};
 
@@ -166,6 +166,7 @@ impl ValidatedDateRange {
 pub enum ReadOnlyProfileId {
     CompanyListV1,
     CompanyBookExtentV1,
+    LedgerOpeningCoverageV1,
     StandardLedgerIdentityV1,
     StandardLedgerCatalogV1,
     LedgersV1,
@@ -180,6 +181,7 @@ impl ReadOnlyProfileId {
         match self {
             Self::CompanyListV1 => "company_list_v1",
             Self::CompanyBookExtentV1 => "company_book_extent_v1",
+            Self::LedgerOpeningCoverageV1 => "ledger_opening_coverage_v1",
             Self::StandardLedgerIdentityV1 => "standard_ledger_identity_v1",
             Self::StandardLedgerCatalogV1 => "standard_ledger_catalog_v1",
             Self::LedgersV1 => "ledgers_v1",
@@ -197,6 +199,7 @@ impl ReadOnlyProfileId {
         let template = match self {
             Self::CompanyListV1 => render_company_list(),
             Self::CompanyBookExtentV1 => render_company_book_extent(TEMPLATE_COMPANY),
+            Self::LedgerOpeningCoverageV1 => render_ledger_opening_coverage(TEMPLATE_COMPANY),
             Self::StandardLedgerIdentityV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
             Self::StandardLedgerCatalogV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
             Self::LedgersV1 => render_ledgers(TEMPLATE_COMPANY),
@@ -224,6 +227,9 @@ impl ReadOnlyProfileId {
 #[derive(Debug, Clone, Copy)]
 pub enum ReadOnlyProfile<'a> {
     CompanyListV1,
+    LedgerOpeningCoverageV1 {
+        company: &'a ValidatedCompanyName,
+    },
     CompanyBookExtentV1 {
         company: &'a ValidatedCompanyName,
     },
@@ -271,6 +277,7 @@ impl ReadOnlyProfile<'_> {
         match self {
             Self::CompanyListV1 => ReadOnlyProfileId::CompanyListV1,
             Self::CompanyBookExtentV1 { .. } => ReadOnlyProfileId::CompanyBookExtentV1,
+            Self::LedgerOpeningCoverageV1 { .. } => ReadOnlyProfileId::LedgerOpeningCoverageV1,
             Self::StandardLedgerIdentityV1 { .. } => ReadOnlyProfileId::StandardLedgerIdentityV1,
             Self::StandardLedgerCatalogV1 { .. } => ReadOnlyProfileId::StandardLedgerCatalogV1,
             Self::LedgersV1 { .. } => ReadOnlyProfileId::LedgersV1,
@@ -289,6 +296,9 @@ impl ReadOnlyProfile<'_> {
         match self {
             Self::CompanyListV1 => render_company_list(),
             Self::CompanyBookExtentV1 { company } => render_company_book_extent(company.as_str()),
+            Self::LedgerOpeningCoverageV1 { company } => {
+                render_ledger_opening_coverage(company.as_str())
+            }
             Self::StandardLedgerIdentityV1 { company } => {
                 render_standard_ledger_identity(company.as_str())
             }
@@ -961,6 +971,10 @@ mod tests {
             (
                 ReadOnlyProfileId::CompanyBookExtentV1,
                 "38038f96473b2bf036d78aca2eea85f96738ace3bf0e691bbfa14ddd165784f4",
+            ),
+            (
+                ReadOnlyProfileId::LedgerOpeningCoverageV1,
+                "fc06813e03f2a8b3e083c07dd788afd017d7a7808827b75b90eef3acc8e15d8f",
             ),
             (
                 ReadOnlyProfileId::StandardLedgerIdentityV1,

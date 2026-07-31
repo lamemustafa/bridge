@@ -386,7 +386,16 @@ mod tests {
 
     const COMPANY_EXTENT: &str =
         include_str!("../../tests/fixtures/unit_a_company_extent_live.xml");
-    const VOUCHERS: &str = include_str!("../../tests/fixtures/unit_a_vouchers_wildcard_live.xml");
+    const VOUCHERS_LEGACY_SHAPE: &str =
+        include_str!("../../tests/fixtures/unit_a_vouchers_wildcard_live.xml");
+
+    /// The capture predates `ISOPTIONAL` joining the sealed FETCH list, and the
+    /// parser now fails closed without it. Tally returns `No` for every
+    /// ordinary voucher (live-verified), so this reproduces what the current
+    /// request shape would have returned for these same rows.
+    fn vouchers() -> String {
+        VOUCHERS_LEGACY_SHAPE.replace("<ISDELETED>", "<ISOPTIONAL>No</ISOPTIONAL><ISDELETED>")
+    }
 
     fn company() -> PinnedCompany {
         parse_company_book_extent(
@@ -413,7 +422,7 @@ mod tests {
     }
 
     fn empty_partition(company: &PinnedCompany, window: DateWindow) -> CompleteScan {
-        let empty = only_vouchers_with_alter_ids(VOUCHERS, &[]);
+        let empty = only_vouchers_with_alter_ids(&vouchers(), &[]);
         let verification = verify_segment_pair(
             &empty,
             &empty,
@@ -446,7 +455,7 @@ mod tests {
     #[test]
     fn live_empty_pairs_are_complete_budget_slices_but_truncation_is_partial() {
         let company = company();
-        let empty = only_vouchers_with_alter_ids(VOUCHERS, &[]);
+        let empty = only_vouchers_with_alter_ids(&vouchers(), &[]);
         assert!(matches!(
             verify_segment_pair(
                 &empty,
@@ -458,7 +467,7 @@ mod tests {
             .unwrap(),
             SegmentVerification::Complete(segment) if segment.vouchers().is_empty()
         ));
-        let truncated = &VOUCHERS[..VOUCHERS.len() - "</ENVELOPE>\n".len()];
+        let truncated = &vouchers()[..vouchers().len() - "</ENVELOPE>\n".len()];
         assert!(matches!(
             verify_segment_pair(
                 truncated,
@@ -475,11 +484,11 @@ mod tests {
     #[test]
     fn same_length_wire_mutation_is_partial_even_when_parsed_rows_match() {
         let company = company();
-        let second = VOUCHERS.replacen("<GROUP>0</GROUP>", "<GROUP>1</GROUP>", 1);
-        assert_eq!(VOUCHERS.len(), second.len());
+        let second = vouchers().replacen("<GROUP>0</GROUP>", "<GROUP>1</GROUP>", 1);
+        assert_eq!(vouchers().len(), second.len());
         assert!(matches!(
             verify_segment_pair(
-                VOUCHERS,
+                &vouchers(),
                 &second,
                 &company,
                 reporting_window(),
@@ -494,7 +503,7 @@ mod tests {
     #[test]
     fn wider_date_witness_requires_rows_outside_the_claimed_empty_window() {
         let company = company();
-        let wider = only_vouchers_with_alter_ids(VOUCHERS, &[440]);
+        let wider = only_vouchers_with_alter_ids(&vouchers(), &[440]);
         let empty_window = DateWindow::parse(
             crate::outstandings::DateBoundaryProfile::ModeAgnostic,
             "20250531",
@@ -520,7 +529,7 @@ mod tests {
     #[test]
     fn widening_witness_rejects_a_row_dated_inside_the_empty_window() {
         let company = company();
-        let contradicting = only_vouchers_with_alter_ids(VOUCHERS, &[440]);
+        let contradicting = only_vouchers_with_alter_ids(&vouchers(), &[440]);
         let claimed_empty = DateWindow::parse(
             crate::outstandings::DateBoundaryProfile::ModeAgnostic,
             "20250401",
@@ -572,8 +581,8 @@ mod tests {
     fn a_row_outside_the_requested_alter_id_range_is_partial() {
         let company = company();
         let result = verify_segment_pair(
-            VOUCHERS,
-            VOUCHERS,
+            &vouchers(),
+            &vouchers(),
             &company,
             reporting_window(),
             AlterIdRange::new(0, 200).unwrap(),
@@ -591,12 +600,12 @@ mod tests {
     #[test]
     fn duplicate_alter_ids_fail_at_the_segment_boundary() {
         let company = company();
-        let duplicate = VOUCHERS.replacen(
+        let duplicate = vouchers().replacen(
             "<ALTERID TYPE=\"Number\"> 77</ALTERID>",
             "<ALTERID TYPE=\"Number\"> 75</ALTERID>",
             1,
         );
-        assert_ne!(duplicate, VOUCHERS);
+        assert_ne!(duplicate, vouchers());
         let result = verify_segment_pair(
             &duplicate,
             &duplicate,
@@ -615,7 +624,7 @@ mod tests {
     #[test]
     fn an_alter_id_subset_can_complete_without_spanning_the_reporting_dates() {
         let company = company();
-        let subset = only_vouchers_with_alter_ids(VOUCHERS, &[75]);
+        let subset = only_vouchers_with_alter_ids(&vouchers(), &[75]);
         let result = verify_segment_pair(
             &subset,
             &subset,
@@ -637,7 +646,7 @@ mod tests {
         let company = company();
         let requested = reporting_window();
         let parsed = parse_segment(
-            VOUCHERS,
+            &vouchers(),
             &company,
             &requested,
             AlterIdRange::new(0, 440).unwrap(),
@@ -725,7 +734,7 @@ mod tests {
         assert_eq!(windows.len(), 3);
         let extent = book_extent(&company, &reporting, high_water(440));
         let parsed = parse_segment(
-            VOUCHERS,
+            &vouchers(),
             &company,
             &reporting_window(),
             AlterIdRange::new(0, 440).unwrap(),

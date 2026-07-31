@@ -16,7 +16,7 @@ invalidates results.**
 | --- | --- | --- |
 | GUID | `bb8ad19e-6aef-4239-a917-87fec0c6215e` | `75f7566d-7a4f-431a-9642-e93a9d06d57d` |
 | Vouchers | ~101,150 | 220 |
-| `ALTVCHID` / `ALTMSTID` | 101,601 / 326 | 252 / 218 |
+| `ALTVCHID` / `ALTMSTID` | **101,603** / 327 | 252 / 218 |
 | Bill references | **2 named in 4,894** — degenerate | **216 named of 440** — real |
 | `AlterID` ↔ date locality | **none** — one day spans the whole ID range | **strong** — one month ≈ 18 consecutive IDs |
 | Scale / payload / failure-mode work | **YES** | no — too small |
@@ -46,6 +46,14 @@ state codes. Vouchers span every Education-legal date from `20240401` to `202604
 (live `LASTVOUCHERDATE`, measured 2026-07-31 port 9000 — an earlier revision said "2026-03"),
 mixing Sales,
 Purchase, Payment and Receipt with 9%+9% CGST/SGST splits and invoice-referencing narrations.
+
+> **Aarav was written to on 2026-08-01 (ruling 9).** It carries one extra ledger
+> (`BRIDGE PROBE PARTY OPT`) and two extra vouchers at `AlterID` 101602/101603 dated
+> `20260401`, created to measure whether Tally returns optional vouchers from a Collection
+> export. It does — see [UNIT_A_RULING_9.md](./UNIT_A_RULING_9.md). `ALTVCHID` is therefore
+> **101,603**. Aarav is synthetic and disposable and is prohibited for sizing calibration, so
+> this is recorded rather than reversed. **`Bridge Billwise Lab` was deliberately not touched**
+> so its reconciliation baseline stays intact.
 
 ---
 
