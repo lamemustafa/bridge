@@ -45,7 +45,7 @@ AUTHORITY DOCUMENTS — read all before editing, in this order
 2. docs/tally/IMPLEMENTATION_GUIDE.md — in full. The 12 invariants and the
    16-row trap index are the specification.
 3. docs/tally/TALLY_PROTOCOL_REFERENCE.md — the evidence behind them.
-4. docs/tally/PRODUCT_TEARDOWN.md §5 — the screen you are building toward.
+4. PRODUCT.md — the screen you are building toward (users, purpose, design principles).
 5. docs/tally/IMPROVEMENT_PLAN_2026H2.md §8 — dated deviations; supersedes
    §§0–7 where they conflict.
 
@@ -81,9 +81,9 @@ One screen, for one company:
   Top parties by outstanding, with oldest-bill age
   A freshness line: "synced N minutes ago"
 
-Computed locally from vouchers and bill allocations. See PRODUCT_TEARDOWN §5
-for the layout. Do not build configurability, filters, or drill-down in this
-unit — one screen, correct numbers.
+Computed locally from vouchers and bill allocations. See PRODUCT.md for the
+intended layout and design principles. Do not build configurability, filters, or
+drill-down in this unit — one screen, correct numbers.
 
 ───────────────────────────────────────────────────────────────────────
 SCOPE

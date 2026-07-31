@@ -763,28 +763,24 @@ Even *rejected* requests can occupy Tally well beyond the HTTP response.
 
 ### 5.3b A self-referential `$$NumItems` hangs the gateway — I1 restated
 
-**OBSERVED 2026-07-30, cause not isolated.** A collection whose own `<COMPUTE>` counted itself:
+**OBSERVED 2026-07-30, cause not isolated.** A collection whose own `<COMPUTE>` counted its own
+membership (a `$$NumItems` referencing the collection it was defined in) left the gateway
+unresponsive with an *empty reply*. A minimal `Company` collection sent immediately before had
+succeeded, so the instance was healthy.
 
-```xml
-<COLLECTION NAME="BridgeVoucherOutstandingsV1" ISMODIFY="No">
-  <TYPE>Voucher</TYPE>
-  <COMPUTE>BRIDGESOURCECOUNT:$$NumItems:BridgeVoucherOutstandingsV1</COMPUTE>
-  ...
-</COLLECTION>
-```
+> The exact reproducing request shape is a **restricted crash trigger** and is kept in the
+> private knowledge hub (`brain/20-security/`), not in this public repo. This section keeps the
+> rule and the reasoning; it does not reproduce the payload.
 
-produced `curl: (52) Empty reply from server` and left the gateway unresponsive. A minimal
-`Company` collection sent immediately before had succeeded, so the instance was healthy.
+**Note the signature is distinct:** *empty reply* means TCP connected and the server closed
+without sending anything — distinct from the connection-refused and indefinite-hang signatures
+seen elsewhere. Treat it as its own failure class.
 
-**Note the signature is new:** *empty reply* means TCP connected and the server closed without
-sending anything — distinct from the connection-refused and indefinite-hang signatures seen
-elsewhere. Treat it as its own failure class.
-
-**Why this matters more than the individual defect.** The identifier name here —
-`BridgeVoucherOutstandingsV1` — contains **no spaces**. It fully complied with I1 as originally
-written ("no `$$` function may reference an identifier containing spaces") and still took the
-instance down. The original crashing profile used `$$NumItems:BRIDGE Voucher Collection V1`,
-which had *both* faults; only the spaces were recorded, and the self-reference was missed.
+**Why this matters more than the individual defect.** The identifier that triggered it contained
+**no spaces**. It fully complied with I1 as originally written ("no `$$` function may reference
+an identifier containing spaces") and still took the instance down — the fault was the
+self-reference, not the spacing. Only the spaces had been recorded from the earlier crash; the
+self-reference was missed.
 
 **I1 is therefore restated:** no `$$` function may reference an identifier containing spaces,
 **and no collection may reference itself inside a `$$` function.** A collection counting its own
