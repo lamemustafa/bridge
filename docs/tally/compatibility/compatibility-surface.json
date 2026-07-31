@@ -3,11 +3,11 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "92ffd045c08f137022a9e9cf6d6e8e0aaa182076662bee0f93c3428c6d56783e"
+      "sha256": "ab3a6531905988b85be32c9fbb10310949a0aa7a7adf90c49e1fe36c34859317"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
-      "sha256": "72fc7e7b5d2839377ff7812eeb744bb8f2dd913f95685a2ac97256bf3ef4c184"
+      "sha256": "7993bc3defa8421bc5da377582d8599fb8ebe90c0473a1426ebd45d4f8a28731"
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
@@ -71,7 +71,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "822ff978159a51461fec8f8de1a75c9a8eff25c373d20e9a66339095d2495f5e"
+      "sha256": "bba4c98cc3c8a7c3e25f05f951fb8334848bb1438688b34addad35d809cd8897"
     },
     {
       "path": "scripts/check-tally-live-read-boundary.mjs",
@@ -83,11 +83,11 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "e938479814aa77699895a01339a56cc079e4939eb4bf4cc648ddf591434f5634"
+      "sha256": "5c8c14609a5597b6ed44f037f331b87998131462b93f4183381e878bb129a9fa"
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "7fc8a29e8c02cbdcadf922a12065d303a832e880196212ddcde7811d47018cfd"
+      "sha256": "9bbe0729f0b3abd66da6f60374452aefcff110e3f0ba9f753147b0e427f96e34"
     },
     {
       "path": "src-tauri/crates/bridge-tally-canonical/Cargo.toml",
@@ -103,7 +103,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-compatibility/Cargo.toml",
-      "sha256": "fa7861275e42c039e1fa1f6e9ebf9de8102e7ecc89c55e6c3360da748fd64a0e"
+      "sha256": "a97e515fc91274fc02a3ce55023c5efe790e22ee92a3b911f2f987e8aa242b14"
     },
     {
       "path": "src-tauri/crates/bridge-tally-compatibility/src/bills_native_outstandings_probe_receipt.rs",
@@ -430,5 +430,5 @@
       "sha256": "dd033010711ca01a7a395a531285c6ef187a359640a156cbc8da7281e11a39ea"
     }
   ],
-  "manifest_sha256": "5c0402848b4987aed55893b38e5a09644aa1624804079c0275369e718eb21a69"
+  "manifest_sha256": "c78456c8c84a8c3ee0091b3a076a09c4fbfe1fefd7979e54073121eb93ec2db8"
 }
