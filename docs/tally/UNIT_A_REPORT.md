@@ -130,6 +130,17 @@ each port, with status checks before, between and after all data reads:
 | 9001 | 27 | 220 | 3,639,306 | 8.93 s | ₹45,14,597 | ₹1,05,000 | 48 | 4 / 4 / 4 / 36 |
 
 Both reports use as-of `20260731`; both match the owner-accepted native Bills Receivable target.
+
+> **Evidence caveat — the request shape changed after these runs.** PR review found that
+> `VoucherOutstandingsV1` never fetched `ISOPTIONAL`, so optional (non-posting) vouchers with
+> bill allocations would be counted into ordinary-book totals. `ISOPTIONAL` is now fetched and
+> optional vouchers are excluded, which **changes the request template hash**. The runs above
+> were performed under the previous shape. They remain valid evidence that the read, pairing,
+> tiling and computation are correct, and the totals should be unchanged because the corpus is
+> not believed to contain optional vouchers — but that is an inference, not a measurement.
+> **Re-run the ignored exit check on both ports to re-confirm under the current shape.** If the
+> numbers move, the new numbers are the correct ones and the target was measuring optional
+> vouchers.
 The encoded payload sizes differ by SKU, while the parsed and computed accounting result is
 identical. Both gateways returned the expected TallyPrime status after completion.
 

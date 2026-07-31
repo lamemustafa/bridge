@@ -374,6 +374,9 @@ pub struct Voucher {
     pub party_ledger_name: Option<String>,
     pub cancelled: bool,
     pub deleted: bool,
+    /// Optional vouchers are non-posting in Tally and must never reach
+    /// ordinary-book totals. See `compute_outstandings`.
+    pub optional: bool,
     pub ledger_entries: Vec<LedgerEntry>,
 }
 

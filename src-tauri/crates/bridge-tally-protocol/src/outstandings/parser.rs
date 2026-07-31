@@ -80,8 +80,8 @@ pub(super) fn parse_segment(
     alter_id_range: AlterIdRange,
 ) -> Result<ParsedSegment, OutstandingsError> {
     require_complete_envelope(xml)?;
-    let raw_row_count = xml.match_indices("<VOUCHER ").count();
     let sanitized = sanitize_invalid_numeric_references(xml);
+    let raw_row_count = count_voucher_start_elements(&sanitized)?;
     let parsed: Envelope<VoucherCollection> = quick_xml::de::from_str(&sanitized)
         .map_err(|_| OutstandingsError::InvalidResponse("voucher_collection_xml_invalid"))?;
     require_success(&parsed.header)?;
@@ -143,6 +143,10 @@ fn convert_voucher(
             .and_then(|value| trimmed_optional(Some(value.text))),
         cancelled: parse_bool(&raw.cancelled.text)?,
         deleted: parse_bool(&raw.deleted.text)?,
+        optional: match raw.optional {
+            Some(value) => parse_bool(&value.text)?,
+            None => false,
+        },
         ledger_entries: raw
             .ledger_entries
             .into_iter()
@@ -228,6 +232,57 @@ fn parse_bool(value: &str) -> Result<bool, OutstandingsError> {
     }
 }
 
+/// Count `<VOUCHER>` **start elements inside `<DATA>`** structurally.
+///
+/// Two traps, both live-observed, make the obvious implementations wrong:
+///
+/// 1. A textual `"<VOUCHER "` scan under-reports. Tally may legitimately
+///    serialize a row as `<VOUCHER>` with no attributes, or place a newline
+///    between the name and its first attribute. `quick_xml` deserializes those
+///    rows, so two identical complete replies would fail the raw-vs-parsed row
+///    agreement check and withhold a correct report.
+/// 2. Counting every `VOUCHER` element over-reports. `CMPINFO` (under `DESC`,
+///    not `DATA`) carries bare `<VOUCHER>0</VOUCHER>` style counters — the
+///    retained live capture has exactly one, against 75 real rows. Scoping to
+///    `DATA` excludes them by structure rather than by guessing at attributes.
+fn count_voucher_start_elements(xml: &str) -> Result<usize, OutstandingsError> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    reader.config_mut().check_end_names = false;
+    let mut count = 0usize;
+    let mut data_depth = 0usize;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) => {
+                let name = element.name();
+                let name = name.as_ref();
+                if name.eq_ignore_ascii_case(b"DATA") {
+                    data_depth += 1;
+                } else if data_depth > 0 && name.eq_ignore_ascii_case(b"VOUCHER") {
+                    count += 1;
+                }
+            }
+            Ok(Event::Empty(element)) => {
+                if data_depth > 0 && element.name().as_ref().eq_ignore_ascii_case(b"VOUCHER") {
+                    count += 1;
+                }
+            }
+            Ok(Event::End(element)) => {
+                if element.name().as_ref().eq_ignore_ascii_case(b"DATA") {
+                    data_depth = data_depth.saturating_sub(1);
+                }
+            }
+            Ok(Event::Eof) => return Ok(count),
+            Ok(_) => {}
+            Err(_) => {
+                return Err(OutstandingsError::InvalidResponse(
+                    "voucher_collection_xml_invalid",
+                ))
+            }
+        }
+    }
+}
+
 fn require_complete_envelope(xml: &str) -> Result<(), OutstandingsError> {
     if !xml.trim_end().ends_with("</ENVELOPE>") {
         return Err(OutstandingsError::InvalidResponse("response_truncated"));
@@ -258,4 +313,45 @@ fn trimmed_optional(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_voucher_start_elements;
+
+    #[test]
+    fn voucher_rows_are_counted_structurally_not_by_one_textual_spelling() {
+        // Three serializations quick_xml deserializes identically. A
+        // `"<VOUCHER "` substring scan sees only the first.
+        let xml = concat!(
+            "<ENVELOPE><BODY><DATA><COLLECTION>",
+            "<VOUCHER REMOTEID=\"a\"></VOUCHER>",
+            "<VOUCHER></VOUCHER>",
+            "<VOUCHER\n  REMOTEID=\"c\"></VOUCHER>",
+            "</COLLECTION></DATA></BODY></ENVELOPE>"
+        );
+        assert_eq!(count_voucher_start_elements(xml).unwrap(), 3);
+        assert_eq!(xml.match_indices("<VOUCHER ").count(), 1);
+    }
+
+    #[test]
+    fn cmpinfo_counter_elements_are_not_counted_as_rows() {
+        // CMPINFO sits under DESC and carries bare `<VOUCHER>0</VOUCHER>`
+        // counters. The retained live capture has exactly one against 75 real
+        // rows, so counting every VOUCHER element would over-report and fail
+        // the raw-vs-parsed agreement check.
+        let xml = concat!(
+            "<ENVELOPE><BODY>",
+            "<DESC><CMPINFO><VOUCHER>0</VOUCHER><VOUCHERTYPE>0</VOUCHERTYPE></CMPINFO></DESC>",
+            "<DATA><COLLECTION><VOUCHER REMOTEID=\"a\"></VOUCHER></COLLECTION></DATA>",
+            "</BODY></ENVELOPE>"
+        );
+        assert_eq!(count_voucher_start_elements(xml).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_response_with_no_rows_counts_zero_rather_than_failing() {
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>";
+        assert_eq!(count_voucher_start_elements(xml).unwrap(), 0);
+    }
 }

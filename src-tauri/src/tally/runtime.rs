@@ -1254,6 +1254,20 @@ impl TallyRuntime {
                             }
                         }
                     }
+                    // A segmented scan is not instantaneous. If a voucher is
+                    // added, edited or deleted in Tally while it runs,
+                    // LastVoucherDate or ALTVCHID advance, but every request
+                    // was capped at the extent read before the scan started.
+                    // The observations would then be a mix of two book states
+                    // that never existed together, and completeness (I4) would
+                    // be claimed for it. Re-read the extent and require it to
+                    // be byte-for-byte the same book before completing.
+                    let closing_extent = client
+                        .fetch_company_book_extent(extent.company().name(), extent.company().guid())
+                        .await?;
+                    if closing_extent != extent {
+                        return Ok(partial_result("book_changed_during_scan"));
+                    }
                     match assemble_partitioned_scan(&extent, requested, completed_date_partitions) {
                         ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
                             report: Box::new(compute_outstandings(&scan, as_of)?),

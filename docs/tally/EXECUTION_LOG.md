@@ -41,10 +41,17 @@ commits may exist, but nothing below is merged.
 | P0b rectify P2-2 | **FIXED, unmerged** | D2 transport claims are limited to durable evidence and reconciled with §§8.9–8.11 | `compatibility/evidence/p0b-live-evidence-defects-2026-07-29.md` D2; Bug #100 |
 | Unit A outstandings | **Complete for Unit A scope per ruling 8, unmerged** | The only correct bill payload remains the closed outstandings-only `ALLLEDGERENTRIES.*` profile under the 40 MiB exception, 28 MiB target and immutable 20-second deadline. Whole-scan completeness is proven by exact `[BooksFrom, LastVoucherDate]` tiling; AlterID ranges tile only the budget axis. Interior empty partitions are admissible, whole-book false-empty fails closed, and no AlterID-adjacent proof remains. Preflight/runtime admit at most 128 segment pairs; paired reads are separated and followed by `/status`. As-of is explicit and every unprovable read is visible as typed Partial with totals withheld. | The first port-9000 exit attempt proved I12 by failing closed on an Education-invalid mode-agnostic boundary. After binding the target-only harness to the owner-attested Educational profile, exact runs completed 27 paired partitions on 9000/9001 in 8.30/8.93 s: 220 vouchers, ₹45,14,597 receivable, ₹1,05,000 payable, 48 open bills, ageing 4/4/4/36. Payload sizes differ (3,443,776/3,639,306 bytes) but accounting agrees. Production-scale conditional subdivision and licensed-Tally coverage are Unit B; no positive licensed claim is made. |
 
-The ignored `unit_a_ordered_corpus_calibration_sample` target is bound to port 9000 and the
-accepted company name/GUID. It permits one sample per invocation, writes a durable reservation
-before Tally contact, retains fresh non-overwriting files, checks status around both paired
-requests, never retries or loops, and never changes policy automatically.
+The `unit_a_ordered_corpus_calibration_sample` harness has been **deleted**, not fixed. Review
+found that it dispatched directly through the transport, bypassing the runtime's per-endpoint
+serial queue, request budget and trend guard — so its timing evidence did not represent the
+product path it existed to calibrate — and that it retained *decoded* response text as the
+"byte-exact" evidence whose encoded length and SHA-256 were asserted.
+
+Both are real, but repairing them would have preserved dead machinery. Ruling 7 established
+that this corpus **cannot** calibrate an AlterID width at all (the proposed width equalled the
+corpus high-water, so no segmentation occurred), and ruling 8 replaced calibrated-width sizing
+with conditional subdivision measured from the book being read. The harness therefore measured
+a quantity nothing consumes. Unit B must measure through the product path, not beside it.
 
 **Process gate before PR:** the adversarial review produced the five
 rectifications recorded above. A fresh-context re-review and the preservation

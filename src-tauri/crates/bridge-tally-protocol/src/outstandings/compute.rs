@@ -30,7 +30,12 @@ pub fn compute_outstandings(
     let mut vouchers = scan
         .vouchers()
         .iter()
-        .filter(|voucher| !voucher.cancelled && !voucher.deleted)
+        // Optional vouchers are non-posting in Tally: they are excluded from
+        // ordinary books, so including them would inflate receivable/payable
+        // totals. Tally's own bank-statement import creates vouchers as
+        // Optional by default, so this is a live production shape, not an edge
+        // case.
+        .filter(|voucher| !voucher.cancelled && !voucher.deleted && !voucher.optional)
         .collect::<Vec<_>>();
     vouchers.sort_by(|left, right| {
         left.date
@@ -367,6 +372,62 @@ mod tests {
         assert_eq!(report.top_parties[0].oldest_bill_age_days, 1);
     }
 
+    #[test]
+    fn optional_vouchers_are_excluded_from_ordinary_book_totals() {
+        // Optional vouchers are non-posting in Tally. Tally's own
+        // bank-statement import creates vouchers as Optional by default, so a
+        // real book can carry them with full bill allocations; counting them
+        // would inflate receivables against the customer's actual ledger.
+        let company = PinnedCompany::verified(
+            ValidatedCompanyName::new("Synthetic Company").unwrap(),
+            "synthetic-guid".to_string(),
+        )
+        .unwrap();
+        let window =
+            DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260101", "20260401").unwrap();
+        let posted = voucher(
+            "sale",
+            "20260101",
+            "Customer",
+            "Invoice-1",
+            "New Ref",
+            "-100.00",
+        );
+        let mut optional = voucher(
+            "optional-sale",
+            "20260101",
+            "Customer",
+            "Invoice-2",
+            "New Ref",
+            "-250.00",
+        );
+        optional.optional = true;
+
+        let scan = CompleteScan {
+            company,
+            reporting_window: window,
+            voucher_alter_id_high_water: VoucherAlterIdHighWater::parse("5").unwrap(),
+            vouchers: vec![posted, optional],
+            encoded_bytes: 2048,
+        };
+        let report = compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()).unwrap();
+
+        // Only the posted 100.00 is receivable; the optional 250.00 is absent
+        // from the total AND from the open-bill count.
+        assert_eq!(report.receivable_total.as_str(), "100");
+        assert_eq!(report.open_receivable_bill_count, 1);
+        let customer = report
+            .top_parties
+            .iter()
+            .find(|party| party.party == "Customer")
+            .expect("the posted voucher's party is present");
+        assert_eq!(
+            customer.receivable.as_str(),
+            "100",
+            "an optional voucher reached top-party exposure"
+        );
+    }
+
     fn voucher(
         guid: &str,
         date: &str,
@@ -386,6 +447,7 @@ mod tests {
             party_ledger_name: Some(party.to_string()),
             cancelled: false,
             deleted: false,
+            optional: false,
             ledger_entries: vec![LedgerEntry {
                 ledger_name: party.to_string(),
                 bill_allocations: vec![BillAllocation {

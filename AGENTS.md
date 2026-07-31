@@ -41,21 +41,24 @@ This document defines agent-level expectations and review responsibilities for t
 
 ## Private knowledge hub
 
-A private cross-repo knowledge repository (`brain`,
-[github.com/lamemustafa/brain](https://github.com/lamemustafa/brain)) holds material that must
-**not** live in this public repo: vulnerabilities, crash triggers, competitor teardowns,
-pricing, market research, and durable protocol findings. If you have access, it is cloned as a
-sibling at `../brain`; its contribution contract is in that repo's `CONTRIBUTING.md`.
+A **private** cross-repo knowledge repository holds material that must **not** live in this
+public repo: vulnerabilities, crash triggers, competitor teardowns, pricing, market research,
+and durable protocol findings. Its name, URL and local path are supplied out-of-band to people
+and agents who have access, and are deliberately **not** recorded here — see the last bullet.
 
 - **Consult before you build.** Before implementing any flow touching Tally, GST, portal auth,
-  MCA, or a competitor feature, search it: `grep -rin "<topic>" ../brain/10-domains ../brain/40-decisions`.
+  MCA, or a competitor feature, search the hub for the topic first. Its contribution contract
+  lives in the hub itself.
 - **Write sensitive findings there, not here.** A vulnerability, crash trigger, sensitive
-  protocol behaviour, or market/pricing fact goes in `brain`; leave only a de-fanged rule here.
-- **Never reference the private repo by path or URL in a committed public file**, and never
-  paste an entry's sensitive body into this tree. The boundary is the point.
+  protocol behaviour, or market/pricing fact goes in the hub; leave only a de-fanged rule here.
+- **Never reference the private repo by name, URL, or filesystem path in a committed public
+  file**, and never paste an entry's sensitive body into this tree. The boundary is the point,
+  and it erodes one convenient pointer at a time: the repo name, the sibling path and the
+  directory taxonomy are each small disclosures that compose into a map. This paragraph
+  previously carried all three and contradicted the rule directly beneath it.
 
-If `../brain` is absent (fresh clone, CI), skip the consult step — it is an enhancement, never a
-build blocker.
+If the hub is not present (fresh clone, CI, or no access), skip the consult step — it is an
+enhancement, never a build blocker.
 
 ## Engineering principles
 

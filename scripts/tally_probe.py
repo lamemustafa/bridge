@@ -45,10 +45,18 @@ def post(xml,timeout=300,tag='q'):
     p=os.path.join(OUTDIR,'%s.out'%tag)
     if os.path.exists(p): os.remove(p)
     t0=time.time()
-    subprocess.run(['curl','-s','--max-time',str(timeout),'-o',p,'-X','POST',
+    done=subprocess.run(['curl','-s','--max-time',str(timeout),'-o',p,'-X','POST',
         'http://127.0.0.1:9000','-H','Content-Type: text/xml; charset=utf-8',
         '--data-binary','@-'],input=xml.encode('utf-8'),capture_output=True)
     el=time.time()-t0
+    # A timed-out or failed curl can still leave a PARTIAL file on disk, and a
+    # truncated capture that happens to contain '<ENVELOPE' would otherwise be
+    # read as a valid response - the corpus verifier would then reason from
+    # missing rows instead of reporting transport failure. Transport failure is
+    # NoResponse regardless of what bytes were written.
+    if done.returncode!=0:
+        raise NoResponse('curl exited %d after %.1fs (%s)'%(
+            done.returncode,el,done.stderr.decode('utf-8',errors='replace').strip()[:200] or 'no stderr'))
     if not os.path.exists(p): raise NoResponse('no output file after %.1fs (connection failed or timed out)'%el)
     raw=open(p,'rb').read()
     if not raw: raise NoResponse('zero bytes after %.1fs'%el)

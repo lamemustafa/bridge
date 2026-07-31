@@ -80,6 +80,8 @@ pub(super) struct RawVoucher {
     pub(super) cancelled: Value,
     #[serde(rename = "ISDELETED")]
     pub(super) deleted: Value,
+    #[serde(rename = "ISOPTIONAL", default)]
+    pub(super) optional: Option<Value>,
     #[serde(rename = "ALLLEDGERENTRIES.LIST", default)]
     pub(super) ledger_entries: Vec<RawLedgerEntry>,
 }

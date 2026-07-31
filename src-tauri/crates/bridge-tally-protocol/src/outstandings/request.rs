@@ -54,6 +54,7 @@ enum VoucherFetchField {
     PartyLedgerName,
     IsCancelled,
     IsDeleted,
+    IsOptional,
     /// The single wildcard exception verified for bill-level outstandings.
     /// This closed variant cannot be reused for another collection or path.
     AllLedgerEntriesWildcard,
@@ -71,6 +72,7 @@ impl VoucherFetchField {
             Self::PartyLedgerName => "PARTYLEDGERNAME",
             Self::IsCancelled => "ISCANCELLED",
             Self::IsDeleted => "ISDELETED",
+            Self::IsOptional => "ISOPTIONAL",
             Self::AllLedgerEntriesWildcard => "ALLLEDGERENTRIES.*",
         }
     }
@@ -126,6 +128,7 @@ const OUTSTANDINGS_DEFINITION: VoucherCollectionDefinition = VoucherCollectionDe
         VoucherFetchField::PartyLedgerName,
         VoucherFetchField::IsCancelled,
         VoucherFetchField::IsDeleted,
+        VoucherFetchField::IsOptional,
         VoucherFetchField::AllLedgerEntriesWildcard,
     ],
     filter: FilterName::OutstandingsPartitionV1,

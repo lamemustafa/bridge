@@ -988,7 +988,7 @@ mod tests {
             ),
             (
                 ReadOnlyProfileId::VoucherOutstandingsV1,
-                "a1aceea482fb497c386b28b61c06afcfb55940960834d30002d97be4545435bc",
+                "7e4025038bf85345d0a55b9437be339c8829b1f699abaaa52bbdfa6affcb1dae",
             ),
         ];
         for (profile, digest) in expected {
