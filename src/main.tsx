@@ -2,7 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, Building2, Cable, CircleHelp, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ReceiptIndianRupee, RefreshCw, ShieldCheck, UploadCloud } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { applyProbeCompanySelectionTransition, clearCompanyScopedState } from "./tally-company-selection";
+import {
+  applyProbeCompanySelectionTransition,
+  clearCompanyScopedState,
+  companyDiscoveryPrompt,
+} from "./tally-company-selection";
 import { OutstandingsScreen } from "./OutstandingsScreen";
 import "./styles.css";
 
@@ -979,6 +983,23 @@ function App() {
         );
         setSelectedCompany(selection.selectedCompany);
         void refreshPersistedCompanyProfiles();
+        setUntrustedDiscoveredCompanies([]);
+        setUntrustedDiscoveryError(null);
+        setUntrustedDiscoveryCompleted(false);
+        if (result.profile.transports.xml_http?.safe_reason_code === "direct_company_report_untrusted") {
+          const discoveryResultsVersion = tallyResultsVersion.current;
+          try {
+            const discovered = await invoke<UntrustedCompanyCandidate[]>("fetch_tally_companies", { config });
+            if (discoveryResultsVersion === tallyResultsVersion.current) {
+              setUntrustedDiscoveredCompanies(discovered);
+              setUntrustedDiscoveryCompleted(true);
+            }
+          } catch (error) {
+            if (discoveryResultsVersion === tallyResultsVersion.current) {
+              setUntrustedDiscoveryError(toOperatorError(error));
+            }
+          }
+        }
       }
     } catch (error) {
       if (resultsVersion === tallyResultsVersion.current) {
@@ -1848,6 +1869,11 @@ function App() {
   const gstDraftComplete = draft !== null && draft.missing_fields.length === 0;
   const selectedCompanyRecord = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
   const selectedCompanyLive = !!selectedCompanyRecord && liveCompanyKeys.includes(tallyCompanyKey(selectedCompanyRecord));
+  const discoveredCompanyPrompt = companyDiscoveryPrompt(
+    selectedCompany,
+    liveCompanyKeys,
+    untrustedDiscoveredCompanies.length,
+  );
   React.useEffect(() => {
     const mirrorCompanyId = selectedCompanyRecord?.mirror_company_id;
     setFixtureStatus(null);
@@ -2001,6 +2027,18 @@ function App() {
               <strong>{selectedCompanyLive ? "Matched" : selectedCompanyRecord ? "Offline evidence only" : "Not selected"}</strong>
             </div>
             <button className="secondary-action" type="button" onClick={() => setView("companies")}>Change setup</button>
+          </section>
+        )}
+
+        {discoveredCompanyPrompt && (
+          <section className="company-discovery-notice" role="status" aria-live="polite">
+            <div>
+              <strong>{discoveredCompanyPrompt.heading}</strong>
+              <span>{discoveredCompanyPrompt.detail}</span>
+            </div>
+            <button className="primary" type="button" onClick={() => setView("companies")}>
+              {discoveredCompanyPrompt.actionLabel}
+            </button>
           </section>
         )}
 
