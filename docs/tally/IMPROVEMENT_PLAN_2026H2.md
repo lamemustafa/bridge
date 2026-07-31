@@ -56,8 +56,10 @@
 #### Sources for §2.1–2.4
 
 Public vendor documentation behind the claims in this section, listed so any
-contributor can re-check or refresh it. **One ruling-driving claim is not
-covered — see the Finsights gap below.**
+contributor can re-check or refresh it. **This list covers every row of the
+§2.1 table — each row has either a citation or an explicitly recorded gap, so
+an omission here is a defect, not an oversight to be inferred.** Two rows are
+gaps; both are called out below.
 
 - **Tally native** — [Import data](https://help.tallysolutions.com/import-data-in-tally/),
   [Understanding Excel import & mapping templates](https://help.tallysolutions.com/getting-started-with-importing-data-into-tallyprime/),
@@ -70,7 +72,22 @@ covered — see the Finsights gap below.**
 - **CredFlow** — [company setup / connector requirements](https://credflow.freshdesk.com/support/solutions/articles/82000909704-how-to-add-company-for-tally-software-).
 - **AI Accountant** — [Tally integration](https://www.aiaccountant.com/blog/tally-integration-with-ai-accountant),
   [chart-of-accounts mapping](https://www.aiaccountant.com/blog/chart-of-accounts-ai-mapping).
-- **Finsights** — **no verifiable citation. See the gap below.**
+- **ClearTax connector** — [Tally connector installation guide](https://docs.cleartax.in/e-invoicing-v2/userguide/guides-tally-connector/installation-guide-for-tally-connector),
+  [Tally connector FAQ](https://docs.cleartax.in/e-invoicing-v2/userguide/guides-tally-connector/frequently-asked-questions-for-tally-connector),
+  [Tally add-on overview](https://docs.cleartax.in/cleartax-docs/add-ons-and-extensions/tally-add-on).
+  **Terminology correction:** the guide confirms the **ODBC port** dependency
+  and **per-machine installation** ("install the application and activate the
+  company in both the server and client systems"), and describes pasting a
+  **TCP path** into Tally — the compiled add-on artifact — rather than the
+  phrase "TDL plugin" used in §2.1 and §3.3. The architecture claim stands;
+  the wording in the table is looser than the source.
+- **Finsights** — **gap 1: no verifiable citation. See below.**
+- **DIY long tail** — **gap 2: uncited.** The "NIKASH converters, TaxGuru VBA
+  recon" examples and the **"6–10 hrs/GSTIN/month VLOOKUP baseline"** have no
+  source in this repo. That baseline is the implicit denominator for any
+  time-saving argument, so treat it as an **internal estimate, not a measured
+  figure**, and do not quote it externally until someone sources or measures
+  it.
 
 **Open gap — the Finsights 24-hour deletion latency is uncited, and a wedge
 rests on it.** §2.1 states that Finsights propagates Tally deletions only every
