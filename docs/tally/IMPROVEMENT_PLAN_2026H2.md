@@ -96,18 +96,22 @@ as directional.
 > (Zoho/Munim/Open/EnKash/GST connectors/Tally-native remote) live in the
 > private lamemustafa knowledge hub rather than in this public repo, because
 > they are commercially sensitive. **No ruling in this document rests on that
-> private material** — the rulings below follow from the public sources above
-> plus **§8's recorded live-probe observations**, and a contributor without hub
+> private material** — the rulings below follow from the public vendor sources
+> above plus code analysis of this repository, and a contributor without hub
 > access can verify and challenge all of them. Where private research informed
 > a *prioritisation* rather than a finding, it is marked inline as an internal
 > hypothesis — see §2.4.
 >
-> **Be precise about what "live evidence" means here.** §8 is unsigned prose
-> from Education-mode probing. The formal evidence system is **empty**: every
-> compatibility-matrix cell is `unknown` with `evidence_id: null` (§1 says so
-> outright — "the evidence product has no evidence"). Nothing in this plan may
-> be treated as compatibility-qualified, and no claim here is backed by a
-> licensed instance, because Bridge has never run against one.
+> **No live-Tally probe record is checked in on this branch.** Do not read the
+> rulings as backed by recorded measurements against a running Tally: the
+> formal evidence system is **empty** — every compatibility-matrix cell is
+> `unknown` with `evidence_id: null`, which §1 states outright ("the evidence
+> product has no evidence") — and `docs/tally/compatibility/evidence/` contains
+> no evidence files. Live Education-mode probe findings exist only on the
+> unmerged `feat/tally-outstandings-slice` branch and are **not** part of this
+> document's public support until that work lands. Nothing here is
+> compatibility-qualified, and no claim is backed by a licensed instance,
+> because Bridge has never run against one.
 
 ### 2.2 Structural takeaways
 1. **The on-prem connector is unavoidable and Bridge already is one** — with a stronger engineering base than the connectors CAs complain about.
