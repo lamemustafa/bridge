@@ -347,10 +347,24 @@ different data. Four confirmed routes:
 
 | Route | Presentation |
 | --- | --- |
-| Rejected `SVTODATE` | too many rows, `STATUS=1` |
-| Rejected `SVFROMDATE` | too few rows, `STATUS=1` |
+| Rejected `SVTODATE` (day ∉ {1,2,31}) | too many rows, `STATUS=1` |
+| Rejected `SVFROMDATE` (day ∉ {1,2,31}) | too few rows, `STATUS=1` |
 | Mistyped or non-existent company name | 0 rows, `STATUS=1` |
 | Response truncated mid-stream | partial rows, `STATUS=1` |
+| **Impossible calendar date that passes the day rule** (e.g. `20240631`) | **0 rows, `STATUS=1`** |
+
+**The fifth route, added 2026-07-31.** `SVTODATE=20240631` — June has no 31st, but `31` passes
+the day-1/2/31 boundary rule — returned **0 rows** on a window whose April portion holds 19
+vouchers. It is a *distinct* failure from the §2.7 rejected-boundary widening: the day passes
+the rule, the date does not exist, and the whole read collapses to zero rather than widening.
+A naïve "month end = day 31" partitioner would emit `0631`, `0931`, `1131`, `0231` and read
+four false-empty months a year.
+
+> **Bridge is already immune by construction.** `TallyDate::parse` (`pack_models.rs`) rejects
+> any impossible calendar date via `is_valid_yyyymmdd`, so Bridge code cannot emit `20240631` —
+> the value has no representation. This is a concrete **P2 win**: the illegal state is
+> unconstructable, so the false-empty route is closed before any request is built. The trap
+> only bites hand-built probes (it bit this author's probe first).
 
 **Consequence for change detection: a zero-row or short scan may never produce a deletion
 tombstone without corroboration from a strictly wider query.**

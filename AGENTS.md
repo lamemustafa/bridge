@@ -39,6 +39,22 @@ This document defines agent-level expectations and review responsibilities for t
 - If regression was introduced by a specific PR, link it explicitly in the rectify issue and include it in the fix PR summary.
 - For non-security production regressions, use a dedicated fix branch and label (`type:rectify`).
 
+## Private knowledge hub
+
+A private cross-repo knowledge repository (`brain`) holds material that must **not** live in
+this public repo: vulnerabilities, crash triggers, competitor teardowns, pricing, market
+research, and durable protocol findings. It is cloned as a sibling at `../brain`.
+
+- **Consult before you build.** Before implementing any flow touching Tally, GST, portal auth,
+  MCA, or a competitor feature, search it: `grep -rin "<topic>" ../brain/10-domains ../brain/40-decisions`.
+- **Write sensitive findings there, not here.** A vulnerability, crash trigger, sensitive
+  protocol behaviour, or market/pricing fact goes in `brain`; leave only a de-fanged rule here.
+- **Never reference the private repo by path or URL in a committed public file**, and never
+  paste an entry's sensitive body into this tree. The boundary is the point.
+
+If `../brain` is absent (fresh clone, CI), skip the consult step — it is an enhancement, never a
+build blocker.
+
 ## Engineering principles
 
 These are derived from defects actually found in this repository, not from general advice.
