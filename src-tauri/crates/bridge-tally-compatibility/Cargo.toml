@@ -13,7 +13,7 @@ default = []
 bills-native-outstandings-probe-receipt = []
 
 [dependencies]
-ed25519-dalek = "2"
+ed25519-dalek = "3"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
