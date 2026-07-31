@@ -1,6 +1,7 @@
 import React from "react";
 import { RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { outstandingsPartialReason } from "./outstandings-copy";
 
 type Props = {
   config: { host: string; port: number };
@@ -18,6 +19,13 @@ type Report = {
     days_31_60: string;
     days_61_90: string;
     days_90_plus: string;
+  };
+  open_receivable_bill_count: number;
+  ageing_bill_counts: {
+    days_0_30: number;
+    days_31_60: number;
+    days_61_90: number;
+    days_90_plus: number;
   };
   top_parties: Array<{
     party: string;
@@ -122,7 +130,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
       {!loading && result?.state === "partial" && (
         <div className="outstandings-state" role="status">
           <strong>Partial result withheld</strong>
-          <span>Bridge could not prove every requested segment complete ({friendlyReason(result.reason_code)}). No totals were calculated.</span>
+          <span>Bridge could not prove every requested segment complete ({outstandingsPartialReason(result.reason_code)}). No totals were calculated.</span>
         </div>
       )}
 
@@ -204,40 +212,6 @@ function relativeTime(timestamp: number) {
   if (minutes < 1) return "just now";
   if (minutes === 1) return "1 minute ago";
   return `${minutes} minutes ago`;
-}
-
-function friendlyReason(value: string) {
-  if (value === "tally_segment_latency_trending_restart_recommended") {
-    return "comparable segments kept slowing toward the safety deadline; Tally may need a restart before another sync";
-  }
-  if (value === "tally_segment_deadline_restart_recommended") {
-    return "a segment reached the safety deadline; Tally may need a restart before another sync";
-  }
-  if (value === "segment_response_size_limit_exceeded") {
-    return "a wildcard segment exceeded Bridge's response safety bound";
-  }
-  if (value === "outstandings_segment_sizing_uncalibrated") {
-    return "safe voucher-segment sizing is waiting for the ordered bill-bearing test company";
-  }
-  if (value === "company_voucher_alter_id_high_water_missing") {
-    return "Tally did not return the voucher limit Bridge needs to prove complete coverage";
-  }
-  if (value === "empty_segment_has_no_adjacent_corroboration_window") {
-    return "an empty voucher range reached the final known voucher without an adjacent range to confirm it";
-  }
-  if (value === "empty_corroboration_pair_mismatch") {
-    return "the paired wider voucher checks did not return identical rows";
-  }
-  if (value === "empty_corroboration_wider_window_empty") {
-    return "the adjacent voucher range was also empty, so absence could not be proven";
-  }
-  if (value === "empty_segment_contradicted_by_wider_read") {
-    return "the wider check found vouchers inside the supposedly empty range";
-  }
-  if (value === "empty_corroboration_scope_ambiguous") {
-    return "the wider check returned vouchers outside the expected adjacent range";
-  }
-  return value.replace(/_/g, " ");
 }
 
 function operatorMessage(cause: unknown) {
