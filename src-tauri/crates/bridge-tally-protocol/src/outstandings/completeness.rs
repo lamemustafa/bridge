@@ -2,9 +2,9 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 use super::{
-    parser::parse_segment, AlterIdRange, CompleteScan, CompleteSegment, CorroboratedEmptySegments,
-    DateWindow, EmptySegmentCandidate, EmptySegmentCorroboration, OutstandingsError, PartialScan,
-    PinnedCompany, ScanResult, SegmentVerification, Voucher, VoucherAlterIdHighWater,
+    parser::parse_segment, AlterIdRange, CompanyBookExtent, CompleteScan, CompleteSegment,
+    DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness, OutstandingsError,
+    PartialScan, PinnedCompany, ScanResult, SegmentVerification, Voucher, VoucherAlterIdHighWater,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -97,13 +97,6 @@ pub fn verify_segment_pair_with_wire_evidence(
             "paired_segment_mismatch",
         )));
     }
-    if first.vouchers.is_empty() {
-        return Ok(SegmentVerification::Empty(EmptySegmentCandidate {
-            reporting_window,
-            alter_id_range,
-            encoded_bytes: first_wire.encoded_bytes,
-        }));
-    }
     Ok(SegmentVerification::Complete(CompleteSegment {
         reporting_window,
         alter_id_range,
@@ -112,117 +105,96 @@ pub fn verify_segment_pair_with_wire_evidence(
     }))
 }
 
-pub fn corroborate_empty_segment_with_adjacent_pair(
-    candidate: EmptySegmentCandidate,
+pub fn verify_empty_date_window_with_wider_pair(
+    empty_partition: &CompleteScan,
     first_xml: &str,
     second_xml: &str,
-    company: &PinnedCompany,
-    adjacent: AlterIdRange,
-) -> Result<EmptySegmentCorroboration, OutstandingsError> {
-    corroborate_empty_segment_with_adjacent_pair_and_encoded_bytes(
-        candidate,
+    wider_window: DateWindow,
+    alter_id_range: AlterIdRange,
+) -> Result<EmptyDateWindowVerification, OutstandingsError> {
+    verify_empty_date_window_with_wider_pair_and_encoded_bytes(
+        empty_partition,
         first_xml,
         first_xml.len(),
         second_xml,
         second_xml.len(),
-        company,
-        adjacent,
+        wider_window,
+        alter_id_range,
     )
 }
 
-pub fn corroborate_empty_segment_with_adjacent_pair_and_encoded_bytes(
-    candidate: EmptySegmentCandidate,
+pub fn verify_empty_date_window_with_wider_pair_and_encoded_bytes(
+    empty_partition: &CompleteScan,
     first_xml: &str,
     first_encoded_bytes: usize,
     second_xml: &str,
     second_encoded_bytes: usize,
-    company: &PinnedCompany,
-    adjacent: AlterIdRange,
-) -> Result<EmptySegmentCorroboration, OutstandingsError> {
+    wider_window: DateWindow,
+    alter_id_range: AlterIdRange,
+) -> Result<EmptyDateWindowVerification, OutstandingsError> {
     let first_encoded_sha256 = sha256_hex(first_xml.as_bytes());
     let second_encoded_sha256 = sha256_hex(second_xml.as_bytes());
-    corroborate_empty_segment_with_adjacent_pair_and_wire_evidence(
-        candidate,
+    verify_empty_date_window_with_wider_pair_and_wire_evidence(
+        empty_partition,
         SegmentWireEvidence::new(first_xml, first_encoded_bytes, &first_encoded_sha256),
         SegmentWireEvidence::new(second_xml, second_encoded_bytes, &second_encoded_sha256),
-        company,
-        adjacent,
+        wider_window,
+        alter_id_range,
     )
 }
 
-pub fn corroborate_empty_segment_with_adjacent_pair_and_wire_evidence(
-    candidate: EmptySegmentCandidate,
+pub fn verify_empty_date_window_with_wider_pair_and_wire_evidence(
+    empty_partition: &CompleteScan,
     first_wire: SegmentWireEvidence<'_>,
     second_wire: SegmentWireEvidence<'_>,
-    company: &PinnedCompany,
-    adjacent: AlterIdRange,
-) -> Result<EmptySegmentCorroboration, OutstandingsError> {
-    let wider = candidate.alter_id_range.joined_with(adjacent)?;
-    let first = match parse_segment(first_wire.xml, company, &candidate.reporting_window, wider) {
-        Ok(value) => value,
-        Err(error) => {
-            return Ok(EmptySegmentCorroboration::Partial(PartialScan::new(
-                error_code(&error),
-            )))
-        }
-    };
-    let second = match parse_segment(second_wire.xml, company, &candidate.reporting_window, wider) {
-        Ok(value) => value,
-        Err(error) => {
-            return Ok(EmptySegmentCorroboration::Partial(PartialScan::new(
-                error_code(&error),
-            )))
-        }
-    };
-    if !paired_rows_match(
-        &first.vouchers,
-        first.raw_row_count,
+    wider_window: DateWindow,
+    alter_id_range: AlterIdRange,
+) -> Result<EmptyDateWindowVerification, OutstandingsError> {
+    if !empty_partition.vouchers.is_empty() {
+        return Ok(EmptyDateWindowVerification::Partial(PartialScan::new(
+            "empty_date_witness_partition_not_empty",
+        )));
+    }
+    let empty_window = &empty_partition.reporting_window;
+    if wider_window.from() > empty_window.from()
+        || wider_window.to() < empty_window.to()
+        || wider_window == *empty_window
+    {
+        return Ok(EmptyDateWindowVerification::Partial(PartialScan::new(
+            "empty_date_witness_not_strictly_wider",
+        )));
+    }
+    let segment = match verify_segment_pair_with_wire_evidence(
         first_wire,
-        &second.vouchers,
-        second.raw_row_count,
         second_wire,
-    ) {
-        return Ok(EmptySegmentCorroboration::Partial(PartialScan::new(
-            "empty_corroboration_pair_mismatch",
+        &empty_partition.company,
+        wider_window.clone(),
+        alter_id_range,
+    )? {
+        SegmentVerification::Complete(segment) => segment,
+        SegmentVerification::Partial(partial) => {
+            return Ok(EmptyDateWindowVerification::Partial(partial))
+        }
+    };
+    if segment.vouchers.is_empty() {
+        return Ok(EmptyDateWindowVerification::Partial(PartialScan::new(
+            "empty_date_witness_wider_window_empty",
         )));
     }
-    if first.vouchers.is_empty() {
-        return Ok(EmptySegmentCorroboration::Partial(PartialScan::new(
-            "empty_corroboration_wider_window_empty",
-        )));
-    }
-    if first
+    if segment
         .vouchers
         .iter()
-        .any(|voucher| candidate.alter_id_range.contains(voucher.alter_id))
+        .any(|voucher| voucher.date >= *empty_window.from() && voucher.date <= *empty_window.to())
     {
-        return Ok(EmptySegmentCorroboration::Partial(PartialScan::new(
-            "empty_segment_contradicted_by_wider_read",
+        return Ok(EmptyDateWindowVerification::Partial(PartialScan::new(
+            "empty_date_window_contradicted_by_wider_read",
         )));
     }
-    if first
-        .vouchers
-        .iter()
-        .any(|voucher| !adjacent.contains(voucher.alter_id))
-    {
-        return Ok(EmptySegmentCorroboration::Partial(PartialScan::new(
-            "empty_corroboration_scope_ambiguous",
-        )));
-    }
-    Ok(EmptySegmentCorroboration::Complete(
-        CorroboratedEmptySegments {
-            empty: CompleteSegment {
-                reporting_window: candidate.reporting_window.clone(),
-                alter_id_range: candidate.alter_id_range,
-                vouchers: Vec::new(),
-                encoded_bytes: candidate.encoded_bytes,
-            },
-            adjacent: CompleteSegment {
-                reporting_window: candidate.reporting_window,
-                alter_id_range: adjacent,
-                vouchers: first.vouchers,
-                encoded_bytes: first_wire.encoded_bytes,
-            },
+    Ok(EmptyDateWindowVerification::Complete(
+        EmptyDateWindowWitness {
+            empty_window: empty_window.clone(),
+            wider_window,
+            observed_row_count: segment.vouchers.len(),
         },
     ))
 }
@@ -257,9 +229,6 @@ pub fn assemble_scan(
     for segment in segments {
         match segment {
             SegmentVerification::Complete(segment) => complete.push(segment),
-            SegmentVerification::Empty(_) => {
-                return ScanResult::Partial(PartialScan::new("uncorroborated_empty_segment"))
-            }
             SegmentVerification::Partial(partial) => return ScanResult::Partial(partial),
         }
     }
@@ -326,16 +295,26 @@ pub fn assemble_scan(
     })
 }
 
-/// Merge individually complete narrow-date scans into one report-period scan.
+/// Merge individually complete narrow-date scans into the extent's full-book scan.
 /// Each narrow scan has already proven exact `0..ALTVCHID` coverage; this
 /// boundary additionally proves that the date partitions are exactly the
-/// deterministic, contiguous partition of the requested reporting period.
+/// deterministic, contiguous partition of `[BooksFrom, LastVoucherDate]`.
 pub fn assemble_partitioned_scan(
-    company: PinnedCompany,
+    extent: &CompanyBookExtent,
     reporting_window: DateWindow,
-    high_water: VoucherAlterIdHighWater,
     mut partitions: Vec<CompleteScan>,
 ) -> ScanResult {
+    if reporting_window.from() != extent.books_from()
+        || reporting_window.to() != extent.last_voucher_date()
+    {
+        return ScanResult::Partial(PartialScan::new("reporting_window_extent_mismatch"));
+    }
+    let Some(high_water) = extent.voucher_alter_id_high_water() else {
+        return ScanResult::Partial(PartialScan::new(
+            "company_voucher_alter_id_high_water_missing",
+        ));
+    };
+    let company = extent.company();
     let expected = match reporting_window.narrow_partitions() {
         Ok(value) => value,
         Err(_) => return ScanResult::Partial(PartialScan::new("date_partition_invalid")),
@@ -354,7 +333,7 @@ pub fn assemble_partitioned_scan(
     let mut alter_ids = BTreeMap::new();
     let mut encoded_bytes = 0_usize;
     for (partition, expected_window) in partitions.into_iter().zip(expected) {
-        if partition.company != company
+        if partition.company != *company
             || partition.voucher_alter_id_high_water != high_water
             || partition.reporting_window != *expected_window.as_date_window()
         {
@@ -378,8 +357,12 @@ pub fn assemble_partitioned_scan(
         }
     }
 
+    if high_water.get() > 0 && vouchers.is_empty() {
+        return ScanResult::Partial(PartialScan::new("whole_book_false_empty"));
+    }
+
     ScanResult::Complete(CompleteScan {
-        company,
+        company: company.clone(),
         reporting_window,
         voucher_alter_id_high_water: high_water,
         vouchers: vouchers.into_values().collect(),
@@ -429,8 +412,39 @@ mod tests {
         VoucherAlterIdHighWater::parse(&value.to_string()).unwrap()
     }
 
+    fn empty_partition(company: &PinnedCompany, window: DateWindow) -> CompleteScan {
+        let empty = only_vouchers_with_alter_ids(VOUCHERS, &[]);
+        let verification = verify_segment_pair(
+            &empty,
+            &empty,
+            company,
+            window.clone(),
+            AlterIdRange::new(0, 440).unwrap(),
+        )
+        .unwrap();
+        let ScanResult::Complete(scan) =
+            assemble_scan(company.clone(), window, high_water(440), vec![verification])
+        else {
+            panic!("paired live empty response should complete one date partition")
+        };
+        scan
+    }
+
+    fn book_extent(
+        company: &PinnedCompany,
+        reporting: &DateWindow,
+        high_water: VoucherAlterIdHighWater,
+    ) -> CompanyBookExtent {
+        CompanyBookExtent::new(
+            company.clone(),
+            reporting.from().clone(),
+            reporting.to().clone(),
+            Some(high_water),
+        )
+    }
+
     #[test]
-    fn empty_and_truncated_pairs_never_construct_complete_segments() {
+    fn live_empty_pairs_are_complete_budget_slices_but_truncation_is_partial() {
         let company = company();
         let empty = only_vouchers_with_alter_ids(VOUCHERS, &[]);
         assert!(matches!(
@@ -442,7 +456,7 @@ mod tests {
                 AlterIdRange::new(148, 200).unwrap(),
             )
             .unwrap(),
-            SegmentVerification::Empty(_)
+            SegmentVerification::Complete(segment) if segment.vouchers().is_empty()
         ));
         let truncated = &VOUCHERS[..VOUCHERS.len() - "</ENVELOPE>\n".len()];
         assert!(matches!(
@@ -478,77 +492,56 @@ mod tests {
     }
 
     #[test]
-    fn an_adjacent_wider_pair_is_the_only_path_from_empty_candidate_to_complete() {
+    fn wider_date_witness_requires_rows_outside_the_claimed_empty_window() {
         let company = company();
-        let exact_empty = only_vouchers_with_alter_ids(VOUCHERS, &[]);
-        let candidate = match verify_segment_pair(
-            &exact_empty,
-            &exact_empty,
-            &company,
-            reporting_window(),
-            AlterIdRange::new(148, 200).unwrap(),
-        )
-        .unwrap()
-        {
-            SegmentVerification::Empty(candidate) => candidate,
-            other => panic!("expected an empty candidate, got {other:?}"),
-        };
         let wider = only_vouchers_with_alter_ids(VOUCHERS, &[440]);
-        let corroboration = corroborate_empty_segment_with_adjacent_pair(
-            candidate,
-            &wider,
-            &wider,
-            &company,
-            AlterIdRange::new(200, 440).unwrap(),
+        let empty_window = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250531",
+            "20250531",
         )
         .unwrap();
-        let EmptySegmentCorroboration::Complete(corroborated) = corroboration else {
-            panic!("adjacent real rows should corroborate the empty boundary")
+        let empty_partition = empty_partition(&company, empty_window.clone());
+        let corroboration = verify_empty_date_window_with_wider_pair(
+            &empty_partition,
+            &wider,
+            &wider,
+            reporting_window(),
+            AlterIdRange::new(0, 440).unwrap(),
+        )
+        .unwrap();
+        let EmptyDateWindowVerification::Complete(witness) = corroboration else {
+            panic!("a wider dated row outside the empty window should corroborate it")
         };
-        let [empty, adjacent] = corroborated.into_segments();
-        assert!(empty.vouchers().is_empty());
-        assert_eq!(empty.alter_id_range(), AlterIdRange::new(148, 200).unwrap());
-        assert_eq!(
-            adjacent.alter_id_range(),
-            AlterIdRange::new(200, 440).unwrap()
-        );
-        assert_eq!(adjacent.vouchers().len(), 1);
-        assert_eq!(adjacent.vouchers()[0].alter_id.get(), 440);
+        assert_eq!(witness.empty_window(), &empty_window);
+        assert_eq!(witness.observed_row_count(), 1);
     }
 
     #[test]
-    fn a_wider_pair_that_finds_the_target_range_contradicts_the_empty_candidate() {
+    fn widening_witness_rejects_a_row_dated_inside_the_empty_window() {
         let company = company();
-        let exact_empty = only_vouchers_with_alter_ids(VOUCHERS, &[]);
-        let SegmentVerification::Empty(candidate) = verify_segment_pair(
-            &exact_empty,
-            &exact_empty,
-            &company,
-            reporting_window(),
-            AlterIdRange::new(148, 200).unwrap(),
-        )
-        .unwrap() else {
-            panic!("expected an empty candidate")
-        };
-        let contradicting = only_vouchers_with_alter_ids(VOUCHERS, &[440]).replacen(
-            "<ALTERID TYPE=\"Number\"> 440</ALTERID>",
-            "<ALTERID TYPE=\"Number\"> 180</ALTERID>",
-            1,
-        );
-        let result = corroborate_empty_segment_with_adjacent_pair(
-            candidate,
-            &contradicting,
-            &contradicting,
-            &company,
-            AlterIdRange::new(200, 440).unwrap(),
+        let contradicting = only_vouchers_with_alter_ids(VOUCHERS, &[440]);
+        let claimed_empty = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250401",
+            "20250401",
         )
         .unwrap();
-        let EmptySegmentCorroboration::Partial(partial) = result else {
-            panic!("a wider read contradicted the claimed empty AlterID range")
+        let empty_partition = empty_partition(&company, claimed_empty);
+        let result = verify_empty_date_window_with_wider_pair(
+            &empty_partition,
+            &contradicting,
+            &contradicting,
+            reporting_window(),
+            AlterIdRange::new(0, 440).unwrap(),
+        )
+        .unwrap();
+        let EmptyDateWindowVerification::Partial(partial) = result else {
+            panic!("a wider read contradicted the claimed empty date window")
         };
         assert_eq!(
             partial.reason_code,
-            "empty_segment_contradicted_by_wider_read"
+            "empty_date_window_contradicted_by_wider_read"
         );
     }
 
@@ -720,27 +713,44 @@ mod tests {
     }
 
     #[test]
-    fn partitioned_scan_requires_every_narrow_date_window_exactly_once() {
+    fn partitioned_scan_accepts_interior_empty_windows_and_requires_exact_tiling() {
         let company = company();
         let reporting = DateWindow::parse(
             crate::outstandings::DateBoundaryProfile::ModeAgnostic,
             "20250401",
-            "20250601",
+            "20250701",
         )
         .unwrap();
         let windows = reporting.narrow_partitions().unwrap();
-        assert_eq!(windows.len(), 2);
+        assert_eq!(windows.len(), 3);
+        let extent = book_extent(&company, &reporting, high_water(440));
+        let parsed = parse_segment(
+            VOUCHERS,
+            &company,
+            &reporting_window(),
+            AlterIdRange::new(0, 440).unwrap(),
+        )
+        .unwrap();
+        let first_voucher = parsed.vouchers[0].clone();
+        let mut last_voucher = parsed.vouchers[1].clone();
+        last_voucher.date = bridge_tally_core::TallyDate::parse("20250701").unwrap();
         let partitions = windows
             .iter()
-            .map(|window| {
+            .enumerate()
+            .map(|(index, window)| {
+                let vouchers = match index {
+                    0 => vec![first_voucher.clone()],
+                    2 => vec![last_voucher.clone()],
+                    _ => Vec::new(),
+                };
                 let ScanResult::Complete(scan) = assemble_scan(
                     company.clone(),
                     window.as_date_window().clone(),
-                    high_water(2),
+                    high_water(440),
                     vec![SegmentVerification::Complete(CompleteSegment {
                         reporting_window: window.as_date_window().clone(),
-                        alter_id_range: AlterIdRange::new(0, 2).unwrap(),
-                        vouchers: Vec::new(),
+                        alter_id_range: AlterIdRange::new(0, 440).unwrap(),
+                        vouchers,
                         encoded_bytes: 10,
                     })],
                 ) else {
@@ -750,24 +760,99 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let complete = assemble_partitioned_scan(
-            company.clone(),
-            reporting.clone(),
-            high_water(2),
-            partitions.clone(),
-        );
+        let complete = assemble_partitioned_scan(&extent, reporting.clone(), partitions.clone());
         let ScanResult::Complete(complete) = complete else {
             panic!("exact date partitions should assemble")
         };
         assert_eq!(complete.window(), &reporting);
-        assert_eq!(complete.encoded_bytes(), 20);
+        assert_eq!(complete.vouchers().len(), 2);
+        assert_eq!(complete.encoded_bytes(), 30);
 
-        let missing = assemble_partitioned_scan(
-            company,
-            reporting,
-            high_water(2),
-            vec![partitions[0].clone()],
-        );
+        let wrong_extent_window = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250402",
+            "20250701",
+        )
+        .unwrap();
+        let wrong_extent = book_extent(&company, &wrong_extent_window, high_water(440));
+        assert!(matches!(
+            assemble_partitioned_scan(&wrong_extent, reporting.clone(), partitions.clone()),
+            ScanResult::Partial(partial)
+                if partial.reason_code == "reporting_window_extent_mismatch"
+        ));
+
+        let missing = assemble_partitioned_scan(&extent, reporting, vec![partitions[0].clone()]);
         assert!(matches!(missing, ScanResult::Partial(_)));
+    }
+
+    #[test]
+    fn whole_book_false_empty_fails_closed_when_extent_has_vouchers() {
+        let company = company();
+        let reporting = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250401",
+            "20250701",
+        )
+        .unwrap();
+        let extent = book_extent(&company, &reporting, high_water(440));
+        let partitions = reporting
+            .narrow_partitions()
+            .unwrap()
+            .into_iter()
+            .map(|window| {
+                let ScanResult::Complete(scan) = assemble_scan(
+                    company.clone(),
+                    window.as_date_window().clone(),
+                    high_water(440),
+                    vec![SegmentVerification::Complete(CompleteSegment {
+                        reporting_window: window.into_date_window(),
+                        alter_id_range: AlterIdRange::new(0, 440).unwrap(),
+                        vouchers: Vec::new(),
+                        encoded_bytes: 10,
+                    })],
+                ) else {
+                    panic!("a live empty partition remains complete on the date axis")
+                };
+                scan
+            })
+            .collect();
+
+        assert!(matches!(
+            assemble_partitioned_scan(&extent, reporting, partitions),
+            ScanResult::Partial(partial) if partial.reason_code == "whole_book_false_empty"
+        ));
+    }
+
+    #[test]
+    fn zero_high_water_all_empty_book_is_complete() {
+        let company = company();
+        let reporting = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250401",
+            "20250701",
+        )
+        .unwrap();
+        let extent = book_extent(&company, &reporting, high_water(0));
+        let partitions = reporting
+            .narrow_partitions()
+            .unwrap()
+            .into_iter()
+            .map(|window| {
+                let ScanResult::Complete(scan) = assemble_scan(
+                    company.clone(),
+                    window.into_date_window(),
+                    high_water(0),
+                    Vec::new(),
+                ) else {
+                    panic!("zero high-water partition should be complete")
+                };
+                scan
+            })
+            .collect();
+
+        assert!(matches!(
+            assemble_partitioned_scan(&extent, reporting, partitions),
+            ScanResult::Complete(scan) if scan.vouchers().is_empty()
+        ));
     }
 }

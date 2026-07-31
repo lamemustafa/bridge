@@ -266,13 +266,6 @@ impl AlterIdRange {
     pub fn is_adjacent_to(self, next: Self) -> bool {
         self.inclusive_end == next.exclusive_start
     }
-
-    pub fn joined_with(self, adjacent: Self) -> Result<Self, OutstandingsError> {
-        if !self.is_adjacent_to(adjacent) {
-            return Err(OutstandingsError::InvalidAlterIdRange);
-        }
-        Self::new(self.exclusive_start, adjacent.inclusive_end)
-    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -392,41 +385,6 @@ pub struct CompleteSegment {
     pub(crate) encoded_bytes: usize,
 }
 
-/// A paired, byte-stable zero-row response that is not yet evidence of
-/// absence. Only an adjacent wider read can promote it to a complete segment.
-#[derive(Debug, PartialEq, Eq)]
-pub struct EmptySegmentCandidate {
-    pub(crate) reporting_window: DateWindow,
-    pub(crate) alter_id_range: AlterIdRange,
-    pub(crate) encoded_bytes: usize,
-}
-
-impl EmptySegmentCandidate {
-    pub fn reporting_window(&self) -> &DateWindow {
-        &self.reporting_window
-    }
-
-    pub fn alter_id_range(&self) -> AlterIdRange {
-        self.alter_id_range
-    }
-
-    pub fn encoded_bytes(&self) -> usize {
-        self.encoded_bytes
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CorroboratedEmptySegments {
-    pub(crate) empty: CompleteSegment,
-    pub(crate) adjacent: CompleteSegment,
-}
-
-impl CorroboratedEmptySegments {
-    pub fn into_segments(self) -> [CompleteSegment; 2] {
-        [self.empty, self.adjacent]
-    }
-}
-
 impl CompleteSegment {
     pub fn reporting_window(&self) -> &DateWindow {
         &self.reporting_window
@@ -439,6 +397,30 @@ impl CompleteSegment {
     }
     pub fn encoded_bytes(&self) -> usize {
         self.encoded_bytes
+    }
+}
+
+/// Optional I5 evidence for a complete empty date partition. Construction
+/// requires that partition's full AlterID tiling plus a paired, non-empty read
+/// of a strictly wider date window with no row dated inside it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct EmptyDateWindowWitness {
+    pub(crate) empty_window: DateWindow,
+    pub(crate) wider_window: DateWindow,
+    pub(crate) observed_row_count: usize,
+}
+
+impl EmptyDateWindowWitness {
+    pub fn empty_window(&self) -> &DateWindow {
+        &self.empty_window
+    }
+
+    pub fn wider_window(&self) -> &DateWindow {
+        &self.wider_window
+    }
+
+    pub fn observed_row_count(&self) -> usize {
+        self.observed_row_count
     }
 }
 
@@ -495,13 +477,12 @@ impl PartialScan {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SegmentVerification {
     Complete(CompleteSegment),
-    Empty(EmptySegmentCandidate),
     Partial(PartialScan),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum EmptySegmentCorroboration {
-    Complete(CorroboratedEmptySegments),
+pub enum EmptyDateWindowVerification {
+    Complete(EmptyDateWindowWitness),
     Partial(PartialScan),
 }
 
@@ -520,6 +501,14 @@ pub struct AgeingBuckets {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AgeingBillCounts {
+    pub days_0_30: usize,
+    pub days_31_60: usize,
+    pub days_61_90: usize,
+    pub days_90_plus: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PartyOutstanding {
     pub party: String,
     pub receivable: ExactDecimal,
@@ -535,6 +524,8 @@ pub struct OutstandingsReport {
     pub receivable_total: ExactDecimal,
     pub payable_total: ExactDecimal,
     pub ageing: AgeingBuckets,
+    pub open_receivable_bill_count: usize,
+    pub ageing_bill_counts: AgeingBillCounts,
     pub top_parties: Vec<PartyOutstanding>,
     pub source_voucher_count: usize,
     pub source_bytes: usize,

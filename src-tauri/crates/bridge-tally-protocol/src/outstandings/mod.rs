@@ -7,17 +7,17 @@ mod tolerant_xml;
 mod wire;
 
 pub use completeness::{
-    assemble_partitioned_scan, assemble_scan, corroborate_empty_segment_with_adjacent_pair,
-    corroborate_empty_segment_with_adjacent_pair_and_encoded_bytes,
-    corroborate_empty_segment_with_adjacent_pair_and_wire_evidence, verify_segment_pair,
+    assemble_partitioned_scan, assemble_scan, verify_empty_date_window_with_wider_pair,
+    verify_empty_date_window_with_wider_pair_and_encoded_bytes,
+    verify_empty_date_window_with_wider_pair_and_wire_evidence, verify_segment_pair,
     verify_segment_pair_with_encoded_bytes, verify_segment_pair_with_wire_evidence,
     SegmentWireEvidence,
 };
 pub use compute::compute_outstandings;
 pub use model::{
-    AgeingBuckets, AlterIdRange, BillAllocation, CompanyBookExtent, CompleteScan, CompleteSegment,
-    CorroboratedEmptySegments, DateBoundaryProfile, DateWindow, EmptySegmentCandidate,
-    EmptySegmentCorroboration, LedgerEntry, MoneyValue, NarrowDateWindow, OutstandingsError,
+    AgeingBillCounts, AgeingBuckets, AlterIdRange, BillAllocation, CompanyBookExtent, CompleteScan,
+    CompleteSegment, DateBoundaryProfile, DateWindow, EmptyDateWindowVerification,
+    EmptyDateWindowWitness, LedgerEntry, MoneyValue, NarrowDateWindow, OutstandingsError,
     OutstandingsReport, PartialScan, PartyOutstanding, PinnedCompany, ScanResult,
     SegmentVerification, Voucher, VoucherAlterId, VoucherAlterIdHighWater,
 };

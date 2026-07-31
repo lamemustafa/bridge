@@ -24,9 +24,8 @@ use bridge_tally_core::{
 };
 use bridge_tally_protocol::{
     outstandings::{
-        corroborate_empty_segment_with_adjacent_pair_and_wire_evidence, parse_company_book_extent,
-        verify_segment_pair_with_wire_evidence, voucher_outstandings_request, AlterIdRange,
-        CompanyBookExtent, EmptySegmentCandidate, EmptySegmentCorroboration, NarrowDateWindow,
+        parse_company_book_extent, verify_segment_pair_with_wire_evidence,
+        voucher_outstandings_request, AlterIdRange, CompanyBookExtent, NarrowDateWindow,
         PinnedCompany, SegmentVerification, SegmentWireEvidence, VoucherOutstandingsRequestXml,
     },
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
@@ -53,23 +52,10 @@ pub(crate) struct OutstandingsSegmentObservation {
     pub(crate) second_read_elapsed: Duration,
 }
 
-#[derive(Debug)]
-pub(crate) struct OutstandingsEmptyCorroborationObservation {
-    pub(crate) verification: EmptySegmentCorroboration,
-    pub(crate) first_read_elapsed: Duration,
-    pub(crate) second_read_elapsed: Duration,
-}
-
 struct OutstandingsWireResponse {
     text: String,
     encoded_bytes: usize,
     encoded_sha256: String,
-}
-
-impl OutstandingsEmptyCorroborationObservation {
-    pub(crate) fn max_read_elapsed(&self) -> Duration {
-        self.first_read_elapsed.max(self.second_read_elapsed)
-    }
 }
 
 /// An exact, validated write-canary readback. Its XML remains crate-private to
@@ -645,7 +631,15 @@ impl TallyClient {
         }
         .render();
         let first = self.post_xml(request.clone()).await?;
+        self.http
+            .get_status_decoded()
+            .await
+            .context("Tally health check between company extent reads failed")?;
         let second = self.post_xml(request).await?;
+        self.http
+            .get_status_decoded()
+            .await
+            .context("Tally health check after company extent reads failed")?;
         let first = parse_company_book_extent(&first, company, expected_company_guid)?;
         let second = parse_company_book_extent(&second, company, expected_company_guid)?;
         if first != second {
@@ -674,6 +668,11 @@ impl TallyClient {
                 format!("outstandings first segment read failed for AlterID {range_label}")
             })?;
         let first_read_elapsed = first_started.elapsed();
+        self.http.get_status_decoded().await.with_context(|| {
+            format!(
+                "Tally health check between outstandings reads failed for AlterID {range_label}"
+            )
+        })?;
         let second_started = Instant::now();
         let second = self
             .post_outstandings_xml_with_encoded_bytes(request)
@@ -682,6 +681,9 @@ impl TallyClient {
                 format!("outstandings second segment read failed for AlterID {range_label}")
             })?;
         let second_read_elapsed = second_started.elapsed();
+        self.http.get_status_decoded().await.with_context(|| {
+            format!("Tally health check after outstandings reads failed for AlterID {range_label}")
+        })?;
         let verification = verify_segment_pair_with_wire_evidence(
             SegmentWireEvidence::new(&first.text, first.encoded_bytes, &first.encoded_sha256),
             SegmentWireEvidence::new(&second.text, second.encoded_bytes, &second.encoded_sha256),
@@ -690,50 +692,6 @@ impl TallyClient {
             alter_id_range,
         )?;
         Ok(OutstandingsSegmentObservation {
-            verification,
-            first_read_elapsed,
-            second_read_elapsed,
-        })
-    }
-
-    pub(crate) async fn fetch_outstandings_empty_corroboration_pair(
-        &self,
-        company: &PinnedCompany,
-        candidate: EmptySegmentCandidate,
-        adjacent: AlterIdRange,
-    ) -> anyhow::Result<OutstandingsEmptyCorroborationObservation> {
-        let wider = candidate.alter_id_range().joined_with(adjacent)?;
-        let segment_window = NarrowDateWindow::try_from(candidate.reporting_window().clone())?;
-        let request = voucher_outstandings_request(company, &segment_window, wider);
-        let range_label = format!("{}..{}", wider.exclusive_start(), wider.inclusive_end());
-        let first_started = Instant::now();
-        let first = self
-            .post_outstandings_xml_with_encoded_bytes(request.clone())
-            .await
-            .with_context(|| {
-                format!(
-                    "outstandings first empty corroboration read failed for AlterID {range_label}"
-                )
-            })?;
-        let first_read_elapsed = first_started.elapsed();
-        let second_started = Instant::now();
-        let second = self
-            .post_outstandings_xml_with_encoded_bytes(request)
-            .await
-            .with_context(|| {
-                format!(
-                    "outstandings second empty corroboration read failed for AlterID {range_label}"
-                )
-            })?;
-        let second_read_elapsed = second_started.elapsed();
-        let verification = corroborate_empty_segment_with_adjacent_pair_and_wire_evidence(
-            candidate,
-            SegmentWireEvidence::new(&first.text, first.encoded_bytes, &first.encoded_sha256),
-            SegmentWireEvidence::new(&second.text, second.encoded_bytes, &second.encoded_sha256),
-            company,
-            adjacent,
-        )?;
-        Ok(OutstandingsEmptyCorroborationObservation {
             verification,
             first_read_elapsed,
             second_read_elapsed,
@@ -1415,6 +1373,101 @@ mod tests {
             !proxy_received_request,
             "Tally traffic must never be sent through a configured proxy"
         );
+    }
+
+    #[tokio::test]
+    async fn paired_outstandings_reads_health_check_between_and_after_requests() {
+        const COMPANY_EXTENT: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        const EMPTY_VOUCHERS: &str = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>";
+        const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            for (index, expected_prefix) in [
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .expect("paired request timed out")
+                        .expect("accept paired request");
+                let mut request = [0_u8; 16 * 1024];
+                let bytes_read = socket
+                    .read(&mut request)
+                    .await
+                    .expect("read paired request");
+                assert!(
+                    String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_prefix),
+                    "request {index} did not follow the required read/health-check sequence"
+                );
+                let body = match index {
+                    0 | 2 => COMPANY_EXTENT,
+                    4 | 6 => EMPTY_VOUCHERS,
+                    _ => STATUS,
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write paired response");
+            }
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let extent = client
+            .fetch_company_book_extent(
+                "Aarav Trading Company Demo",
+                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+            )
+            .await
+            .expect("paired extent reads remain stable");
+        let reporting_window = bridge_tally_protocol::outstandings::DateWindow::parse(
+            bridge_tally_protocol::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250401",
+            "20250401",
+        )
+        .expect("synthetic one-day window");
+        let segment_window = reporting_window
+            .narrow_partitions()
+            .expect("one narrow partition")
+            .remove(0);
+        let observation = client
+            .fetch_outstandings_segment_pair(
+                extent.company(),
+                segment_window,
+                bridge_tally_protocol::outstandings::AlterIdRange::new(0, 1)
+                    .expect("non-empty synthetic range"),
+            )
+            .await
+            .expect("paired segment reads remain stable");
+        assert!(matches!(
+            observation.verification,
+            bridge_tally_protocol::outstandings::SegmentVerification::Complete(segment)
+                if segment.vouchers().is_empty()
+        ));
+        server.await.expect("synthetic Tally server task");
     }
 
     #[tokio::test]

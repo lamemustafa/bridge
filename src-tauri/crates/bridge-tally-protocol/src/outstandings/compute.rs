@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use bridge_tally_core::{ExactDecimal, TallyDate};
 
 use super::{
-    AgeingBuckets, CompleteScan, MoneyValue, OutstandingsError, OutstandingsReport,
-    PartyOutstanding,
+    AgeingBillCounts, AgeingBuckets, CompleteScan, MoneyValue, OutstandingsError,
+    OutstandingsReport, PartyOutstanding,
 };
 
 struct OpenBill {
@@ -86,6 +86,12 @@ pub fn compute_outstandings(
         days_61_90: ExactDecimal::zero(),
         days_90_plus: ExactDecimal::zero(),
     };
+    let mut ageing_bill_counts = AgeingBillCounts {
+        days_0_30: 0,
+        days_31_60: 0,
+        days_61_90: 0,
+        days_90_plus: 0,
+    };
     let mut parties = BTreeMap::<String, PartyTotals>::new();
     for ((party, _), bill) in bills
         .into_iter()
@@ -104,13 +110,19 @@ pub fn compute_outstandings(
                 totals.receivable.as_ref().unwrap_or(&ExactDecimal::zero()),
                 &amount,
             )?);
-            let bucket = match age {
-                0..=30 => &mut ageing.days_0_30,
-                31..=60 => &mut ageing.days_31_60,
-                61..=90 => &mut ageing.days_61_90,
-                _ => &mut ageing.days_90_plus,
+            let (bucket, bill_count) = match age {
+                0..=30 => (&mut ageing.days_0_30, &mut ageing_bill_counts.days_0_30),
+                31..=60 => (&mut ageing.days_31_60, &mut ageing_bill_counts.days_31_60),
+                61..=90 => (&mut ageing.days_61_90, &mut ageing_bill_counts.days_61_90),
+                _ => (
+                    &mut ageing.days_90_plus,
+                    &mut ageing_bill_counts.days_90_plus,
+                ),
             };
             *bucket = add(bucket, &amount)?;
+            *bill_count = bill_count
+                .checked_add(1)
+                .ok_or(OutstandingsError::ArithmeticOverflow)?;
         } else {
             payable_total = add(&payable_total, &amount)?;
             totals.payable = Some(add(
@@ -143,12 +155,21 @@ pub fn compute_outstandings(
     });
     top_parties.truncate(10);
 
+    let open_receivable_bill_count = ageing_bill_counts
+        .days_0_30
+        .checked_add(ageing_bill_counts.days_31_60)
+        .and_then(|value| value.checked_add(ageing_bill_counts.days_61_90))
+        .and_then(|value| value.checked_add(ageing_bill_counts.days_90_plus))
+        .ok_or(OutstandingsError::ArithmeticOverflow)?;
+
     Ok(OutstandingsReport {
         company_name: scan.company().name().to_string(),
         as_of_yyyymmdd: as_of.as_str().to_string(),
         receivable_total,
         payable_total,
         ageing,
+        open_receivable_bill_count,
+        ageing_bill_counts,
         top_parties,
         source_voucher_count: scan.vouchers().len(),
         source_bytes: scan.encoded_bytes(),
@@ -269,10 +290,26 @@ mod tests {
         assert_eq!(report.payable_total.as_str(), "55");
         assert_eq!(report.ageing.days_0_30.as_str(), "10");
         assert_eq!(report.ageing.days_61_90.as_str(), "60");
+        assert_eq!(report.open_receivable_bill_count, 2);
+        assert_eq!(report.ageing_bill_counts.days_0_30, 1);
+        assert_eq!(report.ageing_bill_counts.days_31_60, 0);
+        assert_eq!(report.ageing_bill_counts.days_61_90, 1);
+        assert_eq!(report.ageing_bill_counts.days_90_plus, 0);
         assert_eq!(report.top_parties[0].party, "Customer");
         assert_eq!(report.top_parties[0].payable.as_str(), "5");
         assert_eq!(report.top_parties[0].outstanding_total.as_str(), "75");
         assert_eq!(report.top_parties[0].oldest_bill_age_days, 90);
+
+        let later = compute_outstandings(&scan, TallyDate::parse("20260501").unwrap()).unwrap();
+        assert_eq!(later.receivable_total, report.receivable_total);
+        assert_eq!(later.payable_total, report.payable_total);
+        assert_eq!(
+            later.open_receivable_bill_count,
+            report.open_receivable_bill_count
+        );
+        assert_ne!(later.ageing, report.ageing);
+        assert_ne!(later.ageing_bill_counts, report.ageing_bill_counts);
+        assert_eq!(later.as_of_yyyymmdd, "20260501");
     }
 
     #[test]
@@ -325,6 +362,8 @@ mod tests {
         assert_eq!(report.receivable_total.as_str(), "50");
         assert_eq!(report.ageing.days_0_30.as_str(), "50");
         assert_eq!(report.ageing.days_90_plus.as_str(), "0");
+        assert_eq!(report.open_receivable_bill_count, 1);
+        assert_eq!(report.ageing_bill_counts.days_0_30, 1);
         assert_eq!(report.top_parties[0].oldest_bill_age_days, 1);
     }
 

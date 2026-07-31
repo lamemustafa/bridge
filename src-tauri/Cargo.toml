@@ -15,6 +15,9 @@ default-run = "bridge"
 # reviewed, one-send synthetic-canary command boundary and never a generic write API.
 fixture-canary-dispatch-seam = []
 fixture-canary-runtime-dispatch = ["fixture-canary-dispatch-seam"]
+# Manual-only admission for the ignored, corpus-bound Unit A reconciliation
+# harness. Shipped/default builds have no constructor for an AlterID width.
+live-calibration-harness = []
 
 [workspace]
 members = [

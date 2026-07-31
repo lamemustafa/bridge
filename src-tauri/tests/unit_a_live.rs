@@ -1,4 +1,7 @@
+#[cfg(feature = "live-calibration-harness")]
 use bridge_lib::tally::{OutstandingsLoadResult, TallyConfig, TallyRuntime};
+#[cfg(feature = "live-calibration-harness")]
+use bridge_tally_core::TallyDate;
 use bridge_tally_protocol::outstandings::{
     parse_company_book_extent, verify_segment_pair, verify_segment_pair_with_wire_evidence,
     AlterIdRange, DateBoundaryProfile, DateWindow, SegmentVerification, SegmentWireEvidence,
@@ -7,8 +10,22 @@ use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompany
 use bridge_tally_transport::{TallyEndpointConfig, TallyHttpTransport};
 use std::{collections::BTreeMap, time::Instant};
 
+const EXIT_COMPANY: &str = "Bridge Billwise Lab";
+const EXIT_COMPANY_GUID: &str = "75f7566d-7a4f-431a-9642-e93a9d06d57d";
+#[cfg(feature = "live-calibration-harness")]
+const EXIT_AS_OF: &str = "20260731";
+#[cfg(feature = "live-calibration-harness")]
+const EXIT_VOUCHER_COUNT: usize = 220;
+#[cfg(feature = "live-calibration-harness")]
+const EXIT_RECEIVABLE_TOTAL: &str = "4514597";
+#[cfg(feature = "live-calibration-harness")]
+const EXIT_OPEN_RECEIVABLE_BILLS: usize = 48;
+#[cfg(feature = "live-calibration-harness")]
+const EXIT_AGEING_BILL_COUNTS: [usize; 4] = [4, 4, 4, 36];
+
+#[cfg(feature = "live-calibration-harness")]
 #[tokio::test]
-#[ignore = "blocked until the ordered bill-bearing company exists and its owner-reviewed sizing is encoded"]
+#[ignore = "manual owner-authorized reconciliation only; health-check and run one port at a time"]
 async fn unit_a_outstandings_live_exit_check() {
     let port = std::env::var("BRIDGE_TALLY_LIVE_PORT")
         .expect("BRIDGE_TALLY_LIVE_PORT")
@@ -16,11 +33,18 @@ async fn unit_a_outstandings_live_exit_check() {
         .expect("numeric port");
     let company = std::env::var("BRIDGE_TALLY_LIVE_COMPANY").expect("company name");
     let company_guid = std::env::var("BRIDGE_TALLY_LIVE_COMPANY_GUID").expect("company GUID");
-    assert_ne!(
-        company, "Aarav Trading Company Demo",
-        "Unit A's reconciliation exit check is reserved for the purpose-built bill-bearing corpus from TEST_CORPUS.md section 4"
-    );
-    let result = TallyRuntime::default()
+    validate_exit_target(port, &company, &company_guid)
+        .expect("port and company match the accepted reconciliation target");
+    let transport = TallyHttpTransport::new(TallyEndpointConfig {
+        host: "127.0.0.1".to_string(),
+        port,
+    })
+    .expect("bounded Tally transport");
+    transport
+        .get_status_decoded()
+        .await
+        .expect("pre-reconciliation Tally status");
+    let result = TallyRuntime::for_billwise_lab_reconciliation_exit_check()
         .fetch_outstandings(
             TallyConfig {
                 host: "127.0.0.1".to_string(),
@@ -28,36 +52,53 @@ async fn unit_a_outstandings_live_exit_check() {
             },
             company,
             company_guid,
+            TallyDate::parse(EXIT_AS_OF).expect("fixed reconciliation as-of date is valid"),
         )
         .await
         .expect("live outstandings request completes");
+    transport
+        .get_status_decoded()
+        .await
+        .expect("post-reconciliation Tally status");
     match result {
         OutstandingsLoadResult::Complete { report, .. } => {
-            assert!(
-                (200..=500).contains(&report.source_voucher_count),
-                "the exit corpus must retain its reviewed 200-500 voucher bound"
+            assert_eq!(report.company_name, EXIT_COMPANY);
+            assert_eq!(report.as_of_yyyymmdd, EXIT_AS_OF);
+            assert_eq!(report.source_voucher_count, EXIT_VOUCHER_COUNT);
+            assert_eq!(report.receivable_total.as_str(), EXIT_RECEIVABLE_TOTAL);
+            assert_eq!(
+                report.open_receivable_bill_count,
+                EXIT_OPEN_RECEIVABLE_BILLS
+            );
+            assert_eq!(
+                [
+                    report.ageing_bill_counts.days_0_30,
+                    report.ageing_bill_counts.days_31_60,
+                    report.ageing_bill_counts.days_61_90,
+                    report.ageing_bill_counts.days_90_plus,
+                ],
+                EXIT_AGEING_BILL_COUNTS
             );
             assert!(
                 !report.top_parties.is_empty(),
                 "the bill-bearing exit corpus produced no reconcilable party balances"
             );
-            assert!(
-                !report.receivable_total.is_zero() || !report.payable_total.is_zero(),
-                "the bill-bearing exit corpus produced zero outstandings"
-            );
-            assert!(
-                !report.ageing.days_0_30.is_zero()
-                    && !report.ageing.days_31_60.is_zero()
-                    && !report.ageing.days_61_90.is_zero()
-                    && !report.ageing.days_90_plus.is_zero(),
-                "the purpose-built corpus must remain reconcilable across all four ageing buckets"
-            );
+            let ageing_total = report
+                .ageing
+                .days_0_30
+                .checked_add(&report.ageing.days_31_60)
+                .and_then(|value| value.checked_add(&report.ageing.days_61_90))
+                .and_then(|value| value.checked_add(&report.ageing.days_90_plus))
+                .expect("ageing total remains exactly representable");
+            assert_eq!(ageing_total, report.receivable_total);
             println!(
-                "UNIT_A_LIVE_COMPLETE port={port} vouchers={} bytes={} receivable={} payable={} as_of={}",
+                "UNIT_A_LIVE_COMPLETE port={port} vouchers={} bytes={} receivable={} payable={} open_receivable_bills={} ageing_bill_counts={:?} as_of={}",
                 report.source_voucher_count,
                 report.source_bytes,
                 report.receivable_total.as_str(),
                 report.payable_total.as_str(),
+                report.open_receivable_bill_count,
+                EXIT_AGEING_BILL_COUNTS,
                 report.as_of_yyyymmdd,
             );
         }
@@ -65,6 +106,25 @@ async fn unit_a_outstandings_live_exit_check() {
             panic!("live outstandings remained partial: {reason_code}")
         }
     }
+}
+
+fn validate_exit_target(port: u16, company: &str, company_guid: &str) -> Result<(), &'static str> {
+    if !matches!(port, 9000 | 9001) {
+        return Err("reconciliation is authorized only on ports 9000 and 9001");
+    }
+    if company != EXIT_COMPANY || !company_guid.eq_ignore_ascii_case(EXIT_COMPANY_GUID) {
+        return Err("company is not the accepted bill-bearing reconciliation corpus");
+    }
+    Ok(())
+}
+
+#[test]
+fn unit_a_exit_preflight_is_bound_to_the_accepted_ports_company_and_guid() {
+    assert!(validate_exit_target(9000, EXIT_COMPANY, EXIT_COMPANY_GUID).is_ok());
+    assert!(validate_exit_target(9001, EXIT_COMPANY, EXIT_COMPANY_GUID).is_ok());
+    assert!(validate_exit_target(9002, EXIT_COMPANY, EXIT_COMPANY_GUID).is_err());
+    assert!(validate_exit_target(9000, "Aarav Trading Company Demo", EXIT_COMPANY_GUID,).is_err());
+    assert!(validate_exit_target(9000, EXIT_COMPANY, "wrong-guid").is_err());
 }
 
 #[tokio::test]
@@ -263,9 +323,6 @@ fn unit_a_historical_month_capture_parses() {
     .expect("typed segment verification");
     let segment = match result {
         SegmentVerification::Complete(segment) => segment,
-        SegmentVerification::Empty(_) => {
-            panic!("historical month capture unexpectedly contained no vouchers")
-        }
         SegmentVerification::Partial(partial) => {
             panic!(
                 "historical month capture remained partial: {}",

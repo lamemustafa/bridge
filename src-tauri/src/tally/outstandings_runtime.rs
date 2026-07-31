@@ -9,6 +9,9 @@ const TARGET_READ_MILLIS: u128 = 15_000;
 const TREND_SAMPLE_COUNT: usize = 3;
 const COMPARABLE_PERCENT: usize = 25;
 const TREND_HISTORY_LIMIT: usize = 32;
+pub(crate) const MAX_SEGMENT_PAIRS_PER_SCAN: u64 = 128;
+#[cfg(feature = "live-calibration-harness")]
+const BILLWISE_LAB_EXIT_WIDTH: u64 = 252;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SegmentPerformance {
@@ -32,6 +35,76 @@ impl CalibratedSegmentPolicy {
         Self {
             initial_width: NonZeroU64::new(initial_width).expect("test segment width is non-zero"),
         }
+    }
+
+    #[cfg(feature = "live-calibration-harness")]
+    pub(crate) fn for_billwise_lab_exit_check() -> Self {
+        Self {
+            initial_width: NonZeroU64::new(BILLWISE_LAB_EXIT_WIDTH)
+                .expect("owner-approved exit width is non-zero"),
+        }
+    }
+
+    pub(crate) fn initial_width(self) -> u64 {
+        self.initial_width.get()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SegmentPlan {
+    pub(crate) date_partitions: usize,
+    pub(crate) alter_id_high_water: u64,
+    pub(crate) initial_width: u64,
+    pub(crate) planned_segment_pairs: u64,
+}
+
+impl SegmentPlan {
+    pub(crate) fn new(
+        date_partitions: usize,
+        alter_id_high_water: u64,
+        policy: CalibratedSegmentPolicy,
+    ) -> Result<Self, bridge_tally_protocol::outstandings::OutstandingsError> {
+        let initial_width = policy.initial_width();
+        let ranges_per_partition = alter_id_high_water / initial_width
+            + u64::from(!alter_id_high_water.is_multiple_of(initial_width));
+        let date_partition_count = u64::try_from(date_partitions).map_err(|_| {
+            bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow
+        })?;
+        let planned_segment_pairs = date_partition_count
+            .checked_mul(ranges_per_partition)
+            .ok_or(bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow)?;
+        Ok(Self {
+            date_partitions,
+            alter_id_high_water,
+            initial_width,
+            planned_segment_pairs,
+        })
+    }
+
+    pub(crate) fn is_admitted(self) -> bool {
+        self.planned_segment_pairs <= MAX_SEGMENT_PAIRS_PER_SCAN
+    }
+
+    pub(crate) fn admitted_budget(self) -> Option<SegmentPairBudget> {
+        self.is_admitted().then_some(SegmentPairBudget { spent: 0 })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SegmentPairBudget {
+    spent: u64,
+}
+
+impl SegmentPairBudget {
+    pub(crate) fn admit_next(&mut self) -> bool {
+        let Some(next) = self.spent.checked_add(1) else {
+            return false;
+        };
+        if next > MAX_SEGMENT_PAIRS_PER_SCAN {
+            return false;
+        }
+        self.spent = next;
+        true
     }
 }
 
@@ -203,6 +276,49 @@ mod tests {
             AlterIdRange::new(128, 150).unwrap()
         );
         assert!(guard.next_range(150, 150).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_full_high_water_width_tiles_the_budget_axis_once() {
+        let guard = SegmentTrendGuard::new(CalibratedSegmentPolicy::for_test(252));
+        let only = guard.next_range(0, 252).unwrap().unwrap();
+        assert_eq!(only, AlterIdRange::new(0, 252).unwrap());
+        assert!(guard
+            .next_range(only.inclusive_end(), 252)
+            .unwrap()
+            .is_none());
+    }
+
+    #[cfg(feature = "live-calibration-harness")]
+    #[test]
+    fn live_exit_width_is_fixed_to_the_billwise_lab_high_water() {
+        assert_eq!(
+            CalibratedSegmentPolicy::for_billwise_lab_exit_check().initial_width(),
+            252
+        );
+    }
+
+    #[test]
+    fn segment_plan_admits_128_pairs_and_rejects_larger_scans() {
+        let accepted = SegmentPlan::new(128, 252, CalibratedSegmentPolicy::for_test(252)).unwrap();
+        assert_eq!(accepted.planned_segment_pairs, 128);
+        assert!(accepted.is_admitted());
+
+        let rejected = SegmentPlan::new(24, 101_601, CalibratedSegmentPolicy::for_test(252))
+            .expect("large plan arithmetic remains representable");
+        assert_eq!(rejected.planned_segment_pairs, 9_696);
+        assert!(!rejected.is_admitted());
+    }
+
+    #[test]
+    fn actual_pair_budget_stays_bounded_if_runtime_shrinks_the_width() {
+        let plan = SegmentPlan::new(1, 1, CalibratedSegmentPolicy::for_test(1)).unwrap();
+        let mut budget = plan.admitted_budget().expect("one pair is admitted");
+        for _ in 0..MAX_SEGMENT_PAIRS_PER_SCAN {
+            assert!(budget.admit_next());
+        }
+        assert!(!budget.admit_next());
+        assert!(!budget.admit_next());
     }
 
     #[test]

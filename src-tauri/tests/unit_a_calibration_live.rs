@@ -31,7 +31,7 @@ async fn unit_a_ordered_corpus_calibration_sample() {
     validate_calibration_target(port, &company, &company_guid)
         .expect("port and company are authorized for calibration");
     let reporting_window = DateWindow::parse(
-        DateBoundaryProfile::ModeAgnostic,
+        DateBoundaryProfile::EducationRestricted,
         std::env::var("BRIDGE_TALLY_CALIBRATION_FROM").expect("calibration from date"),
         std::env::var("BRIDGE_TALLY_CALIBRATION_TO").expect("calibration to date"),
     )
@@ -277,10 +277,18 @@ fn calibration_preflight_rejects_aarav_broad_dates_and_out_of_scope_books() {
     assert!(validate_calibration_high_water(600).is_ok());
     assert!(validate_calibration_high_water(601).is_err());
 
-    let narrow =
-        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20250401", "20250501").unwrap();
+    let narrow = DateWindow::parse(
+        DateBoundaryProfile::EducationRestricted,
+        "20250401",
+        "20250501",
+    )
+    .unwrap();
     assert!(calibration_window(&narrow).is_ok());
-    let broad =
-        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20250401", "20250601").unwrap();
+    let broad = DateWindow::parse(
+        DateBoundaryProfile::EducationRestricted,
+        "20250401",
+        "20250601",
+    )
+    .unwrap();
     assert!(calibration_window(&broad).is_err());
 }

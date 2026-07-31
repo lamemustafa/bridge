@@ -29,7 +29,7 @@ use crate::tally::{
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityState,
     CompanyRef as CoreCompanyRef, EvidenceConfidence, ReadWindow, RequestContext, TallyConnector,
-    TransportId, CORE_ACCOUNTING_SCHEMA_VERSION,
+    TallyDate, TransportId, CORE_ACCOUNTING_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -2158,11 +2158,23 @@ pub async fn fetch_tally_outstandings(
             "Select the intended GUID-bearing company and repeat the read-only action.",
         )
     })?;
+    let as_of =
+        TallyDate::parse(chrono::Local::now().format("%Y%m%d").to_string()).map_err(|_| {
+            tally_command_error(
+                "current_date_invalid",
+                "Bridge application",
+                "Bridge could not construct today's outstandings date.",
+                "after_change",
+                false,
+                "Check the workstation date and time, then repeat the read-only action.",
+            )
+        })?;
     runtime
         .fetch_outstandings(
             request.config,
             request.company,
             request.expected_company_guid,
+            as_of,
         )
         .await
         .map_err(tally_runtime_command_error)

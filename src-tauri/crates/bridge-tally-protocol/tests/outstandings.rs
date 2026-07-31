@@ -96,6 +96,22 @@ fn education_date_window_accepts_only_verified_boundary_days() {
             Err(OutstandingsError::InvalidDateWindow)
         );
     }
+    for profile in [
+        DateBoundaryProfile::EducationRestricted,
+        DateBoundaryProfile::ModeAgnostic,
+    ] {
+        assert_eq!(
+            DateWindow::parse(profile, "20240601", "20240631"),
+            Err(OutstandingsError::InvalidDateWindow),
+            "a permitted day number cannot make an impossible calendar date valid"
+        );
+    }
+
+    let across_june =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20240531", "20240701").unwrap();
+    let partitions = across_june.narrow_partitions().unwrap();
+    assert_eq!(partitions[0].to().as_str(), "20240630");
+    assert_eq!(partitions[1].from().as_str(), "20240701");
 }
 
 #[test]
@@ -246,9 +262,6 @@ fn wildcard_live_window_parses_and_computes_exactly() {
     .expect("paired live captures verify");
     let segment = match segment {
         SegmentVerification::Complete(segment) => segment,
-        SegmentVerification::Empty(_) => {
-            panic!("live wildcard fixture unexpectedly contained no vouchers")
-        }
         SegmentVerification::Partial(partial) => {
             panic!("live segment was partial: {}", partial.reason_code)
         }

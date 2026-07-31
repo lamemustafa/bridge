@@ -5,14 +5,17 @@ use crate::tally::connection::{
     SelectedReadObservation,
 };
 use crate::tally::connector::SealedReadRequest;
-use crate::tally::outstandings_runtime::{CalibratedSegmentPolicy, SegmentTrendGuard};
+use crate::tally::outstandings_runtime::{
+    CalibratedSegmentPolicy, SegmentPlan, SegmentTrendGuard, MAX_SEGMENT_PAIRS_PER_SCAN,
+};
 #[cfg(feature = "fixture-canary-runtime-dispatch")]
 use crate::tally::write_sandbox::{
     FixtureCanaryDispatchError, SealedFixtureCanaryDispatch, SealedFixtureCanaryReceipt,
 };
+use bridge_tally_core::TallyDate;
 use bridge_tally_protocol::outstandings::{
     assemble_partitioned_scan, assemble_scan, compute_outstandings, DateBoundaryProfile,
-    DateWindow, EmptySegmentCorroboration, OutstandingsReport, ScanResult, SegmentVerification,
+    DateWindow, OutstandingsReport, ScanResult, SegmentVerification,
 };
 use bridge_tally_protocol::xml_read_profiles::{
     ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
@@ -395,12 +398,17 @@ struct SessionSlot {
     last_used: Instant,
 }
 
+#[cfg_attr(
+    not(feature = "live-calibration-harness"),
+    doc = "```compile_fail\nuse bridge_lib::tally::TallyRuntime;\nlet _ = TallyRuntime::for_billwise_lab_reconciliation_exit_check();\n```"
+)]
 #[derive(Clone)]
 pub struct TallyRuntime {
     sessions: Arc<Mutex<HashMap<EndpointKey, SessionSlot>>>,
     runtime_identity: Arc<()>,
     control: PortableReadRuntime,
     outstandings_segment_policy: Option<CalibratedSegmentPolicy>,
+    outstandings_boundary_profile_override: Option<DateBoundaryProfile>,
     #[cfg(test)]
     transport_policy: Option<bridge_tally_transport::TransportPolicy>,
 }
@@ -538,6 +546,7 @@ impl Default for TallyRuntime {
             runtime_identity: Arc::new(()),
             control: PortableReadRuntime::default(),
             outstandings_segment_policy: None,
+            outstandings_boundary_profile_override: None,
             #[cfg(test)]
             transport_policy: None,
         }
@@ -574,6 +583,21 @@ impl TallyRuntime {
     pub(crate) fn with_transport_policy(policy: bridge_tally_transport::TransportPolicy) -> Self {
         Self {
             transport_policy: Some(policy),
+            ..Self::default()
+        }
+    }
+
+    /// Manual-only admission for the ignored Billwise Lab reconciliation
+    /// check. Both owner-bound target ports are Educational instances, so the
+    /// harness also carries that attested compatibility profile. No generic or
+    /// default-build width/profile constructor exists.
+    #[cfg(feature = "live-calibration-harness")]
+    pub fn for_billwise_lab_reconciliation_exit_check() -> Self {
+        Self {
+            outstandings_segment_policy: Some(
+                CalibratedSegmentPolicy::for_billwise_lab_exit_check(),
+            ),
+            outstandings_boundary_profile_override: Some(DateBoundaryProfile::EducationRestricted),
             ..Self::default()
         }
     }
@@ -1115,14 +1139,19 @@ impl TallyRuntime {
         config: TallyConfig,
         company: String,
         expected_company_guid: String,
+        as_of: TallyDate,
     ) -> anyhow::Result<OutstandingsLoadResult> {
         let Some(segment_policy) = self.outstandings_segment_policy else {
             return Ok(partial_result("outstandings_segment_sizing_uncalibrated"));
         };
         let cached_probe = self.cached_probe(&config)?;
-        let boundary_profile = select_outstandings_date_boundary_profile(
-            cached_probe.as_ref().map(|probe| &probe.profile),
-        );
+        let boundary_profile = self
+            .outstandings_boundary_profile_override
+            .unwrap_or_else(|| {
+                select_outstandings_date_boundary_profile(
+                    cached_probe.as_ref().map(|probe| &probe.profile),
+                )
+            });
         let _lease = self.begin_ordinary_read(&config)?;
         self.execute(
             config,
@@ -1131,6 +1160,7 @@ impl TallyRuntime {
             move |client| {
                 let company = company.clone();
                 let expected_company_guid = expected_company_guid.clone();
+                let as_of = as_of.clone();
                 async move {
                     let extent = client
                         .fetch_company_book_extent(&company, &expected_company_guid)
@@ -1145,15 +1175,36 @@ impl TallyRuntime {
                             "company_voucher_alter_id_high_water_missing",
                         ));
                     };
+                    let date_partitions = requested.narrow_partitions()?;
+                    let plan =
+                        SegmentPlan::new(date_partitions.len(), high_water.get(), segment_policy)?;
+                    tracing::info!(
+                        target: "bridge::tally::outstandings",
+                        date_partitions = plan.date_partitions,
+                        alter_id_high_water = plan.alter_id_high_water,
+                        initial_width = plan.initial_width,
+                        planned_segment_pairs = plan.planned_segment_pairs,
+                        maximum_segment_pairs = MAX_SEGMENT_PAIRS_PER_SCAN,
+                        admitted = plan.is_admitted(),
+                        "planned outstandings segment scan"
+                    );
+                    let Some(mut pair_budget) = plan.admitted_budget() else {
+                        return Ok(partial_result("outstandings_segment_plan_exceeds_budget"));
+                    };
                     let mut trend_guard = SegmentTrendGuard::new(segment_policy);
                     let mut completed_date_partitions = Vec::new();
-                    for segment_window in requested.narrow_partitions()? {
+                    for segment_window in date_partitions {
                         let verification_window = segment_window.as_date_window().clone();
                         let mut segments = Vec::new();
                         let mut cursor = 0_u64;
                         while let Some(alter_id_range) =
                             trend_guard.next_range(cursor, high_water.get())?
                         {
+                            if !pair_budget.admit_next() {
+                                return Ok(partial_result(
+                                    "outstandings_segment_plan_exceeds_budget",
+                                ));
+                            }
                             let observation = match client
                                 .fetch_outstandings_segment_pair(
                                     extent.company(),
@@ -1186,54 +1237,6 @@ impl TallyRuntime {
                                     }
                                     cursor = end;
                                 }
-                                SegmentVerification::Empty(candidate) => {
-                                    let Some(adjacent) = trend_guard.next_range(
-                                        candidate.alter_id_range().inclusive_end(),
-                                        high_water.get(),
-                                    )? else {
-                                        return Ok(partial_result(
-                                            "empty_segment_has_no_adjacent_corroboration_window",
-                                        ));
-                                    };
-                                    let corroboration = match client
-                                        .fetch_outstandings_empty_corroboration_pair(
-                                            extent.company(),
-                                            candidate,
-                                            adjacent,
-                                        )
-                                        .await
-                                    {
-                                        Ok(observation) => observation,
-                                        Err(error) => {
-                                            return Ok(partial_result(segment_read_failure_reason(
-                                                &error,
-                                            )))
-                                        }
-                                    };
-                                    let max_read_elapsed = corroboration.max_read_elapsed();
-                                    match corroboration.verification {
-                                        EmptySegmentCorroboration::Complete(corroborated) => {
-                                            let [empty, adjacent] = corroborated.into_segments();
-                                            let adjacent_end =
-                                                adjacent.alter_id_range().inclusive_end();
-                                            let should_stop = trend_guard.observe_complete_segment(
-                                                &adjacent,
-                                                max_read_elapsed,
-                                            );
-                                            segments.push(SegmentVerification::Complete(empty));
-                                            segments.push(SegmentVerification::Complete(adjacent));
-                                            if should_stop {
-                                                return Ok(partial_result(
-                                                    "tally_segment_latency_trending_restart_recommended",
-                                                ));
-                                            }
-                                            cursor = adjacent_end;
-                                        }
-                                        EmptySegmentCorroboration::Partial(partial) => {
-                                            return Ok(partial_result(&partial.reason_code))
-                                        }
-                                    }
-                                }
                                 SegmentVerification::Partial(partial) => {
                                     return Ok(partial_result(&partial.reason_code))
                                 }
@@ -1251,17 +1254,9 @@ impl TallyRuntime {
                             }
                         }
                     }
-                    match assemble_partitioned_scan(
-                        extent.company().clone(),
-                        requested,
-                        high_water,
-                        completed_date_partitions,
-                    ) {
+                    match assemble_partitioned_scan(&extent, requested, completed_date_partitions) {
                         ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
-                            report: Box::new(compute_outstandings(
-                                &scan,
-                                extent.last_voucher_date().clone(),
-                            )?),
+                            report: Box::new(compute_outstandings(&scan, as_of)?),
                             synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                         }),
                         ScanResult::Partial(partial) => Ok(partial_result(&partial.reason_code)),
@@ -1720,6 +1715,7 @@ mod tests {
                 },
                 "Synthetic Company".to_string(),
                 "synthetic-guid".to_string(),
+                TallyDate::parse("20260731").unwrap(),
             )
             .await
             .expect("uncalibrated state is an in-band partial result");
@@ -1728,6 +1724,49 @@ mod tests {
             OutstandingsLoadResult::Partial { reason_code, .. }
                 if reason_code == "outstandings_segment_sizing_uncalibrated"
         ));
+    }
+
+    #[cfg(not(feature = "live-calibration-harness"))]
+    #[test]
+    fn default_build_has_no_outstandings_width_admission() {
+        let runtime = TallyRuntime::default();
+        assert!(runtime.outstandings_segment_policy.is_none());
+        assert!(runtime.outstandings_boundary_profile_override.is_none());
+    }
+
+    #[cfg(feature = "live-calibration-harness")]
+    #[test]
+    fn billwise_lab_exit_harness_uses_only_education_valid_boundaries() {
+        let runtime = TallyRuntime::for_billwise_lab_reconciliation_exit_check();
+        assert_eq!(
+            runtime.outstandings_boundary_profile_override,
+            Some(DateBoundaryProfile::EducationRestricted)
+        );
+        let reporting_window = DateWindow::parse(
+            runtime
+                .outstandings_boundary_profile_override
+                .expect("exit profile is fixed"),
+            "20240401",
+            "20260702",
+        )
+        .expect("accepted corpus extent uses Education-valid boundaries");
+        let partitions = reporting_window
+            .narrow_partitions()
+            .expect("Education-valid corpus partitions without day-3 synthesis");
+        assert!(partitions.iter().all(|partition| {
+            matches!(&partition.from().as_str()[6..8], "01" | "02" | "31")
+                && matches!(&partition.to().as_str()[6..8], "01" | "02" | "31")
+        }));
+
+        let unprofiled =
+            DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20240401", "20260702")
+                .unwrap()
+                .narrow_partitions()
+                .unwrap();
+        assert!(unprofiled.iter().any(|partition| {
+            !matches!(&partition.from().as_str()[6..8], "01" | "02" | "31")
+                || !matches!(&partition.to().as_str()[6..8], "01" | "02" | "31")
+        }));
     }
 
     #[test]
