@@ -164,6 +164,44 @@ impl ExactDecimal {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn zero() -> Self {
+        Self("0".to_string())
+    }
+
+    pub fn checked_add(&self, other: &Self) -> Result<Self, TallyError> {
+        let mut total = exact_arithmetic::ExactDecimalAccumulator::default();
+        total.add(self.as_str());
+        total.add(other.as_str());
+        Self::parse(total.canonical_string())
+    }
+
+    pub fn checked_subtract(&self, other: &Self) -> Result<Self, TallyError> {
+        let mut total = exact_arithmetic::ExactDecimalAccumulator::default();
+        total.add(self.as_str());
+        total.subtract(other.as_str());
+        Self::parse(total.canonical_string())
+    }
+
+    pub fn is_zero(&self) -> bool {
+        exact_arithmetic::numeric_equal(self.as_str(), "0")
+    }
+
+    pub fn is_negative(&self) -> bool {
+        exact_arithmetic::is_negative_nonzero(self.as_str())
+    }
+
+    pub fn abs(&self) -> Result<Self, TallyError> {
+        if self.is_negative() {
+            Self::parse(self.as_str().trim_start_matches('-').to_string())
+        } else {
+            Ok(self.clone())
+        }
+    }
+
+    pub fn cmp_magnitude(&self, other: &Self) -> std::cmp::Ordering {
+        exact_arithmetic::magnitude_cmp(self.as_str(), other.as_str())
+    }
 }
 
 impl<'de> Deserialize<'de> for ExactDecimal {
@@ -485,6 +523,23 @@ mod tests {
             );
         }
         assert!(ExactDecimal::parse("9".repeat(MAX_EXACT_DECIMAL_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn exact_decimal_arithmetic_is_canonical_checked_and_ordered_by_magnitude() {
+        let left = ExactDecimal::parse("100.00").unwrap();
+        let right = ExactDecimal::parse("-40.0").unwrap();
+        assert_eq!(left.checked_add(&right).unwrap().as_str(), "60");
+        assert_eq!(left.checked_subtract(&right).unwrap().as_str(), "140");
+        assert!(right.is_negative());
+        assert!(!right.is_zero());
+        assert_eq!(right.abs().unwrap().as_str(), "40.0");
+        assert_eq!(
+            ExactDecimal::parse("-100.001")
+                .unwrap()
+                .cmp_magnitude(&left),
+            std::cmp::Ordering::Greater
+        );
     }
 
     #[test]

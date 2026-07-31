@@ -39,6 +39,114 @@ This document defines agent-level expectations and review responsibilities for t
 - If regression was introduced by a specific PR, link it explicitly in the rectify issue and include it in the fix PR summary.
 - For non-security production regressions, use a dedicated fix branch and label (`type:rectify`).
 
+## Engineering principles
+
+These are derived from defects actually found in this repository, not from general advice.
+Each principle names the failure it prevents. Where a principle and a deadline conflict, the
+principle wins — every item below is here because ignoring it already cost this project weeks.
+
+### P1. Nothing is built past the point where it has been proven against reality
+
+The read pipeline reached ~15,500 lines, with 445 passing tests and 15 ADRs, on a code path
+that had **never returned a single row from a real Tally**. The tests passed because they ran
+against a simulator this repository wrote for itself — it verified that Bridge agreed with
+Bridge.
+
+- A component may not grow beyond a working end-to-end slice without live evidence.
+- Fixtures must be **captured from a real instance**, never authored by hand. A hand-written
+  fixture encodes an assumption and then defends it.
+- A simulator is a regression tool for behaviour already observed live. It may never be the
+  first or only evidence that something works.
+
+### P2. Make illegal states unrepresentable, rather than writing rules people must remember
+
+`docs/tally/IMPLEMENTATION_GUIDE.md` lists sixteen traps. Every one currently relies on a
+developer recalling a rule. Prefer types that make the trap impossible:
+
+| Instead of a rule | Build a type |
+| --- | --- |
+| "Always pin the company" | A `PinnedCompany` that can only be constructed from a response whose GUID matched |
+| "Boundary dates must be day 1, 2 or 31" | A `DateWindow` whose constructor rejects other days |
+| "Success needs all four counter conditions" | An `ImportOutcome` with no `Success` variant constructible unless all four hold |
+| "Never tombstone from an unverified scan" | Distinct `CompleteScan` / `PartialScan` types, where the tombstone function accepts only the former |
+
+That last row turns the most dangerous defect in the system — mass false deletion — into a
+compile error. Prefer that over any amount of documentation.
+
+Use the newtype and typestate patterns for this. Avoid primitive obsession: a `String` that is
+sometimes a verified company name and sometimes user input is a latent bug.
+
+### P3. Parse at the boundary; never validate downstream
+
+Convert untrusted input into a type that cannot be wrong **once, at the edge**, and let the
+rest of the system rely on the type. Do not re-check the same property at three layers — that
+is how `is_clean_success()` ended up with a three-of-four success path while its callers each
+compensated differently.
+
+Corollary: parsing must **fail closed with a typed error**. An empty `TYPE="Amount"` is not
+zero; an absent narration is not `""`.
+
+### P4. Argue every added line; prefer deletion and reuse
+
+Before adding code, answer in the PR body:
+
+1. What existing component could do this, possibly with a small change?
+2. What is deleted as a result of this addition?
+3. What breaks if this is simply not built?
+
+Evidence that this matters here: ~7,000 lines of compatibility and qualification machinery has
+produced zero rows of evidence; ~1,100 lines of canary ceremony guarded a write that never
+dispatched; nine copies of one formula that terminates the Tally process. **A code-negative PR
+is a good PR.** Net LOC is a reported metric, not an accident.
+
+### P5. Verification reads bytes, not greps
+
+Every wrong conclusion in the 2026-07 live-probe programme came from a measurement error, not
+a reasoning error:
+
+- `curl … | head` truncated a capture via SIGPIPE; the short file looked complete
+- `grep -c '<VOUCHER'` also matched `<VOUCHERNUMBER>` and `<VOUCHERTYPENAME>`
+- a narrow `grep -A1` window missed a difference that reversed a finding
+- a harness recorded failed connections as "0 rows" instead of erroring
+
+Therefore: write responses to a file and inspect the file; count structure, do not substring
+match; **any tool that can report "nothing found" must distinguish that from "the request
+failed"**; and repeat anything anomalous before believing it.
+
+### P6. Change one variable at a time, and record confidence
+
+A multi-attribute change established that a *combination* worked while leaving the actual cause
+unknown. Findings must be recorded with an explicit confidence marker — verified / partial /
+unverified — and an unverified assumption may not be built upon. See
+`docs/tally/TALLY_PROTOCOL_REFERENCE.md` for the convention.
+
+### P7. Prefer failures that are loud and in-band
+
+Given a choice between two request shapes, choose the one that fails with an error in the
+response over the one that fails inside Tally's UI — the latter blocks the gateway until a
+human intervenes. Applied more generally: design so that the failure mode is detectable by the
+program, not only by a person watching a screen.
+
+Manual voucher numbering is preferred over automatic for the same reason: identical failure,
+but one silently duplicates a client's voucher and the other cleanly rejects.
+
+### P8. Architecture: layered, with dependencies pointing inward
+
+Keep the existing crate layering intent, and enforce it:
+
+- protocol and canonical layers must not depend on transport, storage, or Tauri
+- the Tauri command layer contains no business logic and holds no transport handles
+- one dispatch path to Tally; nothing bypasses it, including tests and harnesses
+- a new dependency requires justification in the PR body — Tauri's value is a small binary and
+  a small attack surface, and both erode by default
+
+### P9. Documentation lives with the decision, not in a wiki
+
+A behavioural discovery goes into `TALLY_PROTOCOL_REFERENCE.md`; a build rule goes into
+`IMPLEMENTATION_GUIDE.md`; a plan change goes into the plan with a dated deviation note. A
+finding that exists only in a conversation is lost. If code encodes a non-obvious external
+behaviour, the comment cites the reference section rather than restating it.
+
 ## Safety expectations
 
 - Never commit hardcoded secrets, tokens, API keys, or raw certificate output.

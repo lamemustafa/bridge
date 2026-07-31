@@ -40,6 +40,20 @@ impl ExactDecimalAccumulator {
         self.negative && !self.is_zero()
     }
 
+    pub(crate) fn canonical_string(&self) -> String {
+        let mut value = self.digits.clone();
+        if self.scale > 0 {
+            if value.len() <= self.scale {
+                value.insert_str(0, &"0".repeat(self.scale + 1 - value.len()));
+            }
+            value.insert(value.len() - self.scale, '.');
+        }
+        if self.negative && !self.is_zero() {
+            value.insert(0, '-');
+        }
+        value
+    }
+
     pub(crate) fn equals(&self, value: &str) -> bool {
         let mut difference = self.clone();
         difference.subtract(value);

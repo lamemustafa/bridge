@@ -499,6 +499,7 @@ name = "bridge-tally-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bridge-tally-core",
  "quick-xml",
  "serde",
  "serde_json",

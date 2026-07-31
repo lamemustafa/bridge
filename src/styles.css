@@ -8,6 +8,18 @@
   box-sizing: border-box;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 body {
   margin: 0;
 }
@@ -1044,6 +1056,205 @@ summary:focus-visible,
   }
 }
 
+.outstandings-screen {
+  overflow: hidden;
+  border: 1px solid #dce4de;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.outstandings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px 30px;
+  border-bottom: 1px solid #e6ebe7;
+}
+
+.outstandings-heading h2 {
+  margin-bottom: 6px;
+  font-size: 24px;
+}
+
+.outstandings-heading p,
+.outstandings-table-heading span,
+.outstandings-party span,
+.outstandings-state span,
+.outstandings-empty p {
+  color: #61756a;
+}
+
+.outstandings-heading p {
+  margin: 0;
+}
+
+.outstandings-heading button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #1f6a4a;
+  color: #fff;
+  cursor: pointer;
+}
+
+.outstandings-heading button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.outstandings-totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid #e6ebe7;
+}
+
+.outstandings-totals div {
+  padding: 28px 30px;
+}
+
+.outstandings-totals div + div {
+  border-left: 1px solid #e6ebe7;
+}
+
+.outstandings-totals span,
+.outstandings-ageing span,
+.ageing-label small {
+  display: block;
+  color: #61756a;
+  font-size: 13px;
+}
+
+.outstandings-totals strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 36px;
+  font-variant-numeric: tabular-nums;
+}
+
+.outstandings-ageing {
+  display: grid;
+  grid-template-columns: 1.25fr repeat(4, minmax(120px, 1fr));
+  border-bottom: 1px solid #e6ebe7;
+}
+
+.outstandings-ageing > div {
+  padding: 22px 20px;
+}
+
+.outstandings-ageing > div + div {
+  border-left: 1px solid #eef2ef;
+}
+
+.outstandings-ageing strong {
+  display: block;
+  margin-top: 7px;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ageing-label {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.ageing-label span {
+  color: #172026;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.outstandings-parties {
+  padding: 26px 30px 30px;
+}
+
+.outstandings-table-heading,
+.outstandings-party {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 180px 110px;
+  align-items: center;
+  gap: 18px;
+}
+
+.outstandings-table-heading {
+  padding-bottom: 12px;
+}
+
+.outstandings-table-heading h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.outstandings-table-heading span {
+  grid-column: 2 / 4;
+  font-size: 12px;
+  text-align: right;
+}
+
+.outstandings-party {
+  min-height: 62px;
+  border-top: 1px solid #eef2ef;
+}
+
+.outstandings-party div strong,
+.outstandings-party div span {
+  display: block;
+}
+
+.outstandings-party div span {
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.outstandings-party > strong,
+.outstandings-party > span {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.outstandings-state {
+  display: flex;
+  gap: 8px;
+  flex-direction: column;
+  margin: 28px 30px;
+  padding: 18px;
+  border: 1px solid #dce4de;
+  border-radius: 10px;
+  background: #f7faf7;
+}
+
+.outstandings-state.error {
+  border-color: #e8caca;
+  background: #fff7f7;
+}
+
+.outstandings-none {
+  margin: 0;
+  padding: 24px 0 6px;
+  border-top: 1px solid #eef2ef;
+  color: #61756a;
+}
+
+.outstandings-empty p {
+  margin-bottom: 0;
+}
+
+.outstandings-empty button {
+  min-height: 44px;
+  margin-top: 18px;
+  border: 0;
+  border-radius: 8px;
+  background: #1f6a4a;
+  color: #fff;
+  cursor: pointer;
+  padding: 0 16px;
+}
+
 @media (max-width: 860px) {
   .shell {
     grid-template-columns: 1fr;
@@ -1083,6 +1294,25 @@ summary:focus-visible,
   .gap-item {
     grid-template-columns: 1fr;
   }
+
+  .outstandings-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .outstandings-ageing {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .outstandings-ageing > div + div {
+    border-left: 0;
+    border-top: 1px solid #eef2ef;
+  }
+
+  .outstandings-table-heading,
+  .outstandings-party {
+    grid-template-columns: minmax(0, 1fr) 140px 90px;
+  }
 }
 
 @media (max-width: 520px) {
@@ -1103,6 +1333,38 @@ summary:focus-visible,
   .runtime-session-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .outstandings-totals,
+  .outstandings-ageing {
+    grid-template-columns: 1fr;
+  }
+
+  .outstandings-totals strong {
+    font-size: 30px;
+  }
+
+  .outstandings-totals div + div {
+    border-top: 1px solid #e6ebe7;
+    border-left: 0;
+  }
+
+  .outstandings-table-heading {
+    display: block;
+  }
+
+  .outstandings-table-heading span {
+    display: block;
+    margin-top: 4px;
+    text-align: left;
+  }
+
+  .outstandings-party {
+    grid-template-columns: 1fr auto;
+  }
+
+  .outstandings-party > span {
+    grid-column: 2;
   }
 }
 

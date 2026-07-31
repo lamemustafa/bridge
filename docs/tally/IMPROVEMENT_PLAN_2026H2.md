@@ -276,6 +276,182 @@ therefore remains unmeasurable with the shipped report profile, while the
 profile defect itself is confirmed. Phase 2 must replace the affected profile
 family rather than extend it.
 
+### 8.17 P0 SEVERITY — some `SVTODATE` values silently return zero rows
+
+Qualifies §8.13. The `<FILTERS>` mechanism bounds correctly *when it returns anything*, but certain end dates make the entire query return zero rows for a range that provably contains vouchers. Deterministic: five identical requests, five zero results.
+
+Measured, `SVFROMDATE=20250401` throughout, `FILTERS` on `$Date >= ##SVFromDate AND $Date <= ##SVToDate`:
+
+| `SVTODATE` | Rows | Dates returned |
+| --- | --- | --- |
+| `20250401` | 4 | 20250401 |
+| `20250402` | 7 | 20250401, 20250402 |
+| **`20250430`** | **0** | — |
+| `20250501` | 10 | …+ 20250501 |
+| `20250601` | 17 | …+ 20250601 |
+| **`20250629`** | **0** | — |
+| **`20250630`** | **0** | — |
+| `20250701` | 22 | …+ 20250701 |
+| `20250731` | 26 | …+ 20250702 |
+
+The `FETCH` list is irrelevant — `DATE` alone, `DATE, VOUCHERNUMBER`, and `DATE, VOUCHERNUMBER, ALLLEDGERENTRIES.*` all return zero at `20250630`. Only `SVTODATE` matters.
+
+**ROOT CAUSE FOUND (same day, after further probing): `SVTODATE` must be a date Education mode considers valid — day 1, 2 or 31.** Any other day-of-month is silently ignored and the period widens to the entire book.
+
+Twenty-three data points, no exceptions, with `SVFROMDATE=20250401` held constant:
+
+| Day of month in `SVTODATE` | Behaviour |
+| --- | --- |
+| 1, 2, 31 (`20250401`, `20250402`, `20250501`, `20250531`, `20250601`, `20250701`, `20250702`, `20250731`, `20251231`, `20260102`, `20260131`) | **honoured** — data bounded to the request |
+| 15, 28, 29, 30 (`20250415`, `20250428`, `20250429`, `20250430`, `20250530`, `20250628`, `20250629`, `20250630`, `20250730`, `20251215`, `20251230`, `20260115`) | **rejected** — period silently widens to the whole book |
+
+This is the same 1st/2nd/31st restriction that governs voucher entry in Education mode, applied to period boundaries. `20250430` fails and `20250531` succeeds because April has no 31st while May does — which is why month-end appeared to explain some cases and not others.
+
+**Severity is therefore Education-specific, not P0 for production** — with two caveats. First, this is **unverified on a licensed instance**; the assumption that licensed Tally accepts arbitrary dates is untested and must be confirmed before any claim rests on it. Second, one earlier observation does not fit the model: `w6-readback` used `SVFROMDATE=SVTODATE=20260401` (a valid day-1 date) yet returned 75 vouchers spanning FY 2025-26 rather than that single day. The `SVTODATE` rule is well-supported for the tested family; it is not yet a complete model of period resolution.
+
+**Practical rule for the lab:** window boundaries must use day 1, 2 or 31. Any other boundary silently returns the whole book.
+
+**The failure-mode lesson survives regardless of trigger**, and is the part worth engineering around: when Tally does not honour a requested period it does not error — it **silently substitutes a wider one**. Without a filter you get far too much data; with a filter you get zero. Both return `STATUS=1` and both look successful.
+
+**Why this is P0.** A segmented scan choosing natural month boundaries — `1-Apr..30-Apr` — returns zero rows and looks like a *successful, complete, empty* scan. Not truncated, not an error, `STATUS=1`. Under §3.1.7's rules, absence from a complete verified scan produces deletion tombstones, so this would **tombstone an entire month of a client's vouchers as deleted**. §6's invariant "a truncated scan never mass-tombstones" does not help: this scan is not truncated.
+
+**Mandatory invariant, independent of cause:** an empty segment is never trusted on its own evidence. Any window returning zero rows must be corroborated by a strictly wider window before the emptiness is treated as real; if the wider window returns rows, the segment result is `Partial` with a reason, never `complete`. A zero-row scan may not produce a tombstone under any circumstances without that corroboration.
+
+**Consequence for §8.13:** its claim that Phase 2's date gate is "solved" is too strong. `<FILTERS>` is necessary and it bounds correctly, but it is not sufficient for safe segmentation. Deriving the failure rule — or proving corroboration is cheap enough to always apply — is now Phase 2 Unit A's first task.
+
+### 8.18 Named `FETCH` sub-paths resolve one level deep only
+
+Confirmed by the Unit A implementer and reproduced here. `ALLLEDGERENTRIES.LEDGERNAME` and the bill-allocation sub-paths resolve (206 allocations, 52 `BILLTYPE` values). `ALLLEDGERENTRIES.RATEDETAILS.GSTRATE` resolves to **zero** elements, as do `ALLLEDGERENTRIES.RATEDETAILS.*` and `ALLLEDGERENTRIES.RATEDETAILS`. The data exists — the same window under `ALLLEDGERENTRIES.*` yields 56 `GSTRATE` elements, and the full book yields 1,510.
+
+`GSTRATE` sits at `VOUCHER > ALLLEDGERENTRIES.LIST > RATEDETAILS.LIST > GSTRATE` — two list levels deep. **Named curation appears to work one level down and not two.**
+
+This forces a choice §8.15's rule did not anticipate: GST rate data is reachable only via `ALLLEDGERENTRIES.*`, at 19,658 B/voucher versus 3,142 B curated — the 6.3× penalty, for one field group. Options, none yet tested: a second request fetching only ledger entries wildcard for vouchers needing GST detail; a different named syntax; or accepting the wildcard cost for GST-bearing voucher types only. **Unit A must not silently adopt the wildcard**; the trade-off is an owner decision.
+
+### 8.16 §8.8 RESOLVED — the period is a default, not a boundary. `<FILTERS>` reaches the whole book.
+
+Four probes settle what §8.8 left open, and they overturn its causal claim.
+
+**T1 — the company's own period fields** (`TYPE=Company`, native methods):
+
+```
+STARTINGFROM 20240401   BOOKSFROM 20240401
+ENDINGAT     20260401   LASTVOUCHERDATE 20260401   ALTVCHID 442
+```
+
+The books run from 1-Apr-2024. The About screen's "CURRENT PERIOD 1-Apr-26 to 31-Mar-27" is a **display** period, not the data extent.
+
+**T2 — collection with no date variables at all: 2 vouchers**, both dated `20260401` — the two probe journals. An unfiltered collection returns the *current display period*, which happens to contain only those two.
+
+**T3 — collection with a `<FILTERS>` predicate spanning `20200101`–`20301231`: 150 vouchers**, earliest `20240401` (a Sales voucher never seen in any prior read).
+
+**T4 — `<FILTERS>` on `20260401`–`20260402`: exactly the 2 probe vouchers.**
+
+**Conclusions, superseding §8.8:**
+
+1. **The period is a default, not a visibility boundary.** `<FILTERS>` crosses it freely. The whole book — 150 vouchers across two financial years — is reachable in one request.
+2. **The earlier "75 vouchers, `20250401`–`20260302`" observation was an artifact of setting `SVFROMDATE`/`SVTODATE`.** Those variables shift which period is loaded without filtering precisely to the requested range. They are neither a filter nor inert, which is the worst of both and why they must never be relied on for scoping.
+3. **§8.8 consequence 2 is withdrawn.** Back-dated vouchers outside the display period are *not* invisible. Drift Sentinel does not need to drive the period; a wide `<FILTERS>` predicate sees everything, and §3.1.7's segmentation is required only for payload size (§8.15), not for correctness.
+4. **§8.8 consequence 3 is substantially withdrawn.** I described "a demonstrated path to duplicating a client's voucher" — a write landing outside the readback window, resolving to `OUTCOME_UNKNOWN`, then being re-dispatched into a duplicate. T4 shows a `<FILTERS>`-scoped readback finds the written voucher. The hazard was real for the *current* implementation, which uses none of this, but it is a consequence of the defective read path rather than an inherent Tally property, and it disappears once Phase 2 lands. **The §5.1.5 rule still stands** — a readback that cannot locate its object must escalate to `MANUAL`, never re-dispatch — because that rule costs nothing and covers the cases we have not seen.
+
+**What survives from §8.8 unchanged:** `SVFROMDATE`/`SVTODATE` do not filter collection membership, `bridge.tally.vouchers/3` echoes a window it never enforces, and ADR 0015's "exact-scope evidence" claim is therefore unsupported. Those remain true and remain defects.
+
+**Net effect:** the read model has no structural blind spot. Every object type is reachable, every date range is reachable, and the mechanism is one `<FILTERS>` clause. Phase 2's remaining hard problems are payload size and local balance computation — both bounded and measured.
+
+### 8.14 `ClosingBalance` is not window-scoped — balances must be computed, not read
+
+Same Ledger collection, four windows, reading `BRIDGE-PROBE-LEDGER-A` (whose only transactions are two journals dated `20260401`):
+
+| `SVTODATE` | `ClosingBalance` |
+| --- | --- |
+| `20250630` (mid-period) | `-200.00` |
+| `20260331` | **empty** |
+| `20260501` | `-200.00` |
+| *no window variables at all* | `-200.00` |
+
+Three of four windows — including the baseline with **no date variables whatsoever** — return the identical figure. The window has no effect. And `-200.00` derives entirely from vouchers dated `20260401`, which lie outside three of the four windows tested.
+
+**Ruling for Phase 2: a ledger's `ClosingBalance` is a lifetime/as-of-now figure and must never be used as a period balance.** Reading it per period yields a number that silently includes out-of-period transactions — a wrong balance presented as a correct one, which is the single most damaging defect class available to a reconciliation product.
+
+Period balances must be **computed locally from window-filtered vouchers**, which §8.13's `<FILTERS>` mechanism now makes reliable. This moves work into the canonical layer and is more effort than reading a field, but it is the only version that produces a correct number.
+
+The empty value at `SVTODATE=20260331` remains unexplained. Whatever its cause, an empty `TYPE="Amount"` must fail closed or quarantine — never coerce to `0.00`.
+
+**Contradiction to resolve — §8.8's stated cause is doubtful.** §8.8 attributes the unfiltered export's `20250401`–`20260302` span to "the company's current period". The instance's About screen reports **CURRENT PERIOD 1-Apr-26 to 31-Mar-27** and **DATE OF LAST ENTRY 1-Apr-26**. If the current period were governing, the export would have *included* the `20260401` vouchers and *excluded* the FY 2025-26 range; it did the opposite. So the observed span is real and reproducible, but the period explanation is not established. §8.8's *observations* stand; its *cause* is unproven and should not be built on until someone probes it deliberately.
+
+### 8.15 Curated `FETCH` cuts payload 6.3× — segmentation ceiling is ~10,000 vouchers
+
+Same filtered two-day window, 6 vouchers, identical apart from the ledger-entry fetch:
+
+| Fetch | Bytes | Per voucher |
+| --- | --- | --- |
+| Curated (`ALLLEDGERENTRIES.LEDGERNAME`, `.AMOUNT`, `.ISDEEMEDPOSITIVE`) | 18,852 | **3,142 B** |
+| Wildcard (`ALLLEDGERENTRIES.*`) | 117,948 | 19,658 B |
+
+**Dotted sub-paths in `FETCH` work** — the curated response retained 22 `LEDGERNAME` elements and all 6 narrations. Fine-grained curation is available, so §8.12's "never use `.*`" rule is implementable rather than aspirational.
+
+**Concrete segmentation ceiling:** at 3,142 B per voucher, the 32 MiB response cap is reached at roughly **10,600 vouchers per request**. Monthly segments suffice for typical companies; high-volume clients need weekly or finer. This replaces the plan's qualitative "segment per FY/month" guidance with a measured number, and the segment size must be derived from observed per-voucher cost rather than assumed — a company carrying inventory lines or long narrations will run heavier than 3.1 KB.
+
+### 8.15a Owner deviation (2026-07-30) — outstandings requires the wildcard
+
+§8.15 remains valid for profiles whose named fields preserve their values. It is superseded
+for bill-level outstandings. On an identical `20250401` window (1,632 vouchers, 4,894
+allocations), curated `BILLALLOCATIONS.NAME/.BILLTYPE/.AMOUNT` returned zero named bills and
+reported every typed allocation as `On Account`; `ALLLEDGERENTRIES.*` preserved one `New Ref`
+and one `Agst Ref`. Because those two types open and settle a bill, the curated answer is
+silently wrong for the Unit A computation.
+
+Unit A therefore has one narrow wildcard exception. Its calibration read must use that same
+wildcard request shape, and its segment plan must derive row capacity from observed bytes and
+elapsed time. The older ~5,000-row default and ~10,600-row curated ceiling do not apply. A
+two-pass candidate/detail design remains measurement work, not an implementation assumption.
+
+### 8.13 Collection-based reads verified across every object type — Phase 2's date gate is solved
+
+Probes G1–G4 on the live instance, all `TYPE=COLLECTION`, all returning `HEADER/STATUS=1`:
+
+| Probe | Object type | Result |
+| --- | --- | --- |
+| G1 | `Group` | 28 rows, 18,651 B, 0.03 s |
+| G2 | `VoucherType` | 24 rows, 17,594 B, 0.04 s |
+| G3 | `Ledger` + `OpeningBalance`/`ClosingBalance` | 12,181 B |
+| G4 | `Voucher` with a `<FILTERS>` date predicate | **6 rows, only the two requested dates** |
+
+**G4 settles §8.12's one unproven assumption.** A collection carrying
+
+```
+<SYSTEM TYPE="Formulae" NAME="BridgeDateWindow">$Date &gt;= ##SVFromDate AND $Date &lt;= ##SVToDate</SYSTEM>
+<FILTERS>BridgeDateWindow</FILTERS>
+```
+
+returned **6 vouchers dated only `20260301`–`20260302`**, against **75 vouchers across 24 dates** for the same collection unfiltered. Collection-level `<FILTERS>` genuinely bounds the window even though `SVFROMDATE`/`SVTODATE` alone do not (§8.8). The revised Phase 2 date-scoping design is proven, and it uses no `$$` function, so it stays clear of the §8.9 crash rule.
+
+Combined with §8.10a, this means the collection shape is verified for **Company, Group, Ledger, VoucherType and Voucher** — every object type the CoreAccounting snapshot needs — while the report-based builders that the application actually calls are all defective. The replacement path is proven before the thing it replaces has ever worked.
+
+**New Phase 2 hazard — empty computed values.** G3 was run over two windows. The narrower window returned `<CLOSINGBALANCE TYPE="Amount">-200.00</CLOSINGBALANCE>` and `200.00` for two ledgers; the wider window returned `<CLOSINGBALANCE TYPE="Amount"></CLOSINGBALANCE>` — **empty, not zero, not absent** — for the same ledgers. Two consequences:
+
+1. Date variables *do* affect computed values even where they do not affect collection membership. Balance reads and object reads have different scoping semantics and must not share an assumption.
+2. A parser that coerces an empty `Amount` to `0.00` would silently report a wrong balance. This is the NULL-vs-empty conflation the Phase 2 review hunt list already calls out, now with live evidence: **empty must fail closed or quarantine, never default.** Why the wider window empties the field is not yet understood and must be resolved before any balance is mirrored.
+
+### 8.10a Blast radius correction (2026-07-29, second pass) — the app read path is a different, larger surface
+
+The table below covers `bridge-tally-protocol/src/xml_read_profiles.rs`, which holds **2** violating instances. A verification sweep found a second TDL surface that the table missed: **`src-tauri/src/tally/tdl_engine.rs` holds 9**, and it — not `xml_read_profiles.rs` — is what the application actually calls.
+
+`tdl_engine.rs` defines ten request builders. Five embed a `$$` function referencing a spaced identifier:
+
+| Builder | Collection referenced | Called from |
+| --- | --- | --- |
+| `ledgers_request` | `BRIDGE Ledger Collection V1` | `connector.rs:122` |
+| `groups_request` | `BRIDGE Group Collection V1` | `connector.rs:109` |
+| `voucher_types_request` | `BRIDGE Voucher Type Collection V1` | `connector.rs:136` |
+| `vouchers_request` (and `selected_vouchers_request`) | `BRIDGE Voucher Collection V1` | `connector.rs:154` |
+| `ledger_period_balances_request` | `BRIDGE Ledger Period Collection V1` | `connector.rs:286` |
+
+**Consequence:** the CoreAccounting snapshot reads groups, ledgers, voucher types, vouchers and ledger period balances. Every one of those five builders carries the defect. The snapshot pipeline — and therefore the canonical model, reconciliation, Proof-of-Sync and the mirror that depend on it — cannot ever have completed against a real Tally. Three of the five object types (Groups, Voucher Types, Ledger Period Balances) were never probed on 2026-07-29 and remain entirely unverified.
+
+Only `company_list_request`, `standard_ledger_identity_request` and `standard_ledger_catalog_request` are clean — and `tdl_engine.rs` obtains all three by delegating to `xml_read_profiles::compatibility`, which is why they were the three that worked live.
+
+**Phase 2 scope grows accordingly:** the collection rebuild in §8.12 must cover `tdl_engine.rs`'s builders, not only the seven profiles in `xml_read_profiles.rs`. Fixing one file would leave the live application path untouched.
+
 ### 8.10 Blast radius — 4 of 7 read profiles violate the identifier rule
 
 | Profile | Spaced identifier referenced by a `$$` function |
@@ -324,6 +500,21 @@ unmodelled rendering geometry, and returns a shape Bridge's strict parser
 rejects. Extending it would amplify all three defects.
 
 **Revised mission:** replace the custom-report profile family with `TYPE=COLLECTION` exports carrying full-fidelity `FETCH` lists, and delete the report renderers.
+
+**Phase 2 is delivered as four units. This mission and the exit criterion below are
+PHASE-level, not unit-level.** Deletion of the report renderers belongs to Unit C, not to
+Unit A — the old path must keep compiling until the replacement is proven against a live
+Tally, or a failed rewrite leaves the read path with neither implementation working.
+
+| Unit | Scope | Deletes anything? |
+| --- | --- | --- |
+| **A** | One collection read profile + parser + tolerant entity handling + one outstandings screen, computed in memory | **No** — additive only |
+| **B** | Canonical model, mirror schema, migrations | No |
+| **C** | **Delete `render_vouchers` / `render_ledgers` / `render_ledger_canary_readback`; rewire `tdl_engine.rs` and `connector.rs`** | **Yes — this is where deletion happens** |
+| **D** | Period balance computation from filtered vouchers | No |
+
+A unit satisfies only its own scope. The Phase 2 exit criterion is met when A–D are all
+complete.
 
 **Design inputs established live on 2026-07-29:**
 

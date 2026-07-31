@@ -35,6 +35,7 @@ pub mod capability_packs;
 pub mod connection;
 pub mod connector;
 pub mod incremental;
+pub(crate) mod outstandings_runtime;
 pub mod runtime;
 pub mod serial_queue;
 pub mod tdl_engine;
@@ -54,7 +55,7 @@ pub use connector::{
     company_source_identity, core_snapshot_start_authorized, source_lineage, RuntimeTallyConnector,
 };
 pub use runtime::{
-    CachedProbeReservation, EndpointKey, TallyRuntime, TallySessionSnapshot,
-    TallyTelemetryPreviewExport,
+    CachedProbeReservation, EndpointKey, OutstandingsLoadResult, TallyRuntime,
+    TallySessionSnapshot, TallyTelemetryPreviewExport,
 };
 pub use xml_parser::{TallyCompany, TallyImportResult, TallyLedger, TallyVoucher};

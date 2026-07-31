@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -5,6 +6,7 @@ use std::sync::{
     atomic::{AtomicU64, AtomicU8, Ordering},
     Arc,
 };
+use std::time::{Duration, Instant};
 
 use super::xml_parser::{TallyLedger, TallyVoucher};
 use super::{
@@ -21,6 +23,12 @@ use bridge_tally_core::{
     EvidenceConfidence, TransportId,
 };
 use bridge_tally_protocol::{
+    outstandings::{
+        corroborate_empty_segment_with_adjacent_pair_and_wire_evidence, parse_company_book_extent,
+        verify_segment_pair_with_wire_evidence, voucher_outstandings_request, AlterIdRange,
+        CompanyBookExtent, EmptySegmentCandidate, EmptySegmentCorroboration, NarrowDateWindow,
+        PinnedCompany, SegmentVerification, SegmentWireEvidence, VoucherOutstandingsRequestXml,
+    },
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
     parse_ledger_write_readback_with_evidence, parse_selected_voucher_source_records_with_evidence,
     parse_standard_ledger_catalog, parse_standard_ledger_identity_observation,
@@ -37,6 +45,32 @@ use bridge_tally_transport::{
 };
 
 pub type TallyConfig = TallyEndpointConfig;
+
+#[derive(Debug)]
+pub(crate) struct OutstandingsSegmentObservation {
+    pub(crate) verification: SegmentVerification,
+    pub(crate) first_read_elapsed: Duration,
+    pub(crate) second_read_elapsed: Duration,
+}
+
+#[derive(Debug)]
+pub(crate) struct OutstandingsEmptyCorroborationObservation {
+    pub(crate) verification: EmptySegmentCorroboration,
+    pub(crate) first_read_elapsed: Duration,
+    pub(crate) second_read_elapsed: Duration,
+}
+
+struct OutstandingsWireResponse {
+    text: String,
+    encoded_bytes: usize,
+    encoded_sha256: String,
+}
+
+impl OutstandingsEmptyCorroborationObservation {
+    pub(crate) fn max_read_elapsed(&self) -> Duration {
+        self.first_read_elapsed.max(self.second_read_elapsed)
+    }
+}
 
 /// An exact, validated write-canary readback. Its XML remains crate-private to
 /// the future write coordinator and is never returned to the UI or persisted.
@@ -453,10 +487,33 @@ impl TallyClient {
     }
 
     pub(super) async fn post_xml(&self, xml: String) -> anyhow::Result<String> {
+        self.post_xml_with_encoded_bytes(xml)
+            .await
+            .map(|(xml, _)| xml)
+    }
+
+    async fn post_xml_with_encoded_bytes(&self, xml: String) -> anyhow::Result<(String, usize)> {
         let response = self.http.post_xml_decoded(xml).await?;
-        self.record_observed_body_bytes(response.encoded_bytes());
+        let encoded_bytes = response.encoded_bytes();
+        self.record_observed_body_bytes(encoded_bytes);
         self.record_observed_encoding(response.encoding());
-        Ok(response.into_text())
+        Ok((response.into_text(), encoded_bytes))
+    }
+
+    async fn post_outstandings_xml_with_encoded_bytes(
+        &self,
+        request: VoucherOutstandingsRequestXml,
+    ) -> anyhow::Result<OutstandingsWireResponse> {
+        let response = self.http.post_outstandings_xml_decoded(request).await?;
+        let encoded_bytes = response.encoded_bytes();
+        let encoded_sha256 = response.encoded_sha256().to_string();
+        self.record_observed_body_bytes(encoded_bytes);
+        self.record_observed_encoding(response.encoding());
+        Ok(OutstandingsWireResponse {
+            text: response.into_text(),
+            encoded_bytes,
+            encoded_sha256,
+        })
     }
 
     /// Sends only the opaque, fixed fixture canary through the bounded
@@ -575,6 +632,112 @@ impl TallyClient {
             .post_xml(tdl_engine::standard_ledger_catalog_request(company))
             .await?;
         parse_standard_ledger_catalog(&xml, company, expected_company_guid)
+    }
+
+    pub async fn fetch_company_book_extent(
+        &self,
+        company: &str,
+        expected_company_guid: &str,
+    ) -> anyhow::Result<CompanyBookExtent> {
+        let company_name = ValidatedCompanyName::new(company.to_string())?;
+        let request = ReadOnlyProfile::CompanyBookExtentV1 {
+            company: &company_name,
+        }
+        .render();
+        let first = self.post_xml(request.clone()).await?;
+        let second = self.post_xml(request).await?;
+        let first = parse_company_book_extent(&first, company, expected_company_guid)?;
+        let second = parse_company_book_extent(&second, company, expected_company_guid)?;
+        if first != second {
+            anyhow::bail!("Tally company book extent changed between paired reads");
+        }
+        Ok(first)
+    }
+
+    pub(crate) async fn fetch_outstandings_segment_pair(
+        &self,
+        company: &PinnedCompany,
+        segment_window: NarrowDateWindow,
+        alter_id_range: AlterIdRange,
+    ) -> anyhow::Result<OutstandingsSegmentObservation> {
+        let request = voucher_outstandings_request(company, &segment_window, alter_id_range);
+        let range_label = format!(
+            "{}..{}",
+            alter_id_range.exclusive_start(),
+            alter_id_range.inclusive_end()
+        );
+        let first_started = Instant::now();
+        let first = self
+            .post_outstandings_xml_with_encoded_bytes(request.clone())
+            .await
+            .with_context(|| {
+                format!("outstandings first segment read failed for AlterID {range_label}")
+            })?;
+        let first_read_elapsed = first_started.elapsed();
+        let second_started = Instant::now();
+        let second = self
+            .post_outstandings_xml_with_encoded_bytes(request)
+            .await
+            .with_context(|| {
+                format!("outstandings second segment read failed for AlterID {range_label}")
+            })?;
+        let second_read_elapsed = second_started.elapsed();
+        let verification = verify_segment_pair_with_wire_evidence(
+            SegmentWireEvidence::new(&first.text, first.encoded_bytes, &first.encoded_sha256),
+            SegmentWireEvidence::new(&second.text, second.encoded_bytes, &second.encoded_sha256),
+            company,
+            segment_window.into_date_window(),
+            alter_id_range,
+        )?;
+        Ok(OutstandingsSegmentObservation {
+            verification,
+            first_read_elapsed,
+            second_read_elapsed,
+        })
+    }
+
+    pub(crate) async fn fetch_outstandings_empty_corroboration_pair(
+        &self,
+        company: &PinnedCompany,
+        candidate: EmptySegmentCandidate,
+        adjacent: AlterIdRange,
+    ) -> anyhow::Result<OutstandingsEmptyCorroborationObservation> {
+        let wider = candidate.alter_id_range().joined_with(adjacent)?;
+        let segment_window = NarrowDateWindow::try_from(candidate.reporting_window().clone())?;
+        let request = voucher_outstandings_request(company, &segment_window, wider);
+        let range_label = format!("{}..{}", wider.exclusive_start(), wider.inclusive_end());
+        let first_started = Instant::now();
+        let first = self
+            .post_outstandings_xml_with_encoded_bytes(request.clone())
+            .await
+            .with_context(|| {
+                format!(
+                    "outstandings first empty corroboration read failed for AlterID {range_label}"
+                )
+            })?;
+        let first_read_elapsed = first_started.elapsed();
+        let second_started = Instant::now();
+        let second = self
+            .post_outstandings_xml_with_encoded_bytes(request)
+            .await
+            .with_context(|| {
+                format!(
+                    "outstandings second empty corroboration read failed for AlterID {range_label}"
+                )
+            })?;
+        let second_read_elapsed = second_started.elapsed();
+        let verification = corroborate_empty_segment_with_adjacent_pair_and_wire_evidence(
+            candidate,
+            SegmentWireEvidence::new(&first.text, first.encoded_bytes, &first.encoded_sha256),
+            SegmentWireEvidence::new(&second.text, second.encoded_bytes, &second.encoded_sha256),
+            company,
+            adjacent,
+        )?;
+        Ok(OutstandingsEmptyCorroborationObservation {
+            verification,
+            first_read_elapsed,
+            second_read_elapsed,
+        })
     }
 
     pub async fn qualify_selected_ledgers(

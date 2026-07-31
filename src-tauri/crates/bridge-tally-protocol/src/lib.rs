@@ -25,6 +25,7 @@ pub mod india_tax_observation;
 pub mod jsonex;
 #[cfg(feature = "jsonex-request-builder")]
 pub mod jsonex_request;
+pub mod outstandings;
 pub mod xml_read_profiles;
 
 pub const BRIDGE_LEDGER_EXPORT_SCHEMA: &str = "bridge.tally.ledgers/1";

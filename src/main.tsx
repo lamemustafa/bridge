@@ -1,8 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Building2, Cable, CircleHelp, Cloud, Database, FileText, FolderOpen, KeyRound, Play, RefreshCw, ShieldCheck, UploadCloud } from "lucide-react";
+import { Activity, Building2, Cable, CircleHelp, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ReceiptIndianRupee, RefreshCw, ShieldCheck, UploadCloud } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { applyProbeCompanySelectionTransition, clearCompanyScopedState } from "./tally-company-selection";
+import { OutstandingsScreen } from "./OutstandingsScreen";
 import "./styles.css";
 
 type TallyConfig = {
@@ -365,7 +366,7 @@ type SelectedDocumentPath = {
   displayName: string;
 };
 
-type View = "dashboard" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "outstandings" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "qualify" | "save" | "fixture_enroll" | "fixture_revoke" | "ledgers" | "catalog" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -373,6 +374,7 @@ const MIRROR_PAGE_LIMIT = 25;
 
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
+  outstandings: "Aged outstandings",
   companies: "Tally setup and company profile",
   gst: "GST return readiness",
   mirror: "Accounting mirror and proof",
@@ -1938,6 +1940,9 @@ function App() {
           <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             <Activity size={18} /> Dashboard
           </button>
+          <button aria-current={view === "outstandings" ? "page" : undefined} className={view === "outstandings" ? "active" : ""} onClick={() => setView("outstandings")}>
+            <ReceiptIndianRupee size={18} /> Outstandings
+          </button>
           <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} onClick={() => setView("companies")}>
             <Building2 size={18} /> Tally Setup
           </button>
@@ -1962,38 +1967,42 @@ function App() {
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
         <header>
           <div>
-            <p className="eyebrow">Tally Truth Layer</p>
+            <p className="eyebrow">{view === "outstandings" ? "Receivables and payables" : "Tally Truth Layer"}</p>
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
-          <button className="primary" onClick={checkTally} disabled={tallyAction !== null}>
-            <Cable size={18} />
-            {tallyAction === "probe" ? "Checking endpoint..." : "Check Tally Endpoint"}
-          </button>
+          {view !== "outstandings" && (
+            <button className="primary" onClick={checkTally} disabled={tallyAction !== null}>
+              <Cable size={18} />
+              {tallyAction === "probe" ? "Checking endpoint..." : "Check Tally Endpoint"}
+            </button>
+          )}
         </header>
 
-        <section className="company-context-bar" aria-label="Selected Tally company context">
-          <div>
-            <span>Selected company</span>
-            <strong>{selectedCompanyRecord?.name ?? "None selected"}</strong>
-          </div>
-          <div>
-            <span>Identity confidence</span>
-            <strong>{selectedCompanyRecord?.mirror_company_id ? formatIdentifier(selectedCompanyRecord.identity_confidence ?? "unknown") : "Not established"}</strong>
-          </div>
-          <div>
-            <span>Pinned evidence endpoint</span>
-            <strong>{selectedCompanyRecord?.canonical_endpoint ?? "No persisted endpoint"}</strong>
-          </div>
-          <div>
-            <span>Configured live endpoint</span>
-            <strong>{config.host}:{config.port}</strong>
-          </div>
-          <div>
-            <span>Current probe match</span>
-            <strong>{selectedCompanyLive ? "Matched" : selectedCompanyRecord ? "Offline evidence only" : "Not selected"}</strong>
-          </div>
-          <button className="secondary-action" type="button" onClick={() => setView("companies")}>Change setup</button>
-        </section>
+        {view !== "outstandings" && (
+          <section className="company-context-bar" aria-label="Selected Tally company context">
+            <div>
+              <span>Selected company</span>
+              <strong>{selectedCompanyRecord?.name ?? "None selected"}</strong>
+            </div>
+            <div>
+              <span>Identity confidence</span>
+              <strong>{selectedCompanyRecord?.mirror_company_id ? formatIdentifier(selectedCompanyRecord.identity_confidence ?? "unknown") : "Not established"}</strong>
+            </div>
+            <div>
+              <span>Pinned evidence endpoint</span>
+              <strong>{selectedCompanyRecord?.canonical_endpoint ?? "No persisted endpoint"}</strong>
+            </div>
+            <div>
+              <span>Configured live endpoint</span>
+              <strong>{config.host}:{config.port}</strong>
+            </div>
+            <div>
+              <span>Current probe match</span>
+              <strong>{selectedCompanyLive ? "Matched" : selectedCompanyRecord ? "Offline evidence only" : "Not selected"}</strong>
+            </div>
+            <button className="secondary-action" type="button" onClick={() => setView("companies")}>Change setup</button>
+          </section>
+        )}
 
         {["dashboard", "companies", "mirror"].includes(view) && (
           <section className="operator-question-grid" aria-label="Tally operator summary">
@@ -2140,6 +2149,14 @@ function App() {
               <span>DSC: token detection and certificate extraction</span>
             </section>
           </>
+        )}
+
+        {view === "outstandings" && (
+          <OutstandingsScreen
+            config={config}
+            company={selectedCompanyRecord?.guid ? { name: selectedCompanyRecord.name, guid: selectedCompanyRecord.guid } : undefined}
+            onChangeSetup={() => setView("companies")}
+          />
         )}
 
         {view === "companies" && (

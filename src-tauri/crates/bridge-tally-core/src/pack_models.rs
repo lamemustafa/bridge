@@ -410,6 +410,34 @@ impl TallyDate {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn next_day(&self) -> Result<Self, TallyError> {
+        let year = self.0[0..4]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let month = self.0[4..6]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let day = self.0[6..8]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let month_days =
+            gregorian_month_days(year, month).ok_or_else(|| invalid_data("invalid_tally_date"))?;
+        let (next_year, next_month, next_day) = if day < month_days {
+            (year, month, day + 1)
+        } else if month < 12 {
+            (year, month + 1, 1)
+        } else {
+            (
+                year.checked_add(1)
+                    .filter(|value| *value <= 9999)
+                    .ok_or_else(|| invalid_data("tally_date_overflow"))?,
+                1,
+                1,
+            )
+        };
+        Self::parse(format!("{next_year:04}{next_month:02}{next_day:02}"))
+    }
 }
 
 impl<'de> Deserialize<'de> for TallyDate {
@@ -945,15 +973,21 @@ fn is_valid_yyyymmdd(value: &str) -> bool {
     let year = value[0..4].parse::<u32>().unwrap_or_default();
     let month = value[4..6].parse::<u32>().unwrap_or_default();
     let day = value[6..8].parse::<u32>().unwrap_or_default();
-    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
-    let days_in_month = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return false,
+    let Some(days_in_month) = gregorian_month_days(year, month) else {
+        return false;
     };
     year != 0 && (1..=days_in_month).contains(&day)
+}
+
+fn gregorian_month_days(year: u32, month: u32) -> Option<u32> {
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => Some(31),
+        4 | 6 | 9 | 11 => Some(30),
+        2 if leap => Some(29),
+        2 => Some(28),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1182,6 +1216,23 @@ mod tests {
         }
         assert!(TallyDate::parse("20240229").is_ok());
         assert!(serde_json::from_str::<TallyDate>(r#""20260229""#).is_err());
+        assert_eq!(
+            TallyDate::parse("20240228")
+                .unwrap()
+                .next_day()
+                .unwrap()
+                .as_str(),
+            "20240229"
+        );
+        assert_eq!(
+            TallyDate::parse("20241231")
+                .unwrap()
+                .next_day()
+                .unwrap()
+                .as_str(),
+            "20250101"
+        );
+        assert!(TallyDate::parse("99991231").unwrap().next_day().is_err());
         for value in ["", " leading", "trailing ", "line\nbreak"] {
             assert!(CanonicalText::parse(value).is_err(), "accepted {value:?}");
         }
