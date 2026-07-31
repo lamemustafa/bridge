@@ -15,9 +15,9 @@
 
 ## 0. Executive summary
 
-**Where Bridge is:** a superbly engineered, read-only Tally evidence console. 13 layered Rust crates, loopback-only transport, strict protocol parsing, atomic checkpointed snapshots into an encrypted SQLCipher mirror, Proof-of-Sync, Gap Map. But: **zero writes possible in any shipped build**, voucher reads deliberately stripped of narration/GSTIN/bill data, every compatibility claim `unknown` with `missing` evidence, and ~30 recent PRs spent on "sealed canary" ceremony for a synthetic write that has never touched a live Tally. The founder's diagnosis is correct: no CA will use it today.
+**Where Bridge is:** a read-only Tally evidence console with 13 layered Rust crates, loopback-only transport, strict protocol parsing, atomic checkpointed snapshots into an encrypted SQLCipher mirror, Proof-of-Sync, and Gap Map. But: **zero writes possible in any shipped build**, voucher reads deliberately stripped of narration/GSTIN/bill data, every compatibility claim `unknown` with `missing` evidence, and ~30 recent PRs spent on "sealed canary" ceremony for a synthetic write that has never touched a live Tally. The plan's diagnosis is that this is insufficient for CA adoption today; that is a product hypothesis to test, not a measured conclusion.
 
-**Market hypothesis:** the sourced landscape identifies several competitors (Vyapar TaxOne née Suvit, Finsights, CredFlow, Biz Analyst, AI Accountant) using local connectors to Tally's XML gateway and reports recurring sync-trust concerns. This is not a universal claim: the Finsights deletion-latency figure and other gaps are explicitly provisional in §2.1. Bridge's thesis is that workflow-level evidence can address this concern; it remains a hypothesis to validate with design partners.
+**Market hypothesis:** the sourced landscape identifies several competitors (Vyapar TaxOne née Suvit, Finsights, CredFlow, Biz Analyst, AI Accountant) using local connectors to Tally's XML gateway. Retrieved evidence reports sync-trust concerns for **some** products, not the whole market: the Finsights deletion-latency figure and other gaps are explicitly provisional in §2.1. Bridge's thesis is that workflow-level evidence can address this concern; it remains a hypothesis to validate with design partners.
 
 **The plan in one paragraph:** Unseal the write machinery and delete the ceremony (keep the evidence). Restore full-fidelity reads. Test **Drift Sentinel** — "know every voucher your client changed after you signed off, with before/after" — as a read-only acquisition wedge whose competitive differentiation is unverified. Rent a licensed TallyPrime in month 2. Then build the write substrate (outbox, batch-of-1, readback-verified posting) and the expansion product: **Excel/CSV → review grid → maker-checker → post → Proof-of-Post**. The solo-dev horizon is a planning estimate: wedge in ~3 months, daily-use write product by ~8–10 months.
 
@@ -134,8 +134,9 @@ Covered here:
   claims of this kind.
 - **CredFlow** — [company setup / connector requirements](https://credflow.freshdesk.com/support/solutions/articles/82000909704-how-to-add-company-for-tally-software-),
   [syncing-issues support folder](https://credflow.freshdesk.com/support/solutions/folders/82000694831)
-  for the sync-reliability complaints that §2.2.2 uses to argue sync trust is
-  the universal open wound.
+  for a documented CredFlow sync concern. Together with the cited Biz Analyst
+  sync-failure material, this supports a **narrow** sync-trust concern in
+  §2.2.2; it does not establish a market-wide conclusion.
 - **AI Accountant** — [Tally integration](https://www.aiaccountant.com/blog/tally-integration-with-ai-accountant),
   [chart-of-accounts mapping](https://www.aiaccountant.com/blog/chart-of-accounts-ai-mapping).
 - **ClearTax connector** — [Tally connector installation guide](https://docs.cleartax.in/e-invoicing-v2/userguide/guides-tally-connector/installation-guide-for-tally-connector),
@@ -219,8 +220,8 @@ not measurement.** Treat the latter two as directional.
 
 ### 2.2 Structural takeaways
 1. **The on-prem connector is unavoidable and Bridge already is one** — with a stronger engineering base than the connectors CAs complain about.
-2. **Sync trust is the universal open wound.** Every incumbent's worst reviews are trust failures. None can prove completeness, attribute failures, or detect Tally-side edits/deletions promptly.
-3. **Tally native is absorbing adjacent value** (2B recon, banking, AI): pure-reporting and portal-integration plays erode. Data-entry automation, multi-client practice ops, and *evidence about the books* remain defensible.
+2. **Sync trust is a supported concern, not a universal conclusion.** CredFlow's support material and Biz Analyst's cited sync-failure page show distinct sync issues. Comparable complaint evidence has not been retrieved for Finsights, Vyapar TaxOne, or AI Accountant, so whether this extends across the market is a design-partner hypothesis.
+3. **Tally native may absorb adjacent value.** The retrieved Tally documentation supports import and banking capabilities; the GSTR-2B and AI claims remain explicit gaps in §2.1. Treat the resulting positioning implication as a hypothesis, not a platform-wide fact.
 4. **Regulatory tailwind — CORRECTED 2026-07-31, the original claim was wrong.** This previously read *"since Jan 2026, excess ITC vs GSTR-2B auto-flags on the portal."* The cited secondary summaries show that is wrong on both the date and the mechanism: GSTR-3B hard-locking is phased, **Table 3 (outward liability) has been locked since the July 2025 period**, and **ITC (Table 4) locking is targeted for around July 2026 — announced, not yet in force** — and it is *hard-locking* to GSTR-2B, not an "auto-flag". The only retrieved GSTN advisory concerns **interest calculation**, not ITC. The primary hard-locking advisories and MCA gazette notification have not been retrieved; see the source limitation in §2.1. The cited secondary summaries describe the MCA half as follows: the **Companies (Accounts) Amendment Rules, 2021** (notified 24-03-2021) require accounting software to record an audit trail and edit log that cannot be disabled, applicable for financial years beginning on or after **1 April 2023** — a stated partner-level anxiety about what changed in the books. **Net effect on the argument: the plan treats the MCA tailwind as in force and the ITC tailwind as a near-term expectation, not a present fact. Neither point should be quoted commercially until the primary sources are retrieved.**
 5. **Education mode:** competitors refuse it (CredFlow). It permits voucher entry only on the 1st/2nd/31st. It is a fine regression rig and an honest Passport state — but nothing can be marked `Verified` from it, and a licensed instance is a hard prerequisite for a credible write story.
 
@@ -230,7 +231,7 @@ not measurement.** Treat the latter two as directional.
 - **GSTR-2B ↔ purchase register recon** (fuzzy multi-field matching, exception queues; Tally native buckets well but resolves one voucher at a time, one company at a time).
 - **Receivables follow-up** (CredFlow's turf; skip).
 - **Multi-client management** (50–200 companies per firm, staff roles, per-client sync health, deadline rhythm: 7th/11th/20th).
-- **Audit/verification** ("what changed since I signed off" — served by *nobody*).
+- **Audit/verification** ("what changed since I signed off" — a potential gap to validate, not a claim that no product serves it).
 
 ### 2.4 UX patterns to steal / fix
 
@@ -274,7 +275,7 @@ Four persona proposals (CA operator, product strategist, protocol engineer, UX d
 | GSTR-2B recon | **Defer to Later (month 9+ gate)**, scoped to the *bulk-resolution* layer across many GSTINs (consume 2B JSON uploads; no portal OTP). Don't fight TallyPrime's flagship solo now; don't cede the only deadline-driven workflow forever. |
 | Licensed-Tally timing | **Rent TallyPrime Silver in month 2** — before the first real write ships. Edu stays the daily regression rig; **nothing is ever marked `Verified` from Edu or simulator.** Cheapest de-risk in the plan. |
 | Bank statements vs Excel first | **Excel/CSV first.** Same review-grid pipeline; bank statements arriving as CSV/Excel flow through unchanged. The bank-format zoo + PDF/OCR is a permanent maintenance tail — fast-follow, not v1. |
-| Lead marketing claim | **Drift Sentinel + Proof-of-Post lead** (fear with a face; the answer to why firms churned). Proof-of-Sync/Passport are substance behind the demo, never the headline. Kill "data minimization" claim; rewrite to "full-fidelity, local, encrypted" in the same commit that un-minimizes reads. |
+| Lead marketing claim | **Proposed Drift Sentinel + Proof-of-Post lead** (hypothesis: a concrete liability fear is more compelling than a time-saving claim). Proof-of-Sync/Passport are substance behind the demo, never the headline. Kill "data minimization" claim; rewrite to "full-fidelity, local, encrypted" in the same commit that un-minimizes reads. |
 | Education-mode UX | Passport-detected restriction only. The "reschedule for the 31st" scheduling feature is **deleted** — a test constraint leaking into product design. |
 | Multi-company control tower | Descoped to Later; redesigned around *expected staleness* ("open these 6 companies today" worklist) — a green wall over unloaded companies is the exact silent failure the Truth Layer exists to prevent. |
 | Capability Passport | **Build it, don't sell it.** It's the internal gate, the 10-second "Run connection check" support self-test, and the topology-honesty vehicle. Never leads a pitch. |
@@ -288,7 +289,7 @@ Canary/attestation/dual-flag machinery and 6 of 8 digest newtypes · e-invoice/e
 ## 4. Strategy
 
 ### 4.1 Proposed positioning (hypothesis to validate)
-> For CA/CS firms burned by "sync issues" in every Tally companion app, Bridge is the two-way Tally integration that **proves** every read and write — posted means read-back-verified, and you know when anyone changes the books after you've signed off.
+> For CA/CS firms concerned about sync issues in Tally companion apps, Bridge aims to make the evidence behind each read and write inspectable — posted means read-back-verified, and users can see when books change after sign-off.
 
 Candidate one-liners (validate before external use): *"Bridge makes the evidence behind a sync inspectable."* · *"Audit-grade sync for the audit profession."*
 
