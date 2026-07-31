@@ -47,7 +47,7 @@
 | **Vyapar TaxOne** (ex-Suvit, absorbed by Vyapar) | Ledgers + vouchers from bank/sales/purchase docs | Desktop connector → XML gateway (manual host/port) | One-way push + reads for GST | Scale leader: claims 10k+ CA firms, 30k+ accountants; AI/OCR ingestion, ledger auto-suggest from history, review-before-post, "zero duplicate entries" marketing |
 | **Finsights** | Vouchers, invoices, stock entries | Desktop connector beside Tally (both must stay open) | Two-way, ~10-min cycles; **Tally deletions propagate only every 24h** | CA-focused; client-invitation model for client-maintained books; unlimited companies |
 | **CredFlow** | Receipts, invoices, quotations, sales orders | Desktop connector; company must be open; **refuses Education-mode Tally** | Two-way | Receivables/dunning company (SMS/WhatsApp/call reminders); sync-reliability complaints |
-| **Biz Analyst** | 10 entry types incl. sales/purchase | Desktop sync agent | Two-way | 1M+ installs, 4.2★; complaints: "unending" sync issues, missing fields, Play-Store data-safety page admits unencrypted data shared with third parties |
+| **Biz Analyst** | 10 entry types incl. sales/purchase | Desktop sync agent | Two-way | 1M+ installs, 4.2★ (Play Store listing); complaints: "unending" sync issues, missing fields. **Data handling — claim corrected 2026-07-31, see Sources:** the vendor's privacy policy discloses sharing with group/affiliate entities and third-party service providers including marketing partners, *and* describes encryption measures. An earlier revision of this row asserted "unencrypted data shared with third parties" — that was unsupported and is contradicted by the vendor's own disclosures. Struck. |
 | **AI Accountant** | Vouchers, mappings, sales invoices | Local agent; XML for R/W, ODBC for analytics; **AlterID-tracked incremental sync** | Two-way, scheduled | Maker-checker approval, review-before-post with rationale, duplicate/voucher-lock handling; lists custom-TDL/UDF fields as a known break risk |
 | **ClearTax connector** | e-invoice/e-way-bill fields | **TDL plugin inside Tally + connector app (ODBC)**; per-machine installs | Two-way (compliance fields) | Owns e-invoicing; in-Tally UI |
 | **Tally native** (the platform threat) | — | — | — | Built-in GSTR-2B download + recon with granular status buckets (resolution still manual, per-company); TallyPrime 6.0 connected banking; 7.x AI features |
@@ -75,7 +75,25 @@ omission is a defect rather than something a reader must infer:
   [Auto-create vouchers from bank statements](https://help.tallysolutions.com/auto-create-vouchers/).
 - **Vyapar TaxOne** — [bank-statement import help](https://taxone.vyapar.com/help/articles/import-the-bank-statement).
 - **Biz Analyst** — [data entry](https://help.bizanalyst.in/features/data-entry/how-to-create-sales-invoice),
-  [sync-failure behaviour](https://help.bizanalyst.in/biz-analyst-manual/support/sync-issues/all-figures-showing-0-in-mobile-app).
+  [sync-failure behaviour](https://help.bizanalyst.in/biz-analyst-manual/support/sync-issues/all-figures-showing-0-in-mobile-app),
+  [Play Store listing](https://play.google.com/store/apps/details?id=in.bizanalyst) and
+  [Play Store data-safety page](https://play.google.com/store/apps/datasafety?id=in.bizanalyst)
+  for install/rating figures, [privacy policy](https://bizanalyst.in/privacy.html)
+  for data handling.
+  **Correction — a claim about this vendor was wrong and has been struck.**
+  The row previously asserted that the Play Store data-safety page "admits
+  unencrypted data shared with third parties". The vendor's privacy policy
+  states the opposite on encryption — *"including appropriate encryption and
+  physical security measures to guard against unauthorized access to systems
+  where we store personal data"* — while confirming the sharing half:
+  *"We may transfer/share information (personal and non-personal) … with
+  another SiliconVeins group / corporate entities or affiliates"* and *"to any
+  third-party service providers including marketing partners"*. The two facts
+  were conflated into an allegation the sources do not support. **Publishing an
+  unsourced security allegation about a named competitor in a public repository
+  is the most serious defect this review surfaced**; it is corrected rather
+  than merely cited, and the "evidence grades" note below does not license
+  claims of this kind.
 - **CredFlow** — [company setup / connector requirements](https://credflow.freshdesk.com/support/solutions/articles/82000909704-how-to-add-company-for-tally-software-).
 - **AI Accountant** — [Tally integration](https://www.aiaccountant.com/blog/tally-integration-with-ai-accountant),
   [chart-of-accounts mapping](https://www.aiaccountant.com/blog/chart-of-accounts-ai-mapping).
@@ -89,15 +107,25 @@ omission is a defect rather than something a reader must infer:
   phrase "TDL plugin" used in §2.1 and §3.3. The architecture claim stands;
   the wording in the table is looser than the source.
 - **Finsights** — **gap 1: no verifiable citation. See below.**
-- **Regulatory claims (§2.2.4)** — GST: GSTN's phased GSTR-3B hard-locking
-  advisories, including the [interest-calculation advisory](https://tutorial.gst.gov.in/downloads/news/advisory_on_interest_calculator.pdf)
-  and public summaries of the Table 3 (July 2025) and planned Table 4 ITC
-  locking. MCA: **Companies (Accounts) Amendment Rules, 2021**, notified
-  24-03-2021, audit-trail/edit-log applicable for FYs beginning on or after
-  1 April 2023. **The §2.2.4 claim was checked against these and found wrong;
-  it is corrected in place rather than merely cited.** These are advisory
-  summaries, not the bare-act text — verify against the GSTN advisory and the
-  MCA notification before relying on either commercially.
+- **Regulatory claims (§2.2.4)** — **GST:** GSTN
+  [interest-calculation advisory](https://tutorial.gst.gov.in/downloads/news/advisory_on_interest_calculator.pdf)
+  (the January-2026 item, which concerns interest, *not* ITC);
+  [hard-locking explainer](https://cleartax.in/s/hard-locking-in-gstr-3b) and
+  [Table 3 rollout summary](https://www.indiafilings.com/learn/hard-locking-in-gstr-3b)
+  for the July-2025 outward-liability locking;
+  [planned Table 4 ITC locking](https://www.taxscan.in/top-stories/big-gst-change-from-july-2026-gstr-3b-itc-locking-explained-1448389)
+  for the ~July-2026 target.
+  **MCA:** Companies (Accounts) Amendment Rules, 2021 — see
+  [the rule text and applicability discussion](https://taxguru.in/company-law/companies-mandates-use-software-audit-trail-each-transaction.html)
+  and [the notification summary](https://lexplosion.in/mca-issues-companies-accounts-amendment-rules-2021-companies-using-accounting-software-for-maintaining-books-of-account-mandated-to-use-software-that-allows-recording-of-audit-trail-of-every-trans/).
+  > **Honest limitation on these two.** Apart from the GSTN interest advisory
+  > PDF, every link above is a **secondary summary** — a tax-practice or
+  > news write-up of a GSTN advisory or an MCA notification. **The primary
+  > GSTN hard-locking advisories and the MCA gazette notification have not
+  > been retrieved for this document.** They are good enough to establish that
+  > the *previous* §2.2.4 claim was wrong, which is why it was corrected, but
+  > **not** good enough to quote commercially. Anyone relying on the dates
+  > must go to the GSTN advisory and the gazette text directly.
 - **DIY long tail** — **gap 2: uncited.** The "NIKASH converters, TaxGuru VBA
   recon" examples and the **"6–10 hrs/GSTIN/month VLOOKUP baseline"** have no
   source in this repo. That baseline is the implicit denominator for any
