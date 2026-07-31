@@ -227,9 +227,10 @@ as directional.
 
 > **Internal hypothesis — prioritisation only.** *Which* of these patterns to build first
 > was ranked with the help of private comparative research (see §2.1 Sources). The
-> observations themselves are all traceable to the public vendor documentation cited there;
-> the ordering is an internal bet and should be challenged on its merits, not accepted on
-> authority.
+> observations are traceable to the public vendor documentation cited there **except
+> Tally's recon-bucket vocabulary**, which remains an uncited platform observation
+> recorded as a gap in §2.1. The ordering is an internal bet and should be challenged
+> on its merits, not accepted on authority.
 
 **Steal:** review-before-post as the *only* path to Tally (Suvit); saved mapping templates; maker-checker (AI Accountant); Tally's own recon-bucket vocabulary; duplicate detection made visible.
 **Fix (the industry's sins):** silent sync failure and single green dots (show *last-verified* vs *latest-attempt* as two timestamps, always); stale data without self-degrading freshness; "posted" claims from HTTP counters (post ≠ verified until re-read); errors in XML language instead of accountant language; black-box AI suggestions (show the rationale).
