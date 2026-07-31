@@ -287,9 +287,9 @@ exception because a live 1,632-voucher boundary produced approximately 33.6 MiB:
 - the general XML response cap remains **32 MiB**;
 - only the closed `VoucherOutstandingsV1` request type may use a **40 MiB** response cap;
 - the runtime sizing target remains **28 MiB**, derived from multiple comparable completed
-  date-plus-AlterID segments using the same wildcard request shape; there is **no production
-  initial width** until an ordered, local corpus is large enough that the candidate width
-  actually splits it, and later ranges may only shrink;
+  date-plus-AlterID segments using the same wildcard request shape; Unit A has **no production
+  initial width**, and ruling 8 supersedes the idea that choosing one can solve production-scale
+  planning — that requires the conditional-subdivision design below;
 - the transport deadline remains **20 seconds**, with one attempt and no retry.
 
 **OWNER-RULED 2026-07-31.** Completeness is established on the date axis for the whole scan;
@@ -326,12 +326,33 @@ production width because no segmentation occurred. Therefore the three Billwise 
 non-default ignored reconciliation harness, not a production policy. Aarav remains invalid for
 sizing because AlterID and date are uncorrelated there; no width can repair that locality defect.
 
+**OWNER-RULED 2026-07-31 (ruling 8).** The AlterID axis is unconditional in Unit A: for every
+date partition, the runtime starts at zero and covers the full `0..ALTVCHID` range. Its scan is
+therefore O(`D × H`) by construction. This is required for correctness because AlterID is an
+alteration identifier: editing an old-dated voucher can move it to a high AlterID, so locality
+between date and AlterID is a performance accident and must never become a completeness
+assumption. No choice of `W` changes the total `D × H` span.
+
+Production-scale planning belongs to Unit B. Its design is to default to one `0..H` range per
+date partition and subdivide only partitions projected to exceed the request budget. That
+projection requires a per-endpoint sizing observation retained across syncs. Do not substitute
+an Aarav-derived constant: Aarav remains prohibited for sizing, and Unit A intentionally remains
+in-memory.
+
+`SegmentPlan::new` is also a **lower bound, not a bound**. It estimates ranges using the initial
+width, while one `SegmentTrendGuard` is shared across the scan and may shrink the width after
+preflight. Later partitions can therefore require more ranges than planned. The execution-time
+128-pair cap correctly fails closed, but only after earlier requests have been spent. Unit B must
+either plan from the minimum width to which the guard may shrink or re-plan on every shrink and
+refuse before dispatching the next request.
+
 Before the first voucher segment request, compute the planned segment pairs from the extent and
 refuse more than **128 pairs / 256 reads** as typed Partial
 `outstandings_segment_plan_exceeds_budget`. Log `D`, `H`, `W`, and the planned pair count. The
 actual loop must retain the same hard 128-pair cap because adaptive shrinking can increase the
-number of ranges after preflight. Production remains uncalibrated and makes no voucher request;
-only the non-default, corpus-bound exit harness may admit width 252.
+number of ranges after preflight. Unit A's default path remains uncalibrated and makes no voucher
+request; only the non-default, corpus-bound exit harness may admit width 252. This explicit
+Partial is complete behavior for Unit A's bounded in-memory scope, not a Unit A blocker.
 
 Paired-read safety is literal: the extent pair and every voucher pair execute
 `read → /status → read → /status`. A synthetic sequencing regression enforces this. A status
@@ -398,9 +419,9 @@ trusted endpoint-bound mode evidence: persisted company profiles expose endpoint
 the direct client probe deliberately records `Unknown` / no mode, and stored capability snapshots
 are not bound into this read path. Unit A also excludes coupling this in-memory slice to the
 mirror path. Do not infer mode from the company name, GUID or port, and do not generalise the
-target-bound harness override. Until a reviewed evidence source is selected, this is a
-production-admission limitation: an Educational read using the mode-agnostic fallback remains
-safe because I12 fails closed, but may not finish.
+target-bound harness override. An Educational read using the mode-agnostic fallback remains safe
+because I12 fails closed, but may not finish. Ruling 8 moves licensed-mode coverage and any
+reviewed evidence-source work to Unit B; this does not reopen Unit A.
 
 ### 2.8 The four routes to a wrong read — I5
 
@@ -972,6 +993,13 @@ zero; fail closed or quarantine.
 | Assumption | Status |
 | --- | --- |
 | Licensed Tally accepts arbitrary period boundaries | **Untested.** The day-1/2/31 rule (verified for BOTH `SVFROMDATE` and `SVTODATE`, §2.7) may be Education-only. Ruling 4 therefore makes it an explicit compatibility profile rather than a universal constructor rule. |
+| Licensed Tally can complete the Unit A outstandings scan | **Untested.** Bridge has never run against a licensed Tally. No positive licensed-mode claim is permitted. |
+| Voucher Alter/Cancel work on standard TallyPrime | **Untested.** May be Edit Log SKU behaviour |
+| `AUDITENTRIES.LIST` populates on a UI edit | **Untested.** Would replace AlterID diffing on Edit Log |
+| A two-level `FETCH` syntax exists for GST rates | **Not found.** Wildcard is the only known route |
+| Behaviour with third-party TDL installed | **Untested.** Client machines will have it |
+| Behaviour on Tally.ERP 9 | **Untested** |
+| Company creation over XML | **Partial** — `CURRENCYNAME`, `SVCURRENTPATH`, `STARTINGFROM`/`BOOKSFROM` all accepted; **only the currency formal-name element remains unknown** (ref §9.10a) |
 
 > **Resolved offline by owner ruling 4.** `DateBoundaryProfile::EducationRestricted` retains
 > the verified `01`/`02`/`31` rule. Licensed, unknown, absent or inconsistent product-mode
@@ -980,12 +1008,15 @@ zero; fail closed or quarantine.
 > `NarrowDateWindow` cap remains universal because it is a resource bound, not a compatibility
 > claim. Licensed behavior itself remains untested; only Bridge's unsafe pre-contact rejection
 > has been removed.
-| Voucher Alter/Cancel work on standard TallyPrime | **Untested.** May be Edit Log SKU behaviour |
-| `AUDITENTRIES.LIST` populates on a UI edit | **Untested.** Would replace AlterID diffing on Edit Log |
-| A two-level `FETCH` syntax exists for GST rates | **Not found.** Wildcard is the only known route |
-| Behaviour with third-party TDL installed | **Untested.** Client machines will have it |
-| Behaviour on Tally.ERP 9 | **Untested** |
-| Company creation over XML | **Partial** — `CURRENCYNAME`, `SVCURRENTPATH`, `STARTINGFROM`/`BOOKSFROM` all accepted; **only the currency formal-name element remains unknown** (ref §9.10a) |
+
+> **LICENSED-TALLY GAP — owner ruling 8.** Bridge has never run against a licensed Tally.
+> Every measurement in this project — every timing, every boundary rule, every reconciliation —
+> comes from an Education instance. `ModeAgnostic` is the production default and has never
+> successfully completed a scan anywhere. Mode detection is therefore not the blocker; mode
+> coverage is. Detecting `licensed` would select a path with zero live evidence. The belief that
+> the day-01/02/31 rule is Education-only is also unverified; if it is general, the production
+> default is wrong for every user. Unit B requires one licensed TallyPrime instance and the same
+> reconciliation. Until then, no positive claim may be made that Unit A works on licensed Tally.
 
 ---
 

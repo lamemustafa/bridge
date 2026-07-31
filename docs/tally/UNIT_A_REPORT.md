@@ -1,18 +1,20 @@
 # Unit A — Outstandings Implementation Report
 
-Status: **in progress, unmerged**  
-Branch: `feat/tally-outstandings-slice`  
+Status: **complete for Unit A scope, unmerged**
+
+Branch: `feat/tally-outstandings-slice`
+
 Base: `d9ee4aa` (`fix/tally-p0b-rectify-20260729`), which is not merged into `master`
 
 ## Implementation and evidence
 
 | Item | Built | Evidence | Remaining |
 | --- | --- | --- | --- |
-| Request | Closed `VoucherOutstandingsV1` collection definition, pinned company, a typed narrow date partition plus `$AlterID > N AND $AlterID <= M`, one outstandings-only `ALLLEDGERENTRIES.*` variant, and no compute/function-expression slot. A broad `DateWindow` cannot cross the sealed request boundary; only a `NarrowDateWindow` of at most 31 calendar days can. Date legality is compatibility-profiled: detected Education remains restricted to day 01/02/31, while licensed/unknown mode permits ordinary boundaries and relies on I12. The paired company extent requests `ALTVCHID` as the voucher high-water. The sealed request type is the only input admitted to the 40 MiB transport method; the general cap stays 32 MiB | Request-shape tests reject missing date/AlterID filters, compute, self-count and curated bill paths; compile-fail tests prove neither raw XML nor a broad reporting period can become a sealed request; ruling-4 regressions accept day 15 in mode-agnostic mode and reject an out-of-span returned voucher as Partial; impossible `20240631` is rejected and partitioning walks through `20240630` with `next_day` | Production sizing remains blocked on a larger ordered/local corpus that actually segments. The selected-company runtime also needs a reviewed endpoint-bound mode source before production admission; live reconciliation remains manual and feature-gated |
+| Request | Closed `VoucherOutstandingsV1` collection definition, pinned company, a typed narrow date partition plus `$AlterID > N AND $AlterID <= M`, one outstandings-only `ALLLEDGERENTRIES.*` variant, and no compute/function-expression slot. A broad `DateWindow` cannot cross the sealed request boundary; only a `NarrowDateWindow` of at most 31 calendar days can. Date legality is compatibility-profiled: detected Education remains restricted to day 01/02/31, while licensed/unknown mode permits ordinary boundaries and relies on I12. The paired company extent requests `ALTVCHID` as the voucher high-water. The sealed request type is the only input admitted to the 40 MiB transport method; the general cap stays 32 MiB | Request-shape tests reject missing date/AlterID filters, compute, self-count and curated bill paths; compile-fail tests prove neither raw XML nor a broad reporting period can become a sealed request; ruling-4 regressions accept day 15 in mode-agnostic mode and reject an out-of-span returned voucher as Partial; impossible `20240631` is rejected and partitioning walks through `20240630` with `next_day` | None for Unit A. Production-scale plan redesign and licensed-mode coverage belong to Unit B |
 | Parser | Strict collection-envelope parser with narrow replacement of illegal XML numeric character references. Company extent deserializes every returned company, selects exactly one by expected GUID, and only then validates its response name/attribute; collection order is never identity evidence | Real `&#4;` capture; real wildcard capture with 75 vouchers, 28 `New Ref`, 24 `Agst Ref`; real-capture-derived multi-company ordering and duplicate-GUID regressions | None for the verified response shapes |
-| Completeness | `CompleteSegment` / `CompleteScan` remain distinct from `PartialScan`; paired encoded SHA-256, byte length and row agreement; company pin; exact contiguous `0..ALTVCHID` budget coverage inside every narrow date partition; and exact date-axis tiling of the full `[BooksFrom, LastVoucherDate]` reporting period. A paired zero-row AlterID slice is complete on the budget axis. Empty date partitions are admissible only inside the exact whole-scan tiling; an all-empty whole book with `ALTVCHID > 0` is typed Partial, while `ALTVCHID == 0` is Complete. Optional deletion-sensitive corroboration uses a strictly wider date window, never an adjacent AlterID range. A preflight and runtime hard cap refuse more than 128 segment pairs. Every paired extent/segment read is separated and followed by a status health check | Interior-empty completion; forged whole-book false-empty rejection; zero-high-water completion; I12/out-of-range rejection; wider-date contradiction rejection; plan-boundary and adaptive-shrink budget tests; exact complete scans on both accepted ports | Production width remains deliberately absent |
+| Completeness | `CompleteSegment` / `CompleteScan` remain distinct from `PartialScan`; paired encoded SHA-256, byte length and row agreement; company pin; exact contiguous `0..ALTVCHID` budget coverage inside every narrow date partition; and exact date-axis tiling of the full `[BooksFrom, LastVoucherDate]` reporting period. A paired zero-row AlterID slice is complete on the budget axis. Empty date partitions are admissible only inside the exact whole-scan tiling; an all-empty whole book with `ALTVCHID > 0` is typed Partial, while `ALTVCHID == 0` is Complete. Optional deletion-sensitive corroboration uses a strictly wider date window, never an adjacent AlterID range. A preflight and runtime hard cap refuse more than 128 segment pairs. Every paired extent/segment read is separated and followed by a status health check | Interior-empty completion; forged whole-book false-empty rejection; zero-high-water completion; I12/out-of-range rejection; wider-date contradiction rejection; plan-boundary and adaptive-shrink budget tests; exact complete scans on both accepted ports | None for Unit A; books beyond the bounded in-memory plan return explicit Partial |
 | Compute | Exact-decimal bill lifecycle, receivable/payable totals, four receivable ageing amount buckets, matching receivable bill-count buckets, top parties and oldest-bill age. As-of is an explicit typed input; production supplies today's local calendar date and the exit harness supplies `20260731` | Real wildcard fixture computes 223,055.4 receivable / 295,424.8 payable; bounded live ports both compute 600 / 600; synthetic lifecycle tests prove settled/payable bills are excluded from receivable counts and changing only as-of preserves totals/counts while moving ageing buckets; both complete live books match ₹45,14,597 / 48 / 4-4-4-36 | None for the accepted reconciliation corpus |
-| Surface | One thin Tauri command and one outstandings screen with totals, ageing, top exposure, freshness, loading, error and Partial states. Partial copy reflects date-axis completeness, distinguishes pre-dispatch sizing/plan refusal from an attempted read, and retains the restart-before-next-sync instruction for deadline/latency stops | Eight frontend tests plus TypeScript/Vite build from the current worktree; focused copy regressions reject the superseded empty/adjacent explanation; command delegates to runtime and owns no transport handle | Default production remains Partial until a real segmented corpus supports a production width |
+| Surface | One thin Tauri command and one outstandings screen with totals, ageing, top exposure, freshness, loading, error and Partial states. Partial copy reflects date-axis completeness, distinguishes pre-dispatch sizing/plan refusal from an attempted read, and retains the restart-before-next-sync instruction for deadline/latency stops | Eight frontend tests plus TypeScript/Vite build from the current worktree; focused copy regressions reject the superseded empty/adjacent explanation; command delegates to runtime and owns no transport handle | None for Unit A |
 
 ## Live evidence
 
@@ -51,8 +53,9 @@ Owner ruling 3 retracted AlterID-only segmentation after measuring the same `0..
 AlterID span scanned, not rows returned, and is non-monotonic. The request boundary now requires
 both a narrow date partition and an AlterID range. The runtime has no production initial width:
 it returns typed Partial `outstandings_segment_sizing_uncalibrated` before endpoint admission
-until the ordered bill-bearing corpus produces reviewed calibration evidence. Aarav is retained
-for protocol, completeness and failure-mode checks only and cannot tune the policy.
+and emits no wildcard request. Ruling 8 later superseded the premise that a calibrated constant
+could fix production-scale planning; that redesign belongs to Unit B. Aarav is retained for
+protocol, completeness and failure-mode checks only and cannot tune the policy.
 
 Owner ruling 4 corrected the universal date-boundary type. The day 01/02/31 restriction now
 belongs only to an explicitly detected Educational compatibility profile. Licensed or unknown
@@ -86,6 +89,11 @@ repeatability, not a deadline-fitting split. Production therefore continues retu
 behind the non-default `live-calibration-harness` feature, in a constructor named and fixed for
 the ignored Billwise Lab reconciliation check; no generic width setter exists, and a default-build
 compile-fail doctest proves that constructor is unreachable.
+
+Ruling 8 subsequently established that this absence is not a Unit A blocker and that no single
+width can repair the unconditional O(`D × H`) plan. The feature-bound width remains sufficient
+for Unit A's one-company reconciliation; conditional production-scale subdivision moves to
+Unit B.
 
 The same ruling corrected Billwise Lab's live extent to `LastVoucherDate=20260702`. The native
 ageing target remains explicitly as of `20260731`, so runtime computation now accepts a typed
@@ -171,7 +179,11 @@ to Unit A.
   and `cargo clippy --workspace --all-targets -- -D warnings` is clean.
 - Frontend copy/selection tests (8), type check and production build: pass.
 
-## Remaining evidence and assumptions
+## Unit B follow-up — production-scale planning and licensed coverage
+
+These are not Unit A blockers. Ruling 8 moves them to Unit B because closing either requires
+persistence or external licensed hardware, both outside this unit's in-memory, Education-tested
+scope.
 
 1. The owner-approved safety policy is implemented: 40 MiB only for the sealed wildcard
    request, 28 MiB target, unchanged 20-second deadline, no production initial AlterID width,
@@ -181,20 +193,23 @@ to Unit A.
    it may choose or change a segment width. The already measured one-day `0..400` result is not
    calibration evidence and must not be rerun without a separate protocol reason.
 3. The accepted ordered corpus exists and three comparable samples prove its full 252-ID span
-   is repeatable. They cannot calibrate a production width because no sample split the corpus.
-   A new ordered/local corpus with a materially larger `ALTVCHID` is required; building it is
-   outside Unit A.
+   is repeatable. The current plan unconditionally scans `0..ALTVCHID` inside every date
+   partition, so its work is O(`D × H`) regardless of width. This is correctness-preserving:
+   editing an old voucher can give it a high AlterID, so date/AlterID locality cannot be assumed.
+   Unit B must default to one `0..H` range per date partition and conditionally subdivide only
+   partitions projected to exceed budget, using persisted per-endpoint observations rather than
+   a constant derived from Aarav.
 4. The exact complete-book exit checks remain feature-gated and ignored by default. Their one
    authorised invocation per port produced 220 vouchers, 48 open bills, ₹45,14,597 receivable
    and ageing counts 4/4/4/36 on both SKUs.
-5. The target-bound harness can use the owner-attested Educational profile, but the default
-   selected-company runtime has no trusted mode input. Persisted company profiles provide
-   endpoint/GUID identity only, the direct client probe intentionally reports `Unknown` / no
-   mode, and capability snapshots can store mode but are not bound into this command. Unit A's
-   in-memory scope excludes adding mirror coupling as a workaround. Default production must not
-   infer mode from port or company identity. Once a width is admitted, a reviewed endpoint-bound
-   mode source is also required for Educational reads to complete reliably; absent evidence
-   remains mode-agnostic and I12 fails closed.
+5. Bridge has never run against a licensed Tally. Every timing, boundary and reconciliation
+   measurement is from Education instances; `ModeAgnostic` has never completed a live scan.
+   The day-01/02/31 rule being Education-only is believed, not verified. Unit B needs a licensed
+   TallyPrime instance and the same reconciliation before any positive licensed-mode claim.
+6. `SegmentPlan::new` is a lower-bound estimate because the shared trend guard may shrink width
+   after preflight, increasing later partitions' range counts. The execution cap fails closed,
+   but only after spending earlier requests. Unit B must plan from the minimum allowed width or
+   re-plan before the next request whenever width shrinks.
 
 ## Exit-criterion audit
 
@@ -208,24 +223,22 @@ to Unit A.
 | Partial cannot become complete implicitly | Distinct typestates and compile-fail doctest | Proven |
 | Paired reads detect truncation or mutation | Encoded SHA-256, byte length, raw row count and parsed rows must agree; same-length mutation regression fails closed | Proven offline; bounded pairs agreed live on both ports |
 | Empty partitions use date-axis completeness | Every paired zero-row AlterID slice remains a complete budget slice only after byte/digest/row agreement; exact `[BooksFrom, LastVoucherDate]` tiling admits interior empty partitions. The optional I5 witness accepts only an already-Complete empty partition and a strictly wider paired date response with rows outside it | Proven offline; forged all-empty whole book with `ALTVCHID > 0` is Partial, `ALTVCHID == 0` is Complete, and an in-window wider-witness row is rejected |
-| Segments are contiguous, non-overlapping and bounded | `NarrowDateWindow` partitions prove exact reporting-period coverage; each partition separately proves half-open/closed `0..ALTVCHID` coverage. Preflight computes `D × ceil(H/W)`, admits at most 128 pairs, and a non-constructible-without-admission runtime budget stops adaptive shrinking from exceeding the same cap | Proven offline; initial width intentionally absent in production |
-| Date-boundary compatibility and I12 | Recognized Tally product plus detected Education/Educational mode selects strict day 01/02/31 boundaries; licensed/unknown/absent/inconsistent evidence accepts arbitrary valid dates. The first live exit attempt used the absent-evidence fallback and failed closed on an Education-adjusted span; the target harness then completed with its owner-attested Educational profile | Proven live for both accepted Education instances; licensed behavior remains untested by ruling |
+| Segments are contiguous, non-overlapping and bounded | `NarrowDateWindow` partitions prove exact reporting-period coverage; each partition separately proves half-open/closed `0..ALTVCHID` coverage. Preflight computes `D × ceil(H/W)`, admits at most 128 pairs, and a non-constructible-without-admission runtime budget stops adaptive shrinking from exceeding the same cap | Proven for Unit A; production-scale conditional subdivision and preflight re-planning belong to Unit B |
+| Date-boundary compatibility and I12 | Recognized Tally product plus detected Education/Educational mode selects strict day 01/02/31 boundaries; licensed/unknown/absent/inconsistent evidence accepts arbitrary valid dates. The first live exit attempt used the absent-evidence fallback and failed closed on an Education-adjusted span; the target harness then completed with its owner-attested Educational profile | Proven live for both accepted Education instances; licensed coverage belongs to Unit B and no positive claim is made |
 | 40/32/28/20 resource policy | Sealed outstandings request is the only 40 MiB API input; general cap 32 MiB, target 28 MiB, deadline 20 s | Proven offline |
 | Exact outstandings calculation | Exact-decimal lifecycle tests and real wildcard fixture totals; identical scan at two as-of dates preserves receivable/payable totals and open-bill count while changing ageing buckets; both accepted live ports match the native-report target | Proven live for the accepted corpus |
-| Tauri command and screen | Thin command delegates to runtime; current TypeScript and Vite production build pass | Proven buildable; final live rendering pending |
+| Tauri command and screen | Thin command delegates to runtime; current TypeScript and Vite production build pass; the command produced the exact complete live reports consumed by the screen contract, whose Complete and Partial states are covered offline | Proven for Unit A |
 | Complete-book run on ports 9000 and 9001 | The exact target-bound check admits corpus-bound width 252 and owner-attested Educational boundaries only under non-default `live-calibration-harness`, takes explicit as-of `20260731`, and stays ignored. Default builds have no width/profile constructor. It completed in 8.30 s / 8.93 s with identical accounting results | Proven live on both ports; encoded payload sizes differ by SKU |
-| Ordered-corpus calibration evidence | Three separate port-9000 invocations used the identical `20260701..20260731`, `0..252` wildcard shape. All six reads were Complete at 280,221 bytes and 106–135 ms; surrounding health checks passed; byte-identical artifacts are retained | Repeatability proven, production sizing not proven: width equalled high-water and never segmented |
+| Ordered-corpus calibration evidence | Three separate port-9000 invocations used the identical `20260701..20260731`, `0..252` wildcard shape. All six reads were Complete at 280,221 bytes and 106–135 ms; surrounding health checks passed; byte-identical artifacts are retained | Repeatability proven; production-scale planning is Unit B |
 | Full current Rust workspace test run | Current `cargo test --workspace` completed with no failures, including listener-backed transport tests and four compile-fail doctests; workspace clippy is clean with warnings denied | Proven |
 | Native Tally report reconciliation | Both ports produced 48 open bills, ₹45,14,597 receivable and ageing bill counts 4/4/4/36 as of `20260731` | Matches the owner-accepted target independently derived from raw XML and Tally's native Bills Receivable export |
 
-Unit A is therefore **not complete**. The accepted corpus supplied three comparable live
-samples, and ruling 6 resolved the empty-period completeness blocker on the date axis. Ruling 7
-correctly withheld a production width because those samples never split the 252-ID corpus.
-Production sizing remains blocked on a larger ordered/local corpus that actually exercises
-segmentation. Production admission also needs a reviewed way to bind detected mode to this
-endpoint-selected read path; the current stored company profile is not that evidence. The
-corpus-bound, feature-gated reconciliation check itself is now proven on both accepted Tally
-instances; it does not supply a default width or a general production mode override.
+Per owner ruling 8, Unit A is therefore **complete for its stated scope**. The feature-gated,
+company-bound reconciliation executed 27 paired partitions and matched both the native Bills
+Receivable report and the independent raw-XML computation on ports 9000 and 9001. I12 also
+proved the promised explicit-Partial path by catching the first mode-agnostic live fault before
+totals were emitted. Production-scale conditional subdivision and licensed-Tally coverage are
+the named Unit B follow-ups above; they do not reopen this completed in-memory slice.
 
 ## Migration, security and rollback
 
