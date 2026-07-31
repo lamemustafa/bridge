@@ -55,8 +55,9 @@
 
 #### Sources for §2.1–2.4
 
-Every claim in this section that drives a ruling is traceable to public vendor
-documentation, listed here so any contributor can re-check or refresh it:
+Public vendor documentation behind the claims in this section, listed so any
+contributor can re-check or refresh it. **One ruling-driving claim is not
+covered — see the Finsights gap below.**
 
 - **Tally native** — [Import data](https://help.tallysolutions.com/import-data-in-tally/),
   [Understanding Excel import & mapping templates](https://help.tallysolutions.com/getting-started-with-importing-data-into-tallyprime/),
@@ -69,6 +70,19 @@ documentation, listed here so any contributor can re-check or refresh it:
 - **CredFlow** — [company setup / connector requirements](https://credflow.freshdesk.com/support/solutions/articles/82000909704-how-to-add-company-for-tally-software-).
 - **AI Accountant** — [Tally integration](https://www.aiaccountant.com/blog/tally-integration-with-ai-accountant),
   [chart-of-accounts mapping](https://www.aiaccountant.com/blog/chart-of-accounts-ai-mapping).
+- **Finsights** — **no verifiable citation. See the gap below.**
+
+**Open gap — the Finsights 24-hour deletion latency is uncited, and a wedge
+rests on it.** §2.1 states that Finsights propagates Tally deletions only every
+24 hours; §0 repeats it as market validation and **§4.2 leans on it directly**
+to argue Drift Sentinel is the acquisition wedge ("Finsights takes 24h to
+notice deletions"). That figure originates from vendor-published help material
+that could not be re-fetched at the time of writing (`finsights.biz` returned
+HTTP 403), so it is recorded here as **vendor-stated, not independently
+measured, and currently unverifiable from this repo.** It is a competitor
+behaviour we have never observed ourselves. Treat the wedge argument as
+provisional until someone re-fetches the vendor page or measures the latency
+directly; do not cite the number onward as established fact.
 
 **Evidence grades within the table.** Mechanism, sync model and documented
 behaviour come from the vendor documentation above. Scale figures ("10k+ CA
@@ -83,10 +97,17 @@ as directional.
 > private lamemustafa knowledge hub rather than in this public repo, because
 > they are commercially sensitive. **No ruling in this document rests on that
 > private material** — the rulings below follow from the public sources above
-> plus this repo's own live Tally evidence, and a contributor without hub
+> plus **§8's recorded live-probe observations**, and a contributor without hub
 > access can verify and challenge all of them. Where private research informed
 > a *prioritisation* rather than a finding, it is marked inline as an internal
 > hypothesis — see §2.4.
+>
+> **Be precise about what "live evidence" means here.** §8 is unsigned prose
+> from Education-mode probing. The formal evidence system is **empty**: every
+> compatibility-matrix cell is `unknown` with `evidence_id: null` (§1 says so
+> outright — "the evidence product has no evidence"). Nothing in this plan may
+> be treated as compatibility-qualified, and no claim here is backed by a
+> licensed instance, because Bridge has never run against one.
 
 ### 2.2 Structural takeaways
 1. **The on-prem connector is unavoidable and Bridge already is one** — with a stronger engineering base than the connectors CAs complain about.
