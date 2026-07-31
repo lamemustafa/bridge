@@ -53,10 +53,40 @@
 | **Tally native** (the platform threat) | — | — | — | Built-in GSTR-2B download + recon with granular status buckets (resolution still manual, per-company); TallyPrime 6.0 connected banking; 7.x AI features |
 | **DIY long tail** | File-based XML import | Gateway of Tally → Import | One-way | NIKASH converters, TaxGuru VBA recon (6–10 hrs/GSTIN/month VLOOKUP baseline) — the actual majority workflow |
 
-> Deeper landscape (Zoho/Munim/Open/EnKash/GST connectors/Tally-native remote),
-> cited competitor pricing, and a UX teardown of the four leading flows are held
-> privately in the lamemustafa knowledge hub, not in this public repo. Their
-> findings confirm every ruling below and sharpen the UX bets (§ Now/Next).
+#### Sources for §2.1–2.4
+
+Every claim in this section that drives a ruling is traceable to public vendor
+documentation, listed here so any contributor can re-check or refresh it:
+
+- **Tally native** — [Import data](https://help.tallysolutions.com/import-data-in-tally/),
+  [Understanding Excel import & mapping templates](https://help.tallysolutions.com/getting-started-with-importing-data-into-tallyprime/),
+  [Import FAQ](https://help.tallysolutions.com/import-data-faq/),
+  [Data-exception resolution](https://help.tallysolutions.com/tally-prime/import-data/data-exceptions-resolutions-in-tallyprime/),
+  [Auto-create vouchers from bank statements](https://help.tallysolutions.com/auto-create-vouchers/).
+- **Vyapar TaxOne** — [bank-statement import help](https://taxone.vyapar.com/help/articles/import-the-bank-statement).
+- **Biz Analyst** — [data entry](https://help.bizanalyst.in/features/data-entry/how-to-create-sales-invoice),
+  [sync-failure behaviour](https://help.bizanalyst.in/biz-analyst-manual/support/sync-issues/all-figures-showing-0-in-mobile-app).
+- **CredFlow** — [company setup / connector requirements](https://credflow.freshdesk.com/support/solutions/articles/82000909704-how-to-add-company-for-tally-software-).
+- **AI Accountant** — [Tally integration](https://www.aiaccountant.com/blog/tally-integration-with-ai-accountant),
+  [chart-of-accounts mapping](https://www.aiaccountant.com/blog/chart-of-accounts-ai-mapping).
+
+**Evidence grades within the table.** Mechanism, sync model and documented
+behaviour come from the vendor documentation above. Scale figures ("10k+ CA
+firms", "1M+ installs, 4.2★") are **vendor or app-store marketing claims,
+reproduced as claims, not independently audited.** Complaint patterns are
+**review-signal, not measurement.** Treat the first as citable, the second two
+as directional.
+
+> **What is held privately, and what does not depend on it.** Competitor
+> *pricing*, a synthesised UX teardown, and a deeper landscape sweep
+> (Zoho/Munim/Open/EnKash/GST connectors/Tally-native remote) live in the
+> private lamemustafa knowledge hub rather than in this public repo, because
+> they are commercially sensitive. **No ruling in this document rests on that
+> private material** — the rulings below follow from the public sources above
+> plus this repo's own live Tally evidence, and a contributor without hub
+> access can verify and challenge all of them. Where private research informed
+> a *prioritisation* rather than a finding, it is marked inline as an internal
+> hypothesis — see §2.4.
 
 ### 2.2 Structural takeaways
 1. **The on-prem connector is unavoidable and Bridge already is one** — with a stronger engineering base than the connectors CAs complain about.
@@ -74,6 +104,13 @@
 - **Audit/verification** ("what changed since I signed off" — served by *nobody*).
 
 ### 2.4 UX patterns to steal / fix
+
+> **Internal hypothesis — prioritisation only.** *Which* of these patterns to build first
+> was ranked with the help of private comparative research (see §2.1 Sources). The
+> observations themselves are all traceable to the public vendor documentation cited there;
+> the ordering is an internal bet and should be challenged on its merits, not accepted on
+> authority.
+
 **Steal:** review-before-post as the *only* path to Tally (Suvit); saved mapping templates; maker-checker (AI Accountant); Tally's own recon-bucket vocabulary; duplicate detection made visible.
 **Fix (the industry's sins):** silent sync failure and single green dots (show *last-verified* vs *latest-attempt* as two timestamps, always); stale data without self-degrading freshness; "posted" claims from HTTP counters (post ≠ verified until re-read); errors in XML language instead of accountant language; black-box AI suggestions (show the rationale).
 
