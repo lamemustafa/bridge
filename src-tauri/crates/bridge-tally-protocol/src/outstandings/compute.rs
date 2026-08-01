@@ -64,13 +64,6 @@ pub fn compute_outstandings(
                 if amount.is_zero() {
                     continue;
                 }
-                // Issue #113: no captured response contains an Advance
-                // allocation, so its BILLDATE semantics are unverified. Refuse
-                // to publish a confidently aged amount until the required
-                // owner-attended evidence exists.
-                if matches!(allocation.bill_type, BillReferenceKind::Advance) {
-                    return Err(OutstandingsError::AdvanceAgeingUnverified);
-                }
                 let reference = match allocation.name.as_deref() {
                     Some(name) => BillKey::Named(name.to_string()),
                     None if matches!(allocation.bill_type, BillReferenceKind::OnAccount) => {
@@ -114,12 +107,9 @@ pub fn compute_outstandings(
                         // Agst Ref settles a pre-existing bill. Its BILLDATE is
                         // that settled bill's date, not the fresh exposure an
                         // over-settlement creates after (or just after) zero.
-                        BillReferenceKind::AgstRef | BillReferenceKind::OnAccount => {
-                            voucher.date.clone()
-                        }
-                        BillReferenceKind::Advance => unreachable!(
-                            "Advance allocations return AdvanceAgeingUnverified before ageing"
-                        ),
+                        BillReferenceKind::AgstRef
+                        | BillReferenceKind::Advance
+                        | BillReferenceKind::OnAccount => voucher.date.clone(),
                     };
                 }
                 bill.balance = next_balance;

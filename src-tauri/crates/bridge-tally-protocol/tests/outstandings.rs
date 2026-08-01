@@ -1036,19 +1036,19 @@ fn advance_with_distinct_bill_date_refuses_to_publish_an_ageing_bucket() {
     .expect("pair verifies") else {
         panic!("identical replies must verify complete")
     };
-    let ScanResult::Complete(scan) = assemble_scan(
+    let result = assemble_scan(
         extent.company().clone(),
         window,
         capture_high_water(),
         vec![SegmentVerification::Complete(segment)],
-    ) else {
-        panic!("scan assembles")
-    };
+    );
 
-    assert_eq!(
-        compute_outstandings(&scan, TallyDate::parse("20260415").unwrap()),
-        Err(OutstandingsError::AdvanceAgeingUnverified),
-        "an Advance must not be placed into a voucher-date bucket without live evidence"
+    assert!(
+        matches!(
+            result,
+            ScanResult::Partial(partial) if partial.reason_code == "advance_ageing_unverified"
+        ),
+        "an Advance must become a typed Partial rather than enter a voucher-date bucket"
     );
 }
 

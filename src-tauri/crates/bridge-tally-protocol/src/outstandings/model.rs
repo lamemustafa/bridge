@@ -64,7 +64,6 @@ pub enum OutstandingsError {
     CompanyIdentityMismatch,
     InvalidResponse(&'static str),
     InvalidAmount,
-    AdvanceAgeingUnverified,
     ArithmeticOverflow,
 }
 
@@ -77,7 +76,6 @@ impl fmt::Display for OutstandingsError {
             Self::CompanyIdentityMismatch => "Tally returned a different company identity",
             Self::InvalidResponse(code) => code,
             Self::InvalidAmount => "Tally returned an invalid amount",
-            Self::AdvanceAgeingUnverified => "advance_ageing_unverified",
             Self::ArithmeticOverflow => "outstandings arithmetic exceeded the exact-decimal bound",
         })
     }

@@ -2,9 +2,10 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 use super::{
-    parser::parse_segment, AlterIdRange, CompanyBookExtent, CompleteScan, CompleteSegment,
-    DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness, OutstandingsError,
-    PartialScan, PinnedCompany, ScanResult, SegmentVerification, Voucher, VoucherAlterIdHighWater,
+    parser::parse_segment, AlterIdRange, BillReferenceKind, CompanyBookExtent, CompleteScan,
+    CompleteSegment, DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness, MoneyValue,
+    OutstandingsError, PartialScan, PinnedCompany, ScanResult, SegmentVerification, Voucher,
+    VoucherAlterIdHighWater,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -286,6 +287,14 @@ pub fn assemble_scan(
             }
         }
     }
+    // Issue #113: no captured response contains a posted non-zero Advance
+    // allocation. Its BILLDATE semantics are therefore unverified, so return
+    // the scan's typed Partial instead of letting computation publish a
+    // confidently aged amount. The guard requires owner-attended evidence to
+    // remove; documentation or inference is not enough.
+    if vouchers.values().any(has_unverified_advance_ageing) {
+        return ScanResult::Partial(PartialScan::new("advance_ageing_unverified"));
+    }
     ScanResult::Complete(CompleteScan {
         company,
         reporting_window,
@@ -293,6 +302,18 @@ pub fn assemble_scan(
         vouchers: vouchers.into_values().collect(),
         encoded_bytes,
     })
+}
+
+fn has_unverified_advance_ageing(voucher: &Voucher) -> bool {
+    !voucher.cancelled
+        && !voucher.deleted
+        && !voucher.optional
+        && voucher.ledger_entries.iter().any(|entry| {
+            entry.bill_allocations.iter().any(|allocation| {
+                matches!(allocation.bill_type, BillReferenceKind::Advance)
+                    && matches!(&allocation.amount, MoneyValue::Exact(amount) if !amount.is_zero())
+            })
+        })
 }
 
 /// Merge individually complete narrow-date scans into the extent's full-book scan.
