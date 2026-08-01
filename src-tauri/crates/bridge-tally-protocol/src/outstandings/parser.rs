@@ -190,8 +190,6 @@ pub(super) fn parse_segment(
         .into_iter()
         .map(|raw| convert_voucher(raw, reporting_window, alter_id_range))
         .collect::<Result<Vec<_>, _>>()?;
-    // Bind the response to the pinned company, not just the name-selected
-    // request, before its financial rows can be used.
     for voucher in &vouchers {
         if !master_guid_belongs_to_company(&voucher.guid, company.guid()) {
             return Err(OutstandingsError::InvalidResponse(
@@ -221,6 +219,15 @@ pub(super) fn parse_segment(
 }
 
 fn master_guid_belongs_to_company(master_guid: &str, company_guid: &str) -> bool {
+    // Bind the response to the pinned company, not just the request.
+    //
+    // `SVCURRENTCOMPANY` selects by NAME. If a second loaded company shares the
+    // selected name, or the name binding shifts mid-scan, Tally can return that
+    // other company's vouchers while the paired company collection still finds
+    // the expected GUID among all loaded companies -- so date checks, AlterID
+    // range checks, and the closing extent all pass, and another company's
+    // financial data is published under the pinned name.
+    //
     // TALLY_PROTOCOL_REFERENCE.md:632 records that every master GUID begins
     // with its company GUID; require the documented `-<master-id>` delimiter
     // as response identity evidence instead of accepting the bare company GUID.
