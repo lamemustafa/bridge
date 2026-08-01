@@ -210,10 +210,19 @@ def main():
             nm = re.search(r'<NAME>([^<]*)', a)
             ty = re.search(r'<BILLTYPE>([^<]*)', a)
             am = re.search(r'<AMOUNT>([^<]*)', a)
-            if not (nm and ty and am and nm.group(1).strip()):
+            if not (nm and ty and nm.group(1).strip()):
                 continue
+            # Production parses amounts with ExactDecimal: an EMPTY amount is not
+            # zero, a missing one is an error, and forms like `1e3` are rejected.
+            # `float()` accepts all three, so the verifier could measure buckets
+            # from values the product refuses.
+            raw_amount = (am.group(1) if am else '').strip()
+            if not re.fullmatch(r'-?\d+(\.\d+)?', raw_amount):
+                print(f'FAIL: allocation amount {raw_amount!r} is not an exact decimal; '
+                      "production's ExactDecimal rejects it.")
+                return 1
             key = nm.group(1).strip()
-            val = float(am.group(1) or 0)
+            val = float(raw_amount)
             # Production ages a bill from Tally's own BILLDATE when supplied,
             # falling back to the voucher date. The verifier must use the same
             # date or it measures a different ageing spread than the product.
@@ -244,6 +253,13 @@ def main():
         except ValueError:
             continue
         age = (today - dt).days
+        if age < 0:
+            # production's days_between rejects a bill dated after the report's
+            # as-of date; a negative age silently landed such a bill in 0-30 and
+            # could supply the final bucket needed for CORPUS ACCEPTED.
+            print(f'FAIL: open bill {k!r} is dated {v["date"]}, after the '
+                  f'reconciliation as-of {today:%Y%m%d}.')
+            return 1
         b = '0-30' if age <= 30 else '31-60' if age <= 60 else '61-90' if age <= 90 else '90+'
         buckets[b] += 1
     print(f'\n[4] open bills by age: {buckets}')

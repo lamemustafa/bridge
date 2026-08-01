@@ -67,6 +67,14 @@ def post(xml,timeout=300,tag='q'):
     body=raw.decode('utf-8',errors='replace')
     if 'Unknown Request' in body: raise BadShape('Unknown Request, cannot be processed')
     if not re.search(r'<(ENVELOPE|RESPONSE)',body): raise BadShape('unrecognised: %r'%body[:80])
+    # An opening tag is not a complete response. A body truncated before its
+    # closing tag can still carry a full <DATA> section, so row-counting callers
+    # would read a partial capture as authoritative - the same truncation the
+    # production parser fails closed on.
+    if re.search(r'<ENVELOPE',body) and '</ENVELOPE>' not in body:
+        raise BadShape('truncated: <ENVELOPE> never closed (%d bytes)'%len(raw))
+    if re.search(r'<RESPONSE',body) and '</RESPONSE>' not in body:
+        raise BadShape('truncated: <RESPONSE> never closed (%d bytes)'%len(raw))
     return Resp(body,el,len(raw))
 def alive():
     try:
