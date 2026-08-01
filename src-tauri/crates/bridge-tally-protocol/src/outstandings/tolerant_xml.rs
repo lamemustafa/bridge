@@ -136,10 +136,12 @@ mod tests {
         };
 
         let illegal_reference = parse("<A>ACME&#4;LTD</A>");
+        let first_illegal_reference = parse("<A>ACME&#1;LTD</A>");
         let literal_encoded_form = parse("<A>ACME\u{fffd}#4;LTD</A>");
         let decimal_replacement_reference = parse("<A>ACME&#65533;#4;LTD</A>");
         let hex_replacement_reference = parse("<A>ACME&#xFFFD;#4;LTD</A>");
 
+        assert_ne!(first_illegal_reference, illegal_reference);
         assert_eq!(illegal_reference, "ACME\u{fffd}#4;LTD");
         assert_eq!(literal_encoded_form, "ACME\u{fffd}#65533;#4;LTD");
         assert_ne!(illegal_reference, literal_encoded_form);
