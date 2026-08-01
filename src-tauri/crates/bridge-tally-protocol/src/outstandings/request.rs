@@ -105,6 +105,7 @@ impl CompanyFetchField {
 
 #[derive(Clone, Copy)]
 enum LedgerFetchField {
+    Guid,
     Name,
     IsBillWiseOn,
     OpeningBalance,
@@ -113,6 +114,7 @@ enum LedgerFetchField {
 impl LedgerFetchField {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::Guid => "GUID",
             Self::Name => "Name",
             Self::IsBillWiseOn => "ISBILLWISEON",
             Self::OpeningBalance => "OPENINGBALANCE",
@@ -132,6 +134,7 @@ const LEDGER_OPENING_DEFINITION: LedgerCollectionDefinition = LedgerCollectionDe
     name: CollectionName::LedgerOpeningCoverageV1,
     object_type: ObjectType::Ledger,
     fetch: &[
+        LedgerFetchField::Guid,
         LedgerFetchField::Name,
         LedgerFetchField::IsBillWiseOn,
         LedgerFetchField::OpeningBalance,

@@ -23,11 +23,6 @@ pub use model::{
 };
 pub use parser::{parse_company_book_extent, parse_ledger_opening_coverage};
 
-/// Test-only view of the tolerant sanitiser so its injectivity can be asserted
-/// from the integration suite without widening the production surface.
-pub fn sanitize_invalid_numeric_references_for_test(xml: &str) -> String {
-    tolerant_xml::sanitize_invalid_numeric_references(xml).into_owned()
-}
 pub(crate) use request::render_ledger_opening_coverage;
 pub(crate) use request::{
     render_company_book_extent, render_outstandings_template, render_outstandings_vouchers,

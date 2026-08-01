@@ -56,6 +56,8 @@ pub(super) struct RawCompany {
 
 #[derive(Deserialize)]
 pub(super) struct RawLedgerMaster {
+    #[serde(rename = "GUID", default)]
+    pub(super) guid: Option<Value>,
     #[serde(rename = "ISBILLWISEON", default)]
     pub(super) bill_wise_on: Option<Value>,
     #[serde(rename = "OPENINGBALANCE", default)]

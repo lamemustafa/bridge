@@ -93,6 +93,7 @@ pub fn parse_company_book_extent(
 /// under-report.
 pub fn parse_ledger_opening_coverage(
     xml: &str,
+    company: &PinnedCompany,
 ) -> Result<LedgerOpeningCoverage, OutstandingsError> {
     require_complete_envelope(xml)?;
     let sanitized = sanitize_invalid_numeric_references(xml);
@@ -102,6 +103,17 @@ pub fn parse_ledger_opening_coverage(
     let ledgers = parsed.body.data.collection.ledgers;
     let mut openings = 0usize;
     for ledger in &ledgers {
+        let ledger_guid = ledger
+            .guid
+            .as_ref()
+            .ok_or(OutstandingsError::InvalidResponse("ledger_guid_missing"))?
+            .text
+            .trim();
+        if !master_guid_belongs_to_company(ledger_guid, company.guid()) {
+            return Err(OutstandingsError::InvalidResponse(
+                "ledger_belongs_to_another_company",
+            ));
+        }
         // Fail closed. `ISBILLWISEON` is in this profile's FETCH list, so an
         // absent or unrecognised value means the response does not match the
         // request. Defaulting to "not bill-wise" would classify a ledger with a
@@ -178,24 +190,8 @@ pub(super) fn parse_segment(
         .into_iter()
         .map(|raw| convert_voucher(raw, reporting_window, alter_id_range))
         .collect::<Result<Vec<_>, _>>()?;
-    // Bind the RESPONSE to the pinned company, not just the request.
-    //
-    // `SVCURRENTCOMPANY` selects by NAME. If a second loaded company shares the
-    // selected name, or the name binding shifts mid-scan, Tally can return that
-    // other company's vouchers while the paired company collection still finds
-    // the expected GUID among all loaded companies -- so the date checks, the
-    // AlterID range checks and the closing extent all pass, and another
-    // company's financial data is published under the pinned name.
-    //
-    // Every master GUID in a company carries the company GUID as its prefix
-    // (TALLY_PROTOCOL_REFERENCE.md), so the response carries its own identity.
-    let expected_guid_prefix = company.guid();
     for voucher in &vouchers {
-        let matches_company = voucher
-            .guid
-            .get(..expected_guid_prefix.len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(expected_guid_prefix));
-        if !matches_company {
+        if !master_guid_belongs_to_company(&voucher.guid, company.guid()) {
             return Err(OutstandingsError::InvalidResponse(
                 "voucher_belongs_to_another_company",
             ));
@@ -220,6 +216,31 @@ pub(super) fn parse_segment(
         vouchers,
         raw_row_count,
     })
+}
+
+fn master_guid_belongs_to_company(master_guid: &str, company_guid: &str) -> bool {
+    // Bind the response to the pinned company, not just the request.
+    //
+    // `SVCURRENTCOMPANY` selects by NAME. If a second loaded company shares the
+    // selected name, or the name binding shifts mid-scan, Tally can return that
+    // other company's vouchers while the paired company collection still finds
+    // the expected GUID among all loaded companies -- so date checks, AlterID
+    // range checks, and the closing extent all pass, and another company's
+    // financial data is published under the pinned name.
+    //
+    // TALLY_PROTOCOL_REFERENCE.md:632 records that every master GUID begins
+    // with its company GUID; require the documented `-<master-id>` delimiter
+    // as response identity evidence instead of accepting the bare company GUID.
+    let Some(prefix) = master_guid.get(..company_guid.len()) else {
+        return false;
+    };
+    let Some(suffix) = master_guid.get(company_guid.len()..) else {
+        return false;
+    };
+    prefix.eq_ignore_ascii_case(company_guid)
+        && suffix
+            .strip_prefix('-')
+            .is_some_and(|master_id| !master_id.is_empty())
 }
 
 fn convert_voucher(
