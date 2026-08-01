@@ -116,4 +116,8 @@ pub(super) struct RawBillAllocation {
     pub(super) bill_type: Option<Value>,
     #[serde(rename = "AMOUNT", default)]
     pub(super) amount: Option<Value>,
+    /// Tally's authoritative date for the bill itself, which can differ from
+    /// the enclosing voucher's date. The wildcard fetch already returns it.
+    #[serde(rename = "BILLDATE", default)]
+    pub(super) bill_date: Option<Value>,
 }

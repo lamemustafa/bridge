@@ -729,3 +729,68 @@ fn a_ledger_missing_bill_wise_state_fails_closed() {
         "an unrecognised bill-wise value must fail closed too"
     );
 }
+
+#[test]
+fn ageing_runs_from_tallys_bill_date_not_the_voucher_date() {
+    // Tally supplies BILLDATE on bill allocations (52 of them in the retained
+    // wildcard capture) and it can differ from the voucher's own date. Ageing
+    // from the voucher date then puts the balance in the wrong bucket and
+    // misreports the oldest-bill age.
+    //
+    // This capture-shaped fixture opens a bill on a voucher dated 20260401
+    // while Tally reports the bill itself as dated 20260101 -- 90 days earlier.
+    let xml = format!(
+        concat!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+            "<VOUCHER REMOTEID=\"r1\">",
+            "<GUID>{guid}-00000001</GUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID>",
+            "<DATE TYPE=\"Date\">20260401</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>",
+            "<VOUCHERNUMBER>1</VOUCHERNUMBER><PARTYLEDGERNAME>Aged Customer</PARTYLEDGERNAME>",
+            "<ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Aged Customer</LEDGERNAME>",
+            "<BILLALLOCATIONS.LIST><NAME>AGED-1</NAME><BILLTYPE>New Ref</BILLTYPE>",
+            "<BILLDATE TYPE=\"Date\">20260101</BILLDATE><AMOUNT>-5000.00</AMOUNT>",
+            "</BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST>",
+            "</VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+        ),
+        guid = COMPANY_GUID
+    );
+
+    let extent = extent();
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
+    let SegmentVerification::Complete(segment) = verify_segment_pair(
+        &xml,
+        &xml,
+        extent.company(),
+        window.clone(),
+        full_alter_id_range(),
+    )
+    .expect("pair verifies") else {
+        panic!("identical replies must verify complete")
+    };
+    let ScanResult::Complete(scan) = assemble_scan(
+        extent.company().clone(),
+        window,
+        capture_high_water(),
+        vec![SegmentVerification::Complete(segment)],
+    ) else {
+        panic!("scan assembles")
+    };
+
+    // As of 20260401, BILLDATE 20260101 is exactly 90 days old -> the 61-90
+    // bucket. From the voucher date the bill would be 0 days old -> 0-30. The
+    // two buckets are disjoint, so this distinguishes the two behaviours.
+    let report =
+        compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()).expect("computes");
+    assert_eq!(report.receivable_total.as_str(), "5000");
+    assert_eq!(
+        report.ageing_bill_counts.days_61_90, 1,
+        "the bill must age from Tally's BILLDATE, not the voucher date"
+    );
+    assert_eq!(
+        report.ageing_bill_counts.days_0_30, 0,
+        "ageing from the voucher date would have put it here"
+    );
+    assert_eq!(report.ageing.days_61_90.as_str(), "5000");
+}

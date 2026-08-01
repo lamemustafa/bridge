@@ -81,21 +81,41 @@ pub fn compute_outstandings(
                         return Err(OutstandingsError::InvalidResponse("bill_reference_missing"))
                     }
                 };
+                // Age from Tally's own BILLDATE when it supplies one. A bill's
+                // date can differ from the date of the voucher that opened it,
+                // and ageing from the voucher date then puts the balance in the
+                // wrong bucket and misreports the oldest-bill age. Fall back to
+                // the voucher date only when the allocation carries no date.
+                let opened_on = allocation
+                    .bill_date
+                    .clone()
+                    .unwrap_or_else(|| voucher.date.clone());
                 let bill = bills
                     .entry((entry.ledger_name.clone(), reference))
                     .or_insert_with(|| OpenBill {
                         balance: ExactDecimal::zero(),
-                        oldest_date: voucher.date.clone(),
+                        oldest_date: opened_on.clone(),
                     });
                 let previous_balance = bill.balance.clone();
                 let next_balance = bill
                     .balance
                     .checked_add(amount)
                     .map_err(|_| OutstandingsError::ArithmeticOverflow)?;
-                if previous_balance.is_zero()
-                    || (!next_balance.is_zero()
-                        && previous_balance.is_negative() != next_balance.is_negative())
+                if previous_balance.is_zero() {
+                    // The bill is being opened (or re-opened after full
+                    // settlement). Age it from Tally's own BILLDATE when it
+                    // supplied one -- that is the authoritative date for the
+                    // bill, and it can precede the voucher that carries it.
+                    bill.oldest_date = opened_on;
+                } else if !next_balance.is_zero()
+                    && previous_balance.is_negative() != next_balance.is_negative()
                 {
+                    // A genuine sign flip: an over-settlement created a fresh
+                    // exposure in the opposite direction. Deliberately the
+                    // VOUCHER date here, because on an `Agst Ref` Tally's
+                    // BILLDATE is the date of the bill being SETTLED, not of the
+                    // settlement -- reusing it would age a brand-new exposure
+                    // from the old bill.
                     bill.oldest_date = voucher.date.clone();
                 }
                 bill.balance = next_balance;
@@ -471,6 +491,7 @@ mod tests {
             ledger_entries: vec![LedgerEntry {
                 ledger_name: party.to_string(),
                 bill_allocations: vec![BillAllocation {
+                    bill_date: None,
                     name: Some(reference.to_string()),
                     bill_type: bill_type.to_string(),
                     amount: MoneyValue::Exact(amount),

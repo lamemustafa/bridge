@@ -125,6 +125,44 @@ would sidestep reconstructing them from vouchers — and would also see opening 
 It remains a live candidate, but it needs a deliberate isolated experiment with someone at the
 Windows box to dismiss a dialog — not an unattended probe while a reconciliation run is pending.
 
+## 4a. Ageing ran from the wrong date — the third corpus blind spot
+
+**VERIFIED 2026-08-01.** Tally emits `<BILLDATE>` on bill allocations — **52 of them in the
+retained wildcard capture** — and the wire model silently discarded it. Ageing ran from
+`voucher.date` instead. When a bill's own date differs from the voucher that carries it, every
+ageing bucket and the oldest-bill age are wrong.
+
+This is in the **original** Unit A computation, not in any review repair. It is now fixed:
+`BILLDATE` is parsed and a bill is aged from it when Tally supplies one.
+
+One distinction is load-bearing and is encoded in the code:
+
+- **Opening a bill** (previous balance zero) ages from `BILLDATE` — Tally's authoritative date,
+  which can precede the voucher carrying it.
+- **A sign flip** (an over-settlement creating a fresh exposure in the opposite direction) ages
+  from the **voucher** date, because on an `Agst Ref` Tally's `BILLDATE` is the date of the bill
+  being *settled*, not of the settlement. Reusing it would age a brand-new exposure from the old
+  bill.
+
+The first attempt at this fix collapsed both cases into one branch and was silently inert: a
+newly inserted bill has a zero balance, so the "previous balance is zero" branch fired on the
+first allocation and overwrote the date. The regression that caught it asserts a bill whose
+`BILLDATE` is 90 days before its voucher lands in the 61–90 bucket, not 0–30.
+
+**Why this matters beyond the bug: it is the third time the accepted corpus could not
+distinguish a correct implementation from an incorrect one.** After width 252 and the ledger
+openings, `Bridge Billwise Lab` opens its bills through Sales vouchers whose `BILLDATE` equals
+the voucher date — so the recorded ageing of 4/4/4/36 matched under both the wrong and the right
+rule. The pattern is now established and should be treated as a standing risk, not an anecdote:
+**a corpus that passes proves the corpus cannot produce the failure, not that the code handles
+it.**
+
+> **The recorded ageing figures are UNCONFIRMED under this fix.** The lab gateways were
+> unreachable when it landed, so the reconciliation could not be re-run. If the re-run moves the
+> ageing buckets, **the new numbers are the correct ones** and 4/4/4/36 was measuring the
+> voucher date. Open bills (48) and total receivable (₹45,14,597) are unaffected — they do not
+> depend on the ageing date.
+
 ## 5. Corpus mutation, recorded
 
 `Aarav Trading Company Demo` was written to. It now carries one extra ledger

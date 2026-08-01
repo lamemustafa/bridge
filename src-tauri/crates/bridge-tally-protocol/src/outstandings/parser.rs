@@ -108,11 +108,20 @@ pub fn parse_ledger_opening_coverage(
         if !bill_wise {
             continue;
         }
+        // Fail closed, like ISBILLWISEON. OPENINGBALANCE is in this profile's
+        // FETCH list, so an absent field means the response does not match the
+        // request -- and treating absence as "no opening" would classify a
+        // ledger carrying a non-zero opening as fully covered, which is exactly
+        // the omission this probe exists to prevent.
         let opening = ledger
             .opening_balance
             .as_ref()
-            .map(|value| value.text.trim().to_string())
-            .unwrap_or_default();
+            .ok_or(OutstandingsError::InvalidResponse(
+                "ledger_opening_balance_missing",
+            ))?
+            .text
+            .trim()
+            .to_string();
         if !opening.is_empty()
             && !matches!(parse_money(opening)?, MoneyValue::Exact(ref v) if v.is_zero())
         {
@@ -279,6 +288,10 @@ fn convert_bill_allocation(
     if raw.amount.is_none() {
         return Err(OutstandingsError::InvalidResponse("bill_amount_missing"));
     }
+    let bill_date = match raw.bill_date {
+        Some(value) if !value.text.trim().is_empty() => Some(parse_date(value.text)?),
+        _ => None,
+    };
     Ok(Some(BillAllocation {
         name,
         bill_type: required(bill_type.text, "bill_type_missing")?,
@@ -287,6 +300,7 @@ fn convert_bill_allocation(
                 .ok_or(OutstandingsError::InvalidResponse("bill_amount_missing"))?
                 .text,
         )?,
+        bill_date,
     }))
 }
 

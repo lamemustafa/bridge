@@ -411,6 +411,10 @@ pub struct BillAllocation {
     pub name: Option<String>,
     pub bill_type: String,
     pub amount: MoneyValue,
+    /// Tally's own date for the bill. Ageing must run from this when present:
+    /// a bill's date can differ from the date of the voucher that opened it,
+    /// and using the voucher date then puts the balance in the wrong bucket.
+    pub bill_date: Option<TallyDate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
