@@ -35,7 +35,7 @@ fn vouchers() -> String {
 }
 const COMPANY_NAME: &str = "Aarav Trading Company Demo";
 const COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
-const PROPTEST_SEED: u64 = 0xB71D_6E_0D_2026_0801;
+const PROPTEST_SEED: u64 = 0xB71D_6E0D_2026_0801;
 
 fn proptest_config() -> ProptestConfig {
     ProptestConfig {

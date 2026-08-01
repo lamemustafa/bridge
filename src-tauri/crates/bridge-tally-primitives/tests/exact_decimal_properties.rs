@@ -6,7 +6,7 @@ use proptest::{
 
 /// This seed is deliberately committed: a failing generated decimal must be
 /// reproducible without relying on an ephemeral test-runner seed.
-const PROPTEST_SEED: u64 = 0xB71D_6E_0D_2026_0801;
+const PROPTEST_SEED: u64 = 0xB71D_6E0D_2026_0801;
 
 fn config() -> Config {
     Config {
