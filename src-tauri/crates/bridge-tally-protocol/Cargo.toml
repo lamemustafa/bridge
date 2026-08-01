@@ -16,6 +16,10 @@ india-tax-observation-parser = []
 bills-payments-observation-parser = []
 bills-native-outstandings-probe = []
 
+[[bin]]
+name = "bridge-tally-test-corpus-verifier"
+path = "src/bin/test_corpus_verifier.rs"
+
 [dependencies]
 anyhow = "1"
 bridge-tally-primitives = { path = "../bridge-tally-primitives" }

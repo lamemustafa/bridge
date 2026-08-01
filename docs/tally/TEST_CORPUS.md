@@ -183,13 +183,18 @@ each month occupies a **contiguous, non-overlapping band of ~18 IDs** (`202404` 
 > Criterion: **worst month's `AlterID` span ≤ 40% of the book's ID range.** Aarav fails this by
 > orders of magnitude — one *day* spans the whole range.
 
-Script: [`scripts/verify-tally-test-corpus.py`](../../scripts/verify-tally-test-corpus.py)
-(uses [`scripts/tally_probe.py`](../../scripts/tally_probe.py)). Checks locality, bill-type
-presence, Education date legality, ageing spread and size, and prints
-`CORPUS ACCEPTED` / `REJECTED`.
+Script: [`scripts/verify-tally-test-corpus.py`](../../scripts/verify-tally-test-corpus.py).
+It performs **no second XML parsing implementation**: it passes captured,
+sealed-profile responses to `bridge-tally-test-corpus-verifier`, which calls
+Bridge's production extent parser, segment parser, scan assembly, and
+outstandings computation. The independent element remains Tally's own native
+report comparison, not a duplicate Bridge parser.
 
 ```bash
-python3 scripts/verify-tally-test-corpus.py "Bridge Billwise Lab"
+python3 scripts/verify-tally-test-corpus.py \
+  --company "Bridge Billwise Lab" --guid "$TALLY_CORPUS_GUID" \
+  --from 20240401 --to 20260702 --as-of 20260731 \
+  --extent-xml /safe/local/extent.xml --voucher-xml /safe/local/vouchers.xml
 ```
 
 **Run it partway through generation, not only at the end** — locality is the one property that
