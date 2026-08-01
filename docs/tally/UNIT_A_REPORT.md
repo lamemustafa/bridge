@@ -251,6 +251,14 @@ proved the promised explicit-Partial path by catching the first mode-agnostic li
 totals were emitted. Production-scale conditional subdivision and licensed-Tally coverage are
 the named Unit B follow-ups above; they do not reopen this completed in-memory slice.
 
+> **Missing evidence — native platform validation.** The Tauri command and the outstandings
+> screen are proven only by TypeScript type-checking, the Vite production build, the frontend
+> copy tests, and offline Rust coverage. **Neither has been exercised on the supported Windows
+> or macOS hosts**, and this change adds a native command plus a new local ledger read. AGENTS.md
+> requires platform-sensitive changes to be validated on affected hosts or to call the missing
+> evidence out explicitly; this note is that call-out, not a substitute for the validation.
+> CI's Windows and macOS jobs compile and test the workspace but do not launch the app.
+
 ## Migration, security and rollback
 
 - Migration impact: none; no schema or persisted mirror state is added.

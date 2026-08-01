@@ -288,13 +288,22 @@ fn convert_bill_allocation(
     if raw.amount.is_none() {
         return Err(OutstandingsError::InvalidResponse("bill_amount_missing"));
     }
+    let bill_type_text = bill_type.text.trim().to_string();
     let bill_date = match raw.bill_date {
         Some(value) if !value.text.trim().is_empty() => Some(parse_date(value.text)?),
+        // A `New Ref` OPENS a bill, and its ageing runs from this date. The
+        // wildcard fetch returns BILLDATE, so absence means the response does
+        // not match the request -- and silently falling back to the voucher
+        // date is exactly the defect this field was added to fix. Fail closed
+        // for the kind that depends on it; other kinds may legitimately omit it.
+        _ if bill_type_text.eq_ignore_ascii_case("New Ref") => {
+            return Err(OutstandingsError::InvalidResponse("bill_date_missing"))
+        }
         _ => None,
     };
     Ok(Some(BillAllocation {
         name,
-        bill_type: required(bill_type.text, "bill_type_missing")?,
+        bill_type: required(bill_type_text, "bill_type_missing")?,
         amount: parse_money(
             raw.amount
                 .ok_or(OutstandingsError::InvalidResponse("bill_amount_missing"))?

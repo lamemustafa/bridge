@@ -21,6 +21,14 @@ import tally_probe as tally
 
 # The accepted corpus's documented reconciliation as-of date. Fixed so the
 # acceptance result depends on the corpus, not on when the check is run.
+
+def xml_escape(value):
+    """Company names are free text and legitimately contain `&` (e.g. "A & B
+    Traders"). Interpolating one raw produces malformed XML and the verifier
+    cannot run against an otherwise valid company."""
+    return (value.replace('&', '&amp;').replace('<', '&lt;')
+                 .replace('>', '&gt;').replace('"', '&quot;'))
+
 RECONCILIATION_AS_OF = datetime.date(2026, 7, 31)
 
 
@@ -33,7 +41,7 @@ def req(frm, to):
     return ('<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST>'
             '<TYPE>Collection</TYPE><ID>VC</ID></HEADER><BODY><DESC><STATICVARIABLES>'
             '<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>'
-            f'<SVCURRENTCOMPANY>{CO}</SVCURRENTCOMPANY>'
+            f'<SVCURRENTCOMPANY>{xml_escape(CO)}</SVCURRENTCOMPANY>'
             f'<SVFROMDATE TYPE="Date">{frm}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE>'
             '</STATICVARIABLES><TDL><TDLMESSAGE>'
             '<SYSTEM TYPE="Formulae" NAME="FW">$Date &gt;= ##SVFromDate AND $Date &lt;= ##SVToDate</SYSTEM>'
@@ -164,7 +172,12 @@ def main():
     # 5. Size
     print(f'\n[5] voucher count: {len(rows)} (target 200-500)')
     if not 200 <= len(rows) <= 500:
-        print('    WARN - outside target range.')
+        # A corpus outside the calibration range must not be ACCEPTED: the range
+        # is what the documented acceptance depends on, and a warning that
+        # leaves `ok` untouched lets a too-small corpus pass on bill types and
+        # ageing spread alone.
+        print('    FAIL - outside the 200-500 calibration range.')
+        ok = False
 
     print('\n==== ' + ('CORPUS ACCEPTED' if ok else 'CORPUS REJECTED - fix before use') + ' ====')
     return 0 if ok else 1
