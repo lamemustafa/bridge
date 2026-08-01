@@ -640,11 +640,10 @@ fn ledger_opening_bills_are_detected_so_a_voucher_only_scan_cannot_claim_complet
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
         "<LEDGER NAME=\"Tracked, No Opening\"><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>",
         "<LEDGER NAME=\"Untracked Bank\"><ISBILLWISEON>No</ISBILLWISEON><OPENINGBALANCE>-90000.00</OPENINGBALANCE></LEDGER>",
-        "<LEDGER NAME=\"No Fields\"></LEDGER>",
         "</COLLECTION></DATA></BODY></ENVELOPE>"
     );
     let coverage = parse_ledger_opening_coverage(covered).expect("ledger collection parses");
-    assert_eq!(coverage.ledgers_seen(), 3);
+    assert_eq!(coverage.ledgers_seen(), 2);
     assert_eq!(coverage.bill_wise_openings(), 0);
     assert!(coverage.is_fully_covered_by_vouchers());
 }
@@ -684,4 +683,49 @@ fn sanitize_for_test(xml: &str) -> String {
     // point is that sanitisation ran without collapsing the two inputs.
     assert!(coverage.is_ok(), "sanitised envelope still parses");
     bridge_tally_protocol::outstandings::sanitize_invalid_numeric_references_for_test(&wrapped)
+}
+
+#[test]
+fn a_bill_literally_named_on_account_does_not_merge_with_the_aggregate() {
+    // The On Account aggregate must be a distinct key VARIANT, not a sentinel
+    // string. Tally bill names are free user text, so a bill genuinely named
+    // "on-account" would otherwise share a key with every unnamed On Account
+    // allocation for that party and reconcile against it, hiding a balance.
+    let xml = concat!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+        "<LEDGER NAME=\"Tracked\"><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    assert!(parse_ledger_opening_coverage(xml).is_ok());
+}
+
+#[test]
+fn a_ledger_missing_bill_wise_state_fails_closed() {
+    // `ISBILLWISEON` is in this profile's FETCH list. Absent means the response
+    // does not match the request; defaulting to "not bill-wise" would classify
+    // a ledger carrying a non-zero opening as fully covered and let a
+    // voucher-only scan claim Complete while omitting its opening bills.
+    let missing = concat!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+        "<LEDGER NAME=\"No Flag\"><OPENINGBALANCE>-12500.00</OPENINGBALANCE></LEDGER>",
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    assert!(
+        matches!(
+            parse_ledger_opening_coverage(missing),
+            Err(OutstandingsError::InvalidResponse(
+                "ledger_bill_wise_state_missing"
+            ))
+        ),
+        "a ledger with no bill-wise state must fail closed, not default to covered"
+    );
+
+    let unrecognised = missing.replace(
+        "<OPENINGBALANCE>",
+        "<ISBILLWISEON>Maybe</ISBILLWISEON><OPENINGBALANCE>",
+    );
+    assert!(
+        parse_ledger_opening_coverage(&unrecognised).is_err(),
+        "an unrecognised bill-wise value must fail closed too"
+    );
 }

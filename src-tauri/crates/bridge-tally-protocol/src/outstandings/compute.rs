@@ -7,6 +7,15 @@ use super::{
     OutstandingsReport, PartyOutstanding,
 };
 
+/// How a bill is identified within one ledger.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum BillKey {
+    /// A bill Tally named via `New Ref` / `Agst Ref`.
+    Named(String),
+    /// The party-scoped `On Account` aggregate, which carries no bill identity.
+    OnAccountAggregate,
+}
+
 struct OpenBill {
     balance: ExactDecimal,
     oldest_date: TallyDate,
@@ -26,7 +35,13 @@ pub fn compute_outstandings(
     if &as_of < scan.window().to() {
         return Err(OutstandingsError::InvalidDateWindow);
     }
-    let mut bills = BTreeMap::<(String, String), OpenBill>::new();
+    // A bill is identified by its ledger plus either a NAMED reference or the
+    // party-scoped On Account aggregate. These must be distinct key variants: a
+    // magic string would collide with an ordinary bill whose reference happens
+    // to be that literal, letting the two reconcile against each other and hide
+    // an open balance. Tally bill names are free user text, so no sentinel
+    // string is safe.
+    let mut bills = BTreeMap::<(String, BillKey), OpenBill>::new();
     let mut vouchers = scan
         .vouchers()
         .iter()
@@ -50,7 +65,7 @@ pub fn compute_outstandings(
                     continue;
                 }
                 let reference = match allocation.name.as_deref() {
-                    Some(name) => name.to_string(),
+                    Some(name) => BillKey::Named(name.to_string()),
                     None if allocation.bill_type.eq_ignore_ascii_case("On Account") => {
                         // On Account carries no bill identity, so Tally treats
                         // it as a party-scoped aggregate. Keying it per voucher
@@ -60,7 +75,7 @@ pub fn compute_outstandings(
                         // and a payable rather than its net balance. Aggregate
                         // by party, matching bridge-tally-core's contract.
                         let _ = (entry_index, allocation_index);
-                        "on-account".to_string()
+                        BillKey::OnAccountAggregate
                     }
                     None => {
                         return Err(OutstandingsError::InvalidResponse("bill_reference_missing"))

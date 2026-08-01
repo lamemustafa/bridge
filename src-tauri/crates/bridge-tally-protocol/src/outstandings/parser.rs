@@ -91,11 +91,20 @@ pub fn parse_ledger_opening_coverage(
     let ledgers = parsed.body.data.collection.ledgers;
     let mut openings = 0usize;
     for ledger in &ledgers {
-        let bill_wise = ledger
-            .bill_wise_on
-            .as_ref()
-            .map(|value| value.text.trim().eq_ignore_ascii_case("Yes"))
-            .unwrap_or(false);
+        // Fail closed. `ISBILLWISEON` is in this profile's FETCH list, so an
+        // absent or unrecognised value means the response does not match the
+        // request. Defaulting to "not bill-wise" would classify a ledger with a
+        // non-zero opening as fully covered and let a voucher-only scan report
+        // Complete while omitting that ledger's opening bills.
+        let bill_wise = parse_bool(
+            &ledger
+                .bill_wise_on
+                .as_ref()
+                .ok_or(OutstandingsError::InvalidResponse(
+                    "ledger_bill_wise_state_missing",
+                ))?
+                .text,
+        )?;
         if !bill_wise {
             continue;
         }

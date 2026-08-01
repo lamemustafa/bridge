@@ -94,6 +94,7 @@ def main():
     allocs = re.findall(r'<BILLALLOCATIONS\.LIST>(.*?)</BILLALLOCATIONS\.LIST>', d, re.S)
     from collections import Counter
 
+    bt = Counter()
     named = 0
     for a in allocs:
         m = re.search(r'<BILLTYPE>([^<]*)', a)
