@@ -1,5 +1,13 @@
 use std::borrow::Cow;
 
+#[cfg(test)]
+use std::cell::Cell;
+
+#[cfg(test)]
+thread_local! {
+    static NUMERIC_REFERENCE_SEARCHES: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
 /// A U+FFFD is ambiguous with an emitted marker only when the text that follows
 /// it is `#<digits>;` -- that is the exact shape this function emits. Anywhere
 /// else a literal U+FFFD is ordinary, legal content and must survive untouched.
@@ -11,6 +19,16 @@ fn collides_with_marker_form(rest: &str) -> bool {
     !digits.is_empty()
         && digits.len() < rest.len()
         && digits.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn find_numeric_reference(xml: &str) -> Option<usize> {
+    #[cfg(test)]
+    NUMERIC_REFERENCE_SEARCHES.with(|searches| {
+        if let Some(count) = searches.get() {
+            searches.set(Some(count + 1));
+        }
+    });
+    xml.find("&#")
 }
 
 pub(super) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
@@ -26,12 +44,15 @@ fn sanitize_invalid_numeric_references_with_marker_search_observer(
     let mut output = None::<String>;
     observe_replacement_marker_search();
     let mut replacement_marker = xml.find('\u{fffd}');
+    let mut numeric_reference = find_numeric_reference(xml);
     while scan < xml.len() {
         if replacement_marker.is_some_and(|marker| marker < scan) {
             observe_replacement_marker_search();
             replacement_marker = xml[scan..].find('\u{fffd}').map(|offset| scan + offset);
         }
-        let numeric_reference = xml[scan..].find("&#").map(|offset| scan + offset);
+        if numeric_reference.is_some_and(|reference| reference < scan) {
+            numeric_reference = find_numeric_reference(&xml[scan..]).map(|offset| scan + offset);
+        }
         let Some(start) = [numeric_reference, replacement_marker]
             .into_iter()
             .flatten()
@@ -116,6 +137,7 @@ mod tests {
     use super::{
         sanitize_invalid_numeric_references,
         sanitize_invalid_numeric_references_with_marker_search_observer,
+        NUMERIC_REFERENCE_SEARCHES,
     };
 
     #[derive(Debug, Deserialize)]
@@ -198,6 +220,27 @@ mod tests {
         assert!(
             large <= small + 1,
             "a no-marker input must not rescan for U+FFFD once per numeric reference: {small} -> {large}"
+        );
+    }
+
+    #[test]
+    fn no_numeric_reference_search_work_stays_constant_as_markers_grow() {
+        let numeric_reference_searches = |markers| {
+            let xml = format!("<A>{}</A>", "\u{fffd}#4;".repeat(markers));
+            NUMERIC_REFERENCE_SEARCHES.with(|searches| {
+                assert!(searches.replace(Some(0)).is_none());
+                let _ = sanitize_invalid_numeric_references(&xml);
+                searches
+                    .replace(None)
+                    .expect("numeric searches were enabled")
+            })
+        };
+
+        let small = numeric_reference_searches(1_000);
+        let large = numeric_reference_searches(20_000);
+        assert!(
+            large <= small + 1,
+            "a marker-heavy input must not rescan for numeric references once per marker: {small} -> {large}"
         );
     }
 }
