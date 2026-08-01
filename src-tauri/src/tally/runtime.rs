@@ -15,7 +15,7 @@ use crate::tally::write_sandbox::{
 use bridge_tally_core::TallyDate;
 use bridge_tally_protocol::outstandings::{
     assemble_partitioned_scan, assemble_scan, compute_outstandings, DateBoundaryProfile,
-    DateWindow, OutstandingsReport, ScanResult, SegmentVerification,
+    DateWindow, OutstandingsError, OutstandingsReport, ScanResult, SegmentVerification,
 };
 use bridge_tally_protocol::xml_read_profiles::{
     ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
@@ -96,6 +96,23 @@ fn partial_result(reason_code: &str) -> OutstandingsLoadResult {
     OutstandingsLoadResult::Partial {
         reason_code: reason_code.to_string(),
         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+    }
+}
+
+fn computed_outstandings_result(
+    result: Result<OutstandingsReport, OutstandingsError>,
+) -> anyhow::Result<OutstandingsLoadResult> {
+    match result {
+        Ok(report) => Ok(OutstandingsLoadResult::Complete {
+            report: Box::new(report),
+            synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+        }),
+        // The protocol makes this an explicit typed outcome so the runtime can
+        // surface it in-band rather than invent an ageing date for Advance.
+        Err(OutstandingsError::AdvanceAgeingUnverified) => {
+            Ok(partial_result("advance_ageing_unverified"))
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -1318,10 +1335,9 @@ impl TallyRuntime {
                         return Ok(partial_result("ledger_opening_bills_not_covered"));
                     }
                     match assemble_partitioned_scan(&extent, requested, completed_date_partitions) {
-                        ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
-                            report: Box::new(compute_outstandings(&scan, as_of)?),
-                            synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
-                        }),
+                        ScanResult::Complete(scan) => {
+                            computed_outstandings_result(compute_outstandings(&scan, as_of))
+                        }
                         ScanResult::Partial(partial) => Ok(partial_result(&partial.reason_code)),
                     }
                 }
@@ -1737,6 +1753,18 @@ mod tests {
             segment_read_failure_reason(&anyhow::anyhow!("connection refused")),
             "segment_read_failed"
         );
+    }
+
+    #[test]
+    fn advance_ageing_unverified_is_an_in_band_partial_result() {
+        let result = computed_outstandings_result(Err(OutstandingsError::AdvanceAgeingUnverified))
+            .expect("the unverified Advance path must remain caller-visible");
+
+        assert!(matches!(
+            result,
+            OutstandingsLoadResult::Partial { reason_code, .. }
+                if reason_code == "advance_ageing_unverified"
+        ));
     }
 
     #[test]

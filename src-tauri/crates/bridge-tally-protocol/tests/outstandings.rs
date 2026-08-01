@@ -1006,6 +1006,49 @@ fn against_ref_after_settlement_ages_from_its_kind_not_the_zero_balance() {
 }
 
 #[test]
+fn advance_with_distinct_bill_date_refuses_to_publish_an_ageing_bucket() {
+    let xml = format!(
+        concat!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+            "<VOUCHER REMOTEID=\"r1\"><GUID>{guid}-00000001</GUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID>",
+            "<DATE TYPE=\"Date\">20260415</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>",
+            "<PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST>",
+            "<NAME>ADV-1</NAME><BILLTYPE>Advance</BILLTYPE><BILLDATE TYPE=\"Date\">20260101</BILLDATE><AMOUNT>25</AMOUNT>",
+            "</BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+        ),
+        guid = COMPANY_GUID
+    );
+    let extent = extent();
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260415", "20260415").unwrap();
+    let SegmentVerification::Complete(segment) = verify_segment_pair(
+        &xml,
+        &xml,
+        extent.company(),
+        window.clone(),
+        full_alter_id_range(),
+    )
+    .expect("pair verifies") else {
+        panic!("identical replies must verify complete")
+    };
+    let ScanResult::Complete(scan) = assemble_scan(
+        extent.company().clone(),
+        window,
+        capture_high_water(),
+        vec![SegmentVerification::Complete(segment)],
+    ) else {
+        panic!("scan assembles")
+    };
+
+    assert_eq!(
+        compute_outstandings(&scan, TallyDate::parse("20260415").unwrap()),
+        Err(OutstandingsError::AdvanceAgeingUnverified),
+        "an Advance must not be placed into a voucher-date bucket without live evidence"
+    );
+}
+
+#[test]
 fn ledger_coverage_fails_closed_on_empty_response_and_empty_values() {
     let head =
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>";
