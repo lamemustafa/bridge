@@ -27,7 +27,6 @@ pub use model::{
     WitnessPairVerification, WitnessVoucher,
 };
 pub use parser::{parse_company_book_extent, parse_ledger_opening_coverage};
-
 pub(crate) use request::render_ledger_opening_coverage;
 pub(crate) use request::{
     render_company_book_extent, render_empty_partition_witness_template,

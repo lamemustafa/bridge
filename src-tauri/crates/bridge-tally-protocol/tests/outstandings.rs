@@ -8,9 +8,15 @@ use bridge_tally_protocol::{
     },
     xml_read_profiles::ReadOnlyProfile,
 };
+use proptest::{
+    prelude::*,
+    test_runner::{Config as ProptestConfig, RngSeed},
+};
+use serde::Deserialize;
 
 const COMPANY_EXTENT: &str = include_str!("fixtures/unit_a_company_extent_live.xml");
 const VOUCHERS_LEGACY_SHAPE: &str = include_str!("fixtures/unit_a_vouchers_wildcard_live.xml");
+const OUTSTANDINGS_FIXTURE_PROVENANCE: &str = include_str!("fixtures/outstandings-provenance.json");
 
 /// The retained wildcard capture predates `ISOPTIONAL` joining the sealed
 /// request's FETCH list, so it carries no such element and the parser now fails
@@ -20,14 +26,105 @@ const VOUCHERS_LEGACY_SHAPE: &str = include_str!("fixtures/unit_a_vouchers_wildc
 /// optional-voucher behaviour itself is covered by a separate capture that
 /// carries the real field: `unit_a_optional_voucher_live.xml`.
 fn vouchers() -> String {
+    assert_fixture_profile(
+        "unit_a_vouchers_wildcard_live.xml",
+        "voucher_outstandings_v1_pre_isoptional",
+        "envelope_collection_voucher",
+    );
     VOUCHERS_LEGACY_SHAPE.replace("<ISDELETED>", "<ISOPTIONAL>No</ISOPTIONAL><ISDELETED>")
 }
 const COMPANY_NAME: &str = "Aarav Trading Company Demo";
 const COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+const PROPTEST_SEED: u64 = 0xB71D_6E_0D_2026_0801;
+
+fn proptest_config() -> ProptestConfig {
+    ProptestConfig {
+        cases: 256,
+        rng_seed: RngSeed::Fixed(PROPTEST_SEED),
+        ..ProptestConfig::default()
+    }
+}
 
 fn extent() -> bridge_tally_protocol::outstandings::CompanyBookExtent {
+    assert_fixture_profile(
+        "unit_a_company_extent_live.xml",
+        "company_book_extent_v1",
+        "envelope_collection_company",
+    );
     parse_company_book_extent(COMPANY_EXTENT, COMPANY_NAME, COMPANY_GUID)
         .expect("real company extent capture parses")
+}
+
+#[derive(Deserialize)]
+struct FixtureProvenanceDocument {
+    fixtures: Vec<FixtureProvenance>,
+}
+
+#[derive(Deserialize)]
+struct FixtureProvenance {
+    file: String,
+    request_profile: String,
+    response_shape: String,
+    capture_kind: String,
+}
+
+fn fixture_provenance() -> FixtureProvenanceDocument {
+    serde_json::from_str(OUTSTANDINGS_FIXTURE_PROVENANCE)
+        .expect("outstandings fixture provenance is valid JSON")
+}
+
+fn assert_fixture_profile(file: &str, expected_profile: &str, expected_shape: &str) {
+    let document = fixture_provenance();
+    let provenance = document
+        .fixtures
+        .iter()
+        .find(|fixture| fixture.file == file)
+        .unwrap_or_else(|| panic!("fixture {file} has no request-profile provenance"));
+    assert_eq!(provenance.request_profile, expected_profile);
+    assert_eq!(
+        provenance.response_shape, expected_shape,
+        "{file} must describe its response shape"
+    );
+    assert_eq!(
+        provenance.capture_kind, "sanitized_live",
+        "{file} must state capture kind"
+    );
+}
+
+#[test]
+fn every_outstandings_fixture_declares_its_request_profile() {
+    let document = fixture_provenance();
+    for expected in [
+        (
+            "unit_a_company_extent_live.xml",
+            "company_book_extent_v1",
+            "envelope_collection_company",
+        ),
+        (
+            "unit_a_vouchers_wildcard_live.xml",
+            "voucher_outstandings_v1_pre_isoptional",
+            "envelope_collection_voucher",
+        ),
+        (
+            "unit_a_optional_voucher_live.xml",
+            "voucher_outstandings_v1",
+            "envelope_collection_voucher",
+        ),
+        (
+            "unit_a_invalid_char_ref_live.xml",
+            "voucher_outstandings_v1",
+            "envelope_collection_voucher",
+        ),
+    ] {
+        let record = document
+            .fixtures
+            .iter()
+            .find(|fixture| fixture.file == expected.0)
+            .unwrap_or_else(|| panic!("fixture {} has no provenance", expected.0));
+        assert_eq!(record.request_profile, expected.1);
+        assert_eq!(record.response_shape, expected.2);
+        assert_eq!(record.capture_kind, "sanitized_live");
+    }
 }
 
 fn full_alter_id_range() -> AlterIdRange {
@@ -703,6 +800,15 @@ fn an_as_of_before_the_last_voucher_clamps_to_a_profile_valid_boundary() {
 
 const OPTIONAL_VOUCHERS: &str = include_str!("fixtures/unit_a_optional_voucher_live.xml");
 
+fn optional_vouchers() -> &'static str {
+    assert_fixture_profile(
+        "unit_a_optional_voucher_live.xml",
+        "voucher_outstandings_v1",
+        "envelope_collection_voucher",
+    );
+    OPTIONAL_VOUCHERS
+}
+
 #[test]
 fn an_optional_agst_ref_does_not_settle_a_bill() {
     // Live-captured 2026-07-31. Two vouchers against one bill reference:
@@ -715,11 +821,11 @@ fn an_optional_agst_ref_does_not_settle_a_bill() {
     // optional allocation it would report the bill as PAID -- understating a
     // client's receivables, which is worse than inflating them.
     assert!(
-        OPTIONAL_VOUCHERS.contains("<ISOPTIONAL TYPE=\"Logical\">Yes</ISOPTIONAL>"),
+        optional_vouchers().contains("<ISOPTIONAL TYPE=\"Logical\">Yes</ISOPTIONAL>"),
         "capture must carry a genuinely optional voucher"
     );
     assert!(
-        OPTIONAL_VOUCHERS.contains("Agst Ref"),
+        optional_vouchers().contains("Agst Ref"),
         "capture must carry the settling allocation"
     );
 
@@ -728,8 +834,8 @@ fn an_optional_agst_ref_does_not_settle_a_bill() {
     let window =
         DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
     let segment = verify_segment_pair(
-        OPTIONAL_VOUCHERS,
-        OPTIONAL_VOUCHERS,
+        optional_vouchers(),
+        optional_vouchers(),
         extent.company(),
         window.clone(),
         optional_capture_alter_id_range(),
@@ -834,6 +940,210 @@ fn ledger_opening_coverage_requires_each_ledger_to_prove_the_pinned_company_guid
         ),
         "a same-named collection from another company must not establish coverage"
     );
+}
+
+#[test]
+fn illegal_numeric_references_keep_distinct_identities() {
+    // Assert at the computation boundary. The parser's output is consumed as
+    // BillKey::Named, so this must remain two open bills—not merely two
+    // different intermediate sanitized strings.
+    let report = report_for_named_references("ACME&#1;LTD", "ACME&#4;LTD");
+    assert_eq!(report.open_receivable_bill_count, 2);
+}
+
+proptest! {
+    #![proptest_config(proptest_config())]
+
+    #[test]
+    fn sanitise_then_parse_preserves_distinct_bill_keys(
+        first in prop_oneof![0_u32..=8, 11_u32..=12, 14_u32..=31, 0xD800_u32..=0xDFFF, 0x11_0000_u32..=0x11_FFFF],
+        second in prop_oneof![0_u32..=8, 11_u32..=12, 14_u32..=31, 0xD800_u32..=0xDFFF, 0x11_0000_u32..=0x11_FFFF],
+    ) {
+        prop_assume!(first != second);
+        let report = report_for_named_references(
+            &format!("ACME&#{first};LTD"),
+            &format!("ACME&#{second};LTD"),
+        );
+        // This final report count is derived from the private BillKey/OpenBill
+        // map. Any sanitizer collision therefore fails at the value the caller
+        // actually consumes.
+        prop_assert_eq!(report.open_receivable_bill_count, 2);
+    }
+
+    #[test]
+    fn ageing_is_monotone_in_the_as_of_date(
+        first_offset in 0_u16..180,
+        additional_days in 0_u16..180,
+    ) {
+        let earlier = day_after("20260401", u32::from(first_offset));
+        let later = day_after(&earlier, u32::from(additional_days));
+        let earlier_report = report_for_named_references_as_of("ONE", "TWO", &earlier);
+        let later_report = report_for_named_references_as_of("ONE", "TWO", &later);
+        prop_assert!(
+            ageing_bucket_index(&earlier_report) <= ageing_bucket_index(&later_report),
+            "a bill cannot move to a younger ageing bucket as as-of advances"
+        );
+    }
+
+    #[test]
+    fn date_partition_sums_equal_the_whole_book(
+        left_amount in 1_u32..1_000_000,
+        right_amount in 1_u32..1_000_000,
+    ) {
+        let whole_window = DateWindow::parse(
+            DateBoundaryProfile::ModeAgnostic,
+            "20240401",
+            "20240502",
+        ).unwrap();
+        let left_window = DateWindow::parse(
+            DateBoundaryProfile::ModeAgnostic,
+            "20240401",
+            "20240501",
+        ).unwrap();
+        let right_window = DateWindow::parse(
+            DateBoundaryProfile::ModeAgnostic,
+            "20240502",
+            "20240502",
+        ).unwrap();
+        let whole = complete_scan_for_vouchers(
+            &outstanding_vouchers_xml(&[
+                (1, "20240401", "LEFT", left_amount),
+                (2, "20240502", "RIGHT", right_amount),
+            ]),
+            whole_window.clone(),
+            2,
+        );
+        let left = complete_scan_for_vouchers(
+            &outstanding_vouchers_xml(&[(1, "20240401", "LEFT", left_amount)]),
+            left_window,
+            2,
+        );
+        let right = complete_scan_for_vouchers(
+            &outstanding_vouchers_xml(&[(2, "20240502", "RIGHT", right_amount)]),
+            right_window,
+            2,
+        );
+        let as_of = TallyDate::parse("20240601").unwrap();
+        let whole_report = compute_outstandings(&whole, as_of.clone()).unwrap();
+        let left_report = compute_outstandings(&left, as_of.clone()).unwrap();
+        let right_report = compute_outstandings(&right, as_of).unwrap();
+        let summed = left_report
+            .receivable_total
+            .checked_add(&right_report.receivable_total)
+            .unwrap();
+        prop_assert_eq!(summed, whole_report.receivable_total.clone());
+    }
+}
+
+fn report_for_named_references(
+    first: &str,
+    second: &str,
+) -> bridge_tally_protocol::outstandings::OutstandingsReport {
+    report_for_named_references_as_of(first, second, "20260401")
+}
+
+fn report_for_named_references_as_of(
+    first: &str,
+    second: &str,
+    as_of: &str,
+) -> bridge_tally_protocol::outstandings::OutstandingsReport {
+    let xml = format!(
+        concat!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+            "<VOUCHER><GUID>{COMPANY_GUID}-00000001</GUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID>",
+            "<DATE>20260401</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>{first}</NAME><BILLTYPE>New Ref</BILLTYPE><BILLDATE>20260401</BILLDATE><AMOUNT>-100</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
+            "<VOUCHER><GUID>{COMPANY_GUID}-00000002</GUID><MASTERID>2</MASTERID><ALTERID>2</ALTERID>",
+            "<DATE>20260401</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>{second}</NAME><BILLTYPE>New Ref</BILLTYPE><BILLDATE>20260401</BILLDATE><AMOUNT>-100</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
+            "</COLLECTION></DATA></BODY></ENVELOPE>"
+        ),
+        COMPANY_GUID = COMPANY_GUID,
+        first = first,
+        second = second,
+    );
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
+    let range = AlterIdRange::new(0, 2).unwrap();
+    let SegmentVerification::Complete(segment) =
+        verify_segment_pair(&xml, &xml, extent().company(), window.clone(), range)
+            .expect("synthetic pair verifies")
+    else {
+        panic!("identical synthetic responses must be complete")
+    };
+    let ScanResult::Complete(scan) = assemble_scan(
+        extent().company().clone(),
+        window,
+        VoucherAlterIdHighWater::parse("2").unwrap(),
+        vec![SegmentVerification::Complete(segment)],
+    ) else {
+        panic!("full synthetic range must assemble")
+    };
+    compute_outstandings(&scan, TallyDate::parse(as_of).unwrap())
+        .expect("parsed bill identities compute")
+}
+
+fn day_after(date: &str, days: u32) -> String {
+    let mut date = TallyDate::parse(date).unwrap();
+    for _ in 0..days {
+        date = date.next_day().unwrap();
+    }
+    date.as_str().to_string()
+}
+
+fn ageing_bucket_index(report: &bridge_tally_protocol::outstandings::OutstandingsReport) -> u8 {
+    let counts = &report.ageing_bill_counts;
+    if counts.days_0_30 > 0 {
+        0
+    } else if counts.days_31_60 > 0 {
+        1
+    } else if counts.days_61_90 > 0 {
+        2
+    } else {
+        3
+    }
+}
+
+fn outstanding_vouchers_xml(vouchers: &[(u64, &str, &str, u32)]) -> String {
+    let vouchers = vouchers
+        .iter()
+        .map(|(alter_id, date, reference, amount)| format!(
+            concat!(
+                "<VOUCHER><GUID>{COMPANY_GUID}-{alter_id:08}</GUID><MASTERID>{alter_id}</MASTERID><ALTERID>{alter_id}</ALTERID>",
+                "<DATE>{date}</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>{reference}</NAME><BILLTYPE>New Ref</BILLTYPE><BILLDATE>{date}</BILLDATE><AMOUNT>-{amount}</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>"
+            ),
+            COMPANY_GUID = COMPANY_GUID,
+            alter_id = alter_id,
+            date = date,
+            reference = reference,
+            amount = amount,
+        ))
+        .collect::<String>();
+    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{vouchers}</COLLECTION></DATA></BODY></ENVELOPE>")
+}
+
+fn complete_scan_for_vouchers(
+    xml: &str,
+    window: DateWindow,
+    high_water: u64,
+) -> bridge_tally_protocol::outstandings::CompleteScan {
+    let range = AlterIdRange::new(0, high_water).unwrap();
+    let SegmentVerification::Complete(segment) =
+        verify_segment_pair(xml, xml, extent().company(), window.clone(), range)
+            .expect("synthetic pair verifies")
+    else {
+        panic!("identical synthetic responses must be complete")
+    };
+    let ScanResult::Complete(scan) = assemble_scan(
+        extent().company().clone(),
+        window,
+        VoucherAlterIdHighWater::parse(&high_water.to_string()).unwrap(),
+        vec![SegmentVerification::Complete(segment)],
+    ) else {
+        panic!("synthetic response must assemble")
+    };
+    scan
 }
 
 #[test]

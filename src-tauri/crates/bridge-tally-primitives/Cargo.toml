@@ -11,3 +11,6 @@ rust-version = "1.96"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+
+[dev-dependencies]
+proptest = "1.7"
