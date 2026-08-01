@@ -221,6 +221,9 @@ pub(super) fn parse_segment(
 }
 
 fn master_guid_belongs_to_company(master_guid: &str, company_guid: &str) -> bool {
+    // TALLY_PROTOCOL_REFERENCE.md:632 records that every master GUID begins
+    // with its company GUID; require the documented `-<master-id>` delimiter
+    // as response identity evidence instead of accepting the bare company GUID.
     let Some(prefix) = master_guid.get(..company_guid.len()) else {
         return false;
     };
