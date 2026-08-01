@@ -111,7 +111,22 @@ def main():
     # ageing spread came only from those, the corpus would be accepted while
     # exercising nothing the product actually computes.
     def posting(x):
+        # Production parses these with a REQUIRED boolean parser, so a missing or
+        # unrecognised value is a hard error there. Treating anything that is not
+        # literally "yes" as posting would let the verifier accept a response the
+        # product rejects.
+        for k in ('optional', 'cancelled', 'deleted'):
+            if x[k].lower() not in ('yes', 'no'):
+                raise ValueError(
+                    f"voucher has a missing/unrecognised {k} state "
+                    f"({x[k]!r}); production's boolean parser rejects this")
         return not any(x[k].lower() == 'yes' for k in ('optional', 'cancelled', 'deleted'))
+
+    try:
+        [posting(x) for x in rows]
+    except ValueError as exc:
+        print(f'FAIL: {exc}')
+        return 1
     non_posting = [x for x in rows if not posting(x)]
     rows = [x for x in rows if posting(x)]
     print(f'vouchers parsed: {len(rows)} posting'
@@ -199,8 +214,18 @@ def main():
                 continue
             key = nm.group(1).strip()
             val = float(am.group(1) or 0)
+            # Production ages a bill from Tally's own BILLDATE when supplied,
+            # falling back to the voucher date. The verifier must use the same
+            # date or it measures a different ageing spread than the product.
+            bd = re.search(r'<BILLDATE[^>]*>(\d{8})<', a)
+            opened_on = bd.group(1) if bd else (dm.group(1) if dm else '')
             if ty.group(1) == 'New Ref':
-                opened.setdefault(key, {'date': dm.group(1) if dm else '', 'amt': 0.0})
+                prior = opened.get(key)
+                # A reference that was fully settled and is then reused starts a
+                # NEW bill. Keeping the first cycle's date would age a freshly
+                # reopened bill into an older bucket.
+                if prior is None or abs(prior['amt']) < 0.01:
+                    opened[key] = {'date': opened_on, 'amt': 0.0}
                 opened[key]['amt'] += val
             elif ty.group(1) == 'Agst Ref' and key in opened:
                 opened[key]['amt'] += val
