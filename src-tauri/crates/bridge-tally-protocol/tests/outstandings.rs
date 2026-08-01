@@ -61,6 +61,20 @@ fn ledger_opening_coverage_request_fetches_master_guid() {
 }
 
 #[test]
+fn ledger_coverage_request_fetches_the_guid_and_name_used_for_drift_detection() {
+    let company = bridge_tally_protocol::xml_read_profiles::ValidatedCompanyName::new(
+        COMPANY_NAME.to_string(),
+    )
+    .expect("valid company name");
+    let request = ReadOnlyProfile::LedgerOpeningCoverageV1 { company: &company }.render();
+
+    assert!(
+        request.contains("<FETCH>GUID, Name, ISBILLWISEON, OPENINGBALANCE</FETCH>"),
+        "the response must carry the GUID-to-name identity compared by the runtime"
+    );
+}
+
+#[test]
 fn ledger_coverage_identity_detects_a_rename_that_preserves_the_count() {
     let response = |name: &str| {
         format!(
@@ -872,6 +886,123 @@ fn ageing_runs_from_tallys_bill_date_not_the_voucher_date() {
         "ageing from the voucher date would have put it here"
     );
     assert_eq!(report.ageing.days_61_90.as_str(), "5000");
+}
+
+#[test]
+fn unknown_bill_reference_kind_fails_closed_at_the_parser_boundary() {
+    let xml = format!(
+        concat!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+            "<VOUCHER REMOTEID=\"r1\"><GUID>{guid}-00000001</GUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID>",
+            "<DATE TYPE=\"Date\">20260401</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>",
+            "<PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST>",
+            "<NAME>REF-1</NAME><BILLTYPE>Unexpected Ref</BILLTYPE><AMOUNT>-100</AMOUNT>",
+            "</BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+        ),
+        guid = COMPANY_GUID
+    );
+    let extent = extent();
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
+
+    assert!(
+        matches!(
+            verify_segment_pair(
+                &xml,
+                &xml,
+                extent.company(),
+                window,
+                full_alter_id_range(),
+            ),
+            Ok(SegmentVerification::Partial(partial))
+                if partial.reason_code == "bill_reference_kind_unknown"
+        ),
+        "an unrecognised BILLTYPE must be rejected before it reaches computation"
+    );
+}
+
+#[test]
+fn named_on_account_fails_closed_at_the_parser_boundary() {
+    let xml = format!(
+        concat!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+            "<VOUCHER REMOTEID=\"r1\"><GUID>{guid}-00000001</GUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID>",
+            "<DATE TYPE=\"Date\">20260401</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>",
+            "<PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST>",
+            "<NAME>NOT-AN-ON-ACCOUNT-REFERENCE</NAME><BILLTYPE>On Account</BILLTYPE><AMOUNT>100</AMOUNT>",
+            "</BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+        ),
+        guid = COMPANY_GUID
+    );
+    let extent = extent();
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
+
+    assert!(
+        matches!(
+            verify_segment_pair(
+                &xml,
+                &xml,
+                extent.company(),
+                window,
+                full_alter_id_range(),
+            ),
+            Ok(SegmentVerification::Partial(partial))
+                if partial.reason_code == "bill_reference_forbidden"
+        ),
+        "a named On Account allocation is malformed rather than an ordinary bill"
+    );
+}
+
+#[test]
+fn against_ref_after_settlement_ages_from_its_kind_not_the_zero_balance() {
+    let voucher = |guid_suffix: u8, date: &str, bill_type: &str, amount: &str| {
+        format!(
+            "<VOUCHER REMOTEID=\"r{guid_suffix}\"><GUID>{company_guid}-0000000{guid_suffix}</GUID><MASTERID>{guid_suffix}</MASTERID><ALTERID>{guid_suffix}</ALTERID><DATE TYPE=\"Date\">{date}</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED><ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>REF-1</NAME><BILLTYPE>{bill_type}</BILLTYPE><BILLDATE TYPE=\"Date\">20260101</BILLDATE><AMOUNT>{amount}</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
+            company_guid = COMPANY_GUID
+        )
+    };
+    let xml = format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{}</COLLECTION></DATA></BODY></ENVELOPE>",
+        [
+            voucher(1, "20260401", "New Ref", "-100"),
+            voucher(2, "20260415", "Agst Ref", "100"),
+            voucher(3, "20260415", "Agst Ref", "25"),
+        ]
+        .join("")
+    );
+    let extent = extent();
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260415").unwrap();
+    let SegmentVerification::Complete(segment) = verify_segment_pair(
+        &xml,
+        &xml,
+        extent.company(),
+        window.clone(),
+        full_alter_id_range(),
+    )
+    .expect("pair verifies") else {
+        panic!("identical replies must verify complete")
+    };
+    let ScanResult::Complete(scan) = assemble_scan(
+        extent.company().clone(),
+        window,
+        capture_high_water(),
+        vec![SegmentVerification::Complete(segment)],
+    ) else {
+        panic!("scan assembles")
+    };
+
+    let report =
+        compute_outstandings(&scan, TallyDate::parse("20260415").unwrap()).expect("computes");
+    assert_eq!(report.payable_total.as_str(), "25");
+    assert_eq!(
+        report.top_parties[0].oldest_bill_age_days,
+        0,
+        "an Agst Ref after full settlement creates a fresh exposure on its voucher date, not the settled bill's BILLDATE"
+    );
 }
 
 #[test]
