@@ -1,12 +1,24 @@
 use std::borrow::Cow;
 
 pub(super) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
+    sanitize_invalid_numeric_references_with_marker_search_observer(xml, || {})
+}
+
+fn sanitize_invalid_numeric_references_with_marker_search_observer(
+    xml: &str,
+    mut observe_replacement_marker_search: impl FnMut(),
+) -> Cow<'_, str> {
     let mut scan = 0_usize;
     let mut copy_from = 0_usize;
     let mut output = None::<String>;
+    observe_replacement_marker_search();
+    let mut replacement_marker = xml.find('\u{fffd}');
     while scan < xml.len() {
+        if replacement_marker.is_some_and(|marker| marker < scan) {
+            observe_replacement_marker_search();
+            replacement_marker = xml[scan..].find('\u{fffd}').map(|offset| scan + offset);
+        }
         let numeric_reference = xml[scan..].find("&#").map(|offset| scan + offset);
-        let replacement_marker = xml[scan..].find('\u{fffd}').map(|offset| scan + offset);
         let Some(start) = [numeric_reference, replacement_marker]
             .into_iter()
             .flatten()
@@ -77,7 +89,10 @@ mod tests {
     use quick_xml::{events::Event, Reader};
     use serde::Deserialize;
 
-    use super::sanitize_invalid_numeric_references;
+    use super::{
+        sanitize_invalid_numeric_references,
+        sanitize_invalid_numeric_references_with_marker_search_observer,
+    };
 
     #[derive(Debug, Deserialize)]
     struct TextValue {
@@ -130,5 +145,24 @@ mod tests {
         assert_ne!(illegal_reference, literal_encoded_form);
         assert_eq!(decimal_replacement_reference, literal_encoded_form);
         assert_eq!(hex_replacement_reference, literal_encoded_form);
+    }
+
+    #[test]
+    fn no_marker_search_work_stays_constant_as_numeric_references_grow() {
+        let replacement_marker_searches = |references| {
+            let xml = format!("<A>{}</A>", "&#4;".repeat(references));
+            let mut searches = 0usize;
+            let _ = sanitize_invalid_numeric_references_with_marker_search_observer(&xml, || {
+                searches += 1;
+            });
+            searches
+        };
+
+        let small = replacement_marker_searches(1_000);
+        let large = replacement_marker_searches(20_000);
+        assert!(
+            large <= small + 1,
+            "a no-marker input must not rescan for U+FFFD once per numeric reference: {small} -> {large}"
+        );
     }
 }
