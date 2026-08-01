@@ -7,20 +7,42 @@ use std::cell::Cell;
 thread_local! {
     static NUMERIC_REFERENCE_SEARCHES: Cell<Option<usize>> = const { Cell::new(None) };
     static NUMERIC_REFERENCE_TERMINATOR_SEARCH_BYTES: Cell<Option<usize>> = const { Cell::new(None) };
+    static MARKER_FORM_SEARCH_BYTES: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
-const MAX_NUMERIC_REFERENCE_TOKEN_BYTES: usize = 10;
+/// No scan in this module may run past the longest token it could accept.
+/// An emitted marker form is `#` + at most ten u32 digits + `;`.
+const MAX_MARKER_FORM_BYTES: usize = 12;
+
+/// Truncate to at most `limit` bytes without splitting a UTF-8 character.
+fn bounded(text: &str, limit: usize) -> &str {
+    let mut end = limit.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
 
 /// A U+FFFD is ambiguous with an emitted marker only when the text that follows
 /// it is `#<digits>;` -- that is the exact shape this function emits. Anywhere
 /// else a literal U+FFFD is ordinary, legal content and must survive untouched.
 fn collides_with_marker_form(rest: &str) -> bool {
-    let Some(rest) = rest.strip_prefix('#') else {
+    // Bounded: an unbounded `split(';')` scans the whole remaining response
+    // once per marker, which is quadratic on input carrying many `#`-prefixed
+    // markers and no terminator.
+    let window = bounded(rest, MAX_MARKER_FORM_BYTES);
+    #[cfg(test)]
+    MARKER_FORM_SEARCH_BYTES.with(|searched_bytes| {
+        if let Some(count) = searched_bytes.get() {
+            searched_bytes.set(Some(count + window.len()));
+        }
+    });
+    let Some(window) = window.strip_prefix('#') else {
         return false;
     };
-    let digits = rest.split(';').next().unwrap_or("");
+    let digits = window.split(';').next().unwrap_or("");
     !digits.is_empty()
-        && digits.len() < rest.len()
+        && digits.len() < window.len()
         && digits.bytes().all(|byte| byte.is_ascii_digit())
 }
 
@@ -34,15 +56,10 @@ fn find_numeric_reference(xml: &str) -> Option<usize> {
     xml.find("&#")
 }
 
-fn find_numeric_reference_terminator(xml: &str) -> Option<usize> {
-    // A numeric token longer than 10 bytes is rejected below, and its `&#`
-    // prefix plus terminator makes 12 bytes total. Bound the search first, but
-    // stop on a UTF-8 boundary because malformed responses are untrusted text.
-    let mut end = xml.len().min(MAX_NUMERIC_REFERENCE_TOKEN_BYTES + 1);
-    while end > 0 && !xml.is_char_boundary(end) {
-        end -= 1;
-    }
-    let search = &xml[..end];
+fn find_numeric_reference_terminator(reference: &str) -> Option<usize> {
+    // Shares the module's structural scan limit. `bounded` also preserves a
+    // UTF-8 boundary because malformed responses are untrusted text.
+    let search = bounded(reference, MAX_MARKER_FORM_BYTES);
     #[cfg(test)]
     NUMERIC_REFERENCE_TERMINATOR_SEARCH_BYTES.with(|searched_bytes| {
         if let Some(count) = searched_bytes.get() {
@@ -102,10 +119,10 @@ fn sanitize_invalid_numeric_references_with_marker_search_observer(
             continue;
         }
 
-        let Some(relative_end) = find_numeric_reference_terminator(&xml[start + 2..]) else {
+        let Some(relative_end) = find_numeric_reference_terminator(&xml[start + 1..]) else {
             break;
         };
-        let end = start + 2 + relative_end;
+        let end = start + 1 + relative_end;
         let token = &xml[start + 2..end];
         let parsed = token
             .strip_prefix('x')
@@ -152,8 +169,8 @@ mod tests {
 
     use super::{
         sanitize_invalid_numeric_references,
-        sanitize_invalid_numeric_references_with_marker_search_observer,
-        MAX_NUMERIC_REFERENCE_TOKEN_BYTES, NUMERIC_REFERENCE_SEARCHES,
+        sanitize_invalid_numeric_references_with_marker_search_observer, MARKER_FORM_SEARCH_BYTES,
+        MAX_MARKER_FORM_BYTES, NUMERIC_REFERENCE_SEARCHES,
         NUMERIC_REFERENCE_TERMINATOR_SEARCH_BYTES,
     };
 
@@ -281,9 +298,30 @@ mod tests {
             let small = searched_bytes(2_000, distant_terminator);
             let large = searched_bytes(10_000, distant_terminator);
             assert!(
-                large <= small + MAX_NUMERIC_REFERENCE_TOKEN_BYTES + 1,
+                large <= small + MAX_MARKER_FORM_BYTES,
                 "numeric-reference terminator searches must stay bounded: {small} -> {large}"
             );
         }
+    }
+
+    #[test]
+    fn marker_form_search_work_scales_linearly_without_terminators() {
+        let searched_bytes = |markers| {
+            let xml = format!("<A>{}</A>", "\u{fffd}#abc".repeat(markers));
+            MARKER_FORM_SEARCH_BYTES.with(|counter| {
+                assert!(counter.replace(Some(0)).is_none());
+                let _ = sanitize_invalid_numeric_references(&xml);
+                counter
+                    .replace(None)
+                    .expect("marker-form search accounting was enabled")
+            })
+        };
+
+        let small = searched_bytes(2_000);
+        let large = searched_bytes(10_000);
+        assert!(
+            large <= small * 6,
+            "marker-form searches without terminators must scale linearly: {small} -> {large}"
+        );
     }
 }
