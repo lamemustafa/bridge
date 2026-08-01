@@ -4,10 +4,35 @@ pub(super) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
     let mut scan = 0_usize;
     let mut copy_from = 0_usize;
     let mut output = None::<String>;
-    while let Some(offset) = xml[scan..].find("&#") {
-        let start = scan + offset;
-        let Some(relative_end) = xml[start + 2..].find(';') else {
+    while scan < xml.len() {
+        let numeric_reference = xml[scan..].find("&#").map(|offset| scan + offset);
+        let replacement_marker = xml[scan..].find('\u{fffd}').map(|offset| scan + offset);
+        let Some(start) = [numeric_reference, replacement_marker]
+            .into_iter()
+            .flatten()
+            .min()
+        else {
             break;
+        };
+
+        if replacement_marker == Some(start) {
+            let target = output.get_or_insert_with(|| String::with_capacity(xml.len()));
+            target.push_str(&xml[copy_from..start]);
+            // U+FFFD is XML-legal source text, so it cannot be used as an
+            // unescaped marker for an illegal reference. Encode literal U+FFFD
+            // through the same grammar; this keeps the transformation
+            // injective even for source containing the previous `\u{fffd}#4;`
+            // representation.
+            target.push('\u{fffd}');
+            target.push_str("#65533;");
+            copy_from = start + '\u{fffd}'.len_utf8();
+            scan = copy_from;
+            continue;
+        }
+
+        let Some(relative_end) = xml[start + 2..].find(';') else {
+            scan = start + 2;
+            continue;
         };
         let end = start + 2 + relative_end;
         if end - start > 12 {
@@ -23,13 +48,12 @@ pub(super) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
         if parsed.is_some_and(|value| !is_xml_10_char(value)) {
             let target = output.get_or_insert_with(|| String::with_capacity(xml.len()));
             target.push_str(&xml[copy_from..start]);
-            // Preserve the numeric identity. Mapping every illegal code point
-            // to a bare U+FFFD is lossy on identity-bearing values: two ledger
-            // names or bill references differing only by `&#1;` vs `&#4;`
-            // become byte-identical, and compute_outstandings then reconciles
-            // two distinct bills under one key. Keeping the original number
-            // makes the substitution injective while still emitting only
-            // XML-1.0-legal characters.
+            // Preserve the numeric identity in a self-escaping marker.
+            // Mapping every illegal code point to bare U+FFFD is lossy, and a
+            // marker that leaves literal U+FFFD untouched collides with source
+            // text already holding that marker. Literal U+FFFD is encoded
+            // above as `U+FFFD#65533;`, so every emitted `U+FFFD#<n>;` denotes
+            // exactly one source atom while remaining XML-1.0 legal.
             target.push('\u{fffd}');
             target.push_str(&format!("#{};", parsed.unwrap_or_default()));
             copy_from = end + 1;
@@ -79,5 +103,21 @@ mod tests {
             sanitize_invalid_numeric_references(input),
             std::borrow::Cow::Borrowed(_)
         ));
+    }
+
+    #[test]
+    fn illegal_reference_and_its_literal_encoded_form_remain_distinct() {
+        let illegal_reference = "<A>ACME&#4;LTD</A>";
+        let literal_encoded_form = "<A>ACME\u{fffd}#4;LTD</A>";
+
+        assert_ne!(
+            sanitize_invalid_numeric_references(illegal_reference),
+            sanitize_invalid_numeric_references(literal_encoded_form),
+            "a source literal marker must not collide with an illegal reference"
+        );
+        assert_eq!(
+            sanitize_invalid_numeric_references(literal_encoded_form),
+            "<A>ACME\u{fffd}#65533;#4;LTD</A>"
+        );
     }
 }
