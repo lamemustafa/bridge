@@ -15,11 +15,17 @@ bills-native-outstandings-probe-runner = [
   "bridge-tally-protocol/bills-native-outstandings-probe",
   "bridge-tally-read-transport/bills-native-outstandings-probe-transport",
 ]
+tally-outstandings-oracle-runner = []
 
 [[bin]]
 name = "bridge-tally-native-outstandings-probe"
 path = "src/bin/native_outstandings_probe.rs"
 required-features = ["bills-native-outstandings-probe-runner"]
+
+[[bin]]
+name = "bridge-tally-outstandings-oracle"
+path = "src/bin/tally_outstandings_oracle.rs"
+required-features = ["tally-outstandings-oracle-runner"]
 
 [dependencies]
 bridge-tally-compatibility = { path = "../bridge-tally-compatibility" }

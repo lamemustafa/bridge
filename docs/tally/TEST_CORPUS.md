@@ -200,6 +200,23 @@ python3 scripts/verify-tally-test-corpus.py \
 **Run it partway through generation, not only at the end** — locality is the one property that
 cannot be repaired afterwards, and catching it at 50 vouchers is far cheaper than at 500.
 
+### Native outstandings oracle availability boundary
+
+`bridge-tally-outstandings-oracle` is a manual, feature-gated command for the
+Tally host; it is not GitHub CI. It sends exactly one existing sealed read-only
+health profile to the port supplied by the operator. It never emits a pass token
+or exits zero: `tally_oracle_skipped:gateway_unreachable:port=<port>` exits 20,
+and `tally_oracle_skipped:native_bills_receivable_profile_unavailable:port=<port>`
+exits 21. The latter is intentional until a reviewed, read-only native Bills
+Receivable export profile exists; do not substitute an unreviewed `<TYPE>Data</TYPE>`
+request, which can block the gateway with a modal dialog.
+
+```bash
+rustup run 1.96.0 cargo run --locked -p bridge-tally-live-read \
+  --features tally-outstandings-oracle-runner \
+  --bin bridge-tally-outstandings-oracle -- --port 9000
+```
+
 > Both scripts are **operator tools that contact a live Tally**. They must never be imported or
 > invoked from an automated test — no test in this repository contacts a live Tally, a
 > government portal, or an external provider.
