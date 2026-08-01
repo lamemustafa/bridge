@@ -157,11 +157,17 @@ rule. The pattern is now established and should be treated as a standing risk, n
 **a corpus that passes proves the corpus cannot produce the failure, not that the code handles
 it.**
 
-> **The recorded ageing figures are UNCONFIRMED under this fix.** The lab gateways were
-> unreachable when it landed, so the reconciliation could not be re-run. If the re-run moves the
-> ageing buckets, **the new numbers are the correct ones** and 4/4/4/36 was measuring the
-> voucher date. Open bills (48) and total receivable (₹45,14,597) are unaffected — they do not
-> depend on the ageing date.
+> **Re-run 2026-08-01, and the figures are CONFIRMED under the fix — unchanged.** Port 9000:
+> 220 vouchers, ₹45,14,597, 48 open bills, ageing **4/4/4/36**, as-of `20260731`. Port 9001:
+> Partial `ledger_opening_bills_not_covered`, as expected. Health verified on both gateways
+> before and after.
+>
+> The numbers being identical is the point, not a relief: it means `Bridge Billwise Lab` opens
+> every bill through a Sales voucher whose `BILLDATE` equals the voucher date, so the corpus
+> produces the same answer under the wrong rule and the right one. **The previous figures were
+> correct by coincidence of the corpus, not by correctness of the code.** A corpus that
+> exercises a differing `BILLDATE` is required before ageing can be called verified — that gap
+> now stands alongside the licensed-instance gap.
 
 ## 5. Corpus mutation, recorded
 
