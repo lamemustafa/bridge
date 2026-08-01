@@ -648,3 +648,40 @@ fn ledger_opening_bills_are_detected_so_a_voucher_only_scan_cannot_claim_complet
     assert_eq!(coverage.bill_wise_openings(), 0);
     assert!(coverage.is_fully_covered_by_vouchers());
 }
+
+#[test]
+fn illegal_numeric_references_keep_distinct_identities() {
+    // Two names differing only by which illegal code point they carry must not
+    // collapse into one key: compute_outstandings reconciles bills by
+    // (ledger, reference), so a lossy substitution would merge two distinct
+    // bills and net their balances.
+    let one = sanitize_for_test("<X>ACME&#1;LTD</X>");
+    let four = sanitize_for_test("<X>ACME&#4;LTD</X>");
+    assert_ne!(
+        one, four,
+        "distinct illegal references must not sanitize to the same text"
+    );
+    assert!(
+        !one.contains("&#1;"),
+        "the illegal reference itself is removed"
+    );
+    // Legal references are untouched.
+    assert!(
+        sanitize_for_test("<X>A&#65;B</X>").contains("A&#65;B"),
+        "a legal numeric reference must survive sanitisation unchanged"
+    );
+}
+
+fn sanitize_for_test(xml: &str) -> String {
+    // Exercised through the public parser boundary: a segment parse sanitizes
+    // before deserialising, so round-tripping a minimal envelope is enough to
+    // observe the substitution.
+    let wrapped = format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{xml}</COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    let coverage = parse_ledger_opening_coverage(&wrapped);
+    // The shape has no LEDGER rows, so this parses to an empty coverage; the
+    // point is that sanitisation ran without collapsing the two inputs.
+    assert!(coverage.is_ok(), "sanitised envelope still parses");
+    bridge_tally_protocol::outstandings::sanitize_invalid_numeric_references_for_test(&wrapped)
+}

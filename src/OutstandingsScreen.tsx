@@ -204,7 +204,15 @@ function formatMoney(value: string) {
 }
 
 function formatDate(value: string) {
-  return `${value.slice(6, 8)} ${new Date(`${value.slice(0, 4)}-${value.slice(4, 6)}-01`).toLocaleString("en-IN", { month: "short" })} ${value.slice(0, 4)}`;
+  // `new Date("2026-07-01")` parses as UTC midnight, so west of UTC it renders
+  // the PREVIOUS day -- and with a day-01 string, the previous MONTH. Report
+  // dates are plain calendar dates with no time zone, so build them from local
+  // components and never round-trip them through UTC.
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(4, 6));
+  const day = value.slice(6, 8);
+  const monthName = new Date(year, month - 1, 1).toLocaleString("en-IN", { month: "short" });
+  return `${day} ${monthName} ${year}`;
 }
 
 function relativeTime(timestamp: number) {

@@ -6,6 +6,8 @@ screens (the GUI blocks the XML gateway).
 Usage:
     python3 scripts/verify-tally-test-corpus.py "Bridge Billwise Lab"
 
+Ageing is measured against a FIXED date, not today - see RECONCILIATION_AS_OF.
+
 Checks, in order of how expensive the defect is to discover late:
   1. AlterID <-> date ordering   (UNFIXABLE afterwards - determines corpus validity)
   2. Bill references present     (New Ref / Agst Ref, named)
@@ -16,6 +18,11 @@ Checks, in order of how expensive the defect is to discover late:
 import sys, re, datetime, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tally_probe as tally
+
+# The accepted corpus's documented reconciliation as-of date. Fixed so the
+# acceptance result depends on the corpus, not on when the check is run.
+RECONCILIATION_AS_OF = datetime.date(2026, 7, 31)
+
 
 CO = sys.argv[1] if len(sys.argv) > 1 else 'Bridge Billwise Lab'
 FETCH = ('GUID, MASTERID, ALTERID, DATE, VOUCHERTYPENAME, VOUCHERNUMBER, '
@@ -86,7 +93,7 @@ def main():
     # 2. Bill references
     allocs = re.findall(r'<BILLALLOCATIONS\.LIST>(.*?)</BILLALLOCATIONS\.LIST>', d, re.S)
     from collections import Counter
-    bt = Counter()
+
     named = 0
     for a in allocs:
         m = re.search(r'<BILLTYPE>([^<]*)', a)
@@ -129,7 +136,12 @@ def main():
                 opened[key]['amt'] += val
             elif ty.group(1) == 'Agst Ref' and key in opened:
                 opened[key]['amt'] += val
-    today = datetime.date.today()
+    # The accepted corpus ends 2026-07-02 and its documented reconciliation
+    # target is aged as of 2026-07-31. Ageing against the workstation clock
+    # makes acceptance drift with the calendar: from 2026-08-02 the newest open
+    # bills leave the 0-30 bucket and the "all four buckets occupied" check
+    # fails with no corpus change at all.
+    today = RECONCILIATION_AS_OF
     buckets = {'0-30': 0, '31-60': 0, '61-90': 0, '90+': 0}
     for k, v in opened.items():
         if abs(v['amt']) < 0.01 or not v['date']:

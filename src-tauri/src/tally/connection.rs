@@ -623,11 +623,17 @@ impl TallyClient {
 
     /// One extra paired read per scan: bill-wise OPENING balances live on
     /// ledger masters, so a voucher-only scan is blind to them.
+    ///
+    /// Takes the already GUID-verified `PinnedCompany` rather than a bare name:
+    /// the ledger collection carries no GUID of its own, so a name-only read
+    /// could report zero openings for a different loaded company sharing the
+    /// selected name, while the voucher rows and the closing extent all pass.
+    /// Binding to the pin makes the caller prove identity first.
     pub async fn fetch_ledger_opening_coverage(
         &self,
-        company: &str,
+        company: &PinnedCompany,
     ) -> anyhow::Result<LedgerOpeningCoverage> {
-        let company_name = ValidatedCompanyName::new(company.to_string())?;
+        let company_name = ValidatedCompanyName::new(company.name().to_string())?;
         let request = ReadOnlyProfile::LedgerOpeningCoverageV1 {
             company: &company_name,
         }

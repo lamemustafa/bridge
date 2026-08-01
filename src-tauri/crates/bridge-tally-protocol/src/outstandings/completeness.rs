@@ -304,8 +304,14 @@ pub fn assemble_partitioned_scan(
     reporting_window: DateWindow,
     mut partitions: Vec<CompleteScan>,
 ) -> ScanResult {
+    // The window ends at the as-of cutoff, which is `LastVoucherDate` unless the
+    // book contains future-dated vouchers. Requiring exact equality would reject
+    // every clamped scan with a misleading "extent mismatch", so require the
+    // window to start at BooksFrom and to end no later than LastVoucherDate.
+    // Ending EARLIER is the deliberate exclusion of future activity; ending
+    // later would mean the tiling ran past the book and is still rejected.
     if reporting_window.from() != extent.books_from()
-        || reporting_window.to() != extent.last_voucher_date()
+        || reporting_window.to() > extent.last_voucher_date()
     {
         return ScanResult::Partial(PartialScan::new("reporting_window_extent_mismatch"));
     }

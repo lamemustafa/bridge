@@ -52,10 +52,15 @@ pub fn compute_outstandings(
                 let reference = match allocation.name.as_deref() {
                     Some(name) => name.to_string(),
                     None if allocation.bill_type.eq_ignore_ascii_case("On Account") => {
-                        format!(
-                            "on-account:{}:{entry_index}:{allocation_index}",
-                            voucher.guid
-                        )
+                        // On Account carries no bill identity, so Tally treats
+                        // it as a party-scoped aggregate. Keying it per voucher
+                        // allocation instead means an advance receipt and a
+                        // later on-account adjustment for the same party never
+                        // reconcile: the party is reported as BOTH a receivable
+                        // and a payable rather than its net balance. Aggregate
+                        // by party, matching bridge-tally-core's contract.
+                        let _ = (entry_index, allocation_index);
+                        "on-account".to_string()
                     }
                     None => {
                         return Err(OutstandingsError::InvalidResponse("bill_reference_missing"))

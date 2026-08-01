@@ -23,7 +23,15 @@ pub(super) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
         if parsed.is_some_and(|value| !is_xml_10_char(value)) {
             let target = output.get_or_insert_with(|| String::with_capacity(xml.len()));
             target.push_str(&xml[copy_from..start]);
+            // Preserve the numeric identity. Mapping every illegal code point
+            // to a bare U+FFFD is lossy on identity-bearing values: two ledger
+            // names or bill references differing only by `&#1;` vs `&#4;`
+            // become byte-identical, and compute_outstandings then reconciles
+            // two distinct bills under one key. Keeping the original number
+            // makes the substitution injective while still emitting only
+            // XML-1.0-legal characters.
             target.push('\u{fffd}');
+            target.push_str(&format!("#{};", parsed.unwrap_or_default()));
             copy_from = end + 1;
         }
         scan = end + 1;

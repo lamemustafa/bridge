@@ -1190,7 +1190,7 @@ impl TallyRuntime {
                     // Detect them and refuse to claim Complete rather than
                     // silently under-report a client's outstandings.
                     let opening_coverage = client
-                        .fetch_ledger_opening_coverage(extent.company().name())
+                        .fetch_ledger_opening_coverage(extent.company())
                         .await?;
                     if !opening_coverage.is_fully_covered_by_vouchers() {
                         return Ok(partial_result("ledger_opening_bills_not_covered"));
@@ -1231,8 +1231,13 @@ impl TallyRuntime {
                             trend_guard.next_range(cursor, high_water.get())?
                         {
                             if !pair_budget.admit_next() {
+                                // NOT the preflight refusal: reaching here means
+                                // the trend guard shrank the width after the plan
+                                // was computed, so live requests have already been
+                                // spent. The UI renders the preflight code as "no
+                                // voucher scan started", which would be false.
                                 return Ok(partial_result(
-                                    "outstandings_segment_plan_exceeds_budget",
+                                    "outstandings_segment_budget_exhausted_mid_scan",
                                 ));
                             }
                             let observation = match client
@@ -1297,6 +1302,20 @@ impl TallyRuntime {
                         .await?;
                     if closing_extent != extent {
                         return Ok(partial_result("book_changed_during_scan"));
+                    }
+                    // The closing extent compares BooksFrom, LastVoucherDate and
+                    // the VOUCHER high-water only, so a master edit that adds a
+                    // bill-wise opening balance mid-scan is invisible to it.
+                    // Measured on the lab instances: two books identical on all
+                    // of those differed by ten ledger openings worth over
+                    // Rs 15 lakh. Re-read coverage and require it unchanged.
+                    let closing_coverage = client
+                        .fetch_ledger_opening_coverage(extent.company())
+                        .await?;
+                    if closing_coverage != opening_coverage
+                        || !closing_coverage.is_fully_covered_by_vouchers()
+                    {
+                        return Ok(partial_result("ledger_opening_bills_not_covered"));
                     }
                     match assemble_partitioned_scan(&extent, requested, completed_date_partitions) {
                         ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
