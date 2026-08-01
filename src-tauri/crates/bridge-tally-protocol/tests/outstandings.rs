@@ -1152,12 +1152,50 @@ fn a_bill_literally_named_on_account_does_not_merge_with_the_aggregate() {
     // string. Tally bill names are free user text, so a bill genuinely named
     // "on-account" would otherwise share a key with every unnamed On Account
     // allocation for that party and reconcile against it, hiding a balance.
-    let xml = concat!(
-        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
-        "<LEDGER NAME=\"Tracked\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000005</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
-        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    let xml = format!(
+        concat!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+            "<VOUCHER REMOTEID=\"r1\"><GUID>{guid}-00000001</GUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID>",
+            "<DATE TYPE=\"Date\">20260401</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><VOUCHERNUMBER>1</VOUCHERNUMBER>",
+            "<PARTYLEDGERNAME>Tracked</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Tracked</LEDGERNAME><BILLALLOCATIONS.LIST>",
+            "<NAME>On Account</NAME><BILLTYPE>New Ref</BILLTYPE><BILLDATE>20260401</BILLDATE><AMOUNT>-100.00</AMOUNT>",
+            "</BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
+            "<VOUCHER REMOTEID=\"r2\"><GUID>{guid}-00000002</GUID><MASTERID>2</MASTERID><ALTERID>2</ALTERID>",
+            "<DATE TYPE=\"Date\">20260401</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><VOUCHERNUMBER>2</VOUCHERNUMBER>",
+            "<PARTYLEDGERNAME>Tracked</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Tracked</LEDGERNAME><BILLALLOCATIONS.LIST>",
+            "<BILLTYPE>On Account</BILLTYPE><BILLDATE>20260401</BILLDATE><AMOUNT>-50.00</AMOUNT>",
+            "</BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
+            "</COLLECTION></DATA></BODY></ENVELOPE>"
+        ),
+        guid = COMPANY_GUID
     );
-    assert!(parse_coverage(xml).is_ok());
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
+    let report = compute_outstandings(
+        &complete_scan_for_vouchers(&xml, window, 440),
+        TallyDate::parse("20260401").unwrap(),
+    )
+    .expect("two distinct bill keys compute");
+
+    assert_eq!(report.receivable_total.as_str(), "150");
+    assert_eq!(report.open_receivable_bill_count, 2);
+    assert_eq!(report.ageing_bill_counts.days_0_30, 2);
+
+    let unnamed_non_on_account = xml.replace(
+        "<BILLTYPE>On Account</BILLTYPE>",
+        "<BILLTYPE>Agst Ref</BILLTYPE>",
+    );
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
+    assert!(matches!(
+        compute_outstandings(
+            &complete_scan_for_vouchers(&unnamed_non_on_account, window, 440),
+            TallyDate::parse("20260401").unwrap(),
+        ),
+        Err(OutstandingsError::InvalidResponse("bill_reference_missing"))
+    ));
 }
 
 #[test]
