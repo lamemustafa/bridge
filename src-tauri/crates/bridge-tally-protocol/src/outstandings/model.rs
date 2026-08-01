@@ -409,7 +409,7 @@ pub enum MoneyValue {
     Absent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BillReferenceKind {
     NewRef,
     AgstRef,

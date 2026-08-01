@@ -289,14 +289,14 @@ async fn unit_a_outstandings_live_bounded_window() {
         "a voucher outside the requested AlterID range crossed the live filter"
     );
 
-    let mut bill_types = BTreeMap::<String, usize>::new();
+    let mut bill_types = BTreeMap::<_, usize>::new();
     for allocation in segment
         .vouchers()
         .iter()
         .flat_map(|voucher| &voucher.ledger_entries)
         .flat_map(|entry| &entry.bill_allocations)
     {
-        *bill_types.entry(allocation.bill_type.clone()).or_default() += 1;
+        *bill_types.entry(allocation.bill_type).or_default() += 1;
     }
     transport
         .get_status_decoded()

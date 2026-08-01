@@ -486,7 +486,7 @@ mod tests {
             ledger_entries: vec![LedgerEntry {
                 ledger_name: party.to_string(),
                 bill_allocations: vec![BillAllocation {
-                    bill_date: None,
+                    bill_date: (bill_type == "New Ref").then(|| TallyDate::parse(date).unwrap()),
                     name: Some(reference.to_string()),
                     bill_type: match bill_type {
                         "New Ref" => BillReferenceKind::NewRef,
