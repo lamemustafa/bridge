@@ -1,5 +1,18 @@
 use std::borrow::Cow;
 
+/// A U+FFFD is ambiguous with an emitted marker only when the text that follows
+/// it is `#<digits>;` -- that is the exact shape this function emits. Anywhere
+/// else a literal U+FFFD is ordinary, legal content and must survive untouched.
+fn collides_with_marker_form(rest: &str) -> bool {
+    let Some(rest) = rest.strip_prefix('#') else {
+        return false;
+    };
+    let digits = rest.split(';').next().unwrap_or("");
+    !digits.is_empty()
+        && digits.len() < rest.len()
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 pub(super) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
     sanitize_invalid_numeric_references_with_marker_search_observer(xml, || {})
 }
@@ -28,6 +41,11 @@ fn sanitize_invalid_numeric_references_with_marker_search_observer(
         };
 
         if replacement_marker == Some(start) {
+            let after = start + '\u{fffd}'.len_utf8();
+            if !collides_with_marker_form(&xml[after..]) {
+                scan = after;
+                continue;
+            }
             let target = output.get_or_insert_with(|| String::with_capacity(xml.len()));
             target.push_str(&xml[copy_from..start]);
             // U+FFFD is XML-legal source text, so it cannot be used as an
@@ -37,8 +55,8 @@ fn sanitize_invalid_numeric_references_with_marker_search_observer(
             // representation.
             target.push('\u{fffd}');
             target.push_str("#65533;");
-            copy_from = start + '\u{fffd}'.len_utf8();
-            scan = copy_from;
+            copy_from = after;
+            scan = after;
             continue;
         }
 
@@ -57,7 +75,13 @@ fn sanitize_invalid_numeric_references_with_marker_search_observer(
             .or_else(|| token.strip_prefix('X'))
             .and_then(|hex| u32::from_str_radix(hex, 16).ok())
             .or_else(|| token.parse::<u32>().ok());
-        if parsed.is_some_and(|value| !is_xml_10_char(value) || value == 0xfffd) {
+        let illegal = parsed.is_some_and(|value| !is_xml_10_char(value));
+        // A legal reference to U+FFFD decodes to the marker character, so it is
+        // ambiguous under exactly the same condition as a literal one -- and
+        // only then. Rewriting it unconditionally corrupts a legitimate value.
+        let ambiguous_replacement =
+            parsed == Some(0xfffd) && collides_with_marker_form(&xml[end + 1..]);
+        if illegal || ambiguous_replacement {
             let target = output.get_or_insert_with(|| String::with_capacity(xml.len()));
             target.push_str(&xml[copy_from..start]);
             // Preserve the numeric identity in a self-escaping marker.
@@ -135,16 +159,25 @@ mod tests {
                 .value
         };
 
-        let illegal_reference = parse("<A>ACME&#4;LTD</A>");
         let first_illegal_reference = parse("<A>ACME&#1;LTD</A>");
+        let illegal_reference = parse("<A>ACME&#4;LTD</A>");
+        let literal_replacement = parse("<A>ACME\u{fffd}LTD</A>");
+        let decimal_replacement = parse("<A>ACME&#65533;LTD</A>");
+        let non_numeric_marker_form = parse("<A>ACME\u{fffd}#abc;LTD</A>");
         let literal_encoded_form = parse("<A>ACME\u{fffd}#4;LTD</A>");
         let decimal_replacement_reference = parse("<A>ACME&#65533;#4;LTD</A>");
         let hex_replacement_reference = parse("<A>ACME&#xFFFD;#4;LTD</A>");
 
-        assert_ne!(first_illegal_reference, illegal_reference);
+        assert_eq!(first_illegal_reference, "ACME\u{fffd}#1;LTD");
         assert_eq!(illegal_reference, "ACME\u{fffd}#4;LTD");
+        assert_eq!(literal_replacement, "ACME\u{fffd}LTD");
+        assert_eq!(decimal_replacement, literal_replacement);
+        assert_eq!(non_numeric_marker_form, "ACME\u{fffd}#abc;LTD");
+        assert_ne!(first_illegal_reference, illegal_reference);
         assert_eq!(literal_encoded_form, "ACME\u{fffd}#65533;#4;LTD");
         assert_ne!(illegal_reference, literal_encoded_form);
+        assert_ne!(illegal_reference, decimal_replacement_reference);
+        assert_ne!(illegal_reference, hex_replacement_reference);
         assert_eq!(decimal_replacement_reference, literal_encoded_form);
         assert_eq!(hex_replacement_reference, literal_encoded_form);
     }
