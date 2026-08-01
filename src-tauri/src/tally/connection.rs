@@ -832,9 +832,17 @@ impl TallyClient {
     }
 
     fn record_observed_body_bytes(&self, bytes: usize) {
-        self.observed_body_bytes.store(
-            u64::try_from(bytes).unwrap_or(u64::MAX - 1),
-            Ordering::Release,
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX - 1);
+        let _ = self.observed_body_bytes.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |observed| {
+                Some(if observed == BODY_BYTES_UNAVAILABLE {
+                    bytes
+                } else {
+                    observed.max(bytes)
+                })
+            },
         );
     }
 
@@ -1421,7 +1429,9 @@ mod tests {
         const COMPANY_EXTENT: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
         );
-        const EMPTY_VOUCHERS: &str = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>";
+        const OPTIONAL_VOUCHERS: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml"
+        );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
 
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -1430,6 +1440,10 @@ mod tests {
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
             for (index, expected_prefix) in [
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
                 "POST / HTTP/1.1",
                 "GET /status HTTP/1.1",
                 "POST / HTTP/1.1",
@@ -1457,8 +1471,8 @@ mod tests {
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let body = match index {
-                    0 | 2 => COMPANY_EXTENT,
-                    4 | 6 => EMPTY_VOUCHERS,
+                    0 | 2 | 8 | 10 => COMPANY_EXTENT,
+                    4 | 6 => OPTIONAL_VOUCHERS,
                     _ => STATUS,
                 };
                 let response = format!(
@@ -1486,8 +1500,8 @@ mod tests {
             .expect("paired extent reads remain stable");
         let reporting_window = bridge_tally_protocol::outstandings::DateWindow::parse(
             bridge_tally_protocol::outstandings::DateBoundaryProfile::ModeAgnostic,
-            "20250401",
-            "20250401",
+            "20260401",
+            "20260401",
         )
         .expect("synthetic one-day window");
         let segment_window = reporting_window
@@ -1498,16 +1512,34 @@ mod tests {
             .fetch_outstandings_segment_pair(
                 extent.company(),
                 segment_window,
-                bridge_tally_protocol::outstandings::AlterIdRange::new(0, 1)
+                bridge_tally_protocol::outstandings::AlterIdRange::new(0, 101603)
                     .expect("non-empty synthetic range"),
             )
             .await
             .expect("paired segment reads remain stable");
-        assert!(matches!(
-            observation.verification,
-            bridge_tally_protocol::outstandings::SegmentVerification::Complete(segment)
-                if segment.vouchers().is_empty()
-        ));
+        let verification = observation.verification;
+        let bridge_tally_protocol::outstandings::SegmentVerification::Complete(segment) =
+            verification
+        else {
+            panic!("captured voucher response did not verify: {verification:?}");
+        };
+        assert!(
+            !segment.vouchers().is_empty(),
+            "captured voucher fixture unexpectedly had no vouchers"
+        );
+        let closing_extent = client
+            .fetch_company_book_extent(
+                "Aarav Trading Company Demo",
+                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+            )
+            .await
+            .expect("closing paired extent reads remain stable");
+        assert_eq!(closing_extent, extent, "synthetic book did not change");
+        assert_eq!(
+            client.observed_body_bytes(),
+            Some(u64::try_from(OPTIONAL_VOUCHERS.len()).expect("fixture length fits u64")),
+            "closing extent evidence must not overwrite the larger voucher payload"
+        );
         server.await.expect("synthetic Tally server task");
     }
 
