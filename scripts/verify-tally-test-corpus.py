@@ -64,6 +64,9 @@ def main():
     # with no attributes, or a newline before the first attribute; a
     # `'<VOUCHER '` scan drops those rows, and a partially omitted corpus
     # would then be accepted as calibration evidence.
+    # `d` is already `Resp.data`, i.e. the inside of `<DATA>`; CMPINFO's bare
+    # `<VOUCHER>0</VOUCHER>` counters are excluded there, so this scan must NOT
+    # re-scope to `<DATA>` -- there is no such tag left to find.
     vs = re.findall(r'<VOUCHER(?:\s[^>]*)?>.*?</VOUCHER>', d, re.S)
     rows = []
     for v in vs:
@@ -205,7 +208,6 @@ def main():
     # 4. Ageing spread of OPEN bills
     opened = {}
     for v in (x['block'] for x in rows):
-        dm = re.search(r'<DATE[^>]*>(\d{8})<', v)
         for a in re.findall(r'<BILLALLOCATIONS\.LIST>(.*?)</BILLALLOCATIONS\.LIST>', v, re.S):
             nm = re.search(r'<NAME>([^<]*)', a)
             ty = re.search(r'<BILLTYPE>([^<]*)', a)
@@ -223,12 +225,22 @@ def main():
                 return 1
             key = nm.group(1).strip()
             val = float(raw_amount)
-            # Production ages a bill from Tally's own BILLDATE when supplied,
-            # falling back to the voucher date. The verifier must use the same
-            # date or it measures a different ageing spread than the product.
-            bd = re.search(r'<BILLDATE[^>]*>(\d{8})<', a)
-            opened_on = bd.group(1) if bd else (dm.group(1) if dm else '')
-            if ty.group(1) == 'New Ref':
+            bill_type = ty.group(1).strip()
+            if bill_type == 'New Ref':
+                # A `New Ref` OPENS a bill and production REQUIRES its BILLDATE,
+                # failing the whole read with `bill_date_missing` rather than
+                # ageing from the voucher date. A corpus whose openings omit the
+                # field would satisfy every bucket here and still be refused by
+                # the product, so the verifier must demand the same field. The
+                # capture group is deliberately `[^<]*`, not `\d{8}`: a present
+                # but malformed BILLDATE must be reported, not read as absent.
+                bd = re.search(r'<BILLDATE[^>]*>([^<]*)<', a)
+                opened_on = (bd.group(1) if bd else '').strip()
+                if not (len(opened_on) == 8 and opened_on.isdigit() and real_date(opened_on)):
+                    print(f'FAIL: `New Ref` allocation {key!r} carries BILLDATE '
+                          f'{opened_on!r}; production requires a real Gregorian '
+                          'BILLDATE on an opening and rejects the response without one.')
+                    return 1
                 prior = opened.get(key)
                 # A reference that was fully settled and is then reused starts a
                 # NEW bill. Keeping the first cycle's date would age a freshly
@@ -236,7 +248,7 @@ def main():
                 if prior is None or abs(prior['amt']) < 0.01:
                     opened[key] = {'date': opened_on, 'amt': 0.0}
                 opened[key]['amt'] += val
-            elif ty.group(1) == 'Agst Ref' and key in opened:
+            elif bill_type == 'Agst Ref' and key in opened:
                 opened[key]['amt'] += val
     # The accepted corpus ends 2026-07-02 and its documented reconciliation
     # target is aged as of 2026-07-31. Ageing against the workstation clock
