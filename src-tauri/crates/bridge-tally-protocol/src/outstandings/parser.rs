@@ -103,20 +103,13 @@ pub fn parse_ledger_opening_coverage(
     let ledgers = parsed.body.data.collection.ledgers;
     let mut openings = 0usize;
     for ledger in &ledgers {
-        // `SVCURRENTCOMPANY` selects by NAME. A same-named loaded company can
-        // still yield a successful ledger collection, so require every ledger
-        // master to prove it belongs to the GUID-pinned company. Tally records
-        // the company GUID as the prefix of each master GUID.
         let ledger_guid = ledger
             .guid
             .as_ref()
             .ok_or(OutstandingsError::InvalidResponse("ledger_guid_missing"))?
             .text
             .trim();
-        let matches_company = ledger_guid
-            .get(..company.guid().len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(company.guid()));
-        if !matches_company {
+        if !master_guid_belongs_to_company(ledger_guid, company.guid()) {
             return Err(OutstandingsError::InvalidResponse(
                 "ledger_belongs_to_another_company",
             ));
@@ -197,24 +190,10 @@ pub(super) fn parse_segment(
         .into_iter()
         .map(|raw| convert_voucher(raw, reporting_window, alter_id_range))
         .collect::<Result<Vec<_>, _>>()?;
-    // Bind the RESPONSE to the pinned company, not just the request.
-    //
-    // `SVCURRENTCOMPANY` selects by NAME. If a second loaded company shares the
-    // selected name, or the name binding shifts mid-scan, Tally can return that
-    // other company's vouchers while the paired company collection still finds
-    // the expected GUID among all loaded companies -- so the date checks, the
-    // AlterID range checks and the closing extent all pass, and another
-    // company's financial data is published under the pinned name.
-    //
-    // Every master GUID in a company carries the company GUID as its prefix
-    // (TALLY_PROTOCOL_REFERENCE.md), so the response carries its own identity.
-    let expected_guid_prefix = company.guid();
+    // Bind the response to the pinned company, not just the name-selected
+    // request, before its financial rows can be used.
     for voucher in &vouchers {
-        let matches_company = voucher
-            .guid
-            .get(..expected_guid_prefix.len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(expected_guid_prefix));
-        if !matches_company {
+        if !master_guid_belongs_to_company(&voucher.guid, company.guid()) {
             return Err(OutstandingsError::InvalidResponse(
                 "voucher_belongs_to_another_company",
             ));
@@ -239,6 +218,19 @@ pub(super) fn parse_segment(
         vouchers,
         raw_row_count,
     })
+}
+
+fn master_guid_belongs_to_company(master_guid: &str, company_guid: &str) -> bool {
+    let Some(prefix) = master_guid.get(..company_guid.len()) else {
+        return false;
+    };
+    let Some(suffix) = master_guid.get(company_guid.len()..) else {
+        return false;
+    };
+    prefix.eq_ignore_ascii_case(company_guid)
+        && suffix
+            .strip_prefix('-')
+            .is_some_and(|master_id| !master_id.is_empty())
 }
 
 fn convert_voucher(

@@ -223,6 +223,61 @@ fn a_segment_carrying_another_companys_vouchers_is_rejected() {
 }
 
 #[test]
+fn ledger_guid_binding_requires_a_nonempty_master_suffix() {
+    let valid_ledger = concat!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+        "<LEDGER NAME=\"Tracked\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000001</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    assert!(
+        parse_coverage(valid_ledger).is_ok(),
+        "a GUID with a nonempty master suffix binds ledger coverage"
+    );
+    let bare_ledger = valid_ledger.replace("-00000001</GUID>", "</GUID>");
+    assert!(matches!(
+        parse_coverage(&bare_ledger),
+        Err(OutstandingsError::InvalidResponse(
+            "ledger_belongs_to_another_company"
+        ))
+    ));
+}
+
+#[test]
+fn voucher_guid_binding_requires_a_nonempty_master_suffix() {
+    let extent = extent();
+    let requested =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20250401", "20260315").unwrap();
+    let accepted = verify_segment_pair(
+        &vouchers(),
+        &vouchers(),
+        extent.company(),
+        requested.clone(),
+        full_alter_id_range(),
+    )
+    .expect("a real-shaped master GUID binds voucher coverage");
+    assert!(matches!(accepted, SegmentVerification::Complete(_)));
+
+    let bare_voucher = vouchers().replacen(
+        "<GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-0000004b</GUID>",
+        "<GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>",
+        1,
+    );
+    let rejected = verify_segment_pair(
+        &bare_voucher,
+        &bare_voucher,
+        extent.company(),
+        requested,
+        full_alter_id_range(),
+    )
+    .expect("a bare voucher GUID is an in-band partial result");
+    assert!(matches!(
+        rejected,
+        SegmentVerification::Partial(partial)
+            if partial.reason_code == "voucher_belongs_to_another_company"
+    ));
+}
+
+#[test]
 fn company_pin_is_created_only_after_live_identity_matches() {
     let extent = extent();
     assert_eq!(extent.company().name(), COMPANY_NAME);
