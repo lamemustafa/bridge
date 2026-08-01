@@ -34,6 +34,7 @@ RECONCILIATION_AS_OF = datetime.date(2026, 7, 31)
 
 CO = sys.argv[1] if len(sys.argv) > 1 else 'Bridge Billwise Lab'
 FETCH = ('GUID, MASTERID, ALTERID, DATE, VOUCHERTYPENAME, VOUCHERNUMBER, '
+         'ISOPTIONAL, ISCANCELLED, ISDELETED, '
          'PARTYLEDGERNAME, ISCANCELLED, ISDELETED, ALLLEDGERENTRIES.*')
 
 
@@ -68,9 +69,32 @@ def main():
     for v in vs:
         g = lambda t: (re.search(rf'<{t}[^>]*>([^<]*)</{t}>', v) or type('', (), {'group': lambda s, i: ''})()).group(1)
         rows.append({'alterid': g('ALTERID').strip(), 'date': g('DATE').strip(),
-                     'vtype': g('VOUCHERTYPENAME'), 'block': v})
-    rows = [x for x in rows if x['alterid'].isdigit() and len(x['date']) == 8]
-    print(f'vouchers parsed: {len(rows)}')
+                     'vtype': g('VOUCHERTYPENAME'), 'block': v,
+                     'optional': g('ISOPTIONAL').strip(),
+                     'cancelled': g('ISCANCELLED').strip(),
+                     'deleted': g('ISDELETED').strip()})
+    # Dropping malformed rows silently lets the corpus be ACCEPTED while the
+    # production parser would reject the very same response: it fails closed on
+    # a missing/non-numeric ALTERID or a bad date. The verifier must agree with
+    # the parser about what is parseable, so any invalid row fails the corpus.
+    valid = [x for x in rows if x['alterid'].isdigit() and len(x['date']) == 8]
+    if len(valid) != len(rows):
+        print(f'FAIL: {len(rows) - len(valid)} of {len(rows)} vouchers have a '
+              'missing/non-numeric ALTERID or a malformed date. The production '
+              'parser rejects these; the corpus cannot be accepted.')
+        return 1
+    rows = valid
+
+    # Production `compute_outstandings` excludes optional, cancelled and
+    # deleted vouchers. If the required New Ref / Agst Ref examples or the
+    # ageing spread came only from those, the corpus would be accepted while
+    # exercising nothing the product actually computes.
+    def posting(x):
+        return not any(x[k].lower() == 'yes' for k in ('optional', 'cancelled', 'deleted'))
+    non_posting = [x for x in rows if not posting(x)]
+    rows = [x for x in rows if posting(x)]
+    print(f'vouchers parsed: {len(rows)} posting'
+          + (f' ({len(non_posting)} non-posting excluded)' if non_posting else ''))
     if not rows:
         print('FAIL: no vouchers. Wrong company name, or nothing created yet.')
         return 1

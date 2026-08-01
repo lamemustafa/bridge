@@ -76,6 +76,17 @@ pub fn parse_company_book_extent(
 
 /// Detect bill-wise OPENING balances on ledger masters.
 ///
+/// **Known limitation — offsetting opening bills are not detected.** This works
+/// from the ledger-level `OPENINGBALANCE`, so a bill-wise ledger holding, say, a
+/// 100 debit opening bill and a 100 credit opening bill nets to zero and is
+/// classified as fully covered, while both bills exist with no voucher. The scan
+/// can then complete while omitting both receivable and payable exposure.
+///
+/// Closing this needs evidence about the opening *allocations* rather than the
+/// ledger balance, which is the same read that reconciling opening bills would
+/// require — Unit B work, tracked in issue #108. Recorded here so the cheap
+/// detector is not mistaken for a complete one.
+///
 /// A ledger with bill-wise tracking on and a non-zero opening balance carries
 /// bills that exist without any voucher. A voucher-only scan cannot observe
 /// them, so their presence must block a `Complete` claim rather than silently

@@ -109,6 +109,21 @@ The exit check now asserts **per port**: 9000 completes at the accepted target, 
 be demanding a wrong answer — and it adds the stronger property that the detector fires exactly
 where opening bills exist and nowhere else.
 
+## 3b. The coverage detector is cheap, and its limit is known
+
+The detector reads ledger-level `OPENINGBALANCE`, so **offsetting opening bills are invisible
+to it**: a bill-wise ledger holding a 100 debit and a 100 credit opening bill nets to zero and
+is classified as fully covered, while both bills exist with no voucher. The scan can then
+complete while omitting both receivable and payable exposure.
+
+This is a limitation of the cheap detector, not a bug in it. Closing it needs evidence about the
+opening *allocations* rather than the ledger balance — the same read that reconciling opening
+bills would require, i.e. Unit B. Tracked in issue #108 and recorded in the code so the detector
+is not mistaken for a complete one.
+
+It does not affect the accepted reconciliation: `Bridge Billwise Lab` on port 9000 has **no**
+bill-wise openings at all, offsetting or otherwise.
+
 ## 4. A better approach was looked for, and rejected on evidence
 
 Tally exposes a `Bills` collection that reportedly returns outstanding bills directly, which
