@@ -38,6 +38,28 @@ fn capture_high_water() -> VoucherAlterIdHighWater {
     VoucherAlterIdHighWater::parse("440").unwrap()
 }
 
+fn parse_coverage(
+    xml: &str,
+) -> Result<bridge_tally_protocol::outstandings::LedgerOpeningCoverage, OutstandingsError> {
+    let extent = extent();
+    parse_ledger_opening_coverage(xml, extent.company())
+}
+
+#[test]
+fn ledger_opening_coverage_request_fetches_master_guid() {
+    let company = bridge_tally_protocol::xml_read_profiles::ValidatedCompanyName::new(
+        COMPANY_NAME.to_string(),
+    )
+    .expect("valid company name");
+    let request = ReadOnlyProfile::LedgerOpeningCoverageV1 { company: &company };
+    assert!(
+        request
+            .render()
+            .contains("<FETCH>GUID, Name, ISBILLWISEON, OPENINGBALANCE</FETCH>"),
+        "the ledger response must carry each master's company-binding evidence"
+    );
+}
+
 #[test]
 fn reporting_period_partitions_into_narrow_valid_non_overlapping_windows() {
     let reporting = DateWindow::parse(
@@ -626,11 +648,11 @@ fn ledger_opening_bills_are_detected_so_a_voucher_only_scan_cannot_claim_complet
     // presence must block a Complete claim.
     let with_openings = concat!(
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
-        "<LEDGER NAME=\"Plain Expense\"><ISBILLWISEON>No</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
-        "<LEDGER NAME=\"Carried Debtor\"><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>-12500.00</OPENINGBALANCE></LEDGER>",
+        "<LEDGER NAME=\"Plain Expense\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000001</GUID><ISBILLWISEON>No</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
+        "<LEDGER NAME=\"Carried Debtor\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000002</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>-12500.00</OPENINGBALANCE></LEDGER>",
         "</COLLECTION></DATA></BODY></ENVELOPE>"
     );
-    let coverage = parse_ledger_opening_coverage(with_openings).expect("ledger collection parses");
+    let coverage = parse_coverage(with_openings).expect("ledger collection parses");
     assert_eq!(coverage.ledgers_seen(), 2);
     assert_eq!(coverage.bill_wise_openings(), 1);
     assert!(
@@ -642,14 +664,32 @@ fn ledger_opening_bills_are_detected_so_a_voucher_only_scan_cannot_claim_complet
     // balance, are both fully covered by the voucher scan.
     let covered = concat!(
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
-        "<LEDGER NAME=\"Tracked, No Opening\"><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>",
-        "<LEDGER NAME=\"Untracked Bank\"><ISBILLWISEON>No</ISBILLWISEON><OPENINGBALANCE>-90000.00</OPENINGBALANCE></LEDGER>",
+        "<LEDGER NAME=\"Tracked, No Opening\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000003</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>",
+        "<LEDGER NAME=\"Untracked Bank\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000004</GUID><ISBILLWISEON>No</ISBILLWISEON><OPENINGBALANCE>-90000.00</OPENINGBALANCE></LEDGER>",
         "</COLLECTION></DATA></BODY></ENVELOPE>"
     );
-    let coverage = parse_ledger_opening_coverage(covered).expect("ledger collection parses");
+    let coverage = parse_coverage(covered).expect("ledger collection parses");
     assert_eq!(coverage.ledgers_seen(), 2);
     assert_eq!(coverage.bill_wise_openings(), 0);
     assert!(coverage.is_fully_covered_by_vouchers());
+}
+
+#[test]
+fn ledger_opening_coverage_requires_each_ledger_to_prove_the_pinned_company_guid() {
+    let response = concat!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+        "<LEDGER NAME=\"Wrong Book\"><GUID>another-company-guid-00000001</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    );
+    assert!(
+        matches!(
+            parse_coverage(response),
+            Err(OutstandingsError::InvalidResponse(
+                "ledger_belongs_to_another_company"
+            ))
+        ),
+        "a same-named collection from another company must not establish coverage"
+    );
 }
 
 #[test]
@@ -696,10 +736,10 @@ fn a_bill_literally_named_on_account_does_not_merge_with_the_aggregate() {
     // allocation for that party and reconcile against it, hiding a balance.
     let xml = concat!(
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
-        "<LEDGER NAME=\"Tracked\"><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
+        "<LEDGER NAME=\"Tracked\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000005</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
         "</COLLECTION></DATA></BODY></ENVELOPE>"
     );
-    assert!(parse_ledger_opening_coverage(xml).is_ok());
+    assert!(parse_coverage(xml).is_ok());
 }
 
 #[test]
@@ -710,12 +750,12 @@ fn a_ledger_missing_bill_wise_state_fails_closed() {
     // voucher-only scan claim Complete while omitting its opening bills.
     let missing = concat!(
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
-        "<LEDGER NAME=\"No Flag\"><OPENINGBALANCE>-12500.00</OPENINGBALANCE></LEDGER>",
+        "<LEDGER NAME=\"No Flag\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000006</GUID><OPENINGBALANCE>-12500.00</OPENINGBALANCE></LEDGER>",
         "</COLLECTION></DATA></BODY></ENVELOPE>"
     );
     assert!(
         matches!(
-            parse_ledger_opening_coverage(missing),
+            parse_coverage(missing),
             Err(OutstandingsError::InvalidResponse(
                 "ledger_bill_wise_state_missing"
             ))
@@ -728,7 +768,7 @@ fn a_ledger_missing_bill_wise_state_fails_closed() {
         "<ISBILLWISEON>Maybe</ISBILLWISEON><OPENINGBALANCE>",
     );
     assert!(
-        parse_ledger_opening_coverage(&unrecognised).is_err(),
+        parse_coverage(&unrecognised).is_err(),
         "an unrecognised bill-wise value must fail closed too"
     );
 }
@@ -810,7 +850,7 @@ fn ledger_coverage_fails_closed_on_empty_response_and_empty_values() {
     // "no openings" would publish a Complete voucher-only report.
     assert!(
         matches!(
-            parse_ledger_opening_coverage(&format!("{head}{tail}")),
+            parse_coverage(&format!("{head}{tail}")),
             Err(OutstandingsError::InvalidResponse(
                 "ledger_coverage_response_empty"
             ))
@@ -821,11 +861,11 @@ fn ledger_coverage_fails_closed_on_empty_response_and_empty_values() {
     // A present-but-empty amount is not zero. Skipping it would count the
     // ledger as carrying no opening.
     let empty_value = format!(
-        "{head}<LEDGER NAME=\"Tracked\"><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE></OPENINGBALANCE></LEDGER>{tail}"
+        "{head}<LEDGER NAME=\"Tracked\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000007</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE></OPENINGBALANCE></LEDGER>{tail}"
     );
     assert!(
         matches!(
-            parse_ledger_opening_coverage(&empty_value),
+            parse_coverage(&empty_value),
             Err(OutstandingsError::InvalidResponse(
                 "ledger_opening_balance_empty"
             ))

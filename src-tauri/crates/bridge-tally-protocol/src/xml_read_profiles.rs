@@ -974,7 +974,7 @@ mod tests {
             ),
             (
                 ReadOnlyProfileId::LedgerOpeningCoverageV1,
-                "fc06813e03f2a8b3e083c07dd788afd017d7a7808827b75b90eef3acc8e15d8f",
+                "64528ba2deddc0b640bc6c557d50baed252c0ba2aadc5e42fea0fd6e1c0c30bf",
             ),
             (
                 ReadOnlyProfileId::StandardLedgerIdentityV1,

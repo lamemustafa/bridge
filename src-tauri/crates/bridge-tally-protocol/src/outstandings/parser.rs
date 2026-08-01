@@ -93,6 +93,7 @@ pub fn parse_company_book_extent(
 /// under-report.
 pub fn parse_ledger_opening_coverage(
     xml: &str,
+    company: &PinnedCompany,
 ) -> Result<LedgerOpeningCoverage, OutstandingsError> {
     require_complete_envelope(xml)?;
     let sanitized = sanitize_invalid_numeric_references(xml);
@@ -102,6 +103,24 @@ pub fn parse_ledger_opening_coverage(
     let ledgers = parsed.body.data.collection.ledgers;
     let mut openings = 0usize;
     for ledger in &ledgers {
+        // `SVCURRENTCOMPANY` selects by NAME. A same-named loaded company can
+        // still yield a successful ledger collection, so require every ledger
+        // master to prove it belongs to the GUID-pinned company. Tally records
+        // the company GUID as the prefix of each master GUID.
+        let ledger_guid = ledger
+            .guid
+            .as_ref()
+            .ok_or(OutstandingsError::InvalidResponse("ledger_guid_missing"))?
+            .text
+            .trim();
+        let matches_company = ledger_guid
+            .get(..company.guid().len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(company.guid()));
+        if !matches_company {
+            return Err(OutstandingsError::InvalidResponse(
+                "ledger_belongs_to_another_company",
+            ));
+        }
         // Fail closed. `ISBILLWISEON` is in this profile's FETCH list, so an
         // absent or unrecognised value means the response does not match the
         // request. Defaulting to "not bill-wise" would classify a ledger with a
