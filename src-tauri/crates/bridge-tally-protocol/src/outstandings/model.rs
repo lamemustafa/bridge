@@ -403,10 +403,36 @@ pub enum MoneyValue {
     Absent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BillReferenceKind {
+    NewRef,
+    AgstRef,
+    Advance,
+    OnAccount,
+}
+
+impl BillReferenceKind {
+    pub(crate) fn parse(value: &str) -> Result<Self, OutstandingsError> {
+        match value.trim() {
+            "New Ref" => Ok(Self::NewRef),
+            "Agst Ref" => Ok(Self::AgstRef),
+            "Advance" => Ok(Self::Advance),
+            "On Account" => Ok(Self::OnAccount),
+            _ => Err(OutstandingsError::InvalidResponse(
+                "bill_reference_kind_unknown",
+            )),
+        }
+    }
+
+    pub(crate) fn requires_named_reference(self) -> bool {
+        !matches!(self, Self::OnAccount)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BillAllocation {
     pub name: Option<String>,
-    pub bill_type: String,
+    pub bill_type: BillReferenceKind,
     pub amount: MoneyValue,
     /// Tally's own date for the bill. Ageing must run from this when present:
     /// a bill's date can differ from the date of the voucher that opened it,

@@ -2,9 +2,9 @@ use bridge_tally_primitives::TallyDate;
 use bridge_tally_protocol::{
     outstandings::{
         assemble_scan, compute_outstandings, parse_company_book_extent,
-        parse_ledger_opening_coverage, verify_segment_pair, AlterIdRange, DateBoundaryProfile,
-        DateWindow, MoneyValue, NarrowDateWindow, OutstandingsError, ScanResult,
-        SegmentVerification, VoucherAlterIdHighWater,
+        parse_ledger_opening_coverage, verify_segment_pair, AlterIdRange, BillReferenceKind,
+        DateBoundaryProfile, DateWindow, MoneyValue, NarrowDateWindow, OutstandingsError,
+        ScanResult, SegmentVerification, VoucherAlterIdHighWater,
     },
     xml_read_profiles::ReadOnlyProfile,
 };
@@ -456,20 +456,20 @@ fn wildcard_live_capture_preserves_named_bill_type_distribution() {
         .collect::<Vec<_>>();
     let new_refs = allocations
         .iter()
-        .filter(|allocation| allocation.bill_type == "New Ref")
+        .filter(|allocation| allocation.bill_type == BillReferenceKind::NewRef)
         .count();
     let against_refs = allocations
         .iter()
-        .filter(|allocation| allocation.bill_type == "Agst Ref")
+        .filter(|allocation| allocation.bill_type == BillReferenceKind::AgstRef)
         .count();
     assert_eq!(new_refs, 28);
     assert_eq!(against_refs, 24);
     assert!(allocations
         .iter()
-        .any(|allocation| allocation.bill_type != "On Account"));
+        .any(|allocation| allocation.bill_type != BillReferenceKind::OnAccount));
     assert!(allocations
         .iter()
-        .filter(|allocation| allocation.bill_type != "On Account")
+        .filter(|allocation| allocation.bill_type != BillReferenceKind::OnAccount)
         .all(|allocation| allocation
             .name
             .as_deref()
