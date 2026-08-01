@@ -2,6 +2,7 @@ import React from "react";
 import { RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { outstandingsPartialReason } from "./outstandings-copy";
+import { canStartOutstandingsRead } from "./outstandings-currency";
 
 type Props = {
   config: { host: string; port: number };
@@ -65,8 +66,10 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
     setInrAsserted(false);
   }, [config.host, config.port, company?.guid, company?.name]);
 
+  const readPermitted = canStartOutstandingsRead(company, inrAsserted);
+
   const load = React.useCallback(async () => {
-    if (!company) return;
+    if (!readPermitted || !company) return;
     const version = requestVersion.current + 1;
     requestVersion.current = version;
     setLoading(true);
@@ -89,12 +92,12 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
     } finally {
       if (requestVersion.current === version) setLoading(false);
     }
-  }, [config.host, config.port, company?.guid, company?.name]);
+  }, [config.host, config.port, company?.guid, company?.name, readPermitted]);
 
   React.useEffect(() => {
-    if (company) void load();
+    if (readPermitted) void load();
     // The screen is mounted only when the operator opens Outstandings.
-  }, [load]);
+  }, [load, readPermitted]);
 
   if (!company) {
     return (
