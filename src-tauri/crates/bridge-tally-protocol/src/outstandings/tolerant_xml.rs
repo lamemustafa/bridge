@@ -6,7 +6,10 @@ use std::cell::Cell;
 #[cfg(test)]
 thread_local! {
     static NUMERIC_REFERENCE_SEARCHES: Cell<Option<usize>> = const { Cell::new(None) };
+    static NUMERIC_REFERENCE_TERMINATOR_SEARCH_BYTES: Cell<Option<usize>> = const { Cell::new(None) };
 }
+
+const MAX_NUMERIC_REFERENCE_TOKEN_BYTES: usize = 10;
 
 /// A U+FFFD is ambiguous with an emitted marker only when the text that follows
 /// it is `#<digits>;` -- that is the exact shape this function emits. Anywhere
@@ -29,6 +32,24 @@ fn find_numeric_reference(xml: &str) -> Option<usize> {
         }
     });
     xml.find("&#")
+}
+
+fn find_numeric_reference_terminator(xml: &str) -> Option<usize> {
+    // A numeric token longer than 10 bytes is rejected below, and its `&#`
+    // prefix plus terminator makes 12 bytes total. Bound the search first, but
+    // stop on a UTF-8 boundary because malformed responses are untrusted text.
+    let mut end = xml.len().min(MAX_NUMERIC_REFERENCE_TOKEN_BYTES + 1);
+    while end > 0 && !xml.is_char_boundary(end) {
+        end -= 1;
+    }
+    let search = &xml[..end];
+    #[cfg(test)]
+    NUMERIC_REFERENCE_TERMINATOR_SEARCH_BYTES.with(|searched_bytes| {
+        if let Some(count) = searched_bytes.get() {
+            searched_bytes.set(Some(count + search.len()));
+        }
+    });
+    search.find(';')
 }
 
 pub(super) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
@@ -81,15 +102,10 @@ fn sanitize_invalid_numeric_references_with_marker_search_observer(
             continue;
         }
 
-        let Some(relative_end) = xml[start + 2..].find(';') else {
-            scan = start + 2;
-            continue;
+        let Some(relative_end) = find_numeric_reference_terminator(&xml[start + 2..]) else {
+            break;
         };
         let end = start + 2 + relative_end;
-        if end - start > 12 {
-            scan = start + 2;
-            continue;
-        }
         let token = &xml[start + 2..end];
         let parsed = token
             .strip_prefix('x')
@@ -137,7 +153,8 @@ mod tests {
     use super::{
         sanitize_invalid_numeric_references,
         sanitize_invalid_numeric_references_with_marker_search_observer,
-        NUMERIC_REFERENCE_SEARCHES,
+        MAX_NUMERIC_REFERENCE_TOKEN_BYTES, NUMERIC_REFERENCE_SEARCHES,
+        NUMERIC_REFERENCE_TERMINATOR_SEARCH_BYTES,
     };
 
     #[derive(Debug, Deserialize)]
@@ -242,5 +259,31 @@ mod tests {
             large <= small + 1,
             "a marker-heavy input must not rescan for numeric references once per marker: {small} -> {large}"
         );
+    }
+
+    #[test]
+    fn numeric_reference_terminator_search_is_bounded_with_or_without_a_terminator() {
+        let searched_bytes = |references, distant_terminator| {
+            let mut xml = format!("<A>{}</A>", "&#1234567890".repeat(references));
+            if distant_terminator {
+                xml.push(';');
+            }
+            NUMERIC_REFERENCE_TERMINATOR_SEARCH_BYTES.with(|counter| {
+                assert!(counter.replace(Some(0)).is_none());
+                let _ = sanitize_invalid_numeric_references(&xml);
+                counter
+                    .replace(None)
+                    .expect("terminator search accounting was enabled")
+            })
+        };
+
+        for distant_terminator in [false, true] {
+            let small = searched_bytes(2_000, distant_terminator);
+            let large = searched_bytes(10_000, distant_terminator);
+            assert!(
+                large <= small + MAX_NUMERIC_REFERENCE_TOKEN_BYTES + 1,
+                "numeric-reference terminator searches must stay bounded: {small} -> {large}"
+            );
+        }
     }
 }
