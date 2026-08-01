@@ -19,7 +19,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "node --experimental-strip-types --test scripts/tally-company-selection.test.mjs && tsc && vite build",
+    "build": "node --experimental-strip-types --test scripts/*.test.mjs && tsc && vite build",
     "check": "pnpm run build && pnpm run cargo:check",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

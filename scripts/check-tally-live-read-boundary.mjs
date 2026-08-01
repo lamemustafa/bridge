@@ -52,9 +52,18 @@ if (forbidden.length) {
 }
 
 const firstParty = [...packages].filter((name) => name.startsWith("bridge-tally-")).sort();
+// `bridge-tally-primitives` was added 2026-07-31 to REMOVE `bridge-tally-core`
+// from this set, not to widen it. Unit A's outstandings work needs `ExactDecimal`
+// and `TallyDate`, which lived in `bridge-tally-core` alongside delivery
+// capability (`AxalTallyGateway`, `DestinationAdapter` -- begin/deliver/finalize).
+// Depending on core from the protocol dragged that write surface into this
+// read-only controller. The two value types now live in a capability-free crate
+// beneath both, so live-read reaches value types and no delivery surface at all.
+// The forbidden list below is unchanged; this is a tightening, not a relaxation.
 const expected = [
   "bridge-tally-compatibility",
   "bridge-tally-live-read",
+  "bridge-tally-primitives",
   "bridge-tally-protocol",
   "bridge-tally-read-transport",
   "bridge-tally-transport",

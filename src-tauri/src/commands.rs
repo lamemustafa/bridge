@@ -21,15 +21,15 @@ use crate::tally::validators::{
 };
 use crate::tally::{
     company_source_identity, core_snapshot_start_authorized, source_lineage,
-    CachedProbeReservation, ConnectionStatus, EndpointKey, RuntimeTallyConnector,
-    SelectedReadObservation, SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyLedger,
-    TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport, TallyVoucher,
-    SELECTED_LEDGER_QUERY_PROFILE_ID, SELECTED_VOUCHER_QUERY_PROFILE_ID,
+    CachedProbeReservation, ConnectionStatus, EndpointKey, OutstandingsLoadResult,
+    RuntimeTallyConnector, SelectedReadObservation, SelectedReadScopeEvidence, TallyCompany,
+    TallyConfig, TallyLedger, TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport,
+    TallyVoucher, SELECTED_LEDGER_QUERY_PROFILE_ID, SELECTED_VOUCHER_QUERY_PROFILE_ID,
 };
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityState,
     CompanyRef as CoreCompanyRef, EvidenceConfidence, ReadWindow, RequestContext, TallyConnector,
-    TransportId, CORE_ACCOUNTING_SCHEMA_VERSION,
+    TallyDate, TransportId, CORE_ACCOUNTING_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -107,6 +107,11 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
             ),
         };
     }
+    let deadline_exceeded = error.chain().any(|cause| {
+        let message = cause.to_string().to_ascii_lowercase();
+        message.contains("request exceeded its deadline")
+            || message.contains("request deadline exceeded")
+    });
     let lower = error.to_string().to_ascii_lowercase();
     let (code, category, message, retry, local_state_changed, remediation) = if lower
         .contains("cancel")
@@ -118,6 +123,15 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
             "safe",
             true,
             "Refresh the scoped run or runtime status before starting another request.",
+        )
+    } else if deadline_exceeded {
+        (
+            "tally_request_deadline_exceeded",
+            "Operation",
+            "The bounded Tally read exceeded its production deadline.",
+            "after_change",
+            true,
+            "Do not retry the unchanged request. Verify Tally gateway health and change the request shape only after reviewing the measured segment.",
         )
     } else if lower.contains("host")
         || lower.contains("port")
@@ -2130,6 +2144,43 @@ pub async fn fetch_tally_vouchers(
 }
 
 #[tauri::command]
+pub async fn fetch_tally_outstandings(
+    request: CompanyRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<OutstandingsLoadResult, TallyCommandError> {
+    validate_company_name(&request.company).map_err(|message| {
+        tally_command_error(
+            "company_selection_invalid",
+            "Tally application",
+            message,
+            "after_change",
+            false,
+            "Select the intended GUID-bearing company and repeat the read-only action.",
+        )
+    })?;
+    let as_of =
+        TallyDate::parse(chrono::Local::now().format("%Y%m%d").to_string()).map_err(|_| {
+            tally_command_error(
+                "current_date_invalid",
+                "Bridge application",
+                "Bridge could not construct today's outstandings date.",
+                "after_change",
+                false,
+                "Check the workstation date and time, then repeat the read-only action.",
+            )
+        })?;
+    runtime
+        .fetch_outstandings(
+            request.config,
+            request.company,
+            request.expected_company_guid,
+            as_of,
+        )
+        .await
+        .map_err(tally_runtime_command_error)
+}
+
+#[tauri::command]
 pub fn cancel_tally_request(
     request_id: String,
     runtime: State<'_, TallyRuntime>,
@@ -2348,6 +2399,14 @@ mod tests {
             tally_runtime_command_error(anyhow::anyhow!("endpoint queue deadline exceeded"));
         assert_eq!(queue_deadline.code, "tally_runtime_temporarily_unavailable");
         assert!(queue_deadline.local_state_changed);
+
+        let deadline = tally_runtime_command_error(
+            anyhow::Error::new(bridge_tally_transport::TallyTransportError::RequestTimedOut)
+                .context("outstandings second segment read failed for 20251002..20251101"),
+        );
+        assert_eq!(deadline.code, "tally_request_deadline_exceeded");
+        assert_eq!(deadline.retry, "after_change");
+        assert!(deadline.remediation.contains("Do not retry"));
 
         let discovery_limit = tally_runtime_command_error(anyhow::anyhow!(
             "interactive discovery listing limit exceeded: synthetic company response"

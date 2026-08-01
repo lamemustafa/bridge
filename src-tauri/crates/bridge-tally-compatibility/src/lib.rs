@@ -48,6 +48,7 @@ fn gate(code: &'static str) -> CompatibilityError {
 #[serde(rename_all = "snake_case")]
 pub enum ProductFamily {
     TallyPrime,
+    TallyPrimeEditLog,
     TallyErp9,
     Unknown,
 }
@@ -911,6 +912,11 @@ fn validate_claim(claim: &SupportClaim) -> Result<(), CompatibilityError> {
         }
         previous = Some(*profile);
     }
+    if matches!(claim.level, ClaimLevel::Observed | ClaimLevel::Supported)
+        && claim.mode == TallyMode::Education
+    {
+        return Err(invalid("education_positive_claim_forbidden"));
+    }
     match claim.level {
         ClaimLevel::Unknown => {
             if claim.evidence_id.is_some() {
@@ -1409,7 +1415,11 @@ mod tests {
         }
     }
 
-    fn receipt(surface: &str) -> LiveCompatibilityReceipt {
+    fn receipt_for(
+        surface: &str,
+        product: ProductFamily,
+        mode: TallyMode,
+    ) -> LiveCompatibilityReceipt {
         LiveCompatibilityReceipt {
             schema_version: LIVE_RECEIPT_SCHEMA_VERSION,
             observed_at_unix_ms: NOW - 10_000,
@@ -1422,9 +1432,9 @@ mod tests {
             architecture: Architecture::X86_64,
             endpoint_family: LoopbackFamily::Ipv4,
             transport: TransportProfile::XmlHttp,
-            product: profile(ProductFamily::TallyPrime),
+            product: profile(product),
             release: profile("7.1".to_string()),
-            mode: profile(TallyMode::Education),
+            mode: profile(mode),
             odbc_state: profile(OdbcState::Disabled),
             locale: profile(LocaleProfile::EnglishIndia),
             dataset_tier: configured(DatasetTier::SyntheticSmall),
@@ -1447,6 +1457,10 @@ mod tests {
         }
         .seal()
         .unwrap()
+    }
+
+    fn receipt(surface: &str) -> LiveCompatibilityReceipt {
+        receipt_for(surface, ProductFamily::TallyPrime, TallyMode::Education)
     }
 
     fn trust(signing: &SigningKey) -> TrustedEvidenceKeys {
@@ -1552,6 +1566,89 @@ mod tests {
             "amount",
         ] {
             assert!(!text.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn edit_log_product_family_has_a_distinct_stable_wire_value() {
+        let encoded = serde_json::to_string(&ProductFamily::TallyPrimeEditLog).unwrap();
+        assert_eq!(encoded, "\"tally_prime_edit_log\"");
+        assert_eq!(
+            serde_json::from_str::<ProductFamily>(&encoded).unwrap(),
+            ProductFamily::TallyPrimeEditLog
+        );
+    }
+
+    #[test]
+    fn edit_log_education_cannot_reach_a_positive_claim_with_valid_signed_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+        let surface = CompatibilitySurfaceManifest {
+            schema_version: SURFACE_SCHEMA_VERSION,
+            files: vec![SurfaceFile {
+                path: "surface.txt".to_string(),
+                sha256: sha256_file(&temp.path().join("surface.txt")).unwrap(),
+            }],
+            manifest_sha256: String::new(),
+        }
+        .seal()
+        .unwrap();
+        let receipt = receipt_for(
+            &surface.manifest_sha256,
+            ProductFamily::TallyPrimeEditLog,
+            TallyMode::Education,
+        );
+        let signing = SigningKey::from_bytes(&[7_u8; 32]);
+        let trust = trust(&signing);
+        let attestation = attestation(&receipt, &surface, &signing);
+        assert!(receipt.validate().is_ok());
+        assert!(attestation.verify(&trust, NOW).is_ok());
+
+        let profiles = receipt
+            .operations
+            .iter()
+            .map(|operation| operation.profile)
+            .collect::<Vec<_>>();
+        for level in [ClaimLevel::Observed, ClaimLevel::Supported] {
+            let manifest = SupportClaimsManifest {
+                schema_version: SUPPORT_MANIFEST_SCHEMA_VERSION,
+                bridge_commit_sha: COMMIT.to_string(),
+                compatibility_surface_sha256: surface.manifest_sha256.clone(),
+                claims: vec![SupportClaim {
+                    claim_id: "edit-log-education-positive".to_string(),
+                    level,
+                    promotion_eligible: true,
+                    product: ProductFamily::TallyPrimeEditLog,
+                    release: "7.1".to_string(),
+                    mode: TallyMode::Education,
+                    platform: Platform::Windows,
+                    architecture: Architecture::X86_64,
+                    transport: TransportProfile::XmlHttp,
+                    endpoint_family: LoopbackFamily::Ipv4,
+                    odbc_state: OdbcState::Disabled,
+                    company_state: CompanyLoadState::One,
+                    locale: LocaleProfile::EnglishIndia,
+                    encoding: TextEncoding::Utf8,
+                    dataset_tier: DatasetTier::SyntheticSmall,
+                    fixture_manifest_sha256: Some(SHA.to_string()),
+                    required_profiles: profiles.clone(),
+                    max_evidence_age_days: 30,
+                    evidence_id: Some("evidence-1".to_string()),
+                }],
+            };
+            assert_eq!(
+                enforce_support_gate(
+                    &manifest,
+                    &surface,
+                    &trust,
+                    std::slice::from_ref(&receipt),
+                    std::slice::from_ref(&attestation),
+                    temp.path(),
+                    NOW,
+                )
+                .unwrap_err(),
+                invalid("education_positive_claim_forbidden")
+            );
         }
     }
 
@@ -1700,7 +1797,11 @@ mod tests {
         }
         .seal()
         .unwrap();
-        let receipt = receipt(&surface.manifest_sha256);
+        let receipt = receipt_for(
+            &surface.manifest_sha256,
+            ProductFamily::TallyPrime,
+            TallyMode::Licensed,
+        );
         let signing = SigningKey::from_bytes(&[7_u8; 32]);
         let trust = TrustedEvidenceKeys {
             schema_version: TRUST_MANIFEST_SCHEMA_VERSION,
@@ -1744,7 +1845,7 @@ mod tests {
                 promotion_eligible: true,
                 product: ProductFamily::TallyPrime,
                 release: "7.1".to_string(),
-                mode: TallyMode::Education,
+                mode: TallyMode::Licensed,
                 platform: Platform::Windows,
                 architecture: Architecture::X86_64,
                 transport: TransportProfile::XmlHttp,
@@ -2107,6 +2208,7 @@ mod tests {
 
         let mut non_promotable_positive = unsupported.clone();
         non_promotable_positive.claims[0].level = ClaimLevel::Observed;
+        non_promotable_positive.claims[0].mode = TallyMode::Licensed;
         assert_eq!(
             non_promotable_positive.validate().unwrap_err(),
             invalid("positive_claim_not_promotion_eligible")

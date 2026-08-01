@@ -7,8 +7,8 @@
 use std::{net::IpAddr, time::Duration};
 
 use bridge_tally_protocol::{
-    decode_tally_text_bytes_limited, TallyTextDecodeError, TallyTextEncoding,
-    TallyTextStreamDecoder,
+    decode_tally_text_bytes_limited, outstandings::VoucherOutstandingsRequestXml,
+    TallyTextDecodeError, TallyTextEncoding, TallyTextStreamDecoder,
 };
 use reqwest::{
     header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE},
@@ -22,6 +22,7 @@ use thiserror::Error;
 pub const STATUS_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
 pub const XML_REQUEST_MAX_BYTES: usize = 32 * 1024 * 1024;
 pub const XML_RESPONSE_MAX_BYTES: usize = 32 * 1024 * 1024;
+pub const OUTSTANDINGS_XML_RESPONSE_MAX_BYTES: usize = 40 * 1024 * 1024;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -350,6 +351,29 @@ impl TallyHttpTransport {
         &self,
         xml: String,
     ) -> Result<TallyDecodedHttpResponse, TallyTransportError> {
+        self.post_xml_decoded_with_response_limit(xml, self.policy.xml_response_max_bytes)
+            .await
+    }
+
+    /// Closed exception for the live-verified wildcard outstandings profile.
+    /// The general policy remains capped at 32 MiB and the same client keeps
+    /// the immutable 20-second request deadline.
+    pub async fn post_outstandings_xml_decoded(
+        &self,
+        request: VoucherOutstandingsRequestXml,
+    ) -> Result<TallyDecodedHttpResponse, TallyTransportError> {
+        self.post_xml_decoded_with_response_limit(
+            request.into_xml(),
+            OUTSTANDINGS_XML_RESPONSE_MAX_BYTES,
+        )
+        .await
+    }
+
+    async fn post_xml_decoded_with_response_limit(
+        &self,
+        xml: String,
+        response_max_bytes: usize,
+    ) -> Result<TallyDecodedHttpResponse, TallyTransportError> {
         if xml.len() > self.policy.xml_request_max_bytes {
             return Err(TallyTransportError::RequestTooLarge {
                 limit: self.policy.xml_request_max_bytes,
@@ -366,7 +390,7 @@ impl TallyHttpTransport {
             .send()
             .await
             .map_err(classify_request_error)?;
-        read_decoded_response(response, self.policy.xml_response_max_bytes).await
+        read_decoded_response(response, response_max_bytes).await
     }
 }
 
@@ -633,6 +657,15 @@ mod unit_tests {
 
     #[test]
     fn policy_cannot_expand_production_caps_or_deadline() {
+        assert_eq!(
+            TransportPolicy::default().request_timeout,
+            Duration::from_secs(20)
+        );
+        assert_eq!(
+            TransportPolicy::default().xml_response_max_bytes,
+            32 * 1024 * 1024
+        );
+        assert_eq!(OUTSTANDINGS_XML_RESPONSE_MAX_BYTES, 40 * 1024 * 1024);
         let expanded = TransportPolicy {
             request_timeout: MAX_REQUEST_TIMEOUT + Duration::from_millis(1),
             ..TransportPolicy::default()

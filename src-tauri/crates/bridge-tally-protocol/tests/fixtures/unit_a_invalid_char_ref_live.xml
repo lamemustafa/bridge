@@ -1,0 +1,269 @@
+<ENVELOPE>
+ <HEADER>
+  <VERSION>1</VERSION>
+  <STATUS>1</STATUS>
+ </HEADER>
+ <BODY>
+  <DESC>
+   <CMPINFO>
+    <COMPANY>0</COMPANY>
+    <GROUP>0</GROUP>
+    <LEDGER>11</LEDGER>
+    <COSTCATEGORY>0</COSTCATEGORY>
+    <COSTCENTRE>0</COSTCENTRE>
+    <GODOWN>0</GODOWN>
+    <STOCKGROUP>0</STOCKGROUP>
+    <STOCKCATEGORY>0</STOCKCATEGORY>
+    <STOCKITEM>0</STOCKITEM>
+    <VOUCHERTYPE>0</VOUCHERTYPE>
+    <CURRENCY>2</CURRENCY>
+    <UNIT>0</UNIT>
+    <BUDGET>0</BUDGET>
+    <CLIENTRULE>0</CLIENTRULE>
+    <SERVERRULE>0</SERVERRULE>
+    <STATE>0</STATE>
+    <TDSRATE>0</TDSRATE>
+    <TAXCLASSIFICATION>0</TAXCLASSIFICATION>
+    <STCATEGORY>0</STCATEGORY>
+    <DEDUCTEETYPE>0</DEDUCTEETYPE>
+    <ATTENDANCETYPE>0</ATTENDANCETYPE>
+    <FBTCATEGORY>0</FBTCATEGORY>
+    <FBTASSESSEETYPE>0</FBTASSESSEETYPE>
+    <TARIFFCLASSIFICATION>0</TARIFFCLASSIFICATION>
+    <EXCISEDUTYCLASSIFICATION>0</EXCISEDUTYCLASSIFICATION>
+    <SERIALNUMBER>0</SERIALNUMBER>
+    <ADJUSTMENTCLASSIFICATION>0</ADJUSTMENTCLASSIFICATION>
+    <INCOMETAXSLAB>0</INCOMETAXSLAB>
+    <INCOMETAXCLASSIFICATION>0</INCOMETAXCLASSIFICATION>
+    <LBTCLASSIFICATION>0</LBTCLASSIFICATION>
+    <TAXUNIT>3</TAXUNIT>
+    <RETURNMASTER>0</RETURNMASTER>
+    <GSTCLASSIFICATION>0</GSTCLASSIFICATION>
+    <VOUCHERNUMBERSERIES>3</VOUCHERNUMBERSERIES>
+    <VOUCHER>2</VOUCHER>
+   </CMPINFO>
+  </DESC>
+  <DATA>
+   <COLLECTION ISMSTDEPTYPE="Yes" MSTDEPTYPE="8">
+    <LEDGER NAME="BRIDGE-PROBE-LEDGER-A" RESERVEDNAME="">
+     <PARENT TYPE="String">Sundry Creditors</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>BRIDGE-PROBE-LEDGER-A</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="BRIDGE-PROBE-LEDGER-B" RESERVEDNAME="">
+     <PARENT TYPE="String">Sundry Creditors</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>BRIDGE-PROBE-LEDGER-B</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Bright Retail Pvt Ltd" RESERVEDNAME="">
+     <PARENT TYPE="String">Sundry Debtors</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Bright Retail Pvt Ltd</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Capital Account - Arjun Mehta" RESERVEDNAME="">
+     <PARENT TYPE="String">Capital Account</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Capital Account - Arjun Mehta</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Cash" RESERVEDNAME="">
+     <PARENT TYPE="String">Cash-in-Hand</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Cash</NAME>
+      </NAME.LIST>
+      <LANGUAGEID TYPE="Number"> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Crescent Office Mart" RESERVEDNAME="">
+     <PARENT TYPE="String">Sundry Debtors</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Crescent Office Mart</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Discount Allowed" RESERVEDNAME="">
+     <PARENT TYPE="String">Indirect Expenses</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Discount Allowed</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Disha Enterprises" RESERVEDNAME="">
+     <PARENT TYPE="String">Sundry Debtors</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Disha Enterprises</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Evergreen Supplies" RESERVEDNAME="">
+     <PARENT TYPE="String">Sundry Debtors</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Evergreen Supplies</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Freight &amp; Cartage" RESERVEDNAME="">
+     <PARENT TYPE="String">Indirect Expenses</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Freight &amp; Cartage</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="HDFC Bank Current Account" RESERVEDNAME="">
+     <PARENT TYPE="String">Bank Accounts</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>HDFC Bank Current Account</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Input CGST 9%" RESERVEDNAME="">
+     <PARENT TYPE="String">Duties &amp; Taxes</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Input CGST 9%</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Input SGST 9%" RESERVEDNAME="">
+     <PARENT TYPE="String">Duties &amp; Taxes</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Input SGST 9%</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Nova Components LLP" RESERVEDNAME="">
+     <PARENT TYPE="String">Sundry Creditors</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Nova Components LLP</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Office Rent" RESERVEDNAME="">
+     <PARENT TYPE="String">Indirect Expenses</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Office Rent</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Om Packaging House" RESERVEDNAME="">
+     <PARENT TYPE="String">Sundry Creditors</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Om Packaging House</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Output CGST 9%" RESERVEDNAME="">
+     <PARENT TYPE="String">Duties &amp; Taxes</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Output CGST 9%</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Output SGST 9%" RESERVEDNAME="">
+     <PARENT TYPE="String">Duties &amp; Taxes</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Output SGST 9%</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Petty Cash" RESERVEDNAME="">
+     <PARENT TYPE="String">Cash-in-Hand</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Petty Cash</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Prakash Logistics" RESERVEDNAME="">
+     <PARENT TYPE="String">Sundry Creditors</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Prakash Logistics</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Profit &amp; Loss A/c" RESERVEDNAME="Profit &amp; Loss A/c">
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Profit &amp; Loss A/c</NAME>
+      </NAME.LIST>
+      <LANGUAGEID TYPE="Number"> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Purchase - Electronics" RESERVEDNAME="">
+     <PARENT TYPE="String">Purchase Accounts</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Purchase - Electronics</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Purchase Return" RESERVEDNAME="">
+     <PARENT TYPE="String">Purchase Accounts</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Purchase Return</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Repairs &amp; Maintenance" RESERVEDNAME="">
+     <PARENT TYPE="String">Indirect Expenses</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Repairs &amp; Maintenance</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Salaries" RESERVEDNAME="">
+     <PARENT TYPE="String">Indirect Expenses</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Salaries</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Sales - Electronics" RESERVEDNAME="">
+     <PARENT TYPE="String">Sales Accounts</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Sales - Electronics</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+    <LEDGER NAME="Sales Return" RESERVEDNAME="">
+     <PARENT TYPE="String">Sales Accounts</PARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Sales Return</NAME>
+      </NAME.LIST>
+     </LANGUAGENAME.LIST>
+    </LEDGER>
+   </COLLECTION>
+  </DATA>
+ </BODY>
+</ENVELOPE>

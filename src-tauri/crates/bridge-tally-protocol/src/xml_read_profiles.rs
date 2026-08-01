@@ -9,11 +9,17 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
+use crate::outstandings::{
+    render_company_book_extent, render_ledger_opening_coverage, render_outstandings_template,
+    render_outstandings_vouchers, AlterIdRange, NarrowDateWindow, PinnedCompany,
+};
 use crate::{BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_LEDGER_WRITE_READBACK_SCHEMA};
 
 const TEMPLATE_COMPANY: &str = "BRIDGE TEMPLATE COMPANY";
 const TEMPLATE_FROM: &str = "20000101";
 const TEMPLATE_TO: &str = "20000102";
+const TEMPLATE_ALTER_ID_START: u64 = 0;
+const TEMPLATE_ALTER_ID_END: u64 = 1;
 const TEMPLATE_CANARY_LEDGER: &str = "BRIDGE-CANARY-LEDGER-001";
 const BRIDGE_CANARY_LEDGER_PREFIX: &str = "BRIDGE-CANARY-";
 const TEMPLATE_IDENTITY_QUERY_SHA256: &str =
@@ -159,24 +165,30 @@ impl ValidatedDateRange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadOnlyProfileId {
     CompanyListV1,
+    CompanyBookExtentV1,
+    LedgerOpeningCoverageV1,
     StandardLedgerIdentityV1,
     StandardLedgerCatalogV1,
     LedgersV1,
     LedgerCanaryReadbackV1,
     VouchersV2,
     VouchersV3,
+    VoucherOutstandingsV1,
 }
 
 impl ReadOnlyProfileId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::CompanyListV1 => "company_list_v1",
+            Self::CompanyBookExtentV1 => "company_book_extent_v1",
+            Self::LedgerOpeningCoverageV1 => "ledger_opening_coverage_v1",
             Self::StandardLedgerIdentityV1 => "standard_ledger_identity_v1",
             Self::StandardLedgerCatalogV1 => "standard_ledger_catalog_v1",
             Self::LedgersV1 => "ledgers_v1",
             Self::LedgerCanaryReadbackV1 => "ledger_canary_readback_v1",
             Self::VouchersV2 => "vouchers_v2",
             Self::VouchersV3 => "vouchers_v3",
+            Self::VoucherOutstandingsV1 => "voucher_outstandings_v1",
         }
     }
 
@@ -186,6 +198,8 @@ impl ReadOnlyProfileId {
     pub fn template_sha256(self) -> String {
         let template = match self {
             Self::CompanyListV1 => render_company_list(),
+            Self::CompanyBookExtentV1 => render_company_book_extent(TEMPLATE_COMPANY),
+            Self::LedgerOpeningCoverageV1 => render_ledger_opening_coverage(TEMPLATE_COMPANY),
             Self::StandardLedgerIdentityV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
             Self::StandardLedgerCatalogV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
             Self::LedgersV1 => render_ledgers(TEMPLATE_COMPANY),
@@ -198,6 +212,13 @@ impl ReadOnlyProfileId {
             Self::VouchersV3 => {
                 render_selected_vouchers(TEMPLATE_COMPANY, TEMPLATE_FROM, TEMPLATE_TO)
             }
+            Self::VoucherOutstandingsV1 => render_outstandings_template(
+                TEMPLATE_COMPANY,
+                TEMPLATE_FROM,
+                TEMPLATE_TO,
+                TEMPLATE_ALTER_ID_START,
+                TEMPLATE_ALTER_ID_END,
+            ),
         };
         sha256_hex(template.as_bytes())
     }
@@ -206,6 +227,12 @@ impl ReadOnlyProfileId {
 #[derive(Debug, Clone, Copy)]
 pub enum ReadOnlyProfile<'a> {
     CompanyListV1,
+    LedgerOpeningCoverageV1 {
+        company: &'a ValidatedCompanyName,
+    },
+    CompanyBookExtentV1 {
+        company: &'a ValidatedCompanyName,
+    },
     /// A narrow compatibility bootstrap for Tally responders that reject
     /// Bridge's custom report profile but accept the documented built-in
     /// `List of Ledgers` collection. Its output is parsed only for repeated
@@ -238,18 +265,26 @@ pub enum ReadOnlyProfile<'a> {
         company: &'a ValidatedCompanyName,
         range: &'a ValidatedDateRange,
     },
+    VoucherOutstandingsV1 {
+        company: &'a PinnedCompany,
+        window: &'a NarrowDateWindow,
+        alter_id_range: AlterIdRange,
+    },
 }
 
 impl ReadOnlyProfile<'_> {
     pub fn id(self) -> ReadOnlyProfileId {
         match self {
             Self::CompanyListV1 => ReadOnlyProfileId::CompanyListV1,
+            Self::CompanyBookExtentV1 { .. } => ReadOnlyProfileId::CompanyBookExtentV1,
+            Self::LedgerOpeningCoverageV1 { .. } => ReadOnlyProfileId::LedgerOpeningCoverageV1,
             Self::StandardLedgerIdentityV1 { .. } => ReadOnlyProfileId::StandardLedgerIdentityV1,
             Self::StandardLedgerCatalogV1 { .. } => ReadOnlyProfileId::StandardLedgerCatalogV1,
             Self::LedgersV1 { .. } => ReadOnlyProfileId::LedgersV1,
             Self::LedgerCanaryReadbackV1 { .. } => ReadOnlyProfileId::LedgerCanaryReadbackV1,
             Self::VouchersV2 { .. } => ReadOnlyProfileId::VouchersV2,
             Self::VouchersV3 { .. } => ReadOnlyProfileId::VouchersV3,
+            Self::VoucherOutstandingsV1 { .. } => ReadOnlyProfileId::VoucherOutstandingsV1,
         }
     }
 
@@ -260,6 +295,10 @@ impl ReadOnlyProfile<'_> {
     pub fn render(self) -> String {
         match self {
             Self::CompanyListV1 => render_company_list(),
+            Self::CompanyBookExtentV1 { company } => render_company_book_extent(company.as_str()),
+            Self::LedgerOpeningCoverageV1 { company } => {
+                render_ledger_opening_coverage(company.as_str())
+            }
             Self::StandardLedgerIdentityV1 { company } => {
                 render_standard_ledger_identity(company.as_str())
             }
@@ -284,6 +323,11 @@ impl ReadOnlyProfile<'_> {
                 range.from_yyyymmdd(),
                 range.to_yyyymmdd(),
             ),
+            Self::VoucherOutstandingsV1 {
+                company,
+                window,
+                alter_id_range,
+            } => render_outstandings_vouchers(company, window, alter_id_range),
         }
     }
 }
@@ -887,6 +931,34 @@ mod tests {
         assert_eq!(bootstrap.matches("<TALLYREQUEST>").count(), 1);
         assert!(!bootstrap.contains("<TALLYREQUEST>IMPORT"));
         assert!(bootstrap.contains("&lt;/SVCURRENTCOMPANY&gt;"));
+
+        let pinned = PinnedCompany::verified(injection.clone(), "synthetic-guid".to_string())
+            .expect("verified test identity");
+        let window = crate::outstandings::DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::EducationRestricted,
+            "20260401",
+            "20260402",
+        )
+        .unwrap()
+        .narrow_partitions()
+        .unwrap()
+        .remove(0);
+        for request in [
+            ReadOnlyProfile::CompanyBookExtentV1 {
+                company: &injection,
+            }
+            .render(),
+            ReadOnlyProfile::VoucherOutstandingsV1 {
+                company: &pinned,
+                window: &window,
+                alter_id_range: AlterIdRange::new(0, 1).unwrap(),
+            }
+            .render(),
+        ] {
+            assert_eq!(request.matches("<TALLYREQUEST>").count(), 1);
+            assert!(!request.contains("<TALLYREQUEST>IMPORT"));
+            assert!(request.contains("&lt;/SVCURRENTCOMPANY&gt;"));
+        }
     }
 
     #[test]
@@ -895,6 +967,14 @@ mod tests {
             (
                 ReadOnlyProfileId::CompanyListV1,
                 "d5c134051e1d298a278e27284fbb5ab1a9d00e0006a70f9777c4e38cebbb16de",
+            ),
+            (
+                ReadOnlyProfileId::CompanyBookExtentV1,
+                "38038f96473b2bf036d78aca2eea85f96738ace3bf0e691bbfa14ddd165784f4",
+            ),
+            (
+                ReadOnlyProfileId::LedgerOpeningCoverageV1,
+                "fc06813e03f2a8b3e083c07dd788afd017d7a7808827b75b90eef3acc8e15d8f",
             ),
             (
                 ReadOnlyProfileId::StandardLedgerIdentityV1,
@@ -919,6 +999,10 @@ mod tests {
             (
                 ReadOnlyProfileId::VouchersV3,
                 "2e68f0ab8e57ded8cc1948b6785598e2f1e0947fcc431975d15fd63131df478d",
+            ),
+            (
+                ReadOnlyProfileId::VoucherOutstandingsV1,
+                "7e4025038bf85345d0a55b9437be339c8829b1f699abaaa52bbdfa6affcb1dae",
             ),
         ];
         for (profile, digest) in expected {

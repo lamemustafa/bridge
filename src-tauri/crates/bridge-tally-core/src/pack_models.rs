@@ -1,5 +1,6 @@
 use crate::{
-    CapabilityPackId, ExactDecimal, PackSchemaVersion, ReadWindow, SourceIdentity, TallyError,
+    CapabilityPackId, ExactDecimal, PackSchemaVersion, ReadWindow, SourceIdentity, TallyDate,
+    TallyError,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
@@ -384,35 +385,6 @@ impl SourceRecordId {
 }
 
 impl<'de> Deserialize<'de> for SourceRecordId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::parse(value).map_err(serde::de::Error::custom)
-    }
-}
-
-/// A validated Gregorian calendar date in Tally's canonical YYYYMMDD form.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(transparent)]
-pub struct TallyDate(String);
-
-impl TallyDate {
-    pub fn parse(value: impl Into<String>) -> Result<Self, TallyError> {
-        let value = value.into();
-        if !is_valid_yyyymmdd(&value) {
-            return Err(invalid_data("invalid_tally_date"));
-        }
-        Ok(Self(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for TallyDate {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -938,24 +910,6 @@ fn hex_lower(bytes: &[u8]) -> String {
     output
 }
 
-fn is_valid_yyyymmdd(value: &str) -> bool {
-    if value.len() != 8 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return false;
-    }
-    let year = value[0..4].parse::<u32>().unwrap_or_default();
-    let month = value[4..6].parse::<u32>().unwrap_or_default();
-    let day = value[6..8].parse::<u32>().unwrap_or_default();
-    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
-    let days_in_month = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return false,
-    };
-    year != 0 && (1..=days_in_month).contains(&day)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1182,6 +1136,23 @@ mod tests {
         }
         assert!(TallyDate::parse("20240229").is_ok());
         assert!(serde_json::from_str::<TallyDate>(r#""20260229""#).is_err());
+        assert_eq!(
+            TallyDate::parse("20240228")
+                .unwrap()
+                .next_day()
+                .unwrap()
+                .as_str(),
+            "20240229"
+        );
+        assert_eq!(
+            TallyDate::parse("20241231")
+                .unwrap()
+                .next_day()
+                .unwrap()
+                .as_str(),
+            "20250101"
+        );
+        assert!(TallyDate::parse("99991231").unwrap().next_day().is_err());
         for value in ["", " leading", "trailing ", "line\nbreak"] {
             assert!(CanonicalText::parse(value).is_err(), "accepted {value:?}");
         }

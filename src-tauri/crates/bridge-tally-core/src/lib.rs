@@ -1,9 +1,13 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(crate) use bridge_tally_primitives::exact_arithmetic;
+pub use bridge_tally_primitives::{
+    ExactDecimal, ReadResponseScope, TallyDate, TallyError, MAX_EXACT_DECIMAL_BYTES,
+};
+
 pub mod bills_reconciliation;
-mod exact_arithmetic;
 mod pack_models;
 pub mod reconciliation;
 pub mod report_tie_out;
@@ -14,7 +18,6 @@ pub use pack_models::*;
 pub mod destination;
 
 pub const PROOF_CONTRACT_VERSION: u16 = 3;
-const MAX_EXACT_DECIMAL_BYTES: usize = 256;
 pub const CORE_ACCOUNTING_SCHEMA_VERSION: PackSchemaVersion =
     PackSchemaVersion { major: 3, minor: 0 };
 pub const BILLS_AND_PAYMENTS_SCHEMA_VERSION: PackSchemaVersion =
@@ -133,47 +136,6 @@ pub struct Gap {
     pub field_or_invariant: String,
     pub state: CapabilityState,
     pub safe_reason_code: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct ExactDecimal(String);
-
-impl ExactDecimal {
-    pub fn parse(value: impl Into<String>) -> Result<Self, TallyError> {
-        let value = value.into();
-        let bytes = value.as_bytes();
-        let body = bytes.strip_prefix(b"-").unwrap_or(bytes);
-        let mut sections = body.split(|byte| *byte == b'.');
-        let whole = sections.next().unwrap_or_default();
-        let fractional = sections.next();
-        let valid = bytes.len() <= MAX_EXACT_DECIMAL_BYTES
-            && !whole.is_empty()
-            && whole.iter().all(u8::is_ascii_digit)
-            && fractional
-                .is_none_or(|part| !part.is_empty() && part.iter().all(u8::is_ascii_digit))
-            && sections.next().is_none();
-        if !valid {
-            return Err(TallyError::InvalidData {
-                code: "invalid_exact_decimal".to_string(),
-            });
-        }
-        Ok(Self(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for ExactDecimal {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::parse(value).map_err(serde::de::Error::custom)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -395,29 +357,6 @@ pub struct DeliveryReceipt {
     pub committed: bool,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum TallyError {
-    #[error("Tally is not reachable")]
-    Unreachable,
-    #[error("Tally returned an invalid protocol response ({code})")]
-    Protocol { code: String },
-    #[error("Tally data failed validation ({code})")]
-    InvalidData { code: String },
-    #[error("Capability is unavailable ({code})")]
-    Unsupported { code: String },
-    #[error("Tally read response exceeded the bounded limit ({scope:?})")]
-    ReadResponseTooLarge { scope: ReadResponseScope },
-    #[error("Operation was cancelled")]
-    Cancelled,
-    #[error("The outcome of the write could not be proven")]
-    OutcomeUnknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadResponseScope {
-    VoucherWindow,
-}
-
 #[async_trait]
 pub trait TallyConnector: Send + Sync {
     async fn probe(&self) -> Result<ProbeResult, TallyError>;
@@ -485,6 +424,23 @@ mod tests {
             );
         }
         assert!(ExactDecimal::parse("9".repeat(MAX_EXACT_DECIMAL_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn exact_decimal_arithmetic_is_canonical_checked_and_ordered_by_magnitude() {
+        let left = ExactDecimal::parse("100.00").unwrap();
+        let right = ExactDecimal::parse("-40.0").unwrap();
+        assert_eq!(left.checked_add(&right).unwrap().as_str(), "60");
+        assert_eq!(left.checked_subtract(&right).unwrap().as_str(), "140");
+        assert!(right.is_negative());
+        assert!(!right.is_zero());
+        assert_eq!(right.abs().unwrap().as_str(), "40.0");
+        assert_eq!(
+            ExactDecimal::parse("-100.001")
+                .unwrap()
+                .cmp_magnitude(&left),
+            std::cmp::Ordering::Greater
+        );
     }
 
     #[test]

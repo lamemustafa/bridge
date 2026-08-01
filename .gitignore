@@ -20,3 +20,7 @@ Desktop.ini
 # Test and coverage output.
 coverage/
 .nyc_output/
+
+# Python bytecode from operator scripts
+__pycache__/
+*.pyc

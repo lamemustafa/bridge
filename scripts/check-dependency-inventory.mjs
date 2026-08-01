@@ -16,6 +16,7 @@ const firstPartyRustPackages = new Set([
   "bridge-tally-incremental",
   "bridge-tally-live-read",
   "bridge-tally-observability",
+  "bridge-tally-primitives",
   "bridge-tally-protocol",
   "bridge-tally-qualification",
   "bridge-tally-read-transport",

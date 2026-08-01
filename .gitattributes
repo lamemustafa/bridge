@@ -3,3 +3,8 @@
 *.icns binary
 *.ico binary
 *.png binary
+
+# Live Tally captures are byte-exact evidence. Their retained byte length and
+# SHA-256 are asserted in tests, so line-ending normalisation would silently
+# rewrite the evidence and make those assertions machine-dependent.
+src-tauri/crates/bridge-tally-protocol/tests/fixtures/*_live.xml -text

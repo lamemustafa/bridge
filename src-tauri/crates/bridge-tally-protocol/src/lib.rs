@@ -25,6 +25,7 @@ pub mod india_tax_observation;
 pub mod jsonex;
 #[cfg(feature = "jsonex-request-builder")]
 pub mod jsonex_request;
+pub mod outstandings;
 pub mod xml_read_profiles;
 
 pub const BRIDGE_LEDGER_EXPORT_SCHEMA: &str = "bridge.tally.ledgers/1";
@@ -211,8 +212,19 @@ impl ParsedImportEvidence {
 }
 
 impl TallyImportResult {
-    pub fn is_clean_success(&self) -> bool {
-        self.ignored == 0
+    /// Accepts only an exact, non-zero intended import mutation with no
+    /// negative result counters or reported line errors.
+    pub fn is_clean_success_for(
+        &self,
+        expected_created: u64,
+        expected_altered: u64,
+        expected_deleted: u64,
+    ) -> bool {
+        (expected_created > 0 || expected_altered > 0 || expected_deleted > 0)
+            && self.created == expected_created
+            && self.altered == expected_altered
+            && self.deleted == expected_deleted
+            && self.ignored == 0
             && self.errors == 0
             && self.cancelled == 0
             && self.exceptions == 0
@@ -2074,9 +2086,8 @@ pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
                             true
                         }
                         b"LINEERROR" => {
-                            if read_optional_text(&mut reader, element.name())?.is_some() {
-                                line_error_count = line_error_count.saturating_add(1);
-                            }
+                            read_optional_text(&mut reader, element.name())?;
+                            line_error_count = line_error_count.saturating_add(1);
                             true
                         }
                         _ => false,
@@ -2100,7 +2111,14 @@ pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
                         if !documented_extra_fields.insert(name.clone()) {
                             anyhow::bail!("Tally import response duplicated a documented field");
                         }
-                        read_optional_text(&mut reader, element.name())?;
+                        if name.as_slice() == b"LASTVCHID" {
+                            // Tally documents LASTVCHID as a numeric import-result field. We do
+                            // not retain it yet, but accepting arbitrary text here would make the
+                            // parser evidence unusable for a future identifier cross-check.
+                            read_counter(&mut reader, element.name(), "LASTVCHID")?;
+                        } else {
+                            read_optional_text(&mut reader, element.name())?;
+                        }
                         if is_direct_envelope_field {
                             if saw_import_result {
                                 anyhow::bail!(
@@ -2270,15 +2288,14 @@ fn parse_import_evidence_inner(xml: &str) -> anyhow::Result<ParsedImportEvidence
     loop {
         match reader.read_event()? {
             Event::Start(element) if element.name().as_ref().eq_ignore_ascii_case(b"LINEERROR") => {
-                if let Some(value) = read_optional_text(&mut reader, element.name())? {
-                    if line_error_sha256.len() == MAX_LINE_ERRORS {
-                        anyhow::bail!("Tally import response exceeded the line-error limit");
-                    }
-                    line_error_sha256.push(domain_sha256(
-                        b"bridge.tally.import-line-error/1\0",
-                        value.as_bytes(),
-                    ));
+                let value = read_optional_text(&mut reader, element.name())?.unwrap_or_default();
+                if line_error_sha256.len() == MAX_LINE_ERRORS {
+                    anyhow::bail!("Tally import response exceeded the line-error limit");
                 }
+                line_error_sha256.push(domain_sha256(
+                    b"bridge.tally.import-line-error/1\0",
+                    value.as_bytes(),
+                ));
             }
             Event::Eof => break,
             _ => {}
