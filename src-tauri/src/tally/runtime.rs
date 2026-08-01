@@ -27,7 +27,7 @@ use bridge_tally_runtime::{
     ReadRetryPolicy, TELEMETRY_PREVIEW_SCHEMA,
 };
 use bridge_tally_transport::TallyTransportError;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -80,11 +80,21 @@ pub enum CircuitState {
     HalfOpen,
 }
 
+/// An operator assertion, not currency evidence exported from Tally. Unit A
+/// supports only an explicit assertion that the selected company's base
+/// currency is INR; no other currency can reach the INR formatter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum OutstandingsCurrencyAssertion {
+    #[serde(rename = "INR")]
+    Inr,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum OutstandingsLoadResult {
     Complete {
         report: Box<OutstandingsReport>,
+        currency_assertion: OutstandingsCurrencyAssertion,
         synced_at_unix_ms: i64,
     },
     Partial {
@@ -1184,6 +1194,7 @@ impl TallyRuntime {
         company: String,
         expected_company_guid: String,
         as_of: TallyDate,
+        currency_assertion: OutstandingsCurrencyAssertion,
     ) -> anyhow::Result<OutstandingsLoadResult> {
         let Some(segment_policy) = self.outstandings_segment_policy else {
             return Ok(partial_result("outstandings_segment_sizing_uncalibrated"));
@@ -1401,6 +1412,7 @@ impl TallyRuntime {
                         ) {
                             ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
                                 report: Box::new(compute_outstandings(&scan, as_of)?),
+                                currency_assertion,
                                 synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                             }),
                             ScanResult::Partial(partial) => {
@@ -1934,6 +1946,7 @@ mod tests {
                 "Synthetic Company".to_string(),
                 "synthetic-guid".to_string(),
                 TallyDate::parse("20260731").unwrap(),
+                OutstandingsCurrencyAssertion::Inr,
             )
             .await
             .expect("uncalibrated state is an in-band partial result");
