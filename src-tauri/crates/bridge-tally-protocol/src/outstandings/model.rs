@@ -43,18 +43,15 @@ impl DateBoundaryProfile {
     pub fn latest_boundary_at_or_before(self, limit: &TallyDate) -> Option<TallyDate> {
         match self {
             Self::ModeAgnostic => Some(limit.clone()),
-            Self::EducationRestricted => {
-                let text = limit.as_str();
-                let day = text.get(6..8)?.parse::<u32>().ok()?;
-                let clamped = if day >= 31 {
-                    31
-                } else if day >= 2 {
-                    2
-                } else {
-                    1
-                };
-                TallyDate::parse(format!("{}{clamped:02}", text.get(..6)?)).ok()
-            }
+            // An INEXACT clamp would silently shrink the scanned period while
+            // the report still carries the caller's as-of date: on Education
+            // with as-of on day 15, the cutoff would fall back to day 02 and
+            // every posting from the 3rd onward would vanish from a report
+            // labelled "as of the 15th". A wrong number under a confident label
+            // is worse than no number, so accept the boundary only when it lands
+            // exactly on the requested date and let the caller fail closed
+            // otherwise.
+            Self::EducationRestricted => self.accepts_boundary(limit).then(|| limit.clone()),
         }
     }
 }

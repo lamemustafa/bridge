@@ -77,7 +77,18 @@ def main():
     # production parser would reject the very same response: it fails closed on
     # a missing/non-numeric ALTERID or a bad date. The verifier must agree with
     # the parser about what is parseable, so any invalid row fails the corpus.
-    valid = [x for x in rows if x['alterid'].isdigit() and len(x['date']) == 8]
+    def real_date(text):
+        # An 8-character string is not a date: `20261301` passes a length check
+        # and even the Education day rule, while production's TallyDate::parse
+        # rejects it. The verifier must agree with the parser.
+        try:
+            datetime.date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    valid = [x for x in rows
+             if x['alterid'].isdigit() and len(x['date']) == 8 and real_date(x['date'])]
     if len(valid) != len(rows):
         print(f'FAIL: {len(rows) - len(valid)} of {len(rows)} vouchers have a '
               'missing/non-numeric ALTERID or a malformed date. The production '
@@ -133,24 +144,38 @@ def main():
         ok = False
 
     # 2. Bill references
-    allocs = re.findall(r'<BILLALLOCATIONS\.LIST>(.*?)</BILLALLOCATIONS\.LIST>', d, re.S)
+    # Build from the FILTERED posting vouchers, not the raw response. Earlier
+    # this rebuilt from `d`, so the posting-state filter never reached the
+    # allocation, ageing or naming checks and an optional/cancelled/deleted
+    # voucher could still satisfy them.
+    posting_xml = ''.join(x['block'] for x in rows)
+    allocs = re.findall(r'<BILLALLOCATIONS\.LIST>(.*?)</BILLALLOCATIONS\.LIST>', posting_xml, re.S)
     from collections import Counter
 
     bt = Counter()
+    named_by_kind = Counter()
     named = 0
     for a in allocs:
         m = re.search(r'<BILLTYPE>([^<]*)', a)
-        bt[(m.group(1) if m else 'MISSING') or '(empty)'] += 1
+        kind = (m.group(1) if m else 'MISSING') or '(empty)'
+        bt[kind] += 1
         n = re.search(r'<NAME>([^<]*)', a)
         if n and n.group(1).strip():
             named += 1
+            named_by_kind[kind] += 1
     print(f'\n[2] allocations: {len(allocs)}  named: {named}')
     for k, v in bt.most_common():
         print(f'    {k:<12} {v}')
-    if bt.get('New Ref', 0) and bt.get('Agst Ref', 0):
-        print('    PASS - both New Ref and Agst Ref present.')
+    if named_by_kind.get('New Ref', 0) and named_by_kind.get('Agst Ref', 0):
+        print('    PASS - both New Ref and Agst Ref present WITH names.')
     else:
-        print('    FAIL - need BOTH New Ref (opens a bill) and Agst Ref (settles one).')
+        # An unnamed allocation carries no bill identity, so a corpus whose only
+        # New Ref / Agst Ref examples lack <NAME> cannot exercise the reference
+        # lifecycle the outstandings computation is built on. Counting them and
+        # only printing the total let such a corpus pass.
+        print('    FAIL - need BOTH New Ref and Agst Ref as NAMED references '
+              f'(named New Ref: {named_by_kind.get("New Ref", 0)}, '
+              f'named Agst Ref: {named_by_kind.get("Agst Ref", 0)}).')
         ok = False
 
     # 3. Education date legality
@@ -164,7 +189,7 @@ def main():
 
     # 4. Ageing spread of OPEN bills
     opened = {}
-    for v in vs:
+    for v in (x['block'] for x in rows):
         dm = re.search(r'<DATE[^>]*>(\d{8})<', v)
         for a in re.findall(r'<BILLALLOCATIONS\.LIST>(.*?)</BILLALLOCATIONS\.LIST>', v, re.S):
             nm = re.search(r'<NAME>([^<]*)', a)

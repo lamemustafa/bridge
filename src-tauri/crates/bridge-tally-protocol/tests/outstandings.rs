@@ -501,13 +501,17 @@ fn an_as_of_before_the_last_voucher_clamps_to_a_profile_valid_boundary() {
     // activity.
     let as_of = TallyDate::parse("20260715").unwrap();
 
-    // Education accepts only day 01/02/31, so the greatest legal boundary at
-    // or before the 15th is the 2nd of the same month.
-    let education = DateBoundaryProfile::EducationRestricted
-        .latest_boundary_at_or_before(&as_of)
-        .expect("an Education boundary exists at or before the 15th");
-    assert_eq!(education.as_str(), "20260702");
-    assert!(education <= as_of, "clamped boundary must not exceed as-of");
+    // Education accepts only day 01/02/31. Falling back to the 2nd would shrink
+    // the scanned period while the report still said "as of the 15th", so every
+    // posting from the 3rd onward would vanish under a confident label. The
+    // clamp therefore REFUSES rather than approximating, and the caller fails
+    // closed with `as_of_has_no_valid_window_boundary`.
+    assert!(
+        DateBoundaryProfile::EducationRestricted
+            .latest_boundary_at_or_before(&as_of)
+            .is_none(),
+        "an inexact Education cutoff must be refused, not silently shrunk"
+    );
 
     // Mode-agnostic has no day restriction, so the as-of date itself is legal.
     assert_eq!(
