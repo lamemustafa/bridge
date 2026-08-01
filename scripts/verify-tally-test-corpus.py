@@ -57,8 +57,11 @@ def main():
         return 1
 
     r = tally.post(req('20240401', '20260731'), timeout=240, tag='vc')
-    d = r.data
     print(f'read: {r.elapsed:.1f}s  {r.nbytes/1048576:.2f} MB  status={r.status}')
+    if r.status != '1':
+        print(f'FAIL: export STATUS={r.status!r}; corpus cannot be accepted.')
+        return 1
+    d = r.data
 
     # Structural, not a single textual spelling. Tally may emit `<VOUCHER>`
     # with no attributes, or a newline before the first attribute; a
@@ -223,7 +226,14 @@ def main():
                 print(f'FAIL: allocation amount {raw_amount!r} is not an exact decimal; '
                       "production's ExactDecimal rejects it.")
                 return 1
-            key = nm.group(1).strip()
+            reference = nm.group(1).strip()
+            party = (re.search(r'<PARTYLEDGERNAME[^>]*>([^<]*)', v) or
+                     type('', (), {'group': lambda s, i: ''})()).group(1).strip()
+            if not party:
+                print(f'FAIL: named allocation {reference!r} has no PARTYLEDGERNAME; '
+                      'cannot scope the bill to a party.')
+                return 1
+            key = (party, reference)
             val = float(raw_amount)
             bill_type = ty.group(1).strip()
             if bill_type == 'New Ref':
