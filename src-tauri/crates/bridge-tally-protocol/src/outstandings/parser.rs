@@ -1,5 +1,5 @@
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::xml_read_profiles::ValidatedCompanyName;
 
@@ -101,18 +101,32 @@ pub fn parse_ledger_opening_coverage(
         .map_err(|_| OutstandingsError::InvalidResponse("ledger_collection_xml_invalid"))?;
     require_success(&parsed.header)?;
     let ledgers = parsed.body.data.collection.ledgers;
+    let mut ledger_identities = BTreeMap::new();
     let mut openings = 0usize;
     for ledger in &ledgers {
-        let ledger_guid = ledger
-            .guid
-            .as_ref()
-            .ok_or(OutstandingsError::InvalidResponse("ledger_guid_missing"))?
-            .text
-            .trim();
-        if !master_guid_belongs_to_company(ledger_guid, company.guid()) {
+        let guid = required(
+            ledger
+                .guid
+                .as_ref()
+                .ok_or(OutstandingsError::InvalidResponse("ledger_guid_missing"))?
+                .text
+                .clone(),
+            "ledger_guid_missing",
+        )?;
+        if !master_guid_belongs_to_company(&guid, company.guid()) {
             return Err(OutstandingsError::InvalidResponse(
                 "ledger_belongs_to_another_company",
             ));
+        }
+        let name = required(
+            ledger
+                .attribute_name
+                .clone()
+                .ok_or(OutstandingsError::InvalidResponse("ledger_name_missing"))?,
+            "ledger_name_missing",
+        )?;
+        if ledger_identities.insert(guid, name).is_some() {
+            return Err(OutstandingsError::InvalidResponse("ledger_guid_duplicate"));
         }
         // Fail closed. `ISBILLWISEON` is in this profile's FETCH list, so an
         // absent or unrecognised value means the response does not match the
@@ -167,7 +181,7 @@ pub fn parse_ledger_opening_coverage(
             "ledger_coverage_response_empty",
         ));
     }
-    Ok(LedgerOpeningCoverage::new(ledgers.len(), openings))
+    Ok(LedgerOpeningCoverage::new(ledger_identities, openings))
 }
 
 pub(super) fn parse_segment(

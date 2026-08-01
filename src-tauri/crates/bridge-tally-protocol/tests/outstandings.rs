@@ -61,6 +61,23 @@ fn ledger_opening_coverage_request_fetches_master_guid() {
 }
 
 #[test]
+fn ledger_coverage_identity_detects_a_rename_that_preserves_the_count() {
+    let response = |name: &str| {
+        format!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME=\"{name}\"><GUID>{company_guid}-00000001</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>",
+            company_guid = COMPANY_GUID
+        )
+    };
+    let opening = parse_coverage(&response("Before Rename")).unwrap();
+    let closing = parse_coverage(&response("After Rename")).unwrap();
+
+    assert_ne!(
+        opening, closing,
+        "the exact LedgerOpeningCoverage values compared by the runtime must change when one GUID is renamed"
+    );
+}
+
+#[test]
 fn reporting_period_partitions_into_narrow_valid_non_overlapping_windows() {
     let reporting = DateWindow::parse(
         DateBoundaryProfile::EducationRestricted,

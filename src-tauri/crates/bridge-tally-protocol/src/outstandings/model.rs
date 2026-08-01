@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use serde::Serialize;
@@ -335,27 +335,33 @@ impl fmt::Debug for PinnedCompany {
 ///
 /// Those bills exist without any voucher, so a voucher-only scan cannot see
 /// them and must not claim complete outstandings when they are present.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedgerOpeningCoverage {
-    ledgers_seen: usize,
+    /// GUID-to-name identity from the coverage read. Equality is consumed by
+    /// the runtime's paired-read check, so a rename cannot hide behind an
+    /// unchanged ledger count.
+    ledger_identities: BTreeMap<String, String>,
     bill_wise_openings: usize,
 }
 
 impl LedgerOpeningCoverage {
-    pub(crate) fn new(ledgers_seen: usize, bill_wise_openings: usize) -> Self {
+    pub(crate) fn new(
+        ledger_identities: BTreeMap<String, String>,
+        bill_wise_openings: usize,
+    ) -> Self {
         Self {
-            ledgers_seen,
+            ledger_identities,
             bill_wise_openings,
         }
     }
-    pub fn ledgers_seen(self) -> usize {
-        self.ledgers_seen
+    pub fn ledgers_seen(&self) -> usize {
+        self.ledger_identities.len()
     }
-    pub fn bill_wise_openings(self) -> usize {
+    pub fn bill_wise_openings(&self) -> usize {
         self.bill_wise_openings
     }
     /// True when a voucher-only scan can still be complete.
-    pub fn is_fully_covered_by_vouchers(self) -> bool {
+    pub fn is_fully_covered_by_vouchers(&self) -> bool {
         self.bill_wise_openings == 0
     }
 }
