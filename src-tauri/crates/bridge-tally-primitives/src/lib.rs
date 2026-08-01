@@ -161,6 +161,35 @@ impl TallyDate {
         };
         Self::parse(format!("{next_year:04}{next_month:02}{next_day:02}"))
     }
+
+    pub fn previous_day(&self) -> Result<Self, TallyError> {
+        let year = self.0[0..4]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let month = self.0[4..6]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let day = self.0[6..8]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let (previous_year, previous_month, previous_day) = if day > 1 {
+            (year, month, day - 1)
+        } else if month > 1 {
+            let previous_month = month - 1;
+            let previous_day = gregorian_month_days(year, previous_month)
+                .ok_or_else(|| invalid_data("invalid_tally_date"))?;
+            (year, previous_month, previous_day)
+        } else {
+            let previous_year = year
+                .checked_sub(1)
+                .filter(|value| *value >= 1)
+                .ok_or_else(|| invalid_data("tally_date_underflow"))?;
+            (previous_year, 12, 31)
+        };
+        Self::parse(format!(
+            "{previous_year:04}{previous_month:02}{previous_day:02}"
+        ))
+    }
 }
 
 impl<'de> Deserialize<'de> for TallyDate {

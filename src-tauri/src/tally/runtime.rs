@@ -15,8 +15,8 @@ use crate::tally::write_sandbox::{
 };
 use bridge_tally_core::TallyDate;
 use bridge_tally_protocol::outstandings::{
-    assemble_partitioned_scan, assemble_scan, compute_outstandings, DateBoundaryProfile,
-    DateWindow, OutstandingsReport, ScanResult, SegmentVerification,
+    assemble_partitioned_scan, assemble_scan, compute_outstandings, CorroboratedDatePartition,
+    DateBoundaryProfile, DateWindow, OutstandingsReport, ScanResult, SegmentVerification,
 };
 use bridge_tally_protocol::xml_read_profiles::{
     ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
@@ -1282,6 +1282,8 @@ impl TallyRuntime {
                             date_partitions = plan.date_partitions,
                             alter_id_high_water = plan.alter_id_high_water,
                             initial_width = plan.initial_width,
+                            planned_primary_segment_pairs = plan.planned_primary_segment_pairs,
+                            reserved_empty_partition_witness_pairs = plan.reserved_empty_partition_witness_pairs,
                             planned_segment_pairs = plan.planned_segment_pairs,
                             maximum_segment_pairs = MAX_SEGMENT_PAIRS_PER_SCAN,
                             admitted = plan.is_admitted(),
@@ -1405,10 +1407,34 @@ impl TallyRuntime {
                         ) {
                             return Ok(partial_result(reason_code));
                         }
+                        // The newly shaped witness profile has not yet received its
+                        // owner-required supervised first live dispatch. Until that
+                        // qualification is recorded, an empty primary partition is
+                        // deliberately Partial rather than silently entering totals.
+                        // This does not dispatch the new profile inside a scan loop.
+                        let mut corroborated_date_partitions =
+                            Vec::with_capacity(completed_date_partitions.len());
+                        for partition in completed_date_partitions {
+                            let corroborated = if partition.vouchers().is_empty() {
+                                if high_water.get() == 0 {
+                                    CorroboratedDatePartition::empty_book(partition)
+                                } else {
+                                    return Ok(partial_result(
+                                        "empty_date_witness_profile_unqualified",
+                                    ));
+                                }
+                            } else {
+                                CorroboratedDatePartition::non_empty(partition)
+                            };
+                            match corroborated {
+                                Ok(partition) => corroborated_date_partitions.push(partition),
+                                Err(partial) => return Ok(partial_result(&partial.reason_code)),
+                            }
+                        }
                         match assemble_partitioned_scan(
                             &extent,
                             requested,
-                            completed_date_partitions,
+                            corroborated_date_partitions,
                         ) {
                             ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
                                 report: Box::new(compute_outstandings(&scan, as_of)?),

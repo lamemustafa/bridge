@@ -25,9 +25,11 @@ use bridge_tally_core::{
 use bridge_tally_protocol::{
     outstandings::{
         parse_company_book_extent, parse_ledger_opening_coverage,
-        verify_segment_pair_with_wire_evidence, voucher_outstandings_request, AlterIdRange,
-        CompanyBookExtent, LedgerOpeningCoverage, NarrowDateWindow, PinnedCompany,
-        SegmentVerification, SegmentWireEvidence, VoucherOutstandingsRequestXml,
+        verify_empty_partition_witness_pair_with_wire_evidence,
+        verify_segment_pair_with_wire_evidence, voucher_empty_partition_witness_request,
+        voucher_outstandings_request, AlterIdRange, CompanyBookExtent, LedgerOpeningCoverage,
+        NarrowDateWindow, PinnedCompany, SegmentVerification, SegmentWireEvidence,
+        VoucherOutstandingsRequestXml, WitnessPairVerification,
     },
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
     parse_ledger_write_readback_with_evidence, parse_selected_voucher_source_records_with_evidence,
@@ -508,6 +510,28 @@ impl TallyClient {
         })
     }
 
+    /// Uses the ordinary 32 MiB XML cap. Only the wildcard outstandings
+    /// profile is allowed through `post_outstandings_xml_decoded`.
+    #[allow(
+        dead_code,
+        reason = "the supervised first live witness dispatch must be recorded before this ordinary-cap seam may be called by fetch_outstandings"
+    )]
+    async fn post_xml_with_wire_evidence(
+        &self,
+        request: String,
+    ) -> anyhow::Result<OutstandingsWireResponse> {
+        let response = self.http.post_xml_decoded(request).await?;
+        let encoded_bytes = response.encoded_bytes();
+        let encoded_sha256 = response.encoded_sha256().to_string();
+        self.record_observed_body_bytes(encoded_bytes);
+        self.record_observed_encoding(response.encoding());
+        Ok(OutstandingsWireResponse {
+            text: response.into_text(),
+            encoded_bytes,
+            encoded_sha256,
+        })
+    }
+
     /// Sends only the opaque, fixed fixture canary through the bounded
     /// loopback transport. It consumes the capsule and exposes neither the
     /// request XML nor the response XML to the application layer.
@@ -736,6 +760,45 @@ impl TallyClient {
             first_read_elapsed,
             second_read_elapsed,
         })
+    }
+
+    /// Executes one paired, date-only I5 witness read. This is intentionally
+    /// separate from `fetch_outstandings_segment_pair`: it has no AlterID
+    /// predicate and uses the ordinary 32 MiB transport cap. The scan loop is
+    /// not allowed to call it until the owner-required supervised first live
+    /// dispatch has been completed and recorded.
+    #[allow(
+        dead_code,
+        reason = "the owner requires one supervised manual live dispatch before the scan loop may call the witness profile"
+    )]
+    pub(crate) async fn fetch_empty_partition_witness_pair(
+        &self,
+        company: &PinnedCompany,
+        window: NarrowDateWindow,
+    ) -> anyhow::Result<WitnessPairVerification> {
+        let request = voucher_empty_partition_witness_request(company, &window).into_xml();
+        let label = format!("{}..{}", window.from().as_str(), window.to().as_str());
+        let first = self
+            .post_xml_with_wire_evidence(request.clone())
+            .await
+            .with_context(|| format!("empty-date witness first read failed for {label}"))?;
+        self.http.get_status_decoded().await.with_context(|| {
+            format!("Tally health check between empty-date witness reads for {label}")
+        })?;
+        let second = self
+            .post_xml_with_wire_evidence(request)
+            .await
+            .with_context(|| format!("empty-date witness second read failed for {label}"))?;
+        self.http.get_status_decoded().await.with_context(|| {
+            format!("Tally health check after empty-date witness reads for {label}")
+        })?;
+        verify_empty_partition_witness_pair_with_wire_evidence(
+            SegmentWireEvidence::new(&first.text, first.encoded_bytes, &first.encoded_sha256),
+            SegmentWireEvidence::new(&second.text, second.encoded_bytes, &second.encoded_sha256),
+            company,
+            window.into_date_window(),
+        )
+        .map_err(anyhow::Error::from)
     }
 
     pub async fn qualify_selected_ledgers(
@@ -1452,6 +1515,10 @@ mod tests {
                 "GET /status HTTP/1.1",
                 "POST / HTTP/1.1",
                 "GET /status HTTP/1.1",
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
             ]
             .into_iter()
             .enumerate()
@@ -1471,8 +1538,8 @@ mod tests {
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let body = match index {
-                    0 | 2 | 8 | 10 => COMPANY_EXTENT,
-                    4 | 6 => OPTIONAL_VOUCHERS,
+                    0 | 2 | 12 | 14 => COMPANY_EXTENT,
+                    4 | 6 | 8 | 10 => OPTIONAL_VOUCHERS,
                     _ => STATUS,
                 };
                 let response = format!(
@@ -1511,7 +1578,7 @@ mod tests {
         let observation = client
             .fetch_outstandings_segment_pair(
                 extent.company(),
-                segment_window,
+                segment_window.clone(),
                 bridge_tally_protocol::outstandings::AlterIdRange::new(0, 101603)
                     .expect("non-empty synthetic range"),
             )
@@ -1526,6 +1593,19 @@ mod tests {
         assert!(
             !segment.vouchers().is_empty(),
             "captured voucher fixture unexpectedly had no vouchers"
+        );
+        let witness = client
+            .fetch_empty_partition_witness_pair(extent.company(), segment_window)
+            .await
+            .expect("paired empty-date witness reads remain stable");
+        let bridge_tally_protocol::outstandings::WitnessPairVerification::Complete(witness) =
+            witness
+        else {
+            panic!("captured witness fixture did not verify: {witness:?}");
+        };
+        assert!(
+            !witness.vouchers().is_empty(),
+            "captured witness fixture unexpectedly had no identity rows"
         );
         let closing_extent = client
             .fetch_company_book_extent(

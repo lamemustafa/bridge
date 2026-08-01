@@ -4,7 +4,7 @@ use bridge_tally_protocol::{
         assemble_scan, compute_outstandings, parse_company_book_extent,
         parse_ledger_opening_coverage, verify_segment_pair, AlterIdRange, BillReferenceKind,
         DateBoundaryProfile, DateWindow, MoneyValue, NarrowDateWindow, OutstandingsError,
-        ScanResult, SegmentVerification, VoucherAlterIdHighWater,
+        ScanResult, SegmentVerification, StrictlyWiderDateCover, VoucherAlterIdHighWater,
     },
     xml_read_profiles::ReadOnlyProfile,
 };
@@ -155,6 +155,41 @@ fn reporting_period_partitions_into_narrow_valid_non_overlapping_windows() {
             pair[1].from().clone(),
             "date partitions must be contiguous and non-overlapping"
         );
+    }
+}
+
+#[test]
+fn every_real_education_partition_has_a_non_identical_capped_witness_cover() {
+    let reporting = DateWindow::parse(
+        DateBoundaryProfile::EducationRestricted,
+        "20240401",
+        "20260731",
+    )
+    .unwrap();
+    let partitions = reporting.narrow_partitions().unwrap();
+    assert_eq!(partitions.len(), 28, "owner feasibility baseline");
+
+    for primary in partitions {
+        let cover = StrictlyWiderDateCover::for_primary(&primary)
+            .expect("owner verified every real partition has a legal cover");
+        assert!((1..=2).contains(&cover.slices().len()));
+        assert!(cover.slices().iter().all(|slice| slice != &primary));
+        assert!(cover
+            .slices()
+            .iter()
+            .any(|slice| { slice.from() < primary.from() || slice.to() > primary.to() }));
+
+        let mut day = primary.from().clone();
+        loop {
+            assert!(cover
+                .slices()
+                .iter()
+                .any(|slice| { slice.from() <= &day && &day <= slice.to() }));
+            if day == *primary.to() {
+                break;
+            }
+            day = day.next_day().unwrap();
+        }
     }
 }
 

@@ -2,9 +2,12 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 use super::{
-    parser::parse_segment, AlterIdRange, CompanyBookExtent, CompleteScan, CompleteSegment,
-    DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness, OutstandingsError,
-    PartialScan, PinnedCompany, ScanResult, SegmentVerification, Voucher, VoucherAlterIdHighWater,
+    parser::{parse_segment, parse_witness_segment},
+    AlterIdRange, CompanyBookExtent, CompleteScan, CompleteSegment, CompleteWitnessPair,
+    CorroboratedDatePartition, DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness,
+    EmptyPartitionControlProvenance, EmptyPartitionWitness, OutstandingsError, PartialScan,
+    PinnedCompany, ScanResult, SegmentVerification, StrictlyWiderDateCover, Voucher,
+    VoucherAlterIdHighWater, WitnessPairVerification, WitnessVoucher,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -103,6 +106,158 @@ pub fn verify_segment_pair_with_wire_evidence(
         vouchers: first.vouchers,
         encoded_bytes: first_wire.encoded_bytes,
     }))
+}
+
+/// Verifies the distinct, date-only I5 witness request. Unlike the wildcard
+/// outstandings reader it has no AlterID slice, and uses the ordinary response
+/// cap in the transport layer. Pairing remains literal and byte-sensitive.
+pub fn verify_empty_partition_witness_pair_with_wire_evidence(
+    first_wire: SegmentWireEvidence<'_>,
+    second_wire: SegmentWireEvidence<'_>,
+    company: &PinnedCompany,
+    window: DateWindow,
+) -> Result<WitnessPairVerification, OutstandingsError> {
+    let first = match parse_witness_segment(first_wire.xml, company, &window) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(WitnessPairVerification::Partial(PartialScan::new(
+                error_code(&error),
+            )))
+        }
+    };
+    let second = match parse_witness_segment(second_wire.xml, company, &window) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(WitnessPairVerification::Partial(PartialScan::new(
+                error_code(&error),
+            )))
+        }
+    };
+    if first.raw_row_count != first.vouchers.len()
+        || second.raw_row_count != second.vouchers.len()
+        || first.raw_row_count != second.raw_row_count
+        || first_wire.encoded_bytes != second_wire.encoded_bytes
+        || first_wire.encoded_sha256 != second_wire.encoded_sha256
+        || first.vouchers != second.vouchers
+    {
+        return Ok(WitnessPairVerification::Partial(PartialScan::new(
+            "paired_empty_date_witness_mismatch",
+        )));
+    }
+    Ok(WitnessPairVerification::Complete(CompleteWitnessPair {
+        window,
+        vouchers: first.vouchers,
+    }))
+}
+
+/// Chooses the closest non-empty primary partition. Ties deliberately prefer
+/// the earlier partition, which makes the control selection reproducible.
+pub fn nearest_non_empty_primary_partition<'a>(
+    primary_partitions: &'a [CompleteScan],
+    empty_window: &DateWindow,
+) -> Option<&'a CompleteScan> {
+    primary_partitions
+        .iter()
+        .filter(|partition| !partition.vouchers.is_empty())
+        .min_by(|left, right| {
+            calendar_distance(&left.reporting_window, empty_window)
+                .cmp(&calendar_distance(&right.reporting_window, empty_window))
+                .then_with(|| {
+                    left.reporting_window
+                        .from()
+                        .cmp(right.reporting_window.from())
+                })
+        })
+}
+
+/// Combines already-verified paired witness reads into the only evidence type
+/// that allows an empty date partition to enter final assembly.
+pub fn corroborate_empty_date_partition(
+    empty_partition: CompleteScan,
+    primary_partitions: &[CompleteScan],
+    cover: StrictlyWiderDateCover,
+    control_pair: CompleteWitnessPair,
+    cover_pairs: Vec<CompleteWitnessPair>,
+) -> Result<CorroboratedDatePartition, PartialScan> {
+    if !empty_partition.vouchers.is_empty()
+        || empty_partition.reporting_window != *cover.primary().as_date_window()
+    {
+        return Err(PartialScan::new("empty_date_witness_scope_mismatch"));
+    }
+    let Some(control_partition) =
+        nearest_non_empty_primary_partition(primary_partitions, &empty_partition.reporting_window)
+    else {
+        return Err(PartialScan::new("empty_date_partition_no_control"));
+    };
+    if control_pair.window != control_partition.reporting_window {
+        return Err(PartialScan::new(
+            "empty_date_witness_control_scope_mismatch",
+        ));
+    }
+    let expected_row = control_partition
+        .vouchers
+        .first()
+        .map(voucher_identity)
+        .ok_or_else(|| PartialScan::new("empty_date_partition_no_control"))?;
+    if !control_pair.vouchers.contains(&expected_row) {
+        return Err(PartialScan::new("empty_date_witness_control_missing_row"));
+    }
+    if cover_pairs.len() != cover.slices().len()
+        || cover_pairs
+            .iter()
+            .zip(cover.slices())
+            .any(|(pair, expected)| pair.window != *expected.as_date_window())
+    {
+        return Err(PartialScan::new("empty_date_witness_cover_scope_mismatch"));
+    }
+    if cover_pairs
+        .iter()
+        .flat_map(|pair| pair.vouchers.iter())
+        .any(|voucher| {
+            voucher.date >= *empty_partition.reporting_window.from()
+                && voucher.date <= *empty_partition.reporting_window.to()
+        })
+    {
+        return Err(PartialScan::new(
+            "empty_date_window_contradicted_by_wider_read",
+        ));
+    }
+    let witness = EmptyPartitionWitness::new(
+        empty_partition.reporting_window.clone(),
+        EmptyPartitionControlProvenance::new(
+            control_partition.reporting_window.clone(),
+            expected_row,
+            cover.slices().to_vec(),
+        ),
+    );
+    CorroboratedDatePartition::empty(empty_partition, witness)
+}
+
+fn voucher_identity(voucher: &Voucher) -> WitnessVoucher {
+    WitnessVoucher {
+        guid: voucher.guid.clone(),
+        alter_id: voucher.alter_id,
+        date: voucher.date.clone(),
+    }
+}
+
+fn calendar_distance(left: &DateWindow, right: &DateWindow) -> usize {
+    let (mut cursor, end) = if left.to() < right.from() {
+        (left.to().clone(), right.from())
+    } else if right.to() < left.from() {
+        (right.to().clone(), left.from())
+    } else {
+        return 0;
+    };
+    let mut days = 0usize;
+    while cursor < *end {
+        let Ok(next) = cursor.next_day() else {
+            return usize::MAX;
+        };
+        cursor = next;
+        days = days.saturating_add(1);
+    }
+    days
 }
 
 pub fn verify_empty_date_window_with_wider_pair(
@@ -240,6 +395,7 @@ pub fn assemble_scan(
             voucher_alter_id_high_water: high_water,
             vouchers: Vec::new(),
             encoded_bytes: 0,
+            empty_partition_witnesses: Vec::new(),
         });
     }
     let Some(first) = complete.first() else {
@@ -292,6 +448,7 @@ pub fn assemble_scan(
         voucher_alter_id_high_water: high_water,
         vouchers: vouchers.into_values().collect(),
         encoded_bytes,
+        empty_partition_witnesses: Vec::new(),
     })
 }
 
@@ -302,7 +459,7 @@ pub fn assemble_scan(
 pub fn assemble_partitioned_scan(
     extent: &CompanyBookExtent,
     reporting_window: DateWindow,
-    mut partitions: Vec<CompleteScan>,
+    mut partitions: Vec<CorroboratedDatePartition>,
 ) -> ScanResult {
     // The window ends at the as-of cutoff, which is `LastVoucherDate` unless the
     // book contains future-dated vouchers. Requiring exact equality would reject
@@ -329,16 +486,44 @@ pub fn assemble_partitioned_scan(
         return ScanResult::Partial(PartialScan::new("date_partition_coverage_incomplete"));
     }
     partitions.sort_by(|left, right| {
-        left.reporting_window
+        left.scan()
+            .reporting_window
             .from()
-            .cmp(right.reporting_window.from())
-            .then_with(|| left.reporting_window.to().cmp(right.reporting_window.to()))
+            .cmp(right.scan().reporting_window.from())
+            .then_with(|| {
+                left.scan()
+                    .reporting_window
+                    .to()
+                    .cmp(right.scan().reporting_window.to())
+            })
     });
 
     let mut vouchers = BTreeMap::<String, Voucher>::new();
     let mut alter_ids = BTreeMap::new();
     let mut encoded_bytes = 0_usize;
+    let mut empty_partition_witnesses = Vec::new();
     for (partition, expected_window) in partitions.into_iter().zip(expected) {
+        let partition = match partition {
+            CorroboratedDatePartition::NonEmpty(scan) => {
+                if high_water.get() == 0 {
+                    return ScanResult::Partial(PartialScan::new("empty_book_partition_invalid"));
+                }
+                scan
+            }
+            CorroboratedDatePartition::Empty { scan, witness } => {
+                if high_water.get() == 0 {
+                    return ScanResult::Partial(PartialScan::new("empty_book_partition_invalid"));
+                }
+                empty_partition_witnesses.push(witness);
+                scan
+            }
+            CorroboratedDatePartition::EmptyBook(scan) => {
+                if high_water.get() != 0 {
+                    return ScanResult::Partial(PartialScan::new("empty_book_partition_invalid"));
+                }
+                scan
+            }
+        };
         if partition.company != *company
             || partition.voucher_alter_id_high_water != high_water
             || partition.reporting_window != *expected_window.as_date_window()
@@ -363,16 +548,13 @@ pub fn assemble_partitioned_scan(
         }
     }
 
-    if high_water.get() > 0 && vouchers.is_empty() {
-        return ScanResult::Partial(PartialScan::new("whole_book_false_empty"));
-    }
-
     ScanResult::Complete(CompleteScan {
         company: company.clone(),
         reporting_window,
         voucher_alter_id_high_water: high_water,
         vouchers: vouchers.into_values().collect(),
         encoded_bytes,
+        empty_partition_witnesses,
     })
 }
 
@@ -388,7 +570,7 @@ fn error_code(error: &OutstandingsError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::outstandings::parse_company_book_extent;
+    use crate::outstandings::{parse_company_book_extent, NarrowDateWindow};
 
     const COMPANY_EXTENT: &str =
         include_str!("../../tests/fixtures/unit_a_company_extent_live.xml");
@@ -728,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn partitioned_scan_accepts_interior_empty_windows_and_requires_exact_tiling() {
+    fn partitioned_scan_requires_corroborated_partitions_and_exact_tiling() {
         let company = company();
         let reporting = DateWindow::parse(
             crate::outstandings::DateBoundaryProfile::ModeAgnostic,
@@ -746,17 +928,24 @@ mod tests {
             AlterIdRange::new(0, 440).unwrap(),
         )
         .unwrap();
-        let first_voucher = parsed.vouchers[0].clone();
+        let mut first_voucher = parsed.vouchers[0].clone();
+        first_voucher.date = windows[0].from().clone();
+        let mut middle_voucher = parsed.vouchers[0].clone();
+        middle_voucher.guid = "company-guid-middle".to_string();
+        middle_voucher.alter_id = crate::outstandings::VoucherAlterId::parse("441").unwrap();
+        middle_voucher.date = windows[1].from().clone();
         let mut last_voucher = parsed.vouchers[1].clone();
-        last_voucher.date = bridge_tally_primitives::TallyDate::parse("20250701").unwrap();
+        last_voucher.guid = "company-guid-last".to_string();
+        last_voucher.alter_id = crate::outstandings::VoucherAlterId::parse("442").unwrap();
+        last_voucher.date = windows[2].from().clone();
         let partitions = windows
             .iter()
             .enumerate()
             .map(|(index, window)| {
                 let vouchers = match index {
                     0 => vec![first_voucher.clone()],
-                    2 => vec![last_voucher.clone()],
-                    _ => Vec::new(),
+                    1 => vec![middle_voucher.clone()],
+                    _ => vec![last_voucher.clone()],
                 };
                 let ScanResult::Complete(scan) = assemble_scan(
                     company.clone(),
@@ -771,7 +960,8 @@ mod tests {
                 ) else {
                     panic!("narrow partition should assemble")
                 };
-                scan
+                CorroboratedDatePartition::non_empty(scan)
+                    .expect("non-empty primary partition is admissible")
             })
             .collect::<Vec<_>>();
 
@@ -780,7 +970,7 @@ mod tests {
             panic!("exact date partitions should assemble")
         };
         assert_eq!(complete.window(), &reporting);
-        assert_eq!(complete.vouchers().len(), 2);
+        assert_eq!(complete.vouchers().len(), 3);
         assert_eq!(complete.encoded_bytes(), 30);
 
         let wrong_extent_window = DateWindow::parse(
@@ -801,7 +991,7 @@ mod tests {
     }
 
     #[test]
-    fn whole_book_false_empty_fails_closed_when_extent_has_vouchers() {
+    fn all_empty_primary_partitions_have_no_control() {
         let company = company();
         let reporting = DateWindow::parse(
             crate::outstandings::DateBoundaryProfile::ModeAgnostic,
@@ -809,7 +999,6 @@ mod tests {
             "20250701",
         )
         .unwrap();
-        let extent = book_extent(&company, &reporting, high_water(440));
         let partitions = reporting
             .narrow_partitions()
             .unwrap()
@@ -830,11 +1019,273 @@ mod tests {
                 };
                 scan
             })
-            .collect();
+            .collect::<Vec<_>>();
 
+        assert!(nearest_non_empty_primary_partition(&partitions, &reporting).is_none());
+        let primary = NarrowDateWindow::try_from(partitions[0].window().clone()).unwrap();
+        let cover = StrictlyWiderDateCover::for_primary(&primary).unwrap();
+        let control_pair = CompleteWitnessPair {
+            window: primary.as_date_window().clone(),
+            vouchers: Vec::new(),
+        };
+        let cover_pairs = cover
+            .slices()
+            .iter()
+            .map(|slice| CompleteWitnessPair {
+                window: slice.as_date_window().clone(),
+                vouchers: Vec::new(),
+            })
+            .collect();
         assert!(matches!(
-            assemble_partitioned_scan(&extent, reporting, partitions),
-            ScanResult::Partial(partial) if partial.reason_code == "whole_book_false_empty"
+            corroborate_empty_date_partition(
+                partitions[0].clone(),
+                &partitions,
+                cover,
+                control_pair,
+                cover_pairs,
+            ),
+            Err(partial) if partial.reason_code == "empty_date_partition_no_control"
+        ));
+    }
+
+    #[test]
+    fn mandatory_empty_witness_records_nearest_control_provenance() {
+        let company = company();
+        let control_window = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250401",
+            "20250401",
+        )
+        .unwrap();
+        let empty_window = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250402",
+            "20250430",
+        )
+        .unwrap();
+        let mut control_voucher = parse_segment(
+            &vouchers(),
+            &company,
+            &reporting_window(),
+            AlterIdRange::new(0, 440).unwrap(),
+        )
+        .unwrap()
+        .vouchers
+        .remove(0);
+        control_voucher.date = control_window.from().clone();
+        let ScanResult::Complete(control) = assemble_scan(
+            company.clone(),
+            control_window.clone(),
+            high_water(440),
+            vec![SegmentVerification::Complete(CompleteSegment {
+                reporting_window: control_window.clone(),
+                alter_id_range: AlterIdRange::new(0, 440).unwrap(),
+                vouchers: vec![control_voucher.clone()],
+                encoded_bytes: 1,
+            })],
+        ) else {
+            panic!("non-empty primary scan must assemble")
+        };
+        let ScanResult::Complete(empty) = assemble_scan(
+            company.clone(),
+            empty_window.clone(),
+            high_water(440),
+            vec![SegmentVerification::Complete(CompleteSegment {
+                reporting_window: empty_window.clone(),
+                alter_id_range: AlterIdRange::new(0, 440).unwrap(),
+                vouchers: Vec::new(),
+                encoded_bytes: 1,
+            })],
+        ) else {
+            panic!("empty primary scan remains complete on the AlterID axis")
+        };
+        let farther = CompleteScan {
+            company: company.clone(),
+            reporting_window: DateWindow::parse(
+                crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+                "20250501",
+                "20250501",
+            )
+            .unwrap(),
+            voucher_alter_id_high_water: high_water(440),
+            vouchers: vec![control_voucher.clone()],
+            encoded_bytes: 1,
+            empty_partition_witnesses: Vec::new(),
+        };
+        assert_eq!(
+            nearest_non_empty_primary_partition(&[farther, control.clone()], empty.window())
+                .expect("at least one primary partition is non-empty")
+                .window(),
+            &control_window
+        );
+        let primary = NarrowDateWindow::try_from(empty_window).unwrap();
+        let cover = StrictlyWiderDateCover::for_primary(&primary).unwrap();
+        let expected_row = voucher_identity(&control_voucher);
+        let control_pair = CompleteWitnessPair {
+            window: control_window.clone(),
+            vouchers: vec![expected_row.clone()],
+        };
+        let cover_pairs = cover
+            .slices()
+            .iter()
+            .map(|slice| CompleteWitnessPair {
+                window: slice.as_date_window().clone(),
+                vouchers: Vec::new(),
+            })
+            .collect();
+        let corroborated =
+            corroborate_empty_date_partition(empty, &[control], cover, control_pair, cover_pairs)
+                .expect("nearest paired control plus shifted cover corroborates emptiness");
+        let provenance = corroborated
+            .empty_witness()
+            .expect("empty variant preserves witness provenance")
+            .control_provenance();
+        assert_eq!(provenance.control_window(), &control_window);
+        assert_eq!(provenance.expected_row(), &expected_row);
+        assert!(!provenance.vouched_cover_slices().is_empty());
+    }
+
+    #[test]
+    fn final_scan_retains_empty_partition_control_provenance() {
+        let company = company();
+        let reporting = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250401",
+            "20250502",
+        )
+        .unwrap();
+        let windows = reporting.narrow_partitions().unwrap();
+        assert_eq!(windows.len(), 2);
+        let mut control_voucher = parse_segment(
+            &vouchers(),
+            &company,
+            &reporting_window(),
+            AlterIdRange::new(0, 440).unwrap(),
+        )
+        .unwrap()
+        .vouchers
+        .remove(0);
+        control_voucher.date = windows[0].from().clone();
+        let control = CompleteScan {
+            company: company.clone(),
+            reporting_window: windows[0].as_date_window().clone(),
+            voucher_alter_id_high_water: high_water(440),
+            vouchers: vec![control_voucher.clone()],
+            encoded_bytes: 1,
+            empty_partition_witnesses: Vec::new(),
+        };
+        let empty = CompleteScan {
+            company: company.clone(),
+            reporting_window: windows[1].as_date_window().clone(),
+            voucher_alter_id_high_water: high_water(440),
+            vouchers: Vec::new(),
+            encoded_bytes: 1,
+            empty_partition_witnesses: Vec::new(),
+        };
+        let cover = StrictlyWiderDateCover::for_primary(&windows[1]).unwrap();
+        let expected_row = voucher_identity(&control_voucher);
+        let corroborated = corroborate_empty_date_partition(
+            empty,
+            std::slice::from_ref(&control),
+            cover.clone(),
+            CompleteWitnessPair {
+                window: control.window().clone(),
+                vouchers: vec![expected_row.clone()],
+            },
+            cover
+                .slices()
+                .iter()
+                .map(|slice| CompleteWitnessPair {
+                    window: slice.as_date_window().clone(),
+                    vouchers: Vec::new(),
+                })
+                .collect(),
+        )
+        .unwrap();
+        let extent = book_extent(&company, &reporting, high_water(440));
+        let ScanResult::Complete(complete) = assemble_partitioned_scan(
+            &extent,
+            reporting,
+            vec![
+                CorroboratedDatePartition::non_empty(control).unwrap(),
+                corroborated,
+            ],
+        ) else {
+            panic!("a control and its corroborated empty partition must complete")
+        };
+        let [witness] = complete.empty_partition_witnesses() else {
+            panic!("completed scan must retain the empty partition witness")
+        };
+        assert_eq!(witness.control_provenance().expected_row(), &expected_row);
+        assert_eq!(
+            witness.control_provenance().control_window(),
+            windows[0].as_date_window()
+        );
+    }
+
+    #[test]
+    fn witness_row_inside_primary_partition_is_typed_partial() {
+        let company = company();
+        let control_window = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250401",
+            "20250401",
+        )
+        .unwrap();
+        let empty_window = DateWindow::parse(
+            crate::outstandings::DateBoundaryProfile::ModeAgnostic,
+            "20250402",
+            "20250430",
+        )
+        .unwrap();
+        let mut control_voucher = parse_segment(
+            &vouchers(),
+            &company,
+            &reporting_window(),
+            AlterIdRange::new(0, 440).unwrap(),
+        )
+        .unwrap()
+        .vouchers
+        .remove(0);
+        control_voucher.date = control_window.from().clone();
+        let control = CompleteScan {
+            company: company.clone(),
+            reporting_window: control_window.clone(),
+            voucher_alter_id_high_water: high_water(440),
+            vouchers: vec![control_voucher.clone()],
+            encoded_bytes: 1,
+            empty_partition_witnesses: Vec::new(),
+        };
+        let empty = CompleteScan {
+            company,
+            reporting_window: empty_window.clone(),
+            voucher_alter_id_high_water: high_water(440),
+            vouchers: Vec::new(),
+            encoded_bytes: 1,
+            empty_partition_witnesses: Vec::new(),
+        };
+        let primary = NarrowDateWindow::try_from(empty_window.clone()).unwrap();
+        let cover = StrictlyWiderDateCover::for_primary(&primary).unwrap();
+        let control_pair = CompleteWitnessPair {
+            window: control_window,
+            vouchers: vec![voucher_identity(&control_voucher)],
+        };
+        let mut cover_pairs = cover
+            .slices()
+            .iter()
+            .map(|slice| CompleteWitnessPair {
+                window: slice.as_date_window().clone(),
+                vouchers: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        cover_pairs[0].vouchers.push(WitnessVoucher {
+            guid: control_voucher.guid,
+            alter_id: control_voucher.alter_id,
+            date: empty_window.from().clone(),
+        });
+        assert!(matches!(
+            corroborate_empty_date_partition(empty, &[control], cover, control_pair, cover_pairs),
+            Err(partial) if partial.reason_code == "empty_date_window_contradicted_by_wider_read"
         ));
     }
 
@@ -861,9 +1312,10 @@ mod tests {
                 ) else {
                     panic!("zero high-water partition should be complete")
                 };
-                scan
+                CorroboratedDatePartition::empty_book(scan)
+                    .expect("zero high-water is the distinct empty-book case")
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         assert!(matches!(
             assemble_partitioned_scan(&extent, reporting, partitions),
