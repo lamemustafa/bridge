@@ -678,10 +678,9 @@ fn sanitize_for_test(xml: &str) -> String {
     let wrapped = format!(
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{xml}</COLLECTION></DATA></BODY></ENVELOPE>"
     );
-    let coverage = parse_ledger_opening_coverage(&wrapped);
-    // The shape has no LEDGER rows, so this parses to an empty coverage; the
-    // point is that sanitisation ran without collapsing the two inputs.
-    assert!(coverage.is_ok(), "sanitised envelope still parses");
+    // Exercise the sanitiser directly. It used to be reached via the coverage
+    // parser, but an empty ledger collection now fails closed, so that harness
+    // no longer suits a shape with no LEDGER rows.
     bridge_tally_protocol::outstandings::sanitize_invalid_numeric_references_for_test(&wrapped)
 }
 
@@ -793,4 +792,40 @@ fn ageing_runs_from_tallys_bill_date_not_the_voucher_date() {
         "ageing from the voucher date would have put it here"
     );
     assert_eq!(report.ageing.days_61_90.as_str(), "5000");
+}
+
+#[test]
+fn ledger_coverage_fails_closed_on_empty_response_and_empty_values() {
+    let head =
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>";
+    let tail = "</COLLECTION></DATA></BODY></ENVELOPE>";
+
+    // A successful-but-empty collection is the false-empty route applied to
+    // masters: any company with vouchers also has ledgers, so zero rows means
+    // the response is not describing the book we asked about. Counting it as
+    // "no openings" would publish a Complete voucher-only report.
+    assert!(
+        matches!(
+            parse_ledger_opening_coverage(&format!("{head}{tail}")),
+            Err(OutstandingsError::InvalidResponse(
+                "ledger_coverage_response_empty"
+            ))
+        ),
+        "an empty ledger collection must not read as fully covered"
+    );
+
+    // A present-but-empty amount is not zero. Skipping it would count the
+    // ledger as carrying no opening.
+    let empty_value = format!(
+        "{head}<LEDGER NAME=\"Tracked\"><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE></OPENINGBALANCE></LEDGER>{tail}"
+    );
+    assert!(
+        matches!(
+            parse_ledger_opening_coverage(&empty_value),
+            Err(OutstandingsError::InvalidResponse(
+                "ledger_opening_balance_empty"
+            ))
+        ),
+        "an empty opening balance must fail closed, not count as no opening"
+    );
 }

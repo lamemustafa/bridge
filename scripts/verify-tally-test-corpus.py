@@ -83,6 +83,16 @@ def main():
               'missing/non-numeric ALTERID or a malformed date. The production '
               'parser rejects these; the corpus cannot be accepted.')
         return 1
+    seen = {}
+    dupes = sorted({x['alterid'] for x in valid if x['alterid'] in seen or seen.setdefault(x['alterid'], 1) is None})
+    if dupes:
+        # Production segment parsing rejects duplicate voucher AlterIDs outright
+        # (duplicate_voucher_alter_id_within_segment). A corpus containing them
+        # cannot calibrate anything, so it must not be ACCEPTED here either.
+        print(f'FAIL: {len(dupes)} duplicate ALTERID value(s), e.g. {dupes[:5]}. '
+              'The production parser rejects duplicates within a segment.')
+        return 1
+
     rows = valid
 
     # Production `compute_outstandings` excludes optional, cancelled and
