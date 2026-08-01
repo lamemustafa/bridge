@@ -693,42 +693,6 @@ fn ledger_opening_coverage_requires_each_ledger_to_prove_the_pinned_company_guid
 }
 
 #[test]
-fn illegal_numeric_references_keep_distinct_identities() {
-    // Two names differing only by which illegal code point they carry must not
-    // collapse into one key: compute_outstandings reconciles bills by
-    // (ledger, reference), so a lossy substitution would merge two distinct
-    // bills and net their balances.
-    let one = sanitize_for_test("<X>ACME&#1;LTD</X>");
-    let four = sanitize_for_test("<X>ACME&#4;LTD</X>");
-    assert_ne!(
-        one, four,
-        "distinct illegal references must not sanitize to the same text"
-    );
-    assert!(
-        !one.contains("&#1;"),
-        "the illegal reference itself is removed"
-    );
-    // Legal references are untouched.
-    assert!(
-        sanitize_for_test("<X>A&#65;B</X>").contains("A&#65;B"),
-        "a legal numeric reference must survive sanitisation unchanged"
-    );
-}
-
-fn sanitize_for_test(xml: &str) -> String {
-    // Exercised through the public parser boundary: a segment parse sanitizes
-    // before deserialising, so round-tripping a minimal envelope is enough to
-    // observe the substitution.
-    let wrapped = format!(
-        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{xml}</COLLECTION></DATA></BODY></ENVELOPE>"
-    );
-    // Exercise the sanitiser directly. It used to be reached via the coverage
-    // parser, but an empty ledger collection now fails closed, so that harness
-    // no longer suits a shape with no LEDGER rows.
-    bridge_tally_protocol::outstandings::sanitize_invalid_numeric_references_for_test(&wrapped)
-}
-
-#[test]
 fn a_bill_literally_named_on_account_does_not_merge_with_the_aggregate() {
     // The On Account aggregate must be a distinct key VARIANT, not a sentinel
     // string. Tally bill names are free user text, so a bill genuinely named

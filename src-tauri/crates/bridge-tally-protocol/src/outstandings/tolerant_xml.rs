@@ -45,7 +45,7 @@ pub(super) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
             .or_else(|| token.strip_prefix('X'))
             .and_then(|hex| u32::from_str_radix(hex, 16).ok())
             .or_else(|| token.parse::<u32>().ok());
-        if parsed.is_some_and(|value| !is_xml_10_char(value)) {
+        if parsed.is_some_and(|value| !is_xml_10_char(value) || value == 0xfffd) {
             let target = output.get_or_insert_with(|| String::with_capacity(xml.len()));
             target.push_str(&xml[copy_from..start]);
             // Preserve the numeric identity in a self-escaping marker.
@@ -75,8 +75,15 @@ fn is_xml_10_char(value: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use quick_xml::{events::Event, Reader};
+    use serde::Deserialize;
 
     use super::sanitize_invalid_numeric_references;
+
+    #[derive(Debug, Deserialize)]
+    struct TextValue {
+        #[serde(rename = "$text")]
+        value: String,
+    }
 
     #[test]
     fn real_invalid_character_reference_is_narrowly_repaired() {
@@ -106,18 +113,22 @@ mod tests {
     }
 
     #[test]
-    fn illegal_reference_and_its_literal_encoded_form_remain_distinct() {
-        let illegal_reference = "<A>ACME&#4;LTD</A>";
-        let literal_encoded_form = "<A>ACME\u{fffd}#4;LTD</A>";
+    fn numeric_references_remain_injective_after_xml_deserialisation() {
+        let parse = |xml| {
+            quick_xml::de::from_str::<TextValue>(&sanitize_invalid_numeric_references(xml))
+                .expect("sanitised XML deserialises like parser.rs")
+                .value
+        };
 
-        assert_ne!(
-            sanitize_invalid_numeric_references(illegal_reference),
-            sanitize_invalid_numeric_references(literal_encoded_form),
-            "a source literal marker must not collide with an illegal reference"
-        );
-        assert_eq!(
-            sanitize_invalid_numeric_references(literal_encoded_form),
-            "<A>ACME\u{fffd}#65533;#4;LTD</A>"
-        );
+        let illegal_reference = parse("<A>ACME&#4;LTD</A>");
+        let literal_encoded_form = parse("<A>ACME\u{fffd}#4;LTD</A>");
+        let decimal_replacement_reference = parse("<A>ACME&#65533;#4;LTD</A>");
+        let hex_replacement_reference = parse("<A>ACME&#xFFFD;#4;LTD</A>");
+
+        assert_eq!(illegal_reference, "ACME\u{fffd}#4;LTD");
+        assert_eq!(literal_encoded_form, "ACME\u{fffd}#65533;#4;LTD");
+        assert_ne!(illegal_reference, literal_encoded_form);
+        assert_eq!(decimal_replacement_reference, literal_encoded_form);
+        assert_eq!(hex_replacement_reference, literal_encoded_form);
     }
 }
