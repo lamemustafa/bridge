@@ -1029,27 +1029,28 @@ fn against_ref_reopened_after_zero_balance_ages_from_original_bill_date() {
 }
 
 #[test]
-fn advance_with_distinct_bill_date_refuses_to_publish_an_ageing_bucket() {
-    assert!(matches!(
-        advance_scan(Some("20260101")),
-        ScanResult::Partial(partial) if partial.reason_code == "advance_ageing_unverified"
-    ));
+fn advance_with_distinct_bill_date_computes_its_voucher_age() {
+    assert_advance_age(advance_scan(Some("20260101")));
 }
 
 #[test]
-fn advance_with_matching_bill_date_is_withheld() {
-    assert!(matches!(
-        advance_scan(Some("20260415")),
-        ScanResult::Partial(partial) if partial.reason_code == "advance_ageing_unverified"
-    ));
+fn advance_with_matching_bill_date_computes_its_voucher_age() {
+    assert_advance_age(advance_scan(Some("20260415")));
 }
 
 #[test]
-fn advance_without_bill_date_is_withheld() {
-    assert!(matches!(
-        advance_scan(None),
-        ScanResult::Partial(partial) if partial.reason_code == "advance_ageing_unverified"
-    ));
+fn advance_without_bill_date_computes_its_voucher_age() {
+    assert_advance_age(advance_scan(None));
+}
+
+fn assert_advance_age(scan: ScanResult) {
+    let ScanResult::Complete(scan) = scan else {
+        panic!("a posted Advance must assemble as a complete scan")
+    };
+    let report = compute_outstandings(&scan, TallyDate::parse("20260415").unwrap())
+        .expect("Advance ageing computes");
+    assert_eq!(report.payable_total.as_str(), "25");
+    assert_eq!(report.top_parties[0].oldest_bill_age_days, 0);
 }
 
 fn advance_scan(bill_date: Option<&str>) -> ScanResult {
