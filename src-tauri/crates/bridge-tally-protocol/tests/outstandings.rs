@@ -1028,6 +1028,53 @@ fn against_ref_reopened_after_zero_balance_ages_from_original_bill_date() {
 }
 
 #[test]
+fn against_ref_sign_flip_ages_from_voucher_date() {
+    let voucher = |guid_suffix: u8, date: &str, bill_type: &str, amount: &str| {
+        format!(
+            "<VOUCHER REMOTEID=\"r{guid_suffix}\"><GUID>{company_guid}-0000000{guid_suffix}</GUID><MASTERID>{guid_suffix}</MASTERID><ALTERID>{guid_suffix}</ALTERID><DATE TYPE=\"Date\">{date}</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED><ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>REF-1</NAME><BILLTYPE>{bill_type}</BILLTYPE><BILLDATE TYPE=\"Date\">20260601</BILLDATE><AMOUNT>{amount}</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
+            company_guid = COMPANY_GUID
+        )
+    };
+    let xml = format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{}</COLLECTION></DATA></BODY></ENVELOPE>",
+        [
+            voucher(1, "20260601", "New Ref", "-3000"),
+            voucher(2, "20260701", "Agst Ref", "4500"),
+        ]
+        .join("")
+    );
+    let extent = extent();
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260601", "20260701").unwrap();
+    let SegmentVerification::Complete(segment) = verify_segment_pair(
+        &xml,
+        &xml,
+        extent.company(),
+        window.clone(),
+        full_alter_id_range(),
+    )
+    .expect("pair verifies") else {
+        panic!("identical replies must verify complete")
+    };
+    let ScanResult::Complete(scan) = assemble_scan(
+        extent.company().clone(),
+        window,
+        capture_high_water(),
+        vec![SegmentVerification::Complete(segment)],
+    ) else {
+        panic!("scan assembles")
+    };
+
+    let report =
+        compute_outstandings(&scan, TallyDate::parse("20260731").unwrap()).expect("computes");
+    assert_eq!(report.payable_total.as_str(), "1500");
+    assert_eq!(
+        report.top_parties[0].oldest_bill_age_days, 30,
+        "an Agst Ref that crosses zero without stopping there must age from its voucher date"
+    );
+}
+
+#[test]
 fn advance_with_distinct_bill_date_computes_its_voucher_age() {
     assert_advance_age(advance_scan(Some("20260101")));
 }

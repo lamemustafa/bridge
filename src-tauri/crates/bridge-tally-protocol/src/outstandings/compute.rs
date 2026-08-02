@@ -92,10 +92,7 @@ pub fn compute_outstandings(
                     .balance
                     .checked_add(amount)
                     .map_err(|_| OutstandingsError::ArithmeticOverflow)?;
-                let fresh_exposure = previous_balance.is_zero()
-                    || (!next_balance.is_zero()
-                        && previous_balance.is_negative() != next_balance.is_negative());
-                if fresh_exposure {
+                if previous_balance.is_zero() {
                     bill.oldest_date = match allocation.bill_type {
                         // TALLY_PROTOCOL_REFERENCE §12a.2 (PR #117): New Ref
                         // and an Agst Ref that re-opens a settled bill age from
@@ -108,6 +105,14 @@ pub fn compute_outstandings(
                             voucher.date.clone()
                         }
                     };
+                } else if !next_balance.is_zero()
+                    && previous_balance.is_negative() != next_balance.is_negative()
+                {
+                    // A genuine sign flip makes a new exposure without an
+                    // intermediate zero balance. Deliberately use the voucher
+                    // date: on an Agst Ref, BILLDATE belongs to the bill being
+                    // settled, not the newly exposed balance.
+                    bill.oldest_date = voucher.date.clone();
                 }
                 bill.balance = next_balance;
             }
