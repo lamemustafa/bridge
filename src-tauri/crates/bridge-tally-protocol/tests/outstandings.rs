@@ -1018,16 +1018,19 @@ fn advance_with_distinct_bill_date_refuses_to_publish_an_ageing_bucket() {
 }
 
 #[test]
-fn advance_with_matching_bill_date_assembles_complete() {
+fn advance_with_matching_bill_date_is_withheld() {
     assert!(matches!(
         advance_scan(Some("20260415")),
-        ScanResult::Complete(_)
+        ScanResult::Partial(partial) if partial.reason_code == "advance_ageing_unverified"
     ));
 }
 
 #[test]
-fn advance_without_bill_date_assembles_complete() {
-    assert!(matches!(advance_scan(None), ScanResult::Complete(_)));
+fn advance_without_bill_date_is_withheld() {
+    assert!(matches!(
+        advance_scan(None),
+        ScanResult::Partial(partial) if partial.reason_code == "advance_ageing_unverified"
+    ));
 }
 
 fn advance_scan(bill_date: Option<&str>) -> ScanResult {

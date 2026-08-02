@@ -287,12 +287,11 @@ pub fn assemble_scan(
             }
         }
     }
-    // Issue #113: no captured response contains a posted non-zero Advance
-    // whose present BILLDATE differs from its voucher date. Those competing
-    // dates are unverified, so return the scan's typed Partial instead of
-    // letting computation publish a confidently aged amount. The guard
-    // requires owner-attended evidence to remove; documentation or inference
-    // is not enough.
+    // Issue #113: no captured response contains any posted non-zero Advance.
+    // Its ageing semantics are unverified, so return the scan's typed Partial
+    // instead of publishing a confident age from an absent or matching date.
+    // The guard requires owner-attended evidence to remove; documentation or
+    // inference is not enough.
     if vouchers.values().any(has_unverified_advance_ageing) {
         return ScanResult::Partial(PartialScan::new("advance_ageing_unverified"));
     }
@@ -313,10 +312,6 @@ fn has_unverified_advance_ageing(voucher: &Voucher) -> bool {
             entry.bill_allocations.iter().any(|allocation| {
                 matches!(allocation.bill_type, BillReferenceKind::Advance)
                     && matches!(&allocation.amount, MoneyValue::Exact(amount) if !amount.is_zero())
-                    && matches!(
-                        allocation.bill_date.as_ref(),
-                        Some(bill_date) if bill_date != &voucher.date
-                    )
             })
         })
 }
