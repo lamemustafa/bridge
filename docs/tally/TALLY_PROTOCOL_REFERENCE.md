@@ -1287,12 +1287,14 @@ projection proves wrong.
 in 43.67 s; a 31-day window returned 101.5 MiB in 81.3 s. Both exceed every stated response
 limit, and both are ordinary requests.
 
-**A pre-flight count was cheaper on the observed windows.** A minimal `FETCH` over those
-windows returned the observed voucher count at about **1/17th** the wildcard cost:
+**A pre-flight count reduced response payload on the observed windows.** A minimal `FETCH`
+over those windows returned the observed voucher count with about **1/17th** the wildcard
+response payload. Its elapsed-time reduction was measured separately and is not a general
+cost estimate:
 
-| window | minimal `FETCH` | wildcard | ratio |
+| window | minimal `FETCH` | wildcard | payload / elapsed ratio |
 | --- | --- | --- | --- |
-| 2-day | 3.98 MB / 2.61 s | 67.67 MiB / 43.67 s | 17× |
+| 2-day | 3.98 MB / 2.61 s | 67.67 MiB / 43.67 s | 17× / 17× |
 | 31-day | 5.96 MB / 5.74 s | 101.5 MiB / 81.3 s | 17× / 14× |
 
 Incidentally, `FETCH ALTERID` and `FETCH GUID, ALTERID, DATE` return **byte-identical**
