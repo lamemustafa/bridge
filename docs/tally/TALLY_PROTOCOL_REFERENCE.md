@@ -1085,8 +1085,12 @@ Four properties that matter more than the speed:
 1. **It is O(open bills), not O(vouchers).** 101,603 vouchers returned 22 rows in **0.10 s /
    5 KB**. A voucher scan over the same book is a different order of problem entirely.
 2. **`STATUS` is emitted only on failure.** A successful response contains **no `STATUS` tag
-   at all**. Verification is inverted relative to §2.1 — you cannot assert `STATUS=1`; you
-   must treat the *presence* of `STATUS` as the failure signal.
+   at all**, so you cannot assert `STATUS=1` as §2.1 allows.
+   **But absence of `STATUS` does not prove success.** An unrecognised report `ID` returns a
+   bare `<RESPONSE>Unknown Request, cannot be processed</RESPONSE>`, which also carries no
+   `STATUS` — a parser treating "no `STATUS`" as success would read it as a report with zero
+   bills and silently publish no exposure. **Require the expected report structure, and reject
+   `RESPONSE` or `LINEERROR` independently of `STATUS`.**
 3. **It fails closed on a company that is not loaded**, with
    `LINEERROR: Could not set 'SVCurrentCompany' to '<name>'` — see 12a.6.
 4. **It carries no GUID anywhere**, so the response cannot be identity-bound the way a
@@ -1163,7 +1167,7 @@ measured by writing a distinguishable value and reading it back. **Every one rep
 | 3 | The allocation **kind** is rewritten when the reference name already exists: `Advance` naming an existing ref is stored as `Agst Ref` |
 | 4 | `On Account` names are **stripped** — it is structurally unnamed |
 | 5 | An allocation on a ledger with `ISBILLWISEON=No` is **silently discarded**; the entry stores with no allocations |
-| 6 | `VOUCHERNUMBER` is **overridden** with Tally's own per-type sequence |
+| 6 | `VOUCHERNUMBER` is **overridden** with Tally's own per-type sequence — **under automatic numbering only.** §9.8 establishes that Manual + `PREVENTDUPLICATES=Yes` preserves it verbatim. The company measured here used the default, so this observation does not generalise; the numbering method decides it |
 | 7 | `ACTION="Alter"` carrying the target `GUID` returns `CREATED:1, ALTERED:0` — it creates a duplicate rather than editing. Consistent with §9.7 and §9.6 |
 | 8 | The company-level `Enable Bill-wise entry` gate does **not** apply to XML import — see 12a.5 |
 
@@ -1208,13 +1212,19 @@ can be fully configured and almost entirely unallocated. On the demo book the re
 **≈ ₹2.83 crore, about 98.4% of debtor balance** — and it is **invisible to both native
 reports**, which return no error.
 
-The residual is exactly recoverable:
+The residual is recoverable:
 
 ```
 On Account = ledger CLOSINGBALANCE − Σ BILLCL
 ```
 
-Verified to the paisa on every bill-carrying party. The ledger read costs **0.08 s / 36 KB**
+Verified to the paisa on every bill-carrying party — **at a current as-of only.**
+
+**This identity does not hold for a historical as-of.** §7 establishes that a `Ledger`
+collection's `CLOSINGBALANCE` ignores the requested window and reflects lifetime activity,
+while `BILLCL` comes from the report period. Subtracting them across different time bases
+would misclassify later activity as `On Account` and silently overstate the residual. For any
+as-of other than now, derive the ledger balance at the same as-of before subtracting. The ledger read costs **0.08 s / 36 KB**
 for 88 ledgers, so full coverage is two requests.
 
 **Any outstandings figure that omits this understates exposure silently.** On that book a
@@ -1240,8 +1250,14 @@ open the company on the server by hand. A client must detect and instruct; it ca
 
 ### 12a.8 Payload and time are linear in voucher count — sizing can be computed
 
-The wildcard voucher fetch costs **~21.7 KB and ~13 ms per voucher**, stable across a 360×
-range:
+The wildcard voucher fetch cost **~21.7 KB and ~13 ms per voucher on this corpus**, stable
+across a 360× range.
+
+**Treat that as a mean, not an upper bound.** Per-voucher cost varies with content — §11 already
+records this — so a book with nested inventory lines or long narrations will exceed it. A segment
+projected under a transport cap using this constant can still breach it after dispatch. Sizing
+must use **observed** bytes for the profile in hand, with headroom, and split adaptively when a
+projection proves wrong.
 
 | AlterID range | vouchers | payload | time | bytes/voucher |
 | --- | --- | --- | --- | --- |
@@ -1267,10 +1283,20 @@ Incidentally, `FETCH ALTERID` and `FETCH GUID, ALTERID, DATE` return **byte-iden
 responses — Tally emits a fixed minimal envelope regardless of which narrow fields are
 named. The wildcard is a **17.8× amplifier** on that baseline.
 
-So a volume bound is computable *before* the request: count cheaply, project
-`count × 21.7 KB`, subdivide by AlterID until the projection is under target, then fetch.
-Response-size and deadline limits belong upstream as planning inputs, not downstream as
-rejection thresholds on data already transferred.
+So a **payload** bound is computable before the request: count cheaply, project from observed
+bytes, subdivide by AlterID until the projection is under target, then fetch. Response-size
+limits belong upstream as planning inputs rather than downstream as rejection thresholds on
+data already transferred.
+
+**Elapsed time does not follow the same model, and subdivision does not reduce it.** The cost
+has a large fixed component: Tally scans the whole collection regardless of how many rows match.
+The 9-row request above took **1.30 s**, not the ~117 ms a purely linear model predicts, and
+§11b.3 records a **zero-row** filter taking ~22 s on the large book. So time is closer to
+`fixed_scan(book) + linear(rows)`, and **every subdivision pays the fixed cost again** — halving
+a partition can increase total wall-clock even as it reduces peak payload.
+
+Deadline planning must therefore model a book-dependent fixed scan cost separately from
+serialization, and subdivision must be justified by payload, not by time.
 
 > A separate stability hazard observed during this work is recorded privately rather than
 > here, per the project's handling of crash triggers.
