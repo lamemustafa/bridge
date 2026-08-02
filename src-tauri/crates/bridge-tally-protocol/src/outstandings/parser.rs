@@ -493,10 +493,12 @@ fn parse_bool(value: &str) -> Result<bool, OutstandingsError> {
 ///    between the name and its first attribute. `quick_xml` deserializes those
 ///    rows, so two identical complete replies would fail the raw-vs-parsed row
 ///    agreement check and withhold a correct report.
-/// 2. Counting every `VOUCHER` element over-reports. `CMPINFO` (under `DESC`,
-///    not `DATA`) carries bare `<VOUCHER>0</VOUCHER>` style counters — the
-///    retained live capture has exactly one, against 75 real rows. Scoping to
-///    `DATA` excludes them by structure rather than by guessing at attributes.
+/// 2. Counting every `VOUCHER` element over-reports. An empty live witness
+///    response carries `CMPINFO` (under `DESC`, not `DATA`) with a bare
+///    `<VOUCHER>0</VOUCHER>` counter. A whole-document count reports one row
+///    and inverts the empty-partition verdict. This appeared three times in the
+///    supervised qualification session. Scoping to `DATA` excludes counters by
+///    structure rather than by guessing at attributes.
 fn count_voucher_start_elements(xml: &str) -> Result<usize, OutstandingsError> {
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(xml);

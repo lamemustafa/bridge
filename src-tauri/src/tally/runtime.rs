@@ -15,8 +15,11 @@ use crate::tally::write_sandbox::{
 };
 use bridge_tally_core::TallyDate;
 use bridge_tally_protocol::outstandings::{
-    assemble_partitioned_scan, assemble_scan, compute_outstandings, CorroboratedDatePartition,
-    DateBoundaryProfile, DateWindow, OutstandingsReport, ScanResult, SegmentVerification,
+    assemble_partitioned_scan, assemble_scan, compute_outstandings,
+    corroborate_empty_date_partition, nearest_non_empty_primary_partition, CompleteWitnessPair,
+    CorroboratedDatePartition, DateBoundaryProfile, DateWindow, NarrowDateWindow,
+    OutstandingsReport, PartialScan, ScanResult, SegmentVerification, StrictlyWiderDateCover,
+    VoucherAlterIdHighWater, WitnessPairVerification,
 };
 use bridge_tally_protocol::xml_read_profiles::{
     ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
@@ -210,6 +213,22 @@ fn partial_after_segment_transport_failure(
             Some(failure) => Ok(partial_result(failure.reason_code)),
             None => Err(error),
         },
+    }
+}
+
+async fn fetch_empty_partition_witness_or_partial<F, Fut>(
+    high_water: VoucherAlterIdHighWater,
+    fetch: F,
+) -> Result<CompleteWitnessPair, PartialScan>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = anyhow::Result<WitnessPairVerification>>,
+{
+    debug_assert!(high_water.get() > 0);
+    match fetch().await {
+        Ok(WitnessPairVerification::Complete(pair)) => Ok(pair),
+        Ok(WitnessPairVerification::Partial(partial)) => Err(partial),
+        Err(_) => Err(PartialScan::new("empty_date_witness_profile_unavailable")),
     }
 }
 
@@ -1407,24 +1426,103 @@ impl TallyRuntime {
                         ) {
                             return Ok(partial_result(reason_code));
                         }
-                        // The newly shaped witness profile has not yet received its
-                        // owner-required supervised first live dispatch. Until that
-                        // qualification is recorded, an empty primary partition is
-                        // deliberately Partial rather than silently entering totals.
-                        // This does not dispatch the new profile inside a scan loop.
+                        // `VoucherEmptyPartitionWitnessV1` was qualified under
+                        // supervised dispatch. A positive-high-water empty primary
+                        // partition now needs its nearest non-empty control plus
+                        // every date-shifted cover slice before it can enter totals.
                         let mut corroborated_date_partitions =
                             Vec::with_capacity(completed_date_partitions.len());
-                        for partition in completed_date_partitions {
+                        for partition in &completed_date_partitions {
                             let corroborated = if partition.vouchers().is_empty() {
                                 if high_water.get() == 0 {
-                                    CorroboratedDatePartition::empty_book(partition)
+                                    CorroboratedDatePartition::empty_book(partition.clone())
                                 } else {
-                                    return Ok(partial_result(
-                                        "empty_date_witness_profile_unqualified",
-                                    ));
+                                    let primary = match NarrowDateWindow::try_from(
+                                        partition.window().clone(),
+                                    ) {
+                                        Ok(window) => window,
+                                        Err(_) => {
+                                            return Ok(partial_result(
+                                                "empty_date_witness_scope_mismatch",
+                                            ))
+                                        }
+                                    };
+                                    let Some(cover) = StrictlyWiderDateCover::for_primary(&primary)
+                                    else {
+                                        return Ok(partial_result(
+                                            "empty_date_witness_cover_unavailable",
+                                        ));
+                                    };
+                                    let Some(control) = nearest_non_empty_primary_partition(
+                                        &completed_date_partitions,
+                                        partition.window(),
+                                    ) else {
+                                        return Ok(partial_result("empty_date_partition_no_control"));
+                                    };
+                                    let control_window = match NarrowDateWindow::try_from(
+                                        control.window().clone(),
+                                    ) {
+                                        Ok(window) => window,
+                                        Err(_) => {
+                                            return Ok(partial_result(
+                                                "empty_date_witness_control_scope_mismatch",
+                                            ))
+                                        }
+                                    };
+                                    if !pair_budget.admit_next() {
+                                        return Ok(partial_result(
+                                            "outstandings_segment_budget_exhausted_mid_scan",
+                                        ));
+                                    }
+                                    let control_pair = match fetch_empty_partition_witness_or_partial(
+                                        high_water,
+                                        || {
+                                            client.fetch_empty_partition_witness_pair(
+                                                extent.company(),
+                                                control_window,
+                                            )
+                                        },
+                                    )
+                                    .await
+                                    {
+                                        Ok(pair) => pair,
+                                        Err(partial) => return Ok(partial_result(&partial.reason_code)),
+                                    };
+                                    let mut cover_pairs = Vec::with_capacity(cover.slices().len());
+                                    for slice in cover.slices() {
+                                        if !pair_budget.admit_next() {
+                                            return Ok(partial_result(
+                                                "outstandings_segment_budget_exhausted_mid_scan",
+                                            ));
+                                        }
+                                        let pair = match fetch_empty_partition_witness_or_partial(
+                                            high_water,
+                                            || {
+                                                client.fetch_empty_partition_witness_pair(
+                                                    extent.company(),
+                                                    slice.clone(),
+                                                )
+                                            },
+                                        )
+                                        .await
+                                        {
+                                            Ok(pair) => pair,
+                                            Err(partial) => {
+                                                return Ok(partial_result(&partial.reason_code))
+                                            }
+                                        };
+                                        cover_pairs.push(pair);
+                                    }
+                                    corroborate_empty_date_partition(
+                                        partition.clone(),
+                                        &completed_date_partitions,
+                                        cover,
+                                        control_pair,
+                                        cover_pairs,
+                                    )
                                 }
                             } else {
-                                CorroboratedDatePartition::non_empty(partition)
+                                CorroboratedDatePartition::non_empty(partition.clone())
                             };
                             match corroborated {
                                 Ok(partition) => corroborated_date_partitions.push(partition),
@@ -1930,6 +2028,22 @@ mod tests {
             0,
             "a verification failure reached a responder and must not poison endpoint health"
         );
+    }
+
+    #[tokio::test]
+    async fn unqualified_empty_partition_with_positive_high_water_is_typed_partial() {
+        let partial = fetch_empty_partition_witness_or_partial(
+            VoucherAlterIdHighWater::parse("1").expect("positive high-water"),
+            || async { Err(anyhow::anyhow!("witness profile is unavailable")) },
+        )
+        .await
+        .expect_err("an unavailable witness cannot complete a non-empty book");
+
+        assert_eq!(
+            partial.reason_code,
+            "empty_date_witness_profile_unavailable"
+        );
+        assert_ne!(partial.reason_code, "whole_book_false_empty");
     }
 
     #[test]

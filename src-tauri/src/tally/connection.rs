@@ -764,13 +764,10 @@ impl TallyClient {
 
     /// Executes one paired, date-only I5 witness read. This is intentionally
     /// separate from `fetch_outstandings_segment_pair`: it has no AlterID
-    /// predicate and uses the ordinary 32 MiB transport cap. The scan loop is
-    /// not allowed to call it until the owner-required supervised first live
-    /// dispatch has been completed and recorded.
-    #[allow(
-        dead_code,
-        reason = "the owner requires one supervised manual live dispatch before the scan loop may call the witness profile"
-    )]
+    /// predicate and uses the ordinary 32 MiB transport cap. Its supervised
+    /// live qualification is recorded in TALLY_PROTOCOL_REFERENCE.md §12.7;
+    /// runtime may use it only for a primary-empty partition's control or
+    /// shifted cover.
     pub(crate) async fn fetch_empty_partition_witness_pair(
         &self,
         company: &PinnedCompany,
