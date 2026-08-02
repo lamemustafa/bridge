@@ -1332,7 +1332,7 @@ serialization, and subdivision must be justified by payload, not by time.
 | Behaviour on standard TallyPrime and Tally.ERP 9 | Every finding here is single-SKU |
 | Behaviour with third-party TDL installed | The demo instance has none; client machines will. Could alter the report surface §12a.1 depends on |
 | Is the crash observed on 2026-08-02 volume-driven or UI-driven? | It did not reproduce on an identical repeat; a UI keypress during generation is at least as likely. Recorded privately |
-| What is the correct key for `ACTION="Alter"` on a voucher? | `GUID`, `REMOTEID`, `MASTERID`, and the `REMOTEID`/`MASTERID` combination have each created duplicates (§9.7, §12a.4); other request shapes and licensed-SKU behavior remain untested |
+| What is the correct key for `ACTION="Alter"` on a voucher? | On automatically numbered types observed, `GUID`, `REMOTEID`, `MASTERID`, and the `REMOTEID`/`MASTERID` combination have each created duplicates (§9.7, §12a.4). Manual + `PREVENTDUPLICATES=Yes` instead rejects the failed Alter (§9.8); other request shapes and licensed-SKU behavior remain untested |
 | Does the `On Account` residual identity hold on a bill-dominated book? | Verified on a book that is 98% unallocated; the opposite composition is the case where a false zero would look like success |
 
 ---
