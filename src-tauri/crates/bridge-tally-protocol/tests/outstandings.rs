@@ -76,10 +76,9 @@ fn ledger_coverage_request_fetches_the_guid_and_name_used_for_drift_detection() 
 
 #[test]
 fn ledger_coverage_identity_detects_a_rename_that_preserves_the_count() {
-    // UNVERIFIED: this synthetic check proves Bridge compares the paired
-    // GUID-to-name values, not that a real Tally rename preserves GUID while
-    // changing NAME. That needs owner-attended write evidence and is outside
-    // this read-only suite.
+    // PR #112 issuecomment-5157185873 measured a Tally UI rename with the
+    // GUID set unchanged and the ledger count stable at six. This synthetic
+    // fixture pins the corresponding GUID-to-name comparison in Bridge.
     let response = |name: &str| {
         format!(
             "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME=\"{name}\"><GUID>{company_guid}-00000001</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>",
