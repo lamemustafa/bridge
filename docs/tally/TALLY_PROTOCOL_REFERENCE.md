@@ -136,7 +136,10 @@ ENVELOPE
 
 > **Qualified by §12a.1.** This section is about a **custom** report definition. Tally's own
 > **built-in reports addressed by name** — e.g. `<ID>Bills Receivable</ID>` — behave quite
-> differently and are safe and cheap. Do not read "avoid `<TYPE>Data</TYPE>`" as a blanket rule.
+> differently and, on the observed TallyPrime Edit Log 7.0 EDU profile with no third-party TDL,
+> were usable and cheap when subjected to §12a.1's response validation and identity brackets.
+> Other releases and configurations remain unverified. Do not read "avoid `<TYPE>Data</TYPE>"
+> as a blanket rule.
 
 **VERIFIED.** Returns a bare envelope with **no `HEADER` and no `STATUS`**:
 
@@ -1304,8 +1307,9 @@ named. The wildcard is a **17.8× amplifier** on that baseline.
 The count response can itself exceed a response limit on a dense book, or be incomplete while
 appearing successful. Bound and completeness-check the count probe before using it; otherwise
 recursively partition that probe too. Even then, observed bytes per voucher are a planning
-estimate, not a bound. Response-size limits belong upstream as planning inputs rather than
-downstream as rejection thresholds on data already transferred.
+estimate, not a bound. A pre-flight projection does not replace the closed streaming transport
+boundary: it must fail closed when encoded response bytes exceed the cap. Planning stays upstream
+to avoid dispatching likely-oversize requests; the transport cap remains the final safeguard.
 
 **Elapsed time does not follow the same model, and subdivision does not reduce it.** The cost
 has a large fixed component: Tally scans the whole collection regardless of how many rows match.
