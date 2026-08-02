@@ -97,19 +97,16 @@ pub fn compute_outstandings(
                         && previous_balance.is_negative() != next_balance.is_negative());
                 if fresh_exposure {
                     bill.oldest_date = match allocation.bill_type {
-                        // Only New Ref opens a bill, and Tally's BILLDATE is
-                        // authoritative for that bill even when it predates the
-                        // voucher that carries the allocation.
-                        BillReferenceKind::NewRef => allocation
+                        // TALLY_PROTOCOL_REFERENCE §12a.2 (PR #117): New Ref
+                        // and an Agst Ref that re-opens a settled bill age from
+                        // the bill's BILLDATE, which is the original bill date.
+                        BillReferenceKind::NewRef | BillReferenceKind::AgstRef => allocation
                             .bill_date
                             .clone()
                             .ok_or(OutstandingsError::InvalidResponse("bill_date_missing"))?,
-                        // Agst Ref settles a pre-existing bill. Its BILLDATE is
-                        // that settled bill's date, not the fresh exposure an
-                        // over-settlement creates after (or just after) zero.
-                        BillReferenceKind::AgstRef
-                        | BillReferenceKind::Advance
-                        | BillReferenceKind::OnAccount => voucher.date.clone(),
+                        BillReferenceKind::Advance | BillReferenceKind::OnAccount => {
+                            voucher.date.clone()
+                        }
                     };
                 }
                 bill.balance = next_balance;

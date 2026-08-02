@@ -981,25 +981,25 @@ fn named_on_account_fails_closed_at_the_parser_boundary() {
 }
 
 #[test]
-fn against_ref_after_settlement_ages_from_its_kind_not_the_zero_balance() {
+fn against_ref_reopened_after_zero_balance_ages_from_original_bill_date() {
     let voucher = |guid_suffix: u8, date: &str, bill_type: &str, amount: &str| {
         format!(
-            "<VOUCHER REMOTEID=\"r{guid_suffix}\"><GUID>{company_guid}-0000000{guid_suffix}</GUID><MASTERID>{guid_suffix}</MASTERID><ALTERID>{guid_suffix}</ALTERID><DATE TYPE=\"Date\">{date}</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED><ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>REF-1</NAME><BILLTYPE>{bill_type}</BILLTYPE><BILLDATE TYPE=\"Date\">20260101</BILLDATE><AMOUNT>{amount}</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
+            "<VOUCHER REMOTEID=\"r{guid_suffix}\"><GUID>{company_guid}-0000000{guid_suffix}</GUID><MASTERID>{guid_suffix}</MASTERID><ALTERID>{guid_suffix}</ALTERID><DATE TYPE=\"Date\">{date}</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED><ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>REF-1</NAME><BILLTYPE>{bill_type}</BILLTYPE><BILLDATE TYPE=\"Date\">20260601</BILLDATE><AMOUNT>{amount}</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
             company_guid = COMPANY_GUID
         )
     };
     let xml = format!(
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{}</COLLECTION></DATA></BODY></ENVELOPE>",
         [
-            voucher(1, "20260401", "New Ref", "-100"),
-            voucher(2, "20260415", "Agst Ref", "100"),
-            voucher(3, "20260415", "Agst Ref", "25"),
+            voucher(1, "20260601", "New Ref", "-3000"),
+            voucher(2, "20260602", "Agst Ref", "3000"),
+            voucher(3, "20260701", "Agst Ref", "1500"),
         ]
         .join("")
     );
     let extent = extent();
     let window =
-        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260415").unwrap();
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260601", "20260701").unwrap();
     let SegmentVerification::Complete(segment) = verify_segment_pair(
         &xml,
         &xml,
@@ -1020,12 +1020,11 @@ fn against_ref_after_settlement_ages_from_its_kind_not_the_zero_balance() {
     };
 
     let report =
-        compute_outstandings(&scan, TallyDate::parse("20260415").unwrap()).expect("computes");
-    assert_eq!(report.payable_total.as_str(), "25");
+        compute_outstandings(&scan, TallyDate::parse("20260731").unwrap()).expect("computes");
+    assert_eq!(report.payable_total.as_str(), "1500");
     assert_eq!(
-        report.top_parties[0].oldest_bill_age_days,
-        0,
-        "an Agst Ref after full settlement creates a fresh exposure on its voucher date, not the settled bill's BILLDATE"
+        report.top_parties[0].oldest_bill_age_days, 60,
+        "an Agst Ref after full settlement must age from the original bill's BILLDATE"
     );
 }
 
