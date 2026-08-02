@@ -1082,8 +1082,11 @@ Accepted on the first attempt. `Bills Payable` works identically. Per-bill rows:
 
 Four properties that matter more than the speed:
 
-1. **It is O(open bills), not O(vouchers).** 101,603 vouchers returned 22 rows in **0.10 s /
-   5 KB**. A voucher scan over the same book is a different order of problem entirely.
+1. **It was fast on the observed book.** 101,603 vouchers returned 22 rows in **0.10 s /
+   5 KB**. This single measurement does not establish an asymptotic bound: voucher count,
+   open-bill count, cache state, and release were not varied independently. A voucher scan over
+   the same book was much more expensive, but capacity and deadline planning must treat that as
+   book- and release-specific evidence.
 2. **`STATUS` is emitted only on failure.** A successful response contains **no `STATUS` tag
    at all**, so you cannot assert `STATUS=1` as §2.1 allows.
    **But absence of `STATUS` does not prove success.** An unrecognised report `ID` returns a
@@ -1094,17 +1097,19 @@ Four properties that matter more than the speed:
 3. **It fails closed on a company that is not loaded**, with
    `LINEERROR: Could not set 'SVCurrentCompany' to '<name>'` — see 12a.6.
 4. **It carries no GUID anywhere**, so the response cannot be identity-bound the way a
-   voucher or ledger collection can. Pair it with a GUID-verified extent probe.
+   voucher or ledger collection can. Bracket every candidate native read with GUID-verified
+   extent probes before and after it, and reject drift. Bracketing detects some changes; it does
+   not create an atomic source cut.
 
 An unrecognised report `ID` returns a clean `<RESPONSE>Unknown Request, cannot be
 processed</RESPONSE>` — **not** the modal-dialog hang of §1.2. The hazards are different
 failure paths and should not be conflated.
 
-**They scope by balance SIGN, not by party group.** On the demo book `Bills Receivable`
-returned 16 ledgers grouped under Sundry *Creditors*; `Bills Payable` returned 18 under
-Sundry *Debtors*. That is correct accounting — a supplier advance is a debit balance — but a
-screen labelled "receivables" that renders this list is showing every debit-balance bill,
-including advances paid out.
+**They scope by balance SIGN, not by party group.** On the demo book, each report included
+parties from both Sundry *Creditors* and Sundry *Debtors*. That is correct accounting — a
+supplier advance is a debit balance — but a screen labelled "receivables" that renders this
+list is showing every debit-balance bill, including advances paid out. The measurement records
+rows, not a complete distinct-ledger census.
 
 ### 12a.2 Which date each allocation kind ages from
 
@@ -1144,9 +1149,10 @@ changes the buckets. On a bill dated 1-May-26 with a 30-day credit period, due 3
 Both are correct. Neither is "the" answer, so **any tool computing ageing must state which
 basis it used.**
 
-`BILLCREDITPERIOD` is already returned by the ordinary wildcard voucher fetch — 19
-occurrences in a single partition capture of a book that sets none — so supporting both
-methods needs no request-shape change.
+`BILLCREDITPERIOD` tags appear in the ordinary wildcard voucher fetch — 19 occurrences in a
+single partition capture of a book that sets none. That establishes serialization of the empty
+field only, not the usable value or format of a configured credit period. Capture and read back
+a nonzero period before claiming that due-date ageing needs no request-shape change.
 
 **`BILLOVERDUE` in the native report is not usable as an ageing oracle.** Its as-of is
 Tally's own period date, not the caller's, and it does **not** follow the `F6` setting:
@@ -1166,9 +1172,9 @@ measured by writing a distinguishable value and reading it back. **Every one rep
 | 2 | `BILLDATE` on an `Agst Ref` is **inherited** from the settled bill — so it legitimately differs from the voucher date |
 | 3 | The allocation **kind** is rewritten when the reference name already exists: `Advance` naming an existing ref is stored as `Agst Ref` |
 | 4 | `On Account` names are **stripped** — it is structurally unnamed |
-| 5 | An allocation on a ledger with `ISBILLWISEON=No` is **silently discarded**; the entry stores with no allocations |
+| 5 | An allocation on a ledger with `ISBILLWISEON=No` is **silently discarded**; the entry stores with no allocations. Treat `No` as a mandatory fail-closed preflight for any bill-wise write |
 | 6 | `VOUCHERNUMBER` is **overridden** with Tally's own per-type sequence — **under automatic numbering only.** §9.8 establishes that Manual + `PREVENTDUPLICATES=Yes` preserves it verbatim. The company measured here used the default, so this observation does not generalise; the numbering method decides it |
-| 7 | `ACTION="Alter"` carrying the target `GUID` returns `CREATED:1, ALTERED:0` — it creates a duplicate rather than editing. Consistent with §9.7 and §9.6 |
+| 7 | On the automatically numbered voucher type measured here, `ACTION="Alter"` carrying the target `GUID` returns `CREATED:1, ALTERED:0` — it creates a duplicate rather than editing. This is not a numbering-method-independent result; see §9.8 |
 | 8 | The company-level `Enable Bill-wise entry` gate does **not** apply to XML import — see 12a.5 |
 
 Consequence for §9 generally: **a write is only verified by reading it back.** Counters
@@ -1194,7 +1200,9 @@ allocation imported afterwards was still accepted and retained.
 So the company flag gates Tally's own voucher-entry screen, not the API or the data. It is
 also **not fetchable over XML**, so a client could not read it even if it meant something.
 
-And the per-ledger flag is no better as a signal. On the 101,603-voucher book:
+And the per-ledger flag is not a sufficient **positive** diagnostic. `ISBILLWISEON=Yes` does
+not prove that a ledger has bill references, but `No` remains a mandatory fail-closed signal
+before a bill-wise XML write. On the 101,603-voucher book:
 
 ```
 party ledgers (Sundry Debtors / Creditors) : 60
@@ -1218,17 +1226,24 @@ The residual is recoverable:
 On Account = ledger CLOSINGBALANCE − Σ BILLCL
 ```
 
-Verified to the paisa on every bill-carrying party — **at a current as-of only.**
+Verified to the paisa on every bill-carrying party — **at a current as-of only.** This is a
+cross-request candidate calculation, not an atomic source cut: a voucher can change between
+the report and ledger reads. Bracket the reads with unchanged content/high-water evidence and
+retain the non-atomic qualification; no cross-request combination becomes `Verified` solely
+because its arithmetic agrees.
 
 **This identity does not hold for a historical as-of.** §7 establishes that a `Ledger`
 collection's `CLOSINGBALANCE` ignores the requested window and reflects lifetime activity,
 while `BILLCL` comes from the report period. Subtracting them across different time bases
 would misclassify later activity as `On Account` and silently overstate the residual. For any
 as-of other than now, derive the ledger balance at the same as-of before subtracting. The ledger read costs **0.08 s / 36 KB**
-for 88 ledgers, so full coverage is two requests.
+for 88 ledgers. A candidate current-as-of view needs at least both sign-scoped native reports
+plus the ledger read, and separate identity bracketing; it must not be described as full
+atomic coverage.
 
-**Any outstandings figure that omits this understates exposure silently.** On that book a
-native-report-only answer would present **1.6%** of the true position as a complete one.
+**Any outstandings figure that omits this is silently incomplete.** Depending on the residual's
+sign, it can understate receivables, overstate them, or hide a payable position. On the observed
+debtor-heavy book a native-report-only answer would present **1.6%** of the position as complete.
 
 ### 12a.7 The `Company` collection ignores `SVCURRENTCOMPANY` — qualifies §9.11
 
@@ -1243,10 +1258,11 @@ state after a Tally restart, which reopens only the last-active company.
 The native report path does **not** share this — it fails closed with
 `Could not set 'SVCurrentCompany'`.
 
-**XML cannot load a company.** `<TALLYREQUEST>Load Company</TALLYREQUEST>` returns
-`STATUS=0` with empty `DATA`; an `SVLOADCOMPANY` variable returns `STATUS=1` with
-`<COMPANY>0</COMPANY>`. Neither loads anything. Tally's own guidance for this error is to
-open the company on the server by hand. A client must detect and instruct; it cannot recover.
+**No working XML company-load path was observed.** `<TALLYREQUEST>Load Company</TALLYREQUEST>`
+returns `STATUS=0` with empty `DATA`; an `SVLOADCOMPANY` variable returns `STATUS=1` with
+`<COMPANY>0</COMPANY>`. Those two attempts establish only that these shapes do not load a
+company. Until a working supported path is observed, a client must detect the condition and
+instruct the operator to open the company on the server by hand.
 
 ### 12a.8 Payload and time are linear in voucher count — sizing can be computed
 
@@ -1271,8 +1287,8 @@ projection proves wrong.
 in 43.67 s; a 31-day window returned 101.5 MiB in 81.3 s. Both exceed every stated response
 limit, and both are ordinary requests.
 
-**A pre-flight count is cheap and exact.** A minimal `FETCH` over the same window returns the
-exact voucher count at about **1/17th** the cost:
+**A pre-flight count was cheaper on the observed windows.** A minimal `FETCH` over those
+windows returned the observed voucher count at about **1/17th** the wildcard cost:
 
 | window | minimal `FETCH` | wildcard | ratio |
 | --- | --- | --- | --- |
@@ -1283,10 +1299,11 @@ Incidentally, `FETCH ALTERID` and `FETCH GUID, ALTERID, DATE` return **byte-iden
 responses — Tally emits a fixed minimal envelope regardless of which narrow fields are
 named. The wildcard is a **17.8× amplifier** on that baseline.
 
-So a **payload** bound is computable before the request: count cheaply, project from observed
-bytes, subdivide by AlterID until the projection is under target, then fetch. Response-size
-limits belong upstream as planning inputs rather than downstream as rejection thresholds on
-data already transferred.
+The count response can itself exceed a response limit on a dense book, or be incomplete while
+appearing successful. Bound and completeness-check the count probe before using it; otherwise
+recursively partition that probe too. Even then, observed bytes per voucher are a planning
+estimate, not a bound. Response-size limits belong upstream as planning inputs rather than
+downstream as rejection thresholds on data already transferred.
 
 **Elapsed time does not follow the same model, and subdivision does not reduce it.** The cost
 has a large fixed component: Tally scans the whole collection regardless of how many rows match.
@@ -1315,7 +1332,7 @@ serialization, and subdivision must be justified by payload, not by time.
 | Behaviour on standard TallyPrime and Tally.ERP 9 | Every finding here is single-SKU |
 | Behaviour with third-party TDL installed | The demo instance has none; client machines will. Could alter the report surface §12a.1 depends on |
 | Is the crash observed on 2026-08-02 volume-driven or UI-driven? | It did not reproduce on an identical repeat; a UI keypress during generation is at least as likely. Recorded privately |
-| What is the correct key for `ACTION="Alter"` on a voucher? | `GUID` creates a duplicate (§12a.4). `REMOTEID` and `MASTERID` untested |
+| What is the correct key for `ACTION="Alter"` on a voucher? | `GUID`, `REMOTEID`, `MASTERID`, and the `REMOTEID`/`MASTERID` combination have each created duplicates (§9.7, §12a.4); other request shapes and licensed-SKU behavior remain untested |
 | Does the `On Account` residual identity hold on a bill-dominated book? | Verified on a book that is 98% unallocated; the opposite composition is the case where a false zero would look like success |
 
 ---
