@@ -134,6 +134,10 @@ ENVELOPE
 
 ### 2.2 Report export — `<TYPE>Data</TYPE>` with a custom `REPORT`/`FORM`/`PART` — **AVOID**
 
+> **Qualified by §12a.1.** This section is about a **custom** report definition. Tally's own
+> **built-in reports addressed by name** — e.g. `<ID>Bills Receivable</ID>` — behave quite
+> differently and are safe and cheap. Do not read "avoid `<TYPE>Data</TYPE>`" as a blanket rule.
+
 **VERIFIED.** Returns a bare envelope with **no `HEADER` and no `STATUS`**:
 
 ```
@@ -1047,17 +1051,246 @@ Learned the hard way; every one of these produced a wrong conclusion at least on
 
 ---
 
+## 12a. Bill-wise semantics, the native reports, and volume — live measurement 2026-08-02
+
+**VERIFIED 2026-08-02** against TallyPrime Edit Log 7.0 EDU on port 9000, using
+`Bridge Ageing Lab` — a company created for this session, every shape placed deliberately —
+and `Aarav Trading Company Demo` for scale. All data synthetic.
+
+Several entries here **correct or qualify earlier sections**; each says which.
+
+### 12a.1 Built-in named reports work — this qualifies §2.2's blanket AVOID
+
+§2.2 tests a **custom** `REPORT`/`FORM`/`PART` and concludes `<TYPE>Data</TYPE>` should be
+avoided. That conclusion does not extend to Tally's **own built-in reports addressed by name**:
+
+```xml
+<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Data</TYPE><ID>Bills Receivable</ID></HEADER>
+<BODY><DESC><STATICVARIABLES>
+  <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+  <SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY>
+  <SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE>
+</STATICVARIABLES></DESC></BODY></ENVELOPE>
+```
+
+Accepted on the first attempt. `Bills Payable` works identically. Per-bill rows:
+
+```
+<BILLFIXED><BILLDATE/><BILLREF/><BILLPARTY/></BILLFIXED> <BILLCL/> <BILLDUE/> <BILLOVERDUE/>
+```
+
+Four properties that matter more than the speed:
+
+1. **It is O(open bills), not O(vouchers).** 101,603 vouchers returned 22 rows in **0.10 s /
+   5 KB**. A voucher scan over the same book is a different order of problem entirely.
+2. **`STATUS` is emitted only on failure.** A successful response contains **no `STATUS` tag
+   at all**. Verification is inverted relative to §2.1 — you cannot assert `STATUS=1`; you
+   must treat the *presence* of `STATUS` as the failure signal.
+3. **It fails closed on a company that is not loaded**, with
+   `LINEERROR: Could not set 'SVCurrentCompany' to '<name>'` — see 12a.6.
+4. **It carries no GUID anywhere**, so the response cannot be identity-bound the way a
+   voucher or ledger collection can. Pair it with a GUID-verified extent probe.
+
+An unrecognised report `ID` returns a clean `<RESPONSE>Unknown Request, cannot be
+processed</RESPONSE>` — **not** the modal-dialog hang of §1.2. The hazards are different
+failure paths and should not be conflated.
+
+**They scope by balance SIGN, not by party group.** On the demo book `Bills Receivable`
+returned 16 ledgers grouped under Sundry *Creditors*; `Bills Payable` returned 18 under
+Sundry *Debtors*. That is correct accounting — a supplier advance is a debit balance — but a
+screen labelled "receivables" that renders this list is showing every debit-balance bill,
+including advances paid out.
+
+### 12a.2 Which date each allocation kind ages from
+
+Measured against Tally's own *Ledger Outstandings* screen and both native reports, not
+inferred from the data model.
+
+| Kind | Ages from | Note |
+| --- | --- | --- |
+| `New Ref` | `BILLDATE` | which on an opening equals the voucher date |
+| `Agst Ref` re-opening a settled bill | **the original bill's `BILLDATE`** | not the voucher that reused it |
+| `Advance` | `BILLDATE` | always its own voucher date; see 12a.4 |
+| `On Account` | **not aged at all** | shown at the *report* date, blank overdue |
+
+The second row was contested in the codebase. Constructed explicitly — a bill opened at
+3,000, settled to exactly zero, then reused by a later `Agst Ref` for 1,500 — Tally reports:
+
+```
+1-Jun-26  ZBR  3,000.00 Dr opening  1,500.00 Cr pending  Due on 1-Jun-26  Overdue 60
+```
+
+Aged from **1-Jun-26**, the original bill, though the reusing voucher is dated 1-Jul-26.
+Confirmed three ways: on screen, in `Bills Receivable`, and in `Bills Payable`.
+
+The mechanism is 12a.4: an `Agst Ref` **carries** the original bill's `BILLDATE`, so ageing
+from `BILLDATE` reaches the true opening without special handling.
+
+### 12a.3 Tally offers two ageing methods, and the anchor differs
+
+`F6: Ageing Method` offers *Ageing by Bill Date* and *Ageing by Due Date*, and the choice
+changes the buckets. On a bill dated 1-May-26 with a 30-day credit period, due 31-May-26:
+
+| as-of | method | days | bucket |
+| --- | --- | --- | --- |
+| 2-Jul-26 | by Due Date | 32 | 30 to 60 |
+| 2-Jul-26 | by Bill Date | 62 | 60 to 90 |
+
+Both are correct. Neither is "the" answer, so **any tool computing ageing must state which
+basis it used.**
+
+`BILLCREDITPERIOD` is already returned by the ordinary wildcard voucher fetch — 19
+occurrences in a single partition capture of a book that sets none — so supporting both
+methods needs no request-shape change.
+
+**`BILLOVERDUE` in the native report is not usable as an ageing oracle.** Its as-of is
+Tally's own period date, not the caller's, and it does **not** follow the `F6` setting:
+toggling the UI to *Ageing by Bill Date* left the exported `BILLOVERDUE` unchanged at the
+due-date value. Recompute ageing from `BILLDATE`/`BILLDUE` against an explicit as-of on
+every path.
+
+### 12a.4 The import path rewrites what you send — extends §9
+
+§9.2 already records that `ERRORS=0` does not mean success. Eight further rewrites, each
+measured by writing a distinguishable value and reading it back. **Every one reported
+`CREATED=1, ERRORS=0, EXCEPTIONS=0`.**
+
+| # | Behaviour |
+| --- | --- |
+| 1 | `BILLDATE` on a bill-**opening** allocation is overwritten with the voucher date; a differing supplied value is discarded |
+| 2 | `BILLDATE` on an `Agst Ref` is **inherited** from the settled bill — so it legitimately differs from the voucher date |
+| 3 | The allocation **kind** is rewritten when the reference name already exists: `Advance` naming an existing ref is stored as `Agst Ref` |
+| 4 | `On Account` names are **stripped** — it is structurally unnamed |
+| 5 | An allocation on a ledger with `ISBILLWISEON=No` is **silently discarded**; the entry stores with no allocations |
+| 6 | `VOUCHERNUMBER` is **overridden** with Tally's own per-type sequence |
+| 7 | `ACTION="Alter"` carrying the target `GUID` returns `CREATED:1, ALTERED:0` — it creates a duplicate rather than editing. Consistent with §9.7 and §9.6 |
+| 8 | The company-level `Enable Bill-wise entry` gate does **not** apply to XML import — see 12a.5 |
+
+Consequence for §9 generally: **a write is only verified by reading it back.** Counters
+describe the operation, not the result.
+
+One error message is actively misleading. A voucher dated on a day Education forbids returns:
+
+```
+CREATED=0  ERRORS=0  EXCEPTIONS=1
+LINEERROR: Voucher date is missing for: 'Sales' voucher BAD-1.
+```
+
+The date was present and well-formed — it was illegal for the mode. Note `ERRORS=0`; the
+failure lives in `EXCEPTIONS`.
+
+### 12a.5 Configuration is not a diagnostic, in either direction
+
+`F11 → Enable Bill-wise entry` set to **No** on a company holding bill-wise data, confirmed
+on screen, changed **nothing** observable over XML: per-ledger `ISBILLWISEON` stayed `Yes`,
+existing allocations survived, both native reports returned identical rows, and a **new**
+allocation imported afterwards was still accepted and retained.
+
+So the company flag gates Tally's own voucher-entry screen, not the API or the data. It is
+also **not fetchable over XML**, so a client could not read it even if it meant something.
+
+And the per-ledger flag is no better as a signal. On the 101,603-voucher book:
+
+```
+party ledgers (Sundry Debtors / Creditors) : 60
+  ISBILLWISEON = Yes : 60
+  ISBILLWISEON = No  :  0
+  absolute closing balance                 : 208,232,027.79
+```
+
+Every ledger correctly configured — yet only **7 of 60** carry any bill reference at all.
+
+### 12a.6 The unallocated remainder, and how to see it
+
+Because a voucher can post to a bill-wise ledger without allocating to a reference, a book
+can be fully configured and almost entirely unallocated. On the demo book the residual is
+**≈ ₹2.83 crore, about 98.4% of debtor balance** — and it is **invisible to both native
+reports**, which return no error.
+
+The residual is exactly recoverable:
+
+```
+On Account = ledger CLOSINGBALANCE − Σ BILLCL
+```
+
+Verified to the paisa on every bill-carrying party. The ledger read costs **0.08 s / 36 KB**
+for 88 ledgers, so full coverage is two requests.
+
+**Any outstandings figure that omits this understates exposure silently.** On that book a
+native-report-only answer would present **1.6%** of the true position as a complete one.
+
+### 12a.7 The `Company` collection ignores `SVCURRENTCOMPANY` — qualifies §9.11
+
+§9.11's table records a *non-existent* company name returning 0 rows on a `Ledger`
+collection. A `Company` collection behaves differently: it **enumerates every loaded
+company regardless of `SVCURRENTCOMPANY`**.
+
+So requesting an existing-but-**unloaded** company returns the loaded company's rows, with
+`STATUS=1`, in under 100 ms. Reading "row 1" binds to the wrong book. This is the default
+state after a Tally restart, which reopens only the last-active company.
+
+The native report path does **not** share this — it fails closed with
+`Could not set 'SVCurrentCompany'`.
+
+**XML cannot load a company.** `<TALLYREQUEST>Load Company</TALLYREQUEST>` returns
+`STATUS=0` with empty `DATA`; an `SVLOADCOMPANY` variable returns `STATUS=1` with
+`<COMPANY>0</COMPANY>`. Neither loads anything. Tally's own guidance for this error is to
+open the company on the server by hand. A client must detect and instruct; it cannot recover.
+
+### 12a.8 Payload and time are linear in voucher count — sizing can be computed
+
+The wildcard voucher fetch costs **~21.7 KB and ~13 ms per voucher**, stable across a 360×
+range:
+
+| AlterID range | vouchers | payload | time | bytes/voucher |
+| --- | --- | --- | --- | --- |
+| 0..500 | 9 | 0.17 MiB | 1.30 s | 19,482 |
+| 0..2000 | 78 | 1.59 MiB | 1.77 s | 21,390 |
+| 0..8000 | 369 | 7.63 MiB | 6.72 s | 21,685 |
+| 0..20000 | 948 | 19.63 MiB | 9.92 s | 21,713 |
+| 2-day window, unbounded | 3,264 | 67.67 MiB | 43.67 s | 21,740 |
+
+**A date window is not a volume bound.** A 2-day window on a dense book returned 67.67 MiB
+in 43.67 s; a 31-day window returned 101.5 MiB in 81.3 s. Both exceed every stated response
+limit, and both are ordinary requests.
+
+**A pre-flight count is cheap and exact.** A minimal `FETCH` over the same window returns the
+exact voucher count at about **1/17th** the cost:
+
+| window | minimal `FETCH` | wildcard | ratio |
+| --- | --- | --- | --- |
+| 2-day | 3.98 MB / 2.61 s | 67.67 MiB / 43.67 s | 17× |
+| 31-day | 5.96 MB / 5.74 s | 101.5 MiB / 81.3 s | 17× / 14× |
+
+Incidentally, `FETCH ALTERID` and `FETCH GUID, ALTERID, DATE` return **byte-identical**
+responses — Tally emits a fixed minimal envelope regardless of which narrow fields are
+named. The wildcard is a **17.8× amplifier** on that baseline.
+
+So a volume bound is computable *before* the request: count cheaply, project
+`count × 21.7 KB`, subdivide by AlterID until the projection is under target, then fetch.
+Response-size and deadline limits belong upstream as planning inputs, not downstream as
+rejection thresholds on data already transferred.
+
+> A separate stability hazard observed during this work is recorded privately rather than
+> here, per the project's handling of crash triggers.
+
+---
+
 ## 13. Open questions
 
 | Question | Why it matters |
 | --- | --- |
-| Does licensed Tally accept arbitrary period boundaries? | Decides whether §5.3 is a lab quirk or a product constraint |
+| Does licensed Tally accept arbitrary period boundaries? | Decides whether §5.3 is a lab quirk or a product constraint. **Blocks intermediate window sizing** — Education permits only days 01/02/31, so 5–20 day windows cannot be tested at all |
 | Does editing a voucher populate `AUDITENTRIES.LIST`? | Could replace AlterID diffing entirely on the Edit Log SKU |
 | Is there a syntax for two-level `FETCH`? | Decides the 6.3× GST payload penalty |
 | Why does `ClosingBalance` render empty at some dates? | Blocks trusting any balance field |
 | Which report attribute makes rendering work? | Only matters if custom reports are retained |
 | Behaviour on standard TallyPrime and Tally.ERP 9 | Every finding here is single-SKU |
-| Behaviour with third-party TDL installed | The demo instance has none; client machines will |
+| Behaviour with third-party TDL installed | The demo instance has none; client machines will. Could alter the report surface §12a.1 depends on |
+| Is the crash observed on 2026-08-02 volume-driven or UI-driven? | It did not reproduce on an identical repeat; a UI keypress during generation is at least as likely. Recorded privately |
+| What is the correct key for `ACTION="Alter"` on a voucher? | `GUID` creates a duplicate (§12a.4). `REMOTEID` and `MASTERID` untested |
+| Does the `On Account` residual identity hold on a bill-dominated book? | Verified on a book that is 98% unallocated; the opposite composition is the case where a false zero would look like success |
 
 ---
 
@@ -1067,3 +1300,4 @@ Learned the hard way; every one of these produced a wrong conclusion at least on
 | --- | --- |
 | 2026-07-29 | Created. All VERIFIED entries established this day against TallyPrime Edit Log 7.0 EDU. |
 | 2026-07-30 | Recorded the outstandings-only wildcard exception, curated bill-type corruption, and the contextual polarity finding. |
+| 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
