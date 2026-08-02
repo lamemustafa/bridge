@@ -94,9 +94,10 @@ pub fn compute_outstandings(
                     .map_err(|_| OutstandingsError::ArithmeticOverflow)?;
                 if previous_balance.is_zero() {
                     bill.oldest_date = match allocation.bill_type {
-                        // TALLY_PROTOCOL_REFERENCE §12a.2 (PR #117): New Ref
-                        // and an Agst Ref that re-opens a settled bill age from
-                        // the bill's BILLDATE, which is the original bill date.
+                        // TALLY_PROTOCOL_REFERENCE §12a.2 (PR #117): Tally
+                        // reported a 1-Jun bill settled to zero and re-opened
+                        // by a 1-Jul Agst Ref as due on 1-Jun, 60 days overdue;
+                        // zero re-opens age from the original BILLDATE.
                         BillReferenceKind::NewRef | BillReferenceKind::AgstRef => allocation
                             .bill_date
                             .clone()
