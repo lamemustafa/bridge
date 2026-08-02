@@ -112,7 +112,8 @@ pub fn parse_ledger_opening_coverage(
                 .text
                 .clone(),
             "ledger_guid_missing",
-        )?;
+        )?
+        .to_ascii_lowercase();
         if !master_guid_belongs_to_company(&guid, company.guid()) {
             return Err(OutstandingsError::InvalidResponse(
                 "ledger_belongs_to_another_company",

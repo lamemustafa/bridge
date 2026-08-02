@@ -96,6 +96,26 @@ fn ledger_coverage_identity_detects_a_rename_that_preserves_the_count() {
 }
 
 #[test]
+fn ledger_coverage_rejects_duplicate_guids_that_differ_only_by_case() {
+    let guid = format!("{COMPANY_GUID}-0000000a");
+    let xml = format!(
+        concat!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+            "<LEDGER NAME=\"First\"><GUID>{guid}</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
+            "<LEDGER NAME=\"Second\"><GUID>{upper_guid}</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>",
+            "</COLLECTION></DATA></BODY></ENVELOPE>"
+        ),
+        guid = guid,
+        upper_guid = guid.to_ascii_uppercase(),
+    );
+
+    assert_eq!(
+        parse_coverage(&xml),
+        Err(OutstandingsError::InvalidResponse("ledger_guid_duplicate"))
+    );
+}
+
+#[test]
 fn reporting_period_partitions_into_narrow_valid_non_overlapping_windows() {
     let reporting = DateWindow::parse(
         DateBoundaryProfile::EducationRestricted,
