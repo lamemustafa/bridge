@@ -1,5 +1,5 @@
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::xml_read_profiles::ValidatedCompanyName;
 
@@ -9,7 +9,7 @@ use super::{
         CompanyCollection, Envelope, Header, LedgerCollection, RawBillAllocation, RawLedgerEntry,
         RawVoucher, VoucherCollection,
     },
-    AlterIdRange, BillAllocation, CompanyBookExtent, DateWindow, LedgerEntry,
+    AlterIdRange, BillAllocation, BillReferenceKind, CompanyBookExtent, DateWindow, LedgerEntry,
     LedgerOpeningCoverage, MoneyValue, OutstandingsError, PinnedCompany, Voucher, VoucherAlterId,
     VoucherAlterIdHighWater,
 };
@@ -101,18 +101,33 @@ pub fn parse_ledger_opening_coverage(
         .map_err(|_| OutstandingsError::InvalidResponse("ledger_collection_xml_invalid"))?;
     require_success(&parsed.header)?;
     let ledgers = parsed.body.data.collection.ledgers;
+    let mut ledger_identities = BTreeMap::new();
     let mut openings = 0usize;
     for ledger in &ledgers {
-        let ledger_guid = ledger
-            .guid
-            .as_ref()
-            .ok_or(OutstandingsError::InvalidResponse("ledger_guid_missing"))?
-            .text
-            .trim();
-        if !master_guid_belongs_to_company(ledger_guid, company.guid()) {
+        let guid = required(
+            ledger
+                .guid
+                .as_ref()
+                .ok_or(OutstandingsError::InvalidResponse("ledger_guid_missing"))?
+                .text
+                .clone(),
+            "ledger_guid_missing",
+        )?
+        .to_ascii_lowercase();
+        if !master_guid_belongs_to_company(&guid, company.guid()) {
             return Err(OutstandingsError::InvalidResponse(
                 "ledger_belongs_to_another_company",
             ));
+        }
+        let name = required(
+            ledger
+                .attribute_name
+                .clone()
+                .ok_or(OutstandingsError::InvalidResponse("ledger_name_missing"))?,
+            "ledger_name_missing",
+        )?;
+        if ledger_identities.insert(guid, name).is_some() {
+            return Err(OutstandingsError::InvalidResponse("ledger_guid_duplicate"));
         }
         // Fail closed. `ISBILLWISEON` is in this profile's FETCH list, so an
         // absent or unrecognised value means the response does not match the
@@ -167,7 +182,7 @@ pub fn parse_ledger_opening_coverage(
             "ledger_coverage_response_empty",
         ));
     }
-    Ok(LedgerOpeningCoverage::new(ledgers.len(), openings))
+    Ok(LedgerOpeningCoverage::new(ledger_identities, openings))
 }
 
 pub(super) fn parse_segment(
@@ -336,22 +351,36 @@ fn convert_bill_allocation(
     if raw.amount.is_none() {
         return Err(OutstandingsError::InvalidResponse("bill_amount_missing"));
     }
-    let bill_type_text = bill_type.text.trim().to_string();
+    let bill_type = BillReferenceKind::parse(&bill_type.text)?;
+    match (bill_type, &name) {
+        (BillReferenceKind::OnAccount, Some(_)) => {
+            return Err(OutstandingsError::InvalidResponse(
+                "bill_reference_forbidden",
+            ))
+        }
+        (kind, None) if kind.requires_named_reference() => {
+            return Err(OutstandingsError::InvalidResponse("bill_reference_missing"))
+        }
+        _ => {}
+    }
     let bill_date = match raw.bill_date {
         Some(value) if !value.text.trim().is_empty() => Some(parse_date(value.text)?),
-        // A `New Ref` OPENS a bill, and its ageing runs from this date. The
-        // wildcard fetch returns BILLDATE, so absence means the response does
-        // not match the request -- and silently falling back to the voucher
-        // date is exactly the defect this field was added to fix. Fail closed
-        // for the kind that depends on it; other kinds may legitimately omit it.
-        _ if bill_type_text.eq_ignore_ascii_case("New Ref") => {
+        // New Ref and Agst Ref ageing depends on BILLDATE. The wildcard fetch
+        // returns it for both, so its absence means the response does not match
+        // the request. Reject it at the parser boundary so a Complete scan
+        // cannot reach computation with an allocation it will reject.
+        _ if matches!(
+            bill_type,
+            BillReferenceKind::NewRef | BillReferenceKind::AgstRef
+        ) =>
+        {
             return Err(OutstandingsError::InvalidResponse("bill_date_missing"))
         }
         _ => None,
     };
     Ok(Some(BillAllocation {
         name,
-        bill_type: required(bill_type_text, "bill_type_missing")?,
+        bill_type,
         amount: parse_money(
             raw.amount
                 .ok_or(OutstandingsError::InvalidResponse("bill_amount_missing"))?

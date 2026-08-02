@@ -1,5 +1,6 @@
 use super::{ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger};
 use super::{TallyProbeResult, TallyVoucher};
+use crate::tally::connection::LedgerOpeningCoverageRead;
 use crate::tally::connection::{
     canonical_loopback_origin, LedgerCanaryReadbackXml, OutstandingsSegmentObservation,
     SelectedReadObservation,
@@ -96,6 +97,26 @@ fn partial_result(reason_code: &str) -> OutstandingsLoadResult {
     OutstandingsLoadResult::Partial {
         reason_code: reason_code.to_string(),
         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+    }
+}
+
+fn closing_coverage_partial_reason(
+    closing_coverage_matches_opening: bool,
+    closing_coverage_is_fully_covered_by_vouchers: bool,
+) -> Option<&'static str> {
+    if !closing_coverage_is_fully_covered_by_vouchers {
+        Some("ledger_opening_bills_not_covered")
+    } else if !closing_coverage_matches_opening {
+        Some("ledger_master_identity_changed_during_scan")
+    } else {
+        None
+    }
+}
+
+fn paired_coverage_partial_reason(coverage: &LedgerOpeningCoverageRead) -> Option<&'static str> {
+    match coverage {
+        LedgerOpeningCoverageRead::Stable(_) => None,
+        LedgerOpeningCoverageRead::Drifted => Some("ledger_master_identity_changed_during_scan"),
     }
 }
 
@@ -1192,6 +1213,15 @@ impl TallyRuntime {
                     let opening_coverage = client
                         .fetch_ledger_opening_coverage(extent.company())
                         .await?;
+                    if let Some(reason_code) = paired_coverage_partial_reason(&opening_coverage) {
+                        return Ok(partial_result(reason_code));
+                    }
+                    let LedgerOpeningCoverageRead::Stable(opening_coverage) = opening_coverage
+                    else {
+                        unreachable!(
+                            "paired coverage drift returns before a stable value is required"
+                        )
+                    };
                     if !opening_coverage.is_fully_covered_by_vouchers() {
                         return Ok(partial_result("ledger_opening_bills_not_covered"));
                     }
@@ -1312,10 +1342,20 @@ impl TallyRuntime {
                     let closing_coverage = client
                         .fetch_ledger_opening_coverage(extent.company())
                         .await?;
-                    if closing_coverage != opening_coverage
-                        || !closing_coverage.is_fully_covered_by_vouchers()
-                    {
-                        return Ok(partial_result("ledger_opening_bills_not_covered"));
+                    if let Some(reason_code) = paired_coverage_partial_reason(&closing_coverage) {
+                        return Ok(partial_result(reason_code));
+                    }
+                    let LedgerOpeningCoverageRead::Stable(closing_coverage) = closing_coverage
+                    else {
+                        unreachable!(
+                            "paired coverage drift returns before a stable value is required"
+                        )
+                    };
+                    if let Some(reason_code) = closing_coverage_partial_reason(
+                        closing_coverage == opening_coverage,
+                        closing_coverage.is_fully_covered_by_vouchers(),
+                    ) {
+                        return Ok(partial_result(reason_code));
                     }
                     match assemble_partitioned_scan(&extent, requested, completed_date_partitions) {
                         ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
@@ -1736,6 +1776,27 @@ mod tests {
         assert_eq!(
             segment_read_failure_reason(&anyhow::anyhow!("connection refused")),
             "segment_read_failed"
+        );
+    }
+
+    #[test]
+    fn closing_coverage_drift_is_not_reported_as_uncovered_opening_bills() {
+        assert_eq!(
+            closing_coverage_partial_reason(false, true),
+            Some("ledger_master_identity_changed_during_scan")
+        );
+        assert_eq!(
+            closing_coverage_partial_reason(true, false),
+            Some("ledger_opening_bills_not_covered")
+        );
+        assert_eq!(closing_coverage_partial_reason(true, true), None);
+    }
+
+    #[test]
+    fn intra_pair_ledger_coverage_drift_is_an_in_band_partial() {
+        assert_eq!(
+            paired_coverage_partial_reason(&LedgerOpeningCoverageRead::Drifted),
+            Some("ledger_master_identity_changed_during_scan")
         );
     }
 

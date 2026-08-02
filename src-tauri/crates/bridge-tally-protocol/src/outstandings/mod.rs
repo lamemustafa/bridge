@@ -15,11 +15,12 @@ pub use completeness::{
 };
 pub use compute::compute_outstandings;
 pub use model::{
-    AgeingBillCounts, AgeingBuckets, AlterIdRange, BillAllocation, CompanyBookExtent, CompleteScan,
-    CompleteSegment, DateBoundaryProfile, DateWindow, EmptyDateWindowVerification,
-    EmptyDateWindowWitness, LedgerEntry, LedgerOpeningCoverage, MoneyValue, NarrowDateWindow,
-    OutstandingsError, OutstandingsReport, PartialScan, PartyOutstanding, PinnedCompany,
-    ScanResult, SegmentVerification, Voucher, VoucherAlterId, VoucherAlterIdHighWater,
+    AgeingBillCounts, AgeingBuckets, AlterIdRange, BillAllocation, BillReferenceKind,
+    CompanyBookExtent, CompleteScan, CompleteSegment, DateBoundaryProfile, DateWindow,
+    EmptyDateWindowVerification, EmptyDateWindowWitness, LedgerEntry, LedgerOpeningCoverage,
+    MoneyValue, NarrowDateWindow, OutstandingsError, OutstandingsReport, PartialScan,
+    PartyOutstanding, PinnedCompany, ScanResult, SegmentVerification, Voucher, VoucherAlterId,
+    VoucherAlterIdHighWater,
 };
 pub use parser::{parse_company_book_extent, parse_ledger_opening_coverage};
 

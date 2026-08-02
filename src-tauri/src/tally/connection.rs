@@ -53,6 +53,11 @@ pub(crate) struct OutstandingsSegmentObservation {
     pub(crate) second_read_elapsed: Duration,
 }
 
+pub(crate) enum LedgerOpeningCoverageRead {
+    Stable(LedgerOpeningCoverage),
+    Drifted,
+}
+
 struct OutstandingsWireResponse {
     text: String,
     encoded_bytes: usize,
@@ -628,10 +633,10 @@ impl TallyClient {
     /// The ledger profile fetches every master GUID and verifies its company
     /// GUID prefix, so a name-only selection cannot make another loaded
     /// company's coverage look like the pinned book.
-    pub async fn fetch_ledger_opening_coverage(
+    pub(crate) async fn fetch_ledger_opening_coverage(
         &self,
         company: &PinnedCompany,
-    ) -> anyhow::Result<LedgerOpeningCoverage> {
+    ) -> anyhow::Result<LedgerOpeningCoverageRead> {
         let company_name = ValidatedCompanyName::new(company.name().to_string())?;
         let request = ReadOnlyProfile::LedgerOpeningCoverageV1 {
             company: &company_name,
@@ -650,9 +655,9 @@ impl TallyClient {
         let first = parse_ledger_opening_coverage(&first, company)?;
         let second = parse_ledger_opening_coverage(&second, company)?;
         if first != second {
-            anyhow::bail!("Tally ledger opening coverage changed between paired reads");
+            return Ok(LedgerOpeningCoverageRead::Drifted);
         }
-        Ok(first)
+        Ok(LedgerOpeningCoverageRead::Stable(first))
     }
 
     pub async fn fetch_company_book_extent(
@@ -1074,7 +1079,8 @@ mod tests {
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
         normalize_discovered_companies, tally_endpoint, unique_company_guids,
-        validate_ledger_canary_readback, TallyClient, TallyConfig, TallyProduct,
+        validate_ledger_canary_readback, LedgerOpeningCoverageRead, TallyClient, TallyConfig,
+        TallyProduct,
     };
     #[cfg(feature = "fixture-canary-runtime-dispatch")]
     use crate::tally::write_sandbox::{
@@ -1501,6 +1507,86 @@ mod tests {
             observation.verification,
             bridge_tally_protocol::outstandings::SegmentVerification::Complete(segment)
                 if segment.vouchers().is_empty()
+        ));
+        server.await.expect("synthetic Tally server task");
+    }
+
+    #[tokio::test]
+    async fn paired_ledger_opening_coverage_reports_intra_pair_drift() {
+        const COMPANY_EXTENT: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+
+        let coverage = |name: &str| {
+            format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME=\"{name}\"><GUID>bb8ad19e-6aef-4239-a917-87fec0c6215e-00000001</GUID><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+        };
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let responses = vec![
+            COMPANY_EXTENT.to_string(),
+            STATUS.to_string(),
+            COMPANY_EXTENT.to_string(),
+            STATUS.to_string(),
+            coverage("Before Rename"),
+            STATUS.to_string(),
+            coverage("After Rename"),
+            STATUS.to_string(),
+        ];
+        let server = tokio::spawn(async move {
+            for (index, body) in responses.into_iter().enumerate() {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .expect("paired request timed out")
+                        .expect("accept paired request");
+                let mut request = [0_u8; 16 * 1024];
+                let bytes_read = socket
+                    .read(&mut request)
+                    .await
+                    .expect("read paired request");
+                let expected_prefix = if index % 2 == 0 {
+                    "POST / HTTP/1.1"
+                } else {
+                    "GET /status HTTP/1.1"
+                };
+                assert!(
+                    String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_prefix),
+                    "request {index} did not follow the required read/health-check sequence"
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write paired response");
+            }
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let extent = client
+            .fetch_company_book_extent(
+                "Aarav Trading Company Demo",
+                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+            )
+            .await
+            .expect("paired extent reads remain stable");
+        assert!(matches!(
+            client
+                .fetch_ledger_opening_coverage(extent.company())
+                .await
+                .expect("coverage responses parse"),
+            LedgerOpeningCoverageRead::Drifted
         ));
         server.await.expect("synthetic Tally server task");
     }

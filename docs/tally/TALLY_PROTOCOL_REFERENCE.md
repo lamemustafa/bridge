@@ -1324,6 +1324,20 @@ serialization, and subdivision must be justified by payload, not by time.
 > A separate stability hazard observed during this work is recorded privately rather than
 > here, per the project's handling of crash triggers.
 
+### 12a.9 A ledger GUID survived an observed UI rename — coverage must compare GUID to name
+
+`LedgerOpeningCoverageV1` was captured immediately before and after renaming one ledger
+through the Tally UI. The response contained the same six ledger GUIDs on both sides, while
+exactly one GUID's `Name` changed. Therefore a count-only comparison, and a comparison of
+GUID membership alone, are both blind to this master-data change.
+
+Bridge must compare the full GUID-to-name map and return a partial result when it changes
+during a scan. This catches the observed rename without treating a stable GUID as evidence
+that the ledger master itself stayed unchanged.
+
+This establishes only a GUI rename on the observed TallyPrime Edit Log EDU profile. XML
+rename behaviour, other releases, and other configurations remain unverified.
+
 ---
 
 ## 13. Open questions

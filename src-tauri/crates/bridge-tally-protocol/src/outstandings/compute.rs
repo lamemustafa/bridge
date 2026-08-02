@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 
 use super::{
-    AgeingBillCounts, AgeingBuckets, CompleteScan, MoneyValue, OutstandingsError,
-    OutstandingsReport, PartyOutstanding,
+    AgeingBillCounts, AgeingBuckets, BillReferenceKind, CompleteScan, MoneyValue,
+    OutstandingsError, OutstandingsReport, PartyOutstanding,
 };
 
 /// How a bill is identified within one ledger.
@@ -66,7 +66,7 @@ pub fn compute_outstandings(
                 }
                 let reference = match allocation.name.as_deref() {
                     Some(name) => BillKey::Named(name.to_string()),
-                    None if allocation.bill_type.eq_ignore_ascii_case("On Account") => {
+                    None if matches!(allocation.bill_type, BillReferenceKind::OnAccount) => {
                         // On Account carries no bill identity, so Tally treats
                         // it as a party-scoped aggregate. Keying it per voucher
                         // allocation instead means an advance receipt and a
@@ -81,20 +81,11 @@ pub fn compute_outstandings(
                         return Err(OutstandingsError::InvalidResponse("bill_reference_missing"))
                     }
                 };
-                // Age from Tally's own BILLDATE when it supplies one. A bill's
-                // date can differ from the date of the voucher that opened it,
-                // and ageing from the voucher date then puts the balance in the
-                // wrong bucket and misreports the oldest-bill age. Fall back to
-                // the voucher date only when the allocation carries no date.
-                let opened_on = allocation
-                    .bill_date
-                    .clone()
-                    .unwrap_or_else(|| voucher.date.clone());
                 let bill = bills
                     .entry((entry.ledger_name.clone(), reference))
                     .or_insert_with(|| OpenBill {
                         balance: ExactDecimal::zero(),
-                        oldest_date: opened_on.clone(),
+                        oldest_date: voucher.date.clone(),
                     });
                 let previous_balance = bill.balance.clone();
                 let next_balance = bill
@@ -102,20 +93,26 @@ pub fn compute_outstandings(
                     .checked_add(amount)
                     .map_err(|_| OutstandingsError::ArithmeticOverflow)?;
                 if previous_balance.is_zero() {
-                    // The bill is being opened (or re-opened after full
-                    // settlement). Age it from Tally's own BILLDATE when it
-                    // supplied one -- that is the authoritative date for the
-                    // bill, and it can precede the voucher that carries it.
-                    bill.oldest_date = opened_on;
+                    bill.oldest_date = match allocation.bill_type {
+                        // TALLY_PROTOCOL_REFERENCE §12a.2 (PR #117): Tally
+                        // reported a 1-Jun bill settled to zero and re-opened
+                        // by a 1-Jul Agst Ref as due on 1-Jun, 60 days overdue;
+                        // zero re-opens age from the original BILLDATE.
+                        BillReferenceKind::NewRef | BillReferenceKind::AgstRef => allocation
+                            .bill_date
+                            .clone()
+                            .ok_or(OutstandingsError::InvalidResponse("bill_date_missing"))?,
+                        BillReferenceKind::Advance | BillReferenceKind::OnAccount => {
+                            voucher.date.clone()
+                        }
+                    };
                 } else if !next_balance.is_zero()
                     && previous_balance.is_negative() != next_balance.is_negative()
                 {
-                    // A genuine sign flip: an over-settlement created a fresh
-                    // exposure in the opposite direction. Deliberately the
-                    // VOUCHER date here, because on an `Agst Ref` Tally's
-                    // BILLDATE is the date of the bill being SETTLED, not of the
-                    // settlement -- reusing it would age a brand-new exposure
-                    // from the old bill.
+                    // A genuine sign flip makes a new exposure without an
+                    // intermediate zero balance. Deliberately use the voucher
+                    // date: on an Agst Ref, BILLDATE belongs to the bill being
+                    // settled, not the newly exposed balance.
                     bill.oldest_date = voucher.date.clone();
                 }
                 bill.balance = next_balance;
@@ -265,8 +262,9 @@ mod tests {
 
     use crate::{
         outstandings::{
-            BillAllocation, CompleteScan, DateBoundaryProfile, DateWindow, LedgerEntry, MoneyValue,
-            PinnedCompany, Voucher, VoucherAlterId, VoucherAlterIdHighWater,
+            BillAllocation, BillReferenceKind, CompleteScan, DateBoundaryProfile, DateWindow,
+            LedgerEntry, MoneyValue, PinnedCompany, Voucher, VoucherAlterId,
+            VoucherAlterIdHighWater,
         },
         xml_read_profiles::ValidatedCompanyName,
     };
@@ -491,9 +489,15 @@ mod tests {
             ledger_entries: vec![LedgerEntry {
                 ledger_name: party.to_string(),
                 bill_allocations: vec![BillAllocation {
-                    bill_date: None,
+                    bill_date: (bill_type == "New Ref").then(|| TallyDate::parse(date).unwrap()),
                     name: Some(reference.to_string()),
-                    bill_type: bill_type.to_string(),
+                    bill_type: match bill_type {
+                        "New Ref" => BillReferenceKind::NewRef,
+                        "Agst Ref" => BillReferenceKind::AgstRef,
+                        "Advance" => BillReferenceKind::Advance,
+                        "On Account" => BillReferenceKind::OnAccount,
+                        _ => panic!("synthetic test must use a known kind"),
+                    },
                     amount: MoneyValue::Exact(amount),
                 }],
             }],
