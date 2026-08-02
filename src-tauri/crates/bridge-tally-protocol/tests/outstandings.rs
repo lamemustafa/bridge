@@ -1011,6 +1011,29 @@ fn against_ref_after_settlement_ages_from_its_kind_not_the_zero_balance() {
 
 #[test]
 fn advance_with_distinct_bill_date_refuses_to_publish_an_ageing_bucket() {
+    assert!(matches!(
+        advance_scan(Some("20260101")),
+        ScanResult::Partial(partial) if partial.reason_code == "advance_ageing_unverified"
+    ));
+}
+
+#[test]
+fn advance_with_matching_bill_date_assembles_complete() {
+    assert!(matches!(
+        advance_scan(Some("20260415")),
+        ScanResult::Complete(_)
+    ));
+}
+
+#[test]
+fn advance_without_bill_date_assembles_complete() {
+    assert!(matches!(advance_scan(None), ScanResult::Complete(_)));
+}
+
+fn advance_scan(bill_date: Option<&str>) -> ScanResult {
+    let bill_date = bill_date
+        .map(|date| format!("<BILLDATE TYPE=\"Date\">{date}</BILLDATE>"))
+        .unwrap_or_default();
     let xml = format!(
         concat!(
             "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
@@ -1018,10 +1041,11 @@ fn advance_with_distinct_bill_date_refuses_to_publish_an_ageing_bucket() {
             "<DATE TYPE=\"Date\">20260415</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>",
             "<PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
             "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST>",
-            "<NAME>ADV-1</NAME><BILLTYPE>Advance</BILLTYPE><BILLDATE TYPE=\"Date\">20260101</BILLDATE><AMOUNT>25</AMOUNT>",
+            "<NAME>ADV-1</NAME><BILLTYPE>Advance</BILLTYPE>{bill_date}<AMOUNT>25</AMOUNT>",
             "</BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
         ),
-        guid = COMPANY_GUID
+        guid = COMPANY_GUID,
+        bill_date = bill_date,
     );
     let extent = extent();
     let window =
@@ -1043,13 +1067,7 @@ fn advance_with_distinct_bill_date_refuses_to_publish_an_ageing_bucket() {
         vec![SegmentVerification::Complete(segment)],
     );
 
-    assert!(
-        matches!(
-            result,
-            ScanResult::Partial(partial) if partial.reason_code == "advance_ageing_unverified"
-        ),
-        "an Advance must become a typed Partial rather than enter a voucher-date bucket"
-    );
+    result
 }
 
 #[test]
