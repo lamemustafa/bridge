@@ -1264,10 +1264,10 @@ returns `STATUS=0` with empty `DATA`; an `SVLOADCOMPANY` variable returns `STATU
 company. Until a working supported path is observed, a client must detect the condition and
 instruct the operator to open the company on the server by hand.
 
-### 12a.8 Payload and time are linear in voucher count — sizing can be computed
+### 12a.8 Payload scales with voucher count; measure request time separately
 
-The wildcard voucher fetch cost **~21.7 KB and ~13 ms per voucher on this corpus**, stable
-across a 360× range.
+The wildcard voucher fetch averaged **~21.7 KB per voucher on this corpus**, stable across a
+360× range.
 
 **Treat that as a mean, not an upper bound.** Per-voucher cost varies with content — §11 already
 records this — so a book with nested inventory lines or long narrations will exceed it. A segment
