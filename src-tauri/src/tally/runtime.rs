@@ -99,6 +99,19 @@ fn partial_result(reason_code: &str) -> OutstandingsLoadResult {
     }
 }
 
+fn closing_coverage_partial_reason(
+    closing_coverage_matches_opening: bool,
+    closing_coverage_is_fully_covered_by_vouchers: bool,
+) -> Option<&'static str> {
+    if !closing_coverage_is_fully_covered_by_vouchers {
+        Some("ledger_opening_bills_not_covered")
+    } else if !closing_coverage_matches_opening {
+        Some("ledger_master_identity_changed_during_scan")
+    } else {
+        None
+    }
+}
+
 fn select_outstandings_date_boundary_profile(
     profile: Option<&bridge_tally_core::CapabilityProfile>,
 ) -> DateBoundaryProfile {
@@ -1312,10 +1325,11 @@ impl TallyRuntime {
                     let closing_coverage = client
                         .fetch_ledger_opening_coverage(extent.company())
                         .await?;
-                    if closing_coverage != opening_coverage
-                        || !closing_coverage.is_fully_covered_by_vouchers()
-                    {
-                        return Ok(partial_result("ledger_opening_bills_not_covered"));
+                    if let Some(reason_code) = closing_coverage_partial_reason(
+                        closing_coverage == opening_coverage,
+                        closing_coverage.is_fully_covered_by_vouchers(),
+                    ) {
+                        return Ok(partial_result(reason_code));
                     }
                     match assemble_partitioned_scan(&extent, requested, completed_date_partitions) {
                         ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
@@ -1737,6 +1751,19 @@ mod tests {
             segment_read_failure_reason(&anyhow::anyhow!("connection refused")),
             "segment_read_failed"
         );
+    }
+
+    #[test]
+    fn closing_coverage_drift_is_not_reported_as_uncovered_opening_bills() {
+        assert_eq!(
+            closing_coverage_partial_reason(false, true),
+            Some("ledger_master_identity_changed_during_scan")
+        );
+        assert_eq!(
+            closing_coverage_partial_reason(true, false),
+            Some("ledger_opening_bills_not_covered")
+        );
+        assert_eq!(closing_coverage_partial_reason(true, true), None);
     }
 
     #[test]
