@@ -43,8 +43,18 @@ This document defines agent-level expectations and review responsibilities for t
 
 A **private** cross-repo knowledge repository holds material that must **not** live in this
 public repo: vulnerabilities, crash triggers, competitor teardowns, pricing, market research,
-and durable protocol findings. Its name, URL and local path are supplied out-of-band to people
-and agents who have access, and are deliberately **not** recorded here — see the last bullet.
+and **sensitive** protocol findings. Its name, URL and local path are supplied out-of-band to
+people and agents who have access, and are deliberately **not** recorded here — see the last
+bullet.
+
+**The test for "sensitive":** would publishing it let someone **harm a user or a Tally
+instance**, or hand a competitor something they **could not measure themselves in an
+afternoon**? If yes, it goes in the hub and only a de-fanged rule stays here. Ordinary
+request/response behaviour, field semantics and protocol invariants belong in
+`docs/tally/TALLY_PROTOCOL_REFERENCE.md`, which exists for exactly that.
+
+This distinction matters because source comments cite that reference by section. **A citation
+into a private document is worse than no citation** — it looks auditable and is not.
 
 - **Consult before you build.** Before implementing any flow touching Tally, GST, portal auth,
   MCA, or a competitor feature, search the hub for the topic first. Its contribution contract
