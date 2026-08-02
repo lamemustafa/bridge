@@ -1075,6 +1075,39 @@ fn against_ref_sign_flip_ages_from_voucher_date() {
 }
 
 #[test]
+fn against_ref_without_bill_date_is_a_typed_partial_at_parser_boundary() {
+    let xml = format!(
+        concat!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+            "<VOUCHER REMOTEID=\"r1\"><GUID>{guid}-00000001</GUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID>",
+            "<DATE TYPE=\"Date\">20260415</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>",
+            "<PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
+            "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST>",
+            "<NAME>REF-1</NAME><BILLTYPE>Agst Ref</BILLTYPE><AMOUNT>25</AMOUNT>",
+            "</BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+        ),
+        guid = COMPANY_GUID,
+    );
+    let extent = extent();
+    let window =
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260415", "20260415").unwrap();
+
+    assert!(
+        matches!(
+            verify_segment_pair(
+                &xml,
+                &xml,
+                extent.company(),
+                window,
+                full_alter_id_range(),
+            ),
+            Ok(SegmentVerification::Partial(partial)) if partial.reason_code == "bill_date_missing"
+        ),
+        "a missing Agst Ref BILLDATE must become an in-band Partial, not a compute error"
+    );
+}
+
+#[test]
 fn advance_with_distinct_bill_date_computes_its_voucher_age() {
     assert_advance_age(advance_scan(Some("20260101")));
 }

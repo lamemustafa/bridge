@@ -365,12 +365,15 @@ fn convert_bill_allocation(
     }
     let bill_date = match raw.bill_date {
         Some(value) if !value.text.trim().is_empty() => Some(parse_date(value.text)?),
-        // A `New Ref` OPENS a bill, and its ageing runs from this date. The
-        // wildcard fetch returns BILLDATE, so absence means the response does
-        // not match the request -- and silently falling back to the voucher
-        // date is exactly the defect this field was added to fix. Fail closed
-        // for the kind that depends on it; other kinds may legitimately omit it.
-        _ if matches!(bill_type, BillReferenceKind::NewRef) => {
+        // New Ref and Agst Ref ageing depends on BILLDATE. The wildcard fetch
+        // returns it for both, so its absence means the response does not match
+        // the request. Reject it at the parser boundary so a Complete scan
+        // cannot reach computation with an allocation it will reject.
+        _ if matches!(
+            bill_type,
+            BillReferenceKind::NewRef | BillReferenceKind::AgstRef
+        ) =>
+        {
             return Err(OutstandingsError::InvalidResponse("bill_date_missing"))
         }
         _ => None,
