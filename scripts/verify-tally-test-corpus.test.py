@@ -13,25 +13,54 @@ def main():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.main([]) == 2
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml") as capture:
-        capture.write(
+    assert module.sanitize_invalid_numeric_references("<A>&#4;</A>") == "<A>\ufffd#4;</A>"
+    assert module.sanitize_invalid_numeric_references("<A>&#4294967296;</A>") == "<A>&#4294967296;</A>"
+    with tempfile.TemporaryDirectory() as directory:
+        capture = pathlib.Path(directory) / "local.xml"
+        capture.write_text(
             "<ENVELOPE><BODY><DATA><COLLECTION>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>3</ALTERID><DATE>20240501</DATE></VOUCHER>"
             "</COLLECTION></DATA></BODY></ENVELOPE>"
         )
-        capture.flush()
-        assert module.main(["--locality-xml", capture.name]) == 0
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml") as capture:
-        capture.write(
+        assert module.main(["--locality-xml", str(capture)]) == 0
+    with tempfile.TemporaryDirectory() as directory:
+        capture = pathlib.Path(directory) / "scattered.xml"
+        capture.write_text(
             "<ENVELOPE><BODY><DATA><COLLECTION>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>100</ALTERID><DATE>20240402</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>2</ALTERID><DATE>20240501</DATE></VOUCHER>"
             "</COLLECTION></DATA></BODY></ENVELOPE>"
         )
-        capture.flush()
-        assert module.main(["--locality-xml", capture.name]) == 1
+        assert module.main(["--locality-xml", str(capture)]) == 1
+    with tempfile.TemporaryDirectory() as directory:
+        capture = pathlib.Path(directory) / "one-month.xml"
+        capture.write_text(
+            "<ENVELOPE><BODY><DATA><COLLECTION>"
+            "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>2</ALTERID><DATE>20240402</DATE></VOUCHER>"
+            "</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+        assert module.main(["--locality-xml", str(capture)]) == 2
+    with tempfile.TemporaryDirectory() as directory:
+        capture = pathlib.Path(directory) / "bad-date.xml"
+        capture.write_text(
+            "<ENVELOPE><BODY><DATA><COLLECTION>"
+            "<VOUCHER><ALTERID>1</ALTERID><DATE>202641</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>2</ALTERID><DATE>20240501</DATE></VOUCHER>"
+            "</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+        assert module.main(["--locality-xml", str(capture)]) == 2
+    with tempfile.TemporaryDirectory() as directory:
+        capture = pathlib.Path(directory) / "invalid-reference.xml"
+        capture.write_text(
+            "<ENVELOPE><BODY><DATA><COLLECTION><LEDGER>&#4;</LEDGER>"
+            "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>3</ALTERID><DATE>20240501</DATE></VOUCHER>"
+            "</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+        assert module.main(["--locality-xml", str(capture)]) == 0
 
 
 if __name__ == "__main__":

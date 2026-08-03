@@ -194,7 +194,9 @@ fails closed and cannot emit an acceptance token.
 **Check locality during generation, not only at the end** — it is a non-accepting diagnostic
 because it cannot be repaired afterwards, and catching it at 50 vouchers is far cheaper than at
 500. Run it only against an already captured response; it does not contact Tally or qualify the
-corpus:
+corpus. It repairs observed XML-1.0-illegal numeric references before strict parsing, but requires
+the product's canonical eight-ASCII-digit voucher dates. It is **inconclusive** until at least two
+month bands are present, because one month cannot measure date-to-AlterID locality:
 
 ```bash
 python3 scripts/verify-tally-test-corpus.py --locality-xml /safe/local/vouchers.xml

@@ -2,14 +2,20 @@
 
 import argparse
 import datetime
+import pathlib
+import re
 import sys
 import xml.etree.ElementTree as ET
 
 
+NUMERIC_REFERENCE = re.compile(r"&#(?P<token>(?:[xX][0-9A-Fa-f]+)|(?:[0-9]+));")
+
+
 def locality_diagnostic(path):
     try:
-        root = ET.parse(path).getroot()
-    except (OSError, ET.ParseError) as error:
+        xml = pathlib.Path(path).read_text(encoding="utf-8")
+        root = ET.fromstring(sanitize_invalid_numeric_references(xml))
+    except (OSError, UnicodeError, ET.ParseError) as error:
         print(f"LOCALITY DIAGNOSTIC FAILED: capture unreadable ({error})")
         return 2
 
@@ -26,6 +32,8 @@ def locality_diagnostic(path):
         date = child_text(voucher, "DATE")
         try:
             alter_id = int(alter_id)
+            if date is None or re.fullmatch(r"[0-9]{8}", date) is None:
+                raise ValueError("date is not canonical YYYYMMDD")
             datetime.datetime.strptime(date, "%Y%m%d")
         except (TypeError, ValueError):
             print("LOCALITY DIAGNOSTIC FAILED: invalid voucher alter ID or date")
@@ -35,6 +43,13 @@ def locality_diagnostic(path):
             return 2
         alter_ids.add(alter_id)
         months.setdefault(date[:6], []).append(alter_id)
+
+    if len(months) < 2:
+        print(
+            "LOCALITY DIAGNOSTIC INCONCLUSIVE: fewer than two month bands; "
+            "not corpus acceptance"
+        )
+        return 2
 
     low, high = min(alter_ids), max(alter_ids)
     total_span = high - low + 1
@@ -55,6 +70,37 @@ def locality_diagnostic(path):
 def child_text(element, name):
     child = element.find(name)
     return child.text.strip() if child is not None and child.text else None
+
+
+def sanitize_invalid_numeric_references(xml):
+    """Make the observed XML 1.0-illegal numeric references parseable.
+
+    This mirrors the production boundary's replacement-marker representation:
+    malformed references remain strict XML errors, but a numeric reference to an
+    XML-illegal character becomes a legal, identity-preserving text marker.
+    """
+
+    def replace(match):
+        token = match.group("token")
+        try:
+            value = int(token[1:], 16) if token[:1].lower() == "x" else int(token)
+        except ValueError:
+            return match.group(0)
+        if value > 0xFFFFFFFF:
+            return match.group(0)
+        if is_xml_10_char(value):
+            return match.group(0)
+        return f"\ufffd#{value};"
+
+    return NUMERIC_REFERENCE.sub(replace, xml)
+
+
+def is_xml_10_char(value):
+    return value in (0x9, 0xA, 0xD) or (
+        0x20 <= value <= 0xD7FF
+        or 0xE000 <= value <= 0xFFFD
+        or 0x10000 <= value <= 0x10FFFF
+    )
 
 
 def main(argv):
