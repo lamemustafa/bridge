@@ -901,7 +901,7 @@ proptest! {
 
     #[test]
     fn assembled_date_partitions_preserve_cross_window_bill_lifecycles(
-        left_amount in 1_u32..1_000_000,
+        left_amount in 2_u32..1_000_000,
     ) {
         let whole_window = DateWindow::parse(
             DateBoundaryProfile::ModeAgnostic,
@@ -921,7 +921,13 @@ proptest! {
         let whole = complete_scan_for_vouchers(
             &bill_vouchers_xml(&[
                 (1, "20240401", "CROSS-WINDOW", "New Ref", -i64::from(left_amount)),
-                (2, "20240502", "CROSS-WINDOW", "Agst Ref", i64::from(left_amount)),
+                (
+                    2,
+                    "20240502",
+                    "CROSS-WINDOW",
+                    "Agst Ref",
+                    i64::from(left_amount) - 1,
+                ),
             ]),
             whole_window.clone(),
             2,
@@ -943,7 +949,7 @@ proptest! {
                 "20240502",
                 "CROSS-WINDOW",
                 "Agst Ref",
-                i64::from(left_amount),
+                i64::from(left_amount) - 1,
             )]),
             right_window,
             2,
@@ -966,6 +972,8 @@ proptest! {
         let as_of = TallyDate::parse("20240601").unwrap();
         let whole_report = compute_outstandings(&whole, as_of.clone()).unwrap();
         let partitioned_report = compute_outstandings(&partitioned, as_of).unwrap();
+        prop_assert_eq!(whole_report.receivable_total.as_str(), "1");
+        prop_assert_eq!(whole_report.open_receivable_bill_count, 1);
         prop_assert_eq!(partitioned_report.receivable_total, whole_report.receivable_total);
         prop_assert_eq!(partitioned_report.open_receivable_bill_count, whole_report.open_receivable_bill_count);
         prop_assert_eq!(partitioned_report.source_voucher_count, whole_report.source_voucher_count);
