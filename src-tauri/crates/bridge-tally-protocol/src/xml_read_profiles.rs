@@ -10,8 +10,9 @@ use std::fmt;
 use sha2::{Digest, Sha256};
 
 use crate::outstandings::{
-    render_company_book_extent, render_ledger_opening_coverage, render_outstandings_template,
-    render_outstandings_vouchers, AlterIdRange, NarrowDateWindow, PinnedCompany,
+    render_company_book_extent, render_empty_partition_witness_template,
+    render_ledger_opening_coverage, render_outstandings_template, render_outstandings_vouchers,
+    AlterIdRange, NarrowDateWindow, PinnedCompany,
 };
 use crate::{BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_LEDGER_WRITE_READBACK_SCHEMA};
 
@@ -174,6 +175,7 @@ pub enum ReadOnlyProfileId {
     VouchersV2,
     VouchersV3,
     VoucherOutstandingsV1,
+    VoucherEmptyPartitionWitnessV1,
 }
 
 impl ReadOnlyProfileId {
@@ -189,6 +191,7 @@ impl ReadOnlyProfileId {
             Self::VouchersV2 => "vouchers_v2",
             Self::VouchersV3 => "vouchers_v3",
             Self::VoucherOutstandingsV1 => "voucher_outstandings_v1",
+            Self::VoucherEmptyPartitionWitnessV1 => "voucher_empty_partition_witness_v1",
         }
     }
 
@@ -218,6 +221,11 @@ impl ReadOnlyProfileId {
                 TEMPLATE_TO,
                 TEMPLATE_ALTER_ID_START,
                 TEMPLATE_ALTER_ID_END,
+            ),
+            Self::VoucherEmptyPartitionWitnessV1 => render_empty_partition_witness_template(
+                TEMPLATE_COMPANY,
+                TEMPLATE_FROM,
+                TEMPLATE_TO,
             ),
         };
         sha256_hex(template.as_bytes())
@@ -270,6 +278,10 @@ pub enum ReadOnlyProfile<'a> {
         window: &'a NarrowDateWindow,
         alter_id_range: AlterIdRange,
     },
+    VoucherEmptyPartitionWitnessV1 {
+        company: &'a PinnedCompany,
+        window: &'a NarrowDateWindow,
+    },
 }
 
 impl ReadOnlyProfile<'_> {
@@ -285,6 +297,9 @@ impl ReadOnlyProfile<'_> {
             Self::VouchersV2 { .. } => ReadOnlyProfileId::VouchersV2,
             Self::VouchersV3 { .. } => ReadOnlyProfileId::VouchersV3,
             Self::VoucherOutstandingsV1 { .. } => ReadOnlyProfileId::VoucherOutstandingsV1,
+            Self::VoucherEmptyPartitionWitnessV1 { .. } => {
+                ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1
+            }
         }
     }
 
@@ -328,6 +343,10 @@ impl ReadOnlyProfile<'_> {
                 window,
                 alter_id_range,
             } => render_outstandings_vouchers(company, window, alter_id_range),
+            Self::VoucherEmptyPartitionWitnessV1 { company, window } => {
+                crate::outstandings::voucher_empty_partition_witness_request(company, window)
+                    .into_xml()
+            }
         }
     }
 }
@@ -954,11 +973,25 @@ mod tests {
                 alter_id_range: AlterIdRange::new(0, 1).unwrap(),
             }
             .render(),
+            ReadOnlyProfile::VoucherEmptyPartitionWitnessV1 {
+                company: &pinned,
+                window: &window,
+            }
+            .render(),
         ] {
             assert_eq!(request.matches("<TALLYREQUEST>").count(), 1);
             assert!(!request.contains("<TALLYREQUEST>IMPORT"));
             assert!(request.contains("&lt;/SVCURRENTCOMPANY&gt;"));
         }
+        let witness = ReadOnlyProfile::VoucherEmptyPartitionWitnessV1 {
+            company: &pinned,
+            window: &window,
+        };
+        assert_eq!(
+            witness.id(),
+            ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1
+        );
+        assert!(witness.template_sha256().len() == 64);
     }
 
     #[test]
@@ -1003,6 +1036,10 @@ mod tests {
             (
                 ReadOnlyProfileId::VoucherOutstandingsV1,
                 "7e4025038bf85345d0a55b9437be339c8829b1f699abaaa52bbdfa6affcb1dae",
+            ),
+            (
+                ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1,
+                "73a9a71e437a8556d18123fad739fa10a7e859a1d462b5ce88d6e42d52811d8d",
             ),
         ];
         for (profile, digest) in expected {

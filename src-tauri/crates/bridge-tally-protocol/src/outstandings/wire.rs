@@ -78,6 +78,22 @@ pub(super) struct VoucherCollection {
     pub(super) vouchers: Vec<RawVoucher>,
 }
 
+#[derive(Default, Deserialize)]
+pub(super) struct WitnessVoucherCollection {
+    #[serde(rename = "VOUCHER", default)]
+    pub(super) vouchers: Vec<RawWitnessVoucher>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct RawWitnessVoucher {
+    #[serde(rename = "GUID")]
+    pub(super) guid: String,
+    #[serde(rename = "ALTERID")]
+    pub(super) alter_id: Value,
+    #[serde(rename = "DATE")]
+    pub(super) date: Value,
+}
+
 #[derive(Deserialize)]
 pub(super) struct RawVoucher {
     #[serde(rename = "GUID")]

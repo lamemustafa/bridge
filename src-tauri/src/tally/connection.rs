@@ -25,9 +25,11 @@ use bridge_tally_core::{
 use bridge_tally_protocol::{
     outstandings::{
         parse_company_book_extent, parse_ledger_opening_coverage,
-        verify_segment_pair_with_wire_evidence, voucher_outstandings_request, AlterIdRange,
-        CompanyBookExtent, LedgerOpeningCoverage, NarrowDateWindow, PinnedCompany,
-        SegmentVerification, SegmentWireEvidence, VoucherOutstandingsRequestXml,
+        verify_empty_partition_witness_pair_with_wire_evidence,
+        verify_segment_pair_with_wire_evidence, voucher_empty_partition_witness_request,
+        voucher_outstandings_request, AlterIdRange, CompanyBookExtent, LedgerOpeningCoverage,
+        NarrowDateWindow, PinnedCompany, SegmentVerification, SegmentWireEvidence,
+        VoucherOutstandingsRequestXml, WitnessPairVerification,
     },
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
     parse_ledger_write_readback_with_evidence, parse_selected_voucher_source_records_with_evidence,
@@ -508,6 +510,28 @@ impl TallyClient {
         })
     }
 
+    /// Uses the ordinary 32 MiB XML cap. Only the wildcard outstandings
+    /// profile is allowed through `post_outstandings_xml_decoded`.
+    #[allow(
+        dead_code,
+        reason = "the supervised first live witness dispatch must be recorded before this ordinary-cap seam may be called by fetch_outstandings"
+    )]
+    async fn post_xml_with_wire_evidence(
+        &self,
+        request: String,
+    ) -> anyhow::Result<OutstandingsWireResponse> {
+        let response = self.http.post_xml_decoded(request).await?;
+        let encoded_bytes = response.encoded_bytes();
+        let encoded_sha256 = response.encoded_sha256().to_string();
+        self.record_observed_body_bytes(encoded_bytes);
+        self.record_observed_encoding(response.encoding());
+        Ok(OutstandingsWireResponse {
+            text: response.into_text(),
+            encoded_bytes,
+            encoded_sha256,
+        })
+    }
+
     /// Sends only the opaque, fixed fixture canary through the bounded
     /// loopback transport. It consumes the capsule and exposes neither the
     /// request XML nor the response XML to the application layer.
@@ -738,6 +762,42 @@ impl TallyClient {
         })
     }
 
+    /// Executes one paired, date-only I5 witness read. This is intentionally
+    /// separate from `fetch_outstandings_segment_pair`: it has no AlterID
+    /// predicate and uses the ordinary 32 MiB transport cap. Its supervised
+    /// live qualification is recorded in TALLY_PROTOCOL_REFERENCE.md §12.7;
+    /// runtime may use it only for a primary-empty partition's control or
+    /// shifted cover.
+    pub(crate) async fn fetch_empty_partition_witness_pair(
+        &self,
+        company: &PinnedCompany,
+        window: NarrowDateWindow,
+    ) -> anyhow::Result<WitnessPairVerification> {
+        let request = voucher_empty_partition_witness_request(company, &window).into_xml();
+        let label = format!("{}..{}", window.from().as_str(), window.to().as_str());
+        let first = self
+            .post_xml_with_wire_evidence(request.clone())
+            .await
+            .with_context(|| format!("empty-date witness first read failed for {label}"))?;
+        self.http.get_status_decoded().await.with_context(|| {
+            format!("Tally health check between empty-date witness reads for {label}")
+        })?;
+        let second = self
+            .post_xml_with_wire_evidence(request)
+            .await
+            .with_context(|| format!("empty-date witness second read failed for {label}"))?;
+        self.http.get_status_decoded().await.with_context(|| {
+            format!("Tally health check after empty-date witness reads for {label}")
+        })?;
+        verify_empty_partition_witness_pair_with_wire_evidence(
+            SegmentWireEvidence::new(&first.text, first.encoded_bytes, &first.encoded_sha256),
+            SegmentWireEvidence::new(&second.text, second.encoded_bytes, &second.encoded_sha256),
+            company,
+            window.into_date_window(),
+        )
+        .map_err(anyhow::Error::from)
+    }
+
     pub async fn qualify_selected_ledgers(
         &self,
         company: &str,
@@ -832,9 +892,17 @@ impl TallyClient {
     }
 
     fn record_observed_body_bytes(&self, bytes: usize) {
-        self.observed_body_bytes.store(
-            u64::try_from(bytes).unwrap_or(u64::MAX - 1),
-            Ordering::Release,
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX - 1);
+        let _ = self.observed_body_bytes.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |observed| {
+                Some(if observed == BODY_BYTES_UNAVAILABLE {
+                    bytes
+                } else {
+                    observed.max(bytes)
+                })
+            },
         );
     }
 
@@ -1421,7 +1489,9 @@ mod tests {
         const COMPANY_EXTENT: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
         );
-        const EMPTY_VOUCHERS: &str = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>";
+        const OPTIONAL_VOUCHERS: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml"
+        );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
 
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -1430,6 +1500,14 @@ mod tests {
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
             for (index, expected_prefix) in [
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
+                "POST / HTTP/1.1",
+                "GET /status HTTP/1.1",
                 "POST / HTTP/1.1",
                 "GET /status HTTP/1.1",
                 "POST / HTTP/1.1",
@@ -1457,8 +1535,8 @@ mod tests {
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let body = match index {
-                    0 | 2 => COMPANY_EXTENT,
-                    4 | 6 => EMPTY_VOUCHERS,
+                    0 | 2 | 12 | 14 => COMPANY_EXTENT,
+                    4 | 6 | 8 | 10 => OPTIONAL_VOUCHERS,
                     _ => STATUS,
                 };
                 let response = format!(
@@ -1486,8 +1564,8 @@ mod tests {
             .expect("paired extent reads remain stable");
         let reporting_window = bridge_tally_protocol::outstandings::DateWindow::parse(
             bridge_tally_protocol::outstandings::DateBoundaryProfile::ModeAgnostic,
-            "20250401",
-            "20250401",
+            "20260401",
+            "20260401",
         )
         .expect("synthetic one-day window");
         let segment_window = reporting_window
@@ -1497,17 +1575,48 @@ mod tests {
         let observation = client
             .fetch_outstandings_segment_pair(
                 extent.company(),
-                segment_window,
-                bridge_tally_protocol::outstandings::AlterIdRange::new(0, 1)
+                segment_window.clone(),
+                bridge_tally_protocol::outstandings::AlterIdRange::new(0, 101603)
                     .expect("non-empty synthetic range"),
             )
             .await
             .expect("paired segment reads remain stable");
-        assert!(matches!(
-            observation.verification,
-            bridge_tally_protocol::outstandings::SegmentVerification::Complete(segment)
-                if segment.vouchers().is_empty()
-        ));
+        let verification = observation.verification;
+        let bridge_tally_protocol::outstandings::SegmentVerification::Complete(segment) =
+            verification
+        else {
+            panic!("captured voucher response did not verify: {verification:?}");
+        };
+        assert!(
+            !segment.vouchers().is_empty(),
+            "captured voucher fixture unexpectedly had no vouchers"
+        );
+        let witness = client
+            .fetch_empty_partition_witness_pair(extent.company(), segment_window)
+            .await
+            .expect("paired empty-date witness reads remain stable");
+        let bridge_tally_protocol::outstandings::WitnessPairVerification::Complete(witness) =
+            witness
+        else {
+            panic!("captured witness fixture did not verify: {witness:?}");
+        };
+        assert!(
+            !witness.vouchers().is_empty(),
+            "captured witness fixture unexpectedly had no identity rows"
+        );
+        let closing_extent = client
+            .fetch_company_book_extent(
+                "Aarav Trading Company Demo",
+                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+            )
+            .await
+            .expect("closing paired extent reads remain stable");
+        assert_eq!(closing_extent, extent, "synthetic book did not change");
+        assert_eq!(
+            client.observed_body_bytes(),
+            Some(u64::try_from(OPTIONAL_VOUCHERS.len()).expect("fixture length fits u64")),
+            "closing extent evidence must not overwrite the larger voucher payload"
+        );
         server.await.expect("synthetic Tally server task");
     }
 

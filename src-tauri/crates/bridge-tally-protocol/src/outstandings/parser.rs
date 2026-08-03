@@ -7,15 +7,20 @@ use super::{
     tolerant_xml::sanitize_invalid_numeric_references,
     wire::{
         CompanyCollection, Envelope, Header, LedgerCollection, RawBillAllocation, RawLedgerEntry,
-        RawVoucher, VoucherCollection,
+        RawVoucher, RawWitnessVoucher, VoucherCollection, WitnessVoucherCollection,
     },
     AlterIdRange, BillAllocation, BillReferenceKind, CompanyBookExtent, DateWindow, LedgerEntry,
     LedgerOpeningCoverage, MoneyValue, OutstandingsError, PinnedCompany, Voucher, VoucherAlterId,
-    VoucherAlterIdHighWater,
+    VoucherAlterIdHighWater, WitnessVoucher,
 };
 
 pub(super) struct ParsedSegment {
     pub(super) vouchers: Vec<Voucher>,
+    pub(super) raw_row_count: usize,
+}
+
+pub(super) struct ParsedWitnessSegment {
+    pub(super) vouchers: Vec<WitnessVoucher>,
     pub(super) raw_row_count: usize,
 }
 
@@ -258,6 +263,72 @@ fn master_guid_belongs_to_company(master_guid: &str, company_guid: &str) -> bool
             .is_some_and(|master_id| !master_id.is_empty())
 }
 
+pub(super) fn parse_witness_segment(
+    xml: &str,
+    company: &PinnedCompany,
+    window: &DateWindow,
+) -> Result<ParsedWitnessSegment, OutstandingsError> {
+    require_complete_envelope(xml)?;
+    let sanitized = sanitize_invalid_numeric_references(xml);
+    let raw_row_count = count_voucher_start_elements(&sanitized)?;
+    let parsed: Envelope<WitnessVoucherCollection> =
+        quick_xml::de::from_str(&sanitized).map_err(|_| {
+            OutstandingsError::InvalidResponse("empty_date_witness_collection_xml_invalid")
+        })?;
+    require_success(&parsed.header)?;
+    let vouchers = parsed
+        .body
+        .data
+        .collection
+        .vouchers
+        .into_iter()
+        .map(|raw| convert_witness_voucher(raw, window))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut guids = BTreeSet::new();
+    let mut alter_ids = BTreeSet::new();
+    for voucher in &vouchers {
+        if !master_guid_belongs_to_company(&voucher.guid, company.guid()) {
+            return Err(OutstandingsError::InvalidResponse(
+                "witness_voucher_belongs_to_another_company",
+            ));
+        }
+        if !guids.insert(voucher.guid.as_str()) {
+            return Err(OutstandingsError::InvalidResponse(
+                "duplicate_witness_voucher_guid",
+            ));
+        }
+        if !alter_ids.insert(voucher.alter_id) {
+            return Err(OutstandingsError::InvalidResponse(
+                "duplicate_witness_voucher_alter_id",
+            ));
+        }
+    }
+    Ok(ParsedWitnessSegment {
+        vouchers,
+        raw_row_count,
+    })
+}
+
+fn convert_witness_voucher(
+    raw: RawWitnessVoucher,
+    window: &DateWindow,
+) -> Result<WitnessVoucher, OutstandingsError> {
+    let date = parse_date(raw.date.text)?;
+    if &date < window.from() || &date > window.to() {
+        return Err(OutstandingsError::InvalidResponse(
+            "witness_voucher_outside_requested_window",
+        ));
+    }
+    Ok(WitnessVoucher {
+        guid: required(raw.guid, "witness_voucher_guid_missing")?,
+        alter_id: VoucherAlterId::parse(&required(
+            raw.alter_id.text,
+            "witness_voucher_alter_id_missing",
+        )?)?,
+        date,
+    })
+}
+
 fn convert_voucher(
     raw: RawVoucher,
     reporting_window: &DateWindow,
@@ -422,10 +493,12 @@ fn parse_bool(value: &str) -> Result<bool, OutstandingsError> {
 ///    between the name and its first attribute. `quick_xml` deserializes those
 ///    rows, so two identical complete replies would fail the raw-vs-parsed row
 ///    agreement check and withhold a correct report.
-/// 2. Counting every `VOUCHER` element over-reports. `CMPINFO` (under `DESC`,
-///    not `DATA`) carries bare `<VOUCHER>0</VOUCHER>` style counters — the
-///    retained live capture has exactly one, against 75 real rows. Scoping to
-///    `DATA` excludes them by structure rather than by guessing at attributes.
+/// 2. Counting every `VOUCHER` element over-reports. An empty live witness
+///    response carries `CMPINFO` (under `DESC`, not `DATA`) with a bare
+///    `<VOUCHER>0</VOUCHER>` counter. A whole-document count reports one row
+///    and inverts the empty-partition verdict. This appeared three times in the
+///    supervised qualification session. Scoping to `DATA` excludes counters by
+///    structure rather than by guessing at attributes.
 fn count_voucher_start_elements(xml: &str) -> Result<usize, OutstandingsError> {
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(xml);

@@ -327,6 +327,7 @@ mod tests {
                 ),
             ],
             encoded_bytes: 4096,
+            empty_partition_witnesses: Vec::new(),
         };
         let report = compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()).unwrap();
         assert_eq!(report.receivable_total.as_str(), "70");
@@ -400,6 +401,7 @@ mod tests {
                 ),
             ],
             encoded_bytes: 1024,
+            empty_partition_witnesses: Vec::new(),
         };
         let report = compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()).unwrap();
         assert_eq!(report.receivable_total.as_str(), "50");
@@ -447,6 +449,7 @@ mod tests {
             voucher_alter_id_high_water: VoucherAlterIdHighWater::parse("5").unwrap(),
             vouchers: vec![posted, optional],
             encoded_bytes: 2048,
+            empty_partition_witnesses: Vec::new(),
         };
         let report = compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()).unwrap();
 

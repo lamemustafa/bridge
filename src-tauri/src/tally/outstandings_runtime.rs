@@ -10,6 +10,10 @@ const TREND_SAMPLE_COUNT: usize = 3;
 const COMPARABLE_PERCENT: usize = 25;
 const TREND_HISTORY_LIMIT: usize = 32;
 pub(crate) const MAX_SEGMENT_PAIRS_PER_SCAN: u64 = 128;
+/// Each primary-empty partition can require two shifted cover pairs plus one
+/// nearest-non-empty control pair. These are paired reads, so they consume the
+/// same capped budget as primary AlterID segments; they are never additive.
+pub(crate) const MAX_EMPTY_PARTITION_WITNESS_PAIRS: u64 = 3;
 #[cfg(feature = "live-calibration-harness")]
 const BILLWISE_LAB_EXIT_WIDTH: u64 = 252;
 
@@ -55,6 +59,8 @@ pub(crate) struct SegmentPlan {
     pub(crate) date_partitions: usize,
     pub(crate) alter_id_high_water: u64,
     pub(crate) initial_width: u64,
+    pub(crate) planned_primary_segment_pairs: u64,
+    pub(crate) reserved_empty_partition_witness_pairs: u64,
     pub(crate) planned_segment_pairs: u64,
 }
 
@@ -70,13 +76,30 @@ impl SegmentPlan {
         let date_partition_count = u64::try_from(date_partitions).map_err(|_| {
             bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow
         })?;
-        let planned_segment_pairs = date_partition_count
+        let planned_primary_segment_pairs = date_partition_count
             .checked_mul(ranges_per_partition)
+            .ok_or(bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow)?;
+        // A non-empty book can reveal empty primary partitions only after they
+        // have been read. Reserve their maximal shifted-cover construction so
+        // an admissible scan can never spend a 129th pair when corroboration is
+        // reached later. A zero high-water book has no primary reads, so it
+        // cannot reach that witness path.
+        let reserved_empty_partition_witness_pairs = if alter_id_high_water == 0 {
+            0
+        } else {
+            date_partition_count
+                .checked_mul(MAX_EMPTY_PARTITION_WITNESS_PAIRS)
+                .ok_or(bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow)?
+        };
+        let planned_segment_pairs = planned_primary_segment_pairs
+            .checked_add(reserved_empty_partition_witness_pairs)
             .ok_or(bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow)?;
         Ok(Self {
             date_partitions,
             alter_id_high_water,
             initial_width,
+            planned_primary_segment_pairs,
+            reserved_empty_partition_witness_pairs,
             planned_segment_pairs,
         })
     }
@@ -299,15 +322,26 @@ mod tests {
     }
 
     #[test]
-    fn segment_plan_admits_128_pairs_and_rejects_larger_scans() {
-        let accepted = SegmentPlan::new(128, 252, CalibratedSegmentPolicy::for_test(252)).unwrap();
+    fn segment_plan_reserves_empty_partition_witnesses_inside_128_pairs() {
+        let accepted = SegmentPlan::new(32, 252, CalibratedSegmentPolicy::for_test(252)).unwrap();
+        assert_eq!(accepted.planned_primary_segment_pairs, 32);
+        assert_eq!(accepted.reserved_empty_partition_witness_pairs, 96);
         assert_eq!(accepted.planned_segment_pairs, 128);
         assert!(accepted.is_admitted());
 
-        let rejected = SegmentPlan::new(24, 101_601, CalibratedSegmentPolicy::for_test(252))
+        let rejected = SegmentPlan::new(33, 252, CalibratedSegmentPolicy::for_test(252))
             .expect("large plan arithmetic remains representable");
-        assert_eq!(rejected.planned_segment_pairs, 9_696);
+        assert_eq!(rejected.planned_segment_pairs, 132);
         assert!(!rejected.is_admitted());
+    }
+
+    #[test]
+    fn zero_high_water_does_not_reserve_witness_pairs() {
+        let empty = SegmentPlan::new(43, 0, CalibratedSegmentPolicy::for_test(252)).unwrap();
+        assert_eq!(empty.planned_primary_segment_pairs, 0);
+        assert_eq!(empty.reserved_empty_partition_witness_pairs, 0);
+        assert_eq!(empty.planned_segment_pairs, 0);
+        assert!(empty.is_admitted());
     }
 
     #[test]

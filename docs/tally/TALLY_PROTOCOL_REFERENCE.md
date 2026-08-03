@@ -1054,6 +1054,34 @@ Learned the hard way; every one of these produced a wrong conclusion at least on
 
 ---
 
+### 12.7 Empty-date witness profile qualification
+
+**VERIFIED 2026-08-02** under owner-supervised dispatch against the reference
+corpus. `VoucherEmptyPartitionWitnessV1` was healthy before and after every
+request and produced no dialog or hang.
+
+| Purpose | Window | Observation |
+| --- | --- | --- |
+| Non-empty control | `20240401..20240501` | 20 vouchers dated `20240401..20240402` |
+| Empty primary | `20240502..20240601` | no rows |
+| Shifted cover A | `20240501..20240531` | no rows |
+| Shifted cover B | `20240531..20240601` | no rows |
+
+The non-empty control proves the profile returns rows when rows exist; the two
+date-shifted covers corroborate that the primary partition is genuinely empty.
+This qualifies the runtime to use the profile only as the nearest non-empty
+control and the bounded shifted cover for a positive-high-water empty primary
+partition. It does not qualify a wider date window, change the universal
+31-day cap, establish a compatibility claim, or establish a sizing rule.
+
+**Parser trap.** An empty witness response also contains `CMPINFO` with bare
+`<VOUCHER>0</VOUCHER>`. Counting `VOUCHER` over the whole document sees one
+element and reverses the verdict. This was observed three times in the
+qualification session. Count only `VOUCHER` start elements inside `<DATA>` and
+deserialize through `BODY.DATA.COLLECTION`; the implementation does both.
+
+---
+
 ## 12a. Bill-wise semantics, the native reports, and volume — live measurement 2026-08-02
 
 **VERIFIED 2026-08-02** against TallyPrime Edit Log 7.0 EDU on port 9000, using

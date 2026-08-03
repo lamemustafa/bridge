@@ -2,6 +2,7 @@ import React from "react";
 import { RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { outstandingsPartialReason } from "./outstandings-copy";
+import { canStartOutstandingsRead } from "./outstandings-currency";
 
 type Props = {
   config: { host: string; port: number };
@@ -39,13 +40,16 @@ type Report = {
 };
 
 type LoadResult =
-  | { state: "complete"; report: Report; synced_at_unix_ms: number }
+  | { state: "complete"; report: Report; currency_assertion: string; synced_at_unix_ms: number }
   | { state: "partial"; reason_code: string; synced_at_unix_ms: number };
+
+type InrCompleteResult = Extract<LoadResult, { state: "complete" }> & { currency_assertion: "INR" };
 
 export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
   const [result, setResult] = React.useState<LoadResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [inrAssertedCompanyGuid, setInrAssertedCompanyGuid] = React.useState<string | null>(null);
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
   const requestVersion = React.useRef(0);
 
@@ -59,10 +63,13 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
     setResult(null);
     setError(null);
     setLoading(false);
+    setInrAssertedCompanyGuid(null);
   }, [config.host, config.port, company?.guid, company?.name]);
 
+  const readPermitted = canStartOutstandingsRead(company, inrAssertedCompanyGuid);
+
   const load = React.useCallback(async () => {
-    if (!company) return;
+    if (!readPermitted || !company) return;
     const version = requestVersion.current + 1;
     requestVersion.current = version;
     setLoading(true);
@@ -73,6 +80,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
           config,
           company: company.name,
           expected_company_guid: company.guid,
+          currency_assertion: "INR",
         },
       });
       if (requestVersion.current !== version) return;
@@ -84,12 +92,12 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
     } finally {
       if (requestVersion.current === version) setLoading(false);
     }
-  }, [config.host, config.port, company?.guid, company?.name]);
+  }, [config.host, config.port, company?.guid, company?.name, readPermitted]);
 
   React.useEffect(() => {
-    if (company) void load();
+    if (readPermitted) void load();
     // The screen is mounted only when the operator opens Outstandings.
-  }, [load]);
+  }, [load, readPermitted]);
 
   if (!company) {
     return (
@@ -101,7 +109,19 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
     );
   }
 
-  const report = result?.state === "complete" ? result.report : null;
+  if (!readPermitted) {
+    return (
+      <section className="panel wide outstandings-empty">
+        <h2>Confirm the company base currency</h2>
+        <p>Bridge cannot read a company’s base currency from the sealed Unit A export. Outstandings are available only after you explicitly confirm that the selected company uses INR.</p>
+        <button type="button" onClick={() => setInrAssertedCompanyGuid(company.guid)}>This company uses INR</button>
+      </section>
+    );
+  }
+
+  const completeResult = isInrCompleteResult(result) ? result : null;
+  const report = completeResult?.report ?? null;
+  const unsupportedCurrencyAssertion = result?.state === "complete" && !completeResult;
   return (
     <section className="outstandings-screen" aria-busy={loading}>
       <div className="outstandings-heading">
@@ -133,23 +153,29 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
           <span>Bridge could not prove every requested segment complete ({outstandingsPartialReason(result.reason_code)}). No totals were calculated.</span>
         </div>
       )}
+      {unsupportedCurrencyAssertion && (
+        <div className="outstandings-state error" role="alert">
+          <strong>Totals withheld</strong>
+          <span>Bridge received an unsupported currency assertion. Unit A displays totals only for an explicit INR assertion.</span>
+        </div>
+      )}
 
-      {report ? (
+      {completeResult ? (
         <>
           <div className="outstandings-totals" role="group" aria-label="Outstanding totals">
-            <div><span>Receivable</span><strong>{formatMoney(report.receivable_total)}</strong></div>
-            <div><span>Payable</span><strong>{formatMoney(report.payable_total)}</strong></div>
+            <div><span>Receivable</span><strong>{formatMoney(completeResult.report.receivable_total, completeResult.currency_assertion)}</strong></div>
+            <div><span>Payable</span><strong>{formatMoney(completeResult.report.payable_total, completeResult.currency_assertion)}</strong></div>
           </div>
 
           <div className="outstandings-ageing" role="group" aria-label="Receivable ageing buckets">
-            <div className="ageing-label"><span>Receivable ageing</span><small>as of {formatDate(report.as_of_yyyymmdd)}</small></div>
+            <div className="ageing-label"><span>Receivable ageing</span><small>as of {formatDate(completeResult.report.as_of_yyyymmdd)}</small></div>
             {[
-              ["0–30", report.ageing.days_0_30],
-              ["31–60", report.ageing.days_31_60],
-              ["61–90", report.ageing.days_61_90],
-              ["90+", report.ageing.days_90_plus],
+              ["0–30", completeResult.report.ageing.days_0_30],
+              ["31–60", completeResult.report.ageing.days_31_60],
+              ["61–90", completeResult.report.ageing.days_61_90],
+              ["90+", completeResult.report.ageing.days_90_plus],
             ].map(([label, amount]) => (
-              <div key={label}><span>{label} days</span><strong>{formatMoney(amount)}</strong></div>
+              <div key={label}><span>{label} days</span><strong>{formatMoney(amount, completeResult.currency_assertion)}</strong></div>
             ))}
           </div>
 
@@ -158,14 +184,14 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
               <h3>Top exposure</h3>
               <span>Outstanding · oldest bill</span>
             </div>
-            {report.top_parties.length ? (
-              <div role="table" aria-label="Top party exposure" aria-rowcount={report.top_parties.length + 1}>
+            {completeResult.report.top_parties.length ? (
+              <div role="table" aria-label="Top party exposure" aria-rowcount={completeResult.report.top_parties.length + 1}>
                 <div className="visually-hidden" role="row">
                   <span role="columnheader">Party</span>
                   <span role="columnheader">Outstanding</span>
                   <span role="columnheader">Oldest bill</span>
                 </div>
-                {report.top_parties.map((party) => {
+                {completeResult.report.top_parties.map((party) => {
                   const hasReceivable = party.receivable !== "0";
                   const hasPayable = party.payable !== "0";
                   const kind = hasReceivable && hasPayable
@@ -174,7 +200,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
                   return (
                     <div className="outstandings-party" role="row" key={party.party}>
                       <div role="cell"><strong>{party.party}</strong><span>{kind}</span></div>
-                      <strong role="cell">{formatMoney(party.outstanding_total)}</strong>
+                      <strong role="cell">{formatMoney(party.outstanding_total, completeResult.currency_assertion)}</strong>
                       <span role="cell">{party.oldest_bill_age_days} days</span>
                     </div>
                   );
@@ -193,14 +219,26 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
   );
 }
 
-function formatMoney(value: string) {
+function formatMoney(value: string, currencyAssertion: "INR") {
   const negative = value.startsWith("-");
   const unsigned = negative ? value.slice(1) : value;
   const [whole, fraction] = unsigned.split(".");
   const tail = whole.slice(-3);
   const head = whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",");
   const grouped = head ? `${head},${tail}` : tail;
-  return `${negative ? "−" : ""}₹${grouped}${fraction ? `.${fraction.padEnd(2, "0")}` : ""}`;
+  return `${negative ? "−" : ""}${currencySymbol(currencyAssertion)}${grouped}${fraction ? `.${fraction.padEnd(2, "0")}` : ""}`;
+}
+
+function isInrCompleteResult(result: LoadResult | null): result is InrCompleteResult {
+  return result?.state === "complete" && result.currency_assertion === "INR";
+}
+
+function currencySymbol(currencyAssertion: "INR") {
+  return currencyAssertion === "INR" ? "₹" : unreachableCurrencyAssertion(currencyAssertion);
+}
+
+function unreachableCurrencyAssertion(currencyAssertion: never): never {
+  throw new Error(`Unsupported outstandings currency assertion: ${currencyAssertion}`);
 }
 
 function formatDate(value: string) {

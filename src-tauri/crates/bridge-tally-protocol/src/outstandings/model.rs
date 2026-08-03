@@ -195,6 +195,140 @@ impl NarrowDateWindow {
     }
 }
 
+/// One or two independently requested date windows that jointly re-observe an
+/// empty primary partition without exceeding the universal 31-day wire cap.
+///
+/// Every covered day is observed through a window *different* from the primary
+/// window. Re-reading the identical primary window would reproduce its
+/// false-empty route and is therefore not corroboration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrictlyWiderDateCover {
+    primary: NarrowDateWindow,
+    slices: Vec<NarrowDateWindow>,
+}
+
+impl StrictlyWiderDateCover {
+    pub fn for_primary(primary: &NarrowDateWindow) -> Option<Self> {
+        let candidates = witness_candidates(primary);
+
+        if let Some(slice) = candidates
+            .iter()
+            .find(|slice| slice_covers_primary(slice, primary))
+        {
+            return Some(Self {
+                primary: primary.clone(),
+                slices: vec![slice.clone()],
+            });
+        }
+
+        for (index, left) in candidates.iter().enumerate() {
+            for right in candidates.iter().skip(index + 1) {
+                if slices_cover_primary(left, right, primary) {
+                    return Some(Self {
+                        primary: primary.clone(),
+                        slices: vec![left.clone(), right.clone()],
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    pub fn primary(&self) -> &NarrowDateWindow {
+        &self.primary
+    }
+
+    pub fn slices(&self) -> &[NarrowDateWindow] {
+        &self.slices
+    }
+}
+
+fn witness_candidates(primary: &NarrowDateWindow) -> Vec<NarrowDateWindow> {
+    let profile = primary.0.boundary_profile;
+    let mut starts = Vec::new();
+    let mut cursor = primary.from().clone();
+    starts.push(cursor.clone());
+    for _ in 1..MAX_NARROW_DATE_WINDOW_DAYS {
+        let Ok(previous) = cursor.previous_day() else {
+            break;
+        };
+        cursor = previous;
+        starts.push(cursor.clone());
+    }
+    let mut cursor = primary.from().clone();
+    while cursor < *primary.to() {
+        let Ok(next) = cursor.next_day() else {
+            break;
+        };
+        cursor = next;
+        starts.push(cursor.clone());
+    }
+
+    let mut candidates = Vec::new();
+    for start in starts {
+        let mut end = start.clone();
+        for _ in 0..MAX_NARROW_DATE_WINDOW_DAYS {
+            if let Ok(window) = DateWindow::parse(profile, start.as_str(), end.as_str()) {
+                if let Ok(window) = NarrowDateWindow::try_from(window) {
+                    if window != *primary
+                        && window.to() >= primary.from()
+                        && window.from() <= primary.to()
+                    {
+                        candidates.push(window);
+                    }
+                }
+            }
+            let Ok(next) = end.next_day() else {
+                break;
+            };
+            end = next;
+        }
+    }
+    candidates.sort_by(|left, right| {
+        left.from()
+            .cmp(right.from())
+            .then_with(|| left.to().cmp(right.to()))
+    });
+    candidates.dedup();
+    candidates
+}
+
+fn slice_covers_primary(slice: &NarrowDateWindow, primary: &NarrowDateWindow) -> bool {
+    slice.from() <= primary.from()
+        && slice.to() >= primary.to()
+        && slice != primary
+        && (slice.from() < primary.from() || slice.to() > primary.to())
+}
+
+fn slices_cover_primary(
+    left: &NarrowDateWindow,
+    right: &NarrowDateWindow,
+    primary: &NarrowDateWindow,
+) -> bool {
+    if left == primary || right == primary {
+        return false;
+    }
+    let mut cursor = primary.from().clone();
+    loop {
+        if !((left.from() <= &cursor && &cursor <= left.to())
+            || (right.from() <= &cursor && &cursor <= right.to()))
+        {
+            return false;
+        }
+        if cursor == *primary.to() {
+            break;
+        }
+        let Ok(next) = cursor.next_day() else {
+            return false;
+        };
+        cursor = next;
+    }
+    left.from() < primary.from()
+        || left.to() > primary.to()
+        || right.from() < primary.from()
+        || right.to() > primary.to()
+}
+
 impl TryFrom<DateWindow> for NarrowDateWindow {
     type Error = OutstandingsError;
 
@@ -469,6 +603,39 @@ pub struct Voucher {
     pub ledger_entries: Vec<LedgerEntry>,
 }
 
+/// The only row shape admitted by the empty-date corroboration profile.
+/// Keeping it distinct from `Voucher` prevents a three-field witness response
+/// from ever reaching bill computation.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WitnessVoucher {
+    pub guid: String,
+    pub alter_id: VoucherAlterId,
+    pub date: TallyDate,
+}
+
+/// A byte-stable paired response from the date-only witness profile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteWitnessPair {
+    pub(crate) window: DateWindow,
+    pub(crate) vouchers: Vec<WitnessVoucher>,
+}
+
+impl CompleteWitnessPair {
+    pub fn window(&self) -> &DateWindow {
+        &self.window
+    }
+
+    pub fn vouchers(&self) -> &[WitnessVoucher] {
+        &self.vouchers
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum WitnessPairVerification {
+    Complete(CompleteWitnessPair),
+    Partial(PartialScan),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteSegment {
     pub(crate) reporting_window: DateWindow,
@@ -502,6 +669,123 @@ pub struct EmptyDateWindowWitness {
     pub(crate) observed_row_count: usize,
 }
 
+/// Records which non-empty primary partition established liveness immediately
+/// before a particular empty partition's cover. This is retained in the typed
+/// completion evidence rather than reconstructed from logs later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmptyPartitionControlProvenance {
+    control_window: DateWindow,
+    expected_row: WitnessVoucher,
+    vouched_cover_slices: Vec<NarrowDateWindow>,
+}
+
+impl EmptyPartitionControlProvenance {
+    pub(crate) fn new(
+        control_window: DateWindow,
+        expected_row: WitnessVoucher,
+        vouched_cover_slices: Vec<NarrowDateWindow>,
+    ) -> Self {
+        Self {
+            control_window,
+            expected_row,
+            vouched_cover_slices,
+        }
+    }
+
+    pub fn control_window(&self) -> &DateWindow {
+        &self.control_window
+    }
+
+    pub fn expected_row(&self) -> &WitnessVoucher {
+        &self.expected_row
+    }
+
+    pub fn vouched_cover_slices(&self) -> &[NarrowDateWindow] {
+        &self.vouched_cover_slices
+    }
+}
+
+/// Mandatory I5 corroboration for a zero-row primary date partition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmptyPartitionWitness {
+    empty_window: DateWindow,
+    control_provenance: EmptyPartitionControlProvenance,
+}
+
+impl EmptyPartitionWitness {
+    pub(crate) fn new(
+        empty_window: DateWindow,
+        control_provenance: EmptyPartitionControlProvenance,
+    ) -> Self {
+        Self {
+            empty_window,
+            control_provenance,
+        }
+    }
+
+    pub fn empty_window(&self) -> &DateWindow {
+        &self.empty_window
+    }
+
+    pub fn control_provenance(&self) -> &EmptyPartitionControlProvenance {
+        &self.control_provenance
+    }
+}
+
+/// A partition that may enter final assembly. A zero-row `CompleteScan` has
+/// no public path across this boundary unless its capped, date-shifted witness
+/// and control provenance are present.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CorroboratedDatePartition {
+    NonEmpty(CompleteScan),
+    Empty {
+        scan: CompleteScan,
+        witness: EmptyPartitionWitness,
+    },
+    /// `ALTVCHID = 0` is the separately proven genuinely-empty-book case.
+    /// It carries no same-profile control because none can exist.
+    EmptyBook(CompleteScan),
+}
+
+impl CorroboratedDatePartition {
+    pub fn non_empty(scan: CompleteScan) -> Result<Self, PartialScan> {
+        if scan.vouchers.is_empty() {
+            return Err(PartialScan::new("empty_date_partition_uncorroborated"));
+        }
+        Ok(Self::NonEmpty(scan))
+    }
+
+    pub(crate) fn empty(
+        scan: CompleteScan,
+        witness: EmptyPartitionWitness,
+    ) -> Result<Self, PartialScan> {
+        if !scan.vouchers.is_empty() || scan.reporting_window != witness.empty_window {
+            return Err(PartialScan::new("empty_date_witness_scope_mismatch"));
+        }
+        Ok(Self::Empty { scan, witness })
+    }
+
+    pub fn empty_book(scan: CompleteScan) -> Result<Self, PartialScan> {
+        if scan.voucher_alter_id_high_water.get() != 0 || !scan.vouchers.is_empty() {
+            return Err(PartialScan::new("empty_book_partition_invalid"));
+        }
+        Ok(Self::EmptyBook(scan))
+    }
+
+    pub(crate) fn scan(&self) -> &CompleteScan {
+        match self {
+            Self::NonEmpty(scan) | Self::Empty { scan, .. } | Self::EmptyBook(scan) => scan,
+        }
+    }
+
+    pub fn empty_witness(&self) -> Option<&EmptyPartitionWitness> {
+        match self {
+            Self::NonEmpty(_) | Self::EmptyBook(_) => None,
+            Self::Empty { witness, .. } => Some(witness),
+        }
+    }
+}
+
 impl EmptyDateWindowWitness {
     pub fn empty_window(&self) -> &DateWindow {
         &self.empty_window
@@ -533,6 +817,9 @@ pub struct CompleteScan {
     pub(crate) voucher_alter_id_high_water: VoucherAlterIdHighWater,
     pub(crate) vouchers: Vec<Voucher>,
     pub(crate) encoded_bytes: usize,
+    /// Provenance for date partitions that were empty in the primary profile
+    /// and therefore required an independently shaped witness request.
+    pub(crate) empty_partition_witnesses: Vec<EmptyPartitionWitness>,
 }
 
 impl CompleteScan {
@@ -550,6 +837,9 @@ impl CompleteScan {
     }
     pub fn encoded_bytes(&self) -> usize {
         self.encoded_bytes
+    }
+    pub fn empty_partition_witnesses(&self) -> &[EmptyPartitionWitness] {
+        &self.empty_partition_witnesses
     }
 }
 

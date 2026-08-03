@@ -55,7 +55,7 @@ pub use connector::{
     company_source_identity, core_snapshot_start_authorized, source_lineage, RuntimeTallyConnector,
 };
 pub use runtime::{
-    CachedProbeReservation, EndpointKey, OutstandingsLoadResult, TallyRuntime,
-    TallySessionSnapshot, TallyTelemetryPreviewExport,
+    CachedProbeReservation, EndpointKey, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
+    TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport,
 };
 pub use xml_parser::{TallyCompany, TallyImportResult, TallyLedger, TallyVoucher};

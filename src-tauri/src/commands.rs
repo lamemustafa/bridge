@@ -21,10 +21,11 @@ use crate::tally::validators::{
 };
 use crate::tally::{
     company_source_identity, core_snapshot_start_authorized, source_lineage,
-    CachedProbeReservation, ConnectionStatus, EndpointKey, OutstandingsLoadResult,
-    RuntimeTallyConnector, SelectedReadObservation, SelectedReadScopeEvidence, TallyCompany,
-    TallyConfig, TallyLedger, TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport,
-    TallyVoucher, SELECTED_LEDGER_QUERY_PROFILE_ID, SELECTED_VOUCHER_QUERY_PROFILE_ID,
+    CachedProbeReservation, ConnectionStatus, EndpointKey, OutstandingsCurrencyAssertion,
+    OutstandingsLoadResult, RuntimeTallyConnector, SelectedReadObservation,
+    SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyLedger, TallyRuntime,
+    TallySessionSnapshot, TallyTelemetryPreviewExport, TallyVoucher,
+    SELECTED_LEDGER_QUERY_PROFILE_ID, SELECTED_VOUCHER_QUERY_PROFILE_ID,
 };
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityState,
@@ -2048,6 +2049,14 @@ pub struct CompanyRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct OutstandingsRequest {
+    pub config: TallyConfig,
+    pub company: String,
+    pub expected_company_guid: String,
+    pub currency_assertion: OutstandingsCurrencyAssertion,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct VoucherRequest {
     pub config: TallyConfig,
     pub company: String,
@@ -2145,7 +2154,7 @@ pub async fn fetch_tally_vouchers(
 
 #[tauri::command]
 pub async fn fetch_tally_outstandings(
-    request: CompanyRequest,
+    request: OutstandingsRequest,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<OutstandingsLoadResult, TallyCommandError> {
     validate_company_name(&request.company).map_err(|message| {
@@ -2175,6 +2184,7 @@ pub async fn fetch_tally_outstandings(
             request.company,
             request.expected_company_guid,
             as_of,
+            request.currency_assertion,
         )
         .await
         .map_err(tally_runtime_command_error)
@@ -2347,10 +2357,12 @@ mod tests {
     use super::{
         first_calendar_day_canary_window, reconcile_review_cleanup,
         reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
-        tally_runtime_command_error, validate_dsc_pins, PersistedTallyCompany, SavedTallySetup,
+        tally_runtime_command_error, validate_dsc_pins, OutstandingsRequest, PersistedTallyCompany,
+        SavedTallySetup,
     };
     use crate::tally::{
-        ConnectionStatus, SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
+        ConnectionStatus, OutstandingsCurrencyAssertion, SelectedReadObservation, TallyCompany,
+        TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
@@ -2362,6 +2374,32 @@ mod tests {
         assert!(validate_dsc_pins(&["1\n2".to_string()]).is_err());
         assert!(validate_dsc_pins(&["x".repeat(129)]).is_err());
         assert!(validate_dsc_pins(&["1".to_string(), "2".to_string()]).is_err());
+    }
+
+    #[test]
+    fn outstandings_accepts_only_an_explicit_inr_currency_assertion() {
+        let accepted: OutstandingsRequest = serde_json::from_value(serde_json::json!({
+            "config": { "host": "127.0.0.1", "port": 9000 },
+            "company": "Synthetic Company",
+            "expected_company_guid": "synthetic-guid",
+            "currency_assertion": "INR"
+        }))
+        .expect("INR is the one supported explicit assertion");
+        assert_eq!(
+            accepted.currency_assertion,
+            OutstandingsCurrencyAssertion::Inr
+        );
+
+        let rejected = serde_json::from_value::<OutstandingsRequest>(serde_json::json!({
+            "config": { "host": "127.0.0.1", "port": 9000 },
+            "company": "Synthetic Company",
+            "expected_company_guid": "synthetic-guid",
+            "currency_assertion": "USD"
+        }));
+        assert!(
+            rejected.is_err(),
+            "unsupported currencies must not start a scan"
+        );
     }
 
     #[test]
