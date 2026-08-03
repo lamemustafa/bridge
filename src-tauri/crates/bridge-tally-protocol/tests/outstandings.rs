@@ -890,8 +890,11 @@ proptest! {
         let later = day_after(&earlier, u32::from(additional_days));
         let earlier_report = report_for_named_references_as_of("ONE", "TWO", &earlier);
         let later_report = report_for_named_references_as_of("ONE", "TWO", &later);
+        prop_assert_eq!(ageing_bill_count(&earlier_report), 2);
+        prop_assert_eq!(ageing_bill_count(&later_report), 2);
         prop_assert!(
-            ageing_bucket_index(&earlier_report) <= ageing_bucket_index(&later_report),
+            ageing_bucket_index(&earlier_report).expect("fixture retains open bills")
+                <= ageing_bucket_index(&later_report).expect("fixture retains open bills"),
             "a bill cannot move to a younger ageing bucket as as-of advances"
         );
     }
@@ -1025,16 +1028,25 @@ fn day_after(date: &str, days: u32) -> String {
     date.as_str().to_string()
 }
 
-fn ageing_bucket_index(report: &bridge_tally_protocol::outstandings::OutstandingsReport) -> u8 {
+fn ageing_bill_count(report: &bridge_tally_protocol::outstandings::OutstandingsReport) -> usize {
+    let counts = &report.ageing_bill_counts;
+    counts.days_0_30 + counts.days_31_60 + counts.days_61_90 + counts.days_90_plus
+}
+
+fn ageing_bucket_index(
+    report: &bridge_tally_protocol::outstandings::OutstandingsReport,
+) -> Option<u8> {
     let counts = &report.ageing_bill_counts;
     if counts.days_0_30 > 0 {
-        0
+        Some(0)
     } else if counts.days_31_60 > 0 {
-        1
+        Some(1)
     } else if counts.days_61_90 > 0 {
-        2
+        Some(2)
+    } else if counts.days_90_plus > 0 {
+        Some(3)
     } else {
-        3
+        None
     }
 }
 
