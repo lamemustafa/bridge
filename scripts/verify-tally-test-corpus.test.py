@@ -1,30 +1,17 @@
-"""Offline contract tests for the corpus-verifier wrapper."""
+"""Offline contract tests for the corpus-qualification boundary."""
 
+import importlib.util
 import pathlib
-import subprocess
-import sys
 
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts" / "verify-tally-test-corpus.py"
-
-
-def run(*args):
-    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
+SCRIPT = pathlib.Path(__file__).resolve().parent / "verify-tally-test-corpus.py"
 
 
 def main():
-    help_result = run("--help")
-    assert help_result.returncode == 0, help_result.stderr
-    assert "--extent-xml" in help_result.stdout
-    assert "--voucher-xml" in help_result.stdout
-    missing_capture = run(
-        "--company", "Synthetic Company", "--guid", "synthetic-guid",
-        "--from", "20260401", "--to", "20260401", "--as-of", "20260401",
-        "--extent-xml", "missing-extent.xml", "--voucher-xml", "missing-vouchers.xml",
-    )
-    assert missing_capture.returncode != 0
-    assert "capture is not a regular file" in missing_capture.stderr
+    spec = importlib.util.spec_from_file_location("verify_tally_test_corpus", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.main([]) == 2
 
 
 if __name__ == "__main__":

@@ -183,43 +183,20 @@ each month occupies a **contiguous, non-overlapping band of ~18 IDs** (`202404` 
 > Criterion: **worst month's `AlterID` span ≤ 40% of the book's ID range.** Aarav fails this by
 > orders of magnitude — one *day* spans the whole range.
 
-Script: [`scripts/verify-tally-test-corpus.py`](../../scripts/verify-tally-test-corpus.py).
-It performs **no second XML parsing implementation**: it passes captured,
-sealed-profile responses to `bridge-tally-test-corpus-verifier`, which calls
-Bridge's production extent parser, segment parser, scan assembly, and
-outstandings computation. The independent element remains Tally's own native
-report comparison, not a duplicate Bridge parser.
+The corpus is currently **unqualified**. Do not treat a single voucher response,
+a hand-maintained fixture label, or gateway reachability as acceptance evidence.
+Qualification requires independently captured paired responses for every narrow
+date partition, paired ledger-opening coverage, and an extent-bound full-book
+scan. Until those captures are available, [`scripts/verify-tally-test-corpus.py`](../../scripts/verify-tally-test-corpus.py)
+fails closed and cannot emit an acceptance token.
 
-```bash
-python3 scripts/verify-tally-test-corpus.py \
-  --company "Bridge Billwise Lab" --guid "$TALLY_CORPUS_GUID" \
-  --from 20240401 --to 20260702 --as-of 20260731 \
-  --extent-xml /safe/local/extent.xml --voucher-xml /safe/local/vouchers.xml
-```
+**Check locality during generation, not only at the end** — it is the one property
+that cannot be repaired afterwards, and catching it at 50 vouchers is far cheaper
+than at 500.
 
-**Run it partway through generation, not only at the end** — locality is the one property that
-cannot be repaired afterwards, and catching it at 50 vouchers is far cheaper than at 500.
-
-### Native outstandings oracle availability boundary
-
-`bridge-tally-outstandings-oracle` is a manual, feature-gated command for the
-Tally host; it is not GitHub CI. It sends exactly one existing sealed read-only
-health profile to the port supplied by the operator. It never emits a pass token
-or exits zero: `tally_oracle_skipped:gateway_unreachable:port=<port>` exits 20,
-and `tally_oracle_skipped:native_bills_receivable_profile_unavailable:port=<port>`
-exits 21. The latter is intentional until a reviewed, read-only native Bills
-Receivable export profile exists; do not substitute an unreviewed `<TYPE>Data</TYPE>`
-request, which can block the gateway with a modal dialog.
-
-```bash
-rustup run 1.96.0 cargo run --locked -p bridge-tally-live-read \
-  --features tally-outstandings-oracle-runner \
-  --bin bridge-tally-outstandings-oracle -- --port 9000
-```
-
-> Both scripts are **operator tools that contact a live Tally**. They must never be imported or
-> invoked from an automated test — no test in this repository contacts a live Tally, a
-> government portal, or an external provider.
+> Capture remains an **operator-only live Tally activity**. It must never be imported or invoked
+> from an automated test — no test in this repository contacts a live Tally, a government portal,
+> or an external provider.
 
 ---
 

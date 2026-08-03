@@ -35,17 +35,6 @@ const FIXTURE_SCHEMA_VERSION: u16 = 1;
 const MAX_LOCAL_INPUT_BYTES: usize = 64 * 1024;
 const NETWORK_CONSENT_TTL_MS: i64 = 5 * 60 * 1000;
 
-/// Reachability probe used only by the separately feature-gated oracle binary.
-/// It sends one existing sealed, read-only profile and exposes no generic XML
-/// capability. A successful probe is explicitly not an oracle pass.
-pub async fn read_only_oracle_health(port: u16) -> Result<(), ReadOnlyTransportError> {
-    let transport = ReadOnlyTransport::new(ReadLoopback::Ipv4, port)?;
-    transport
-        .send(ReadOnlyProfile::CompanyListV1)
-        .await
-        .map(|_| ())
-}
-
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[error("live-read qualification failed ({code})")]
 pub struct LiveReadError {

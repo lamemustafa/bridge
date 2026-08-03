@@ -5,25 +5,37 @@
       "file": "unit_a_company_extent_live.xml",
       "request_profile": "company_book_extent_v1",
       "response_shape": "envelope_collection_company",
-      "capture_kind": "sanitized_live"
+      "capture_kind": "sanitized_live",
+      "fixture_sha256": "ab580f9db97425ff328e30ebf0a81af000e21862180ef7093e553ccc8ed3d3e3",
+      "request_template_sha256": "38038f96473b2bf036d78aca2eea85f96738ace3bf0e691bbfa14ddd165784f4",
+      "request_evidence": "sealed_profile_template"
     },
     {
       "file": "unit_a_vouchers_wildcard_live.xml",
       "request_profile": "voucher_outstandings_v1_pre_isoptional",
       "response_shape": "envelope_collection_voucher",
-      "capture_kind": "sanitized_live"
+      "capture_kind": "sanitized_live",
+      "fixture_sha256": "6db364089068d13563047a58a491a518e90fd30099dc0723ab39da9ebaf58e99",
+      "request_template_sha256": null,
+      "request_evidence": "pre_seal_legacy_capture_no_template_digest"
     },
     {
       "file": "unit_a_optional_voucher_live.xml",
       "request_profile": "voucher_outstandings_v1",
       "response_shape": "envelope_collection_voucher",
-      "capture_kind": "sanitized_live"
+      "capture_kind": "sanitized_live",
+      "fixture_sha256": "0a692e6362101f9c176cddca1f8afb7d00da3ceb97f94ebd42ff682130b99e53",
+      "request_template_sha256": "7e4025038bf85345d0a55b9437be339c8829b1f699abaaa52bbdfa6affcb1dae",
+      "request_evidence": "sealed_profile_template"
     },
     {
       "file": "unit_a_invalid_char_ref_live.xml",
       "request_profile": "voucher_outstandings_v1",
       "response_shape": "envelope_collection_voucher",
-      "capture_kind": "sanitized_live"
+      "capture_kind": "sanitized_live",
+      "fixture_sha256": "c6484f004cdee7b1b1ef7065a4156243993956b54c4acf8776ab0c7b68fa5a8d",
+      "request_template_sha256": "7e4025038bf85345d0a55b9437be339c8829b1f699abaaa52bbdfa6affcb1dae",
+      "request_evidence": "sealed_profile_template"
     }
   ]
 }

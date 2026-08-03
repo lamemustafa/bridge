@@ -135,7 +135,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-live-read/Cargo.toml",
-      "sha256": "8ef4c9996d1f565ad5ceede9f72e8ea7b639ca51f1389151e2e88326000dca11"
+      "sha256": "627b2ef41ef8bc01a3e5e28fc7985d98feece91f38135373b2aef9459e301226"
     },
     {
       "path": "src-tauri/crates/bridge-tally-live-read/src/bin/native_outstandings_probe.rs",
@@ -143,7 +143,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-live-read/src/lib.rs",
-      "sha256": "b24cbe439ff160e129b373ae819d14efce80fce31fcabf533e72d5d9343acb3f"
+      "sha256": "e5a37cc45e5718353525f7bd0a00f4cad739716c8588c2409aa828b125351d70"
     },
     {
       "path": "src-tauri/crates/bridge-tally-live-read/src/main.rs",
@@ -175,7 +175,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/Cargo.toml",
-      "sha256": "5ebea19df50ca0dbd5939730a3985fdee592f6714c0b7eeef2fd5e2c66d95676"
+      "sha256": "cb144c8de2662814723603c0a58e23c1cfac74a49fde3c392fceb51af0b549db"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/bills_native_outstandings_probe.rs",
@@ -466,5 +466,5 @@
       "sha256": "dd033010711ca01a7a395a531285c6ef187a359640a156cbc8da7281e11a39ea"
     }
   ],
-  "manifest_sha256": "90769a1536e838aecc11c5741429a32ba46d7a724504bb0c477d8bf6423de387"
+  "manifest_sha256": "189e6a37c29a28c478caa32a2217a22362ebda768abf554ae64b4d9d532f44ad"
 }

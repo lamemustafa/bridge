@@ -6,13 +6,14 @@ use bridge_tally_protocol::{
         DateBoundaryProfile, DateWindow, MoneyValue, NarrowDateWindow, OutstandingsError,
         ScanResult, SegmentVerification, StrictlyWiderDateCover, VoucherAlterIdHighWater,
     },
-    xml_read_profiles::ReadOnlyProfile,
+    xml_read_profiles::{ReadOnlyProfile, ReadOnlyProfileId},
 };
 use proptest::{
     prelude::*,
     test_runner::{Config as ProptestConfig, RngSeed},
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 const COMPANY_EXTENT: &str = include_str!("fixtures/unit_a_company_extent_live.xml");
 const VOUCHERS_LEGACY_SHAPE: &str = include_str!("fixtures/unit_a_vouchers_wildcard_live.xml");
@@ -66,6 +67,9 @@ struct FixtureProvenance {
     request_profile: String,
     response_shape: String,
     capture_kind: String,
+    fixture_sha256: String,
+    request_template_sha256: Option<String>,
+    request_evidence: String,
 }
 
 fn fixture_provenance() -> FixtureProvenanceDocument {
@@ -88,6 +92,15 @@ fn assert_fixture_profile(file: &str, expected_profile: &str, expected_shape: &s
     assert_eq!(
         provenance.capture_kind, "sanitized_live",
         "{file} must state capture kind"
+    );
+    assert_eq!(
+        provenance.fixture_sha256.len(),
+        64,
+        "{file} must bind its bytes"
+    );
+    assert!(
+        !provenance.request_evidence.is_empty(),
+        "{file} must record request evidence"
     );
 }
 
@@ -124,7 +137,55 @@ fn every_outstandings_fixture_declares_its_request_profile() {
         assert_eq!(record.request_profile, expected.1);
         assert_eq!(record.response_shape, expected.2);
         assert_eq!(record.capture_kind, "sanitized_live");
+        assert_eq!(record.fixture_sha256.len(), 64);
+        assert!(!record.request_evidence.is_empty());
     }
+}
+
+#[test]
+fn outstandings_fixture_provenance_binds_capture_bytes_and_sealed_profiles() {
+    let document = fixture_provenance();
+    for (file, bytes, expected_template_sha256) in [
+        (
+            "unit_a_company_extent_live.xml",
+            COMPANY_EXTENT,
+            Some(ReadOnlyProfileId::CompanyBookExtentV1.template_sha256()),
+        ),
+        (
+            "unit_a_vouchers_wildcard_live.xml",
+            VOUCHERS_LEGACY_SHAPE,
+            None,
+        ),
+        (
+            "unit_a_optional_voucher_live.xml",
+            include_str!("fixtures/unit_a_optional_voucher_live.xml"),
+            Some(ReadOnlyProfileId::VoucherOutstandingsV1.template_sha256()),
+        ),
+        (
+            "unit_a_invalid_char_ref_live.xml",
+            include_str!("fixtures/unit_a_invalid_char_ref_live.xml"),
+            Some(ReadOnlyProfileId::VoucherOutstandingsV1.template_sha256()),
+        ),
+    ] {
+        let record = document
+            .fixtures
+            .iter()
+            .find(|fixture| fixture.file == file)
+            .unwrap_or_else(|| panic!("fixture {file} has no provenance"));
+        assert_eq!(
+            record.fixture_sha256,
+            sha256_hex(bytes.as_bytes()),
+            "{file} digest must bind the exact included fixture"
+        );
+        assert_eq!(record.request_template_sha256, expected_template_sha256);
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn full_alter_id_range() -> AlterIdRange {
@@ -1174,7 +1235,7 @@ fn a_bill_literally_named_on_account_does_not_merge_with_the_aggregate() {
     let window =
         DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
     let report = compute_outstandings(
-        &complete_scan_for_vouchers(&xml, window, 440),
+        &complete_scan_for_vouchers(&xml, window, 2),
         TallyDate::parse("20260401").unwrap(),
     )
     .expect("two distinct bill keys compute");
@@ -1190,11 +1251,15 @@ fn a_bill_literally_named_on_account_does_not_merge_with_the_aggregate() {
     let window =
         DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260401", "20260401").unwrap();
     assert!(matches!(
-        compute_outstandings(
-            &complete_scan_for_vouchers(&unnamed_non_on_account, window, 440),
-            TallyDate::parse("20260401").unwrap(),
-        ),
-        Err(OutstandingsError::InvalidResponse("bill_reference_missing"))
+        verify_segment_pair(
+            &unnamed_non_on_account,
+            &unnamed_non_on_account,
+            extent().company(),
+            window,
+            AlterIdRange::new(0, 2).unwrap(),
+        )
+        .expect("pair verification returns an in-band result"),
+        SegmentVerification::Partial(partial) if partial.reason_code == "bill_reference_missing"
     ));
 }
 
