@@ -9,7 +9,8 @@ use std::{collections::BTreeMap, fs, process::ExitCode};
 use bridge_tally_primitives::TallyDate;
 use bridge_tally_protocol::outstandings::{
     assemble_scan, compute_outstandings, parse_company_book_extent, verify_segment_pair,
-    AlterIdRange, DateBoundaryProfile, DateWindow, ScanResult, SegmentVerification,
+    AlterIdRange, BillReferenceKind, DateBoundaryProfile, DateWindow, ScanResult,
+    SegmentVerification,
 };
 
 fn main() -> ExitCode {
@@ -98,10 +99,10 @@ fn run() -> Result<(), String> {
                 .as_deref()
                 .is_some_and(|name| !name.is_empty())
             {
-                if allocation.bill_type.eq_ignore_ascii_case("New Ref") {
+                if allocation.bill_type == BillReferenceKind::NewRef {
                     named_new_ref += 1;
                 }
-                if allocation.bill_type.eq_ignore_ascii_case("Agst Ref") {
+                if allocation.bill_type == BillReferenceKind::AgstRef {
                     named_agst_ref += 1;
                 }
             }
