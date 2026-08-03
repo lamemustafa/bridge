@@ -198,7 +198,8 @@ corpus. It repairs observed XML-1.0-illegal numeric references before strict par
 the production success envelope (`HEADER/STATUS = 1`) and canonical eight-ASCII-digit voucher dates.
 It is **inconclusive** until at least three
 month bands are present: two dense, correctly ordered bands each occupy at least half the ID range,
-which cannot be distinguished from scattering by the 40% criterion:
+which cannot be distinguished from scattering by the 40% criterion. Each observed month must also
+contain at least two voucher IDs; singleton bands have a trivial span of one and cannot test locality:
 
 ```bash
 python3 scripts/verify-tally-test-corpus.py --locality-xml /safe/local/vouchers.xml

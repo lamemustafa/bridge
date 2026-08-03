@@ -33,8 +33,11 @@ def main():
         capture.write_text(
             "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
-            "<VOUCHER><ALTERID>3</ALTERID><DATE>20240501</DATE></VOUCHER>"
-            "<VOUCHER><ALTERID>5</ALTERID><DATE>20240601</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>2</ALTERID><DATE>20240402</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>4</ALTERID><DATE>20240501</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>5</ALTERID><DATE>20240502</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>7</ALTERID><DATE>20240601</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>8</ALTERID><DATE>20240602</DATE></VOUCHER>"
             "</COLLECTION></DATA></BODY></ENVELOPE>"
         )
         assert module.main(["--locality-xml", str(capture)]) == 0
@@ -46,6 +49,8 @@ def main():
             "<VOUCHER><ALTERID>100</ALTERID><DATE>20240402</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>2</ALTERID><DATE>20240501</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>3</ALTERID><DATE>20240601</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>4</ALTERID><DATE>20240502</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>5</ALTERID><DATE>20240602</DATE></VOUCHER>"
             "</COLLECTION></DATA></BODY></ENVELOPE>"
         )
         assert module.main(["--locality-xml", str(capture)]) == 1
@@ -55,6 +60,16 @@ def main():
             "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>2</ALTERID><DATE>20240402</DATE></VOUCHER>"
+            "</COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+        assert module.main(["--locality-xml", str(capture)]) == 2
+    with tempfile.TemporaryDirectory() as directory:
+        capture = pathlib.Path(directory) / "sparse-months.xml"
+        capture.write_text(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"
+            "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>3</ALTERID><DATE>20240501</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>5</ALTERID><DATE>20240601</DATE></VOUCHER>"
             "</COLLECTION></DATA></BODY></ENVELOPE>"
         )
         assert module.main(["--locality-xml", str(capture)]) == 2
@@ -101,8 +116,11 @@ def main():
         capture.write_text(
             "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER>&#4;</LEDGER>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
-            "<VOUCHER><ALTERID>3</ALTERID><DATE>20240501</DATE></VOUCHER>"
-            "<VOUCHER><ALTERID>5</ALTERID><DATE>20240601</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>2</ALTERID><DATE>20240402</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>4</ALTERID><DATE>20240501</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>5</ALTERID><DATE>20240502</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>7</ALTERID><DATE>20240601</DATE></VOUCHER>"
+            "<VOUCHER><ALTERID>8</ALTERID><DATE>20240602</DATE></VOUCHER>"
             "</COLLECTION></DATA></BODY></ENVELOPE>"
         )
         assert module.main(["--locality-xml", str(capture)]) == 0

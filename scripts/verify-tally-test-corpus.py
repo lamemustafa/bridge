@@ -59,6 +59,12 @@ def locality_diagnostic(path):
             "not corpus acceptance"
         )
         return 2
+    if any(len(ids) < 2 for ids in months.values()):
+        print(
+            "LOCALITY DIAGNOSTIC INCONCLUSIVE: every month band needs at least "
+            "two voucher IDs; not corpus acceptance"
+        )
+        return 2
 
     low, high = min(alter_ids), max(alter_ids)
     total_span = high - low + 1
