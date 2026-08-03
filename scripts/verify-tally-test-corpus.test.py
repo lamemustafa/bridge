@@ -15,10 +15,23 @@ def main():
     assert module.main([]) == 2
     assert module.sanitize_invalid_numeric_references("<A>&#4;</A>") == "<A>\ufffd#4;</A>"
     assert module.sanitize_invalid_numeric_references("<A>&#4294967296;</A>") == "<A>&#4294967296;</A>"
+    for name, header in (("failed-status", "<STATUS>0</STATUS>"), ("missing-status", "")):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = pathlib.Path(directory) / f"{name}.xml"
+            capture.write_text(
+                "<ENVELOPE><HEADER>"
+                f"{header}"
+                "</HEADER><BODY><DATA><COLLECTION>"
+                "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
+                "<VOUCHER><ALTERID>3</ALTERID><DATE>20240501</DATE></VOUCHER>"
+                "<VOUCHER><ALTERID>5</ALTERID><DATE>20240601</DATE></VOUCHER>"
+                "</COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+            assert module.main(["--locality-xml", str(capture)]) == 2
     with tempfile.TemporaryDirectory() as directory:
         capture = pathlib.Path(directory) / "local.xml"
         capture.write_text(
-            "<ENVELOPE><BODY><DATA><COLLECTION>"
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>3</ALTERID><DATE>20240501</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>5</ALTERID><DATE>20240601</DATE></VOUCHER>"
@@ -28,7 +41,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         capture = pathlib.Path(directory) / "scattered.xml"
         capture.write_text(
-            "<ENVELOPE><BODY><DATA><COLLECTION>"
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>100</ALTERID><DATE>20240402</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>2</ALTERID><DATE>20240501</DATE></VOUCHER>"
@@ -39,7 +52,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         capture = pathlib.Path(directory) / "one-month.xml"
         capture.write_text(
-            "<ENVELOPE><BODY><DATA><COLLECTION>"
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>2</ALTERID><DATE>20240402</DATE></VOUCHER>"
             "</COLLECTION></DATA></BODY></ENVELOPE>"
@@ -56,7 +69,7 @@ def main():
             for alter_id in range(26, 51)
         )
         capture.write_text(
-            "<ENVELOPE><BODY><DATA><COLLECTION>"
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"
             f"{april}{may}"
             "</COLLECTION></DATA></BODY></ENVELOPE>"
         )
@@ -64,7 +77,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         capture = pathlib.Path(directory) / "bad-date.xml"
         capture.write_text(
-            "<ENVELOPE><BODY><DATA><COLLECTION>"
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>202641</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>2</ALTERID><DATE>20240501</DATE></VOUCHER>"
             "</COLLECTION></DATA></BODY></ENVELOPE>"
@@ -78,7 +91,7 @@ def main():
         with tempfile.TemporaryDirectory() as directory:
             capture = pathlib.Path(directory) / f"{name}.xml"
             capture.write_text(
-                "<ENVELOPE><BODY><DATA><COLLECTION>"
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>"
                 f"<VOUCHER><ALTERID>{alter_id}</ALTERID><DATE>20240401</DATE></VOUCHER>"
                 "</COLLECTION></DATA></BODY></ENVELOPE>"
             )
@@ -86,7 +99,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         capture = pathlib.Path(directory) / "invalid-reference.xml"
         capture.write_text(
-            "<ENVELOPE><BODY><DATA><COLLECTION><LEDGER>&#4;</LEDGER>"
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER>&#4;</LEDGER>"
             "<VOUCHER><ALTERID>1</ALTERID><DATE>20240401</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>3</ALTERID><DATE>20240501</DATE></VOUCHER>"
             "<VOUCHER><ALTERID>5</ALTERID><DATE>20240601</DATE></VOUCHER>"

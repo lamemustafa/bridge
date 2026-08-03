@@ -19,6 +19,10 @@ def locality_diagnostic(path):
         print(f"LOCALITY DIAGNOSTIC FAILED: capture unreadable ({error})")
         return 2
 
+    if child_text(root.find("./HEADER"), "STATUS") != "1":
+        print("LOCALITY DIAGNOSTIC FAILED: capture status is not success")
+        return 2
+
     data = root.find("./BODY/DATA")
     vouchers = data.findall(".//VOUCHER") if data is not None else []
     if not vouchers:
@@ -73,6 +77,8 @@ def locality_diagnostic(path):
 
 
 def child_text(element, name):
+    if element is None:
+        return None
     child = element.find(name)
     return child.text.strip() if child is not None and child.text else None
 
