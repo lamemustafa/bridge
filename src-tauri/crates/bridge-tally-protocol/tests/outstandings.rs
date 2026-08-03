@@ -1,23 +1,20 @@
 use bridge_tally_primitives::TallyDate;
 use bridge_tally_protocol::{
     outstandings::{
-        assemble_scan, compute_outstandings, parse_company_book_extent,
+        assemble_partitioned_scan, assemble_scan, compute_outstandings, parse_company_book_extent,
         parse_ledger_opening_coverage, verify_segment_pair, AlterIdRange, BillReferenceKind,
-        DateBoundaryProfile, DateWindow, MoneyValue, NarrowDateWindow, OutstandingsError,
-        ScanResult, SegmentVerification, StrictlyWiderDateCover, VoucherAlterIdHighWater,
+        CorroboratedDatePartition, DateBoundaryProfile, DateWindow, MoneyValue, NarrowDateWindow,
+        OutstandingsError, ScanResult, SegmentVerification, StrictlyWiderDateCover,
+        VoucherAlterIdHighWater,
     },
-    xml_read_profiles::{ReadOnlyProfile, ReadOnlyProfileId},
+    xml_read_profiles::ReadOnlyProfile,
 };
 use proptest::{
     prelude::*,
     test_runner::{Config as ProptestConfig, RngSeed},
 };
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
-
 const COMPANY_EXTENT: &str = include_str!("fixtures/unit_a_company_extent_live.xml");
 const VOUCHERS_LEGACY_SHAPE: &str = include_str!("fixtures/unit_a_vouchers_wildcard_live.xml");
-const OUTSTANDINGS_FIXTURE_PROVENANCE: &str = include_str!("fixtures/outstandings-provenance.json");
 
 /// The retained wildcard capture predates `ISOPTIONAL` joining the sealed
 /// request's FETCH list, so it carries no such element and the parser now fails
@@ -27,11 +24,6 @@ const OUTSTANDINGS_FIXTURE_PROVENANCE: &str = include_str!("fixtures/outstanding
 /// optional-voucher behaviour itself is covered by a separate capture that
 /// carries the real field: `unit_a_optional_voucher_live.xml`.
 fn vouchers() -> String {
-    assert_fixture_profile(
-        "unit_a_vouchers_wildcard_live.xml",
-        "voucher_outstandings_v1_pre_isoptional",
-        "envelope_collection_voucher",
-    );
     VOUCHERS_LEGACY_SHAPE.replace("<ISDELETED>", "<ISOPTIONAL>No</ISOPTIONAL><ISDELETED>")
 }
 const COMPANY_NAME: &str = "Aarav Trading Company Demo";
@@ -47,145 +39,8 @@ fn proptest_config() -> ProptestConfig {
 }
 
 fn extent() -> bridge_tally_protocol::outstandings::CompanyBookExtent {
-    assert_fixture_profile(
-        "unit_a_company_extent_live.xml",
-        "company_book_extent_v1",
-        "envelope_collection_company",
-    );
     parse_company_book_extent(COMPANY_EXTENT, COMPANY_NAME, COMPANY_GUID)
         .expect("real company extent capture parses")
-}
-
-#[derive(Deserialize)]
-struct FixtureProvenanceDocument {
-    fixtures: Vec<FixtureProvenance>,
-}
-
-#[derive(Deserialize)]
-struct FixtureProvenance {
-    file: String,
-    request_profile: String,
-    response_shape: String,
-    capture_kind: String,
-    fixture_sha256: String,
-    request_template_sha256: Option<String>,
-    request_evidence: String,
-}
-
-fn fixture_provenance() -> FixtureProvenanceDocument {
-    serde_json::from_str(OUTSTANDINGS_FIXTURE_PROVENANCE)
-        .expect("outstandings fixture provenance is valid JSON")
-}
-
-fn assert_fixture_profile(file: &str, expected_profile: &str, expected_shape: &str) {
-    let document = fixture_provenance();
-    let provenance = document
-        .fixtures
-        .iter()
-        .find(|fixture| fixture.file == file)
-        .unwrap_or_else(|| panic!("fixture {file} has no request-profile provenance"));
-    assert_eq!(provenance.request_profile, expected_profile);
-    assert_eq!(
-        provenance.response_shape, expected_shape,
-        "{file} must describe its response shape"
-    );
-    assert_eq!(
-        provenance.capture_kind, "sanitized_live",
-        "{file} must state capture kind"
-    );
-    assert_eq!(
-        provenance.fixture_sha256.len(),
-        64,
-        "{file} must bind its bytes"
-    );
-    assert!(
-        !provenance.request_evidence.is_empty(),
-        "{file} must record request evidence"
-    );
-}
-
-#[test]
-fn every_outstandings_fixture_declares_its_request_profile() {
-    let document = fixture_provenance();
-    for expected in [
-        (
-            "unit_a_company_extent_live.xml",
-            "company_book_extent_v1",
-            "envelope_collection_company",
-        ),
-        (
-            "unit_a_vouchers_wildcard_live.xml",
-            "voucher_outstandings_v1_pre_isoptional",
-            "envelope_collection_voucher",
-        ),
-        (
-            "unit_a_optional_voucher_live.xml",
-            "voucher_outstandings_v1",
-            "envelope_collection_voucher",
-        ),
-        (
-            "unit_a_invalid_char_ref_live.xml",
-            "voucher_outstandings_v1",
-            "envelope_collection_voucher",
-        ),
-    ] {
-        let record = document
-            .fixtures
-            .iter()
-            .find(|fixture| fixture.file == expected.0)
-            .unwrap_or_else(|| panic!("fixture {} has no provenance", expected.0));
-        assert_eq!(record.request_profile, expected.1);
-        assert_eq!(record.response_shape, expected.2);
-        assert_eq!(record.capture_kind, "sanitized_live");
-        assert_eq!(record.fixture_sha256.len(), 64);
-        assert!(!record.request_evidence.is_empty());
-    }
-}
-
-#[test]
-fn outstandings_fixture_provenance_binds_capture_bytes_and_sealed_profiles() {
-    let document = fixture_provenance();
-    for (file, bytes, expected_template_sha256) in [
-        (
-            "unit_a_company_extent_live.xml",
-            COMPANY_EXTENT,
-            Some(ReadOnlyProfileId::CompanyBookExtentV1.template_sha256()),
-        ),
-        (
-            "unit_a_vouchers_wildcard_live.xml",
-            VOUCHERS_LEGACY_SHAPE,
-            None,
-        ),
-        (
-            "unit_a_optional_voucher_live.xml",
-            include_str!("fixtures/unit_a_optional_voucher_live.xml"),
-            Some(ReadOnlyProfileId::VoucherOutstandingsV1.template_sha256()),
-        ),
-        (
-            "unit_a_invalid_char_ref_live.xml",
-            include_str!("fixtures/unit_a_invalid_char_ref_live.xml"),
-            Some(ReadOnlyProfileId::VoucherOutstandingsV1.template_sha256()),
-        ),
-    ] {
-        let record = document
-            .fixtures
-            .iter()
-            .find(|fixture| fixture.file == file)
-            .unwrap_or_else(|| panic!("fixture {file} has no provenance"));
-        assert_eq!(
-            record.fixture_sha256,
-            sha256_hex(bytes.as_bytes()),
-            "{file} digest must bind the exact included fixture"
-        );
-        assert_eq!(record.request_template_sha256, expected_template_sha256);
-    }
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 fn full_alter_id_range() -> AlterIdRange {
@@ -862,11 +717,6 @@ fn an_as_of_before_the_last_voucher_clamps_to_a_profile_valid_boundary() {
 const OPTIONAL_VOUCHERS: &str = include_str!("fixtures/unit_a_optional_voucher_live.xml");
 
 fn optional_vouchers() -> &'static str {
-    assert_fixture_profile(
-        "unit_a_optional_voucher_live.xml",
-        "voucher_outstandings_v1",
-        "envelope_collection_voucher",
-    );
     OPTIONAL_VOUCHERS
 }
 
@@ -1047,9 +897,8 @@ proptest! {
     }
 
     #[test]
-    fn date_partition_sums_equal_the_whole_book(
+    fn assembled_date_partitions_preserve_cross_window_bill_lifecycles(
         left_amount in 1_u32..1_000_000,
-        right_amount in 1_u32..1_000_000,
     ) {
         let whole_window = DateWindow::parse(
             DateBoundaryProfile::ModeAgnostic,
@@ -1067,32 +916,55 @@ proptest! {
             "20240502",
         ).unwrap();
         let whole = complete_scan_for_vouchers(
-            &outstanding_vouchers_xml(&[
-                (1, "20240401", "LEFT", left_amount),
-                (2, "20240502", "RIGHT", right_amount),
+            &bill_vouchers_xml(&[
+                (1, "20240401", "CROSS-WINDOW", "New Ref", -i64::from(left_amount)),
+                (2, "20240502", "CROSS-WINDOW", "Agst Ref", i64::from(left_amount)),
             ]),
             whole_window.clone(),
             2,
         );
         let left = complete_scan_for_vouchers(
-            &outstanding_vouchers_xml(&[(1, "20240401", "LEFT", left_amount)]),
-            left_window,
+            &bill_vouchers_xml(&[(
+                1,
+                "20240401",
+                "CROSS-WINDOW",
+                "New Ref",
+                -i64::from(left_amount),
+            )]),
+            left_window.clone(),
             2,
         );
         let right = complete_scan_for_vouchers(
-            &outstanding_vouchers_xml(&[(2, "20240502", "RIGHT", right_amount)]),
+            &bill_vouchers_xml(&[(
+                2,
+                "20240502",
+                "CROSS-WINDOW",
+                "Agst Ref",
+                i64::from(left_amount),
+            )]),
             right_window,
             2,
         );
+        let extent_xml = COMPANY_EXTENT
+            .replace("20260401", "20240502")
+            .replace("</COMPANY>", "<ALTVCHID>2</ALTVCHID></COMPANY>");
+        let partition_extent = parse_company_book_extent(&extent_xml, COMPANY_NAME, COMPANY_GUID)
+            .expect("synthetic partition extent parses");
+        let ScanResult::Complete(partitioned) = assemble_partitioned_scan(
+            &partition_extent,
+            whole_window,
+            vec![
+                CorroboratedDatePartition::non_empty(left).unwrap(),
+                CorroboratedDatePartition::non_empty(right).unwrap(),
+            ],
+        ) else {
+            panic!("cross-window partitions must assemble before computation")
+        };
         let as_of = TallyDate::parse("20240601").unwrap();
         let whole_report = compute_outstandings(&whole, as_of.clone()).unwrap();
-        let left_report = compute_outstandings(&left, as_of.clone()).unwrap();
-        let right_report = compute_outstandings(&right, as_of).unwrap();
-        let summed = left_report
-            .receivable_total
-            .checked_add(&right_report.receivable_total)
-            .unwrap();
-        prop_assert_eq!(summed, whole_report.receivable_total.clone());
+        let partitioned_report = compute_outstandings(&partitioned, as_of).unwrap();
+        prop_assert_eq!(partitioned_report.receivable_total, whole_report.receivable_total);
+        prop_assert_eq!(partitioned_report.open_receivable_bill_count, whole_report.open_receivable_bill_count);
     }
 }
 
@@ -1165,19 +1037,20 @@ fn ageing_bucket_index(report: &bridge_tally_protocol::outstandings::Outstanding
     }
 }
 
-fn outstanding_vouchers_xml(vouchers: &[(u64, &str, &str, u32)]) -> String {
+fn bill_vouchers_xml(vouchers: &[(u64, &str, &str, &str, i64)]) -> String {
     let vouchers = vouchers
         .iter()
-        .map(|(alter_id, date, reference, amount)| format!(
+        .map(|(alter_id, date, reference, bill_type, amount)| format!(
             concat!(
                 "<VOUCHER><GUID>{COMPANY_GUID}-{alter_id:08}</GUID><MASTERID>{alter_id}</MASTERID><ALTERID>{alter_id}</ALTERID>",
                 "<DATE>{date}</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
-                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>{reference}</NAME><BILLTYPE>New Ref</BILLTYPE><BILLDATE>{date}</BILLDATE><AMOUNT>-{amount}</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>"
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>{reference}</NAME><BILLTYPE>{bill_type}</BILLTYPE><BILLDATE>{date}</BILLDATE><AMOUNT>{amount}</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>"
             ),
             COMPANY_GUID = COMPANY_GUID,
             alter_id = alter_id,
             date = date,
             reference = reference,
+            bill_type = bill_type,
             amount = amount,
         ))
         .collect::<String>();

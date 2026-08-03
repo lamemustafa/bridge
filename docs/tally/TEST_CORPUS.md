@@ -20,8 +20,8 @@ invalidates results.**
 | Bill references | **2 named in 4,894** — degenerate | **216 named of 440** — real |
 | `AlterID` ↔ date locality | **none** — one day spans the whole ID range | **strong** — one month ≈ 18 consecutive IDs |
 | Scale / payload / failure-mode work | **YES** | no — too small |
-| Outstandings correctness | no | **YES** |
-| **Segment-size calibration** | **PROHIBITED** (§2.4b) | **APPROVED** |
+| Outstandings correctness | no | **UNQUALIFIED** — historical cross-check only |
+| **Segment-size calibration** | **PROHIBITED** (§2.4b) | **UNQUALIFIED** — historical sizing sample only |
 
 Both are loaded on port 9000. `Bridge Billwise Lab` also exists on port 9001 as a GUI
 backup/restore of the same company — **same GUID, same AlterIDs** — see §7.
@@ -129,11 +129,12 @@ depends on.
 
 Returned `CREATED=1`; readback confirmed `NAME=BRIDGE-INV-0001`, `BILLTYPE=New Ref`.
 
-### Resolved 2026-07-31 — `Bridge Billwise Lab` exists and is ACCEPTED
+### Historical 2026-07-31 reconciliation — `Bridge Billwise Lab` is currently UNQUALIFIED
 
-The company below was built through the Tally GUI on the Windows host and **passed
-acceptance**. The recipe that follows it is retained because it is the procedure to repeat for
-any future corpus.
+The company below was built through the Tally GUI on the Windows host and historically
+reconciled. It is **not accepted for current corpus qualification**: the paired partition,
+opening-coverage, and extent-bound proof requirements below were not retained. The recipe that
+follows it is retained because it is the procedure to repeat for any future corpus.
 
 | Property | Value |
 | --- | --- |
@@ -169,7 +170,7 @@ Tally's own *Bills Receivable* export is the authority. The figures above were c
 > buckets move with as-of.** A run that reports as-of `20260702` is not a compute defect —
 > it is the wrong as-of source, and ruling 7 §4 requires as-of to be an explicit input.
 
-#### Acceptance criterion — validate *locality*, not ordering
+#### Historical locality measurement — not an acceptance criterion
 
 `AlterID` locality is what makes a corpus usable for segment-size calibration. Measured here:
 each month occupies a **contiguous, non-overlapping band of ~18 IDs** (`202404` → 1..19,
@@ -190,9 +191,14 @@ date partition, paired ledger-opening coverage, and an extent-bound full-book
 scan. Until those captures are available, [`scripts/verify-tally-test-corpus.py`](../../scripts/verify-tally-test-corpus.py)
 fails closed and cannot emit an acceptance token.
 
-**Check locality during generation, not only at the end** — it is the one property
-that cannot be repaired afterwards, and catching it at 50 vouchers is far cheaper
-than at 500.
+**Check locality during generation, not only at the end** — it is a non-accepting diagnostic
+because it cannot be repaired afterwards, and catching it at 50 vouchers is far cheaper than at
+500. Run it only against an already captured response; it does not contact Tally or qualify the
+corpus:
+
+```bash
+python3 scripts/verify-tally-test-corpus.py --locality-xml /safe/local/vouchers.xml
+```
 
 > Capture remains an **operator-only live Tally activity**. It must never be imported or invoked
 > from an automated test — no test in this repository contacts a live Tally, a government portal,
@@ -303,4 +309,4 @@ the data. That is the right setup for closing the open Alter/Cancel question (re
 | Date | Change |
 | --- | --- |
 | 2026-07-30 | Created. Records the missing-bill-reference defect and the verified fix. |
-| 2026-07-31 | `Bridge Billwise Lab` created and **accepted**: GUID, extents, reconciliation target, and the locality acceptance criterion. Added §0 (which corpus for what) and §7 (three traps found while validating). Recorded that the first acceptance script used the wrong criterion and would have condemned a good corpus. |
+| 2026-07-31 | `Bridge Billwise Lab` created and historically reconciled: GUID, extents, reconciliation target, and locality measurement. It is now explicitly unqualified pending paired partitions, opening coverage, and extent-bound proof. Added §0 (which corpus for what) and §7 (three traps found while validating). Recorded that the first acceptance script used the wrong criterion and would have condemned a good corpus. |
