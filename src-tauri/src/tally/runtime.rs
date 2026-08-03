@@ -159,7 +159,7 @@ fn select_outstandings_date_boundary_profile(
     }
 }
 
-fn segment_read_failure_reason(error: &anyhow::Error) -> &'static str {
+fn outstandings_read_failure_reason(error: &anyhow::Error) -> &'static str {
     if let Some(transport) = error.downcast_ref::<TallyTransportError>() {
         return match transport {
             TallyTransportError::EndpointInvalid { .. } => "segment_endpoint_invalid",
@@ -193,42 +193,59 @@ fn segment_read_failure_reason(error: &anyhow::Error) -> &'static str {
     }
 }
 
-/// A segment transport failure must cross `execute_cancellable` as an error so
+/// An outstandings read transport failure must cross `execute_cancellable` as an error so
 /// the endpoint circuit sees it. `fetch_outstandings` converts this back to
 /// the established typed Partial only after that health boundary.
 #[derive(Debug, thiserror::Error)]
-#[error("outstandings segment transport failure: {source}")]
-struct OutstandingsSegmentTransportFailure {
+#[error("outstandings read transport failure: {source}")]
+struct OutstandingsReadTransportFailure {
     reason_code: &'static str,
     #[source]
     source: anyhow::Error,
 }
 
-fn partial_after_segment_transport_failure(
+fn partial_after_outstandings_read_transport_failure(
     result: anyhow::Result<OutstandingsLoadResult>,
 ) -> anyhow::Result<OutstandingsLoadResult> {
     match result {
         Ok(value) => Ok(value),
-        Err(error) => match error.downcast_ref::<OutstandingsSegmentTransportFailure>() {
+        Err(error) => match error.downcast_ref::<OutstandingsReadTransportFailure>() {
             Some(failure) => Ok(partial_result(failure.reason_code)),
             None => Err(error),
         },
     }
 }
 
-async fn fetch_empty_partition_witness_or_partial<F, Fut>(
+fn outstandings_read_transport_failure(error: anyhow::Error) -> anyhow::Error {
+    let reason_code = outstandings_read_failure_reason(&error);
+    anyhow::Error::new(OutstandingsReadTransportFailure {
+        reason_code,
+        source: error,
+    })
+}
+
+fn is_outstandings_transport_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<TallyTransportError>().is_some())
+}
+
+async fn fetch_empty_partition_witness<F, Fut>(
     high_water: VoucherAlterIdHighWater,
     fetch: F,
-) -> Result<CompleteWitnessPair, PartialScan>
+) -> anyhow::Result<Result<CompleteWitnessPair, PartialScan>>
 where
     F: FnOnce() -> Fut,
     Fut: Future<Output = anyhow::Result<WitnessPairVerification>>,
 {
     debug_assert!(high_water.get() > 0);
     match fetch().await {
-        Ok(WitnessPairVerification::Complete(pair)) => Ok(pair),
-        Ok(WitnessPairVerification::Partial(partial)) => Err(partial),
-        Err(_) => Err(PartialScan::new("empty_date_witness_profile_unavailable")),
+        Ok(WitnessPairVerification::Complete(pair)) => Ok(Ok(pair)),
+        Ok(WitnessPairVerification::Partial(partial)) => Ok(Err(partial)),
+        Err(error) if is_outstandings_transport_error(&error) => Err(error),
+        Err(_) => Ok(Err(PartialScan::new(
+            "empty_date_witness_profile_unavailable",
+        ))),
     }
 }
 
@@ -1340,13 +1357,7 @@ impl TallyRuntime {
                                 {
                                     Ok(observation) => observation,
                                     Err(error) => {
-                                        let reason_code = segment_read_failure_reason(&error);
-                                        return Err(anyhow::Error::new(
-                                            OutstandingsSegmentTransportFailure {
-                                                reason_code,
-                                                source: error,
-                                            },
-                                        ));
+                                        return Err(outstandings_read_transport_failure(error));
                                     }
                                 };
                                 let OutstandingsSegmentObservation {
@@ -1384,47 +1395,6 @@ impl TallyRuntime {
                                     return Ok(partial_result(&partial.reason_code))
                                 }
                             }
-                        }
-                        // A segmented scan is not instantaneous. If a voucher is
-                        // added, edited or deleted in Tally while it runs,
-                        // LastVoucherDate or ALTVCHID advance, but every request
-                        // was capped at the extent read before the scan started.
-                        // The observations would then be a mix of two book states
-                        // that never existed together, and completeness (I4) would
-                        // be claimed for it. Re-read the extent and require it to
-                        // be byte-for-byte the same book before completing.
-                        let closing_extent = client
-                            .fetch_company_book_extent(
-                                extent.company().name(),
-                                extent.company().guid(),
-                            )
-                            .await?;
-                        if closing_extent != extent {
-                            return Ok(partial_result("book_changed_during_scan"));
-                        }
-                        // The closing extent compares BooksFrom, LastVoucherDate and
-                        // the VOUCHER high-water only, so a master edit that adds a
-                        // bill-wise opening balance mid-scan is invisible to it.
-                        // Measured on the lab instances: two books identical on all
-                        // of those differed by ten ledger openings worth over
-                        // Rs 15 lakh. Re-read coverage and require it unchanged.
-                        let closing_coverage = client
-                            .fetch_ledger_opening_coverage(extent.company())
-                            .await?;
-                        if let Some(reason_code) = paired_coverage_partial_reason(&closing_coverage) {
-                            return Ok(partial_result(reason_code));
-                        }
-                        let LedgerOpeningCoverageRead::Stable(closing_coverage) = closing_coverage
-                        else {
-                            unreachable!(
-                                "paired coverage drift returns before a stable value is required"
-                            )
-                        };
-                        if let Some(reason_code) = closing_coverage_partial_reason(
-                            closing_coverage == opening_coverage,
-                            closing_coverage.is_fully_covered_by_vouchers(),
-                        ) {
-                            return Ok(partial_result(reason_code));
                         }
                         // `VoucherEmptyPartitionWitnessV1` was qualified under
                         // supervised dispatch. A positive-high-water empty primary
@@ -1474,7 +1444,7 @@ impl TallyRuntime {
                                             "outstandings_segment_budget_exhausted_mid_scan",
                                         ));
                                     }
-                                    let control_pair = match fetch_empty_partition_witness_or_partial(
+                                    let control_pair = match fetch_empty_partition_witness(
                                         high_water,
                                         || {
                                             client.fetch_empty_partition_witness_pair(
@@ -1485,8 +1455,13 @@ impl TallyRuntime {
                                     )
                                     .await
                                     {
-                                        Ok(pair) => pair,
-                                        Err(partial) => return Ok(partial_result(&partial.reason_code)),
+                                        Ok(Ok(pair)) => pair,
+                                        Ok(Err(partial)) => {
+                                            return Ok(partial_result(&partial.reason_code))
+                                        }
+                                        Err(error) => {
+                                            return Err(outstandings_read_transport_failure(error))
+                                        }
                                     };
                                     let mut cover_pairs = Vec::with_capacity(cover.slices().len());
                                     for slice in cover.slices() {
@@ -1495,7 +1470,7 @@ impl TallyRuntime {
                                                 "outstandings_segment_budget_exhausted_mid_scan",
                                             ));
                                         }
-                                        let pair = match fetch_empty_partition_witness_or_partial(
+                                        let pair = match fetch_empty_partition_witness(
                                             high_water,
                                             || {
                                                 client.fetch_empty_partition_witness_pair(
@@ -1506,9 +1481,12 @@ impl TallyRuntime {
                                         )
                                         .await
                                         {
-                                            Ok(pair) => pair,
-                                            Err(partial) => {
+                                            Ok(Ok(pair)) => pair,
+                                            Ok(Err(partial)) => {
                                                 return Ok(partial_result(&partial.reason_code))
+                                            }
+                                            Err(error) => {
+                                                return Err(outstandings_read_transport_failure(error))
                                             }
                                         };
                                         cover_pairs.push(pair);
@@ -1529,6 +1507,39 @@ impl TallyRuntime {
                                 Err(partial) => return Ok(partial_result(&partial.reason_code)),
                             }
                         }
+                        // A scan is not instantaneous: primary segments and empty
+                        // partition witnesses must describe one book state before
+                        // a Complete result can be assembled.
+                        let closing_extent = client
+                            .fetch_company_book_extent(
+                                extent.company().name(),
+                                extent.company().guid(),
+                            )
+                            .await?;
+                        if closing_extent != extent {
+                            return Ok(partial_result("book_changed_during_scan"));
+                        }
+                        // The extent does not cover bill-wise ledger openings, so
+                        // revalidate their GUID-to-name coverage after the witness
+                        // loop as well.
+                        let closing_coverage = client
+                            .fetch_ledger_opening_coverage(extent.company())
+                            .await?;
+                        if let Some(reason_code) = paired_coverage_partial_reason(&closing_coverage) {
+                            return Ok(partial_result(reason_code));
+                        }
+                        let LedgerOpeningCoverageRead::Stable(closing_coverage) = closing_coverage
+                        else {
+                            unreachable!(
+                                "paired coverage drift returns before a stable value is required"
+                            )
+                        };
+                        if let Some(reason_code) = closing_coverage_partial_reason(
+                            closing_coverage == opening_coverage,
+                            closing_coverage.is_fully_covered_by_vouchers(),
+                        ) {
+                            return Ok(partial_result(reason_code));
+                        }
                         match assemble_partitioned_scan(
                             &extent,
                             requested,
@@ -1547,7 +1558,7 @@ impl TallyRuntime {
                 },
             )
             .await;
-        partial_after_segment_transport_failure(result)
+        partial_after_outstandings_read_transport_failure(result)
     }
 
     pub async fn qualify_selected_vouchers(
@@ -1943,29 +1954,33 @@ mod tests {
     }
 
     #[test]
-    fn outstandings_segment_failures_are_partial_and_deadlines_recommend_restart() {
+    fn outstandings_read_failures_are_partial_and_deadlines_recommend_restart() {
         assert_eq!(
-            segment_read_failure_reason(&anyhow::Error::new(TallyTransportError::RequestTimedOut)),
+            outstandings_read_failure_reason(&anyhow::Error::new(
+                TallyTransportError::RequestTimedOut
+            )),
             "tally_segment_deadline_restart_recommended"
         );
         assert_eq!(
-            segment_read_failure_reason(&anyhow::Error::new(TallyTransportError::RequestFailed)),
+            outstandings_read_failure_reason(&anyhow::Error::new(
+                TallyTransportError::RequestFailed
+            )),
             "segment_request_failed"
         );
         assert_eq!(
-            segment_read_failure_reason(&anyhow::Error::new(TallyTransportError::HttpStatus {
-                status: 500,
-            })),
+            outstandings_read_failure_reason(&anyhow::Error::new(
+                TallyTransportError::HttpStatus { status: 500 }
+            )),
             "segment_http_status_failure"
         );
         assert_eq!(
-            segment_read_failure_reason(&anyhow::anyhow!("connection refused")),
+            outstandings_read_failure_reason(&anyhow::anyhow!("connection refused")),
             "segment_read_failed"
         );
     }
 
     #[tokio::test]
-    async fn segment_transport_failure_feeds_breaker_and_preserves_typed_partial() {
+    async fn outstandings_read_transport_failure_feeds_breaker_and_preserves_typed_partial() {
         let runtime = TallyRuntime::default();
         let config = TallyConfig {
             host: "localhost".to_string(),
@@ -1978,7 +1993,7 @@ mod tests {
                 ReadRetryPolicy::SINGLE_ATTEMPT,
                 |_client| async {
                     Err::<OutstandingsLoadResult, _>(anyhow::Error::new(
-                        OutstandingsSegmentTransportFailure {
+                        OutstandingsReadTransportFailure {
                             reason_code: "tally_segment_deadline_restart_recommended",
                             source: anyhow::Error::new(TallyTransportError::RequestTimedOut),
                         },
@@ -1986,8 +2001,8 @@ mod tests {
                 },
             )
             .await;
-        let caller_value = partial_after_segment_transport_failure(result)
-            .expect("segment transport failures stay in-band for the outstandings caller");
+        let caller_value = partial_after_outstandings_read_transport_failure(result)
+            .expect("outstandings read transport failures stay in-band for the caller");
         assert!(matches!(
             caller_value,
             OutstandingsLoadResult::Partial { reason_code, .. }
@@ -2016,7 +2031,7 @@ mod tests {
                 },
             )
             .await;
-        let caller_value = partial_after_segment_transport_failure(result)
+        let caller_value = partial_after_outstandings_read_transport_failure(result)
             .expect("verification partial remains an in-band result");
         assert!(matches!(
             caller_value,
@@ -2030,20 +2045,82 @@ mod tests {
         );
     }
 
+    #[test]
+    fn closing_coverage_drift_is_not_reported_as_uncovered_opening_bills() {
+        assert_eq!(
+            closing_coverage_partial_reason(false, true),
+            Some("ledger_master_identity_changed_during_scan")
+        );
+        assert_eq!(
+            closing_coverage_partial_reason(true, false),
+            Some("ledger_opening_bills_not_covered")
+        );
+        assert_eq!(closing_coverage_partial_reason(true, true), None);
+    }
+
+    #[test]
+    fn intra_pair_ledger_coverage_drift_is_an_in_band_partial() {
+        assert_eq!(
+            paired_coverage_partial_reason(&LedgerOpeningCoverageRead::Drifted),
+            Some("ledger_master_identity_changed_during_scan")
+        );
+    }
+
     #[tokio::test]
-    async fn unqualified_empty_partition_with_positive_high_water_is_typed_partial() {
-        let partial = fetch_empty_partition_witness_or_partial(
+    async fn witness_transport_failure_feeds_breaker_and_preserves_typed_partial() {
+        let error = fetch_empty_partition_witness(
             VoucherAlterIdHighWater::parse("1").expect("positive high-water"),
-            || async { Err(anyhow::anyhow!("witness profile is unavailable")) },
+            || async { Err(anyhow::Error::new(TallyTransportError::RequestTimedOut)) },
         )
         .await
-        .expect_err("an unavailable witness cannot complete a non-empty book");
+        .expect_err("a witness transport failure must cross the runtime health boundary");
+        assert!(error.downcast_ref::<TallyTransportError>().is_some());
+
+        let runtime = TallyRuntime::default();
+        let result = runtime
+            .execute(
+                TallyConfig {
+                    host: "localhost".to_string(),
+                    port: 9122,
+                },
+                ReadOperation::VoucherExport,
+                ReadRetryPolicy::SINGLE_ATTEMPT,
+                |_client| async {
+                    Err::<OutstandingsLoadResult, _>(outstandings_read_transport_failure(
+                        anyhow::Error::new(TallyTransportError::RequestTimedOut),
+                    ))
+                },
+            )
+            .await;
+        let caller_value = partial_after_outstandings_read_transport_failure(result)
+            .expect("witness transport failure stays in-band only after health accounting");
+
+        assert!(matches!(
+            caller_value,
+            OutstandingsLoadResult::Partial { reason_code, .. }
+                if reason_code == "tally_segment_deadline_restart_recommended"
+        ));
+        assert_eq!(
+            runtime.snapshots().expect("runtime snapshot")[0].consecutive_failures,
+            1,
+            "the breaker must observe the witness transport failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn witness_non_transport_failure_remains_an_in_band_partial() {
+        let partial = fetch_empty_partition_witness(
+            VoucherAlterIdHighWater::parse("1").expect("positive high-water"),
+            || async { Err(anyhow::anyhow!("witness response was malformed")) },
+        )
+        .await
+        .expect("non-transport witness failure stays in-band")
+        .expect_err("a malformed witness cannot complete a non-empty book");
 
         assert_eq!(
             partial.reason_code,
             "empty_date_witness_profile_unavailable"
         );
-        assert_ne!(partial.reason_code, "whole_book_false_empty");
     }
 
     #[test]

@@ -171,7 +171,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-primitives/src/lib.rs",
-      "sha256": "b834060330adad0966a694bbecd08a5af3de80d3e9ba5f350b9cffee7b45acad"
+      "sha256": "48469d58b3a169d4cf34b80cfc28c491bb8d930cccbba847736520b72b78c130"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/Cargo.toml",
@@ -191,7 +191,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/xml_read_profiles.rs",
-      "sha256": "f225b7b06084d8b3deb59bad7302f62a2f8934525f8e620d14cf4f0438b59dad"
+      "sha256": "5f13f213b171c51b3f5f3620638ce90bdd613987f7d4d624c6bfbdd52cf43d18"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml",
@@ -271,7 +271,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "8f3e344c41486f1f6fcba2574b28954ba6fa145b1fc79e69e3661c0ac0acd690"
+      "sha256": "5e18b9ed4fac6622b59b4078936832cb5766411b0b3c229f530a5129e8b6efc2"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -395,7 +395,7 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "c8d6ec1fedf2ff0e6caa801aebf78cdb14ebe14bad335fb380c9f3eaa1d5f950"
+      "sha256": "5b3fd134988c44a4847daf3ae7396b7cc5c300ea27189307d09fcba148c1e1bb"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
@@ -403,11 +403,11 @@
     },
     {
       "path": "src-tauri/src/tally/mod.rs",
-      "sha256": "fab6caec50e9bba5cd5f9b12748e40269fc97e4f4a6e6c4279b4e25d38b1393f"
+      "sha256": "0d44e34bfbf6443a59cbf1ddc8a18b990b5d0d997bc63a61c5f1cf08f84c0b6b"
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "4d01d6821a41061b49894fc4fce2ac4dc567053fd451d6c096ce1cb9324bd0f8"
+      "sha256": "843664d558a4ee80f65ddff87af83a15d19d2a54281576d410f21a7407fff5c2"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -442,5 +442,5 @@
       "sha256": "dd033010711ca01a7a395a531285c6ef187a359640a156cbc8da7281e11a39ea"
     }
   ],
-  "manifest_sha256": "5bb665c32e436d3af051e5743afed473ae655ca8c432ad8c499469162d438f65"
+  "manifest_sha256": "71392fdcde7fa90ccf9adab6297535bb6e640421fc3e157ba6a8e171433b9d80"
 }

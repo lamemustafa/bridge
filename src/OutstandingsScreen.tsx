@@ -49,7 +49,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
   const [result, setResult] = React.useState<LoadResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
-  const [inrAsserted, setInrAsserted] = React.useState(false);
+  const [inrAssertedCompanyGuid, setInrAssertedCompanyGuid] = React.useState<string | null>(null);
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
   const requestVersion = React.useRef(0);
 
@@ -63,10 +63,10 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
     setResult(null);
     setError(null);
     setLoading(false);
-    setInrAsserted(false);
+    setInrAssertedCompanyGuid(null);
   }, [config.host, config.port, company?.guid, company?.name]);
 
-  const readPermitted = canStartOutstandingsRead(company, inrAsserted);
+  const readPermitted = canStartOutstandingsRead(company, inrAssertedCompanyGuid);
 
   const load = React.useCallback(async () => {
     if (!readPermitted || !company) return;
@@ -109,12 +109,12 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
     );
   }
 
-  if (!inrAsserted) {
+  if (!readPermitted) {
     return (
       <section className="panel wide outstandings-empty">
         <h2>Confirm the company base currency</h2>
         <p>Bridge cannot read a company’s base currency from the sealed Unit A export. Outstandings are available only after you explicitly confirm that the selected company uses INR.</p>
-        <button type="button" onClick={() => setInrAsserted(true)}>This company uses INR</button>
+        <button type="button" onClick={() => setInrAssertedCompanyGuid(company.guid)}>This company uses INR</button>
       </section>
     );
   }

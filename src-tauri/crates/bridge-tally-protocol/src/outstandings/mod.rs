@@ -18,13 +18,13 @@ pub use completeness::{
 pub use compute::compute_outstandings;
 pub use model::{
     AgeingBillCounts, AgeingBuckets, AlterIdRange, BillAllocation, BillReferenceKind,
-    CompanyBookExtent, CompleteScan,
-    CompleteSegment, CompleteWitnessPair, CorroboratedDatePartition, DateBoundaryProfile,
-    DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness,
-    EmptyPartitionControlProvenance, EmptyPartitionWitness, LedgerEntry, LedgerOpeningCoverage,
-    MoneyValue, NarrowDateWindow, OutstandingsError, OutstandingsReport, PartialScan,
-    PartyOutstanding, PinnedCompany, ScanResult, SegmentVerification, StrictlyWiderDateCover,
-    Voucher, VoucherAlterId, VoucherAlterIdHighWater, WitnessPairVerification, WitnessVoucher,
+    CompanyBookExtent, CompleteScan, CompleteSegment, CompleteWitnessPair,
+    CorroboratedDatePartition, DateBoundaryProfile, DateWindow, EmptyDateWindowVerification,
+    EmptyDateWindowWitness, EmptyPartitionControlProvenance, EmptyPartitionWitness, LedgerEntry,
+    LedgerOpeningCoverage, MoneyValue, NarrowDateWindow, OutstandingsError, OutstandingsReport,
+    PartialScan, PartyOutstanding, PinnedCompany, ScanResult, SegmentVerification,
+    StrictlyWiderDateCover, Voucher, VoucherAlterId, VoucherAlterIdHighWater,
+    WitnessPairVerification, WitnessVoucher,
 };
 pub use parser::{parse_company_book_extent, parse_ledger_opening_coverage};
 

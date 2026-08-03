@@ -2,7 +2,7 @@
 
 export function canStartOutstandingsRead(
   company: { name: string; guid: string } | undefined,
-  inrAsserted: boolean,
+  inrAssertedCompanyGuid: string | null,
 ) {
-  return company !== undefined && inrAsserted;
+  return company?.guid === inrAssertedCompanyGuid;
 }
