@@ -195,8 +195,9 @@ fails closed and cannot emit an acceptance token.
 because it cannot be repaired afterwards, and catching it at 50 vouchers is far cheaper than at
 500. Run it only against an already captured response; it does not contact Tally or qualify the
 corpus. It repairs observed XML-1.0-illegal numeric references before strict parsing, but requires
-the product's canonical eight-ASCII-digit voucher dates. It is **inconclusive** until at least two
-month bands are present, because one month cannot measure date-to-AlterID locality:
+the product's canonical eight-ASCII-digit voucher dates. It is **inconclusive** until at least three
+month bands are present: two dense, correctly ordered bands each occupy at least half the ID range,
+which cannot be distinguished from scattering by the 40% criterion:
 
 ```bash
 python3 scripts/verify-tally-test-corpus.py --locality-xml /safe/local/vouchers.xml

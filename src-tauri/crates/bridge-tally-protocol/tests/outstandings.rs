@@ -965,6 +965,7 @@ proptest! {
         let partitioned_report = compute_outstandings(&partitioned, as_of).unwrap();
         prop_assert_eq!(partitioned_report.receivable_total, whole_report.receivable_total);
         prop_assert_eq!(partitioned_report.open_receivable_bill_count, whole_report.open_receivable_bill_count);
+        prop_assert_eq!(partitioned_report.source_voucher_count, whole_report.source_voucher_count);
     }
 }
 

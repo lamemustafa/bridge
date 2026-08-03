@@ -31,11 +31,16 @@ def locality_diagnostic(path):
         alter_id = child_text(voucher, "ALTERID")
         date = child_text(voucher, "DATE")
         try:
+            if alter_id is None or re.fullmatch(r"[0-9]+", alter_id) is None:
+                raise ValueError("alter ID is not canonical unsigned decimal")
             alter_id = int(alter_id)
             if date is None or re.fullmatch(r"[0-9]{8}", date) is None:
                 raise ValueError("date is not canonical YYYYMMDD")
             datetime.datetime.strptime(date, "%Y%m%d")
         except (TypeError, ValueError):
+            print("LOCALITY DIAGNOSTIC FAILED: invalid voucher alter ID or date")
+            return 2
+        if alter_id > 0xFFFFFFFFFFFFFFFF:
             print("LOCALITY DIAGNOSTIC FAILED: invalid voucher alter ID or date")
             return 2
         if alter_id <= 0 or alter_id in alter_ids:
@@ -44,9 +49,9 @@ def locality_diagnostic(path):
         alter_ids.add(alter_id)
         months.setdefault(date[:6], []).append(alter_id)
 
-    if len(months) < 2:
+    if len(months) < 3:
         print(
-            "LOCALITY DIAGNOSTIC INCONCLUSIVE: fewer than two month bands; "
+            "LOCALITY DIAGNOSTIC INCONCLUSIVE: fewer than three month bands; "
             "not corpus acceptance"
         )
         return 2
