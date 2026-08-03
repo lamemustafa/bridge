@@ -79,13 +79,18 @@ impl SegmentPlan {
         let planned_primary_segment_pairs = date_partition_count
             .checked_mul(ranges_per_partition)
             .ok_or(bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow)?;
-        // The primary response is not known empty until it has been read. Plan
-        // for every partition needing the maximal shifted-cover construction so
+        // A non-empty book can reveal empty primary partitions only after they
+        // have been read. Reserve their maximal shifted-cover construction so
         // an admissible scan can never spend a 129th pair when corroboration is
-        // reached later.
-        let reserved_empty_partition_witness_pairs = date_partition_count
-            .checked_mul(MAX_EMPTY_PARTITION_WITNESS_PAIRS)
-            .ok_or(bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow)?;
+        // reached later. A zero high-water book has no primary reads, so it
+        // cannot reach that witness path.
+        let reserved_empty_partition_witness_pairs = if alter_id_high_water == 0 {
+            0
+        } else {
+            date_partition_count
+                .checked_mul(MAX_EMPTY_PARTITION_WITNESS_PAIRS)
+                .ok_or(bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow)?
+        };
         let planned_segment_pairs = planned_primary_segment_pairs
             .checked_add(reserved_empty_partition_witness_pairs)
             .ok_or(bridge_tally_protocol::outstandings::OutstandingsError::ArithmeticOverflow)?;
@@ -328,6 +333,15 @@ mod tests {
             .expect("large plan arithmetic remains representable");
         assert_eq!(rejected.planned_segment_pairs, 132);
         assert!(!rejected.is_admitted());
+    }
+
+    #[test]
+    fn zero_high_water_does_not_reserve_witness_pairs() {
+        let empty = SegmentPlan::new(43, 0, CalibratedSegmentPolicy::for_test(252)).unwrap();
+        assert_eq!(empty.planned_primary_segment_pairs, 0);
+        assert_eq!(empty.reserved_empty_partition_witness_pairs, 0);
+        assert_eq!(empty.planned_segment_pairs, 0);
+        assert!(empty.is_admitted());
     }
 
     #[test]

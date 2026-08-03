@@ -190,8 +190,28 @@
       "sha256": "7d69f93c0ebc423151f97ae3f9a3b51106a56b3c3ae561b35a482026ef9ace7f"
     },
     {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/completeness.rs",
+      "sha256": "94dac8a7abad4ba13507040e9474eee504dcd12da56136f76b2c5df70534b8ac"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/model.rs",
+      "sha256": "e6f3a0e5a142f8e241b9080d93a611528acb6248af39f41bd44f649948783b27"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/parser.rs",
+      "sha256": "0f682aec36689a2e28602ea7257913106ca8bb5346a8edc725d147ee30f6440b"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/request.rs",
+      "sha256": "400a3e97cd283fe1a6affebc0a235d2a6a1731e736747df728499dd0cd304f4f"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/wire.rs",
+      "sha256": "37d1ce2de6edf1daa841715b96a44ef294dfe992b57fedf275b50eb63f93570f"
+    },
+    {
       "path": "src-tauri/crates/bridge-tally-protocol/src/xml_read_profiles.rs",
-      "sha256": "5f13f213b171c51b3f5f3620638ce90bdd613987f7d4d624c6bfbdd52cf43d18"
+      "sha256": "9fff9b46f22be5feb4b14efed80ca79bbdc0aec09d80c649592c640f3abc5b15"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml",
@@ -406,6 +426,10 @@
       "sha256": "0d44e34bfbf6443a59cbf1ddc8a18b990b5d0d997bc63a61c5f1cf08f84c0b6b"
     },
     {
+      "path": "src-tauri/src/tally/outstandings_runtime.rs",
+      "sha256": "afe1f27c9696e5c13bd95afe81959946d6bc9002545b4a9fabed218f238b6a8b"
+    },
+    {
       "path": "src-tauri/src/tally/runtime.rs",
       "sha256": "843664d558a4ee80f65ddff87af83a15d19d2a54281576d410f21a7407fff5c2"
     },
@@ -442,5 +466,5 @@
       "sha256": "dd033010711ca01a7a395a531285c6ef187a359640a156cbc8da7281e11a39ea"
     }
   ],
-  "manifest_sha256": "71392fdcde7fa90ccf9adab6297535bb6e640421fc3e157ba6a8e171433b9d80"
+  "manifest_sha256": "6963f10505be901fe80cc4f1f53b7de98a56a7d7ff55ca1e665c70d57fbc195c"
 }

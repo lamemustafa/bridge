@@ -1037,6 +1037,10 @@ mod tests {
                 ReadOnlyProfileId::VoucherOutstandingsV1,
                 "7e4025038bf85345d0a55b9437be339c8829b1f699abaaa52bbdfa6affcb1dae",
             ),
+            (
+                ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1,
+                "73a9a71e437a8556d18123fad739fa10a7e859a1d462b5ce88d6e42d52811d8d",
+            ),
         ];
         for (profile, digest) in expected {
             assert_eq!(profile.template_sha256(), digest);
