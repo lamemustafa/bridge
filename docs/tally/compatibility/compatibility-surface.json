@@ -3,11 +3,11 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "ab3a6531905988b85be32c9fbb10310949a0aa7a7adf90c49e1fe36c34859317"
+      "sha256": "5161158bf6d871f91e5afe2f1230738f84ee240be73a76514b335678477f1913"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
-      "sha256": "7993bc3defa8421bc5da377582d8599fb8ebe90c0473a1426ebd45d4f8a28731"
+      "sha256": "c09463ec79311307c1e10f1fe8bee3e72c5b421bea31b4a5868973b5a68e76ed"
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
@@ -71,7 +71,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "2122f365cf1a3f9705d617f1313e7064e23b63825cb4d24ad3687f5397bc26b3"
+      "sha256": "fa83020b46612c3e0c7a72fc4ea14d578cbb2c4e3a12c6788d085f61337facd0"
     },
     {
       "path": "scripts/check-tally-live-read-boundary.mjs",
@@ -83,11 +83,11 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "20f8197720e32d8bfc60be4b9e58e7ab3152c713f42c0283019f472d521451b4"
+      "sha256": "83571510f7a2c5610862743863eebd4386c73b338987598d10cdcdb4a36174c7"
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "3c09bab27909da6d0198b7fa63f0c51759721dbdefaad86659aea6801be4312f"
+      "sha256": "0b101cdcc297150a566d81b984bf39df40e8d2aa12a6e5433ce65243c2f7a4cd"
     },
     {
       "path": "src-tauri/crates/bridge-tally-canonical/Cargo.toml",
@@ -135,7 +135,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-live-read/Cargo.toml",
-      "sha256": "627b2ef41ef8bc01a3e5e28fc7985d98feece91f38135373b2aef9459e301226"
+      "sha256": "0532622f6bc6a43ddb2b54554305121ff6048c62c6a190eed9dd55f253623243"
     },
     {
       "path": "src-tauri/crates/bridge-tally-live-read/src/bin/native_outstandings_probe.rs",
@@ -466,5 +466,5 @@
       "sha256": "dd033010711ca01a7a395a531285c6ef187a359640a156cbc8da7281e11a39ea"
     }
   ],
-  "manifest_sha256": "189e6a37c29a28c478caa32a2217a22362ebda768abf554ae64b4d9d532f44ad"
+  "manifest_sha256": "712ea84b8c4e3a8f49369f2bdbb98a2abb8e8586702b2b128a8fbd82c949403d"
 }

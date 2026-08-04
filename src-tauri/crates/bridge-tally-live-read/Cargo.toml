@@ -25,7 +25,7 @@ required-features = ["bills-native-outstandings-probe-runner"]
 bridge-tally-compatibility = { path = "../bridge-tally-compatibility" }
 bridge-tally-protocol = { path = "../bridge-tally-protocol" }
 bridge-tally-read-transport = { path = "../bridge-tally-read-transport" }
-getrandom = "0.3"
+getrandom = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
