@@ -18,6 +18,12 @@ test("an over-budget plan says the voucher scan did not start", () => {
   );
 });
 
+test("bill-wise opening balances explain why totals stay withheld", () => {
+  const message = outstandingsPartialReason("ledger_opening_bills_not_covered");
+  assert.match(message, /bill-wise opening balances/i);
+  assert.match(message, /totals stay withheld/i);
+});
+
 test("deadline states keep the restart-before-next-sync instruction", () => {
   assert.match(
     outstandingsPartialReason("tally_segment_deadline_restart_recommended"),

@@ -19,6 +19,9 @@ export function outstandingsPartialReason(value: string) {
   if (value === "company_voucher_alter_id_high_water_missing") {
     return "Tally did not return the voucher limit Bridge needs to prove complete coverage";
   }
+  if (value === "ledger_opening_bills_not_covered") {
+    return "Bridge found bill-wise opening balances that the voucher scan cannot verify, so totals stay withheld";
+  }
   if (value === "whole_book_false_empty") {
     return "Tally reported existing vouchers but the complete tiled date scan returned no rows";
   }

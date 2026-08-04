@@ -896,7 +896,9 @@ pub struct PartyOutstanding {
     pub receivable: ExactDecimal,
     pub payable: ExactDecimal,
     pub outstanding_total: ExactDecimal,
-    pub oldest_bill_age_days: u32,
+    /// `None` means this party's open exposure is entirely On Account, which
+    /// has no bill reference and therefore no truthful bill age.
+    pub oldest_bill_age_days: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -905,6 +907,10 @@ pub struct OutstandingsReport {
     pub as_of_yyyymmdd: String,
     pub receivable_total: ExactDecimal,
     pub payable_total: ExactDecimal,
+    /// Included in `receivable_total`, but deliberately excluded from bill ageing.
+    pub on_account_receivable_total: ExactDecimal,
+    /// Included in `payable_total`, but deliberately excluded from bill ageing.
+    pub on_account_payable_total: ExactDecimal,
     pub ageing: AgeingBuckets,
     pub open_receivable_bill_count: usize,
     pub ageing_bill_counts: AgeingBillCounts,

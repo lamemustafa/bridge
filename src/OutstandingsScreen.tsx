@@ -15,6 +15,8 @@ type Report = {
   as_of_yyyymmdd: string;
   receivable_total: string;
   payable_total: string;
+  on_account_receivable_total: string;
+  on_account_payable_total: string;
   ageing: {
     days_0_30: string;
     days_31_60: string;
@@ -33,7 +35,7 @@ type Report = {
     receivable: string;
     payable: string;
     outstanding_total: string;
-    oldest_bill_age_days: number;
+    oldest_bill_age_days: number | null;
   }>;
   source_voucher_count: number;
   source_bytes: number;
@@ -167,6 +169,16 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
             <div><span>Payable</span><strong>{formatMoney(completeResult.report.payable_total, completeResult.currency_assertion)}</strong></div>
           </div>
 
+          <div className="outstandings-basis" role="note">
+            <div>
+              <span>On account</span>
+              <strong>
+                {formatMoney(completeResult.report.on_account_receivable_total, completeResult.currency_assertion)} receivable · {formatMoney(completeResult.report.on_account_payable_total, completeResult.currency_assertion)} payable
+              </strong>
+            </div>
+            <p>Included in the totals. These entries have no bill reference, so they are excluded from bill ageing and the oldest-bill figure.</p>
+          </div>
+
           <div className="outstandings-ageing" role="group" aria-label="Receivable ageing buckets">
             <div className="ageing-label"><span>Receivable ageing</span><small>as of {formatDate(completeResult.report.as_of_yyyymmdd)}</small></div>
             {[
@@ -182,14 +194,14 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
           <div className="outstandings-parties">
             <div className="outstandings-table-heading">
               <h3>Top exposure</h3>
-              <span>Outstanding · oldest bill</span>
+              <span>Outstanding · oldest bill reference</span>
             </div>
             {completeResult.report.top_parties.length ? (
               <div role="table" aria-label="Top party exposure" aria-rowcount={completeResult.report.top_parties.length + 1}>
                 <div className="visually-hidden" role="row">
                   <span role="columnheader">Party</span>
                   <span role="columnheader">Outstanding</span>
-                  <span role="columnheader">Oldest bill</span>
+                  <span role="columnheader">Oldest bill reference</span>
                 </div>
                 {completeResult.report.top_parties.map((party) => {
                   const hasReceivable = party.receivable !== "0";
@@ -201,7 +213,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
                     <div className="outstandings-party" role="row" key={party.party}>
                       <div role="cell"><strong>{party.party}</strong><span>{kind}</span></div>
                       <strong role="cell">{formatMoney(party.outstanding_total, completeResult.currency_assertion)}</strong>
-                      <span role="cell">{party.oldest_bill_age_days} days</span>
+                      <span role="cell">{party.oldest_bill_age_days === null ? "No bill reference" : `${party.oldest_bill_age_days} days`}</span>
                     </div>
                   );
                 })}
