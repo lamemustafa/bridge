@@ -16,19 +16,11 @@ const EXIT_COMPANY: &str = "Bridge Billwise Lab";
 const EXIT_COMPANY_GUID: &str = "75f7566d-7a4f-431a-9642-e93a9d06d57d";
 #[cfg(feature = "live-calibration-harness")]
 const EXIT_AS_OF: &str = "20260731";
-#[cfg(feature = "live-calibration-harness")]
-const EXIT_VOUCHER_COUNT: usize = 220;
-#[cfg(feature = "live-calibration-harness")]
-const EXIT_RECEIVABLE_TOTAL: &str = "4514597";
-#[cfg(feature = "live-calibration-harness")]
-const EXIT_OPEN_RECEIVABLE_BILLS: usize = 48;
-#[cfg(feature = "live-calibration-harness")]
-const EXIT_AGEING_BILL_COUNTS: [usize; 4] = [4, 4, 4, 36];
 
 #[cfg(feature = "live-calibration-harness")]
 #[tokio::test]
-#[ignore = "manual owner-authorized reconciliation only; health-check and run one port at a time"]
-async fn unit_a_outstandings_live_exit_check() {
+#[ignore = "manual owner-authorized guard only; health-check and run one port at a time"]
+async fn unit_a_outstandings_live_exit_check_withholds_without_residual_coverage() {
     let port = std::env::var("BRIDGE_TALLY_LIVE_PORT")
         .expect("BRIDGE_TALLY_LIVE_PORT")
         .parse::<u16>()
@@ -45,7 +37,7 @@ async fn unit_a_outstandings_live_exit_check() {
     transport
         .get_status_decoded()
         .await
-        .expect("pre-reconciliation Tally status");
+        .expect("pre-withholding Tally status");
     let result = TallyRuntime::for_billwise_lab_reconciliation_exit_check()
         .fetch_outstandings(
             TallyConfig {
@@ -62,79 +54,23 @@ async fn unit_a_outstandings_live_exit_check() {
     transport
         .get_status_decoded()
         .await
-        .expect("post-reconciliation Tally status");
-    // The two instances are NOT interchangeable, despite identical company
-    // identity. Measured 2026-08-01: same GUID, same BooksFrom, same
-    // LastVoucherDate, same ALTVCHID (252) -- but port 9001 carries TEN
-    // bill-wise ledgers with non-zero OPENING balances (over Rs 15 lakh) that
-    // port 9000 does not; only ALTMSTID differs (218 vs 219). Those bills exist
-    // with no voucher, so a voucher-only scan cannot see them and MUST NOT
-    // claim complete outstandings for that book.
-    //
-    // Expecting Complete on 9001 would be demanding a wrong answer. This is
-    // therefore a per-port expectation, not a relaxed one -- and it asserts the
-    // stronger property that the detector fires exactly where opening bills are.
-    if port == 9001 {
-        match result {
-            OutstandingsLoadResult::Partial { reason_code, .. } => {
-                assert_eq!(
-                    reason_code, "ledger_opening_bills_not_covered",
-                    "port 9001 carries ledger-opening bills and must say so"
-                );
-                println!("UNIT_A_LIVE_PARTIAL port={port} reason={reason_code}");
-                return;
-            }
-            OutstandingsLoadResult::Complete { .. } => panic!(
-                "port 9001 has ledger-opening bills a voucher-only scan cannot see; \
-                 completing would under-report outstandings"
-            ),
-        }
-    }
+        .expect("post-withholding Tally status");
+    // This guard does not reconcile accounting figures. Its companion runtime
+    // regression uses an invalid endpoint to prove this partial is returned
+    // before endpoint admission or a voucher request starts.
     match result {
-        OutstandingsLoadResult::Complete { report, .. } => {
-            assert_eq!(report.company_name, EXIT_COMPANY);
-            assert_eq!(report.as_of_yyyymmdd, EXIT_AS_OF);
-            assert_eq!(report.source_voucher_count, EXIT_VOUCHER_COUNT);
-            assert_eq!(report.receivable_total.as_str(), EXIT_RECEIVABLE_TOTAL);
-            assert_eq!(
-                report.open_receivable_bill_count,
-                EXIT_OPEN_RECEIVABLE_BILLS
-            );
-            assert_eq!(
-                [
-                    report.ageing_bill_counts.days_0_30,
-                    report.ageing_bill_counts.days_31_60,
-                    report.ageing_bill_counts.days_61_90,
-                    report.ageing_bill_counts.days_90_plus,
-                ],
-                EXIT_AGEING_BILL_COUNTS
-            );
-            assert!(
-                !report.top_parties.is_empty(),
-                "the bill-bearing exit corpus produced no reconcilable party balances"
-            );
-            let ageing_total = report
-                .ageing
-                .days_0_30
-                .checked_add(&report.ageing.days_31_60)
-                .and_then(|value| value.checked_add(&report.ageing.days_61_90))
-                .and_then(|value| value.checked_add(&report.ageing.days_90_plus))
-                .expect("ageing total remains exactly representable");
-            assert_eq!(ageing_total, report.receivable_total);
-            println!(
-                "UNIT_A_LIVE_COMPLETE port={port} vouchers={} bytes={} receivable={} payable={} open_receivable_bills={} ageing_bill_counts={:?} as_of={}",
-                report.source_voucher_count,
-                report.source_bytes,
-                report.receivable_total.as_str(),
-                report.payable_total.as_str(),
-                report.open_receivable_bill_count,
-                EXIT_AGEING_BILL_COUNTS,
-                report.as_of_yyyymmdd,
-            );
-        }
         OutstandingsLoadResult::Partial { reason_code, .. } => {
-            panic!("live outstandings remained partial: {reason_code}")
+            assert_eq!(
+                reason_code, "unallocated_direct_postings_not_covered",
+                "a voucher-only scan cannot prove direct bill-wise postings on either port"
+            );
+            println!(
+                "UNIT_A_LIVE_WITHHELD port={port} reason={reason_code} mode=preflight_no_voucher_scan"
+            );
         }
+        OutstandingsLoadResult::Complete { .. } => panic!(
+            "the exit harness must not emit totals until residual coverage is independently qualified"
+        ),
     }
 }
 
