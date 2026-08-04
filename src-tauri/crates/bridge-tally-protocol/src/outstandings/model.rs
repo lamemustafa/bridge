@@ -907,10 +907,6 @@ pub struct OutstandingsReport {
     pub as_of_yyyymmdd: String,
     pub receivable_total: ExactDecimal,
     pub payable_total: ExactDecimal,
-    /// Included in `receivable_total`, but deliberately excluded from bill ageing.
-    pub on_account_receivable_total: ExactDecimal,
-    /// Included in `payable_total`, but deliberately excluded from bill ageing.
-    pub on_account_payable_total: ExactDecimal,
     pub ageing: AgeingBuckets,
     pub open_receivable_bill_count: usize,
     pub ageing_bill_counts: AgeingBillCounts,

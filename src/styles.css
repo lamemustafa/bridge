@@ -1164,36 +1164,6 @@ summary:focus-visible,
   font-variant-numeric: tabular-nums;
 }
 
-.outstandings-basis {
-  display: grid;
-  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
-  gap: 24px;
-  align-items: center;
-  padding: 18px 30px;
-  border-bottom: 1px solid #e6ebe7;
-  background: #f8faf8;
-}
-
-.outstandings-basis span {
-  display: block;
-  color: #61756a;
-  font-size: 13px;
-}
-
-.outstandings-basis strong {
-  display: block;
-  margin-top: 5px;
-  font-variant-numeric: tabular-nums;
-}
-
-.outstandings-basis p {
-  max-width: 65ch;
-  margin: 0;
-  color: #52645b;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
 .outstandings-ageing {
   display: grid;
   grid-template-columns: 1.25fr repeat(4, minmax(120px, 1fr));
@@ -1363,11 +1333,6 @@ summary:focus-visible,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .outstandings-basis {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-
   .outstandings-ageing > div + div {
     border-left: 0;
     border-top: 1px solid #eef2ef;
@@ -1405,7 +1370,6 @@ summary:focus-visible,
   }
 
   .outstandings-totals,
-  .outstandings-basis,
   .outstandings-ageing {
     grid-template-columns: 1fr;
   }

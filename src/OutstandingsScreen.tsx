@@ -15,8 +15,6 @@ type Report = {
   as_of_yyyymmdd: string;
   receivable_total: string;
   payable_total: string;
-  on_account_receivable_total: string;
-  on_account_payable_total: string;
   ageing: {
     days_0_30: string;
     days_31_60: string;
@@ -167,16 +165,6 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
           <div className="outstandings-totals" role="group" aria-label="Outstanding totals">
             <div><span>Receivable</span><strong>{formatMoney(completeResult.report.receivable_total, completeResult.currency_assertion)}</strong></div>
             <div><span>Payable</span><strong>{formatMoney(completeResult.report.payable_total, completeResult.currency_assertion)}</strong></div>
-          </div>
-
-          <div className="outstandings-basis" role="note">
-            <div>
-              <span>On account</span>
-              <strong>
-                {formatMoney(completeResult.report.on_account_receivable_total, completeResult.currency_assertion)} receivable · {formatMoney(completeResult.report.on_account_payable_total, completeResult.currency_assertion)} payable
-              </strong>
-            </div>
-            <p>Included in the totals. These entries have no bill reference, so they are excluded from bill ageing and the oldest-bill figure.</p>
           </div>
 
           <div className="outstandings-ageing" role="group" aria-label="Receivable ageing buckets">

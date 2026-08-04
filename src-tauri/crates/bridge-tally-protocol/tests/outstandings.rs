@@ -1135,8 +1135,6 @@ fn a_bill_literally_named_on_account_does_not_merge_with_the_aggregate() {
     .expect("two distinct bill keys compute");
 
     assert_eq!(report.receivable_total.as_str(), "150");
-    assert_eq!(report.on_account_receivable_total.as_str(), "50");
-    assert_eq!(report.on_account_payable_total.as_str(), "0");
     assert_eq!(report.open_receivable_bill_count, 1);
     assert_eq!(report.ageing_bill_counts.days_0_30, 1);
     assert_eq!(report.ageing.days_0_30.as_str(), "100");
