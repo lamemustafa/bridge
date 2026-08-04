@@ -24,6 +24,13 @@ test("bill-wise opening balances explain why totals stay withheld", () => {
   assert.match(message, /totals stay withheld/i);
 });
 
+test("unqualified direct postings withhold totals before a voucher read", () => {
+  const message = outstandingsPartialReason("unallocated_direct_postings_not_covered");
+  assert.match(message, /posted without a bill reference/i);
+  assert.match(message, /totals stay withheld/i);
+  assert.match(message, /before any voucher read/i);
+});
+
 test("deadline states keep the restart-before-next-sync instruction", () => {
   assert.match(
     outstandingsPartialReason("tally_segment_deadline_restart_recommended"),

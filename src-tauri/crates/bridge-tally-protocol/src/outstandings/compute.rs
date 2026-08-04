@@ -511,62 +511,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn on_account_exposure_is_included_but_has_no_bill_age() {
-        let company = PinnedCompany::verified(
-            ValidatedCompanyName::new("Synthetic Company").unwrap(),
-            "synthetic-guid".to_string(),
-        )
-        .unwrap();
-        let window =
-            DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260101", "20260401").unwrap();
-        let mut receivable = voucher(
-            "on-account-receivable",
-            "20260101",
-            "Customer",
-            "ignored",
-            "On Account",
-            "-100.00",
-        );
-        receivable.ledger_entries[0].bill_allocations[0].name = None;
-        let mut payable = voucher(
-            "on-account-payable",
-            "20260101",
-            "Supplier",
-            "ignored",
-            "On Account",
-            "25.00",
-        );
-        payable.ledger_entries[0].bill_allocations[0].name = None;
-
-        let scan = CompleteScan {
-            company,
-            reporting_window: window,
-            voucher_alter_id_high_water: VoucherAlterIdHighWater::parse("2").unwrap(),
-            vouchers: vec![receivable, payable],
-            encoded_bytes: 2048,
-            empty_partition_witnesses: Vec::new(),
-        };
-        let report = compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()).unwrap();
-
-        assert_eq!(report.receivable_total.as_str(), "100");
-        assert_eq!(report.payable_total.as_str(), "25");
-        assert!(report.has_unaged_receivable);
-        assert_eq!(report.open_receivable_bill_count, 0);
-        assert_eq!(report.ageing.days_0_30.as_str(), "0");
-        assert_eq!(report.ageing.days_31_60.as_str(), "0");
-        assert_eq!(report.ageing.days_61_90.as_str(), "0");
-        assert_eq!(report.ageing.days_90_plus.as_str(), "0");
-        assert_eq!(report.top_parties[0].party, "Customer");
-        assert_eq!(report.top_parties[0].oldest_bill_age_days, None);
-        let serialized = serde_json::to_value(&report).expect("report serializes across Tauri");
-        assert!(
-            serialized.get("on_account_receivable_total").is_none()
-                && serialized.get("on_account_payable_total").is_none(),
-            "explicit allocation rows must not be presented as a complete On Account total"
-        );
-    }
-
     fn voucher(
         guid: &str,
         date: &str,

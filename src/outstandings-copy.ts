@@ -22,6 +22,9 @@ export function outstandingsPartialReason(value: string) {
   if (value === "ledger_opening_bills_not_covered") {
     return "Bridge found bill-wise opening balances that the voucher scan cannot verify, so totals stay withheld";
   }
+  if (value === "unallocated_direct_postings_not_covered") {
+    return "Bridge cannot yet prove balances posted without a bill reference, so totals stay withheld before any voucher read";
+  }
   if (value === "whole_book_false_empty") {
     return "Tally reported existing vouchers but the complete tiled date scan returned no rows";
   }
