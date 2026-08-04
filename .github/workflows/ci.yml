@@ -124,6 +124,11 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri -> target
+          # A lockfile change creates a cold target cache. On Windows, saving that
+          # multi-gigabyte target tree can outlast this job's hard timeout after
+          # every test and lint gate has already passed. Keep the registry cache,
+          # but do not persist native Windows build artifacts.
+          cache-targets: ${{ runner.os != 'Windows' }}
       - name: Test portable Tally truth layer
         working-directory: src-tauri
         run: >-
