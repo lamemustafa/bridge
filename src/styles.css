@@ -1197,6 +1197,14 @@ summary:focus-visible,
   font-weight: 700;
 }
 
+.outstandings-ageing-note {
+  color: #4d6256;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 14px 20px 0;
+  max-width: 72ch;
+}
+
 .outstandings-parties {
   padding: 26px 30px 30px;
 }

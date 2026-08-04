@@ -19,6 +19,12 @@ export function outstandingsPartialReason(value: string) {
   if (value === "company_voucher_alter_id_high_water_missing") {
     return "Tally did not return the voucher limit Bridge needs to prove complete coverage";
   }
+  if (value === "ledger_opening_bills_not_covered") {
+    return "Bridge found bill-wise opening balances that the voucher scan cannot verify, so totals stay withheld";
+  }
+  if (value === "unallocated_direct_postings_not_covered") {
+    return "Bridge cannot yet prove balances posted without a bill reference, so totals stay withheld before any voucher read";
+  }
   if (value === "whole_book_false_empty") {
     return "Tally reported existing vouchers but the complete tiled date scan returned no rows";
   }
@@ -29,4 +35,9 @@ export function outstandingsPartialReason(value: string) {
     return "Tally returned a voucher outside the requested date period";
   }
   return value.replace(/_/g, " ");
+}
+
+export function outstandingsAgeingDisclosure(hasUnagedReceivable: boolean) {
+  if (!hasUnagedReceivable) return null;
+  return "Receivable includes On Account entries that are excluded from these buckets. Tally gives them no bill reference or age. Bridge does not show an On Account amount because this voucher read cannot prove the full unallocated balance.";
 }

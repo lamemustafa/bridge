@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { outstandingsPartialReason } from "../src/outstandings-copy.ts";
+import { outstandingsAgeingDisclosure, outstandingsPartialReason } from "../src/outstandings-copy.ts";
 
 test("uncalibrated sizing says the voucher read was not sent", () => {
   const message = outstandingsPartialReason("outstandings_segment_sizing_uncalibrated");
@@ -16,6 +16,19 @@ test("an over-budget plan says the voucher scan did not start", () => {
     outstandingsPartialReason("outstandings_segment_plan_exceeds_budget"),
     /no voucher scan started/i,
   );
+});
+
+test("bill-wise opening balances explain why totals stay withheld", () => {
+  const message = outstandingsPartialReason("ledger_opening_bills_not_covered");
+  assert.match(message, /bill-wise opening balances/i);
+  assert.match(message, /totals stay withheld/i);
+});
+
+test("unqualified direct postings withhold totals before a voucher read", () => {
+  const message = outstandingsPartialReason("unallocated_direct_postings_not_covered");
+  assert.match(message, /posted without a bill reference/i);
+  assert.match(message, /totals stay withheld/i);
+  assert.match(message, /before any voucher read/i);
 });
 
 test("deadline states keep the restart-before-next-sync instruction", () => {
@@ -31,4 +44,13 @@ test("deadline states keep the restart-before-next-sync instruction", () => {
 
 test("unknown reason codes remain readable", () => {
   assert.equal(outstandingsPartialReason("date_partition_scope_mismatch"), "date partition scope mismatch");
+});
+
+test("unaged receivables disclose the ageing scope without inventing an On Account total", () => {
+  const disclosure = outstandingsAgeingDisclosure(true);
+  assert.match(disclosure, /excluded from these buckets/i);
+  assert.match(disclosure, /no bill reference or age/i);
+  assert.match(disclosure, /does not show an On Account amount/i);
+  assert.match(disclosure, /cannot prove the full unallocated balance/i);
+  assert.equal(outstandingsAgeingDisclosure(false), null);
 });

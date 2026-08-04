@@ -1135,8 +1135,9 @@ fn a_bill_literally_named_on_account_does_not_merge_with_the_aggregate() {
     .expect("two distinct bill keys compute");
 
     assert_eq!(report.receivable_total.as_str(), "150");
-    assert_eq!(report.open_receivable_bill_count, 2);
-    assert_eq!(report.ageing_bill_counts.days_0_30, 2);
+    assert_eq!(report.open_receivable_bill_count, 1);
+    assert_eq!(report.ageing_bill_counts.days_0_30, 1);
+    assert_eq!(report.ageing.days_0_30.as_str(), "100");
 
     let unnamed_non_on_account = xml.replace(
         "<BILLTYPE>On Account</BILLTYPE>",
@@ -1364,7 +1365,8 @@ fn against_ref_reopened_after_zero_balance_ages_from_original_bill_date() {
         compute_outstandings(&scan, TallyDate::parse("20260731").unwrap()).expect("computes");
     assert_eq!(report.payable_total.as_str(), "1500");
     assert_eq!(
-        report.top_parties[0].oldest_bill_age_days, 60,
+        report.top_parties[0].oldest_bill_age_days,
+        Some(60),
         "an Agst Ref after full settlement must age from the original bill's BILLDATE"
     );
 }
@@ -1411,7 +1413,8 @@ fn against_ref_sign_flip_ages_from_voucher_date() {
         compute_outstandings(&scan, TallyDate::parse("20260731").unwrap()).expect("computes");
     assert_eq!(report.payable_total.as_str(), "1500");
     assert_eq!(
-        report.top_parties[0].oldest_bill_age_days, 30,
+        report.top_parties[0].oldest_bill_age_days,
+        Some(30),
         "an Agst Ref that crosses zero without stopping there must age from its voucher date"
     );
 }
@@ -1471,7 +1474,7 @@ fn assert_advance_age(scan: ScanResult) {
     let report = compute_outstandings(&scan, TallyDate::parse("20260415").unwrap())
         .expect("Advance ageing computes");
     assert_eq!(report.payable_total.as_str(), "25");
-    assert_eq!(report.top_parties[0].oldest_bill_age_days, 0);
+    assert_eq!(report.top_parties[0].oldest_bill_age_days, Some(0));
 }
 
 fn advance_scan(bill_date: Option<&str>) -> ScanResult {

@@ -18,14 +18,25 @@ enum BillKey {
 
 struct OpenBill {
     balance: ExactDecimal,
-    oldest_date: TallyDate,
+    kind: OpenBillKind,
+}
+
+/// A named bill always carries an ageing date; On Account never does.
+/// TALLY_PROTOCOL_REFERENCE.md §12a.2 records that Tally does not age On
+/// Account and leaves its overdue value blank.
+///
+/// Keeping these states distinct prevents an On Account aggregate from
+/// accidentally entering bill ageing when the calculation changes.
+enum OpenBillKind {
+    Named { oldest_date: TallyDate },
+    OnAccount,
 }
 
 #[derive(Default)]
 struct PartyTotals {
     receivable: Option<ExactDecimal>,
     payable: Option<ExactDecimal>,
-    oldest_age: u32,
+    oldest_bill_age: Option<u32>,
 }
 
 pub fn compute_outstandings(
@@ -64,8 +75,13 @@ pub fn compute_outstandings(
                 if amount.is_zero() {
                     continue;
                 }
-                let reference = match allocation.name.as_deref() {
-                    Some(name) => BillKey::Named(name.to_string()),
+                let (reference, initial_kind) = match allocation.name.as_deref() {
+                    Some(name) => (
+                        BillKey::Named(name.to_string()),
+                        OpenBillKind::Named {
+                            oldest_date: bill_age_date(allocation, voucher)?,
+                        },
+                    ),
                     None if matches!(allocation.bill_type, BillReferenceKind::OnAccount) => {
                         // On Account carries no bill identity, so Tally treats
                         // it as a party-scoped aggregate. Keying it per voucher
@@ -75,7 +91,7 @@ pub fn compute_outstandings(
                         // and a payable rather than its net balance. Aggregate
                         // by party, matching bridge-tally-core's contract.
                         let _ = (entry_index, allocation_index);
-                        BillKey::OnAccountAggregate
+                        (BillKey::OnAccountAggregate, OpenBillKind::OnAccount)
                     }
                     None => {
                         return Err(OutstandingsError::InvalidResponse("bill_reference_missing"))
@@ -85,7 +101,7 @@ pub fn compute_outstandings(
                     .entry((entry.ledger_name.clone(), reference))
                     .or_insert_with(|| OpenBill {
                         balance: ExactDecimal::zero(),
-                        oldest_date: voucher.date.clone(),
+                        kind: initial_kind,
                     });
                 let previous_balance = bill.balance.clone();
                 let next_balance = bill
@@ -93,19 +109,9 @@ pub fn compute_outstandings(
                     .checked_add(amount)
                     .map_err(|_| OutstandingsError::ArithmeticOverflow)?;
                 if previous_balance.is_zero() {
-                    bill.oldest_date = match allocation.bill_type {
-                        // TALLY_PROTOCOL_REFERENCE §12a.2 (PR #117): Tally
-                        // reported a 1-Jun bill settled to zero and re-opened
-                        // by a 1-Jul Agst Ref as due on 1-Jun, 60 days overdue;
-                        // zero re-opens age from the original BILLDATE.
-                        BillReferenceKind::NewRef | BillReferenceKind::AgstRef => allocation
-                            .bill_date
-                            .clone()
-                            .ok_or(OutstandingsError::InvalidResponse("bill_date_missing"))?,
-                        BillReferenceKind::Advance | BillReferenceKind::OnAccount => {
-                            voucher.date.clone()
-                        }
-                    };
+                    if let OpenBillKind::Named { oldest_date } = &mut bill.kind {
+                        *oldest_date = bill_age_date(allocation, voucher)?;
+                    }
                 } else if !next_balance.is_zero()
                     && previous_balance.is_negative() != next_balance.is_negative()
                 {
@@ -113,7 +119,9 @@ pub fn compute_outstandings(
                     // intermediate zero balance. Deliberately use the voucher
                     // date: on an Agst Ref, BILLDATE belongs to the bill being
                     // settled, not the newly exposed balance.
-                    bill.oldest_date = voucher.date.clone();
+                    if let OpenBillKind::Named { oldest_date } = &mut bill.kind {
+                        *oldest_date = voucher.date.clone();
+                    }
                 }
                 bill.balance = next_balance;
             }
@@ -122,6 +130,7 @@ pub fn compute_outstandings(
 
     let mut receivable_total = ExactDecimal::zero();
     let mut payable_total = ExactDecimal::zero();
+    let mut has_unaged_receivable = false;
     let mut ageing = AgeingBuckets {
         days_0_30: ExactDecimal::zero(),
         days_31_60: ExactDecimal::zero(),
@@ -139,38 +148,49 @@ pub fn compute_outstandings(
         .into_iter()
         .filter(|(_, bill)| !bill.balance.is_zero())
     {
-        let age = days_between(&bill.oldest_date, &as_of)?;
         let amount = bill
             .balance
             .abs()
             .map_err(|_| OutstandingsError::ArithmeticOverflow)?;
         let totals = parties.entry(party).or_default();
-        totals.oldest_age = totals.oldest_age.max(age);
+        let bill_age = match &bill.kind {
+            OpenBillKind::Named { oldest_date } => Some(days_between(oldest_date, &as_of)?),
+            OpenBillKind::OnAccount => None,
+        };
         if bill.balance.is_negative() {
             receivable_total = add(&receivable_total, &amount)?;
+            has_unaged_receivable |= matches!(&bill.kind, OpenBillKind::OnAccount);
             totals.receivable = Some(add(
                 totals.receivable.as_ref().unwrap_or(&ExactDecimal::zero()),
                 &amount,
             )?);
-            let (bucket, bill_count) = match age {
-                0..=30 => (&mut ageing.days_0_30, &mut ageing_bill_counts.days_0_30),
-                31..=60 => (&mut ageing.days_31_60, &mut ageing_bill_counts.days_31_60),
-                61..=90 => (&mut ageing.days_61_90, &mut ageing_bill_counts.days_61_90),
-                _ => (
-                    &mut ageing.days_90_plus,
-                    &mut ageing_bill_counts.days_90_plus,
-                ),
-            };
-            *bucket = add(bucket, &amount)?;
-            *bill_count = bill_count
-                .checked_add(1)
-                .ok_or(OutstandingsError::ArithmeticOverflow)?;
+            if let Some(age) = bill_age {
+                totals.oldest_bill_age =
+                    Some(totals.oldest_bill_age.map_or(age, |oldest| oldest.max(age)));
+                let (bucket, bill_count) = match age {
+                    0..=30 => (&mut ageing.days_0_30, &mut ageing_bill_counts.days_0_30),
+                    31..=60 => (&mut ageing.days_31_60, &mut ageing_bill_counts.days_31_60),
+                    61..=90 => (&mut ageing.days_61_90, &mut ageing_bill_counts.days_61_90),
+                    _ => (
+                        &mut ageing.days_90_plus,
+                        &mut ageing_bill_counts.days_90_plus,
+                    ),
+                };
+                *bucket = add(bucket, &amount)?;
+                *bill_count = bill_count
+                    .checked_add(1)
+                    .ok_or(OutstandingsError::ArithmeticOverflow)?;
+            }
         } else {
             payable_total = add(&payable_total, &amount)?;
             totals.payable = Some(add(
                 totals.payable.as_ref().unwrap_or(&ExactDecimal::zero()),
                 &amount,
             )?);
+            if let Some(age) = bill_age {
+                totals.oldest_bill_age =
+                    Some(totals.oldest_bill_age.map_or(age, |oldest| oldest.max(age)));
+            }
         }
     }
 
@@ -185,7 +205,7 @@ pub fn compute_outstandings(
                 receivable,
                 payable,
                 outstanding_total,
-                oldest_bill_age_days: totals.oldest_age,
+                oldest_bill_age_days: totals.oldest_bill_age,
             })
         })
         .collect::<Result<Vec<_>, OutstandingsError>>()?;
@@ -209,6 +229,7 @@ pub fn compute_outstandings(
         as_of_yyyymmdd: as_of.as_str().to_string(),
         receivable_total,
         payable_total,
+        has_unaged_receivable,
         ageing,
         open_receivable_bill_count,
         ageing_bill_counts,
@@ -216,6 +237,26 @@ pub fn compute_outstandings(
         source_voucher_count: scan.vouchers().len(),
         source_bytes: scan.encoded_bytes(),
     })
+}
+
+fn bill_age_date(
+    allocation: &super::BillAllocation,
+    voucher: &super::Voucher,
+) -> Result<TallyDate, OutstandingsError> {
+    match allocation.bill_type {
+        // TALLY_PROTOCOL_REFERENCE §12a.2 (PR #117): Tally reported a 1-Jun
+        // bill settled to zero and re-opened by a 1-Jul Agst Ref as due on
+        // 1-Jun, 60 days overdue; zero re-opens age from the original
+        // BILLDATE.
+        BillReferenceKind::NewRef | BillReferenceKind::AgstRef => allocation
+            .bill_date
+            .clone()
+            .ok_or(OutstandingsError::InvalidResponse("bill_date_missing")),
+        BillReferenceKind::Advance => Ok(voucher.date.clone()),
+        BillReferenceKind::OnAccount => Err(OutstandingsError::InvalidResponse(
+            "bill_reference_forbidden",
+        )),
+    }
 }
 
 fn exact(value: &MoneyValue) -> Result<&ExactDecimal, OutstandingsError> {
@@ -332,6 +373,7 @@ mod tests {
         let report = compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()).unwrap();
         assert_eq!(report.receivable_total.as_str(), "70");
         assert_eq!(report.payable_total.as_str(), "55");
+        assert!(!report.has_unaged_receivable);
         assert_eq!(report.ageing.days_0_30.as_str(), "10");
         assert_eq!(report.ageing.days_61_90.as_str(), "60");
         assert_eq!(report.open_receivable_bill_count, 2);
@@ -342,7 +384,7 @@ mod tests {
         assert_eq!(report.top_parties[0].party, "Customer");
         assert_eq!(report.top_parties[0].payable.as_str(), "5");
         assert_eq!(report.top_parties[0].outstanding_total.as_str(), "75");
-        assert_eq!(report.top_parties[0].oldest_bill_age_days, 90);
+        assert_eq!(report.top_parties[0].oldest_bill_age_days, Some(90));
 
         let later = compute_outstandings(&scan, TallyDate::parse("20260501").unwrap()).unwrap();
         assert_eq!(later.receivable_total, report.receivable_total);
@@ -409,7 +451,7 @@ mod tests {
         assert_eq!(report.ageing.days_90_plus.as_str(), "0");
         assert_eq!(report.open_receivable_bill_count, 1);
         assert_eq!(report.ageing_bill_counts.days_0_30, 1);
-        assert_eq!(report.top_parties[0].oldest_bill_age_days, 1);
+        assert_eq!(report.top_parties[0].oldest_bill_age_days, Some(1));
     }
 
     #[test]
@@ -492,7 +534,8 @@ mod tests {
             ledger_entries: vec![LedgerEntry {
                 ledger_name: party.to_string(),
                 bill_allocations: vec![BillAllocation {
-                    bill_date: (bill_type == "New Ref").then(|| TallyDate::parse(date).unwrap()),
+                    bill_date: matches!(bill_type, "New Ref" | "Agst Ref")
+                        .then(|| TallyDate::parse(date).unwrap()),
                     name: Some(reference.to_string()),
                     bill_type: match bill_type {
                         "New Ref" => BillReferenceKind::NewRef,

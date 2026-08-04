@@ -40,6 +40,13 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_ENDPOINT_SESSIONS: usize = 32;
 
+/// Private capability witness for the future native-report + ledger-residual
+/// implementation. There is intentionally no constructor: a future promotion
+/// must add the release-qualified evidence and the reconciliation itself,
+/// rather than merely opt the voucher scan back in.
+#[derive(Clone)]
+struct QualifiedUnallocatedBalanceCoverage;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EndpointKey(String);
 
@@ -498,6 +505,12 @@ pub struct TallyRuntime {
     runtime_identity: Arc<()>,
     control: PortableReadRuntime,
     outstandings_segment_policy: Option<CalibratedSegmentPolicy>,
+    // A complete voucher scan proves only the bill allocations it can read.
+    // This witness may be constructed only by a qualified residual path that
+    // independently reconciles direct postings without BILLALLOCATIONS.LIST.
+    // Until then, returning a Complete result would turn an unknown balance
+    // into a plausible total (TALLY_PROTOCOL_REFERENCE.md §12a.6).
+    unallocated_balance_coverage: Option<QualifiedUnallocatedBalanceCoverage>,
     outstandings_boundary_profile_override: Option<DateBoundaryProfile>,
     #[cfg(test)]
     transport_policy: Option<bridge_tally_transport::TransportPolicy>,
@@ -636,6 +649,7 @@ impl Default for TallyRuntime {
             runtime_identity: Arc::new(()),
             control: PortableReadRuntime::default(),
             outstandings_segment_policy: None,
+            unallocated_balance_coverage: None,
             outstandings_boundary_profile_override: None,
             #[cfg(test)]
             transport_policy: None,
@@ -1234,6 +1248,9 @@ impl TallyRuntime {
     ) -> anyhow::Result<OutstandingsLoadResult> {
         let Some(segment_policy) = self.outstandings_segment_policy else {
             return Ok(partial_result("outstandings_segment_sizing_uncalibrated"));
+        };
+        let Some(_coverage) = self.unallocated_balance_coverage.as_ref() else {
+            return Ok(partial_result("unallocated_direct_postings_not_covered"));
         };
         let cached_probe = self.cached_probe(&config)?;
         let boundary_profile = self
@@ -2171,6 +2188,30 @@ mod tests {
             result,
             OutstandingsLoadResult::Partial { reason_code, .. }
                 if reason_code == "outstandings_segment_sizing_uncalibrated"
+        ));
+    }
+
+    #[cfg(feature = "live-calibration-harness")]
+    #[tokio::test]
+    async fn calibrated_voucher_scan_withholds_totals_before_endpoint_admission_without_residual_coverage(
+    ) {
+        let result = TallyRuntime::for_billwise_lab_reconciliation_exit_check()
+            .fetch_outstandings(
+                TallyConfig {
+                    host: "not-a-loopback-endpoint".to_string(),
+                    port: 9000,
+                },
+                "Synthetic Company".to_string(),
+                "synthetic-guid".to_string(),
+                TallyDate::parse("20260731").unwrap(),
+                OutstandingsCurrencyAssertion::Inr,
+            )
+            .await
+            .expect("missing coverage is an in-band partial result");
+        assert!(matches!(
+            result,
+            OutstandingsLoadResult::Partial { reason_code, .. }
+                if reason_code == "unallocated_direct_postings_not_covered"
         ));
     }
 
