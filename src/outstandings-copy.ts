@@ -33,3 +33,8 @@ export function outstandingsPartialReason(value: string) {
   }
   return value.replace(/_/g, " ");
 }
+
+export function outstandingsAgeingDisclosure(hasUnagedReceivable: boolean) {
+  if (!hasUnagedReceivable) return null;
+  return "Receivable includes On Account entries that are excluded from these buckets. Tally gives them no bill reference or age. Bridge does not show an On Account amount because this voucher read cannot prove the full unallocated balance.";
+}

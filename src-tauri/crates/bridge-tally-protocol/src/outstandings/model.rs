@@ -907,6 +907,9 @@ pub struct OutstandingsReport {
     pub as_of_yyyymmdd: String,
     pub receivable_total: ExactDecimal,
     pub payable_total: ExactDecimal,
+    /// At least one observed receivable On Account allocation is included in
+    /// `receivable_total` but cannot be assigned a truthful bill age.
+    pub has_unaged_receivable: bool,
     pub ageing: AgeingBuckets,
     pub open_receivable_bill_count: usize,
     pub ageing_bill_counts: AgeingBillCounts,

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { outstandingsPartialReason } from "../src/outstandings-copy.ts";
+import { outstandingsAgeingDisclosure, outstandingsPartialReason } from "../src/outstandings-copy.ts";
 
 test("uncalibrated sizing says the voucher read was not sent", () => {
   const message = outstandingsPartialReason("outstandings_segment_sizing_uncalibrated");
@@ -37,4 +37,13 @@ test("deadline states keep the restart-before-next-sync instruction", () => {
 
 test("unknown reason codes remain readable", () => {
   assert.equal(outstandingsPartialReason("date_partition_scope_mismatch"), "date partition scope mismatch");
+});
+
+test("unaged receivables disclose the ageing scope without inventing an On Account total", () => {
+  const disclosure = outstandingsAgeingDisclosure(true);
+  assert.match(disclosure, /excluded from these buckets/i);
+  assert.match(disclosure, /no bill reference or age/i);
+  assert.match(disclosure, /does not show an On Account amount/i);
+  assert.match(disclosure, /cannot prove the full unallocated balance/i);
+  assert.equal(outstandingsAgeingDisclosure(false), null);
 });

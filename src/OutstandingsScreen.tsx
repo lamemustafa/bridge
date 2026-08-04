@@ -1,7 +1,7 @@
 import React from "react";
 import { RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { outstandingsPartialReason } from "./outstandings-copy";
+import { outstandingsAgeingDisclosure, outstandingsPartialReason } from "./outstandings-copy";
 import { canStartOutstandingsRead } from "./outstandings-currency";
 
 type Props = {
@@ -15,6 +15,7 @@ type Report = {
   as_of_yyyymmdd: string;
   receivable_total: string;
   payable_total: string;
+  has_unaged_receivable: boolean;
   ageing: {
     days_0_30: string;
     days_31_60: string;
@@ -121,6 +122,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
 
   const completeResult = isInrCompleteResult(result) ? result : null;
   const report = completeResult?.report ?? null;
+  const ageingDisclosure = report && outstandingsAgeingDisclosure(report.has_unaged_receivable);
   const unsupportedCurrencyAssertion = result?.state === "complete" && !completeResult;
   return (
     <section className="outstandings-screen" aria-busy={loading}>
@@ -167,8 +169,8 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
             <div><span>Payable</span><strong>{formatMoney(completeResult.report.payable_total, completeResult.currency_assertion)}</strong></div>
           </div>
 
-          <div className="outstandings-ageing" role="group" aria-label="Receivable ageing buckets">
-            <div className="ageing-label"><span>Receivable ageing</span><small>as of {formatDate(completeResult.report.as_of_yyyymmdd)}</small></div>
+          <div className="outstandings-ageing" role="group" aria-label="Receivable ageing by bill reference">
+            <div className="ageing-label"><span>Receivable ageing (bill references only)</span><small>as of {formatDate(completeResult.report.as_of_yyyymmdd)}</small></div>
             {[
               ["0–30", completeResult.report.ageing.days_0_30],
               ["31–60", completeResult.report.ageing.days_31_60],
@@ -178,6 +180,11 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
               <div key={label}><span>{label} days</span><strong>{formatMoney(amount, completeResult.currency_assertion)}</strong></div>
             ))}
           </div>
+          {ageingDisclosure && (
+            <p className="outstandings-ageing-note" role="note">
+              {ageingDisclosure}
+            </p>
+          )}
 
           <div className="outstandings-parties">
             <div className="outstandings-table-heading">

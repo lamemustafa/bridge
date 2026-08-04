@@ -22,6 +22,8 @@ struct OpenBill {
 }
 
 /// A named bill always carries an ageing date; On Account never does.
+/// TALLY_PROTOCOL_REFERENCE.md §12a.2 records that Tally does not age On
+/// Account and leaves its overdue value blank.
 ///
 /// Keeping these states distinct prevents an On Account aggregate from
 /// accidentally entering bill ageing when the calculation changes.
@@ -128,6 +130,7 @@ pub fn compute_outstandings(
 
     let mut receivable_total = ExactDecimal::zero();
     let mut payable_total = ExactDecimal::zero();
+    let mut has_unaged_receivable = false;
     let mut ageing = AgeingBuckets {
         days_0_30: ExactDecimal::zero(),
         days_31_60: ExactDecimal::zero(),
@@ -156,6 +159,7 @@ pub fn compute_outstandings(
         };
         if bill.balance.is_negative() {
             receivable_total = add(&receivable_total, &amount)?;
+            has_unaged_receivable |= matches!(&bill.kind, OpenBillKind::OnAccount);
             totals.receivable = Some(add(
                 totals.receivable.as_ref().unwrap_or(&ExactDecimal::zero()),
                 &amount,
@@ -225,6 +229,7 @@ pub fn compute_outstandings(
         as_of_yyyymmdd: as_of.as_str().to_string(),
         receivable_total,
         payable_total,
+        has_unaged_receivable,
         ageing,
         open_receivable_bill_count,
         ageing_bill_counts,
@@ -368,6 +373,7 @@ mod tests {
         let report = compute_outstandings(&scan, TallyDate::parse("20260401").unwrap()).unwrap();
         assert_eq!(report.receivable_total.as_str(), "70");
         assert_eq!(report.payable_total.as_str(), "55");
+        assert!(!report.has_unaged_receivable);
         assert_eq!(report.ageing.days_0_30.as_str(), "10");
         assert_eq!(report.ageing.days_61_90.as_str(), "60");
         assert_eq!(report.open_receivable_bill_count, 2);
@@ -545,6 +551,7 @@ mod tests {
 
         assert_eq!(report.receivable_total.as_str(), "100");
         assert_eq!(report.payable_total.as_str(), "25");
+        assert!(report.has_unaged_receivable);
         assert_eq!(report.open_receivable_bill_count, 0);
         assert_eq!(report.ageing.days_0_30.as_str(), "0");
         assert_eq!(report.ageing.days_31_60.as_str(), "0");
