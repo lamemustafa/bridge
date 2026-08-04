@@ -898,6 +898,8 @@ pub struct PartyOutstanding {
     pub outstanding_total: ExactDecimal,
     /// `None` means this party's open exposure is entirely On Account, which
     /// has no bill reference and therefore no truthful bill age.
+    /// TALLY_PROTOCOL_REFERENCE.md §12a.2 records that On Account is not aged;
+    /// §12a.4 records that Tally strips its name.
     pub oldest_bill_age_days: Option<u32>,
 }
 
@@ -909,6 +911,7 @@ pub struct OutstandingsReport {
     pub payable_total: ExactDecimal,
     /// At least one observed receivable On Account allocation is included in
     /// `receivable_total` but cannot be assigned a truthful bill age.
+    /// TALLY_PROTOCOL_REFERENCE.md §12a.2 records that On Account is not aged.
     pub has_unaged_receivable: bool,
     pub ageing: AgeingBuckets,
     pub open_receivable_bill_count: usize,
