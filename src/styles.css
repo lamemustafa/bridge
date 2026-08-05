@@ -503,7 +503,7 @@ h2 {
   justify-content: space-between;
   align-items: flex-start;
   gap: 24px;
-  border-left: 4px solid #d9a53b;
+  border-top: 2px solid #d9a53b;
 }
 
 .mirror-hero h2 {
@@ -527,7 +527,6 @@ h2 {
   align-items: center;
   gap: 14px;
   border: 1px solid #cddbd3;
-  border-left: 4px solid #0f766e;
   border-radius: 8px;
   background: rgb(248 252 249 / 96%);
   box-shadow: 0 8px 24px rgb(23 32 38 / 8%);
@@ -557,7 +556,7 @@ h2 {
 }
 
 .privacy-warning {
-  border-left: 3px solid #b36b00;
+  border: 1px solid #e7c978;
   background: #fff8e8;
   color: #6c4700;
   padding: 10px 12px;
@@ -610,7 +609,6 @@ h2 {
   justify-content: space-between;
   gap: 16px;
   border: 1px solid #9bc9b6;
-  border-left: 4px solid #0f766e;
   border-radius: 8px;
   background: #f0fdf7;
   color: #183b2e;
@@ -695,7 +693,7 @@ h2 {
   gap: 4px;
   align-content: end;
   padding: 14px 16px;
-  border-left: 3px solid #0f766e;
+  border: 1px solid #c7ddd0;
   border-radius: 8px;
   background: #f0f8f3;
 }
@@ -828,6 +826,22 @@ h2 {
 
 .readiness-complete {
   padding: 0 4px;
+  color: #176344;
+}
+
+.company-advanced-setup {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid #dfe6e1;
+  padding-top: 16px;
+}
+
+.company-advanced-setup > summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.company-advanced-setup[open] > summary {
   color: #176344;
 }
 

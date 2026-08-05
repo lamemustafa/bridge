@@ -380,7 +380,7 @@ const MIRROR_PAGE_LIMIT = 25;
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
   outstandings: "Aged outstandings",
-  companies: "Tally readiness",
+  companies: "Connect Tally",
   gst: "GST return readiness",
   mirror: "Accounting mirror and proof",
   dsc: "DSC token",
@@ -2269,8 +2269,8 @@ function App() {
             <article className="panel wide" id="company-profile">
               <div className="panel-heading">
                 <div>
-                  <h2>Choose and review a company</h2>
-                  <p className="panel-description">Bridge enables company-scoped reads only after an observed GUID is reviewed and saved for the selected local endpoint.</p>
+                  <h2>Choose your Tally company</h2>
+                  <p className="panel-description">Choose the company open in Tally, then save it for Bridge to use on this computer.</p>
                 </div>
                 <span>{liveCompanyKeys.length} current probe · {persistedCompanyProfileTotal} persisted{persistedCompanyProfilesTruncated ? ` (showing newest ${persistedCompanyProfilesLoaded})` : ""}</span>
               </div>
@@ -2281,7 +2281,7 @@ function App() {
                 <div className="empty-state">
                   <Building2 size={32} />
                   <strong>No companies discovered yet</strong>
-                  <span>Start Tally, load the intended company, enable the XML server, then run Probe and discover.</span>
+                  <span>Open the company you need in Tally, then check the connection again.</span>
                 </div>
               ) : (
                 <div className="company-profile-grid">
@@ -2298,11 +2298,14 @@ function App() {
                       <option value="">Select company</option>
                       {companies.map((company) => (
                         <option value={tallyCompanyKey(company)} key={tallyCompanyKey(company)}>
-                          {company.name} · {company.canonical_endpoint ?? "endpoint not persisted"} · {liveCompanyKeys.includes(tallyCompanyKey(company)) ? "current probe" : `offline pin, observed ${formatRuntimeTime(company.last_observed_at_unix_ms)}`}
+                          {company.name}{liveCompanyKeys.includes(tallyCompanyKey(company)) ? "" : " (previously saved)"}
                         </option>
                       ))}
                     </select>
                   </label>
+                  <details className="company-advanced-setup">
+                    <summary>Review connection details and advanced checks</summary>
+                    <p className="section-note">Use these details to verify the connection or run an advanced read. They do not establish accounting completeness.</p>
                   <dl>
                     <div><dt>Identity confidence</dt><dd>{selectedCompanyRecord?.mirror_company_id ? formatIdentifier(selectedCompanyRecord.identity_confidence ?? "unknown") : "Not established"}</dd></div>
                     <div><dt>GUID reported</dt><dd>{selectedCompanyRecord?.guid || selectedCompanyRecord?.guid_observed ? "Yes; value hidden for persisted profiles" : "No"}</dd></div>
@@ -2363,14 +2366,17 @@ function App() {
                       </dl>
                     )}
                   </section>
+                  </details>
                   <button
                     type="button"
                     onClick={() => void saveReviewedTallySetup()}
                     disabled={snapshotActive || tallyAction !== null || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyLive || !selectedCompanyRecord?.guid || !!passportSnapshotId}
                   >
-                    {passportSnapshotId ? "Reviewed scope saved" : "Save reviewed company scope"}
+                    {passportSnapshotId ? "Company setup saved" : "Save this company"}
                   </button>
-                  <p className="section-note">This explicit save atomically stores the current Passport, the selected company pin, and any exact selected-read scope evidence. Probing and qualification alone do not write local setup state or anything to Tally.</p>
+                  <p className="section-note">Bridge saves this company only after a current connection check. Nothing is changed in Tally.</p>
+                  <details className="company-advanced-setup">
+                    <summary>Future write testing and sync proof</summary>
                   <section className="qualification-panel" aria-label="Synthetic write-canary fixture">
                     <h3>Synthetic write-canary fixture</h3>
                     <p className="section-note">This is a local, revocable enrollment gate for a future canary. It sends no Tally request, performs no Tally write, and leaves write capability Unknown.</p>
@@ -2444,6 +2450,7 @@ function App() {
                     {!reviewId || !reviewCommitmentSha256 ? <p className="section-note">Next: run a fresh Probe and review the selected company before local enrollment. Saving a reviewed company scope consumes its earlier review.</p> : null}
                   </section>
                   <button className="secondary-action" type="button" onClick={() => { setView("mirror"); void refreshSyncEvidence(true); }} disabled={!selectedCompanyRecord?.mirror_company_id}>Open Sync runs and Proof</button>
+                  </details>
                 </div>
               )}
             </article>
