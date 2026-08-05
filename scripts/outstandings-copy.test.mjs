@@ -3,12 +3,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isNonRetryableOutstandingsBoundary, outstandingsAgeingDisclosure, outstandingsPartialReason } from "../src/outstandings-copy.ts";
+import { isNonRetryableOutstandingsBoundary, outstandingsAgeingDisclosure, outstandingsPartialReason, outstandingsPartialState } from "../src/outstandings-copy.ts";
 
 test("uncalibrated sizing says the voucher read was not sent", () => {
   const message = outstandingsPartialReason("outstandings_segment_sizing_uncalibrated");
   assert.match(message, /no voucher read was sent/i);
   assert.doesNotMatch(message, /empty|adjacent/i);
+});
+
+test("an unavailable production reader does not invite a pointless refresh", () => {
+  const state = outstandingsPartialState("outstandings_segment_sizing_uncalibrated");
+  assert.equal(state.retryable, false);
+  assert.match(state.title, /aren’t available yet/i);
+  assert.match(state.message, /didn’t read anything from tally/i);
+  assert.match(state.message, /changing tally settings won’t resolve this/i);
+  assert.equal(isNonRetryableOutstandingsBoundary("outstandings_segment_sizing_uncalibrated"), true);
 });
 
 test("an over-budget plan says the voucher scan did not start", () => {

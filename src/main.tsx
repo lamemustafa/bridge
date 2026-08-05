@@ -1,12 +1,16 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Building2, Cable, CircleHelp, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ReceiptIndianRupee, RefreshCw, ShieldCheck, UploadCloud } from "lucide-react";
+import { Activity, Building2, Cable, Check, CircleHelp, Cloud, Database, FileText, FolderOpen, KeyRound, Play, RefreshCw, ShieldCheck, UploadCloud } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyProbeCompanySelectionTransition,
+  canReuseCurrentProbeReview,
   clearCompanyScopedState,
   companyDiscoveryPrompt,
+  currentProbeCompanies,
+  tallyCompanyKey,
 } from "./tally-company-selection";
+import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
 import { OutstandingsScreen } from "./OutstandingsScreen";
 import "./styles.css";
@@ -94,18 +98,6 @@ type SelectedReadScope = {
   voucher_from_yyyymmdd: string;
   voucher_to_yyyymmdd: string;
   scope_commitment_sha256: string;
-};
-
-type SelectedReadQualificationResult = {
-  review_id: string;
-  observed_at_unix_ms: number;
-  profile: CapabilityProfile;
-  profile_sha256: string;
-  review_commitment_sha256: string;
-  selected_read_scope: SelectedReadScope;
-  no_writes_attempted: boolean;
-  raw_records_retained: boolean;
-  completeness_claimed: boolean;
 };
 
 type SavedTallySetup = {
@@ -223,21 +215,6 @@ type TallyRuntimeSnapshot = {
   last_success_unix_ms?: number;
   last_failure_unix_ms?: number;
   cached_capability_observed_at_unix_ms?: number;
-};
-
-type TallyLedger = {
-  name: string;
-  parent?: string;
-  party_gstin?: string;
-  opening_balance?: string;
-};
-
-type TallyVoucher = {
-  id?: string;
-  date?: string;
-  voucher_type?: string;
-  voucher_number?: string;
-  party_ledger_name?: string;
 };
 
 type GstReturnDraft = {
@@ -372,7 +349,7 @@ type SelectedDocumentPath = {
 };
 
 type View = "dashboard" | "outstandings" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
-type TallyAction = "probe" | "discover" | "bootstrap" | "qualify" | "save" | "fixture_enroll" | "fixture_revoke" | "ledgers" | "catalog" | "vouchers" | "evidence" | "explorer" | "start" | "resume" | "cancel";
+type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
 const MIRROR_PAGE_LIMIT = 25;
@@ -380,7 +357,7 @@ const MIRROR_PAGE_LIMIT = 25;
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
   outstandings: "Aged outstandings",
-  companies: "Tally readiness",
+  companies: "Connect Tally",
   gst: "GST return readiness",
   mirror: "Accounting mirror and proof",
   dsc: "DSC token",
@@ -584,41 +561,20 @@ function GapMap({ codes, available }: { codes: string[]; available: boolean }) {
   );
 }
 
-function classifyTallyError(message: string): { category: string; action: string } {
-  const value = message.toLowerCase();
-  if (value.includes("permission") || value.includes("education") || value.includes("mode")) {
-    return { category: "Permission or mode", action: "Confirm this operation is supported by the active Tally mode and company permissions." };
-  }
-  if (value.includes("parse") || value.includes("xml") || value.includes("schema") || value.includes("payload")) {
-    return { category: "Response validation", action: "Keep the run unverified and inspect the redacted diagnostic evidence before retrying." };
-  }
-  if (value.includes("reconcil") || value.includes("mismatch") || value.includes("proof")) {
-    return { category: "Reconciliation", action: "Review the Gap Map and local drill-down. Do not overwrite or ignore the mismatch." };
-  }
-  if (value.includes("status") || value.includes("company") || value.includes("tally_export")) {
-    return { category: "Tally application", action: "Confirm the intended company is loaded and Tally accepted the read-only request." };
-  }
-  if (value.includes("host") || value.includes("port") || value.includes("endpoint") || value.includes("connect")) {
-    return { category: "Endpoint configuration", action: "Check the loopback host, port, and Tally XML server, then probe again." };
-  }
-  return { category: "Operation", action: "Preserve the error and inspect Tally Setup, the Gap Map, and Tally runtime before deciding whether a retry is safe." };
-}
-
 function TallyErrorNotice({ message }: { message: OperatorError }) {
-  const guidance = typeof message === "string"
-    ? classifyTallyError(message)
-    : { category: message.category, action: message.remediation };
+  const guidance = classifyTallyError(typeof message === "string" ? { message } : message);
   const displayMessage = typeof message === "string" ? message : message.message;
   return (
     <div className="error-banner" role="alert">
       <strong>{guidance.category}</strong>
-      <span>{displayMessage}</span>
+      <span>{guidance.action}</span>
       {typeof message !== "string" && (
-        <small>
-          Code <code>{message.code}</code> · Retry {formatIdentifier(message.retry)} · Local state {message.local_state_changed ? "changed" : "unchanged"} · Tally state {message.tally_state_may_have_changed ? "may have changed" : "unchanged by this read-only action"}
-        </small>
+        <details>
+          <summary>Technical details</summary>
+          <small>Code <code>{message.code}</code> · Retry {formatIdentifier(message.retry)} · Local state {message.local_state_changed ? "changed" : "unchanged"} · Tally state {message.tally_state_may_have_changed ? "may have changed" : "unchanged by this read-only action"}</small>
+          <small>{displayMessage}</small>
+        </details>
       )}
-      <small>{guidance.action}</small>
     </div>
   );
 }
@@ -659,7 +615,6 @@ const DSC_METADATA_RETENTION_MS = 5 * 60 * 1000;
 
 function App() {
   const currentFinancialYear = React.useMemo(() => getCurrentFinancialYear(), []);
-  const currentQualificationWindow = React.useMemo(() => getCurrentQualificationWindow(), []);
   const [config, setConfig] = React.useState<TallyConfig>({ host: "localhost", port: 9000 });
   const [status, setStatus] = React.useState<ConnectionStatus | null>(null);
   const [passport, setPassport] = React.useState<CapabilityProfile | null>(null);
@@ -673,20 +628,13 @@ function App() {
   const [companies, setCompanies] = React.useState<TallyCompany[]>([]);
   const [untrustedDiscoveredCompanies, setUntrustedDiscoveredCompanies] = React.useState<UntrustedCompanyCandidate[]>([]);
   const [untrustedDiscoveryError, setUntrustedDiscoveryError] = React.useState<OperatorError | null>(null);
-  const [untrustedDiscoveryCompleted, setUntrustedDiscoveryCompleted] = React.useState(false);
-  const [untrustedListingOpen, setUntrustedListingOpen] = React.useState(false);
   const [selectedCompany, setSelectedCompany] = React.useState("");
   const [liveCompanyKeys, setLiveCompanyKeys] = React.useState<string[]>([]);
   const [persistedCompanyProfileTotal, setPersistedCompanyProfileTotal] = React.useState(0);
   const [persistedCompanyProfilesLoaded, setPersistedCompanyProfilesLoaded] = React.useState(0);
   const [persistedCompanyProfilesTruncated, setPersistedCompanyProfilesTruncated] = React.useState(false);
-  const [ledgers, setLedgers] = React.useState<TallyLedger[]>([]);
-  const [ledgerPreviewKind, setLedgerPreviewKind] = React.useState<"bridge" | "compatible_catalog" | null>(null);
-  const [vouchers, setVouchers] = React.useState<TallyVoucher[]>([]);
   const [voucherFrom, setVoucherFrom] = React.useState(currentFinancialYear.from);
   const [voucherTo, setVoucherTo] = React.useState(currentFinancialYear.to);
-  const [qualificationFrom, setQualificationFrom] = React.useState(currentQualificationWindow.from);
-  const [qualificationTo, setQualificationTo] = React.useState(currentQualificationWindow.to);
   const [companyError, setCompanyError] = React.useState<OperatorError | null>(null);
   const [fixtureStatus, setFixtureStatus] = React.useState<TallyWriteFixtureEnrollmentStatus | null>(null);
   const [fixtureStatusError, setFixtureStatusError] = React.useState<string | null>(null);
@@ -731,10 +679,8 @@ function App() {
   const [view, setView] = React.useState<View>("dashboard");
   const [busy, setBusy] = React.useState(false);
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
-  const [diagnosticsRevealed, setDiagnosticsRevealed] = React.useState(false);
   const tallyResultsVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
-  const diagnosticsRequestVersion = React.useRef(0);
   const snapshotSelectionVersion = React.useRef(0);
   const dscRequestVersion = React.useRef(0);
   const mainContentRef = React.useRef<HTMLElement>(null);
@@ -797,10 +743,6 @@ function App() {
   React.useEffect(() => {
     mainContentRef.current?.focus();
   }, [view]);
-
-  React.useEffect(() => {
-    clearSensitiveDiagnostics();
-  }, [view, selectedCompany]);
 
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
@@ -873,9 +815,6 @@ function App() {
     setLiveCompanyKeys([]);
     setUntrustedDiscoveredCompanies([]);
     setUntrustedDiscoveryError(null);
-    setUntrustedDiscoveryCompleted(false);
-    setUntrustedListingOpen(false);
-    clearSensitiveDiagnostics();
     setDraft(null);
     setCompanyError(null);
     setFixtureStatus(null);
@@ -894,15 +833,7 @@ function App() {
     setDashboardError(null);
   }
 
-  function clearSensitiveDiagnostics() {
-    diagnosticsRequestVersion.current += 1;
-    setDiagnosticsRevealed(false);
-    setLedgers([]);
-    setLedgerPreviewKind(null);
-    setVouchers([]);
-  }
-
-  function clearSelectedCompanyScope() {
+  function clearSelectedCompanyScope({ preserveCurrentProbeReview = false } = {}) {
     setFixtureStatus(null);
     setFixtureStatusError(null);
     setFixtureDisposableAttested(false);
@@ -910,14 +841,15 @@ function App() {
     setFixtureBackupGuidanceAcknowledged(false);
     clearCompanyScopedState({
       clearQualifiedReadReview: () => {
-        setPassport(null);
-        setProfileSha256(null);
-        setReviewId(null);
-        setReviewCommitmentSha256(null);
+        if (!preserveCurrentProbeReview) {
+          setPassport(null);
+          setProfileSha256(null);
+          setReviewId(null);
+          setReviewCommitmentSha256(null);
+        }
         setSelectedReadScope(null);
       },
       clearPassportSnapshot: () => setPassportSnapshotId(null),
-      clearSensitiveDiagnostics,
       clearSyncEvidence: () => {
         setSyncEvidence(null);
         setSyncEvidenceError(null);
@@ -988,15 +920,12 @@ function App() {
         void refreshPersistedCompanyProfiles();
         setUntrustedDiscoveredCompanies([]);
         setUntrustedDiscoveryError(null);
-        setUntrustedDiscoveryCompleted(false);
         if (result.profile.transports.xml_http?.safe_reason_code === "direct_company_report_untrusted") {
           const discoveryResultsVersion = tallyResultsVersion.current;
           try {
             const discovered = await invoke<UntrustedCompanyCandidate[]>("fetch_tally_companies", { config });
             if (discoveryResultsVersion === tallyResultsVersion.current) {
               setUntrustedDiscoveredCompanies(discovered);
-              setUntrustedDiscoveryCompleted(true);
-              setUntrustedListingOpen(discovered.length > 0);
             }
           } catch (error) {
             if (discoveryResultsVersion === tallyResultsVersion.current) {
@@ -1028,13 +957,10 @@ function App() {
     setTallyAction("discover");
     setUntrustedDiscoveryError(null);
     setUntrustedDiscoveredCompanies([]);
-    setUntrustedDiscoveryCompleted(false);
     try {
       const discovered = await invoke<UntrustedCompanyCandidate[]>("fetch_tally_companies", { config });
       if (resultsVersion === tallyResultsVersion.current) {
         setUntrustedDiscoveredCompanies(discovered);
-        setUntrustedDiscoveryCompleted(true);
-        setUntrustedListingOpen(discovered.length > 0);
       }
     } catch (error) {
       if (resultsVersion === tallyResultsVersion.current) {
@@ -1088,61 +1014,6 @@ function App() {
       if (resultsVersion === tallyResultsVersion.current) setCompanyError(toOperatorError(error));
     } finally {
       setTallyAction(null);
-      void refreshRuntime();
-    }
-  }
-
-  async function qualifySelectedTallyReads() {
-    const company = companies.find((candidate) => tallyCompanyKey(candidate) === selectedCompany);
-    if (!reviewId || !reviewCommitmentSha256 || !company?.guid || !selectedCompanyLive) {
-      setCompanyError("Probe again and select one GUID-bearing company from the current result before qualifying reads.");
-      return;
-    }
-    if (!qualificationFrom || !qualificationTo || qualificationFrom > qualificationTo) {
-      setCompanyError("Choose a valid inclusive qualification window of 31 days or fewer.");
-      return;
-    }
-    const resultsVersion = tallyResultsVersion.current;
-    const reviewedCompanyKey = tallyCompanyKey(company);
-    const expectedReviewId = reviewId;
-    setTallyAction("qualify");
-    setCompanyError(null);
-    try {
-      const result = await invoke<SelectedReadQualificationResult>("qualify_selected_tally_reads", {
-        request: {
-          config,
-          expected_review_id: expectedReviewId,
-          expected_review_commitment_sha256: reviewCommitmentSha256,
-          selected_company_guid: company.guid,
-          voucher_from_yyyymmdd: toTallyDate(qualificationFrom),
-          voucher_to_yyyymmdd: toTallyDate(qualificationTo),
-        },
-      });
-      if (
-        resultsVersion !== tallyResultsVersion.current
-        || reviewedCompanyKey !== selectedCompany
-        || expectedReviewId !== reviewId
-      ) return;
-      setPassport(result.profile);
-      setProfileSha256(result.profile_sha256);
-      setReviewId(result.review_id);
-      setReviewCommitmentSha256(result.review_commitment_sha256);
-      setSelectedReadScope(result.selected_read_scope);
-      setPassportSnapshotId(null);
-    } catch (error) {
-      if (resultsVersion !== tallyResultsVersion.current) return;
-      const normalized = toOperatorError(error);
-      setCompanyError(normalized);
-      if (
-        typeof normalized !== "string"
-        && ["selected_read_company_context_changed", "selected_read_review_state_uncertain"].includes(normalized.code)
-      ) {
-        setReviewId(null);
-        setReviewCommitmentSha256(null);
-        setSelectedReadScope(null);
-      }
-    } finally {
-      setTallyAction((current) => current === "qualify" ? null : current);
       void refreshRuntime();
     }
   }
@@ -1508,128 +1379,6 @@ function App() {
     }
   }
 
-  async function fetchLedgers() {
-    if (!diagnosticsRevealed) {
-      setCompanyError("Reveal sensitive diagnostics before requesting ledger data.");
-      return;
-    }
-    if (!selectedCompany) {
-      setCompanyError("Select a company before fetching ledgers.");
-      return;
-    }
-
-    const selected = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
-    const expectedCompanyGuid = selected?.guid;
-    if (!expectedCompanyGuid) {
-      setCompanyError("This company has no observed stable GUID. Bridge will not accept company-scoped records without identity proof.");
-      return;
-    }
-
-    const resultsVersion = tallyResultsVersion.current;
-    const requestVersion = diagnosticsRequestVersion.current;
-    setTallyAction("ledgers");
-    setCompanyError(null);
-    try {
-      const result = await invoke<TallyLedger[]>("fetch_tally_ledgers", {
-        request: { config, company: selected?.name ?? "", expected_company_guid: expectedCompanyGuid },
-      });
-      if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
-        setLedgers(result);
-        setLedgerPreviewKind("bridge");
-      }
-    } catch (error) {
-      if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
-        setCompanyError(toOperatorError(error));
-      }
-    } finally {
-      setTallyAction(null);
-    }
-  }
-
-  async function fetchStandardLedgerCatalog() {
-    if (!diagnosticsRevealed) {
-      setCompanyError("Reveal sensitive diagnostics before requesting ledger data.");
-      return;
-    }
-    if (!selectedCompany) {
-      setCompanyError("Select a company before fetching the compatible ledger catalog.");
-      return;
-    }
-
-    const selected = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
-    const expectedCompanyGuid = selected?.guid;
-    if (!expectedCompanyGuid) {
-      setCompanyError("This company has no observed stable GUID. Bridge will not accept company-scoped records without identity proof.");
-      return;
-    }
-
-    const resultsVersion = tallyResultsVersion.current;
-    const requestVersion = diagnosticsRequestVersion.current;
-    setTallyAction("catalog");
-    setCompanyError(null);
-    try {
-      const result = await invoke<TallyLedger[]>("fetch_standard_tally_ledger_catalog", {
-        request: { config, company: selected?.name ?? "", expected_company_guid: expectedCompanyGuid },
-      });
-      if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
-        setLedgers(result);
-        setLedgerPreviewKind("compatible_catalog");
-      }
-    } catch (error) {
-      if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
-        setCompanyError(toOperatorError(error));
-      }
-    } finally {
-      setTallyAction(null);
-    }
-  }
-
-  async function fetchVouchers() {
-    if (!diagnosticsRevealed) {
-      setCompanyError("Reveal sensitive diagnostics before requesting voucher data.");
-      return;
-    }
-    if (!selectedCompany) {
-      setCompanyError("Select a company before fetching vouchers.");
-      return;
-    }
-    if (!voucherFrom || !voucherTo || voucherFrom > voucherTo) {
-      setCompanyError("Choose a valid voucher date range with the from date on or before the to date.");
-      return;
-    }
-    const selected = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
-    const expectedCompanyGuid = selected?.guid;
-    if (!expectedCompanyGuid) {
-      setCompanyError("This company has no observed stable GUID. Bridge will not accept company-scoped records without identity proof.");
-      return;
-    }
-
-    const resultsVersion = tallyResultsVersion.current;
-    const requestVersion = diagnosticsRequestVersion.current;
-    setTallyAction("vouchers");
-    setCompanyError(null);
-    try {
-      const result = await invoke<TallyVoucher[]>("fetch_tally_vouchers", {
-        request: {
-          config,
-          company: selected?.name ?? "",
-          expected_company_guid: expectedCompanyGuid,
-          from: toTallyDate(voucherFrom),
-          to: toTallyDate(voucherTo),
-        },
-      });
-      if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
-        setVouchers(result);
-      }
-    } catch (error) {
-      if (resultsVersion === tallyResultsVersion.current && requestVersion === diagnosticsRequestVersion.current) {
-        setCompanyError(toOperatorError(error));
-      }
-    } finally {
-      setTallyAction(null);
-    }
-  }
-
   async function runDsc(detectOnly: boolean) {
     const pin = dscPin;
     if (!detectOnly && !pin) {
@@ -1874,6 +1623,8 @@ function App() {
   const gstDraftComplete = draft !== null && draft.missing_fields.length === 0;
   const selectedCompanyRecord = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
   const selectedCompanyLive = !!selectedCompanyRecord && liveCompanyKeys.includes(tallyCompanyKey(selectedCompanyRecord));
+  const currentProbeCompanyList = currentProbeCompanies(companies, liveCompanyKeys);
+  const setupConnectionComplete = Boolean(status?.reachable && passport);
   const discoveredCompanyPrompt = companyDiscoveryPrompt(
     selectedCompany,
     liveCompanyKeys,
@@ -1937,7 +1688,7 @@ function App() {
             ? "No gaps declared for the loaded Verified scope; unsupported or unrequested scopes are not covered"
             : "A fresh Verified baseline for this company";
   const operatorNext = !selectedCompanyRecord?.mirror_company_id
-    ? "Select a GUID-bearing company in Tally Setup"
+    ? "Select a GUID-bearing company in Tally"
     : snapshotJob?.resume_available
       ? "Resume the interrupted run"
       : snapshotActive
@@ -1971,11 +1722,12 @@ function App() {
           <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             <Activity size={18} /> Dashboard
           </button>
-          <button aria-current={view === "outstandings" ? "page" : undefined} className={view === "outstandings" ? "active" : ""} onClick={() => setView("outstandings")}>
-            <ReceiptIndianRupee size={18} /> Outstandings
-          </button>
-          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} onClick={() => setView("companies")}>
-            <Building2 size={18} /> Tally Setup
+          <button
+            aria-current={["outstandings", "companies"].includes(view) ? "page" : undefined}
+            className={["outstandings", "companies"].includes(view) ? "active" : ""}
+            onClick={() => setView(selectedCompanyRecord?.guid ? "outstandings" : "companies")}
+          >
+            <Cable size={18} /> Tally
           </button>
           <button aria-current={view === "gst" ? "page" : undefined} className={view === "gst" ? "active" : ""} onClick={() => setView("gst")}>
             <FileText size={18} /> GST Returns
@@ -1998,7 +1750,7 @@ function App() {
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
         <header>
           <div>
-            <p className="eyebrow">{view === "outstandings" ? "Receivables and payables" : view === "companies" ? "Local connection and identity" : "Tally Truth Layer"}</p>
+            {view !== "companies" && <p className="eyebrow">{view === "outstandings" ? "Receivables and payables" : "Tally Truth Layer"}</p>}
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
           {!["outstandings", "companies"].includes(view) && (
@@ -2031,11 +1783,11 @@ function App() {
               <span>Current probe match</span>
               <strong>{selectedCompanyLive ? "Matched" : selectedCompanyRecord ? "Offline evidence only" : "Not selected"}</strong>
             </div>
-            <button className="secondary-action" type="button" onClick={() => setView("companies")}>Change setup</button>
+            <button className="secondary-action" type="button" onClick={() => setView("companies")}>Manage Tally</button>
           </section>
         )}
 
-        {discoveredCompanyPrompt && (
+        {discoveredCompanyPrompt && view !== "companies" && (
           <section className="company-discovery-notice" role="status" aria-live="polite">
             <div>
               <strong>{discoveredCompanyPrompt.heading}</strong>
@@ -2045,7 +1797,6 @@ function App() {
               className="primary"
               type="button"
               onClick={() => {
-                setUntrustedListingOpen(untrustedDiscoveredCompanies.length > 0);
                 setView("companies");
               }}
             >
@@ -2215,9 +1966,6 @@ function App() {
               config={config}
               endpointReachable={Boolean(status?.reachable)}
               passportObserved={Boolean(passport)}
-              companySaved={Boolean(selectedCompanyRecord?.mirror_company_id)}
-              companyLive={selectedCompanyLive}
-              companyName={selectedCompanyRecord?.name}
               busy={tallyAction !== null}
               settingsLocked={snapshotActive}
               onHostChange={updateTallyHost}
@@ -2227,342 +1975,84 @@ function App() {
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
 
-            <details
-              className="panel wide untrusted-company-listing"
-              id="unverified-company-listing"
-              open={untrustedListingOpen}
-              onToggle={(event) => setUntrustedListingOpen(event.currentTarget.open)}
-            >
-              <summary>Use an unverified local company listing instead</summary>
-              <div className="panel-heading">
+            {setupConnectionComplete && (
+              <section className="setup-company" id="company-profile" aria-labelledby="company-profile-heading">
                 <div>
-                  <h2>Local company listing</h2>
-                  <p className="panel-description">This compatibility listing is not part of the readiness path. Verify a listed company separately before Bridge treats its identity as evidence or enables company-scoped reads.</p>
+                  <h2 id="company-profile-heading">Choose a company</h2>
+                  <p>Choose the company that is open in Tally. Bridge only reads from Tally.</p>
                 </div>
-                <button className="secondary-action" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={snapshotActive || tallyAction !== null}>
-                  {tallyAction === "discover" ? "Listing local companies..." : "List local companies (unverified)"}
-                </button>
-              </div>
-              <p className="privacy-warning" role="note">Names are displayed locally and are not persisted. Run Check Tally Endpoint before treating any company as verified evidence.</p>
-              {untrustedDiscoveryError && <TallyErrorNotice message={untrustedDiscoveryError} />}
-              <p role="status" aria-live="polite" className="section-note">
-                {untrustedDiscoveredCompanies.length > 0
-                  ? `${untrustedDiscoveredCompanies.length} local company names listed, unverified.`
-                  : untrustedDiscoveryError ? "No local company names retained."
-                    : untrustedDiscoveryCompleted ? "No local company names were returned; the unverified listing completed."
-                      : "No local company names listed yet."}
-              </p>
-              {untrustedDiscoveredCompanies.length > 0 && (
-                <ul aria-label="Unverified local company names">
-                  {untrustedDiscoveredCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => (
-                    <li key={`${company.name}-${index}`}>
-                      <span>{company.name}</span>
-                      <button className="secondary-action" type="button" onClick={() => void bootstrapDirectCompany(company.name)} disabled={snapshotActive || tallyAction !== null}>
-                        {tallyAction === "bootstrap" ? "Verifying..." : "Verify for setup"}
+                {companyError && <TallyErrorNotice message={companyError} />}
+                {untrustedDiscoveredCompanies.length > 0 ? (
+                  <div className="company-options" role="list" aria-label="Companies to verify">
+                    {untrustedDiscoveredCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => (
+                      <button className="company-option" type="button" key={`${company.name}-${index}`} onClick={() => void bootstrapDirectCompany(company.name)} disabled={snapshotActive || tallyAction !== null}>
+                        <Building2 size={20} />
+                        <span>{company.name}</span>
+                        <small>{tallyAction === "bootstrap" ? "Checking…" : "Use this company"}</small>
                       </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </details>
-
-            <article className="panel wide" id="company-profile">
-              <div className="panel-heading">
-                <div>
-                  <h2>Choose and review a company</h2>
-                  <p className="panel-description">Bridge enables company-scoped reads only after an observed GUID is reviewed and saved for the selected local endpoint.</p>
-                </div>
-                <span>{liveCompanyKeys.length} current probe · {persistedCompanyProfileTotal} persisted{persistedCompanyProfilesTruncated ? ` (showing newest ${persistedCompanyProfilesLoaded})` : ""}</span>
-              </div>
-
-              {companyError && <TallyErrorNotice message={companyError} />}
-
-              {companies.length === 0 && !companyError ? (
-                <div className="empty-state">
-                  <Building2 size={32} />
-                  <strong>No companies discovered yet</strong>
-                  <span>Start Tally, load the intended company, enable the XML server, then run Probe and discover.</span>
-                </div>
-              ) : (
-                <div className="company-profile-grid">
-                  <label>
-                    Selected company
-                    <select
-                      value={selectedCompany}
-                      disabled={tallyAction !== null || snapshotActive}
-                      onChange={(event) => {
-                        setSelectedCompany(event.target.value);
-                        clearSelectedCompanyScope();
-                      }}
-                    >
-                      <option value="">Select company</option>
-                      {companies.map((company) => (
-                        <option value={tallyCompanyKey(company)} key={tallyCompanyKey(company)}>
-                          {company.name} · {company.canonical_endpoint ?? "endpoint not persisted"} · {liveCompanyKeys.includes(tallyCompanyKey(company)) ? "current probe" : `offline pin, observed ${formatRuntimeTime(company.last_observed_at_unix_ms)}`}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <dl>
-                    <div><dt>Identity confidence</dt><dd>{selectedCompanyRecord?.mirror_company_id ? formatIdentifier(selectedCompanyRecord.identity_confidence ?? "unknown") : "Not established"}</dd></div>
-                    <div><dt>GUID reported</dt><dd>{selectedCompanyRecord?.guid || selectedCompanyRecord?.guid_observed ? "Yes; value hidden for persisted profiles" : "No"}</dd></div>
-                    <div><dt>Pinned evidence endpoint</dt><dd>{selectedCompanyRecord?.canonical_endpoint ?? "Not persisted"}</dd></div>
-                    <div><dt>Mirror company pin</dt><dd>{selectedCompanyRecord?.mirror_company_id ? "Persisted" : "Unavailable"}</dd></div>
-                    <div><dt>Last observed</dt><dd>{formatRuntimeTime(selectedCompanyRecord?.last_observed_at_unix_ms)}</dd></div>
-                    <div><dt>Current endpoint match</dt><dd>{selectedCompanyLive ? "Yes" : "No; evidence review only"}</dd></div>
-                    <div><dt>Passport hash</dt><dd>{profileSha256 ? `${profileSha256.slice(0, 12)}...` : "Probe required"}</dd></div>
-                    <div><dt>Exact reviewed scope</dt><dd>{reviewCommitmentSha256 ? `${reviewCommitmentSha256.slice(0, 12)}...` : passportSnapshotId ? "Consumed by atomic save" : "Probe required"}</dd></div>
-                  </dl>
-                  <section className="qualification-panel" aria-label="Selected read qualification">
-                    <h3>Selected read qualification</h3>
-                    <p className="section-note">Runs one ledger profile and, only if it passes, one exact voucher-window profile. Records are discarded. This does not prove source completeness, performance, pack support, or write permission.</p>
-                    <div className="toolbar secondary-toolbar">
-                      <label>
-                        Qualification from
-                        <input
-                          type="date"
-                          value={qualificationFrom}
-                          disabled={tallyAction !== null || snapshotActive}
-                          onChange={(event) => {
-                            setQualificationFrom(event.target.value);
-                            if (selectedReadScope) invalidateTallyResults();
-                          }}
-                        />
-                      </label>
-                      <label>
-                        Qualification to
-                        <input
-                          type="date"
-                          value={qualificationTo}
-                          disabled={tallyAction !== null || snapshotActive}
-                          onChange={(event) => {
-                            setQualificationTo(event.target.value);
-                            if (selectedReadScope) invalidateTallyResults();
-                          }}
-                        />
-                      </label>
-                      <button
-                        className="secondary-action"
-                        type="button"
-                        onClick={() => void qualifySelectedTallyReads()}
-                        disabled={snapshotActive || tallyAction !== null || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyLive || !selectedCompanyRecord?.guid || !!passportSnapshotId}
-                      >
-                        {tallyAction === "qualify" ? "Qualifying exact profiles..." : selectedReadScope ? "Re-run selected qualification" : "Qualify selected reads"}
-                      </button>
-                    </div>
-                    {selectedReadScope && (
-                      <dl>
-                        <div><dt>Ledger profile</dt><dd>{selectedReadScope.ledger_profile_id}</dd></div>
-                        <div><dt>Ledger outcome</dt><dd>{formatCapabilityEvidence(passport?.features.selected_ledger_read)}</dd></div>
-                        <div><dt>Voucher profile</dt><dd>{selectedReadScope.voucher_profile_id}</dd></div>
-                        <div><dt>Voucher outcome</dt><dd>{formatCapabilityEvidence(passport?.features.selected_voucher_window_read)}</dd></div>
-                        <div><dt>Voucher window</dt><dd>{formatTallyDate(selectedReadScope.voucher_from_yyyymmdd)} to {formatTallyDate(selectedReadScope.voucher_to_yyyymmdd)}</dd></div>
-                        <div><dt>Scope commitment</dt><dd>{selectedReadScope.scope_commitment_sha256.slice(0, 12)}...</dd></div>
-                        <div><dt>Data handling</dt><dd>Records discarded; no Tally writes attempted</dd></div>
-                        <div><dt>Completeness</dt><dd>Not claimed</dd></div>
-                      </dl>
-                    )}
-                  </section>
-                  <button
-                    type="button"
-                    onClick={() => void saveReviewedTallySetup()}
-                    disabled={snapshotActive || tallyAction !== null || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyLive || !selectedCompanyRecord?.guid || !!passportSnapshotId}
-                  >
-                    {passportSnapshotId ? "Reviewed scope saved" : "Save reviewed company scope"}
-                  </button>
-                  <p className="section-note">This explicit save atomically stores the current Passport, the selected company pin, and any exact selected-read scope evidence. Probing and qualification alone do not write local setup state or anything to Tally.</p>
-                  <section className="qualification-panel" aria-label="Synthetic write-canary fixture">
-                    <h3>Synthetic write-canary fixture</h3>
-                    <p className="section-note">This is a local, revocable enrollment gate for a future canary. It sends no Tally request, performs no Tally write, and leaves write capability Unknown.</p>
-                    <dl>
-                      <div><dt>Local fixture state</dt><dd>{fixtureStatusError ? "Unavailable" : fixtureStatus ? formatIdentifier(fixtureStatus.fixture_state) : "Checking local state"}</dd></div>
-                      <div><dt>Candidate gate</dt><dd>{fixtureStatus ? formatIdentifier(fixtureStatus.candidate_gate) : "Not checked"}</dd></div>
-                      <div><dt>Enrolled locally</dt><dd>{formatRuntimeTime(fixtureStatus?.enrolled_at_unix_ms)}</dd></div>
-                      <div><dt>Revoked locally</dt><dd>{formatRuntimeTime(fixtureStatus?.revoked_at_unix_ms)}</dd></div>
-                      <div><dt>Write capability</dt><dd>Unknown</dd></div>
-                    </dl>
-                    {fixtureStatusError && (
-                      <div className="toolbar secondary-toolbar">
-                        <p className="privacy-warning" role="note">{fixtureStatusError}</p>
-                        {selectedCompanyRecord?.mirror_company_id && (
-                          <button className="secondary-action" type="button" onClick={() => {
-                            const mirrorCompanyId = selectedCompanyRecord?.mirror_company_id;
-                            if (mirrorCompanyId) void refreshWriteFixtureStatus(mirrorCompanyId);
-                          }} disabled={tallyAction !== null || snapshotActive}>
-                            Retry local fixture status
+                    ))}
+                  </div>
+                ) : currentProbeCompanyList.length > 0 ? (
+                  <>
+                    <div className="company-options" role="list" aria-label="Companies found in Tally">
+                      {currentProbeCompanyList.map((company) => {
+                        const key = tallyCompanyKey(company);
+                        const current = liveCompanyKeys.includes(key);
+                        const selected = key === selectedCompany;
+                        return (
+                          <button
+                            className={`company-option${selected ? " selected" : ""}`}
+                            type="button"
+                            key={key}
+                            aria-pressed={selected}
+                            disabled={!current || tallyAction !== null || snapshotActive}
+                            onClick={() => {
+                              clearSelectedCompanyScope({
+                                preserveCurrentProbeReview: canReuseCurrentProbeReview({
+                                  reviewAvailable: Boolean(reviewId && reviewCommitmentSha256),
+                                  setupSaved: Boolean(passportSnapshotId),
+                                }),
+                              });
+                              setSelectedCompany(key);
+                            }}
+                          >
+                            <Building2 size={20} />
+                            <span>{company.name}</span>
+                            <small>{current ? "Open in Tally" : "Not open now"}</small>
                           </button>
-                        )}
-                      </div>
-                    )}
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={fixtureDisposableAttested}
-                        disabled={tallyAction !== null || snapshotActive || fixtureStatus?.fixture_state === "active"}
-                        onChange={(event) => setFixtureDisposableAttested(event.target.checked)}
-                      />
-                      This is a dedicated disposable synthetic company.
-                    </label>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={fixtureNoCustomerDataAttested}
-                        disabled={tallyAction !== null || snapshotActive || fixtureStatus?.fixture_state === "active"}
-                        onChange={(event) => setFixtureNoCustomerDataAttested(event.target.checked)}
-                      />
-                      No customer, personal, or production data will be used.
-                    </label>
-                    <p className="section-note">Backup guidance: before any later canary, create an offline backup, record how to restore it, and verify the restore path on a separate copy. If that is not possible, leave the next acknowledgement unchecked and do not proceed.</p>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={fixtureBackupGuidanceAcknowledged}
-                        disabled={tallyAction !== null || snapshotActive || fixtureStatus?.fixture_state === "active"}
-                        onChange={(event) => setFixtureBackupGuidanceAcknowledged(event.target.checked)}
-                      />
-                      I have acknowledged the backup guidance before any later canary.
-                    </label>
-                    <div className="toolbar secondary-toolbar">
-                      <button
-                        className="secondary-action"
-                        type="button"
-                        onClick={() => void enrollWriteFixture()}
-                        disabled={snapshotActive || tallyAction !== null || !fixtureStatus || !!fixtureStatusError || fixtureStatus.fixture_state === "active" || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyLive || !selectedCompanyRecord?.mirror_company_id || !selectedCompanyRecord?.guid || !fixtureDisposableAttested || !fixtureNoCustomerDataAttested || !fixtureBackupGuidanceAcknowledged}
-                      >
-                        {tallyAction === "fixture_enroll" ? "Enrolling locally..." : "Enroll local synthetic fixture"}
-                      </button>
-                      <button
-                        className="secondary-action"
-                        type="button"
-                        onClick={() => void revokeWriteFixture()}
-                        disabled={snapshotActive || tallyAction !== null || !fixtureStatus || !!fixtureStatusError || fixtureStatus.fixture_state !== "active" || !selectedCompanyRecord?.mirror_company_id}
-                      >
-                        {tallyAction === "fixture_revoke" ? "Revoking locally..." : "Revoke local fixture enrollment"}
-                      </button>
+                        );
+                      })}
                     </div>
-                    <p className="section-note">An existing demo company is not automatically eligible: operator attestation is a gate, not proof of disposability. Revocation only changes this local gate; it does not alter Tally.</p>
-                    {!reviewId || !reviewCommitmentSha256 ? <p className="section-note">Next: run a fresh Probe and review the selected company before local enrollment. Saving a reviewed company scope consumes its earlier review.</p> : null}
-                  </section>
-                  <button className="secondary-action" type="button" onClick={() => { setView("mirror"); void refreshSyncEvidence(true); }} disabled={!selectedCompanyRecord?.mirror_company_id}>Open Sync runs and Proof</button>
-                </div>
-              )}
-            </article>
-
-            <details
-              className="panel wide diagnostic-disclosure"
-              onToggle={(event) => {
-                if (!event.currentTarget.open) {
-                  clearSensitiveDiagnostics();
-                }
-              }}
-            >
-              <summary>Display-capped source diagnostics (not Proof of Sync)</summary>
-              <p className="panel-description">Shows at most 100 returned rows. The read itself may return more; returned counts are not source-total counts and never establish completeness or accuracy.</p>
-              <p className="privacy-warning" role="note">Revealing can display ledger names, GSTINs, balances, voucher numbers, and party names from the selected books on screen. Use only in a private workspace.</p>
-              <button
-                className="secondary-action"
-                type="button"
-                onClick={() => {
-                  if (diagnosticsRevealed) clearSensitiveDiagnostics();
-                  else setDiagnosticsRevealed(true);
-                }}
-              >
-                {diagnosticsRevealed ? "Hide and clear sensitive diagnostics" : "Reveal sensitive diagnostics"}
-              </button>
-              <section className="toolbar secondary-toolbar">
-                <button onClick={checkTally} disabled={tallyAction !== null}>
-                  <RefreshCw size={18} /> {tallyAction === "probe" ? "Refreshing..." : "Refresh discovered companies"}
-                </button>
-                <button onClick={fetchLedgers} disabled={tallyAction !== null || !selectedCompanyLive || !diagnosticsRevealed}>
-                  <RefreshCw size={18} /> {tallyAction === "ledgers" ? "Reading..." : "Preview ledgers"}
-                </button>
-                <button className="secondary-action" onClick={fetchStandardLedgerCatalog} disabled={tallyAction !== null || !selectedCompanyLive || !diagnosticsRevealed}>
-                  <RefreshCw size={18} /> {tallyAction === "catalog" ? "Reading catalog..." : "Preview compatible ledger catalog"}
-                </button>
-                <label>From<input type="date" value={voucherFrom} onChange={(event) => { setVoucherFrom(event.target.value); setVouchers([]); diagnosticsRequestVersion.current += 1; tallyResultsVersion.current += 1; }} /></label>
-                <label>To<input type="date" value={voucherTo} onChange={(event) => { setVoucherTo(event.target.value); setVouchers([]); diagnosticsRequestVersion.current += 1; tallyResultsVersion.current += 1; }} /></label>
-                <button onClick={fetchVouchers} disabled={tallyAction !== null || !selectedCompanyLive || !diagnosticsRevealed}>
-                  <RefreshCw size={18} /> {tallyAction === "vouchers" ? "Reading..." : "Preview vouchers"}
-                </button>
-              </section>
-
-              <section className="grid data-grid">
-              <article className="panel">
-                <div className="panel-heading">
-                  <h2>{ledgerPreviewKind === "compatible_catalog" ? "Compatible ledger catalog" : "Ledgers"}</h2>
-                  <span>{formatPreviewCount(ledgers.length)}</span>
-                </div>
-                {ledgerPreviewKind === "compatible_catalog" && (
-                  <p className="panel-description">Standard profile <code>standard_ledger_catalog_v1</code>: names and safely representable parents only. This is a compatibility preview, not a complete export, qualified read, or sync-ready result.</p>
-                )}
-                {ledgers.length === 0 ? (
-                  <div className="empty-state compact">
-                    <strong>No ledgers fetched yet</strong>
-                    <span>Select a company and fetch ledgers.</span>
-                  </div>
+                    <button className="secondary-action company-lookup" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={snapshotActive || tallyAction !== null}>
+                      {tallyAction === "discover" ? "Finding companies…" : "Find all companies"}
+                    </button>
+                  </>
                 ) : (
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>Parent</th>
-                          {ledgerPreviewKind !== "compatible_catalog" && <th>GSTIN</th>}
-                          {ledgerPreviewKind !== "compatible_catalog" && <th>Balance</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ledgers.slice(0, TABLE_PREVIEW_LIMIT).map((ledger) => (
-                          <tr key={`${ledger.parent || ""}-${ledger.name}`}>
-                            <td>{diagnosticsRevealed ? ledger.name : "Hidden"}</td>
-                            <td>{diagnosticsRevealed ? ledger.parent || "-" : "Hidden"}</td>
-                            {ledgerPreviewKind !== "compatible_catalog" && <td>{diagnosticsRevealed ? ledger.party_gstin || "-" : "Hidden"}</td>}
-                            {ledgerPreviewKind !== "compatible_catalog" && <td>{diagnosticsRevealed ? ledger.opening_balance || "-" : "Hidden"}</td>}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="setup-empty-state">
+                    <Building2 size={28} />
+                    <p>{untrustedDiscoveryError ? "Bridge could not list companies from Tally." : "No companies were found."}</p>
+                    <button className="secondary-action" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={snapshotActive || tallyAction !== null}>
+                      {tallyAction === "discover" ? "Checking Tally…" : "Find companies"}
+                    </button>
                   </div>
                 )}
-              </article>
-
-              <article className="panel">
-                <div className="panel-heading">
-                  <h2>Vouchers</h2>
-                  <span>{formatPreviewCount(vouchers.length)}</span>
+                <div className="setup-company-footer">
+                  {selectedCompany && !selectedCompanyLive ? <p>Open this company in Tally, then check Tally again.</p> : null}
+                  {selectedCompanyLive && !passportSnapshotId && (
+                    <button className="primary" type="button" onClick={() => void saveReviewedTallySetup()} disabled={snapshotActive || tallyAction !== null || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyRecord?.guid}>
+                      {tallyAction === "save" ? "Saving company…" : "Use this company"}
+                    </button>
+                  )}
+                  {passportSnapshotId && (
+                    <>
+                      <p className="setup-complete" role="status"><Check size={18} /> {selectedCompanyRecord?.name} is ready.</p>
+                      <button className="primary" type="button" onClick={() => setView("outstandings")}>Open outstandings</button>
+                    </>
+                  )}
                 </div>
-                {vouchers.length === 0 ? (
-                  <div className="empty-state compact">
-                    <strong>No vouchers fetched yet</strong>
-                    <span>Select a company and date range, then fetch vouchers.</span>
-                  </div>
-                ) : (
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Type</th>
-                          <th>No.</th>
-                          <th>Party</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {vouchers.slice(0, TABLE_PREVIEW_LIMIT).map((voucher, index) => (
-                          <tr key={voucher.id || `${voucher.voucher_number || "voucher"}-${index}`}>
-                            <td>{diagnosticsRevealed ? formatTallyDate(voucher.date) : "Hidden"}</td>
-                            <td>{diagnosticsRevealed ? voucher.voucher_type || "-" : "Hidden"}</td>
-                            <td>{diagnosticsRevealed ? voucher.voucher_number || "-" : "Hidden"}</td>
-                            <td>{diagnosticsRevealed ? voucher.party_ledger_name || "-" : "Hidden"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </article>
               </section>
-            </details>
+            )}
+
           </>
         )}
 
@@ -3235,7 +2725,14 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(<App />);
+type RootContainer = HTMLElement & {
+  bridgeRoot?: ReturnType<typeof ReactDOM.createRoot>;
+};
+
+const rootContainer = document.getElementById("root") as RootContainer;
+const root = rootContainer.bridgeRoot ?? ReactDOM.createRoot(rootContainer);
+rootContainer.bridgeRoot = root;
+root.render(<App />);
 
 function formatCapabilityState(state: CapabilityEvidence["state"]): string {
   switch (state) {
@@ -3324,13 +2821,6 @@ function formatPreviewCount(total: number, label = "loaded"): string {
   return `Showing ${Math.min(total, TABLE_PREVIEW_LIMIT)} of ${total} returned ${label}; source completeness not established`;
 }
 
-function tallyCompanyKey(company: TallyCompany): string {
-  if (company.correlation_key) return `correlation:${company.correlation_key}`;
-  if (company.mirror_company_id) return `mirror:${company.mirror_company_id}`;
-  if (company.guid) return `guid:${company.guid.toLocaleLowerCase()}`;
-  return `unverified-name:${company.name}`;
-}
-
 function mergeTallyCompanies(preferred: TallyCompany[], existing: TallyCompany[]): TallyCompany[] {
   const merged = new Map<string, TallyCompany>();
   for (const company of existing) merged.set(tallyCompanyKey(company), company);
@@ -3367,18 +2857,6 @@ function toErrorMessage(error: unknown): string {
   return typeof normalized === "string"
     ? normalized
     : `${normalized.category}: ${normalized.message} [${normalized.code}]. ${normalized.remediation}`;
-}
-
-function getCurrentQualificationWindow(now = new Date()): { from: string; to: string } {
-  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const from = new Date(to);
-  from.setDate(from.getDate() - 30);
-  const format = (value: Date) => [
-    value.getFullYear().toString().padStart(4, "0"),
-    (value.getMonth() + 1).toString().padStart(2, "0"),
-    value.getDate().toString().padStart(2, "0"),
-  ].join("-");
-  return { from: format(from), to: format(to) };
 }
 
 function toOperatorError(error: unknown): OperatorError {

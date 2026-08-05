@@ -44,7 +44,6 @@ pub fn run() {
             commands::check_tally_connection,
             commands::probe_tally,
             commands::bootstrap_direct_tally_company,
-            commands::qualify_selected_tally_reads,
             commands::save_tally_setup,
             commands::enroll_tally_write_fixture,
             #[cfg(feature = "fixture-canary-runtime-dispatch")]
@@ -64,9 +63,6 @@ pub fn run() {
             commands::tally_runtime_snapshots,
             commands::tally_telemetry_preview,
             commands::fetch_tally_companies,
-            commands::fetch_tally_ledgers,
-            commands::fetch_standard_tally_ledger_catalog,
-            commands::fetch_tally_vouchers,
             commands::fetch_tally_outstandings,
             commands::prepare_gst_return_draft,
             commands::detect_dsc_token,
