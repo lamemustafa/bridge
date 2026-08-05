@@ -568,13 +568,13 @@ function TallyErrorNotice({ message }: { message: OperatorError }) {
     <div className="error-banner" role="alert">
       <strong>{guidance.category}</strong>
       <span>{guidance.action}</span>
-      {typeof message !== "string" && (
-        <details>
-          <summary>Technical details</summary>
+      <details>
+        <summary>{typeof message === "string" ? "Details" : "Technical details"}</summary>
+        {typeof message !== "string" && (
           <small>Code <code>{message.code}</code> · Retry {formatIdentifier(message.retry)} · Local state {message.local_state_changed ? "changed" : "unchanged"} · Tally state {message.tally_state_may_have_changed ? "may have changed" : "unchanged by this read-only action"}</small>
-          <small>{displayMessage}</small>
-        </details>
-      )}
+        )}
+        <small>{displayMessage}</small>
+      </details>
     </div>
   );
 }
@@ -1624,6 +1624,7 @@ function App() {
   const selectedCompanyRecord = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
   const selectedCompanyLive = !!selectedCompanyRecord && liveCompanyKeys.includes(tallyCompanyKey(selectedCompanyRecord));
   const currentProbeCompanyList = currentProbeCompanies(companies, liveCompanyKeys);
+  const savedCompanyList = companies.filter((company) => Boolean(company.mirror_company_id));
   const setupConnectionComplete = Boolean(status?.reachable && passport);
   const discoveredCompanyPrompt = companyDiscoveryPrompt(
     selectedCompany,
@@ -1725,7 +1726,7 @@ function App() {
           <button
             aria-current={["outstandings", "companies"].includes(view) ? "page" : undefined}
             className={["outstandings", "companies"].includes(view) ? "active" : ""}
-            onClick={() => setView(selectedCompanyRecord?.guid ? "outstandings" : "companies")}
+            onClick={() => setView(selectedCompanyRecord?.mirror_company_id ? "outstandings" : "companies")}
           >
             <Cable size={18} /> Tally
           </button>
@@ -2097,6 +2098,24 @@ function App() {
 
         {view === "mirror" && (
           <>
+            {!selectedCompanyRecord?.mirror_company_id && savedCompanyList.length > 0 && (
+              <section className="panel wide" aria-labelledby="saved-company-heading">
+                <h2 id="saved-company-heading">Choose a saved company</h2>
+                <p className="panel-description">Review local Mirror &amp; Proof evidence without contacting Tally.</p>
+                <div className="company-options" role="list" aria-label="Saved companies">
+                  {savedCompanyList.map((company) => {
+                    const key = tallyCompanyKey(company);
+                    return (
+                      <button className="company-option" type="button" key={key} onClick={() => setSelectedCompany(key)}>
+                        <Building2 size={20} />
+                        <span>{company.name}</span>
+                        <small>Saved locally</small>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
             <article className="panel wide mirror-hero">
               <div>
                 <p className="eyebrow">Truth state</p>

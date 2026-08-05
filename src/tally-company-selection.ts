@@ -42,8 +42,8 @@ export type TallyCompanyIdentity = {
 };
 
 export function tallyCompanyKey(company: TallyCompanyIdentity): string {
-  if (company.guid) return `guid:${company.guid.toLocaleLowerCase()}`;
   if (company.correlation_key) return `correlation:${company.correlation_key}`;
+  if (company.guid) return `guid:${company.guid.toLocaleLowerCase()}`;
   if (company.mirror_company_id) return `mirror:${company.mirror_company_id}`;
   return `unverified-name:${company.name}`;
 }

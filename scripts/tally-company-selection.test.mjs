@@ -168,14 +168,19 @@ test("choosing from a fresh probe preserves only its unused reviewed scope", () 
   assert.equal(canReuseCurrentProbeReview({ reviewAvailable: true, setupSaved: true }), false);
 });
 
-test("a persisted mirror and a fresh Tally probe share the observed GUID key", () => {
+test("a persisted mirror and a fresh Tally probe share the endpoint-bound correlation key", () => {
   assert.equal(
     tallyCompanyKey({
       name: "Northwind Traders",
       guid: "A0B1C2D3",
+      correlation_key: "endpoint-bound-company",
       mirror_company_id: "local-mirror-42",
     }),
-    "guid:a0b1c2d3",
+    "correlation:endpoint-bound-company",
+  );
+  assert.equal(
+    tallyCompanyKey({ name: "Northwind Traders", correlation_key: "endpoint-bound-company", mirror_company_id: "local-mirror-42" }),
+    "correlation:endpoint-bound-company",
   );
   assert.equal(
     tallyCompanyKey({ name: "No GUID yet", mirror_company_id: "local-mirror-42" }),

@@ -33,8 +33,15 @@ test("Tally has one top-level navigation entry and keeps connection management i
 
   assert.match(nav, /<Cable size=\{18\} \/> Tally/);
   assert.doesNotMatch(nav, /Outstandings|Tally Setup/);
-  assert.match(frontend, /selectedCompanyRecord\?\.guid \? "outstandings" : "companies"/);
+  assert.match(frontend, /selectedCompanyRecord\?\.mirror_company_id \? "outstandings" : "companies"/);
   assert.match(outstandings, /Manage Tally/);
+});
+
+test("saved pins remain selectable for local proof review without a Tally read", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+
+  assert.match(frontend, /savedCompanyList\.length > 0/);
+  assert.match(frontend, /Review local Mirror &amp; Proof evidence without contacting Tally\./);
 });
 
 test("desktop scrolling remains inside the content pane", async () => {

@@ -9,7 +9,7 @@ export function classifyTallyError({ code, message }: TallyErrorDetails) {
   if (code === "tally_request_deadline_exceeded") {
     return {
       category: "Tally is taking longer than expected",
-      action: "Tally may still be processing the last check. Wait until it is responsive, make sure the right company is open, then check Tally again. Bridge did not change data in Tally.",
+      action: "Bridge did not change data in Tally. Do not repeat the same request. Wait until Tally is responsive, then review the connection and company before making a changed request.",
     };
   }
   if (code === "response_validation_failed") {
