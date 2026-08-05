@@ -5,9 +5,12 @@ import test from "node:test";
 
 import {
   applyProbeCompanySelectionTransition,
+  canReuseCurrentProbeReview,
   companyDiscoveryPrompt,
   clearCompanyScopedState,
+  currentProbeCompanies,
   reconcileProbeCompanySelection,
+  tallyCompanyKey,
   tallyReadinessState,
 } from "../src/tally-company-selection.ts";
 
@@ -19,7 +22,6 @@ function companyScopedState() {
     reviewCommitmentSha256: "commitment-old",
     selectedReadScope: { company: "old-company" },
     passportSnapshotId: "passport-old",
-    diagnostics: ["ledger-old"],
     syncEvidence: { company: "old-company" },
     syncEvidenceError: "old evidence error",
     proofPreview: { proof: "old-proof" },
@@ -29,7 +31,6 @@ function companyScopedState() {
     snapshotJob: { runId: "old-run" },
     snapshotError: "old snapshot error",
     snapshotStartOutcomeUnknown: true,
-    diagnosticsRequestVersion: 4,
     proofPreviewRequestVersion: 7,
     snapshotSelectionVersion: 11,
     tallyResultsVersion: 13,
@@ -46,10 +47,6 @@ function cleanupFor(state) {
       state.selectedReadScope = null;
     },
     clearPassportSnapshot: () => { state.passportSnapshotId = null; },
-    clearSensitiveDiagnostics: () => {
-      state.diagnostics = [];
-      state.diagnosticsRequestVersion += 1;
-    },
     clearSyncEvidence: () => {
       state.syncEvidence = null;
       state.syncEvidenceError = null;
@@ -97,7 +94,6 @@ test("an automatic probe drop clears old company state before installing a usabl
     ...freshProbe,
     selectedReadScope: null,
     passportSnapshotId: null,
-    diagnostics: [],
     syncEvidence: null,
     syncEvidenceError: null,
     proofPreview: null,
@@ -107,7 +103,6 @@ test("an automatic probe drop clears old company state before installing a usabl
     snapshotJob: null,
     snapshotError: null,
     snapshotStartOutcomeUnknown: false,
-    diagnosticsRequestVersion: 5,
     proofPreviewRequestVersion: 8,
     snapshotSelectionVersion: 12,
     tallyResultsVersion: 14,
@@ -144,13 +139,11 @@ test("a manual company selection clears the existing review and all company-scop
   assert.equal(state.reviewCommitmentSha256, null);
   assert.equal(state.selectedReadScope, null);
   assert.equal(state.passportSnapshotId, null);
-  assert.deepEqual(state.diagnostics, []);
   assert.equal(state.syncEvidence, null);
   assert.equal(state.proofPreview, null);
   assert.equal(state.mirrorExplorer, null);
   assert.equal(state.snapshotJob, null);
   assert.equal(state.snapshotStartOutcomeUnknown, false);
-  assert.equal(state.diagnosticsRequestVersion, 5);
   assert.equal(state.proofPreviewRequestVersion, 8);
   assert.equal(state.snapshotSelectionVersion, 12);
   assert.equal(state.tallyResultsVersion, 14);
@@ -167,6 +160,37 @@ test("a manual company selection clears an unqualified probe review", () => {
   assert.equal(state.reviewId, null);
   assert.equal(state.reviewCommitmentSha256, null);
   assert.equal(state.selectedReadScope, null);
+});
+
+test("choosing from a fresh probe preserves only its unused reviewed scope", () => {
+  assert.equal(canReuseCurrentProbeReview({ reviewAvailable: true, setupSaved: false }), true);
+  assert.equal(canReuseCurrentProbeReview({ reviewAvailable: false, setupSaved: false }), false);
+  assert.equal(canReuseCurrentProbeReview({ reviewAvailable: true, setupSaved: true }), false);
+});
+
+test("a persisted mirror and a fresh Tally probe share the observed GUID key", () => {
+  assert.equal(
+    tallyCompanyKey({
+      name: "Northwind Traders",
+      guid: "A0B1C2D3",
+      mirror_company_id: "local-mirror-42",
+    }),
+    "guid:a0b1c2d3",
+  );
+  assert.equal(
+    tallyCompanyKey({ name: "No GUID yet", mirror_company_id: "local-mirror-42" }),
+    "mirror:local-mirror-42",
+  );
+});
+
+test("only current-probe companies are offered for selection", () => {
+  const persisted = { name: "Saved only", guid: "AAAA", mirror_company_id: "mirror-a" };
+  const live = { name: "Open now", guid: "BBBB", mirror_company_id: "mirror-b" };
+
+  assert.deepEqual(
+    currentProbeCompanies([persisted, live], [tallyCompanyKey(live)]),
+    [live],
+  );
 });
 
 test("a selected company retained by the probe is not reported as dropped", () => {
@@ -215,6 +239,7 @@ test("readiness keeps a current probe action until the saved company matches the
     companySaved: false,
   }), {
     companyReady: false,
+    companyNeedsRecheck: false,
     showCheck: true,
     showCompanyLink: true,
   });
@@ -225,6 +250,7 @@ test("readiness keeps a current probe action until the saved company matches the
     companySaved: true,
   }), {
     companyReady: false,
+    companyNeedsRecheck: true,
     showCheck: true,
     showCompanyLink: false,
   });
@@ -235,7 +261,17 @@ test("readiness keeps a current probe action until the saved company matches the
     companySaved: true,
   }), {
     companyReady: true,
+    companyNeedsRecheck: false,
     showCheck: false,
     showCompanyLink: false,
   });
+});
+
+test("a saved company is not presented as ready until it appears in the current Tally response", () => {
+  assert.equal(tallyReadinessState({
+    endpointComplete: true,
+    companySelected: true,
+    companyCurrent: false,
+    companySaved: true,
+  }).companyNeedsRecheck, true);
 });

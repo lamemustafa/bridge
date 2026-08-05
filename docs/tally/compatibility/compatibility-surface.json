@@ -79,7 +79,15 @@
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
-      "sha256": "2203876a7019a6adb4cae49960a7a4aa4610e5339fcbfe8eedc7c79cb2e1d922"
+      "sha256": "8dfd81d80ad6f65090861e3de39c92737c630aec3086a09e9362231dee2445c0"
+    },
+    {
+      "path": "scripts/tally-error-copy.test.mjs",
+      "sha256": "51841ab14b0539753f580b5b64f8d62ab07e847170f95e4593b5ed9b6d9d51f9"
+    },
+    {
+      "path": "scripts/tally-setup-safety.test.mjs",
+      "sha256": "a1d8d30aaf83cc13347e990d5cac40b3cfeefc1085cbfb414161de43e6a6c585"
     },
     {
       "path": "src-tauri/Cargo.lock",
@@ -375,7 +383,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "b9e6e1260067c4eaa57eeda78178aca90e2b56e4af8d3862186c2795bf9376fc"
+      "sha256": "c84dae31b363abcee38abeac37d2e53e9d50fb76da1f4af67068351d0b7cb213"
     },
     {
       "path": "src-tauri/src/sync/coordinator.rs",
@@ -455,20 +463,24 @@
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
-      "sha256": "cea6b8356dd3ce0c910bdd454d5a2951bc15cd109745c96027d460ec0af87a18"
+      "sha256": "a8f347fc696f5bf3a569a874aa3f2ee82df976e907cff5fe913f1d7e7afda102"
     },
     {
       "path": "src/main.tsx",
-      "sha256": "e5db5d03dcc0ff9635e473aeeddace3883e86213cfd872a4ab08661c332f556d"
+      "sha256": "516aff4192a5df1fb6907c4f822378a98d7a16060e70afe215d90f8e162a9cad"
     },
     {
       "path": "src/styles.css",
-      "sha256": "bfd9fb37b64544b46c958a38bc2b864791b89d7de56324e8330d3ae9ddf9b2b1"
+      "sha256": "1e808cab2d3627896a816c3b0452dc6fe06aafd125235fee21f41cf84f02eb9d"
     },
     {
       "path": "src/tally-company-selection.ts",
-      "sha256": "2036574217ede8df1ac4551815635d23922b5e015915ac8cdbc251c11f197663"
+      "sha256": "f71e8837ffd52f5998b546dce8a9c55881f9ef53289580a0f4482e26b2ec2461"
+    },
+    {
+      "path": "src/tally-error-copy.ts",
+      "sha256": "aa2a17c30335d09527d742290c54b3cbf74c5c29d8530f9c1bed3633f60782eb"
     }
   ],
-  "manifest_sha256": "4d0360f1132d158a00a4ec22e616551a860d03c9eb57e69badb8677fcf0b195a"
+  "manifest_sha256": "15c4d5536ea167673522d0ea02ef761c00cb7cf8d632822e2433d49c02561c27"
 }

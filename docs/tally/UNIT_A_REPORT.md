@@ -190,7 +190,7 @@ to Unit A.
   and `cargo clippy --workspace --all-targets -- -D warnings` is clean.
 - Frontend copy/selection tests (8), type check and production build: pass.
 
-## Unit B follow-up — production-scale planning and licensed coverage
+## Unit B follow-up — production-scale planning, balance coverage and licensed validation
 
 These are not Unit A blockers. Ruling 8 moves them to Unit B because closing either requires
 persistence or external licensed hardware, both outside this unit's in-memory, Education-tested
@@ -221,6 +221,10 @@ scope.
    after preflight, increasing later partitions' range counts. The execution cap fails closed,
    but only after spending earlier requests. Unit B must plan from the minimum allowed width or
    re-plan before the next request whenever width shrinks.
+7. The runtime also withholds totals when it cannot independently cover direct postings without
+   a bill reference. That guard has no qualification path yet. Unit B must define and verify a
+   residual-balance witness before it can construct that authority; it must not treat an
+   unallocated amount as zero or infer it from a voucher-only read.
 
 ## Exit-criterion audit
 
