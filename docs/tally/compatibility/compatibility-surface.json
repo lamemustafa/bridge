@@ -455,16 +455,16 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "6c3a05d94f5e3fc8bcb2ddfbc616a3251103eb6d67b752562b67503818ce5395"
+      "sha256": "df130354b6ebd566bec70c4e5a2f9ce288bfda31a6f061e09c34a77777bff729"
     },
     {
       "path": "src/styles.css",
-      "sha256": "63f1397c98c9e365a01e343e2ad271479350d50f80d2db735c1602c4e347d19c"
+      "sha256": "ac9c3e8fa676218d793efbac94704527702f543ff9db43276302ef8fe0d70e99"
     },
     {
       "path": "src/tally-company-selection.ts",
       "sha256": "dd033010711ca01a7a395a531285c6ef187a359640a156cbc8da7281e11a39ea"
     }
   ],
-  "manifest_sha256": "7431447076d764751c88cc8e357a2e79cb5158665cc4d77318895f65060854f2"
+  "manifest_sha256": "e018f0471af2b9044506a4bc49e414269312577ddf8ac0e35c16f61e32291652"
 }
