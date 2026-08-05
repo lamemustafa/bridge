@@ -1016,10 +1016,17 @@ function App() {
           },
         },
       );
-      const verifiedCompanyKey = liveCompanies.length === 1 && liveCompanies[0].guid
-        ? tallyCompanyKey(liveCompanies[0])
+      const verifiedCompany = liveCompanies.length === 1 && liveCompanies[0].guid
+        ? liveCompanies[0]
+        : null;
+      const verifiedCompanyKey = verifiedCompany
+        ? tallyCompanyKey(verifiedCompany)
         : selection.selectedCompany;
       setSelectedCompany(verifiedCompanyKey);
+      if (verifiedCompany) {
+        setUntrustedDiscoveredCompanies([]);
+        setUntrustedDiscoveryError(null);
+      }
       void refreshPersistedCompanyProfiles();
     } catch (error) {
       if (resultsVersion === tallyResultsVersion.current) setCompanyError(toOperatorError(error));

@@ -71,6 +71,17 @@ test("Tally setup uses the durable pin for readiness and keeps fixture control l
   assert.match(frontend, /Retry local fixture status/);
 });
 
+test("direct fallback replaces untrusted candidates only after verified identity is selected", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const bootstrap = frontend.slice(
+    frontend.indexOf("async function bootstrapDirectCompany"),
+    frontend.indexOf("async function saveReviewedTallySetup"),
+  );
+
+  assert.match(bootstrap, /const verifiedCompany = liveCompanies\.length === 1 && liveCompanies\[0\]\.guid[\s\S]*?const verifiedCompanyKey = verifiedCompany[\s\S]*?setSelectedCompany\(verifiedCompanyKey\);/);
+  assert.match(bootstrap, /if \(verifiedCompany\) \{\s*setUntrustedDiscoveredCompanies\(\[\]\);\s*setUntrustedDiscoveryError\(null\);\s*\}/);
+});
+
 test("desktop scrolling remains inside the content pane", async () => {
   const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 
