@@ -1984,6 +1984,7 @@ function App() {
             />
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
+            {companyError && !setupConnectionComplete && <TallyErrorNotice message={companyError} />}
 
             {setupConnectionComplete && (
               <section className="setup-company" id="company-profile" aria-labelledby="company-profile-heading">

@@ -52,6 +52,13 @@ test("structured Tally errors retain their backend remediation", async () => {
   assert.match(frontend, /Next step: \{message\.remediation\}/);
 });
 
+test("persisted-company load failures remain visible before a Tally connection is established", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+
+  assert.match(frontend, /refreshPersistedCompanyProfiles[\s\S]*?setCompanyError\(toOperatorError\(error\)\)/);
+  assert.match(frontend, /\{companyError && !setupConnectionComplete && <TallyErrorNotice message=\{companyError\} \/>\}/);
+});
+
 test("desktop scrolling remains inside the content pane", async () => {
   const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 
