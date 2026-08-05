@@ -23,6 +23,12 @@ export type CompanyDiscoveryPrompt = {
   actionLabel: string;
 };
 
+export type TallyReadinessState = {
+  companyReady: boolean;
+  showCheck: boolean;
+  showCompanyLink: boolean;
+};
+
 export type ProbeSelectionEffects = {
   clearDroppedCompanyScope: () => void;
   installProbeState: () => void;
@@ -77,6 +83,25 @@ export function companyDiscoveryPrompt(
     heading: `${companyCount} ${companyLabel} listed for verification`,
     detail: "Tally returned a compatibility company listing. Verify the intended company before Bridge treats its identity as evidence or enables company-scoped reads.",
     actionLabel: "Verify company",
+  };
+}
+
+export function tallyReadinessState({
+  endpointComplete,
+  companySelected,
+  companyCurrent,
+  companySaved,
+}: {
+  endpointComplete: boolean;
+  companySelected: boolean;
+  companyCurrent: boolean;
+  companySaved: boolean;
+}): TallyReadinessState {
+  const companyReady = companySelected && companyCurrent && companySaved;
+  return {
+    companyReady,
+    showCheck: !companyReady,
+    showCompanyLink: endpointComplete && !companyReady,
   };
 }
 

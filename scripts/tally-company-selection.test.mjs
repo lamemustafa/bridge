@@ -8,6 +8,7 @@ import {
   companyDiscoveryPrompt,
   clearCompanyScopedState,
   reconcileProbeCompanySelection,
+  tallyReadinessState,
 } from "../src/tally-company-selection.ts";
 
 function companyScopedState() {
@@ -204,4 +205,37 @@ test("a direct compatibility listing prompts verification instead of selecting a
     actionLabel: "Verify company",
   });
   assert.equal(companyDiscoveryPrompt("selected-company", [], 1), null);
+});
+
+test("readiness keeps a current probe action until the saved company matches the endpoint", () => {
+  assert.deepEqual(tallyReadinessState({
+    endpointComplete: true,
+    companySelected: false,
+    companyCurrent: false,
+    companySaved: false,
+  }), {
+    companyReady: false,
+    showCheck: true,
+    showCompanyLink: true,
+  });
+  assert.deepEqual(tallyReadinessState({
+    endpointComplete: false,
+    companySelected: true,
+    companyCurrent: false,
+    companySaved: true,
+  }), {
+    companyReady: false,
+    showCheck: true,
+    showCompanyLink: false,
+  });
+  assert.deepEqual(tallyReadinessState({
+    endpointComplete: true,
+    companySelected: true,
+    companyCurrent: true,
+    companySaved: true,
+  }), {
+    companyReady: true,
+    showCheck: false,
+    showCompanyLink: false,
+  });
 });

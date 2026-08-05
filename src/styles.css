@@ -797,6 +797,13 @@ h2 {
   min-height: 42px;
 }
 
+.tally-readiness-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
 .tally-readiness-action .primary,
 .readiness-link,
 .readiness-complete {

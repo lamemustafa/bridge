@@ -674,6 +674,7 @@ function App() {
   const [untrustedDiscoveredCompanies, setUntrustedDiscoveredCompanies] = React.useState<UntrustedCompanyCandidate[]>([]);
   const [untrustedDiscoveryError, setUntrustedDiscoveryError] = React.useState<OperatorError | null>(null);
   const [untrustedDiscoveryCompleted, setUntrustedDiscoveryCompleted] = React.useState(false);
+  const [untrustedListingOpen, setUntrustedListingOpen] = React.useState(false);
   const [selectedCompany, setSelectedCompany] = React.useState("");
   const [liveCompanyKeys, setLiveCompanyKeys] = React.useState<string[]>([]);
   const [persistedCompanyProfileTotal, setPersistedCompanyProfileTotal] = React.useState(0);
@@ -873,6 +874,7 @@ function App() {
     setUntrustedDiscoveredCompanies([]);
     setUntrustedDiscoveryError(null);
     setUntrustedDiscoveryCompleted(false);
+    setUntrustedListingOpen(false);
     clearSensitiveDiagnostics();
     setDraft(null);
     setCompanyError(null);
@@ -994,6 +996,7 @@ function App() {
             if (discoveryResultsVersion === tallyResultsVersion.current) {
               setUntrustedDiscoveredCompanies(discovered);
               setUntrustedDiscoveryCompleted(true);
+              setUntrustedListingOpen(discovered.length > 0);
             }
           } catch (error) {
             if (discoveryResultsVersion === tallyResultsVersion.current) {
@@ -1031,6 +1034,7 @@ function App() {
       if (resultsVersion === tallyResultsVersion.current) {
         setUntrustedDiscoveredCompanies(discovered);
         setUntrustedDiscoveryCompleted(true);
+        setUntrustedListingOpen(discovered.length > 0);
       }
     } catch (error) {
       if (resultsVersion === tallyResultsVersion.current) {
@@ -2037,7 +2041,14 @@ function App() {
               <strong>{discoveredCompanyPrompt.heading}</strong>
               <span>{discoveredCompanyPrompt.detail}</span>
             </div>
-            <button className="primary" type="button" onClick={() => setView("companies")}>
+            <button
+              className="primary"
+              type="button"
+              onClick={() => {
+                setUntrustedListingOpen(untrustedDiscoveredCompanies.length > 0);
+                setView("companies");
+              }}
+            >
               {discoveredCompanyPrompt.actionLabel}
             </button>
           </section>
@@ -2205,6 +2216,7 @@ function App() {
               endpointReachable={Boolean(status?.reachable)}
               passportObserved={Boolean(passport)}
               companySaved={Boolean(selectedCompanyRecord?.mirror_company_id)}
+              companyLive={selectedCompanyLive}
               companyName={selectedCompanyRecord?.name}
               busy={tallyAction !== null}
               settingsLocked={snapshotActive}
@@ -2215,7 +2227,12 @@ function App() {
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
 
-            <details className="panel wide untrusted-company-listing">
+            <details
+              className="panel wide untrusted-company-listing"
+              id="unverified-company-listing"
+              open={untrustedListingOpen}
+              onToggle={(event) => setUntrustedListingOpen(event.currentTarget.open)}
+            >
               <summary>Use an unverified local company listing instead</summary>
               <div className="panel-heading">
                 <div>
