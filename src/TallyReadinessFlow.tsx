@@ -4,6 +4,7 @@ type Props = {
   config: { host: string; port: number };
   endpointReachable: boolean;
   passportObserved: boolean;
+  companyReady: boolean;
   busy: boolean;
   settingsLocked: boolean;
   onHostChange: (value: string) => void;
@@ -15,6 +16,7 @@ export function TallyReadinessFlow({
   config,
   endpointReachable,
   passportObserved,
+  companyReady,
   busy,
   settingsLocked,
   onHostChange,
@@ -22,7 +24,9 @@ export function TallyReadinessFlow({
   onCheck,
 }: Props) {
   const endpointComplete = endpointReachable && passportObserved;
-  const guidance = endpointComplete
+  const guidance = companyReady
+    ? "Tally matches your saved company. You can open outstandings."
+    : endpointComplete
     ? "Tally is connected. Choose the company you want to use below."
     : "Enter the address where Tally is running, then check the connection.";
 

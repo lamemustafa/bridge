@@ -59,6 +59,18 @@ test("persisted-company load failures remain visible before a Tally connection i
   assert.match(frontend, /\{companyError && !setupConnectionComplete && <TallyErrorNotice message=\{companyError\} \/>\}/);
 });
 
+test("Tally setup uses the durable pin for readiness and keeps fixture control local to proof work", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const currentProbePicker = frontend.slice(frontend.indexOf("currentProbeCompanyList.map"), frontend.indexOf("Find all companies"));
+
+  assert.match(frontend, /tallyReadinessState\(\{[\s\S]*?companySaved:\s*Boolean\(selectedCompanyRecord\?\.mirror_company_id\),[\s\S]*?\}\)\.companyReady/);
+  assert.match(currentProbePicker, /if \(key === selectedCompany\) return;[\s\S]*?clearSelectedCompanyScope\(/);
+  assert.match(frontend, /Synthetic write fixture \(advanced\)/);
+  assert.match(frontend, /onClick=\{\(\) => void enrollWriteFixture\(\)\}/);
+  assert.match(frontend, /onClick=\{\(\) => void revokeWriteFixture\(\)\}/);
+  assert.match(frontend, /Retry local fixture status/);
+});
+
 test("desktop scrolling remains inside the content pane", async () => {
   const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 

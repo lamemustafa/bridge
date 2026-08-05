@@ -9,6 +9,7 @@ import {
   companyDiscoveryPrompt,
   currentProbeCompanies,
   tallyCompanyKey,
+  tallyReadinessState,
 } from "./tally-company-selection";
 import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
@@ -837,6 +838,7 @@ function App() {
   }
 
   function clearSelectedCompanyScope({ preserveCurrentProbeReview = false } = {}) {
+    setCompanyError(null);
     setFixtureStatus(null);
     setFixtureStatusError(null);
     setFixtureDisposableAttested(false);
@@ -1635,6 +1637,12 @@ function App() {
   const currentProbeCompanyList = currentProbeCompanies(companies, liveCompanyKeys);
   const savedCompanyList = companies.filter((company) => Boolean(company.mirror_company_id));
   const setupConnectionComplete = Boolean(status?.reachable && passport);
+  const selectedCompanyReady = tallyReadinessState({
+    endpointComplete: setupConnectionComplete,
+    companySelected: Boolean(selectedCompanyRecord),
+    companyCurrent: selectedCompanyLive,
+    companySaved: Boolean(selectedCompanyRecord?.mirror_company_id),
+  }).companyReady;
   const discoveredCompanyPrompt = companyDiscoveryPrompt(
     selectedCompany,
     liveCompanyKeys,
@@ -1976,6 +1984,7 @@ function App() {
               config={config}
               endpointReachable={Boolean(status?.reachable)}
               passportObserved={Boolean(passport)}
+              companyReady={selectedCompanyReady}
               busy={tallyAction !== null}
               settingsLocked={snapshotActive}
               onHostChange={updateTallyHost}
@@ -2018,6 +2027,7 @@ function App() {
                             aria-pressed={selected}
                             disabled={!current || tallyAction !== null || snapshotActive}
                             onClick={() => {
+                              if (key === selectedCompany) return;
                               clearSelectedCompanyScope({
                                 preserveCurrentProbeReview: canReuseCurrentProbeReview({
                                   reviewAvailable: Boolean(reviewId && reviewCommitmentSha256),
@@ -2049,12 +2059,12 @@ function App() {
                 )}
                 <div className="setup-company-footer">
                   {selectedCompany && !selectedCompanyLive ? <p>Open this company in Tally, then check Tally again.</p> : null}
-                  {selectedCompanyLive && !passportSnapshotId && (
+                  {selectedCompanyLive && !selectedCompanyReady && (
                     <button className="primary" type="button" onClick={() => void saveReviewedTallySetup()} disabled={snapshotActive || tallyAction !== null || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyRecord?.guid}>
                       {tallyAction === "save" ? "Saving company…" : "Use this company"}
                     </button>
                   )}
-                  {passportSnapshotId && (
+                  {selectedCompanyReady && (
                     <>
                       <p className="setup-complete" role="status"><Check size={18} /> {selectedCompanyRecord?.name} is ready.</p>
                       <button className="primary" type="button" onClick={() => setView("outstandings")}>Open outstandings</button>
@@ -2173,6 +2183,7 @@ function App() {
 
             {syncEvidenceError && <TallyErrorNotice message={syncEvidenceError} />}
             {snapshotError && <TallyErrorNotice message={snapshotError} />}
+            {companyError && <TallyErrorNotice message={companyError} />}
             {snapshotStartOutcomeUnknown && (
               <section className="status-strip" role="alert">
                 <span>A previous start outcome is unknown. Inspect the refreshed durable runs before allowing another start.</span>
@@ -2256,6 +2267,50 @@ function App() {
                 </small>
               </article>
             </section>
+
+            {selectedCompanyRecord?.mirror_company_id && (
+              <details className="panel wide fixture-controls" aria-label="Synthetic write fixture">
+                <summary>Synthetic write fixture (advanced)</summary>
+                <div className="panel-heading">
+                  <div>
+                    <h2>Local fixture safety gate</h2>
+                    <p className="panel-description">A revocable local gate for a future synthetic canary. It does not write to Tally and write capability remains Unknown.</p>
+                  </div>
+                </div>
+                <dl>
+                  <div><dt>Local state</dt><dd>{fixtureStatusError ? "Unavailable" : fixtureStatus ? formatIdentifier(fixtureStatus.fixture_state) : "Checking local state"}</dd></div>
+                  <div><dt>Candidate gate</dt><dd>{fixtureStatus ? formatIdentifier(fixtureStatus.candidate_gate) : "Not checked"}</dd></div>
+                  <div><dt>Write capability</dt><dd>Unknown</dd></div>
+                </dl>
+                {fixtureStatusError && (
+                  <div className="toolbar secondary-toolbar">
+                    <p className="privacy-warning" role="note">{fixtureStatusError}</p>
+                    <button className="secondary-action" type="button" onClick={() => void refreshWriteFixtureStatus(selectedCompanyRecord.mirror_company_id!)} disabled={tallyAction !== null || snapshotActive}>Retry local fixture status</button>
+                  </div>
+                )}
+                {fixtureStatus?.fixture_state === "active" ? (
+                  <div className="toolbar secondary-toolbar">
+                    <button className="secondary-action" type="button" onClick={() => void revokeWriteFixture()} disabled={snapshotActive || tallyAction !== null}>Revoke local fixture enrollment</button>
+                  </div>
+                ) : !reviewId || !reviewCommitmentSha256 || !selectedCompanyLive ? (
+                  <div className="toolbar secondary-toolbar">
+                    <p className="section-note">Check Tally again with this saved company open before locally enrolling a fixture.</p>
+                    <button className="secondary-action" type="button" onClick={() => setView("companies")} disabled={snapshotActive || tallyAction !== null}>Prepare fixture review</button>
+                  </div>
+                ) : (
+                  <>
+                    <label><input type="checkbox" checked={fixtureDisposableAttested} disabled={tallyAction !== null || snapshotActive} onChange={(event) => setFixtureDisposableAttested(event.target.checked)} /> This is a dedicated disposable synthetic company.</label>
+                    <label><input type="checkbox" checked={fixtureNoCustomerDataAttested} disabled={tallyAction !== null || snapshotActive} onChange={(event) => setFixtureNoCustomerDataAttested(event.target.checked)} /> No customer, personal, or production data will be used.</label>
+                    <label><input type="checkbox" checked={fixtureBackupGuidanceAcknowledged} disabled={tallyAction !== null || snapshotActive} onChange={(event) => setFixtureBackupGuidanceAcknowledged(event.target.checked)} /> I have created and checked an offline backup before any later canary.</label>
+                    <div className="toolbar secondary-toolbar">
+                      <button className="secondary-action" type="button" onClick={() => void enrollWriteFixture()} disabled={snapshotActive || tallyAction !== null || !fixtureStatus || !!fixtureStatusError || !fixtureDisposableAttested || !fixtureNoCustomerDataAttested || !fixtureBackupGuidanceAcknowledged}>
+                        {tallyAction === "fixture_enroll" ? "Enrolling locally…" : "Enroll local synthetic fixture"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </details>
+            )}
 
             <article className="panel wide gap-panel">
               <div className="panel-heading">
