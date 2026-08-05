@@ -7,6 +7,7 @@ import {
   clearCompanyScopedState,
   companyDiscoveryPrompt,
 } from "./tally-company-selection";
+import { TallyReadinessFlow } from "./TallyReadinessFlow";
 import { OutstandingsScreen } from "./OutstandingsScreen";
 import "./styles.css";
 
@@ -379,7 +380,7 @@ const MIRROR_PAGE_LIMIT = 25;
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
   outstandings: "Aged outstandings",
-  companies: "Tally setup and company profile",
+  companies: "Tally readiness",
   gst: "GST return readiness",
   mirror: "Accounting mirror and proof",
   dsc: "DSC token",
@@ -1993,10 +1994,10 @@ function App() {
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
         <header>
           <div>
-            <p className="eyebrow">{view === "outstandings" ? "Receivables and payables" : "Tally Truth Layer"}</p>
+            <p className="eyebrow">{view === "outstandings" ? "Receivables and payables" : view === "companies" ? "Local connection and identity" : "Tally Truth Layer"}</p>
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
-          {view !== "outstandings" && (
+          {!["outstandings", "companies"].includes(view) && (
             <button className="primary" onClick={checkTally} disabled={tallyAction !== null}>
               <Cable size={18} />
               {tallyAction === "probe" ? "Checking endpoint..." : "Check Tally Endpoint"}
@@ -2004,7 +2005,7 @@ function App() {
           )}
         </header>
 
-        {view !== "outstandings" && (
+        {!["outstandings", "companies"].includes(view) && (
           <section className="company-context-bar" aria-label="Selected Tally company context">
             <div>
               <span>Selected company</span>
@@ -2042,7 +2043,7 @@ function App() {
           </section>
         )}
 
-        {["dashboard", "companies", "mirror"].includes(view) && (
+        {["dashboard", "mirror"].includes(view) && (
           <section className="operator-question-grid" aria-label="Tally operator summary">
             <article><span>Verified baseline</span><strong>{verifiedBaseline}</strong></article>
             <article><span>Latest attempt</span><strong>{latestAttemptSummary}</strong></article>
@@ -2199,44 +2200,27 @@ function App() {
 
         {view === "companies" && (
           <>
-            <article className="panel wide setup-workflow">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Setup / Capability Passport</p>
-                  <h2>Connect, identify, then prove</h2>
-                  <p className="panel-description">Endpoint reachability and company discovery are setup evidence, not accounting completeness.</p>
-                </div>
-                <button onClick={checkTally} disabled={tallyAction !== null}>
-                  <Cable size={18} /> {tallyAction === "probe" ? "Probing..." : "Probe and discover"}
-                </button>
-              </div>
-              <div className="toolbar setup-fields">
-                <label>
-                  Host
-                  <input disabled={tallyAction !== null || snapshotActive} value={config.host} onChange={(event) => updateTallyHost(event.target.value)} />
-                </label>
-                <label>
-                  Port
-                  <input disabled={tallyAction !== null || snapshotActive} type="number" min="1" max="65535" value={config.port} onChange={(event) => updateTallyPort(Number(event.target.value))} />
-                </label>
-              </div>
-              {snapshotActive && (
-                <p className="section-note">Endpoint settings are locked while the active snapshot continues against its reviewed source.</p>
-              )}
-              <ol className="setup-steps">
-                <li className={status?.reachable ? "step-complete" : ""}><strong>Endpoint</strong><span>{status?.reachable ? "Reachable" : "Probe required"}</span></li>
-                <li className={passport ? "step-complete" : ""}><strong>Capability Passport</strong><span>{passport ? (passportSnapshotId ? "Reviewed and stored" : "Observed; review before save") : "Not observed"}</span></li>
-                <li className={selectedCompanyRecord?.mirror_company_id ? "step-complete" : ""}><strong>Company identity</strong><span>{selectedCompanyRecord?.mirror_company_id ? "Observed GUID persisted" : "Select a GUID-bearing company"}</span></li>
-              </ol>
-            </article>
+            <TallyReadinessFlow
+              config={config}
+              endpointReachable={Boolean(status?.reachable)}
+              passportObserved={Boolean(passport)}
+              companySaved={Boolean(selectedCompanyRecord?.mirror_company_id)}
+              companyName={selectedCompanyRecord?.name}
+              busy={tallyAction !== null}
+              settingsLocked={snapshotActive}
+              onHostChange={updateTallyHost}
+              onPortChange={updateTallyPort}
+              onCheck={checkTally}
+            />
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
 
-            <article className="panel wide">
+            <details className="panel wide untrusted-company-listing">
+              <summary>Use an unverified local company listing instead</summary>
               <div className="panel-heading">
                 <div>
-                  <h2>Local company listing (unverified)</h2>
-                  <p className="panel-description">A compatibility listing only. Use Verify for setup to run a separate strict, scoped local observation; the listing itself cannot establish identity, sync eligibility, or write permission.</p>
+                  <h2>Local company listing</h2>
+                  <p className="panel-description">This compatibility listing is not part of the readiness path. Verify a listed company separately before Bridge treats its identity as evidence or enables company-scoped reads.</p>
                 </div>
                 <button className="secondary-action" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={snapshotActive || tallyAction !== null}>
                   {tallyAction === "discover" ? "Listing local companies..." : "List local companies (unverified)"}
@@ -2263,13 +2247,13 @@ function App() {
                   ))}
                 </ul>
               )}
-            </article>
+            </details>
 
-            <article className="panel wide">
+            <article className="panel wide" id="company-profile">
               <div className="panel-heading">
                 <div>
-                  <h2>Company profile</h2>
-                  <p className="panel-description">Every run is pinned to the selected company's observed identity.</p>
+                  <h2>Choose and review a company</h2>
+                  <p className="panel-description">Bridge enables company-scoped reads only after an observed GUID is reviewed and saved for the selected local endpoint.</p>
                 </div>
                 <span>{liveCompanyKeys.length} current probe · {persistedCompanyProfileTotal} persisted{persistedCompanyProfilesTruncated ? ` (showing newest ${persistedCompanyProfilesLoaded})` : ""}</span>
               </div>

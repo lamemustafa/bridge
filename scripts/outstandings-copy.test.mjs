@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { outstandingsAgeingDisclosure, outstandingsPartialReason } from "../src/outstandings-copy.ts";
+import { isNonRetryableOutstandingsBoundary, outstandingsAgeingDisclosure, outstandingsPartialReason } from "../src/outstandings-copy.ts";
 
 test("uncalibrated sizing says the voucher read was not sent", () => {
   const message = outstandingsPartialReason("outstandings_segment_sizing_uncalibrated");
@@ -29,6 +29,11 @@ test("unqualified direct postings withhold totals before a voucher read", () => 
   assert.match(message, /posted without a bill reference/i);
   assert.match(message, /totals stay withheld/i);
   assert.match(message, /before any voucher read/i);
+});
+
+test("unqualified direct postings do not invite a pointless retry", () => {
+  assert.equal(isNonRetryableOutstandingsBoundary("unallocated_direct_postings_not_covered"), true);
+  assert.equal(isNonRetryableOutstandingsBoundary("outstandings_segment_plan_exceeds_budget"), false);
 });
 
 test("deadline states keep the restart-before-next-sync instruction", () => {

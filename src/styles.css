@@ -659,6 +659,171 @@ h2 {
   margin-bottom: 18px;
 }
 
+.tally-readiness {
+  overflow: hidden;
+  margin-bottom: 18px;
+  border: 1px solid #cbdcd2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgb(23 32 38 / 5%);
+}
+
+.tally-readiness-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.42fr);
+  gap: 28px;
+  align-items: end;
+  padding: 26px 28px 22px;
+  border-bottom: 1px solid #e4ece6;
+}
+
+.tally-readiness-intro h2 {
+  margin-bottom: 8px;
+  font-size: 26px;
+}
+
+.tally-readiness-intro > div > p:last-child,
+.tally-readiness-action-copy p {
+  max-width: 68ch;
+  margin: 0;
+  color: #52645b;
+  line-height: 1.55;
+}
+
+.tally-readiness-next {
+  display: grid;
+  gap: 4px;
+  align-content: end;
+  padding: 14px 16px;
+  border-left: 3px solid #0f766e;
+  border-radius: 8px;
+  background: #f0f8f3;
+}
+
+.tally-readiness-next span,
+.tally-readiness-steps li > div > span {
+  color: #61756a;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.tally-readiness-next strong {
+  line-height: 1.35;
+}
+
+.tally-readiness-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-bottom: 1px solid #e4ece6;
+}
+
+.tally-readiness-steps li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 112px;
+  padding: 20px 22px;
+  background: #fbfdfb;
+}
+
+.tally-readiness-steps li + li {
+  border-left: 1px solid #e4ece6;
+}
+
+.tally-readiness-steps li.is-complete {
+  background: #f0f8f3;
+}
+
+.tally-readiness-step-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #afc2b6;
+  border-radius: 50%;
+  color: #52645b;
+}
+
+.is-complete .tally-readiness-step-icon {
+  border-color: #1f7957;
+  background: #1f7957;
+  color: #fff;
+}
+
+.tally-readiness-steps li > div {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+}
+
+.tally-readiness-steps strong {
+  font-size: 15px;
+}
+
+.tally-readiness-steps small {
+  color: #52645b;
+  line-height: 1.4;
+}
+
+.tally-readiness-action {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.35fr) auto;
+  gap: 20px;
+  align-items: end;
+  padding: 22px 28px 26px;
+}
+
+.tally-readiness-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 0.65fr);
+  gap: 12px;
+}
+
+.tally-readiness-fields label {
+  display: grid;
+  gap: 6px;
+  color: #52645b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tally-readiness-fields input {
+  min-height: 42px;
+}
+
+.tally-readiness-action .primary,
+.readiness-link,
+.readiness-complete {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.readiness-link,
+.readiness-complete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.readiness-link {
+  padding: 0 14px;
+}
+
+.readiness-complete {
+  padding: 0 4px;
+  color: #176344;
+}
+
 .setup-fields {
   padding-bottom: 18px;
 }
@@ -735,6 +900,21 @@ h2 {
 
 .diagnostic-disclosure[open] > summary {
   margin-bottom: 10px;
+}
+
+.untrusted-company-listing {
+  margin-bottom: 18px;
+}
+
+.untrusted-company-listing > summary {
+  cursor: pointer;
+  color: #52645b;
+  font-weight: 700;
+}
+
+.untrusted-company-listing[open] > summary {
+  margin-bottom: 18px;
+  color: #172026;
 }
 
 .snapshot-scope {
@@ -1084,6 +1264,17 @@ summary:focus-visible,
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
 .outstandings-screen {
   overflow: hidden;
   border: 1px solid #dce4de;
@@ -1332,6 +1523,15 @@ summary:focus-visible,
     grid-template-columns: 1fr;
   }
 
+  .tally-readiness-intro,
+  .tally-readiness-action {
+    grid-template-columns: 1fr;
+  }
+
+  .tally-readiness-action {
+    align-items: stretch;
+  }
+
   .outstandings-heading {
     align-items: stretch;
     flex-direction: column;
@@ -1368,6 +1568,22 @@ summary:focus-visible,
   .setup-steps,
   .runtime-health {
     grid-template-columns: 1fr;
+  }
+
+  .tally-readiness-steps,
+  .tally-readiness-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .tally-readiness-steps li + li {
+    border-top: 1px solid #e4ece6;
+    border-left: 0;
+  }
+
+  .tally-readiness-intro,
+  .tally-readiness-action {
+    padding-right: 20px;
+    padding-left: 20px;
   }
 
   .capability-row,

@@ -1,7 +1,7 @@
 import React from "react";
 import { RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { outstandingsAgeingDisclosure, outstandingsPartialReason } from "./outstandings-copy";
+import { isNonRetryableOutstandingsBoundary, outstandingsAgeingDisclosure, outstandingsPartialReason } from "./outstandings-copy";
 import { canStartOutstandingsRead } from "./outstandings-currency";
 
 type Props = {
@@ -124,6 +124,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
   const report = completeResult?.report ?? null;
   const ageingDisclosure = report && outstandingsAgeingDisclosure(report.has_unaged_receivable);
   const unsupportedCurrencyAssertion = result?.state === "complete" && !completeResult;
+  const requiresNativeQualification = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);
   return (
     <section className="outstandings-screen" aria-busy={loading}>
       <div className="outstandings-heading">
@@ -136,10 +137,14 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
             {report ? ` · ${report.source_voucher_count.toLocaleString("en-IN")} vouchers verified` : ""}
           </p>
         </div>
-        <button type="button" onClick={load} disabled={loading}>
-          <RefreshCw size={18} className={loading ? "spin" : undefined} />
-          {loading ? "Reading verified segments…" : result ? "Refresh" : "Load outstandings"}
-        </button>
+        {requiresNativeQualification ? (
+          <button type="button" onClick={onChangeSetup}>View Tally readiness</button>
+        ) : (
+          <button type="button" onClick={load} disabled={loading}>
+            <RefreshCw size={18} className={loading ? "spin" : undefined} />
+            {loading ? "Reading verified segments…" : result ? "Refresh" : "Load outstandings"}
+          </button>
+        )}
       </div>
 
       {error && <div className="outstandings-state error" role="alert"><strong>Read failed</strong><span>{error}</span></div>}
@@ -151,8 +156,10 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
       )}
       {!loading && result?.state === "partial" && (
         <div className="outstandings-state" role="status">
-          <strong>Partial result withheld</strong>
-          <span>Bridge could not prove every requested segment complete ({outstandingsPartialReason(result.reason_code)}). No totals were calculated.</span>
+          <strong>{requiresNativeQualification ? "Outstandings are not available yet" : "Partial result withheld"}</strong>
+          <span>{requiresNativeQualification
+            ? `${outstandingsPartialReason(result.reason_code)} This is a product boundary, not a setting you can change in Tally Setup.`
+            : `Bridge could not prove every requested segment complete (${outstandingsPartialReason(result.reason_code)}). No totals were calculated.`}</span>
         </div>
       )}
       {unsupportedCurrencyAssertion && (
