@@ -42,6 +42,14 @@ test("saved pins remain selectable for local proof review without a Tally read",
 
   assert.match(frontend, /savedCompanyList\.length > 0/);
   assert.match(frontend, /Review local Mirror &amp; Proof evidence without contacting Tally\./);
+  assert.match(frontend, /Change saved company/);
+  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
+});
+
+test("structured Tally errors retain their backend remediation", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+
+  assert.match(frontend, /Next step: \{message\.remediation\}/);
 });
 
 test("desktop scrolling remains inside the content pane", async () => {

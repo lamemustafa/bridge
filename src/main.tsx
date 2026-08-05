@@ -571,7 +571,10 @@ function TallyErrorNotice({ message }: { message: OperatorError }) {
       <details>
         <summary>{typeof message === "string" ? "Details" : "Technical details"}</summary>
         {typeof message !== "string" && (
-          <small>Code <code>{message.code}</code> · Retry {formatIdentifier(message.retry)} · Local state {message.local_state_changed ? "changed" : "unchanged"} · Tally state {message.tally_state_may_have_changed ? "may have changed" : "unchanged by this read-only action"}</small>
+          <>
+            <small>Code <code>{message.code}</code> · Retry {formatIdentifier(message.retry)} · Local state {message.local_state_changed ? "changed" : "unchanged"} · Tally state {message.tally_state_may_have_changed ? "may have changed" : "unchanged by this read-only action"}</small>
+            <small>Next step: {message.remediation}</small>
+          </>
         )}
         <small>{displayMessage}</small>
       </details>
@@ -873,6 +876,12 @@ function App() {
         tallyResultsVersion.current += 1;
       },
     });
+  }
+
+  function selectSavedCompany(key: string) {
+    if (key === selectedCompany) return;
+    clearSelectedCompanyScope();
+    setSelectedCompany(key);
   }
 
   function updateTallyHost(host: string) {
@@ -2098,22 +2107,26 @@ function App() {
 
         {view === "mirror" && (
           <>
-            {!selectedCompanyRecord?.mirror_company_id && savedCompanyList.length > 0 && (
+            {savedCompanyList.length > 0 && (
               <section className="panel wide" aria-labelledby="saved-company-heading">
-                <h2 id="saved-company-heading">Choose a saved company</h2>
+                <h2 id="saved-company-heading">{selectedCompanyRecord?.mirror_company_id ? "Saved company" : "Choose a saved company"}</h2>
                 <p className="panel-description">Review local Mirror &amp; Proof evidence without contacting Tally.</p>
-                <div className="company-options" role="list" aria-label="Saved companies">
-                  {savedCompanyList.map((company) => {
-                    const key = tallyCompanyKey(company);
-                    return (
-                      <button className="company-option" type="button" key={key} onClick={() => setSelectedCompany(key)}>
-                        <Building2 size={20} />
-                        <span>{company.name}</span>
-                        <small>Saved locally</small>
-                      </button>
-                    );
-                  })}
-                </div>
+                {selectedCompanyRecord?.mirror_company_id ? (
+                  <button className="secondary-action" type="button" onClick={() => selectSavedCompany("")}>Change saved company</button>
+                ) : (
+                  <div className="company-options" role="list" aria-label="Saved companies">
+                    {savedCompanyList.map((company) => {
+                      const key = tallyCompanyKey(company);
+                      return (
+                        <button className="company-option" type="button" key={key} onClick={() => selectSavedCompany(key)}>
+                          <Building2 size={20} />
+                          <span>{company.name}</span>
+                          <small>Saved locally</small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </section>
             )}
             <article className="panel wide mirror-hero">
