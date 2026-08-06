@@ -751,7 +751,14 @@ function App() {
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
     && !["completed", "partial", "failed", "cancelled"].includes(snapshotJob.phase);
-  const savedCompanySelectionLocked = snapshotActive || snapshotStartOutcomeUnknown || tallyAction === "start" || tallyAction === "resume";
+  const savedCompanyMutationPending = tallyAction === "save"
+    || tallyAction === "fixture_enroll"
+    || tallyAction === "fixture_revoke";
+  const savedCompanySelectionLocked = snapshotActive
+    || snapshotStartOutcomeUnknown
+    || savedCompanyMutationPending
+    || tallyAction === "start"
+    || tallyAction === "resume";
 
   React.useEffect(() => {
     if (!tallyAction && !snapshotActive) {
