@@ -258,10 +258,15 @@ the named Unit B follow-ups above; they do not reopen this completed in-memory s
 > **Missing evidence — native platform validation.** The Tauri command and the outstandings
 > screen are proven only by TypeScript type-checking, the Vite production build, the frontend
 > copy tests, and offline Rust coverage. **Neither has been exercised on the supported Windows
-> or macOS hosts**, and this change adds a native command plus a new local ledger read. AGENTS.md
-> requires platform-sensitive changes to be validated on affected hosts or to call the missing
-> evidence out explicitly; this note is that call-out, not a substitute for the validation.
-> CI's Windows and macOS jobs compile and test the workspace but do not launch the app.
+> or macOS hosts**, and this change adds a native command plus a new local ledger read. The
+> readiness-workflow UI also changes the desktop shell to `100dvh` with independently scrolling
+> sidebar and content panes; its source/browser checks do not prove native WebView viewport,
+> resize, wheel, keyboard, or touchpad behavior. Manual validation remains required on Windows
+> WebView2 and macOS WKWebView for normal and maximized windows, including a long sidebar and
+> long content pane. AGENTS.md requires platform-sensitive changes to be validated on affected
+> hosts or to call the missing evidence out explicitly; this note is that call-out, not a
+> substitute for the validation. CI's Windows and macOS jobs compile and test the workspace but
+> do not launch the app.
 
 ## Migration, security and rollback
 
