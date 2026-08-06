@@ -190,7 +190,7 @@ to Unit A.
   and `cargo clippy --workspace --all-targets -- -D warnings` is clean.
 - Frontend copy/selection tests (8), type check and production build: pass.
 
-## Unit B follow-up — production-scale planning and licensed coverage
+## Unit B follow-up — production-scale planning, balance coverage and licensed validation
 
 These are not Unit A blockers. Ruling 8 moves them to Unit B because closing either requires
 persistence or external licensed hardware, both outside this unit's in-memory, Education-tested
@@ -221,6 +221,10 @@ scope.
    after preflight, increasing later partitions' range counts. The execution cap fails closed,
    but only after spending earlier requests. Unit B must plan from the minimum allowed width or
    re-plan before the next request whenever width shrinks.
+7. The runtime also withholds totals when it cannot independently cover direct postings without
+   a bill reference. That guard has no qualification path yet. Unit B must define and verify a
+   residual-balance witness before it can construct that authority; it must not treat an
+   unallocated amount as zero or infer it from a voucher-only read.
 
 ## Exit-criterion audit
 
@@ -254,10 +258,15 @@ the named Unit B follow-ups above; they do not reopen this completed in-memory s
 > **Missing evidence — native platform validation.** The Tauri command and the outstandings
 > screen are proven only by TypeScript type-checking, the Vite production build, the frontend
 > copy tests, and offline Rust coverage. **Neither has been exercised on the supported Windows
-> or macOS hosts**, and this change adds a native command plus a new local ledger read. AGENTS.md
-> requires platform-sensitive changes to be validated on affected hosts or to call the missing
-> evidence out explicitly; this note is that call-out, not a substitute for the validation.
-> CI's Windows and macOS jobs compile and test the workspace but do not launch the app.
+> or macOS hosts**, and this change adds a native command plus a new local ledger read. The
+> readiness-workflow UI also changes the desktop shell to `100dvh` with independently scrolling
+> sidebar and content panes; its source/browser checks do not prove native WebView viewport,
+> resize, wheel, keyboard, or touchpad behavior. Manual validation remains required on Windows
+> WebView2 and macOS WKWebView for normal and maximized windows, including a long sidebar and
+> long content pane. AGENTS.md requires platform-sensitive changes to be validated on affected
+> hosts or to call the missing evidence out explicitly; this note is that call-out, not a
+> substitute for the validation. CI's Windows and macOS jobs compile and test the workspace but
+> do not launch the app.
 
 ## Migration, security and rollback
 

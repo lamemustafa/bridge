@@ -1,7 +1,7 @@
 :root {
   color: #172026;
   background: #f6f8f5;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 * {
@@ -31,12 +31,15 @@ select {
 }
 
 .shell {
-  min-height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 260px 1fr;
 }
 
 .sidebar {
+  min-height: 0;
+  overflow-y: auto;
   background: #172026;
   color: #f8fbf5;
   padding: 24px 18px;
@@ -90,6 +93,9 @@ nav button:hover {
 }
 
 .content {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
   padding: 32px;
 }
 
@@ -377,6 +383,27 @@ h2 {
   padding: 20px;
 }
 
+.fixture-controls > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.fixture-controls[open] > summary {
+  margin-bottom: 18px;
+}
+
+.fixture-controls label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.fixture-controls input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
 .passport-panel {
   margin-top: 0;
 }
@@ -503,7 +530,7 @@ h2 {
   justify-content: space-between;
   align-items: flex-start;
   gap: 24px;
-  border-left: 4px solid #d9a53b;
+  border-top: 2px solid #d9a53b;
 }
 
 .mirror-hero h2 {
@@ -527,7 +554,6 @@ h2 {
   align-items: center;
   gap: 14px;
   border: 1px solid #cddbd3;
-  border-left: 4px solid #0f766e;
   border-radius: 8px;
   background: rgb(248 252 249 / 96%);
   box-shadow: 0 8px 24px rgb(23 32 38 / 8%);
@@ -557,7 +583,7 @@ h2 {
 }
 
 .privacy-warning {
-  border-left: 3px solid #b36b00;
+  border: 1px solid #e7c978;
   background: #fff8e8;
   color: #6c4700;
   padding: 10px 12px;
@@ -610,7 +636,6 @@ h2 {
   justify-content: space-between;
   gap: 16px;
   border: 1px solid #9bc9b6;
-  border-left: 4px solid #0f766e;
   border-radius: 8px;
   background: #f0fdf7;
   color: #183b2e;
@@ -657,6 +682,106 @@ h2 {
 .diagnostic-disclosure,
 .gap-panel {
   margin-bottom: 18px;
+}
+
+.tally-readiness {
+  overflow: hidden;
+  margin-bottom: 18px;
+  border: 1px solid #cbdcd2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgb(23 32 38 / 5%);
+}
+
+.tally-readiness-intro {
+  max-width: 68ch;
+  margin: 0;
+  padding: 20px 28px 0;
+  color: #52645b;
+  line-height: 1.55;
+}
+
+.tally-readiness-action-copy p {
+  max-width: 68ch;
+  margin: 0;
+  color: #52645b;
+  line-height: 1.55;
+}
+
+.tally-readiness-action {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.35fr) auto;
+  gap: 20px;
+  align-items: end;
+  padding: 22px 28px 26px;
+}
+
+.tally-readiness-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 0.65fr);
+  gap: 12px;
+}
+
+.tally-readiness-fields label {
+  display: grid;
+  gap: 6px;
+  color: #52645b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tally-readiness-fields input {
+  min-height: 42px;
+}
+
+.tally-readiness-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.tally-readiness-action .primary,
+.readiness-link,
+.readiness-complete {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.readiness-link,
+.readiness-complete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.readiness-link {
+  padding: 0 14px;
+}
+
+.readiness-complete {
+  padding: 0 4px;
+  color: #176344;
+}
+
+.company-advanced-setup {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid #dfe6e1;
+  padding-top: 16px;
+}
+
+.company-advanced-setup > summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.company-advanced-setup[open] > summary {
+  color: #176344;
 }
 
 .setup-fields {
@@ -710,7 +835,12 @@ h2 {
   margin-top: 0;
 }
 
-.company-profile-grid > label,
+.company-selection {
+  display: grid;
+  gap: 6px;
+}
+
+.company-selection > label,
 .snapshot-scope label {
   display: grid;
   gap: 6px;
@@ -719,7 +849,7 @@ h2 {
   font-weight: 700;
 }
 
-.company-profile-grid select,
+.company-selection select,
 .snapshot-scope input {
   min-height: 40px;
   border: 1px solid #d5ddd7;
@@ -735,6 +865,21 @@ h2 {
 
 .diagnostic-disclosure[open] > summary {
   margin-bottom: 10px;
+}
+
+.untrusted-company-listing {
+  margin-bottom: 18px;
+}
+
+.untrusted-company-listing > summary {
+  cursor: pointer;
+  color: #52645b;
+  font-weight: 700;
+}
+
+.untrusted-company-listing[open] > summary {
+  margin-bottom: 18px;
+  color: #172026;
 }
 
 .snapshot-scope {
@@ -923,6 +1068,116 @@ h2 {
   color: #71433b;
 }
 
+.error-banner details {
+  margin-top: 8px;
+}
+
+.error-banner summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.setup-company {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 26px 28px;
+  border: 1px solid #cbdcd2;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.setup-company h2,
+.setup-company p {
+  margin: 0;
+}
+
+.setup-company h2 {
+  font-size: 22px;
+}
+
+.setup-company > div > p,
+.setup-company-footer > p {
+  margin-top: 5px;
+  color: #52645b;
+  line-height: 1.5;
+}
+
+.company-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.company-lookup {
+  justify-self: start;
+}
+
+.company-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: center;
+  min-height: 72px;
+  padding: 12px 14px;
+  border: 1px solid #d5ddd7;
+  border-radius: 10px;
+  background: #fff;
+  color: #172026;
+  cursor: pointer;
+  text-align: left;
+}
+
+.company-option:hover:not(:disabled),
+.company-option.selected {
+  border-color: #0f766e;
+  background: #f0faf5;
+}
+
+.company-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.company-option svg {
+  grid-row: span 2;
+  color: #0f766e;
+}
+
+.company-option span {
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.company-option small {
+  color: #61756a;
+}
+
+.setup-empty-state,
+.setup-company-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.setup-empty-state {
+  min-height: 72px;
+  padding: 14px;
+  border: 1px dashed #cbdcd2;
+  border-radius: 10px;
+  color: #52645b;
+}
+
+.setup-complete {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f766e !important;
+  font-weight: 700;
+}
+
 caption {
   color: #61756a;
   font-size: 13px;
@@ -1084,6 +1339,17 @@ summary:focus-visible,
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
 .outstandings-screen {
   overflow: hidden;
   border: 1px solid #dce4de;
@@ -1133,6 +1399,18 @@ summary:focus-visible,
 .outstandings-heading button:disabled {
   cursor: wait;
   opacity: 0.7;
+}
+
+.outstandings-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.outstandings-heading .secondary-action {
+  border: 1px solid #c9d5ce;
+  background: #f8faf8;
+  color: #27352e;
 }
 
 .outstandings-totals {
@@ -1293,10 +1571,13 @@ summary:focus-visible,
 
 @media (max-width: 860px) {
   .shell {
+    height: auto;
+    overflow: visible;
     grid-template-columns: 1fr;
   }
 
   .sidebar {
+    overflow: visible;
     padding: 18px;
   }
 
@@ -1332,9 +1613,26 @@ summary:focus-visible,
     grid-template-columns: 1fr;
   }
 
+  .tally-readiness-action {
+    grid-template-columns: 1fr;
+  }
+
+  .tally-readiness-action {
+    align-items: stretch;
+  }
+
   .outstandings-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .outstandings-heading-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .outstandings-heading-actions button {
+    width: 100%;
   }
 
   .outstandings-ageing {
@@ -1368,6 +1666,16 @@ summary:focus-visible,
   .setup-steps,
   .runtime-health {
     grid-template-columns: 1fr;
+  }
+
+  .tally-readiness-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .tally-readiness-intro,
+  .tally-readiness-action {
+    padding-right: 20px;
+    padding-left: 20px;
   }
 
   .capability-row,

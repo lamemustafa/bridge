@@ -37,6 +37,50 @@ export function outstandingsPartialReason(value: string) {
   return value.replace(/_/g, " ");
 }
 
+export type OutstandingsPartialState = {
+  title: string;
+  message: string;
+  retryable: boolean;
+  tallyReadAttempted: boolean;
+};
+
+export function outstandingsPartialState(reasonCode: string): OutstandingsPartialState {
+  if (reasonCode === "outstandings_segment_sizing_uncalibrated") {
+    return {
+      title: "Outstandings aren’t available yet",
+      message: "Bridge isn’t ready to calculate this report safely. It didn’t read anything from Tally or calculate totals. Changing Tally settings won’t resolve this.",
+      retryable: false,
+      tallyReadAttempted: false,
+    };
+  }
+  if (reasonCode === "unallocated_direct_postings_not_covered") {
+    return {
+      title: "Outstandings are not available for this company",
+      message: "Bridge cannot yet verify balances posted without a bill reference. It did not calculate totals. Changing Tally settings won’t resolve this.",
+      retryable: false,
+      tallyReadAttempted: false,
+    };
+  }
+  if (reasonCode === "ledger_opening_bills_not_covered") {
+    return {
+      title: "Outstandings are not available for this company",
+      message: "Bridge completed a coverage check, but bill-wise opening balances fall outside the current read scope. It did not calculate totals. Repeating the same scan won't resolve this.",
+      retryable: false,
+      tallyReadAttempted: true,
+    };
+  }
+  return {
+    title: "Partial result withheld",
+    message: `Bridge could not prove every requested segment complete (${outstandingsPartialReason(reasonCode)}). No totals were calculated.`,
+    retryable: true,
+    tallyReadAttempted: true,
+  };
+}
+
+export function isNonRetryableOutstandingsBoundary(value: string) {
+  return !outstandingsPartialState(value).retryable;
+}
+
 export function outstandingsAgeingDisclosure(hasUnagedReceivable: boolean) {
   if (!hasUnagedReceivable) return null;
   return "Receivable includes On Account entries that are excluded from these buckets. Tally gives them no bill reference or age. Bridge does not show an On Account amount because this voucher read cannot prove the full unallocated balance.";

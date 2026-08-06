@@ -1,7 +1,7 @@
 import React from "react";
 import { RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { outstandingsAgeingDisclosure, outstandingsPartialReason } from "./outstandings-copy";
+import { isNonRetryableOutstandingsBoundary, outstandingsAgeingDisclosure, outstandingsPartialState } from "./outstandings-copy";
 import { canStartOutstandingsRead } from "./outstandings-currency";
 
 type Props = {
@@ -68,6 +68,9 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
   }, [config.host, config.port, company?.guid, company?.name]);
 
   const readPermitted = canStartOutstandingsRead(company, inrAssertedCompanyGuid);
+  const partialState = result?.state === "partial" ? outstandingsPartialState(result.reason_code) : null;
+  const outstandingsUnavailable = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);
+  const tallyReadAttempted = result?.state === "partial" && partialState?.tallyReadAttempted;
 
   const load = React.useCallback(async () => {
     if (!readPermitted || !company) return;
@@ -105,7 +108,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
       <section className="panel wide outstandings-empty">
         <h2>Select a verified Tally company</h2>
         <p>Outstandings require a persisted company name and observed GUID before any voucher read can start.</p>
-        <button type="button" onClick={onChangeSetup}>Open Tally setup</button>
+        <button type="button" onClick={onChangeSetup}>Manage Tally</button>
       </section>
     );
   }
@@ -131,15 +134,24 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
           <h2>{company.name}</h2>
           <p>
             {result
-              ? `${result.state === "complete" ? "Synced" : "Checked"} ${relativeTime(result.synced_at_unix_ms)}`
+              ? result.state === "complete"
+                ? `Synced ${relativeTime(result.synced_at_unix_ms)}`
+                : tallyReadAttempted
+                  ? `Checked ${relativeTime(result.synced_at_unix_ms)}`
+                  : "No Tally data was read"
               : "Not read in this session"}
             {report ? ` · ${report.source_voucher_count.toLocaleString("en-IN")} vouchers verified` : ""}
           </p>
         </div>
-        <button type="button" onClick={load} disabled={loading}>
-          <RefreshCw size={18} className={loading ? "spin" : undefined} />
-          {loading ? "Reading verified segments…" : result ? "Refresh" : "Load outstandings"}
-        </button>
+        <div className="outstandings-heading-actions">
+          <button className="secondary-action" type="button" onClick={onChangeSetup}>Manage Tally</button>
+          {!outstandingsUnavailable && (
+            <button type="button" onClick={load} disabled={loading}>
+              <RefreshCw size={18} className={loading ? "spin" : undefined} />
+              {loading ? "Reading verified segments…" : result ? "Refresh" : "Load outstandings"}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <div className="outstandings-state error" role="alert"><strong>Read failed</strong><span>{error}</span></div>}
@@ -151,8 +163,8 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
       )}
       {!loading && result?.state === "partial" && (
         <div className="outstandings-state" role="status">
-          <strong>Partial result withheld</strong>
-          <span>Bridge could not prove every requested segment complete ({outstandingsPartialReason(result.reason_code)}). No totals were calculated.</span>
+          <strong>{partialState?.title}</strong>
+          <span>{partialState?.message}</span>
         </div>
       )}
       {unsupportedCurrencyAssertion && (

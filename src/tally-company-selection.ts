@@ -3,7 +3,6 @@
 export type CompanyScopeCleanup = {
   clearQualifiedReadReview: () => void;
   clearPassportSnapshot: () => void;
-  clearSensitiveDiagnostics: () => void;
   clearSyncEvidence: () => void;
   clearProofPreview: () => void;
   clearMirrorExplorer: () => void;
@@ -23,10 +22,48 @@ export type CompanyDiscoveryPrompt = {
   actionLabel: string;
 };
 
+export type TallyReadinessState = {
+  companyReady: boolean;
+  companyNeedsRecheck: boolean;
+  showCheck: boolean;
+  showCompanyLink: boolean;
+};
+
 export type ProbeSelectionEffects = {
   clearDroppedCompanyScope: () => void;
   installProbeState: () => void;
 };
+
+export type TallyCompanyIdentity = {
+  name: string;
+  guid?: string;
+  correlation_key?: string;
+  mirror_company_id?: string;
+};
+
+export function tallyCompanyKey(company: TallyCompanyIdentity): string {
+  if (company.correlation_key) return `correlation:${company.correlation_key}`;
+  if (company.guid) return `guid:${company.guid.toLocaleLowerCase()}`;
+  if (company.mirror_company_id) return `mirror:${company.mirror_company_id}`;
+  return `unverified-name:${company.name}`;
+}
+
+export function currentProbeCompanies<T extends TallyCompanyIdentity>(
+  companies: readonly T[],
+  liveCompanyKeys: readonly string[],
+): T[] {
+  return companies.filter((company) => liveCompanyKeys.includes(tallyCompanyKey(company)));
+}
+
+export function canReuseCurrentProbeReview({
+  reviewAvailable,
+  setupSaved,
+}: {
+  reviewAvailable: boolean;
+  setupSaved: boolean;
+}): boolean {
+  return reviewAvailable && !setupSaved;
+}
 
 export function reconcileProbeCompanySelection(
   selectedCompany: string,
@@ -80,10 +117,29 @@ export function companyDiscoveryPrompt(
   };
 }
 
+export function tallyReadinessState({
+  endpointComplete,
+  companySelected,
+  companyCurrent,
+  companySaved,
+}: {
+  endpointComplete: boolean;
+  companySelected: boolean;
+  companyCurrent: boolean;
+  companySaved: boolean;
+}): TallyReadinessState {
+  const companyReady = companySelected && companyCurrent && companySaved;
+  return {
+    companyReady,
+    companyNeedsRecheck: companySelected && !companyCurrent,
+    showCheck: !companyReady,
+    showCompanyLink: endpointComplete && !companyReady,
+  };
+}
+
 export function clearCompanyScopedState(cleanup: CompanyScopeCleanup) {
   cleanup.clearQualifiedReadReview();
   cleanup.clearPassportSnapshot();
-  cleanup.clearSensitiveDiagnostics();
   cleanup.clearSyncEvidence();
   cleanup.clearProofPreview();
   cleanup.clearMirrorExplorer();
