@@ -37,3 +37,11 @@ test("a plain endpoint failure gives the operator one clear next step", () => {
     },
   );
 });
+
+test("a persisted-profile failure stays local instead of directing the operator to Tally", () => {
+  const guidance = classifyUnstructuredTallyError("persisted_tally_company_profiles_unavailable");
+
+  assert.match(guidance.category, /saved company profiles are unavailable/i);
+  assert.match(guidance.action, /restart bridge/i);
+  assert.match(guidance.action, /keep tally unchanged/i);
+});

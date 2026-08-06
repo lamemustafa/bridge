@@ -21,7 +21,7 @@ test("Tally setup does not expose unqualified legacy reads", async () => {
   }
 
   assert.match(frontend, /discoveredCompanyPrompt && view !== "companies"/);
-  assert.match(frontend, /Find all companies/);
+  assert.match(frontend, /async function discoverUntrustedCompanies\(\) \{\s*if \(currentProbeCompanyList\.length > 0\) return;/s);
 });
 
 test("Tally has one top-level navigation entry and keeps connection management in its workspace", async () => {
@@ -33,7 +33,8 @@ test("Tally has one top-level navigation entry and keeps connection management i
 
   assert.match(nav, /<Cable size=\{18\} \/> Tally/);
   assert.doesNotMatch(nav, /Outstandings|Tally Setup/);
-  assert.match(frontend, /selectedCompanyRecord\?\.mirror_company_id \? "outstandings" : "companies"/);
+  assert.match(frontend, /selectedCompanyReady \? "outstandings" : "companies"/);
+  assert.match(frontend, /company=\{selectedCompanyReady && selectedCompanyRecord\?\.guid \? \{ name: selectedCompanyRecord\.name, guid: selectedCompanyRecord\.guid \} : undefined\}/);
   assert.match(outstandings, /Manage Tally/);
 });
 
@@ -43,7 +44,9 @@ test("saved pins remain selectable for local proof review without a Tally read",
   assert.match(frontend, /savedCompanyList\.length > 0/);
   assert.match(frontend, /Review local Mirror &amp; Proof evidence without contacting Tally\./);
   assert.match(frontend, /Change saved company/);
-  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
+  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| snapshotActive\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
+  assert.match(frontend, /selectSavedCompany\(""\)\} disabled=\{snapshotActive\}/);
+  assert.match(frontend, /selectSavedCompany\(key\)\} disabled=\{snapshotActive\}/);
 });
 
 test("structured Tally errors retain their backend remediation", async () => {
@@ -61,10 +64,16 @@ test("persisted-company load failures remain visible before a Tally connection i
 
 test("Tally setup uses the durable pin for readiness and keeps fixture control local to proof work", async () => {
   const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
-  const currentProbePicker = frontend.slice(frontend.indexOf("currentProbeCompanyList.map"), frontend.indexOf("Find all companies"));
+  const companySetup = frontend.slice(frontend.indexOf("{setupConnectionComplete && ("), frontend.indexOf("{selectedCompanyReady && ("));
+  const currentProbePicker = companySetup.slice(
+    companySetup.indexOf("{currentProbeCompanyList.length > 0 ? ("),
+    companySetup.indexOf(") : untrustedDiscoveredCompanies.length > 0 ? ("),
+  );
 
   assert.match(frontend, /tallyReadinessState\(\{[\s\S]*?companySaved:\s*Boolean\(selectedCompanyRecord\?\.mirror_company_id\),[\s\S]*?\}\)\.companyReady/);
   assert.match(currentProbePicker, /if \(key === selectedCompany\) return;[\s\S]*?clearSelectedCompanyScope\(/);
+  assert.match(companySetup, /\{currentProbeCompanyList\.length > 0 \? \([\s\S]*?\) : untrustedDiscoveredCompanies\.length > 0 \? \(/);
+  assert.doesNotMatch(currentProbePicker, /bootstrapDirectCompany/);
   assert.match(frontend, /Synthetic write fixture \(advanced\)/);
   assert.match(frontend, /onClick=\{\(\) => void enrollWriteFixture\(\)\}/);
   assert.match(frontend, /onClick=\{\(\) => void revokeWriteFixture\(\)\}/);

@@ -5,7 +5,17 @@ type TallyErrorDetails = {
   message: string;
 };
 
+function localProfileStoreUnavailable() {
+  return {
+    category: "Bridge's saved company profiles are unavailable",
+    action: "Bridge could not read its local saved company profiles. Restart Bridge. If this happens again, keep Tally unchanged and ask for help with Bridge's local data.",
+  };
+}
+
 export function classifyTallyError({ code, message }: TallyErrorDetails) {
+  if (code === "persisted_tally_company_profiles_unavailable") {
+    return localProfileStoreUnavailable();
+  }
   if (code === "tally_request_deadline_exceeded") {
     return {
       category: "Tally is taking longer than expected",
@@ -35,6 +45,9 @@ export function classifyTallyError({ code, message }: TallyErrorDetails) {
 
 export function classifyUnstructuredTallyError(message: string) {
   const value = message.toLowerCase();
+  if (value.includes("persisted_tally_company_profiles_unavailable")) {
+    return localProfileStoreUnavailable();
+  }
   if (value.includes("permission") || value.includes("education") || value.includes("mode")) {
     return { category: "Permission or mode", action: "Confirm this operation is supported by the active Tally mode and company permissions." };
   }

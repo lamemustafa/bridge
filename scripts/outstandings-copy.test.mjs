@@ -33,6 +33,15 @@ test("bill-wise opening balances explain why totals stay withheld", () => {
   assert.match(message, /totals stay withheld/i);
 });
 
+test("opening-bill coverage is a non-retryable Unit A boundary", () => {
+  const state = outstandingsPartialState("ledger_opening_bills_not_covered");
+
+  assert.equal(state.retryable, false);
+  assert.match(state.message, /current read scope does not cover bill-wise opening balances/i);
+  assert.match(state.message, /repeating the same scan won't resolve this/i);
+  assert.equal(isNonRetryableOutstandingsBoundary("ledger_opening_bills_not_covered"), true);
+});
+
 test("unqualified direct postings withhold totals before a voucher read", () => {
   const message = outstandingsPartialReason("unallocated_direct_postings_not_covered");
   assert.match(message, /posted without a bill reference/i);

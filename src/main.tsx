@@ -881,7 +881,7 @@ function App() {
   }
 
   function selectSavedCompany(key: string) {
-    if (key === selectedCompany) return;
+    if (key === selectedCompany || snapshotActive) return;
     clearSelectedCompanyScope();
     setSelectedCompany(key);
   }
@@ -964,6 +964,7 @@ function App() {
   }
 
   async function discoverUntrustedCompanies() {
+    if (currentProbeCompanyList.length > 0) return;
     const resultsVersion = tallyResultsVersion.current;
     setTallyAction("discover");
     setUntrustedDiscoveryError(null);
@@ -1750,7 +1751,7 @@ function App() {
           <button
             aria-current={["outstandings", "companies"].includes(view) ? "page" : undefined}
             className={["outstandings", "companies"].includes(view) ? "active" : ""}
-            onClick={() => setView(selectedCompanyRecord?.mirror_company_id ? "outstandings" : "companies")}
+            onClick={() => setView(selectedCompanyReady ? "outstandings" : "companies")}
           >
             <Cable size={18} /> Tally
           </button>
@@ -1980,7 +1981,7 @@ function App() {
         {view === "outstandings" && (
           <OutstandingsScreen
             config={config}
-            company={selectedCompanyRecord?.guid ? { name: selectedCompanyRecord.name, guid: selectedCompanyRecord.guid } : undefined}
+            company={selectedCompanyReady && selectedCompanyRecord?.guid ? { name: selectedCompanyRecord.name, guid: selectedCompanyRecord.guid } : undefined}
             onChangeSetup={() => setView("companies")}
           />
         )}
@@ -2009,17 +2010,7 @@ function App() {
                   <p>Choose the company that is open in Tally. Bridge only reads from Tally.</p>
                 </div>
                 {companyError && <TallyErrorNotice message={companyError} />}
-                {untrustedDiscoveredCompanies.length > 0 ? (
-                  <div className="company-options" role="list" aria-label="Companies to verify">
-                    {untrustedDiscoveredCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => (
-                      <button className="company-option" type="button" key={`${company.name}-${index}`} onClick={() => void bootstrapDirectCompany(company.name)} disabled={snapshotActive || tallyAction !== null}>
-                        <Building2 size={20} />
-                        <span>{company.name}</span>
-                        <small>{tallyAction === "bootstrap" ? "Checking…" : "Use this company"}</small>
-                      </button>
-                    ))}
-                  </div>
-                ) : currentProbeCompanyList.length > 0 ? (
+                {currentProbeCompanyList.length > 0 ? (
                   <>
                     <div className="company-options" role="list" aria-label="Companies found in Tally">
                       {currentProbeCompanyList.map((company) => {
@@ -2051,10 +2042,17 @@ function App() {
                         );
                       })}
                     </div>
-                    <button className="secondary-action company-lookup" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={snapshotActive || tallyAction !== null}>
-                      {tallyAction === "discover" ? "Finding companies…" : "Find all companies"}
-                    </button>
                   </>
+                ) : untrustedDiscoveredCompanies.length > 0 ? (
+                  <div className="company-options" role="list" aria-label="Companies to verify">
+                    {untrustedDiscoveredCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => (
+                      <button className="company-option" type="button" key={`${company.name}-${index}`} onClick={() => void bootstrapDirectCompany(company.name)} disabled={snapshotActive || tallyAction !== null}>
+                        <Building2 size={20} />
+                        <span>{company.name}</span>
+                        <small>{tallyAction === "bootstrap" ? "Checking…" : "Use this company"}</small>
+                      </button>
+                    ))}
+                  </div>
                 ) : (
                   <div className="setup-empty-state">
                     <Building2 size={28} />
@@ -2130,13 +2128,13 @@ function App() {
                 <h2 id="saved-company-heading">{selectedCompanyRecord?.mirror_company_id ? "Saved company" : "Choose a saved company"}</h2>
                 <p className="panel-description">Review local Mirror &amp; Proof evidence without contacting Tally.</p>
                 {selectedCompanyRecord?.mirror_company_id ? (
-                  <button className="secondary-action" type="button" onClick={() => selectSavedCompany("")}>Change saved company</button>
+                  <button className="secondary-action" type="button" onClick={() => selectSavedCompany("")} disabled={snapshotActive}>Change saved company</button>
                 ) : (
                   <div className="company-options" role="list" aria-label="Saved companies">
                     {savedCompanyList.map((company) => {
                       const key = tallyCompanyKey(company);
                       return (
-                        <button className="company-option" type="button" key={key} onClick={() => selectSavedCompany(key)}>
+                        <button className="company-option" type="button" key={key} onClick={() => selectSavedCompany(key)} disabled={snapshotActive}>
                           <Building2 size={20} />
                           <span>{company.name}</span>
                           <small>Saved locally</small>

@@ -58,6 +58,13 @@ export function outstandingsPartialState(reasonCode: string): OutstandingsPartia
       retryable: false,
     };
   }
+  if (reasonCode === "ledger_opening_bills_not_covered") {
+    return {
+      title: "Outstandings are not available for this company",
+      message: "Bridge's current read scope does not cover bill-wise opening balances. It did not calculate totals. Repeating the same scan won't resolve this.",
+      retryable: false,
+    };
+  }
   return {
     title: "Partial result withheld",
     message: `Bridge could not prove every requested segment complete (${outstandingsPartialReason(reasonCode)}). No totals were calculated.`,
