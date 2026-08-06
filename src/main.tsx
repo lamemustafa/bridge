@@ -751,6 +751,7 @@ function App() {
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
     && !["completed", "partial", "failed", "cancelled"].includes(snapshotJob.phase);
+  const savedCompanySelectionLocked = snapshotActive || snapshotStartOutcomeUnknown || tallyAction === "start" || tallyAction === "resume";
 
   React.useEffect(() => {
     if (!tallyAction && !snapshotActive) {
@@ -881,7 +882,7 @@ function App() {
   }
 
   function selectSavedCompany(key: string) {
-    if (key === selectedCompany || snapshotActive) return;
+    if (key === selectedCompany || savedCompanySelectionLocked) return;
     clearSelectedCompanyScope();
     setSelectedCompany(key);
   }
@@ -2128,13 +2129,13 @@ function App() {
                 <h2 id="saved-company-heading">{selectedCompanyRecord?.mirror_company_id ? "Saved company" : "Choose a saved company"}</h2>
                 <p className="panel-description">Review local Mirror &amp; Proof evidence without contacting Tally.</p>
                 {selectedCompanyRecord?.mirror_company_id ? (
-                  <button className="secondary-action" type="button" onClick={() => selectSavedCompany("")} disabled={snapshotActive}>Change saved company</button>
+                  <button className="secondary-action" type="button" onClick={() => selectSavedCompany("")} disabled={savedCompanySelectionLocked}>Change saved company</button>
                 ) : (
                   <div className="company-options" role="list" aria-label="Saved companies">
                     {savedCompanyList.map((company) => {
                       const key = tallyCompanyKey(company);
                       return (
-                        <button className="company-option" type="button" key={key} onClick={() => selectSavedCompany(key)} disabled={snapshotActive}>
+                        <button className="company-option" type="button" key={key} onClick={() => selectSavedCompany(key)} disabled={savedCompanySelectionLocked}>
                           <Building2 size={20} />
                           <span>{company.name}</span>
                           <small>Saved locally</small>

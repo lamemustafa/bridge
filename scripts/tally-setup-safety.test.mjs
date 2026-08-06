@@ -44,9 +44,10 @@ test("saved pins remain selectable for local proof review without a Tally read",
   assert.match(frontend, /savedCompanyList\.length > 0/);
   assert.match(frontend, /Review local Mirror &amp; Proof evidence without contacting Tally\./);
   assert.match(frontend, /Change saved company/);
-  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| snapshotActive\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
-  assert.match(frontend, /selectSavedCompany\(""\)\} disabled=\{snapshotActive\}/);
-  assert.match(frontend, /selectSavedCompany\(key\)\} disabled=\{snapshotActive\}/);
+  assert.match(frontend, /const savedCompanySelectionLocked = snapshotActive \|\| snapshotStartOutcomeUnknown \|\| tallyAction === "start" \|\| tallyAction === "resume";/);
+  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
+  assert.match(frontend, /selectSavedCompany\(""\)\} disabled=\{savedCompanySelectionLocked\}/);
+  assert.match(frontend, /selectSavedCompany\(key\)\} disabled=\{savedCompanySelectionLocked\}/);
 });
 
 test("structured Tally errors retain their backend remediation", async () => {

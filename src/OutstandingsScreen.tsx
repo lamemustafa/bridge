@@ -70,6 +70,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
   const readPermitted = canStartOutstandingsRead(company, inrAssertedCompanyGuid);
   const partialState = result?.state === "partial" ? outstandingsPartialState(result.reason_code) : null;
   const outstandingsUnavailable = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);
+  const tallyReadAttempted = result?.state === "partial" && partialState?.tallyReadAttempted;
 
   const load = React.useCallback(async () => {
     if (!readPermitted || !company) return;
@@ -135,9 +136,9 @@ export function OutstandingsScreen({ config, company, onChangeSetup }: Props) {
             {result
               ? result.state === "complete"
                 ? `Synced ${relativeTime(result.synced_at_unix_ms)}`
-                : outstandingsUnavailable
-                  ? "No Tally data was read"
-                  : `Checked ${relativeTime(result.synced_at_unix_ms)}`
+                : tallyReadAttempted
+                  ? `Checked ${relativeTime(result.synced_at_unix_ms)}`
+                  : "No Tally data was read"
               : "Not read in this session"}
             {report ? ` · ${report.source_voucher_count.toLocaleString("en-IN")} vouchers verified` : ""}
           </p>

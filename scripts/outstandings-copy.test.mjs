@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { isNonRetryableOutstandingsBoundary, outstandingsAgeingDisclosure, outstandingsPartialReason, outstandingsPartialState } from "../src/outstandings-copy.ts";
@@ -37,9 +38,23 @@ test("opening-bill coverage is a non-retryable Unit A boundary", () => {
   const state = outstandingsPartialState("ledger_opening_bills_not_covered");
 
   assert.equal(state.retryable, false);
-  assert.match(state.message, /current read scope does not cover bill-wise opening balances/i);
+  assert.equal(state.tallyReadAttempted, true);
+  assert.match(state.message, /completed a coverage check/i);
+  assert.match(state.message, /bill-wise opening balances/i);
   assert.match(state.message, /repeating the same scan won't resolve this/i);
   assert.equal(isNonRetryableOutstandingsBoundary("ledger_opening_bills_not_covered"), true);
+});
+
+test("pre-admission boundaries do not claim a Tally read", () => {
+  assert.equal(outstandingsPartialState("outstandings_segment_sizing_uncalibrated").tallyReadAttempted, false);
+  assert.equal(outstandingsPartialState("unallocated_direct_postings_not_covered").tallyReadAttempted, false);
+});
+
+test("opening-bill coverage reports a completed check instead of an unread request", async () => {
+  const screen = await readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8");
+
+  assert.match(screen, /const tallyReadAttempted = result\?\.state === "partial" && partialState\?\.tallyReadAttempted;/);
+  assert.match(screen, /: tallyReadAttempted\s*\? `Checked \$\{relativeTime\(result\.synced_at_unix_ms\)\}`\s*: "No Tally data was read"/s);
 });
 
 test("unqualified direct postings withhold totals before a voucher read", () => {
