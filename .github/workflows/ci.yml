@@ -148,7 +148,6 @@ jobs:
         working-directory: src-tauri
         run: >-
           cargo test --locked
-          -p bridge-tally-canonical
           -p bridge-tally-core
           -p bridge-tally-incremental
           -p bridge-tally-observability
@@ -180,7 +179,6 @@ jobs:
         working-directory: src-tauri
         run: >-
           cargo clippy --locked
-          -p bridge-tally-canonical
           -p bridge-tally-core
           -p bridge-tally-incremental
           -p bridge-tally-observability
