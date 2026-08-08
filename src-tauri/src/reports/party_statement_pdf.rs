@@ -42,6 +42,28 @@ struct PdfLine {
     bold: bool,
 }
 
+/// Allocates indirect PDF object references without making later document
+/// layouts depend on hand-maintained numeric offsets.
+#[derive(Debug)]
+struct PdfObjectAllocator {
+    next_id: i32,
+}
+
+impl PdfObjectAllocator {
+    fn new() -> Self {
+        Self { next_id: 1 }
+    }
+
+    fn allocate(&mut self) -> Result<Ref, PartyStatementPdfError> {
+        let id = self.next_id;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or(PartyStatementPdfError::TooManyPages)?;
+        Ok(Ref::new(id))
+    }
+}
+
 impl PdfLine {
     fn body(text: impl Into<String>) -> Self {
         Self {
@@ -72,21 +94,18 @@ pub fn render_party_statement_pdf(
     let page_count_i32 =
         i32::try_from(page_count).map_err(|_| PartyStatementPdfError::TooManyPages)?;
 
-    let catalog_id = Ref::new(1);
-    let pages_id = Ref::new(2);
-    let regular_font_id = Ref::new(3);
-    let bold_font_id = Ref::new(4);
+    let mut object_ids = PdfObjectAllocator::new();
+    let catalog_id = object_ids.allocate()?;
+    let pages_id = object_ids.allocate()?;
+    let regular_font_id = object_ids.allocate()?;
+    let bold_font_id = object_ids.allocate()?;
     let regular_font = Name(b"F1");
     let bold_font = Name(b"F2");
     let mut pdf = Pdf::new();
 
     pdf.catalog(catalog_id).pages(pages_id);
     let page_ids: Vec<_> = (0..page_count)
-        .map(|index| {
-            i32::try_from(index)
-                .map(|index| Ref::new(10 + index * 2))
-                .map_err(|_| PartyStatementPdfError::TooManyPages)
-        })
+        .map(|_| object_ids.allocate())
         .collect::<Result<_, _>>()?;
     pdf.pages(pages_id)
         .kids(page_ids.iter().copied())
@@ -98,9 +117,7 @@ pub fn render_party_statement_pdf(
 
     for (page_index, page_lines) in lines.chunks(BODY_LINES_PER_PAGE).enumerate() {
         let page_id = page_ids[page_index];
-        let content_id = i32::try_from(page_index)
-            .map(|index| Ref::new(11 + index * 2))
-            .map_err(|_| PartyStatementPdfError::TooManyPages)?;
+        let content_id = object_ids.allocate()?;
         {
             let mut page = pdf.page(page_id);
             page.parent(pages_id)
@@ -340,6 +357,21 @@ mod tests {
     use bridge_tally_core::ExactDecimal;
     use std::io::{Cursor, Read};
     use zip::ZipArchive;
+
+    #[test]
+    fn pdf_object_allocator_issues_unique_sequential_references() {
+        let mut allocator = PdfObjectAllocator::new();
+        let ids = (0..8)
+            .map(|_| {
+                allocator
+                    .allocate()
+                    .expect("eight PDF references fit")
+                    .get()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, (1..=8).collect::<Vec<_>>());
+    }
 
     fn bill(reference: &str, amount: &str, age_days: u32) -> OpenBillRow {
         OpenBillRow {
