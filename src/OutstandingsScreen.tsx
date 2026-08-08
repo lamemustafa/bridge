@@ -506,7 +506,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
                               className="party-statement-action"
                               onClick={async () => {
                                 try {
-                                  const path = await exportPartyStatement(completeResult, party.party);
+                                  const path = await exportPartyStatement(completeResult, party.party, "xlsx");
                                   setExportNotice({ message: fileNameOf(path), path });
                                 } catch (cause) {
                                   setExportNotice({ message: operatorMessage(cause) });
@@ -514,7 +514,22 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
                               }}
                             >
                               <Download size={14} />
-                              Statement
+                              Excel statement
+                            </button>
+                            <button
+                              type="button"
+                              className="party-statement-action"
+                              onClick={async () => {
+                                try {
+                                  const path = await exportPartyStatement(completeResult, party.party, "pdf");
+                                  setExportNotice({ message: fileNameOf(path), path });
+                                } catch (cause) {
+                                  setExportNotice({ message: operatorMessage(cause) });
+                                }
+                              }}
+                            >
+                              <Download size={14} />
+                              PDF statement
                             </button>
                           </div>
                           {renderPartyBills(openBillsByParty?.get(party.party), completeResult.currency_assertion)}
@@ -537,16 +552,21 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
   );
 }
 
-/// Builds one party's statement as an `.xlsx` workbook via the Rust command
+/// Builds one party's statement in the selected format via the Rust command
 /// and writes it to Downloads. Sends the `open_bills`/`unallocated_by_party`
 /// rows this screen already holds from `fetch_tally_outstandings` -- Bridge
 /// never reads Tally a second time to produce a statement.
-async function exportPartyStatement(result: InrCompleteResult, party: string) {
+async function exportPartyStatement(
+  result: InrCompleteResult,
+  party: string,
+  format: "xlsx" | "pdf",
+) {
   return invoke<string>("export_party_statement", {
     request: {
       company: result.report.company_name,
       as_of_yyyymmdd: result.report.as_of_yyyymmdd,
       party,
+      format,
       open_bills: result.open_bills ?? [],
       unallocated_by_party: result.unallocated_by_party ?? [],
     },

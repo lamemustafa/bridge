@@ -10,6 +10,7 @@ use crate::db::tally_mirror::{
 };
 use crate::gst::{GstDraftRequest, GstReturnDraft};
 use crate::reports::party_statement::{build_party_statement, PartyStatementError};
+use crate::reports::party_statement_pdf::render_party_statement_pdf;
 use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
 use crate::sync::coordinator::{SnapshotCoordinator, SnapshotJobStatus};
 use crate::sync::reconciliation::ExternalReferenceCatalog;
@@ -2787,6 +2788,18 @@ pub async fn save_report_download(
     file_name: String,
     contents: String,
 ) -> Result<String, String> {
+    save_report_download_bytes(&app, &file_name, contents.as_bytes())
+}
+
+/// Shared byte-oriented implementation for every local report export.
+///
+/// The public command keeps its text-only IPC contract for CSV exports; binary
+/// formats use this same checked path after their renderer has produced bytes.
+fn save_report_download_bytes(
+    app: &tauri::AppHandle,
+    file_name: &str,
+    contents: &[u8],
+) -> Result<String, String> {
     use tauri::Manager as _;
     let file_name = portable_export_file_name(&file_name)?;
 
@@ -2797,7 +2810,7 @@ pub async fn save_report_download(
         .download_dir()
         .or_else(|_| app.path().home_dir())
         .map_err(|_| "Bridge could not locate a folder to save into.".to_string())?;
-    let path = write_unique_download(&downloads, &file_name, contents.as_bytes())
+    let path = write_unique_download(&downloads, &file_name, contents)
         .map_err(|error| format!("Bridge could not write the export: {error}"))?;
     Ok(path.to_string_lossy().into_owned())
 }
@@ -2886,6 +2899,9 @@ pub struct ExportPartyStatementRequest {
     pub company: String,
     pub as_of_yyyymmdd: String,
     pub party: String,
+    /// XLSX remains the default for callers that predate the PDF option.
+    #[serde(default)]
+    pub format: PartyStatementFormat,
     /// The `open_bills`/`unallocated_by_party` rows the frontend already
     /// holds from `fetch_tally_outstandings`. This command reads no Tally
     /// endpoint of its own -- `OutstandingsLoadResult::Complete` already
@@ -2894,7 +2910,15 @@ pub struct ExportPartyStatementRequest {
     pub unallocated_by_party: Vec<UnallocatedParty>,
 }
 
-/// Builds one party's aged-bills statement as an `.xlsx` workbook and writes
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PartyStatementFormat {
+    #[default]
+    Xlsx,
+    Pdf,
+}
+
+/// Builds one party's aged-bills statement in the requested format and writes
 /// it to the user's Downloads folder.
 ///
 /// Mirrors `save_report_download` exactly: Tauri's own path resolver, the
@@ -2905,8 +2929,6 @@ pub async fn export_party_statement(
     app: tauri::AppHandle,
     request: ExportPartyStatementRequest,
 ) -> Result<String, String> {
-    use tauri::Manager as _;
-
     let open_bills = request
         .open_bills
         .into_iter()
@@ -2930,8 +2952,18 @@ pub async fn export_party_statement(
         }
     })?;
 
-    let bytes = render_party_statement_xlsx(&statement)
-        .map_err(|error| format!("Bridge could not build the statement: {error}"))?;
+    let (bytes, extension) = match request.format {
+        PartyStatementFormat::Xlsx => (
+            render_party_statement_xlsx(&statement)
+                .map_err(|error| format!("Bridge could not build the statement: {error}"))?,
+            "xlsx",
+        ),
+        PartyStatementFormat::Pdf => (
+            render_party_statement_pdf(&statement)
+                .map_err(|error| format!("Bridge could not build the statement: {error}"))?,
+            "pdf",
+        ),
+    };
 
     let mut slug = statement_filename_slug(&statement.party);
     slug.truncate(150);
@@ -2942,7 +2974,7 @@ pub async fn export_party_statement(
         .download_dir()
         .or_else(|_| app.path().home_dir())
         .map_err(|_| "Bridge could not locate a folder to save into.".to_string())?;
-    let path = write_unique_statement_file(&downloads, &stem, "xlsx", &bytes)?;
+    let path = write_unique_statement_file(&downloads, &stem, extension, &bytes)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -3050,6 +3082,29 @@ mod statement_export_tests {
         );
         assert_eq!(std::fs::read(first).expect("first bytes"), b"one");
         assert_eq!(std::fs::read(second).expect("second bytes"), b"two");
+    }
+}
+
+#[cfg(test)]
+mod party_statement_export_tests {
+    use super::*;
+
+    #[test]
+    fn statement_export_format_defaults_to_xlsx_and_accepts_pdf() {
+        let base = serde_json::json!({
+            "company": "Synthetic Books Pvt Ltd",
+            "as_of_yyyymmdd": "20260808",
+            "party": "Synthetic Party",
+            "open_bills": [],
+            "unallocated_by_party": [],
+        });
+        let defaulted: ExportPartyStatementRequest = serde_json::from_value(base.clone()).unwrap();
+        assert!(matches!(defaulted.format, PartyStatementFormat::Xlsx));
+
+        let mut pdf = base;
+        pdf["format"] = serde_json::Value::String("pdf".to_string());
+        let pdf: ExportPartyStatementRequest = serde_json::from_value(pdf).unwrap();
+        assert!(matches!(pdf.format, PartyStatementFormat::Pdf));
     }
 }
 
