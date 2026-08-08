@@ -3,6 +3,7 @@
 import React from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { ClientGroupLabels, groupClientRows } from "./client-grouping";
 import { outstandingsPartialState } from "./outstandings-copy";
 
 type CompanyRef = { name: string; guid: string };
@@ -74,7 +75,25 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   const [entries, setEntries] = React.useState<Entry[] | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [groupLabels, setGroupLabels] = React.useState<ClientGroupLabels>({});
+  const [groupLabelError, setGroupLabelError] = React.useState<string | null>(null);
   const requestVersion = React.useRef(0);
+
+  React.useEffect(() => {
+    let active = true;
+    void invoke<ClientGroupLabels>("load_client_group_labels")
+      .then((labels) => {
+        if (active) setGroupLabels(labels);
+      })
+      // A label is optional. If its local config cannot be read, continue as
+      // ungrouped instead of turning the report into a failed screen.
+      .catch(() => {
+        if (active) setGroupLabels({});
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const load = React.useCallback(async () => {
     if (companies.length === 0) return;
@@ -113,6 +132,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
     return entries
       .map((entry) => {
         const complete = entry.result.state === "complete" ? entry.result : null;
+        const companyGuid = companies.find((company) => company.name === entry.company)?.guid ?? entry.company;
         const oldest = complete
           ? complete.report.top_parties.reduce<number | null>(
               (worst, party) =>
@@ -124,6 +144,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
           : null;
         return {
           company: entry.company,
+          companyGuid,
           complete,
           reasonCode: entry.result.state === "partial" ? entry.result.reason_code : null,
           receivable: complete ? amountOf(complete.report.receivable_total) : 0,
@@ -156,17 +177,72 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
       });
   }, [entries, sort]);
 
-  const totals = React.useMemo(() => rows.reduce(
-    (sum, row) => ({
-      receivable: sum.receivable + row.receivable,
-      overdue: sum.overdue + row.overdue,
-      unallocated: sum.unallocated + row.unallocated,
-    }),
-    { receivable: 0, overdue: 0, unallocated: 0 },
-  ), [rows]);
+  const groupedRows = React.useMemo(
+    () => groupClientRows(rows, groupLabels),
+    [rows, groupLabels],
+  );
 
   const readable = rows.filter((row) => row.complete).length;
   const largestExposure = Math.max(...rows.map((row) => row.receivable + row.unallocated), 0);
+
+  const updateGroupLabel = React.useCallback((companyGuid: string, label: string) => {
+    setGroupLabels((current) => {
+      const next = { ...current };
+      if (label.trim()) next[companyGuid] = label;
+      else delete next[companyGuid];
+      return next;
+    });
+  }, []);
+
+  const saveGroupLabel = React.useCallback((companyGuid: string, label: string) => {
+    setGroupLabelError(null);
+    void invoke("save_client_group_label", {
+      request: { company_guid: companyGuid, label },
+    }).catch(() => setGroupLabelError("Bridge could not save this group label. Your figures are unchanged."));
+  }, []);
+
+  const renderRow = (row: (typeof rows)[number]) => {
+    const partial = row.reasonCode ? outstandingsPartialState(row.reasonCode) : null;
+    return (
+      <button
+        className="clients-row"
+        role="row"
+        type="button"
+        key={row.companyGuid}
+        onClick={() => {
+          const match = companies.find((company) => company.guid === row.companyGuid);
+          if (match) onOpenCompany(match);
+        }}
+      >
+        {/* Magnitude behind the row: which client is biggest is
+            readable without comparing five columns of digits. */}
+        <span
+          className="clients-magnitude"
+          style={{ width: `${largestExposure > 0 ? Math.max(1, (row.receivable + row.unallocated) / largestExposure * 100) : 0}%` }}
+          aria-hidden="true"
+        />
+        <span role="cell" className="clients-name">
+          <strong>{row.company}</strong>
+          {partial
+            ? <em>{partial.title}</em>
+            : row.unallocatedShare !== null && (
+              <em>{row.unallocatedShare}% carries no bill reference</em>
+            )}
+        </span>
+        <span role="cell">{row.complete ? formatCompact(String(row.receivable)) : "—"}</span>
+        <span role="cell" className={row.overdue > 0 ? "is-overdue" : undefined}>
+          {row.complete ? formatCompact(String(row.overdue)) : "—"}
+        </span>
+        <span role="cell">{row.complete ? formatCompact(String(row.unallocated)) : "—"}</span>
+        <span role="cell" className="clients-age">
+          {row.oldest === null
+            ? <em className="age-chip is-none">none</em>
+            : <em className={`age-chip tier-${ageTier(row.oldest)}`}>{row.oldest}d</em>}
+          <ChevronRight size={16} aria-hidden="true" />
+        </span>
+      </button>
+    );
+  };
 
   return (
     <section className="clients-screen" aria-busy={loading}>
@@ -210,11 +286,27 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
 
       {entries && rows.length > 0 && (
         <>
-          <div className="clients-totals" role="group" aria-label="Totals across all clients">
-            <div><span>Receivable</span><strong>{formatCompact(String(totals.receivable))}</strong></div>
-            <div><span>Overdue 90+</span><strong>{formatCompact(String(totals.overdue))}</strong></div>
-            <div><span>Unallocated</span><strong>{formatCompact(String(totals.unallocated))}</strong></div>
-          </div>
+          <section className="client-group-labels" aria-labelledby="client-group-labels-heading">
+            <div>
+              <h3 id="client-group-labels-heading">Client groups</h3>
+              <p>Optional filing labels. Ungrouped clients stay separate.</p>
+            </div>
+            <div className="client-group-label-grid">
+              {companies.map((company) => (
+                <label key={company.guid}>
+                  <span>{company.name}</span>
+                  <input
+                    aria-label={`Group label for ${company.name}`}
+                    value={groupLabels[company.guid] ?? ""}
+                    placeholder="No group"
+                    onChange={(event) => updateGroupLabel(company.guid, event.target.value)}
+                    onBlur={(event) => saveGroupLabel(company.guid, event.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+            {groupLabelError && <p className="client-group-label-error" role="alert">{groupLabelError}</p>}
+          </section>
 
           <div className="clients-table" role="table" aria-label="Outstandings by client">
             <div className="clients-row is-head" role="row">
@@ -234,59 +326,27 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
                   onClick={() => setSort((current) =>
                     current.key === key
                       ? { key, desc: !current.desc }
-                      // Money and age default to worst-first; a name defaults
-                      // to A-Z, because "descending name" is never what is
-                      // wanted on first click.
                       : { key, desc: key !== "client" })}
                 >
                   {label}
                 </button>
               ))}
             </div>
-            {rows.map((row) => {
-              const partial = row.reasonCode ? outstandingsPartialState(row.reasonCode) : null;
-              return (
-                <button
-                  className="clients-row"
-                  role="row"
-                  type="button"
-                  key={row.company}
-                  onClick={() => {
-                    const match = companies.find((company) => company.name === row.company);
-                    if (match) onOpenCompany(match);
-                  }}
-                >
-                  {/* Magnitude behind the row: which client is biggest is
-                      readable without comparing five columns of digits. */}
-                  <span
-                    className="clients-magnitude"
-                    style={{ width: `${largestExposure > 0 ? Math.max(1, (row.receivable + row.unallocated) / largestExposure * 100) : 0}%` }}
-                    aria-hidden="true"
-                  />
-                  <span role="cell" className="clients-name">
-                    <strong>{row.company}</strong>
-                    {partial
-                      ? <em>{partial.title}</em>
-                      : row.unallocatedShare !== null && (
-                        <em>{row.unallocatedShare}% carries no bill reference</em>
-                      )}
+            {groupedRows.groups.map((group) => (
+              <React.Fragment key={group.label}>
+                <div className="clients-row clients-group-total" role="row" aria-label={`Totals for ${group.label}`}>
+                  <span role="cell" className="clients-name"><strong>{group.label}</strong><em>Group total</em></span>
+                  <span role="cell">{formatCompact(String(group.totals.receivable))}</span>
+                  <span role="cell" className={group.totals.overdue > 0 ? "is-overdue" : undefined}>
+                    {formatCompact(String(group.totals.overdue))}
                   </span>
-                  {/* Every money column in the SAME unit. Mixing full precision
-                      and compact across columns made them uncomparable. */}
-                  <span role="cell">{row.complete ? formatCompact(String(row.receivable)) : "—"}</span>
-                  <span role="cell" className={row.overdue > 0 ? "is-overdue" : undefined}>
-                    {row.complete ? formatCompact(String(row.overdue)) : "—"}
-                  </span>
-                  <span role="cell">{row.complete ? formatCompact(String(row.unallocated)) : "—"}</span>
-                  <span role="cell" className="clients-age">
-                    {row.oldest === null
-                      ? <em className="age-chip is-none">none</em>
-                      : <em className={`age-chip tier-${ageTier(row.oldest)}`}>{row.oldest}d</em>}
-                    <ChevronRight size={16} aria-hidden="true" />
-                  </span>
-                </button>
-              );
-            })}
+                  <span role="cell">{formatCompact(String(group.totals.unallocated))}</span>
+                  <span role="cell" />
+                </div>
+                {group.rows.map(renderRow)}
+              </React.Fragment>
+            ))}
+            {groupedRows.ungroupedRows.map(renderRow)}
           </div>
         </>
       )}

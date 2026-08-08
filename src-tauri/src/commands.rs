@@ -1,3 +1,4 @@
+use crate::client_groups;
 use crate::db::tally_incremental::IncrementalFoundationEvidence;
 use crate::db::tally_mirror::{
     company_profile_correlation_key, selected_read_scope_commitment_sha256, CapabilityItemInput,
@@ -40,7 +41,7 @@ use bridge_tally_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroizing;
 
 const MAX_DSC_PIN_BYTES: usize = 128;
@@ -2105,6 +2106,42 @@ pub async fn fetch_tally_outstandings(
         )
         .await
         .map_err(tally_runtime_command_error)
+}
+
+/// Reads operator-owned filing labels from ordinary application configuration.
+///
+/// The helper deliberately degrades to no labels for a missing, empty, corrupt,
+/// or unavailable file. It receives no mirror state, so this command cannot
+/// initialise SQLCipher or resolve a keychain key.
+#[tauri::command]
+pub fn load_client_group_labels(app: AppHandle) -> client_groups::ClientGroupLabels {
+    let Ok(directory) = app.path().app_config_dir() else {
+        return client_groups::ClientGroupLabels::new();
+    };
+    client_groups::load(&directory)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveClientGroupLabelRequest {
+    pub company_guid: String,
+    pub label: String,
+}
+
+/// Saves one operator-owned filing label without accessing the Tally mirror.
+#[tauri::command]
+pub fn save_client_group_label(
+    app: AppHandle,
+    request: SaveClientGroupLabelRequest,
+) -> Result<(), String> {
+    if request.company_guid.trim().is_empty() {
+        return Err("Bridge could not identify the company for this group label.".to_string());
+    }
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|_| "Bridge could not locate its local group-label configuration.".to_string())?;
+    client_groups::save_label(&directory, &request.company_guid, &request.label)
+        .map_err(|_| "Bridge could not save this group label.".to_string())
 }
 
 #[derive(Debug, Deserialize)]
