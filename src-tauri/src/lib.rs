@@ -7,6 +7,7 @@ pub mod gst;
 // Crate-internal only: the previously separate `bridge-tally-observability` crate had exactly
 // one consumer inside this crate, so it does not need to be reachable from outside `bridge_lib`.
 mod observability;
+pub mod reports;
 pub mod sync;
 pub mod tally;
 
@@ -88,6 +89,7 @@ pub fn run() {
             commands::revoke_tally_write_fixture_enrollment,
             commands::save_report_download,
             commands::reveal_exported_file,
+            commands::export_party_statement,
             commands::fetch_tally_outstandings_all_companies,
             commands::detect_tally_base_currency,
             commands::tally_persisted_company_profiles,
