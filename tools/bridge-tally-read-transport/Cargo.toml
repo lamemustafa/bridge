@@ -13,11 +13,11 @@ default = []
 bills-native-outstandings-probe-transport = ["bridge-tally-protocol/bills-native-outstandings-probe"]
 
 [dependencies]
-bridge-tally-protocol = { path = "../bridge-tally-protocol" }
-bridge-tally-transport = { path = "../bridge-tally-transport" }
+bridge-tally-protocol = { path = "../../src-tauri/crates/bridge-tally-protocol" }
+bridge-tally-transport = { path = "../../src-tauri/crates/bridge-tally-transport" }
 thiserror = "2"
 sha2 = "0.11"
 
 [dev-dependencies]
-tally-protocol-simulator = { path = "../tally-protocol-simulator" }
+tally-protocol-simulator = { path = "../../src-tauri/crates/tally-protocol-simulator" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

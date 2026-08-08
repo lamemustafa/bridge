@@ -1,0 +1,8 @@
+[workspace]
+members = [
+  "bridge-tally-compatibility",
+  "bridge-tally-live-read",
+  "bridge-tally-qualification",
+  "bridge-tally-read-transport",
+]
+resolver = "2"

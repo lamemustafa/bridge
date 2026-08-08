@@ -2,6 +2,7 @@ node_modules/
 .pnpm-store/
 /dist
 /src-tauri/target
+/tools/target
 .DS_Store
 Thumbs.db
 Desktop.ini
