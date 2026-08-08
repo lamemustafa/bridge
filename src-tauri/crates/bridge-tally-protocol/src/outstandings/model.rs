@@ -1,9 +1,11 @@
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::collections::BTreeMap;
 
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use serde::Serialize;
 
-use crate::xml_read_profiles::ValidatedCompanyName;
+pub use crate::outstandings_shared::{
+    CompanyBookExtent, OutstandingsError, PinnedCompany, VoucherAlterIdHighWater,
+};
 
 const MAX_NARROW_DATE_WINDOW_DAYS: usize = 31;
 
@@ -55,33 +57,6 @@ impl DateBoundaryProfile {
         }
     }
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OutstandingsError {
-    InvalidDateWindow,
-    InvalidAlterIdRange,
-    InvalidCompanyIdentity,
-    CompanyIdentityMismatch,
-    InvalidResponse(&'static str),
-    InvalidAmount,
-    ArithmeticOverflow,
-}
-
-impl fmt::Display for OutstandingsError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::InvalidDateWindow => "outstandings date window is invalid",
-            Self::InvalidAlterIdRange => "outstandings AlterID range is invalid",
-            Self::InvalidCompanyIdentity => "outstandings company identity is invalid",
-            Self::CompanyIdentityMismatch => "Tally returned a different company identity",
-            Self::InvalidResponse(code) => code,
-            Self::InvalidAmount => "Tally returned an invalid amount",
-            Self::ArithmeticOverflow => "outstandings arithmetic exceeded the exact-decimal bound",
-        })
-    }
-}
-
-impl std::error::Error for OutstandingsError {}
 
 /// The complete report period. It cannot be rendered directly as a segment
 /// request; callers must first partition it into `NarrowDateWindow` values.
@@ -370,23 +345,6 @@ impl VoucherAlterId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VoucherAlterIdHighWater(u64);
-
-impl VoucherAlterIdHighWater {
-    pub fn parse(value: &str) -> Result<Self, OutstandingsError> {
-        let value = value
-            .trim()
-            .parse::<u64>()
-            .map_err(|_| OutstandingsError::InvalidResponse("company_altvchid_invalid"))?;
-        Ok(Self(value))
-    }
-
-    pub fn get(self) -> u64 {
-        self.0
-    }
-}
-
 /// A server-side partition expressed as `$AlterID > start AND $AlterID <= end`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlterIdRange {
@@ -426,45 +384,6 @@ impl AlterIdRange {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct PinnedCompany {
-    name: ValidatedCompanyName,
-    guid: Arc<str>,
-}
-
-impl PinnedCompany {
-    pub(crate) fn verified(
-        name: ValidatedCompanyName,
-        guid: String,
-    ) -> Result<Self, OutstandingsError> {
-        if guid.trim() != guid
-            || guid.is_empty()
-            || guid.len() > 255
-            || guid.chars().any(char::is_control)
-        {
-            return Err(OutstandingsError::InvalidCompanyIdentity);
-        }
-        Ok(Self {
-            name,
-            guid: Arc::from(guid),
-        })
-    }
-
-    pub fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    pub fn guid(&self) -> &str {
-        &self.guid
-    }
-}
-
-impl fmt::Debug for PinnedCompany {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("PinnedCompany([verified identity])")
-    }
-}
-
 /// Whether the book carries bill-wise OPENING balances on ledger masters.
 ///
 /// Those bills exist without any voucher, so a voucher-only scan cannot see
@@ -497,43 +416,6 @@ impl LedgerOpeningCoverage {
     /// True when a voucher-only scan can still be complete.
     pub fn is_fully_covered_by_vouchers(&self) -> bool {
         self.bill_wise_openings == 0
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompanyBookExtent {
-    company: PinnedCompany,
-    books_from: TallyDate,
-    last_voucher_date: TallyDate,
-    voucher_alter_id_high_water: Option<VoucherAlterIdHighWater>,
-}
-
-impl CompanyBookExtent {
-    pub(crate) fn new(
-        company: PinnedCompany,
-        books_from: TallyDate,
-        last_voucher_date: TallyDate,
-        voucher_alter_id_high_water: Option<VoucherAlterIdHighWater>,
-    ) -> Self {
-        Self {
-            company,
-            books_from,
-            last_voucher_date,
-            voucher_alter_id_high_water,
-        }
-    }
-
-    pub fn company(&self) -> &PinnedCompany {
-        &self.company
-    }
-    pub fn books_from(&self) -> &TallyDate {
-        &self.books_from
-    }
-    pub fn last_voucher_date(&self) -> &TallyDate {
-        &self.last_voucher_date
-    }
-    pub fn voucher_alter_id_high_water(&self) -> Option<VoucherAlterIdHighWater> {
-        self.voucher_alter_id_high_water
     }
 }
 
@@ -874,49 +756,8 @@ pub enum ScanResult {
     Partial(PartialScan),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AgeingBuckets {
-    pub days_0_30: ExactDecimal,
-    pub days_31_60: ExactDecimal,
-    pub days_61_90: ExactDecimal,
-    pub days_90_plus: ExactDecimal,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AgeingBillCounts {
-    pub days_0_30: usize,
-    pub days_31_60: usize,
-    pub days_61_90: usize,
-    pub days_90_plus: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct PartyOutstanding {
-    pub party: String,
-    pub receivable: ExactDecimal,
-    pub payable: ExactDecimal,
-    pub outstanding_total: ExactDecimal,
-    /// `None` means this party's open exposure is entirely On Account, which
-    /// has no bill reference and therefore no truthful bill age.
-    /// TALLY_PROTOCOL_REFERENCE.md §12a.2 records that On Account is not aged;
-    /// §12a.4 records that Tally strips its name.
-    pub oldest_bill_age_days: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct OutstandingsReport {
-    pub company_name: String,
-    pub as_of_yyyymmdd: String,
-    pub receivable_total: ExactDecimal,
-    pub payable_total: ExactDecimal,
-    /// At least one observed receivable On Account allocation is included in
-    /// `receivable_total` but cannot be assigned a truthful bill age.
-    /// TALLY_PROTOCOL_REFERENCE.md §12a.2 records that On Account is not aged.
-    pub has_unaged_receivable: bool,
-    pub ageing: AgeingBuckets,
-    pub open_receivable_bill_count: usize,
-    pub ageing_bill_counts: AgeingBillCounts,
-    pub top_parties: Vec<PartyOutstanding>,
-    pub source_voucher_count: usize,
-    pub source_bytes: usize,
-}
+// `AgeingBuckets`, `AgeingBillCounts`, `PartyOutstanding`, and
+// `OutstandingsReport` -- the shared report contract both the voucher-scan
+// and native read paths produce -- live in `crate::outstandings_shared` and
+// are re-exported by `outstandings::mod` for this module's own internal
+// `super::` references (see `compute.rs`).

@@ -1,39 +1,40 @@
 use super::{ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger};
 use super::{TallyProbeResult, TallyVoucher};
-use crate::tally::connection::LedgerOpeningCoverageRead;
-use crate::tally::connection::{
-    canonical_loopback_origin, LedgerCanaryReadbackXml, OutstandingsSegmentObservation,
-    SelectedReadObservation,
-};
+use crate::observability::BodyBytesObservation;
+use crate::tally::connection::NativePairedRead;
+use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
+#[cfg(feature = "voucher-scan")]
+use crate::tally::connection::{LedgerOpeningCoverageRead, OutstandingsSegmentObservation};
 use crate::tally::connector::SealedReadRequest;
+#[cfg(feature = "voucher-scan")]
 use crate::tally::outstandings_runtime::{
     CalibratedSegmentPolicy, SegmentPlan, SegmentTrendGuard, MAX_SEGMENT_PAIRS_PER_SCAN,
 };
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-use crate::tally::write_sandbox::{
-    FixtureCanaryDispatchError, SealedFixtureCanaryDispatch, SealedFixtureCanaryReceipt,
+use crate::tally::runtime_control::{
+    EndpointCircuitState, EndpointIdentity, EndpointRuntimeSnapshot, PortableReadRuntime,
+    ReadAttempt, ReadExecutionError, ReadFailureClass, ReadOperation, ReadRetryPolicy,
+    TELEMETRY_PREVIEW_SCHEMA,
 };
-use bridge_tally_core::TallyDate;
+use bridge_tally_core::{ExactDecimal, TallyDate};
+use bridge_tally_protocol::native_outstandings::{
+    compute_native_outstandings, parse_company_currency, parse_native_bill_rows,
+    parse_native_ledger_snapshot, render_company_currency_request, render_native_bills_request,
+    render_native_ledger_snapshot_request, AgeingAnchor, CompanyCurrency, NativeBillsReportKind,
+};
+#[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
     assemble_partitioned_scan, assemble_scan, compute_outstandings,
     corroborate_empty_date_partition, nearest_non_empty_primary_partition, CompleteWitnessPair,
-    CorroboratedDatePartition, DateBoundaryProfile, DateWindow, NarrowDateWindow,
-    OutstandingsReport, PartialScan, ScanResult, SegmentVerification, StrictlyWiderDateCover,
-    VoucherAlterIdHighWater, WitnessPairVerification,
+    CorroboratedDatePartition, DateBoundaryProfile, DateWindow, NarrowDateWindow, PartialScan,
+    ScanResult, SegmentVerification, StrictlyWiderDateCover, VoucherAlterIdHighWater,
+    WitnessPairVerification,
 };
-use bridge_tally_protocol::xml_read_profiles::{
-    ValidatedCanaryLedgerName, ValidatedCompanyName, ValidatedIdentityQuerySha256,
-};
-use bridge_tally_runtime::{
-    BodyBytesObservation, EndpointCircuitState, EndpointIdentity, EndpointRuntimeSnapshot,
-    PortableReadRuntime, ReadAttempt, ReadExecutionError, ReadFailureClass, ReadOperation,
-    ReadRetryPolicy, TELEMETRY_PREVIEW_SCHEMA,
-};
+use bridge_tally_protocol::outstandings_shared::OutstandingsReport;
 use bridge_tally_transport::TallyTransportError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -44,6 +45,7 @@ const MAX_ENDPOINT_SESSIONS: usize = 32;
 /// implementation. There is intentionally no constructor: a future promotion
 /// must add the release-qualified evidence and the reconciliation itself,
 /// rather than merely opt the voucher scan back in.
+#[cfg(feature = "voucher-scan")]
 #[derive(Clone)]
 struct QualifiedUnallocatedBalanceCoverage;
 
@@ -106,11 +108,138 @@ pub enum OutstandingsLoadResult {
         report: Box<OutstandingsReport>,
         currency_assertion: OutstandingsCurrencyAssertion,
         synced_at_unix_ms: i64,
+        /// Total exposure carrying no bill reference, when the read path can
+        /// establish it. `None` means "not computed", which is not the same as
+        /// zero and must never be rendered as zero: the voucher scan cannot
+        /// establish this figure, while the native path recovers it exactly
+        /// from the ledger closing balances.
+        ///
+        /// It matters more than its size suggests. On a bulk book measured
+        /// 2026-08-07 the named bills totalled Rs 10.36 lakh while the
+        /// unallocated remainder was Rs 2.79 crore -- so a screen showing only
+        /// the bills would be short by 96% with nothing to indicate it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        unallocated_total: Option<ExactDecimal>,
+        /// Per-party unallocated exposure, largest first.
+        ///
+        /// On a book where most balances carry no bill reference, the ageing
+        /// buckets describe a rounding error and this list is the actual
+        /// answer -- so it is surfaced rather than collapsed into the single
+        /// total above. Empty when the path cannot establish it.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        unallocated_by_party: Vec<UnallocatedParty>,
+        /// Every open bill the native reports returned, so the UI can answer
+        /// "why does this party owe so much" without a second Tally request --
+        /// these rows are already in hand.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        open_bills: Vec<OpenBillRow>,
     },
     Partial {
         reason_code: String,
         synced_at_unix_ms: i64,
     },
+}
+
+/// Flattens both native reports into displayable bill rows, oldest first.
+///
+/// Ageing anchors on the DUE date to match the report and Tally's own
+/// `BILLOVERDUE` column; where no credit period exists the two dates coincide.
+fn open_bill_rows(
+    receivable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
+    payable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
+    as_of: &TallyDate,
+) -> Vec<OpenBillRow> {
+    let mut rows = receivable
+        .iter()
+        .map(|row| (row, "receivable"))
+        .chain(payable.iter().map(|row| (row, "payable")))
+        .filter_map(|(row, kind)| {
+            let amount = row.closing_balance.abs().ok()?;
+            let age_days =
+                bridge_tally_protocol::native_outstandings::age_in_days(&row.due_date, as_of)
+                    .ok()?;
+            Some(OpenBillRow {
+                party: row.party.clone(),
+                reference: row.reference.clone(),
+                bill_date: row.bill_date.as_str().to_string(),
+                due_date: row.due_date.as_str().to_string(),
+                amount,
+                age_days,
+                kind,
+            })
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .age_days
+            .cmp(&left.age_days)
+            .then_with(|| left.party.cmp(&right.party))
+            .then_with(|| left.reference.cmp(&right.reference))
+    });
+    rows.truncate(MAX_OPEN_BILL_ROWS);
+    rows
+}
+
+/// Ranks parties by unallocated exposure, largest first.
+///
+/// Zero residuals are dropped rather than listed: a party whose ledger agrees
+/// exactly with its bills has nothing unallocated, and showing it as a zero row
+/// buries the parties that do.
+fn top_unallocated_parties(
+    residuals: &[bridge_tally_protocol::native_outstandings::PartyResidual],
+) -> Vec<UnallocatedParty> {
+    let mut ranked = residuals
+        .iter()
+        .filter(|residual| !residual.amount.is_zero())
+        .filter_map(|residual| {
+            residual.amount.abs().ok().map(|amount| UnallocatedParty {
+                party: residual.party.clone(),
+                amount,
+            })
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .amount
+            .cmp_magnitude(&left.amount)
+            .then_with(|| left.party.cmp(&right.party))
+    });
+    ranked.truncate(10);
+    ranked
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OpenBillRow {
+    pub party: String,
+    pub reference: String,
+    pub bill_date: String,
+    pub due_date: String,
+    pub amount: ExactDecimal,
+    pub age_days: u32,
+    /// `receivable` for a debit-balance bill, `payable` for a credit one.
+    /// Named by balance direction because that is what Tally's two reports
+    /// actually scope by -- a supplier advance is a receivable bill.
+    ///
+    /// Not `Deserialize`: a `&'static str` field forces any struct that
+    /// embeds this one into a `'de: 'static` bound on its own derive, which
+    /// a Tauri command argument (deserialized from a short-lived JSON
+    /// buffer) cannot satisfy. `commands::OpenBillRowInput` is the
+    /// deserializable counterpart used at that boundary instead.
+    pub kind: &'static str,
+}
+
+/// Caps how many bill rows cross into the UI.
+///
+/// Every row is already parsed, so this bounds only the serialized payload and
+/// what the screen must render. A book past this many OPEN bills is well
+/// outside anything measured, and silently truncating would be worse than
+/// disclosing it -- see `open_bills_truncated`.
+const MAX_OPEN_BILL_ROWS: usize = 2_000;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnallocatedParty {
+    pub party: String,
+    pub amount: ExactDecimal,
 }
 
 fn partial_result(reason_code: &str) -> OutstandingsLoadResult {
@@ -120,6 +249,7 @@ fn partial_result(reason_code: &str) -> OutstandingsLoadResult {
     }
 }
 
+#[cfg(feature = "voucher-scan")]
 fn closing_coverage_partial_reason(
     closing_coverage_matches_opening: bool,
     closing_coverage_is_fully_covered_by_vouchers: bool,
@@ -133,6 +263,7 @@ fn closing_coverage_partial_reason(
     }
 }
 
+#[cfg(feature = "voucher-scan")]
 fn paired_coverage_partial_reason(coverage: &LedgerOpeningCoverageRead) -> Option<&'static str> {
     match coverage {
         LedgerOpeningCoverageRead::Stable(_) => None,
@@ -140,6 +271,7 @@ fn paired_coverage_partial_reason(coverage: &LedgerOpeningCoverageRead) -> Optio
     }
 }
 
+#[cfg(feature = "voucher-scan")]
 fn select_outstandings_date_boundary_profile(
     profile: Option<&bridge_tally_core::CapabilityProfile>,
 ) -> DateBoundaryProfile {
@@ -166,6 +298,7 @@ fn select_outstandings_date_boundary_profile(
     }
 }
 
+#[cfg(feature = "voucher-scan")]
 fn outstandings_read_failure_reason(error: &anyhow::Error) -> &'static str {
     if let Some(transport) = error.downcast_ref::<TallyTransportError>() {
         return match transport {
@@ -203,6 +336,7 @@ fn outstandings_read_failure_reason(error: &anyhow::Error) -> &'static str {
 /// An outstandings read transport failure must cross `execute_cancellable` as an error so
 /// the endpoint circuit sees it. `fetch_outstandings` converts this back to
 /// the established typed Partial only after that health boundary.
+#[cfg(feature = "voucher-scan")]
 #[derive(Debug, thiserror::Error)]
 #[error("outstandings read transport failure: {source}")]
 struct OutstandingsReadTransportFailure {
@@ -211,6 +345,7 @@ struct OutstandingsReadTransportFailure {
     source: anyhow::Error,
 }
 
+#[cfg(feature = "voucher-scan")]
 fn partial_after_outstandings_read_transport_failure(
     result: anyhow::Result<OutstandingsLoadResult>,
 ) -> anyhow::Result<OutstandingsLoadResult> {
@@ -223,6 +358,7 @@ fn partial_after_outstandings_read_transport_failure(
     }
 }
 
+#[cfg(feature = "voucher-scan")]
 fn outstandings_read_transport_failure(error: anyhow::Error) -> anyhow::Error {
     let reason_code = outstandings_read_failure_reason(&error);
     anyhow::Error::new(OutstandingsReadTransportFailure {
@@ -231,12 +367,14 @@ fn outstandings_read_transport_failure(error: anyhow::Error) -> anyhow::Error {
     })
 }
 
+#[cfg(feature = "voucher-scan")]
 fn is_outstandings_transport_error(error: &anyhow::Error) -> bool {
     error
         .chain()
         .any(|cause| cause.downcast_ref::<TallyTransportError>().is_some())
 }
 
+#[cfg(feature = "voucher-scan")]
 async fn fetch_empty_partition_witness<F, Fut>(
     high_water: VoucherAlterIdHighWater,
     fetch: F,
@@ -308,7 +446,6 @@ struct TallySession {
     health: Mutex<SessionHealth>,
     cached_probe: RwLock<Option<CachedProbe>>,
     active_ordinary_reads: AtomicU64,
-    canary_dispatch_active: AtomicBool,
 }
 
 impl TallySession {
@@ -322,7 +459,6 @@ impl TallySession {
             health: Mutex::new(SessionHealth::default()),
             cached_probe: RwLock::new(None),
             active_ordinary_reads: AtomicU64::new(0),
-            canary_dispatch_active: AtomicBool::new(false),
         })
     }
 
@@ -341,7 +477,6 @@ impl TallySession {
             health: Mutex::new(SessionHealth::default()),
             cached_probe: RwLock::new(None),
             active_ordinary_reads: AtomicU64::new(0),
-            canary_dispatch_active: AtomicBool::new(false),
         })
     }
 
@@ -460,20 +595,6 @@ struct OrdinaryReadLease {
     session: Arc<TallySession>,
 }
 
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-pub(crate) struct CanaryDispatchLease {
-    session: Arc<TallySession>,
-}
-
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-impl Drop for CanaryDispatchLease {
-    fn drop(&mut self) {
-        self.session
-            .canary_dispatch_active
-            .store(false, Ordering::Release);
-    }
-}
-
 impl Drop for OrdinaryReadLease {
     fn drop(&mut self) {
         self.session
@@ -504,13 +625,16 @@ pub struct TallyRuntime {
     sessions: Arc<Mutex<HashMap<EndpointKey, SessionSlot>>>,
     runtime_identity: Arc<()>,
     control: PortableReadRuntime,
+    #[cfg(feature = "voucher-scan")]
     outstandings_segment_policy: Option<CalibratedSegmentPolicy>,
     // A complete voucher scan proves only the bill allocations it can read.
     // This witness may be constructed only by a qualified residual path that
     // independently reconciles direct postings without BILLALLOCATIONS.LIST.
     // Until then, returning a Complete result would turn an unknown balance
     // into a plausible total (TALLY_PROTOCOL_REFERENCE.md §12a.6).
+    #[cfg(feature = "voucher-scan")]
     unallocated_balance_coverage: Option<QualifiedUnallocatedBalanceCoverage>,
+    #[cfg(feature = "voucher-scan")]
     outstandings_boundary_profile_override: Option<DateBoundaryProfile>,
     #[cfg(test)]
     transport_policy: Option<bridge_tally_transport::TransportPolicy>,
@@ -547,7 +671,6 @@ impl CachedProbeReservation {
         if !self.armed
             || !Arc::ptr_eq(&self.runtime_identity, &runtime.runtime_identity)
             || self.session.endpoint != EndpointKey::from_config(config)?
-            || self.session.canary_dispatch_active.load(Ordering::Acquire)
         {
             anyhow::bail!("Tally reviewed setup operation ownership changed");
         }
@@ -648,8 +771,11 @@ impl Default for TallyRuntime {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             runtime_identity: Arc::new(()),
             control: PortableReadRuntime::default(),
+            #[cfg(feature = "voucher-scan")]
             outstandings_segment_policy: None,
+            #[cfg(feature = "voucher-scan")]
             unallocated_balance_coverage: None,
+            #[cfg(feature = "voucher-scan")]
             outstandings_boundary_profile_override: None,
             #[cfg(test)]
             transport_policy: None,
@@ -764,105 +890,6 @@ impl TallyRuntime {
     {
         self.execute_cancellable(config, None, operation_class, retry, operation)
             .await
-    }
-
-    /// Acquires the exclusive dispatch lease and verifies the pinned company
-    /// GUID through the sealed readback profile immediately before the import.
-    /// The returned lease must remain held for the sole import and final
-    /// readback; no ordinary Bridge read can interleave with that sequence.
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    pub(crate) async fn begin_verified_canary_dispatch(
-        &self,
-        config: TallyConfig,
-        company: ValidatedCompanyName,
-        ledger_name: ValidatedCanaryLedgerName,
-        identity_query_sha256: ValidatedIdentityQuerySha256,
-        expected_company_guid: String,
-    ) -> anyhow::Result<CanaryDispatchLease> {
-        let lease = self.begin_canary_dispatch(&config)?;
-        self.fetch_ledger_canary_readback_under_dispatch(
-            &lease,
-            config,
-            company,
-            ledger_name,
-            identity_query_sha256,
-            expected_company_guid,
-        )
-        .await?;
-        Ok(lease)
-    }
-
-    /// Issues exactly one sealed fixture-canary import while the previously
-    /// verified dispatch lease remains exclusive. Unlike every read path, this
-    /// bypasses retries: a durable dispatch claim permits no second HTTP send.
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    pub(crate) async fn dispatch_fixture_canary_once_under_dispatch(
-        &self,
-        lease: &CanaryDispatchLease,
-        config: &TallyConfig,
-        capsule: SealedFixtureCanaryDispatch,
-    ) -> Result<SealedFixtureCanaryReceipt, FixtureCanaryDispatchError> {
-        if EndpointKey::from_config(config)
-            .map(|endpoint| endpoint != lease.session.endpoint)
-            .unwrap_or(true)
-        {
-            return Err(FixtureCanaryDispatchError::RuntimeUnavailable);
-        }
-        let session = Arc::clone(&lease.session);
-        let _request = session
-            .begin_request()
-            .map_err(|_| FixtureCanaryDispatchError::RuntimeUnavailable)?;
-        match session
-            .client
-            .dispatch_sealed_fixture_canary_once(capsule)
-            .await
-        {
-            Ok(receipt) => {
-                session.record_result(HealthOutcome::TransportSuccess);
-                Ok(receipt)
-            }
-            Err(error) => {
-                session.record_result(HealthOutcome::TransportFailure);
-                Err(error)
-            }
-        }
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    pub(crate) async fn fetch_ledger_canary_readback_under_dispatch(
-        &self,
-        lease: &CanaryDispatchLease,
-        config: TallyConfig,
-        company: ValidatedCompanyName,
-        ledger_name: ValidatedCanaryLedgerName,
-        identity_query_sha256: ValidatedIdentityQuerySha256,
-        expected_company_guid: String,
-    ) -> anyhow::Result<LedgerCanaryReadbackXml> {
-        if EndpointKey::from_config(&config)? != lease.session.endpoint {
-            anyhow::bail!("sealed canary dispatch endpoint changed before readback");
-        }
-        self.execute(
-            config,
-            ReadOperation::MasterExport,
-            ReadRetryPolicy::SINGLE_ATTEMPT,
-            move |client| {
-                let company = company.clone();
-                let ledger_name = ledger_name.clone();
-                let identity_query_sha256 = identity_query_sha256.clone();
-                let expected_company_guid = expected_company_guid.clone();
-                async move {
-                    client
-                        .fetch_ledger_canary_readback(
-                            company,
-                            ledger_name,
-                            identity_query_sha256,
-                            &expected_company_guid,
-                        )
-                        .await
-                }
-            },
-        )
-        .await
     }
 
     async fn execute_cancellable<T, F, Fut>(
@@ -1145,46 +1172,6 @@ impl TallyRuntime {
         .await
     }
 
-    /// Executes one sealed, serial canary readback. This remains a read-only
-    /// internal primitive for the future write coordinator; it never exposes
-    /// response XML to commands, the UI, or persistence.
-    #[allow(
-        dead_code,
-        reason = "the sealed runtime seam is intentionally staged before the write coordinator"
-    )]
-    pub(crate) async fn fetch_ledger_canary_readback(
-        &self,
-        config: TallyConfig,
-        company: ValidatedCompanyName,
-        ledger_name: ValidatedCanaryLedgerName,
-        identity_query_sha256: ValidatedIdentityQuerySha256,
-        expected_company_guid: String,
-    ) -> anyhow::Result<LedgerCanaryReadbackXml> {
-        let _lease = self.begin_ordinary_read(&config)?;
-        self.execute(
-            config,
-            ReadOperation::MasterExport,
-            ReadRetryPolicy::SINGLE_ATTEMPT,
-            move |client| {
-                let company = company.clone();
-                let ledger_name = ledger_name.clone();
-                let identity_query_sha256 = identity_query_sha256.clone();
-                let expected_company_guid = expected_company_guid.clone();
-                async move {
-                    client
-                        .fetch_ledger_canary_readback(
-                            company,
-                            ledger_name,
-                            identity_query_sha256,
-                            &expected_company_guid,
-                        )
-                        .await
-                }
-            },
-        )
-        .await
-    }
-
     pub async fn qualify_selected_ledgers(
         &self,
         config: TallyConfig,
@@ -1238,6 +1225,195 @@ impl TallyRuntime {
         .await
     }
 
+    /// Outstandings via Tally's own `TYPE=Data` bills reports plus one ledger
+    /// snapshot.
+    ///
+    /// Three paired reads, bracketed by a GUID-pinned company extent probe
+    /// before and after. The extent probe is what binds identity: the native
+    /// report carries **no GUID anywhere**, so it cannot be identity-checked
+    /// from its own bytes. It does fail closed on an unloaded company
+    /// (`STATUS=0`, `LINEERROR: Could not set 'SVCurrentCompany'`, verified
+    /// live 2026-08-07), which the Collection path does not -- that path
+    /// silently substitutes whichever company is loaded.
+    ///
+    /// The bills reports alone are **not** complete: unallocated "on account"
+    /// balances carry no bill reference and appear in neither report. The
+    /// ledger snapshot recovers them exactly, as
+    /// `CLOSINGBALANCE - sum(BILLCL)` per party -- measured to 0.00 to the
+    /// paisa on every bill-carrying party of both a bill-dominated book (6 of
+    /// 10 parties exact, residual Rs 1,05,000) and an on-account-dominated one
+    /// (7 of 7 exact, residual Rs 2.79 crore against Rs 10.36 lakh of named
+    /// bills). Reporting the bills reports without that residual would show
+    /// 3.7% of exposure on the second book, with no error.
+    async fn fetch_outstandings_native(
+        &self,
+        config: TallyConfig,
+        company: String,
+        expected_company_guid: String,
+        as_of: TallyDate,
+        currency_assertion: OutstandingsCurrencyAssertion,
+    ) -> anyhow::Result<OutstandingsLoadResult> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        self.execute(
+            config,
+            ReadOperation::VoucherExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let company = company.clone();
+                let expected_company_guid = expected_company_guid.clone();
+                let as_of = as_of.clone();
+                async move {
+                    let extent = client
+                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .await?;
+                    if &as_of < extent.books_from() {
+                        return Ok(partial_result("as_of_precedes_books_from"));
+                    }
+                    let books_from = extent.books_from().clone();
+                    // The two-digit year in a display date ("1-Apr-24") is
+                    // resolved against the book's own start, never the wall
+                    // clock.
+                    let Ok(books_from_year) = books_from.as_str()[..4].parse::<u32>() else {
+                        return Ok(partial_result("company_books_from_year_unreadable"));
+                    };
+
+                    let mut total_bytes = 0usize;
+                    let read =
+                        |kind| render_native_bills_request(kind, &company, &books_from, &as_of);
+                    let receivable = client
+                        .fetch_native_report_paired(read(NativeBillsReportKind::Receivable))
+                        .await?;
+                    let NativePairedRead::Stable {
+                        body: receivable_body,
+                        encoded_bytes,
+                    } = receivable
+                    else {
+                        return Ok(partial_result("native_bills_report_drifted"));
+                    };
+                    total_bytes += encoded_bytes;
+
+                    let payable = client
+                        .fetch_native_report_paired(read(NativeBillsReportKind::Payable))
+                        .await?;
+                    let NativePairedRead::Stable {
+                        body: payable_body,
+                        encoded_bytes,
+                    } = payable
+                    else {
+                        return Ok(partial_result("native_bills_report_drifted"));
+                    };
+                    total_bytes += encoded_bytes;
+
+                    let ledgers = client
+                        .fetch_native_report_paired(render_native_ledger_snapshot_request(
+                            &company,
+                            &books_from,
+                            &as_of,
+                        ))
+                        .await?;
+                    let NativePairedRead::Stable {
+                        body: ledger_body,
+                        encoded_bytes,
+                    } = ledgers
+                    else {
+                        return Ok(partial_result("native_ledger_snapshot_drifted"));
+                    };
+                    total_bytes += encoded_bytes;
+
+                    // Re-pin after every read. The native rows cannot be
+                    // GUID-checked individually, so an unchanged extent across
+                    // the whole sequence is the only identity evidence
+                    // available.
+                    let closing_extent = client
+                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .await?;
+                    if closing_extent != extent {
+                        return Ok(partial_result("book_changed_during_read"));
+                    }
+
+                    let receivable_rows =
+                        parse_native_bill_rows(&receivable_body, books_from_year)?;
+                    let payable_rows = parse_native_bill_rows(&payable_body, books_from_year)?;
+                    let ledger_rows = parse_native_ledger_snapshot(&ledger_body)?;
+
+                    // Ageing anchors on the DUE date. Measured 2026-08-07: on a
+                    // bill carrying a 30-day credit period Tally's own
+                    // BILLOVERDUE counted 61 days, which is the age from
+                    // BILLDUE, not the 91 days from BILLDATE. Where no credit
+                    // period exists the two dates coincide, so this is correct
+                    // on both books.
+                    let result = compute_native_outstandings(
+                        &company,
+                        &receivable_rows,
+                        &payable_rows,
+                        &ledger_rows,
+                        AgeingAnchor::DueDate,
+                        &as_of,
+                        total_bytes,
+                    )?;
+
+                    Ok(OutstandingsLoadResult::Complete {
+                        report: Box::new(result.report),
+                        currency_assertion,
+                        synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+                        unallocated_total: Some(result.residual_total),
+                        unallocated_by_party: top_unallocated_parties(&result.residuals),
+                        open_bills: open_bill_rows(&receivable_rows, &payable_rows, &as_of),
+                    })
+                }
+            },
+        )
+        .await
+    }
+
+    /// Reads the company's currency masters so Bridge can establish the base
+    /// currency itself.
+    ///
+    /// The INR assertion is a real safety property -- formatting a foreign
+    /// balance with a rupee symbol misstates money -- but it is a fact Tally
+    /// holds, and making the operator click it on every company was a step the
+    /// product could answer for itself. This satisfies the assertion rather
+    /// than removing it: where the answer is not determinable (several
+    /// currencies defined, or a non-Indian one), the caller still has to ask.
+    pub async fn detect_base_currency(
+        &self,
+        config: TallyConfig,
+        company: String,
+        expected_company_guid: String,
+    ) -> anyhow::Result<CompanyCurrency> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        self.execute(
+            config,
+            ReadOperation::VoucherExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let company = company.clone();
+                let expected_company_guid = expected_company_guid.clone();
+                async move {
+                    // Pin identity first: a currency read against the wrong
+                    // company is worse than none.
+                    client
+                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .await?;
+                    let body = client
+                        .fetch_native_report_paired(render_company_currency_request(&company))
+                        .await?;
+                    let NativePairedRead::Stable { body, .. } = body else {
+                        anyhow::bail!("Tally currency masters changed between paired reads");
+                    };
+                    Ok(parse_company_currency(&body)?)
+                }
+            },
+        )
+        .await
+    }
+
+    /// With `voucher-scan` off, the legacy scan cannot execute in any shipped
+    /// build (its only width-calibration constructors are `#[cfg(test)]` and
+    /// `#[cfg(feature = "live-calibration-harness")]`, and this crate's
+    /// default build has neither), so this simply *is* the native path: no
+    /// `Option`, no branch, no dead arm to compile in and never take.
+    #[cfg(not(feature = "voucher-scan"))]
     pub async fn fetch_outstandings(
         &self,
         config: TallyConfig,
@@ -1246,8 +1422,50 @@ impl TallyRuntime {
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
     ) -> anyhow::Result<OutstandingsLoadResult> {
+        self.fetch_outstandings_native(
+            config,
+            company,
+            expected_company_guid,
+            as_of,
+            currency_assertion,
+        )
+        .await
+    }
+
+    #[cfg(feature = "voucher-scan")]
+    pub async fn fetch_outstandings(
+        &self,
+        config: TallyConfig,
+        company: String,
+        expected_company_guid: String,
+        as_of: TallyDate,
+        currency_assertion: OutstandingsCurrencyAssertion,
+    ) -> anyhow::Result<OutstandingsLoadResult> {
+        // Tally's own Bills Receivable/Payable reports answer this question in
+        // O(open bills) instead of O(vouchers), so they need no segment
+        // calibration at all. Measured 2026-08-07 against the same book the
+        // voucher scan reconciles against: identical 48 open bills,
+        // Rs 45,14,597 receivable and 4/4/4/36 ageing, in 0.21 s and 11 KB
+        // against the scan's 8.30 s, 54 requests and 3.44 MB.
+        //
+        // This ordering matters for a reason that is not a preference: a
+        // production build has no calibrated width by construction --
+        // `CalibratedSegmentPolicy`'s only constructors are `#[cfg(test)]` and
+        // `#[cfg(feature = "live-calibration-harness")]`, and `Self::default`
+        // sets the field to `None`. Before this, the command returned
+        // `outstandings_segment_sizing_uncalibrated` for every company on every
+        // book, before any request, and the screen could only ever say "No
+        // Tally data was read".
         let Some(segment_policy) = self.outstandings_segment_policy else {
-            return Ok(partial_result("outstandings_segment_sizing_uncalibrated"));
+            return self
+                .fetch_outstandings_native(
+                    config,
+                    company,
+                    expected_company_guid,
+                    as_of,
+                    currency_assertion,
+                )
+                .await;
         };
         let Some(_coverage) = self.unallocated_balance_coverage.as_ref() else {
             return Ok(partial_result("unallocated_direct_postings_not_covered"));
@@ -1566,6 +1784,13 @@ impl TallyRuntime {
                                 report: Box::new(compute_outstandings(&scan, as_of)?),
                                 currency_assertion,
                                 synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+                                // The voucher scan derives bills from vouchers
+                                // and cannot establish the unallocated
+                                // remainder, so it must stay absent rather
+                                // than be reported as zero.
+                                unallocated_total: None,
+                                unallocated_by_party: Vec::new(),
+                                open_bills: Vec::new(),
                             }),
                             ScanResult::Partial(partial) => {
                                 Ok(partial_result(&partial.reason_code))
@@ -1722,16 +1947,10 @@ impl TallyRuntime {
             return Ok(None);
         };
         let now = chrono::Utc::now().timestamp_millis();
-        if session.canary_dispatch_active.load(Ordering::Acquire) {
-            anyhow::bail!("sealed canary dispatch is in progress");
-        }
         let mut cache = session
             .cached_probe
             .write()
             .map_err(|_| anyhow::anyhow!("Tally capability cache is unavailable"))?;
-        if session.canary_dispatch_active.load(Ordering::Acquire) {
-            anyhow::bail!("sealed canary dispatch is in progress");
-        }
         if session.active_ordinary_reads.load(Ordering::Acquire) != 0 {
             anyhow::bail!("Tally read operation is already in progress");
         }
@@ -1789,9 +2008,6 @@ impl TallyRuntime {
         &self,
         session: Arc<TallySession>,
     ) -> anyhow::Result<OrdinaryReadLease> {
-        if session.canary_dispatch_active.load(Ordering::Acquire) {
-            anyhow::bail!("sealed canary dispatch is in progress");
-        }
         let cache = session
             .cached_probe
             .write()
@@ -1806,53 +2022,7 @@ impl TallyRuntime {
             })
             .map_err(|_| anyhow::anyhow!("Tally read admission capacity is unavailable"))?;
         drop(cache);
-        if session.canary_dispatch_active.load(Ordering::Acquire) {
-            session.active_ordinary_reads.fetch_sub(1, Ordering::AcqRel);
-            anyhow::bail!("sealed canary dispatch is in progress");
-        }
         Ok(OrdinaryReadLease { session })
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    fn begin_canary_dispatch(&self, config: &TallyConfig) -> anyhow::Result<CanaryDispatchLease> {
-        let session = self.session(config.clone())?;
-        if session
-            .canary_dispatch_active
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            anyhow::bail!("sealed canary dispatch is already in progress");
-        }
-        let admitted = (|| -> anyhow::Result<()> {
-            if session.active_ordinary_reads.load(Ordering::Acquire) != 0 {
-                anyhow::bail!("ordinary Tally read is in progress");
-            }
-            if !session
-                .active_requests
-                .lock()
-                .map_err(|_| anyhow::anyhow!("Tally cancellation registry is unavailable"))?
-                .is_empty()
-            {
-                anyhow::bail!("Tally endpoint request is in progress");
-            }
-            if session
-                .cached_probe
-                .read()
-                .map_err(|_| anyhow::anyhow!("Tally capability cache is unavailable"))?
-                .as_ref()
-                .is_some_and(|probe| probe.reserved)
-            {
-                anyhow::bail!("Tally reviewed setup operation is in progress");
-            }
-            Ok(())
-        })();
-        if let Err(error) = admitted {
-            session
-                .canary_dispatch_active
-                .store(false, Ordering::Release);
-            return Err(error);
-        }
-        Ok(CanaryDispatchLease { session })
     }
 }
 
@@ -1867,7 +2037,6 @@ fn classify_error(error: &anyhow::Error) -> HealthOutcome {
         | ReadFailureClass::SizeLimit
         | ReadFailureClass::Decode
         | ReadFailureClass::Application
-        | ReadFailureClass::Parse
         | ReadFailureClass::Validation
         | ReadFailureClass::CompanyMismatch => HealthOutcome::ApplicationRejected,
     }
@@ -1923,11 +2092,11 @@ fn map_execution_error(error: ReadExecutionError<anyhow::Error>) -> anyhow::Erro
             anyhow::Error::new(TallyRuntimeControlError::QueueDeadline)
         }
         ReadExecutionError::CircuitRejected {
-            reason: bridge_tally_runtime::CircuitRejectReason::Cooldown,
+            reason: crate::observability::CircuitRejectReason::Cooldown,
             ..
         } => anyhow::Error::new(TallyRuntimeControlError::CircuitCooldown),
         ReadExecutionError::CircuitRejected {
-            reason: bridge_tally_runtime::CircuitRejectReason::HalfOpenProbeInFlight,
+            reason: crate::observability::CircuitRejectReason::HalfOpenProbeInFlight,
             ..
         } => anyhow::Error::new(TallyRuntimeControlError::HalfOpenProbeInFlight),
         ReadExecutionError::EndpointSessionLimit => {
@@ -1970,6 +2139,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[test]
     fn outstandings_read_failures_are_partial_and_deadlines_recommend_restart() {
         assert_eq!(
@@ -1996,6 +2166,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[tokio::test]
     async fn outstandings_read_transport_failure_feeds_breaker_and_preserves_typed_partial() {
         let runtime = TallyRuntime::default();
@@ -2032,6 +2203,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[tokio::test]
     async fn verification_partial_stays_partial_without_feeding_breaker() {
         let runtime = TallyRuntime::default();
@@ -2062,6 +2234,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[test]
     fn closing_coverage_drift_is_not_reported_as_uncovered_opening_bills() {
         assert_eq!(
@@ -2075,6 +2248,7 @@ mod tests {
         assert_eq!(closing_coverage_partial_reason(true, true), None);
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[test]
     fn intra_pair_ledger_coverage_drift_is_an_in_band_partial() {
         assert_eq!(
@@ -2083,6 +2257,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[tokio::test]
     async fn witness_transport_failure_feeds_breaker_and_preserves_typed_partial() {
         let error = fetch_empty_partition_witness(
@@ -2124,6 +2299,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[tokio::test]
     async fn witness_non_transport_failure_remains_an_in_band_partial() {
         let partial = fetch_empty_partition_witness(
@@ -2140,6 +2316,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[test]
     fn outstandings_date_boundaries_follow_detected_mode_and_fallback_to_i12() {
         let mut profile = synthetic_probe_result().profile;
@@ -2169,9 +2346,32 @@ mod tests {
         );
     }
 
+    /// An uncalibrated segment width no longer refuses the read -- it selects
+    /// the native bills path, which needs no width. What must NOT change is
+    /// that a non-loopback endpoint is still refused.
+    ///
+    /// This test previously asserted `outstandings_segment_sizing_uncalibrated`
+    /// and, by using a non-loopback host, proved the refusal happened BEFORE
+    /// endpoint admission. That refusal was the defect: production has no
+    /// calibrated width by construction, so every shipped build returned it for
+    /// every company on every book and the screen could only ever say "No Tally
+    /// data was read". The reason code is gone with it.
+    ///
+    /// The loopback guard is unchanged and still fails closed; it is simply now
+    /// the first guard the native path reaches. That is the property worth
+    /// pinning, so this asserts it directly rather than inferring it from an
+    /// ordering that no longer exists.
     #[tokio::test]
-    async fn uncalibrated_outstandings_returns_partial_before_endpoint_admission() {
-        let result = TallyRuntime::default()
+    async fn uncalibrated_outstandings_takes_the_native_path_and_still_refuses_a_non_loopback_endpoint(
+    ) {
+        let runtime = TallyRuntime::default();
+        #[cfg(feature = "voucher-scan")]
+        assert!(
+            runtime.outstandings_segment_policy.is_none(),
+            "a default runtime must have no calibrated width -- that is what routes to the native path"
+        );
+
+        let error = runtime
             .fetch_outstandings(
                 TallyConfig {
                     host: "not-a-loopback-endpoint".to_string(),
@@ -2183,12 +2383,11 @@ mod tests {
                 OutstandingsCurrencyAssertion::Inr,
             )
             .await
-            .expect("uncalibrated state is an in-band partial result");
-        assert!(matches!(
-            result,
-            OutstandingsLoadResult::Partial { reason_code, .. }
-                if reason_code == "outstandings_segment_sizing_uncalibrated"
-        ));
+            .expect_err("a non-loopback endpoint must never be contacted");
+        assert!(
+            error.to_string().contains("non_loopback_forbidden"),
+            "loopback-only admission must still fail closed on the native path, got: {error}"
+        );
     }
 
     #[cfg(feature = "live-calibration-harness")]
@@ -2215,7 +2414,7 @@ mod tests {
         ));
     }
 
-    #[cfg(not(feature = "live-calibration-harness"))]
+    #[cfg(all(feature = "voucher-scan", not(feature = "live-calibration-harness")))]
     #[test]
     fn default_build_has_no_outstandings_width_admission() {
         let runtime = TallyRuntime::default();
@@ -2672,85 +2871,6 @@ mod tests {
             .reserve_cached_probe_fresh(&config, "review-pending", 300_000)
             .expect("reserve after pending abort")
             .is_some());
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    #[test]
-    fn sealed_canary_dispatch_lease_excludes_ordinary_reads() {
-        let runtime = TallyRuntime::default();
-        let config = TallyConfig {
-            host: "127.0.0.1".to_string(),
-            port: 9050,
-        };
-        let lease = runtime
-            .begin_canary_dispatch(&config)
-            .expect("admit sealed canary dispatch");
-        assert!(runtime.begin_ordinary_read(&config).is_err());
-        drop(lease);
-        drop(
-            runtime
-                .begin_ordinary_read(&config)
-                .expect("read resumes after sealed dispatch"),
-        );
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    #[test]
-    fn ordinary_reads_exclude_sealed_canary_dispatch() {
-        let runtime = TallyRuntime::default();
-        let config = TallyConfig {
-            host: "127.0.0.1".to_string(),
-            port: 9051,
-        };
-        let read = runtime
-            .begin_ordinary_read(&config)
-            .expect("admit ordinary read");
-        assert!(runtime.begin_canary_dispatch(&config).is_err());
-        drop(read);
-        drop(
-            runtime
-                .begin_canary_dispatch(&config)
-                .expect("dispatch resumes after ordinary read"),
-        );
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    #[test]
-    fn sealed_canary_dispatch_lease_excludes_review_reservation_admission() {
-        let runtime = TallyRuntime::default();
-        let config = TallyConfig {
-            host: "127.0.0.1".to_string(),
-            port: 9052,
-        };
-        let session = runtime.session(config.clone()).expect("runtime session");
-        let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
-        *session.cached_probe.write().expect("capability cache") = Some(CachedProbe {
-            review_id: "review-canary-lease".to_string(),
-            observed_at_unix_ms,
-            freshness_origin_unix_ms: observed_at_unix_ms,
-            result: synthetic_probe_result(),
-            reserved: false,
-        });
-
-        let dispatch = runtime
-            .begin_canary_dispatch(&config)
-            .expect("admit sealed canary dispatch");
-        assert!(runtime
-            .reserve_cached_probe_fresh(&config, "review-canary-lease", 300_000)
-            .is_err());
-        drop(dispatch);
-
-        let reservation = runtime
-            .reserve_cached_probe_fresh(&config, "review-canary-lease", 300_000)
-            .expect("admit reservation after sealed dispatch")
-            .expect("fresh reviewed probe");
-        session
-            .canary_dispatch_active
-            .store(true, Ordering::Release);
-        assert!(reservation.authorize(&runtime, &config).is_err());
-        session
-            .canary_dispatch_active
-            .store(false, Ordering::Release);
     }
 
     #[test]

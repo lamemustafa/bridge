@@ -6,9 +6,11 @@
 
 use std::{net::IpAddr, time::Duration};
 
+#[cfg(feature = "voucher-scan")]
+use bridge_tally_protocol::outstandings::VoucherOutstandingsRequestXml;
 use bridge_tally_protocol::{
-    decode_tally_text_bytes_limited, outstandings::VoucherOutstandingsRequestXml,
-    TallyTextDecodeError, TallyTextEncoding, TallyTextStreamDecoder,
+    decode_tally_text_bytes_limited, TallyTextDecodeError, TallyTextEncoding,
+    TallyTextStreamDecoder,
 };
 use reqwest::{
     header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE},
@@ -22,6 +24,12 @@ use thiserror::Error;
 pub const STATUS_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
 pub const XML_REQUEST_MAX_BYTES: usize = 32 * 1024 * 1024;
 pub const XML_RESPONSE_MAX_BYTES: usize = 32 * 1024 * 1024;
+/// Sealed exception for the voucher-scan wildcard outstandings request only
+/// -- see `post_outstandings_xml_decoded`. Gated with the request type that
+/// is the only thing admitted through it: with `voucher-scan` off, nothing
+/// can construct that request, so a raised cap nothing can reach would be a
+/// widened attack surface for no reason.
+#[cfg(feature = "voucher-scan")]
 pub const OUTSTANDINGS_XML_RESPONSE_MAX_BYTES: usize = 40 * 1024 * 1024;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -358,6 +366,7 @@ impl TallyHttpTransport {
     /// Closed exception for the live-verified wildcard outstandings profile.
     /// The general policy remains capped at 32 MiB and the same client keeps
     /// the immutable 20-second request deadline.
+    #[cfg(feature = "voucher-scan")]
     pub async fn post_outstandings_xml_decoded(
         &self,
         request: VoucherOutstandingsRequestXml,
@@ -665,6 +674,7 @@ mod unit_tests {
             TransportPolicy::default().xml_response_max_bytes,
             32 * 1024 * 1024
         );
+        #[cfg(feature = "voucher-scan")]
         assert_eq!(OUTSTANDINGS_XML_RESPONSE_MAX_BYTES, 40 * 1024 * 1024);
         let expanded = TransportPolicy {
             request_timeout: MAX_REQUEST_TIMEOUT + Duration::from_millis(1),

@@ -11,14 +11,17 @@ rust-version = "1.96"
 default-run = "bridge"
 
 [features]
-voucher-scan = []
-# Deliberately disabled in shipped builds. This feature enables the separately
-# reviewed, one-send synthetic-canary command boundary and never a generic write API.
-fixture-canary-dispatch-seam = []
-fixture-canary-runtime-dispatch = ["fixture-canary-dispatch-seam"]
+# Legacy voucher-scan outstandings path. Shipped/default builds take the
+# native Bills Receivable/Payable + List of Ledgers path unconditionally;
+# this gate exists so the ~4,800 lines of scan machinery (date/AlterID
+# partitioning, segment completeness proofs, the wildcard voucher fetch) do
+# not compile into a shipped build at all. Not a default feature.
+voucher-scan = ["bridge-tally-protocol/voucher-scan", "bridge-tally-transport/voucher-scan"]
 # Manual-only admission for the ignored, corpus-bound Unit A reconciliation
 # harness. Shipped/default builds have no constructor for an AlterID width.
-live-calibration-harness = []
+# The harness is what actually drives a voucher scan, so it implies the scan
+# machinery it needs.
+live-calibration-harness = ["voucher-scan"]
 
 [workspace]
 members = [

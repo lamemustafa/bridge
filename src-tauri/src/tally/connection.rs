@@ -6,6 +6,7 @@ use std::sync::{
     atomic::{AtomicU64, AtomicU8, Ordering},
     Arc,
 };
+#[cfg(feature = "voucher-scan")]
 use std::time::{Duration, Instant};
 
 use super::xml_parser::{TallyLedger, TallyVoucher};
@@ -14,31 +15,24 @@ use super::{
     validators::{normalize_company_guid, normalize_company_name},
     xml_parser::{self, TallyCompany},
 };
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-use crate::tally::write_sandbox::{
-    FixtureCanaryDispatchError, SealedFixtureCanaryDispatch, SealedFixtureCanaryReceipt,
-};
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityProfile, CapabilityState,
     EvidenceConfidence, TransportId,
 };
+#[cfg(feature = "voucher-scan")]
+use bridge_tally_protocol::outstandings::{
+    parse_ledger_opening_coverage, verify_empty_partition_witness_pair_with_wire_evidence,
+    verify_segment_pair_with_wire_evidence, voucher_empty_partition_witness_request,
+    voucher_outstandings_request, AlterIdRange, LedgerOpeningCoverage, NarrowDateWindow,
+    PinnedCompany, SegmentVerification, SegmentWireEvidence, VoucherOutstandingsRequestXml,
+    WitnessPairVerification,
+};
 use bridge_tally_protocol::{
-    outstandings::{
-        parse_company_book_extent, parse_ledger_opening_coverage,
-        verify_empty_partition_witness_pair_with_wire_evidence,
-        verify_segment_pair_with_wire_evidence, voucher_empty_partition_witness_request,
-        voucher_outstandings_request, AlterIdRange, CompanyBookExtent, LedgerOpeningCoverage,
-        NarrowDateWindow, PinnedCompany, SegmentVerification, SegmentWireEvidence,
-        VoucherOutstandingsRequestXml, WitnessPairVerification,
-    },
+    outstandings_shared::{parse_company_book_extent, CompanyBookExtent},
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
-    parse_ledger_write_readback_with_evidence, parse_selected_voucher_source_records_with_evidence,
-    parse_standard_ledger_catalog, parse_standard_ledger_identity_observation,
-    verify_company_context, verify_selected_voucher_window_context,
-    xml_read_profiles::{
-        ReadOnlyProfile, ValidatedCanaryLedgerName, ValidatedCompanyName,
-        ValidatedIdentityQuerySha256,
-    },
+    parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
+    parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
+    xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName},
     TallyTextEncoding, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
 };
 use bridge_tally_transport::{
@@ -48,6 +42,7 @@ use bridge_tally_transport::{
 
 pub type TallyConfig = TallyEndpointConfig;
 
+#[cfg(feature = "voucher-scan")]
 #[derive(Debug)]
 pub(crate) struct OutstandingsSegmentObservation {
     pub(crate) verification: SegmentVerification,
@@ -55,39 +50,24 @@ pub(crate) struct OutstandingsSegmentObservation {
     pub(crate) second_read_elapsed: Duration,
 }
 
+#[cfg(feature = "voucher-scan")]
 pub(crate) enum LedgerOpeningCoverageRead {
     Stable(LedgerOpeningCoverage),
     Drifted,
 }
 
+/// Outcome of a paired native-report read. `Drifted` means the two reads
+/// disagreed, so the book moved between them and no total may be reported.
+pub(crate) enum NativePairedRead {
+    Stable { body: String, encoded_bytes: usize },
+    Drifted,
+}
+
+#[cfg(feature = "voucher-scan")]
 struct OutstandingsWireResponse {
     text: String,
     encoded_bytes: usize,
     encoded_sha256: String,
-}
-
-/// An exact, validated write-canary readback. Its XML remains crate-private to
-/// the future write coordinator and is never returned to the UI or persisted.
-#[allow(
-    dead_code,
-    reason = "the sealed runtime seam is intentionally staged before the write coordinator"
-)]
-pub(crate) struct LedgerCanaryReadbackXml(String);
-
-impl LedgerCanaryReadbackXml {
-    #[allow(
-        dead_code,
-        reason = "only the future crate-internal write coordinator may inspect sealed XML"
-    )]
-    pub(crate) fn as_xml(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Debug for LedgerCanaryReadbackXml {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("LedgerCanaryReadbackXml([redacted])")
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -266,59 +246,9 @@ impl TallyClient {
         let mut packs = BTreeMap::new();
         let mut companies = Vec::new();
 
-        let xml_evidence = match self.post_xml(tdl_engine::company_list_request()).await {
-            Ok(xml) => match xml_parser::parse_companies(&xml) {
-                Ok(discovered) => {
-                    connection.reachable = true;
-                    if connection.error.is_some() {
-                        connection.error = Some("status_heuristic_unavailable".to_string());
-                    }
-                    match normalize_discovered_companies(discovered) {
-                        Ok(normalized) => {
-                            companies = normalized;
-                            CapabilityEvidence {
-                                state: CapabilityState::Supported,
-                                confidence: EvidenceConfidence::Observed,
-                                safe_reason_code: None,
-                            }
-                        }
-                        Err(()) => CapabilityEvidence {
-                            state: CapabilityState::Unknown,
-                            confidence: EvidenceConfidence::Observed,
-                            safe_reason_code: Some("company_identity_invalid".to_string()),
-                        },
-                    }
-                }
-                Err(_) => match xml_parser::export_status(&xml) {
-                    Ok(xml_parser::TallyExportStatus::Failure) => CapabilityEvidence {
-                        // A shaped failure is an endpoint claim, not responder
-                        // authenticity or proof that the read profile works.
-                        state: CapabilityState::Unknown,
-                        confidence: EvidenceConfidence::Observed,
-                        safe_reason_code: Some(
-                            xml_parser::export_failure_reason_code(&xml).to_string(),
-                        ),
-                    },
-                    _ if parse_companies_for_interactive_discovery(&xml).is_ok() => {
-                        connection.reachable = true;
-                        if connection.error.is_some() {
-                            connection.error = Some("status_heuristic_unavailable".to_string());
-                        }
-                        CapabilityEvidence {
-                            state: CapabilityState::Unknown,
-                            confidence: EvidenceConfidence::Observed,
-                            safe_reason_code: Some("direct_company_report_untrusted".to_string()),
-                        }
-                    }
-                    _ => CapabilityEvidence {
-                        state: CapabilityState::Unknown,
-                        confidence: EvidenceConfidence::Observed,
-                        safe_reason_code: Some("xml_export_shape_unrecognized".to_string()),
-                    },
-                },
-            },
-            Err(error) => return Err(error),
-        };
+        let xml_evidence = self
+            .company_discovery_evidence(&mut connection, &mut companies)
+            .await?;
         transports.insert(TransportId::XmlHttp, xml_evidence.clone());
         transports.insert(
             TransportId::JsonEx,
@@ -480,6 +410,118 @@ impl TallyClient {
         })
     }
 
+    /// Discovers companies through Tally's documented `Company` collection
+    /// (`ReadOnlyProfile::CompanyListV2`). Unlike the legacy custom TDL
+    /// report, its response is Tally's ordinary shaped `HEADER/STATUS=1`
+    /// success envelope, so a successful parse directly satisfies the export
+    /// trust check instead of requiring the narrower, explicitly-untrusted
+    /// interactive compatibility parse.
+    ///
+    /// Responders that reject the collection outright — a shaped failure, an
+    /// unrecognized shape, or anything else the collection parser cannot
+    /// read — fall back to `legacy_company_discovery_evidence`, off the happy
+    /// path but otherwise unchanged.
+    async fn company_discovery_evidence(
+        &self,
+        connection: &mut ConnectionStatus,
+        companies: &mut Vec<TallyCompany>,
+    ) -> anyhow::Result<CapabilityEvidence> {
+        let xml = self
+            .post_xml(ReadOnlyProfile::CompanyListV2.render())
+            .await?;
+        match xml_parser::parse_companies_from_collection(&xml) {
+            Ok(discovered) => {
+                connection.reachable = true;
+                if connection.error.is_some() {
+                    connection.error = Some("status_heuristic_unavailable".to_string());
+                }
+                Ok(match normalize_discovered_companies(discovered) {
+                    Ok(normalized) => {
+                        *companies = normalized;
+                        CapabilityEvidence {
+                            state: CapabilityState::Supported,
+                            confidence: EvidenceConfidence::Observed,
+                            safe_reason_code: None,
+                        }
+                    }
+                    Err(()) => CapabilityEvidence {
+                        state: CapabilityState::Unknown,
+                        confidence: EvidenceConfidence::Observed,
+                        safe_reason_code: Some("company_identity_invalid".to_string()),
+                    },
+                })
+            }
+            Err(_) => {
+                self.legacy_company_discovery_evidence(connection, companies)
+                    .await
+            }
+        }
+    }
+
+    /// The pre-`CompanyListV2` company discovery path: the custom
+    /// `CompanyListV1` TDL report, which most Tally responders answer with a
+    /// bare `<ENVELOPE><COMPANYINFO>...` document carrying no
+    /// `HEADER`/`STATUS` at all. That bare shape is accepted only through the
+    /// narrow, explicitly-untrusted interactive discovery parse; it can never
+    /// promote `CapabilityState::Supported`.
+    async fn legacy_company_discovery_evidence(
+        &self,
+        connection: &mut ConnectionStatus,
+        companies: &mut Vec<TallyCompany>,
+    ) -> anyhow::Result<CapabilityEvidence> {
+        let xml = self.post_xml(tdl_engine::company_list_request()).await?;
+        Ok(match xml_parser::parse_companies(&xml) {
+            Ok(discovered) => {
+                connection.reachable = true;
+                if connection.error.is_some() {
+                    connection.error = Some("status_heuristic_unavailable".to_string());
+                }
+                match normalize_discovered_companies(discovered) {
+                    Ok(normalized) => {
+                        *companies = normalized;
+                        CapabilityEvidence {
+                            state: CapabilityState::Supported,
+                            confidence: EvidenceConfidence::Observed,
+                            safe_reason_code: None,
+                        }
+                    }
+                    Err(()) => CapabilityEvidence {
+                        state: CapabilityState::Unknown,
+                        confidence: EvidenceConfidence::Observed,
+                        safe_reason_code: Some("company_identity_invalid".to_string()),
+                    },
+                }
+            }
+            Err(_) => match xml_parser::export_status(&xml) {
+                Ok(xml_parser::TallyExportStatus::Failure) => CapabilityEvidence {
+                    // A shaped failure is an endpoint claim, not responder
+                    // authenticity or proof that the read profile works.
+                    state: CapabilityState::Unknown,
+                    confidence: EvidenceConfidence::Observed,
+                    safe_reason_code: Some(
+                        xml_parser::export_failure_reason_code(&xml).to_string(),
+                    ),
+                },
+                _ if parse_companies_for_interactive_discovery(&xml).is_ok() => {
+                    connection.reachable = true;
+                    if connection.error.is_some() {
+                        connection.error = Some("status_heuristic_unavailable".to_string());
+                    }
+                    CapabilityEvidence {
+                        state: CapabilityState::Unknown,
+                        confidence: EvidenceConfidence::Observed,
+                        safe_reason_code: Some("direct_company_report_untrusted".to_string()),
+                    }
+                }
+                _ => CapabilityEvidence {
+                    state: CapabilityState::Unknown,
+                    confidence: EvidenceConfidence::Observed,
+                    safe_reason_code: Some("xml_export_shape_unrecognized".to_string()),
+                },
+            },
+        })
+    }
+
     pub(super) async fn post_xml(&self, xml: String) -> anyhow::Result<String> {
         self.post_xml_with_encoded_bytes(xml)
             .await
@@ -494,6 +536,7 @@ impl TallyClient {
         Ok((response.into_text(), encoded_bytes))
     }
 
+    #[cfg(feature = "voucher-scan")]
     async fn post_outstandings_xml_with_encoded_bytes(
         &self,
         request: VoucherOutstandingsRequestXml,
@@ -512,10 +555,7 @@ impl TallyClient {
 
     /// Uses the ordinary 32 MiB XML cap. Only the wildcard outstandings
     /// profile is allowed through `post_outstandings_xml_decoded`.
-    #[allow(
-        dead_code,
-        reason = "the supervised first live witness dispatch must be recorded before this ordinary-cap seam may be called by fetch_outstandings"
-    )]
+    #[cfg(feature = "voucher-scan")]
     async fn post_xml_with_wire_evidence(
         &self,
         request: String,
@@ -529,27 +569,6 @@ impl TallyClient {
             text: response.into_text(),
             encoded_bytes,
             encoded_sha256,
-        })
-    }
-
-    /// Sends only the opaque, fixed fixture canary through the bounded
-    /// loopback transport. It consumes the capsule and exposes neither the
-    /// request XML nor the response XML to the application layer.
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    pub(crate) async fn dispatch_sealed_fixture_canary_once(
-        &self,
-        capsule: SealedFixtureCanaryDispatch,
-    ) -> Result<SealedFixtureCanaryReceipt, FixtureCanaryDispatchError> {
-        let receipt_xml = self
-            .http
-            .post_xml_decoded(capsule.wire_xml)
-            .await
-            .map_err(FixtureCanaryDispatchError::Transport)?
-            .into_text();
-        Ok(SealedFixtureCanaryReceipt {
-            prepared: capsule.prepared,
-            receipt_xml,
-            wire_digest: capsule.wire_digest,
         })
     }
 
@@ -604,38 +623,6 @@ impl TallyClient {
         Ok(parsed.records)
     }
 
-    /// Executes the closed canary-readback profile and admits its response only
-    /// when the company, query commitment, and at-most-one exact ledger agree.
-    #[allow(
-        dead_code,
-        reason = "the sealed runtime seam is intentionally staged before the write coordinator"
-    )]
-    pub(crate) async fn fetch_ledger_canary_readback(
-        &self,
-        company: ValidatedCompanyName,
-        ledger_name: ValidatedCanaryLedgerName,
-        identity_query_sha256: ValidatedIdentityQuerySha256,
-        expected_company_guid: &str,
-    ) -> anyhow::Result<LedgerCanaryReadbackXml> {
-        let xml = self
-            .post_xml(
-                ReadOnlyProfile::LedgerCanaryReadbackV1 {
-                    company: &company,
-                    ledger_name: &ledger_name,
-                    identity_query_sha256: &identity_query_sha256,
-                }
-                .render(),
-            )
-            .await?;
-        validate_ledger_canary_readback(
-            &xml,
-            ledger_name.as_str(),
-            identity_query_sha256.as_str(),
-            expected_company_guid,
-        )?;
-        Ok(LedgerCanaryReadbackXml(xml))
-    }
-
     /// Reads the documented standard ledger collection as an explicitly limited
     /// compatibility catalog. It is not a fallback for Bridge's custom export
     /// and cannot establish snapshot, voucher, or write capability.
@@ -657,6 +644,7 @@ impl TallyClient {
     /// The ledger profile fetches every master GUID and verifies its company
     /// GUID prefix, so a name-only selection cannot make another loaded
     /// company's coverage look like the pinned book.
+    #[cfg(feature = "voucher-scan")]
     pub(crate) async fn fetch_ledger_opening_coverage(
         &self,
         company: &PinnedCompany,
@@ -712,6 +700,45 @@ impl TallyClient {
         Ok(first)
     }
 
+    /// Paired read for the native `TYPE=Data` bills reports and the ledger
+    /// closing snapshot.
+    ///
+    /// These responses are small — measured 11 KB for 48 bills and 41 KB for 88
+    /// ledgers — so the whole-response byte comparison this performs is cheap,
+    /// and it replaces the date/AlterID partition-completeness machinery the
+    /// voucher scan needs. A drift between the two reads means the book moved
+    /// mid-sequence; the caller must treat that as Partial rather than pick a
+    /// side.
+    ///
+    /// Health checks bracket both requests and sit between them, so a gateway
+    /// that stalls mid-pair is distinguishable from a clean pair. See the
+    /// identical discipline in `fetch_company_book_extent`.
+    pub(crate) async fn fetch_native_report_paired(
+        &self,
+        request_xml: String,
+    ) -> anyhow::Result<NativePairedRead> {
+        let (first, first_bytes) = self
+            .post_xml_with_encoded_bytes(request_xml.clone())
+            .await?;
+        self.http
+            .get_status_decoded()
+            .await
+            .context("Tally health check between paired native report reads failed")?;
+        let (second, second_bytes) = self.post_xml_with_encoded_bytes(request_xml).await?;
+        self.http
+            .get_status_decoded()
+            .await
+            .context("Tally health check after paired native report reads failed")?;
+        if first != second || first_bytes != second_bytes {
+            return Ok(NativePairedRead::Drifted);
+        }
+        Ok(NativePairedRead::Stable {
+            body: first,
+            encoded_bytes: first_bytes,
+        })
+    }
+
+    #[cfg(feature = "voucher-scan")]
     pub(crate) async fn fetch_outstandings_segment_pair(
         &self,
         company: &PinnedCompany,
@@ -768,6 +795,7 @@ impl TallyClient {
     /// live qualification is recorded in TALLY_PROTOCOL_REFERENCE.md §12.7;
     /// runtime may use it only for a primary-empty partition's control or
     /// shifted cover.
+    #[cfg(feature = "voucher-scan")]
     pub(crate) async fn fetch_empty_partition_witness_pair(
         &self,
         company: &PinnedCompany,
@@ -865,7 +893,7 @@ impl TallyClient {
             parsed.evidence.identified_record_count,
             parsed.evidence.duplicate_identities.len(),
         )?;
-        bridge_tally_canonical::validate_selected_voucher_window(from, to, &parsed)
+        crate::tally::canonical_window::validate_selected_voucher_window(from, to, &parsed)
             .map_err(anyhow::Error::new)?;
         Ok(SelectedReadObservation {
             request_sha256,
@@ -1033,40 +1061,6 @@ fn validate_selected_ledgers(
     Ok(())
 }
 
-#[allow(
-    dead_code,
-    reason = "the sealed runtime seam is intentionally staged before the write coordinator"
-)]
-fn validate_ledger_canary_readback(
-    xml: &str,
-    expected_ledger_name: &str,
-    expected_identity_query_sha256: &str,
-    expected_company_guid: &str,
-) -> anyhow::Result<()> {
-    let parsed = parse_ledger_write_readback_with_evidence(xml)?;
-    verify_company_context(&parsed.evidence, expected_company_guid)?;
-    if parsed
-        .evidence
-        .company_context
-        .as_ref()
-        .and_then(|context| context.query_identity_set_sha256.as_deref())
-        != Some(expected_identity_query_sha256)
-    {
-        anyhow::bail!("Tally canary readback query commitment did not match the request");
-    }
-    if parsed.records.len() > 1 {
-        anyhow::bail!("Tally canary readback returned more than one ledger");
-    }
-    if parsed
-        .records
-        .first()
-        .is_some_and(|record| record.record.name != expected_ledger_name)
-    {
-        anyhow::bail!("Tally canary readback ledger name did not match the request");
-    }
-    Ok(())
-}
-
 fn verify_selected_company_name(
     evidence: &bridge_tally_protocol::ExportEvidence,
     expected_name: &str,
@@ -1144,127 +1138,19 @@ fn detect_product(text: &str) -> TallyProduct {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "voucher-scan")]
+    use super::LedgerOpeningCoverageRead;
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
-        normalize_discovered_companies, tally_endpoint, unique_company_guids,
-        validate_ledger_canary_readback, LedgerOpeningCoverageRead, TallyClient, TallyConfig,
-        TallyProduct,
-    };
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    use crate::tally::write_sandbox::{
-        authorize_fixture_canary, fixture_canary_ledger_mutation,
-        prepare_fixture_canary_ledger_import, preview_ledger_import,
-        FixtureCanaryAuthorizationRequest, IdempotencyRegistry, SyntheticCompany,
-        FIXTURE_CANARY_MAPPING_VERSION,
+        normalize_discovered_companies, tally_endpoint, unique_company_guids, TallyClient,
+        TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TransportId,
     };
     use std::time::Duration;
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-
-    const CANARY_QUERY_DIGEST: &str =
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    const FIXTURE_COMPANY_GUID: &str = "00000000-0000-4000-8000-000000000001";
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    const FIXTURE_COMMITMENT: &str =
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
-    fn canary_readback(ledger_name: &str, company_guid: &str, query_digest: &str) -> String {
-        format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="bridge.tally.ledger-write-readback/1" OBJECTTYPE="LEDGER" NAME="BRIDGE SYNTHETIC BOOK" GUID="{company_guid}" RECORDCOUNT="1" QUERYIDENTITYSETSHA256="{query_digest}"/><LEDGER REMOTEID="bridge-canary-remote-id" NAME="{ledger_name}"><PARENT>BRIDGE SYNTHETIC GROUP</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></BODY></ENVELOPE>"#
-        )
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    fn sealed_fixture_canary() -> crate::tally::write_sandbox::PreparedFixtureCanary {
-        let company = SyntheticCompany::new("BRIDGE SYNTHETIC BOOK", FIXTURE_COMPANY_GUID)
-            .expect("synthetic company");
-        let mutation = fixture_canary_ledger_mutation().expect("fixed canary mutation");
-        let preview = preview_ledger_import(&company, &[mutation], FIXTURE_CANARY_MAPPING_VERSION)
-            .expect("fixed canary preview");
-        let authorization = authorize_fixture_canary(FixtureCanaryAuthorizationRequest {
-            explicit_opt_in: true,
-            synthetic_company_confirmed: true,
-            company_guid: FIXTURE_COMPANY_GUID.to_owned(),
-            backup_guidance_acknowledged: true,
-            review_commitment_sha256: FIXTURE_COMMITMENT.to_owned(),
-            reservation_id: "fixture-runtime-dispatch-reservation".to_owned(),
-            reservation_payload_sha256: FIXTURE_COMMITMENT.to_owned(),
-            approved_wire_sha256: preview.wire_digest().as_hex().to_owned(),
-            approved_intended_state_sha256: preview.intended_state_digest().as_hex().to_owned(),
-            approved_identity_query_sha256: preview.identity_query_digest().as_hex().to_owned(),
-            idempotency_key: "fixture-runtime-dispatch-idempotency".to_owned(),
-        })
-        .expect("authorize fixed canary");
-        prepare_fixture_canary_ledger_import(
-            company,
-            authorization,
-            &mut IdempotencyRegistry::default(),
-        )
-        .expect("prepare fixed canary")
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    #[tokio::test]
-    async fn sealed_fixture_canary_dispatch_posts_exactly_once_without_xml_escape() {
-        let simulator = Simulator::spawn(ScenarioPlan::new(Fixture::ImportCounters))
-            .expect("spawn synthetic loopback server");
-        let client = TallyClient::new(TallyConfig {
-            host: simulator.address().ip().to_string(),
-            port: simulator.address().port(),
-        })
-        .expect("construct bounded loopback transport");
-        let receipt = client
-            .dispatch_sealed_fixture_canary_once(
-                sealed_fixture_canary()
-                    .seal_for_dispatch()
-                    .expect("seal exact canary"),
-            )
-            .await
-            .expect("single synthetic import response");
-
-        assert!(format!("{receipt:?}").contains("[redacted]"));
-        let observed = simulator.finish().expect("observe one request");
-        assert_eq!(observed.method, "POST");
-        assert_eq!(observed.path, "/");
-        assert!(observed.bytes_received > 0);
-    }
-
-    #[test]
-    fn canary_readback_requires_exact_company_commitment_and_ledger_name() {
-        let ledger_name = "BRIDGE-CANARY-LEDGER-001";
-        let xml = canary_readback(ledger_name, "company-guid", CANARY_QUERY_DIGEST);
-        validate_ledger_canary_readback(&xml, ledger_name, CANARY_QUERY_DIGEST, "company-guid")
-            .expect("exact synthetic canary readback is accepted");
-
-        assert!(validate_ledger_canary_readback(
-            &xml,
-            "BRIDGE-CANARY-LEDGER-002",
-            CANARY_QUERY_DIGEST,
-            "company-guid",
-        )
-        .is_err());
-        assert!(validate_ledger_canary_readback(
-            &xml,
-            ledger_name,
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "company-guid",
-        )
-        .is_err());
-        assert!(validate_ledger_canary_readback(
-            &xml,
-            ledger_name,
-            CANARY_QUERY_DIGEST,
-            "other-company-guid",
-        )
-        .is_err());
-    }
 
     #[test]
     fn detects_tallyprime_status() {
@@ -1484,6 +1370,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[tokio::test]
     async fn paired_outstandings_reads_health_check_between_and_after_requests() {
         const COMPANY_EXTENT: &str = include_str!(
@@ -1620,6 +1507,7 @@ mod tests {
         server.await.expect("synthetic Tally server task");
     }
 
+    #[cfg(feature = "voucher-scan")]
     #[tokio::test]
     async fn paired_ledger_opening_coverage_reports_intra_pair_drift() {
         const COMPANY_EXTENT: &str = include_str!(
@@ -1747,7 +1635,7 @@ mod tests {
         let server = tokio::spawn(async move {
             for body in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
-                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>",
+                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
             ] {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let mut request = [0_u8; 8192];
@@ -1948,8 +1836,14 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
+            // This responder gives the same untrusted bare direct company
+            // report regardless of what is requested: once for the `V2`
+            // collection attempt (which the collection parser rejects, since
+            // it never satisfies `HEADER/STATUS`), and once more for the
+            // `V1` fallback that follows.
             for body in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
+                "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
                 "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
             ] {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
@@ -2002,8 +1896,11 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
+            // Same shaped `STATUS=0` failure for both the `V2` collection
+            // attempt and the `V1` fallback that follows it.
             for body in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Could not find Company ''</LINEERROR></DATA></BODY></ENVELOPE>",
                 "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Could not find Company ''</LINEERROR></DATA></BODY></ENVELOPE>",
             ] {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
@@ -2044,5 +1941,75 @@ mod tests {
             probe.profile.features[&CapabilityFeatureId::StableCompanyIdentity].state,
             CapabilityState::Unknown
         );
+    }
+
+    /// Measured live 2026-08-07: the exact `Company` collection response for
+    /// a Tally instance with three loaded companies, `CMPINFO` counter trap
+    /// included. Proves `probe` requests `CompanyListV2` on the happy path
+    /// and trusts its success without ever falling back to the legacy
+    /// `CompanyListV1` report: the mock server has exactly one POST response
+    /// queued, so a fallback request would hang and fail this test.
+    #[tokio::test]
+    async fn capability_probe_trusts_the_company_collection_without_falling_back() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for body in [
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Aarav Trading Company Demo\"><GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Ageing Lab\"><GUID TYPE=\"String\">eebb9a9f-1679-4468-9e8f-814c729674cb</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Billwise Lab\"><GUID TYPE=\"String\">75f7566d-7a4f-431a-9642-e93a9d06d57d</GUID></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
+            ] {
+                let (mut socket, _) = listener.accept().await.expect("accept Tally request");
+                let mut request = [0_u8; 8192];
+                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
+                requests.push(String::from_utf8_lossy(&request[..bytes_read]).into_owned());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write Tally response");
+            }
+            requests
+        });
+
+        let probe = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client")
+        .probe()
+        .await
+        .expect("probe synthetic Tally endpoint");
+        let requests = server.await.expect("synthetic Tally server task");
+
+        assert_eq!(probe.companies.len(), 3);
+        assert_eq!(probe.companies[0].name, "Aarav Trading Company Demo");
+        assert_eq!(
+            probe.companies[0].guid.as_deref(),
+            Some("bb8ad19e-6aef-4239-a917-87fec0c6215e")
+        );
+        assert_eq!(probe.companies[1].name, "Bridge Ageing Lab");
+        assert_eq!(probe.companies[2].name, "Bridge Billwise Lab");
+        assert_eq!(
+            probe.profile.transports[&TransportId::XmlHttp].state,
+            CapabilityState::Supported
+        );
+        assert_eq!(
+            probe.profile.features[&CapabilityFeatureId::StableCompanyIdentity].state,
+            CapabilityState::Supported
+        );
+
+        let post_request = requests
+            .iter()
+            .find(|request| request.starts_with("POST"))
+            .expect("exactly one POST request was sent");
+        assert!(post_request.contains("<TYPE>Collection</TYPE>"));
+        assert!(post_request.contains("<ID>BridgeCompanyExtent</ID>"));
+        assert!(post_request.contains("<FETCH>NAME,GUID</FETCH>"));
     }
 }

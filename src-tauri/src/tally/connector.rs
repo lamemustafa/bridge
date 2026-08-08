@@ -1,4 +1,4 @@
-use bridge_tally_canonical::build_core_window;
+use crate::tally::canonical_window::build_core_window;
 use bridge_tally_core::report_tie_out::{LedgerPeriodBalance, LedgerPeriodBalanceReport};
 use bridge_tally_core::{
     CanonicalPackWindow, CapabilityEvidence, CapabilityPackId, CapabilityState, CompanyRef,
@@ -774,8 +774,12 @@ mod tests {
     async fn duplicate_company_snapshot_probe_stops_before_core_exports() {
         let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "synthetic-company-guid";
+        // `TallyClient::probe` requests the trusted `Company` collection
+        // (`CompanyListV2`) first, so the two duplicate-GUID rows this test
+        // exercises are expressed in that shape rather than the legacy
+        // `CompanyListV1` direct report.
         let duplicate_company_xml = format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company A</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company B</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company A"><GUID TYPE="String">{company_guid}</GUID></COMPANY><COMPANY NAME="Synthetic Company B"><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         );
         let (address, server) = spawn_method_routed_server(vec![duplicate_company_xml]).await;
         let config = TallyConfig {
@@ -827,6 +831,12 @@ mod tests {
             )
         };
         let (address, server) = spawn_method_routed_server(vec![
+            // `TallyClient::probe` requests the trusted `Company` collection
+            // (`CompanyListV2`) first. This responder rejects it (the bare
+            // direct report has no `HEADER`/`STATUS` at all), so `probe` falls
+            // back to the legacy `CompanyListV1` report — one extra `direct`
+            // response ahead of the pre-existing legacy sequence below.
+            direct.to_string(),
             direct.to_string(),
             direct.to_string(),
             standard.to_string(),
@@ -882,7 +892,7 @@ mod tests {
         let methods = server.await.expect("join routed Tally server");
         assert_eq!(
             methods,
-            ["GET", "POST", "POST", "POST", "POST", "POST", "POST", "POST"]
+            ["GET", "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST"]
         );
     }
 
@@ -890,6 +900,17 @@ mod tests {
     async fn snapshot_start_and_end_probes_preserve_setup_review_and_read_transport_freshly() {
         let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "synthetic-company-guid";
+        // `TallyClient::probe` requests the trusted `Company` collection
+        // (`CompanyListV2`) first; this shape is what every `probe`/`probe_fresh`
+        // POST below answers with, so the trusted path resolves the company in
+        // one request and never falls back to the legacy, explicitly-untrusted
+        // direct report.
+        let company_collection_xml = format!(
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        // `discover_companies` posts the legacy `CompanyListV1` report directly
+        // and parses it with the trusted `parse_companies` (unscoped
+        // `COMPANYINFO` scan), so its one response below keeps that shape.
         let company_xml = format!(
             r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>"#
         );
@@ -898,10 +919,10 @@ mod tests {
                 r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{schema}" OBJECTTYPE="{object_type}" NAME="Synthetic Company" GUID="{company_guid}" RECORDCOUNT="0"/></BODY></ENVELOPE>"#
             )
         };
-        let mut post_responses = vec![company_xml.clone()];
+        let mut post_responses = vec![company_collection_xml.clone()];
         for _ in 0..2 {
             post_responses.extend([
-                company_xml.clone(),
+                company_collection_xml.clone(),
                 empty_export(bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA, "GROUP"),
                 empty_export(bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA, "LEDGER"),
                 empty_export(

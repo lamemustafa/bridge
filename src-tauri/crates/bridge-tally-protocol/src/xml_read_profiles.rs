@@ -9,17 +9,22 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "voucher-scan")]
 use crate::outstandings::{
-    render_company_book_extent, render_empty_partition_witness_template,
-    render_ledger_opening_coverage, render_outstandings_template, render_outstandings_vouchers,
-    AlterIdRange, NarrowDateWindow, PinnedCompany,
+    render_empty_partition_witness_template, render_ledger_opening_coverage,
+    render_outstandings_template, render_outstandings_vouchers, AlterIdRange, NarrowDateWindow,
 };
+use crate::outstandings_shared::render_company_book_extent;
+#[cfg(feature = "voucher-scan")]
+use crate::outstandings_shared::PinnedCompany;
 use crate::{BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_LEDGER_WRITE_READBACK_SCHEMA};
 
 const TEMPLATE_COMPANY: &str = "BRIDGE TEMPLATE COMPANY";
 const TEMPLATE_FROM: &str = "20000101";
 const TEMPLATE_TO: &str = "20000102";
+#[cfg(feature = "voucher-scan")]
 const TEMPLATE_ALTER_ID_START: u64 = 0;
+#[cfg(feature = "voucher-scan")]
 const TEMPLATE_ALTER_ID_END: u64 = 1;
 const TEMPLATE_CANARY_LEDGER: &str = "BRIDGE-CANARY-LEDGER-001";
 const BRIDGE_CANARY_LEDGER_PREFIX: &str = "BRIDGE-CANARY-";
@@ -166,7 +171,9 @@ impl ValidatedDateRange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadOnlyProfileId {
     CompanyListV1,
+    CompanyListV2,
     CompanyBookExtentV1,
+    #[cfg(feature = "voucher-scan")]
     LedgerOpeningCoverageV1,
     StandardLedgerIdentityV1,
     StandardLedgerCatalogV1,
@@ -174,7 +181,9 @@ pub enum ReadOnlyProfileId {
     LedgerCanaryReadbackV1,
     VouchersV2,
     VouchersV3,
+    #[cfg(feature = "voucher-scan")]
     VoucherOutstandingsV1,
+    #[cfg(feature = "voucher-scan")]
     VoucherEmptyPartitionWitnessV1,
 }
 
@@ -182,7 +191,9 @@ impl ReadOnlyProfileId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::CompanyListV1 => "company_list_v1",
+            Self::CompanyListV2 => "company_list_v2",
             Self::CompanyBookExtentV1 => "company_book_extent_v1",
+            #[cfg(feature = "voucher-scan")]
             Self::LedgerOpeningCoverageV1 => "ledger_opening_coverage_v1",
             Self::StandardLedgerIdentityV1 => "standard_ledger_identity_v1",
             Self::StandardLedgerCatalogV1 => "standard_ledger_catalog_v1",
@@ -190,7 +201,9 @@ impl ReadOnlyProfileId {
             Self::LedgerCanaryReadbackV1 => "ledger_canary_readback_v1",
             Self::VouchersV2 => "vouchers_v2",
             Self::VouchersV3 => "vouchers_v3",
+            #[cfg(feature = "voucher-scan")]
             Self::VoucherOutstandingsV1 => "voucher_outstandings_v1",
+            #[cfg(feature = "voucher-scan")]
             Self::VoucherEmptyPartitionWitnessV1 => "voucher_empty_partition_witness_v1",
         }
     }
@@ -201,7 +214,9 @@ impl ReadOnlyProfileId {
     pub fn template_sha256(self) -> String {
         let template = match self {
             Self::CompanyListV1 => render_company_list(),
+            Self::CompanyListV2 => render_company_list_v2(),
             Self::CompanyBookExtentV1 => render_company_book_extent(TEMPLATE_COMPANY),
+            #[cfg(feature = "voucher-scan")]
             Self::LedgerOpeningCoverageV1 => render_ledger_opening_coverage(TEMPLATE_COMPANY),
             Self::StandardLedgerIdentityV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
             Self::StandardLedgerCatalogV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
@@ -215,6 +230,7 @@ impl ReadOnlyProfileId {
             Self::VouchersV3 => {
                 render_selected_vouchers(TEMPLATE_COMPANY, TEMPLATE_FROM, TEMPLATE_TO)
             }
+            #[cfg(feature = "voucher-scan")]
             Self::VoucherOutstandingsV1 => render_outstandings_template(
                 TEMPLATE_COMPANY,
                 TEMPLATE_FROM,
@@ -222,6 +238,7 @@ impl ReadOnlyProfileId {
                 TEMPLATE_ALTER_ID_START,
                 TEMPLATE_ALTER_ID_END,
             ),
+            #[cfg(feature = "voucher-scan")]
             Self::VoucherEmptyPartitionWitnessV1 => render_empty_partition_witness_template(
                 TEMPLATE_COMPANY,
                 TEMPLATE_FROM,
@@ -235,6 +252,13 @@ impl ReadOnlyProfileId {
 #[derive(Debug, Clone, Copy)]
 pub enum ReadOnlyProfile<'a> {
     CompanyListV1,
+    /// Tally's documented `Company` collection (`TYPE=Collection`), fetching
+    /// only `NAME` and `GUID`. Unlike `CompanyListV1`'s custom TDL report,
+    /// this returns the ordinary shaped `HEADER/STATUS=1` success envelope,
+    /// so it can satisfy the trust check instead of being parsed as an
+    /// unverified direct report.
+    CompanyListV2,
+    #[cfg(feature = "voucher-scan")]
     LedgerOpeningCoverageV1 {
         company: &'a ValidatedCompanyName,
     },
@@ -273,11 +297,13 @@ pub enum ReadOnlyProfile<'a> {
         company: &'a ValidatedCompanyName,
         range: &'a ValidatedDateRange,
     },
+    #[cfg(feature = "voucher-scan")]
     VoucherOutstandingsV1 {
         company: &'a PinnedCompany,
         window: &'a NarrowDateWindow,
         alter_id_range: AlterIdRange,
     },
+    #[cfg(feature = "voucher-scan")]
     VoucherEmptyPartitionWitnessV1 {
         company: &'a PinnedCompany,
         window: &'a NarrowDateWindow,
@@ -288,7 +314,9 @@ impl ReadOnlyProfile<'_> {
     pub fn id(self) -> ReadOnlyProfileId {
         match self {
             Self::CompanyListV1 => ReadOnlyProfileId::CompanyListV1,
+            Self::CompanyListV2 => ReadOnlyProfileId::CompanyListV2,
             Self::CompanyBookExtentV1 { .. } => ReadOnlyProfileId::CompanyBookExtentV1,
+            #[cfg(feature = "voucher-scan")]
             Self::LedgerOpeningCoverageV1 { .. } => ReadOnlyProfileId::LedgerOpeningCoverageV1,
             Self::StandardLedgerIdentityV1 { .. } => ReadOnlyProfileId::StandardLedgerIdentityV1,
             Self::StandardLedgerCatalogV1 { .. } => ReadOnlyProfileId::StandardLedgerCatalogV1,
@@ -296,7 +324,9 @@ impl ReadOnlyProfile<'_> {
             Self::LedgerCanaryReadbackV1 { .. } => ReadOnlyProfileId::LedgerCanaryReadbackV1,
             Self::VouchersV2 { .. } => ReadOnlyProfileId::VouchersV2,
             Self::VouchersV3 { .. } => ReadOnlyProfileId::VouchersV3,
+            #[cfg(feature = "voucher-scan")]
             Self::VoucherOutstandingsV1 { .. } => ReadOnlyProfileId::VoucherOutstandingsV1,
+            #[cfg(feature = "voucher-scan")]
             Self::VoucherEmptyPartitionWitnessV1 { .. } => {
                 ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1
             }
@@ -310,7 +340,9 @@ impl ReadOnlyProfile<'_> {
     pub fn render(self) -> String {
         match self {
             Self::CompanyListV1 => render_company_list(),
+            Self::CompanyListV2 => render_company_list_v2(),
             Self::CompanyBookExtentV1 { company } => render_company_book_extent(company.as_str()),
+            #[cfg(feature = "voucher-scan")]
             Self::LedgerOpeningCoverageV1 { company } => {
                 render_ledger_opening_coverage(company.as_str())
             }
@@ -338,11 +370,13 @@ impl ReadOnlyProfile<'_> {
                 range.from_yyyymmdd(),
                 range.to_yyyymmdd(),
             ),
+            #[cfg(feature = "voucher-scan")]
             Self::VoucherOutstandingsV1 {
                 company,
                 window,
                 alter_id_range,
             } => render_outstandings_vouchers(company, window, alter_id_range),
+            #[cfg(feature = "voucher-scan")]
             Self::VoucherEmptyPartitionWitnessV1 { company, window } => {
                 crate::outstandings::voucher_empty_partition_witness_request(company, window)
                     .into_xml()
@@ -430,6 +464,42 @@ fn render_company_list() -> String {
                     <COLLECTION NAME="CompanyCollection">
                         <TYPE>Company</TYPE>
                         <FETCH>Name, GUID</FETCH>
+                    </COLLECTION>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
+    </BODY>
+</ENVELOPE>
+"#
+    .trim()
+    .to_string()
+}
+
+/// Tally's documented `Company` collection, fetching only `NAME` and `GUID`.
+/// Unlike `render_company_list`'s custom TDL report — which Tally answers
+/// with a bare `<ENVELOPE><COMPANYINFO>...` document carrying no
+/// `HEADER`/`STATUS` at all — a `TYPE=Collection` export returns the
+/// ordinary shaped success envelope, so its response can satisfy the same
+/// `HEADER/STATUS=1` trust check every other export profile requires.
+fn render_company_list_v2() -> String {
+    r#"
+<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>BridgeCompanyExtent</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="BridgeCompanyExtent" ISMODIFY="No">
+                        <TYPE>Company</TYPE>
+                        <FETCH>NAME,GUID</FETCH>
                     </COLLECTION>
                 </TDLMESSAGE>
             </TDL>
@@ -821,9 +891,10 @@ mod tests {
         range: &'a ValidatedDateRange,
         canary_ledger: &'a ValidatedCanaryLedgerName,
         identity_query_sha256: &'a ValidatedIdentityQuerySha256,
-    ) -> [ReadOnlyProfile<'a>; 7] {
+    ) -> [ReadOnlyProfile<'a>; 8] {
         [
             ReadOnlyProfile::CompanyListV1,
+            ReadOnlyProfile::CompanyListV2,
             ReadOnlyProfile::StandardLedgerIdentityV1 { company },
             ReadOnlyProfile::StandardLedgerCatalogV1 { company },
             ReadOnlyProfile::LedgersV1 { company },
@@ -951,63 +1022,71 @@ mod tests {
         assert!(!bootstrap.contains("<TALLYREQUEST>IMPORT"));
         assert!(bootstrap.contains("&lt;/SVCURRENTCOMPANY&gt;"));
 
-        let pinned = PinnedCompany::verified(injection.clone(), "synthetic-guid".to_string())
-            .expect("verified test identity");
-        let window = crate::outstandings::DateWindow::parse(
-            crate::outstandings::DateBoundaryProfile::EducationRestricted,
-            "20260401",
-            "20260402",
-        )
-        .unwrap()
-        .narrow_partitions()
-        .unwrap()
-        .remove(0);
-        for request in [
-            ReadOnlyProfile::CompanyBookExtentV1 {
-                company: &injection,
-            }
-            .render(),
-            ReadOnlyProfile::VoucherOutstandingsV1 {
-                company: &pinned,
-                window: &window,
-                alter_id_range: AlterIdRange::new(0, 1).unwrap(),
-            }
-            .render(),
-            ReadOnlyProfile::VoucherEmptyPartitionWitnessV1 {
-                company: &pinned,
-                window: &window,
-            }
-            .render(),
-        ] {
-            assert_eq!(request.matches("<TALLYREQUEST>").count(), 1);
-            assert!(!request.contains("<TALLYREQUEST>IMPORT"));
-            assert!(request.contains("&lt;/SVCURRENTCOMPANY&gt;"));
+        let extent_request = ReadOnlyProfile::CompanyBookExtentV1 {
+            company: &injection,
         }
-        let witness = ReadOnlyProfile::VoucherEmptyPartitionWitnessV1 {
-            company: &pinned,
-            window: &window,
-        };
-        assert_eq!(
-            witness.id(),
-            ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1
-        );
-        assert!(witness.template_sha256().len() == 64);
+        .render();
+        assert_eq!(extent_request.matches("<TALLYREQUEST>").count(), 1);
+        assert!(!extent_request.contains("<TALLYREQUEST>IMPORT"));
+        assert!(extent_request.contains("&lt;/SVCURRENTCOMPANY&gt;"));
+
+        #[cfg(feature = "voucher-scan")]
+        {
+            let pinned = PinnedCompany::verified(injection.clone(), "synthetic-guid".to_string())
+                .expect("verified test identity");
+            let window = crate::outstandings::DateWindow::parse(
+                crate::outstandings::DateBoundaryProfile::EducationRestricted,
+                "20260401",
+                "20260402",
+            )
+            .unwrap()
+            .narrow_partitions()
+            .unwrap()
+            .remove(0);
+            for request in [
+                ReadOnlyProfile::VoucherOutstandingsV1 {
+                    company: &pinned,
+                    window: &window,
+                    alter_id_range: AlterIdRange::new(0, 1).unwrap(),
+                }
+                .render(),
+                ReadOnlyProfile::VoucherEmptyPartitionWitnessV1 {
+                    company: &pinned,
+                    window: &window,
+                }
+                .render(),
+            ] {
+                assert_eq!(request.matches("<TALLYREQUEST>").count(), 1);
+                assert!(!request.contains("<TALLYREQUEST>IMPORT"));
+                assert!(request.contains("&lt;/SVCURRENTCOMPANY&gt;"));
+            }
+            let witness = ReadOnlyProfile::VoucherEmptyPartitionWitnessV1 {
+                company: &pinned,
+                window: &window,
+            };
+            assert_eq!(
+                witness.id(),
+                ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1
+            );
+            assert!(witness.template_sha256().len() == 64);
+        }
     }
 
     #[test]
     fn profile_ids_and_template_hashes_are_stable() {
-        let expected = [
+        #[cfg_attr(not(feature = "voucher-scan"), allow(unused_mut))]
+        let mut expected: Vec<(ReadOnlyProfileId, &str)> = vec![
             (
                 ReadOnlyProfileId::CompanyListV1,
                 "d5c134051e1d298a278e27284fbb5ab1a9d00e0006a70f9777c4e38cebbb16de",
             ),
             (
-                ReadOnlyProfileId::CompanyBookExtentV1,
-                "38038f96473b2bf036d78aca2eea85f96738ace3bf0e691bbfa14ddd165784f4",
+                ReadOnlyProfileId::CompanyListV2,
+                "f484b6f1e19a622d351c77dbe14b319524cb0cd5a02414dd2d9a6141721b1bad",
             ),
             (
-                ReadOnlyProfileId::LedgerOpeningCoverageV1,
-                "64528ba2deddc0b640bc6c557d50baed252c0ba2aadc5e42fea0fd6e1c0c30bf",
+                ReadOnlyProfileId::CompanyBookExtentV1,
+                "38038f96473b2bf036d78aca2eea85f96738ace3bf0e691bbfa14ddd165784f4",
             ),
             (
                 ReadOnlyProfileId::StandardLedgerIdentityV1,
@@ -1033,6 +1112,13 @@ mod tests {
                 ReadOnlyProfileId::VouchersV3,
                 "2e68f0ab8e57ded8cc1948b6785598e2f1e0947fcc431975d15fd63131df478d",
             ),
+        ];
+        #[cfg(feature = "voucher-scan")]
+        expected.extend([
+            (
+                ReadOnlyProfileId::LedgerOpeningCoverageV1,
+                "64528ba2deddc0b640bc6c557d50baed252c0ba2aadc5e42fea0fd6e1c0c30bf",
+            ),
             (
                 ReadOnlyProfileId::VoucherOutstandingsV1,
                 "7e4025038bf85345d0a55b9437be339c8829b1f699abaaa52bbdfa6affcb1dae",
@@ -1041,7 +1127,7 @@ mod tests {
                 ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1,
                 "73a9a71e437a8556d18123fad739fa10a7e859a1d462b5ce88d6e42d52811d8d",
             ),
-        ];
+        ]);
         for (profile, digest) in expected {
             assert_eq!(profile.template_sha256(), digest);
             assert_eq!(profile.template_sha256().len(), 64);

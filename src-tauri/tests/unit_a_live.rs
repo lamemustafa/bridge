@@ -1,3 +1,11 @@
+//! Manual, owner-authorized live-capture verification for the legacy
+//! voucher-scan outstandings path. Every test here exercises `outstandings`
+//! scan machinery (the wildcard voucher request, segment-pair verification,
+//! or the calibration harness itself), so the whole file is gated behind
+//! `voucher-scan` -- with the feature off, `bridge_tally_protocol::outstandings`
+//! does not exist and there is nothing left here to run.
+#![cfg(feature = "voucher-scan")]
+
 #[cfg(feature = "live-calibration-harness")]
 use bridge_lib::tally::{
     OutstandingsCurrencyAssertion, OutstandingsLoadResult, TallyConfig, TallyRuntime,

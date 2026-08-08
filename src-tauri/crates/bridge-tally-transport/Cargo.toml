@@ -8,6 +8,14 @@ publish = false
 edition = "2021"
 rust-version = "1.96"
 
+[features]
+default = []
+# Enables the sealed 40 MiB transport exception for the voucher-scan wildcard
+# outstandings request. With this off, `post_outstandings_xml_decoded` and the
+# raised response cap do not compile: no request exists that could use them,
+# and a raised cap nothing can reach is a widened attack surface for nothing.
+voucher-scan = ["bridge-tally-protocol/voucher-scan"]
+
 [dependencies]
 bridge-tally-protocol = { path = "../bridge-tally-protocol" }
 reqwest = { version = "0.13", features = ["stream"] }

@@ -1,3 +1,11 @@
+//! Exercises the legacy voucher-scan outstandings machinery end to end, so
+//! this whole file is gated behind `voucher-scan`: with the feature off,
+//! `bridge_tally_protocol::outstandings` does not exist and there is no scan
+//! left to test. `parse_company_book_extent`'s own identity-verification
+//! properties -- shared with the always-on native path -- are covered
+//! separately in `tests/outstandings_shared.rs`, which is NOT gated.
+#![cfg(feature = "voucher-scan")]
+
 use bridge_tally_primitives::TallyDate;
 use bridge_tally_protocol::{
     outstandings::{
@@ -379,59 +387,12 @@ fn voucher_guid_binding_requires_a_nonempty_master_suffix() {
     ));
 }
 
-#[test]
-fn company_pin_is_created_only_after_live_identity_matches() {
-    let extent = extent();
-    assert_eq!(extent.company().name(), COMPANY_NAME);
-    assert_eq!(extent.company().guid(), COMPANY_GUID);
-    assert!(matches!(
-        parse_company_book_extent(COMPANY_EXTENT, COMPANY_NAME, "wrong-guid"),
-        Err(OutstandingsError::CompanyIdentityMismatch)
-    ));
-}
-
-#[test]
-fn company_extent_selects_the_expected_guid_in_a_multi_company_collection() {
-    let company_start = COMPANY_EXTENT
-        .find("    <COMPANY ")
-        .expect("real capture contains a company row");
-    let company_end = COMPANY_EXTENT[company_start..]
-        .find("    </COMPANY>")
-        .map(|offset| company_start + offset + "    </COMPANY>".len())
-        .expect("real capture company row is complete");
-    let expected_row = &COMPANY_EXTENT[company_start..company_end];
-    let unrelated_row = expected_row
-        .replace(COMPANY_NAME, "Earlier Loaded Synthetic Company")
-        .replace(COMPANY_GUID, "00000000-0000-4000-8000-000000000001");
-    let response =
-        COMPANY_EXTENT.replacen(expected_row, &format!("{unrelated_row}\n{expected_row}"), 1);
-
-    let selected = parse_company_book_extent(&response, COMPANY_NAME, COMPANY_GUID)
-        .expect("GUID selection is independent of collection order");
-    assert_eq!(selected.company().name(), COMPANY_NAME);
-    assert_eq!(selected.company().guid(), COMPANY_GUID);
-}
-
-#[test]
-fn company_extent_rejects_duplicate_rows_for_the_expected_guid() {
-    let company_start = COMPANY_EXTENT
-        .find("    <COMPANY ")
-        .expect("real capture contains a company row");
-    let company_end = COMPANY_EXTENT[company_start..]
-        .find("    </COMPANY>")
-        .map(|offset| company_start + offset + "    </COMPANY>".len())
-        .expect("real capture company row is complete");
-    let expected_row = &COMPANY_EXTENT[company_start..company_end];
-    let response =
-        COMPANY_EXTENT.replacen(expected_row, &format!("{expected_row}\n{expected_row}"), 1);
-
-    assert_eq!(
-        parse_company_book_extent(&response, COMPANY_NAME, COMPANY_GUID),
-        Err(OutstandingsError::InvalidResponse(
-            "company_identity_ambiguous"
-        ))
-    );
-}
+// `company_pin_is_created_only_after_live_identity_matches`,
+// `company_extent_selects_the_expected_guid_in_a_multi_company_collection`,
+// and `company_extent_rejects_duplicate_rows_for_the_expected_guid` moved to
+// `tests/outstandings_shared.rs`: they test `parse_company_book_extent`,
+// which is shared with (and, in the default build, exercised only by) the
+// always-on native outstandings path.
 
 #[test]
 fn final_profile_is_bounded_and_contains_no_self_reference() {
