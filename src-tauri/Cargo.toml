@@ -26,15 +26,10 @@ live-calibration-harness = ["voucher-scan"]
 [workspace]
 members = [
   ".",
-  "crates/bridge-tally-canonical",
   "crates/bridge-tally-core",
-  "crates/bridge-tally-incremental",
-  "crates/bridge-tally-observability",
   "crates/bridge-tally-primitives",
   "crates/bridge-tally-protocol",
-  "crates/bridge-tally-runtime",
   "crates/bridge-tally-transport",
-  "crates/bridge-tally-write",
   "crates/tally-protocol-simulator",
 ]
 resolver = "2"
@@ -62,10 +57,7 @@ tauri-build = { version = "2", features = [] }
 anyhow = "1"
 async-trait = "0.1"
 bridge-tally-core = { path = "crates/bridge-tally-core" }
-bridge-tally-canonical = { path = "crates/bridge-tally-canonical" }
-bridge-tally-incremental = { path = "crates/bridge-tally-incremental" }
 bridge-tally-protocol = { path = "crates/bridge-tally-protocol" }
-bridge-tally-runtime = { path = "crates/bridge-tally-runtime" }
 bridge-tally-transport = { path = "crates/bridge-tally-transport" }
 chrono = { version = "0.4", features = ["serde"] }
 cryptoki = "0.12"
