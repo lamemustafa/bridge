@@ -140,6 +140,16 @@ pub enum OutstandingsLoadResult {
         /// these rows are already in hand.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         open_bills: Vec<OpenBillRow>,
+        /// Complete, uncapped statement source rows. Kept separate from the
+        /// display projection so a bulk statement action cannot silently omit
+        /// a party outside the dashboard's UI caps.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        statement_open_bills: Vec<OpenBillRow>,
+        /// Complete, uncapped unallocated statement source rows; see
+        /// `statement_open_bills` for why this must not reuse the top-ten UI
+        /// projection.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        statement_unallocated_by_party: Vec<UnallocatedParty>,
     },
     Partial {
         reason_code: String,
@@ -153,7 +163,7 @@ pub enum OutstandingsLoadResult {
 /// `BILLOVERDUE` column; where no credit period exists the two dates coincide.
 const MISSING_BILL_REFERENCE_LABEL: &str = "No reference reported";
 
-fn open_bill_rows(
+fn all_open_bill_rows(
     receivable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
     payable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
     as_of: &TallyDate,
@@ -194,16 +204,15 @@ fn open_bill_rows(
             .then_with(|| left.party.cmp(&right.party))
             .then_with(|| left.reference.cmp(&right.reference))
     });
-    rows.truncate(MAX_OPEN_BILL_ROWS);
     rows
 }
 
-/// Ranks parties by unallocated exposure, largest first.
+/// Returns every unallocated party ranked by exposure, largest first.
 ///
 /// Zero residuals are dropped rather than listed: a party whose ledger agrees
 /// exactly with its bills has nothing unallocated, and showing it as a zero row
 /// buries the parties that do.
-fn top_unallocated_parties(
+fn all_unallocated_parties(
     residuals: &[bridge_tally_protocol::native_outstandings::PartyResidual],
 ) -> Vec<UnallocatedParty> {
     let mut ranked = residuals
@@ -227,7 +236,6 @@ fn top_unallocated_parties(
             .cmp_magnitude(&left.amount)
             .then_with(|| left.party.cmp(&right.party))
     });
-    ranked.truncate(10);
     ranked
 }
 
@@ -255,8 +263,8 @@ pub struct OpenBillRow {
 ///
 /// Every row is already parsed, so this bounds only the serialized payload and
 /// what the screen must render. A book past this many OPEN bills is well
-/// outside anything measured, and silently truncating would be worse than
-/// disclosing it -- see `open_bills_truncated`.
+/// outside anything measured, so the uncapped statement source is sent
+/// separately rather than letting the bulk action reuse this display cap.
 const MAX_OPEN_BILL_ROWS: usize = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1419,14 +1427,29 @@ impl TallyRuntime {
                         return Ok(partial_result(reason_code));
                     }
 
+                    let statement_open_bills =
+                        all_open_bill_rows(&receivable_rows, &payable_rows, &as_of);
+                    let statement_unallocated_by_party = all_unallocated_parties(&result.residuals);
+                    let open_bills = statement_open_bills
+                        .iter()
+                        .take(MAX_OPEN_BILL_ROWS)
+                        .cloned()
+                        .collect();
+                    let unallocated_by_party = statement_unallocated_by_party
+                        .iter()
+                        .take(10)
+                        .cloned()
+                        .collect();
                     Ok(OutstandingsLoadResult::Complete {
                         report: Box::new(result.report),
                         currency_assertion,
                         ageing_anchor: OutstandingsAgeingAnchor::DueDate,
                         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                         unallocated_total: Some(result.residual_total),
-                        unallocated_by_party: top_unallocated_parties(&result.residuals),
-                        open_bills: open_bill_rows(&receivable_rows, &payable_rows, &as_of),
+                        unallocated_by_party,
+                        open_bills,
+                        statement_open_bills,
+                        statement_unallocated_by_party,
                     })
                 }
             },
@@ -1866,6 +1889,8 @@ impl TallyRuntime {
                                 unallocated_total: None,
                                 unallocated_by_party: Vec::new(),
                                 open_bills: Vec::new(),
+                                statement_open_bills: Vec::new(),
+                                statement_unallocated_by_party: Vec::new(),
                             }),
                             ScanResult::Partial(partial) => {
                                 Ok(partial_result(&partial.reason_code))
@@ -2210,7 +2235,7 @@ mod tests {
             &TallyDate::parse("20260817").expect("capture as-of"),
         )
         .expect("captured validation-book rows parse");
-        let rows = open_bill_rows(
+        let rows = all_open_bill_rows(
             &receivable,
             &[],
             &TallyDate::parse("20260817").expect("capture as-of"),
@@ -2268,7 +2293,7 @@ mod tests {
             &as_of,
         )
         .expect("paired empty BILLREF values remain parseable");
-        let rows = open_bill_rows(&parsed, &[], &as_of);
+        let rows = all_open_bill_rows(&parsed, &[], &as_of);
 
         assert_eq!(rows.len(), 2, "empty identities must not collapse rows");
         let total = rows

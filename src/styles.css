@@ -1982,6 +1982,7 @@ summary:focus-visible,
 
 .outstandings-export-notice {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -1999,6 +2000,13 @@ summary:focus-visible,
   font-size: 12px;
   cursor: pointer;
   text-decoration: underline;
+}
+
+.outstandings-export-failures {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 18px;
+  color: #8f2e27;
 }
 
 .view-switch {
