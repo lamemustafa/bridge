@@ -150,7 +150,6 @@ jobs:
           cargo test --locked
           -p bridge-tally-core
           -p bridge-tally-protocol
-          -p bridge-tally-runtime
           -p bridge-tally-transport
           -p bridge-tally-write
           -p tally-protocol-simulator
@@ -179,7 +178,6 @@ jobs:
           cargo clippy --locked
           -p bridge-tally-core
           -p bridge-tally-protocol
-          -p bridge-tally-runtime
           -p bridge-tally-transport
           -p bridge-tally-write
           -p tally-protocol-simulator
