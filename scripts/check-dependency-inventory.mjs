@@ -10,13 +10,9 @@ const checkFrontend = modes.size === 0 || modes.has("--frontend");
 const checkRust = modes.size === 0 || modes.has("--rust");
 const firstPartyRustPackages = new Set([
   "bridge",
-  "bridge-tally-canonical",
   "bridge-tally-core",
-  "bridge-tally-incremental",
-  "bridge-tally-observability",
   "bridge-tally-primitives",
   "bridge-tally-protocol",
-  "bridge-tally-runtime",
   "bridge-tally-transport",
   "tally-protocol-simulator",
 ]);

@@ -2121,6 +2121,16 @@ pub fn load_client_group_labels(app: AppHandle) -> client_groups::ClientGroupLab
     client_groups::load(&directory)
 }
 
+/// Reads the optional all-client sort preference from ordinary application
+/// configuration. Like group labels, it never initialises the Tally mirror.
+#[tauri::command]
+pub fn load_client_sort_preference(app: AppHandle) -> Option<client_groups::ClientSortPreference> {
+    let Ok(directory) = app.path().app_config_dir() else {
+        return None;
+    };
+    client_groups::load_sort_preference(&directory)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SaveClientGroupLabelRequest {
     pub company_guid: String,
@@ -2142,6 +2152,19 @@ pub fn save_client_group_label(
         .map_err(|_| "Bridge could not locate its local group-label configuration.".to_string())?;
     client_groups::save_label(&directory, &request.company_guid, &request.label)
         .map_err(|_| "Bridge could not save this group label.".to_string())
+}
+
+/// Saves the optional all-client sort preference without accessing the Tally mirror.
+#[tauri::command]
+pub fn save_client_sort_preference(
+    app: AppHandle,
+    preference: client_groups::ClientSortPreference,
+) -> Result<(), String> {
+    let directory = app.path().app_config_dir().map_err(|_| {
+        "Bridge could not locate its local client-preference configuration.".to_string()
+    })?;
+    client_groups::save_sort_preference(&directory, preference)
+        .map_err(|_| "Bridge could not save the all-client sort preference.".to_string())
 }
 
 #[derive(Debug, Deserialize)]

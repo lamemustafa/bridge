@@ -97,6 +97,8 @@ pub fn run() {
             commands::fetch_tally_outstandings_all_companies,
             commands::load_client_group_labels,
             commands::save_client_group_label,
+            commands::load_client_sort_preference,
+            commands::save_client_sort_preference,
             commands::detect_tally_base_currency,
             commands::tally_persisted_company_profiles,
             commands::tally_mirror_explorer_page,
@@ -235,9 +237,9 @@ mod security_config_tests {
 }
 
 #[cfg(test)]
-mod client_group_label_mount_tests {
+mod client_preference_mount_tests {
     #[test]
-    fn group_label_load_path_is_mirror_and_keychain_free() {
+    fn client_preference_commands_are_mirror_and_keychain_free() {
         let commands = include_str!("commands.rs");
         let start = commands
             .find("pub fn load_client_group_labels")
@@ -246,10 +248,12 @@ mod client_group_label_mount_tests {
             .find("pub struct AllCompaniesOutstandingsRequest")
             .map(|offset| start + offset)
             .expect("end of group-label commands");
-        let group_label_commands = &commands[start..end];
+        let client_preference_commands = &commands[start..end];
 
-        assert!(group_label_commands.contains("app_config_dir"));
-        assert!(!group_label_commands.contains("LazyTallyMirror"));
-        assert!(!group_label_commands.contains("keyring"));
+        assert!(client_preference_commands.contains("load_client_sort_preference"));
+        assert!(client_preference_commands.contains("save_client_sort_preference"));
+        assert!(client_preference_commands.contains("app_config_dir"));
+        assert!(!client_preference_commands.contains("LazyTallyMirror"));
+        assert!(!client_preference_commands.contains("keyring"));
     }
 }

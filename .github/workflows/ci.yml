@@ -85,6 +85,7 @@ jobs:
           cache: pnpm
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm run license:check
+      - run: corepack pnpm test
       - run: corepack pnpm run build
 
   rust-format:

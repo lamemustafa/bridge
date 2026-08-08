@@ -11,6 +11,20 @@ const fixtureDirectories = [
   "src-tauri/crates/tally-protocol-simulator/fixtures",
   "docs/tally/compatibility/fixtures",
 ];
+const discoveredFixtureDirectories = walkDirectories(repositoryRoot)
+  .filter((directory) => directory.endsWith("/fixture") || directory.endsWith("/fixtures"))
+  .map((directory) => relative(repositoryRoot, directory).replaceAll("\\", "/"))
+  .sort();
+const unexpectedFixtureDirectories = discoveredFixtureDirectories.filter(
+  (directory) => !fixtureDirectories.includes(directory),
+);
+if (unexpectedFixtureDirectories.length) {
+  throw new Error(
+    "unexpected fixture directories are not covered by byte-integrity policy:\n" +
+      unexpectedFixtureDirectories.map((directory) => `- ${directory}`).join("\n") +
+      "\nRegister each directory in fixtureDirectories and .gitattributes before adding fixtures.",
+  );
+}
 const fixtures = fixtureDirectories
   .flatMap((directory) => {
     const paths = walkFiles(join(repositoryRoot, directory));
@@ -40,6 +54,10 @@ if (attributeFailures.length) {
 
 const byteFailures = [];
 for (const fixture of fixtures) {
+  // In CI the checkout materialises this file from the same HEAD blob, so this
+  // comparison cannot independently establish captured-byte provenance there.
+  // The checked .gitattributes rule is the meaningful CI protection; this
+  // comparison still catches local worktree conversion or mutation.
   const committed = runGit(["show", "--no-textconv", `HEAD:${fixture}`], { allowFailure: true });
   if (committed.status !== 0) {
     // A new fixture has no blob until its first commit. Attribute coverage still
@@ -70,6 +88,16 @@ function walkFiles(directory) {
     else if (entry.isFile()) paths.push(path);
   }
   return paths;
+}
+
+function walkDirectories(directory) {
+  const directories = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || [".git", "node_modules", "target"].includes(entry.name)) continue;
+    const path = join(directory, entry.name);
+    directories.push(path, ...walkDirectories(path));
+  }
+  return directories;
 }
 
 function runGit(args, { allowFailure = false } = {}) {

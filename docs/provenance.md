@@ -37,6 +37,16 @@ Do not replace or add an icon, font, screenshot, fixture, or other asset unless
 its source, contributor authority, license, and required attribution are added
 to this record or `NOTICE`.
 
+## Fixture byte-integrity boundary
+
+`scripts/check-fixture-byte-integrity.mjs` compares local worktree bytes with
+the committed blob and verifies that every registered fixture location opts out
+of Git text normalization. In CI, a normal checkout materialises the worktree
+from that same blob, so the byte comparison cannot independently prove capture
+fidelity there; the Git attribute check is the meaningful CI protection. This
+does not establish SHA-256 or byte-length assertions for provenance-listed
+fixtures.
+
 ## Third-party material
 
 - JavaScript production dependencies are locked by `pnpm-lock.yaml` and listed

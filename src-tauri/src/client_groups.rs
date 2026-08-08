@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Operator-owned company filing labels.
+//! Operator-owned company filing labels and all-client sort preference.
 //!
 //! These labels deliberately live in the ordinary application configuration
 //! directory, not in the encrypted Tally mirror. They are an operator's filing
-//! choice rather than accounting data, and reading them must never resolve the
-//! mirror key or prompt the operating-system keychain.
+//! choice rather than accounting data. They contain neither accounting figures
+//! nor mirror state, and reading them must never resolve the mirror key or
+//! prompt the operating-system keychain.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -17,11 +18,30 @@ const SCHEMA_VERSION: u8 = 1;
 
 pub type ClientGroupLabels = BTreeMap<String, String>;
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientSortKey {
+    Client,
+    Receivable,
+    Overdue,
+    Unallocated,
+    Oldest,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ClientSortPreference {
+    pub key: ClientSortKey,
+    pub desc: bool,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ClientGroupLabelsFile {
     version: u8,
     labels: ClientGroupLabels,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sort: Option<ClientSortPreference>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -39,15 +59,19 @@ pub enum ClientGroupLabelsError {
 }
 
 pub fn load(directory: &Path) -> ClientGroupLabels {
-    try_load(directory).unwrap_or_default()
+    try_load(directory)
+        .map(|file| file.labels)
+        .unwrap_or_default()
 }
 
-fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsError> {
+pub fn load_sort_preference(directory: &Path) -> Option<ClientSortPreference> {
+    try_load(directory).ok().and_then(|file| file.sort)
+}
+
+fn try_load(directory: &Path) -> Result<ClientGroupLabelsFile, ClientGroupLabelsError> {
     let contents = match std::fs::read_to_string(directory.join(FILE_NAME)) {
         Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ClientGroupLabels::new())
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(empty_file()),
         Err(error) => return Err(ClientGroupLabelsError::Read(error)),
     };
     if contents.trim().is_empty() {
@@ -63,7 +87,19 @@ fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsErro
         });
     }
 
-    Ok(normalize(file.labels))
+    Ok(ClientGroupLabelsFile {
+        version: SCHEMA_VERSION,
+        labels: normalize(file.labels),
+        sort: file.sort,
+    })
+}
+
+fn empty_file() -> ClientGroupLabelsFile {
+    ClientGroupLabelsFile {
+        version: SCHEMA_VERSION,
+        labels: ClientGroupLabels::new(),
+        sort: None,
+    }
 }
 
 pub fn save_label(
@@ -71,22 +107,33 @@ pub fn save_label(
     company_guid: &str,
     label: &str,
 ) -> Result<(), ClientGroupLabelsError> {
-    let mut labels = try_load(directory)?;
+    let mut file = try_load(directory)?;
     let company_guid = company_guid.trim();
     let label = label.trim();
     if label.is_empty() {
-        labels.remove(company_guid);
+        file.labels.remove(company_guid);
     } else {
-        labels.insert(company_guid.to_string(), label.to_string());
+        file.labels
+            .insert(company_guid.to_string(), label.to_string());
     }
 
+    save_file(directory, file)
+}
+
+pub fn save_sort_preference(
+    directory: &Path,
+    sort: ClientSortPreference,
+) -> Result<(), ClientGroupLabelsError> {
+    let mut file = try_load(directory)?;
+    file.sort = Some(sort);
+    save_file(directory, file)
+}
+
+fn save_file(directory: &Path, file: ClientGroupLabelsFile) -> Result<(), ClientGroupLabelsError> {
     std::fs::create_dir_all(directory).map_err(ClientGroupLabelsError::Write)?;
     let path = directory.join(FILE_NAME);
-    let contents = serde_json::to_vec_pretty(&ClientGroupLabelsFile {
-        version: SCHEMA_VERSION,
-        labels,
-    })
-    .expect("client group label schema always serializes");
+    let contents =
+        serde_json::to_vec_pretty(&file).expect("client preference schema always serializes");
     write_file_atomically(&path, &contents).map_err(ClientGroupLabelsError::Write)?;
     #[cfg(unix)]
     {
@@ -280,5 +327,24 @@ mod tests {
             Err(ClientGroupLabelsError::Read(_))
         ));
         assert!(unreadable_path.is_dir());
+    }
+
+    #[test]
+    fn sort_preference_survives_a_reload_without_changing_group_labels() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        save_label(directory.path(), "synthetic-company-guid", "North practice")
+            .expect("save label");
+        let sort = ClientSortPreference {
+            key: ClientSortKey::Unallocated,
+            desc: false,
+        };
+
+        save_sort_preference(directory.path(), sort.clone()).expect("save sort preference");
+
+        assert_eq!(load_sort_preference(directory.path()), Some(sort));
+        assert_eq!(
+            load(directory.path()).get("synthetic-company-guid"),
+            Some(&"North practice".to_string())
+        );
     }
 }
