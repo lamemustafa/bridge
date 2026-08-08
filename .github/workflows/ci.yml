@@ -217,6 +217,8 @@ jobs:
           ../docs/tally/support-matrix.md
       - name: Enforce no-write live-read dependency boundary
         run: node scripts/check-tally-live-read-boundary.mjs
+      - name: Enforce fixture byte integrity
+        run: node scripts/check-fixture-byte-integrity.mjs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tally-parser-qualification-smoke
