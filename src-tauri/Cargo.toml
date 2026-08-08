@@ -88,6 +88,7 @@ pdf-writer = "0.15.0"
 
 [dev-dependencies]
 tally-protocol-simulator = { path = "crates/tally-protocol-simulator" }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

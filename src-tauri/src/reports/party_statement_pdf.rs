@@ -292,6 +292,8 @@ mod tests {
     use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
     use crate::tally::{OpenBillRow, UnallocatedParty};
     use bridge_tally_core::ExactDecimal;
+    use std::io::{Cursor, Read};
+    use zip::ZipArchive;
 
     fn bill(reference: &str, amount: &str, age_days: u32) -> OpenBillRow {
         OpenBillRow {
@@ -337,6 +339,18 @@ mod tests {
         haystack
             .windows(needle.len())
             .position(|window| window == needle)
+    }
+
+    fn xlsx_sheet_xml(xlsx: &[u8]) -> String {
+        let mut archive = ZipArchive::new(Cursor::new(xlsx)).expect("well-formed XLSX archive");
+        let mut sheet = archive
+            .by_name("xl/worksheets/sheet1.xml")
+            .expect("statement worksheet exists");
+        let mut xml = String::new();
+        sheet
+            .read_to_string(&mut xml)
+            .expect("statement worksheet is UTF-8 XML");
+        xml
     }
 
     #[test]
@@ -397,8 +411,9 @@ mod tests {
 
         let xlsx = render_party_statement_xlsx(&statement).unwrap();
         let pdf_text = extracted_text(&render_party_statement_pdf(&statement).unwrap());
-        assert!(!xlsx.is_empty());
         assert_eq!(statement.grand_total.as_str(), "1600");
+        // `1600` appears only in the XLSX grand-total cell for this fixture.
+        assert!(xlsx_sheet_xml(&xlsx).contains("<v>1600</v>"));
         assert!(pdf_text.contains("Grand total: INR 1,600"));
     }
 
