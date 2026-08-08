@@ -86,7 +86,12 @@ pub fn render_party_statement_xlsx(
         worksheet.write_string(row, 0, bill.reference.as_str())?;
         worksheet.write_datetime_with_format(row, 1, excel_date(&bill.bill_date)?, &date_format)?;
         worksheet.write_datetime_with_format(row, 2, excel_date(&bill.due_date)?, &date_format)?;
-        worksheet.write_number_with_format(row, 3, amount_to_f64(&bill.amount)?, &amount_format)?;
+        worksheet.write_number_with_format(
+            row,
+            3,
+            amount_to_f64(bill.amount.as_str())?,
+            &amount_format,
+        )?;
         worksheet.write_number(row, 4, bill.age_days)?;
         worksheet.write_string(row, 5, bill.bucket.label())?;
         row += 1;
@@ -96,7 +101,7 @@ pub fn render_party_statement_xlsx(
     worksheet.write_number_with_format(
         row,
         3,
-        amount_to_f64(&statement.bill_total)?,
+        amount_to_f64(statement.bill_total.as_str())?,
         &bold_amount_format,
     )?;
     row += 1;
@@ -106,7 +111,7 @@ pub fn render_party_statement_xlsx(
         worksheet.write_number_with_format(
             row,
             3,
-            amount_to_f64(&statement.unallocated)?,
+            amount_to_f64(statement.unallocated.as_str())?,
             &amount_format,
         )?;
         row += 1;
@@ -115,7 +120,7 @@ pub fn render_party_statement_xlsx(
         worksheet.write_number_with_format(
             row,
             3,
-            amount_to_f64(&statement.grand_total)?,
+            amount_to_f64(statement.grand_total.as_str())?,
             &bold_amount_format,
         )?;
     }
@@ -152,8 +157,7 @@ pub fn render_party_statement_xlsx(
 ///
 /// Bridge's own arithmetic never touches `f64`; this is the last step before
 /// the cell, and Excel has no exact-decimal cell type to target instead.
-fn amount_to_f64(amount: &bridge_tally_core::ExactDecimal) -> Result<f64, PartyStatementXlsxError> {
-    let text = amount.as_str();
+fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> {
     let value = text
         .parse::<f64>()
         .map_err(|_| PartyStatementXlsxError::InvalidAmount(text.to_string()))?;
@@ -183,18 +187,17 @@ mod tests {
     /// would have written a real bill as zero into a document sent to a client.
     #[test]
     fn an_unrepresentable_amount_fails_instead_of_becoming_zero() {
-        let bad = bridge_tally_core::ExactDecimal::parse("12").expect("valid seed");
         // Sanity: a well-formed amount converts.
-        assert!(amount_to_f64(&bad).is_ok());
+        assert!(amount_to_f64("12").is_ok());
 
-        // A value Excel's number cell cannot hold must be refused outright.
-        // `ExactDecimal` is string-backed, so this exercises the parse guard.
+        // Every malformed or non-finite value must be refused outright. The
+        // string is this private conversion boundary's direct input; an
+        // `ExactDecimal` has already rejected malformed source data earlier.
         for unrepresentable in ["", "not-a-number", "1e999"] {
-            let result = "1e999".parse::<f64>();
-            if unrepresentable == "1e999" {
-                // f64 parses this as +inf; the finiteness guard must catch it.
-                assert!(result.is_ok_and(|value| !value.is_finite()));
-            }
+            assert!(matches!(
+                amount_to_f64(unrepresentable),
+                Err(PartyStatementXlsxError::InvalidAmount(value)) if value == unrepresentable
+            ));
         }
     }
     use super::*;
