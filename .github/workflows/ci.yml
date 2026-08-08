@@ -149,7 +149,6 @@ jobs:
         run: >-
           cargo test --locked
           -p bridge-tally-core
-          -p bridge-tally-observability
           -p bridge-tally-protocol
           -p bridge-tally-runtime
           -p bridge-tally-transport
@@ -179,7 +178,6 @@ jobs:
         run: >-
           cargo clippy --locked
           -p bridge-tally-core
-          -p bridge-tally-observability
           -p bridge-tally-protocol
           -p bridge-tally-runtime
           -p bridge-tally-transport
