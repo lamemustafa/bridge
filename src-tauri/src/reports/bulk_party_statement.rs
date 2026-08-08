@@ -302,6 +302,10 @@ mod tests {
         assert!(file.starts_with(destination.path()));
         assert!(file.is_file());
         assert_eq!(
+            fs::read(&file).expect("statement bytes are readable"),
+            b"synthetic workbook"
+        );
+        assert_eq!(
             result.written[0].file_name,
             "statement-etc-passwd-20260808.xlsx"
         );
@@ -367,6 +371,29 @@ mod tests {
 
         assert_eq!(result.written[0].receivable_amount, "10");
         assert_eq!(result.written[0].payable_amount, "7");
+    }
+
+    #[test]
+    fn per_party_file_creation_failure_is_retained_in_the_manifest() {
+        let destination = tempfile::tempdir().expect("temporary destination");
+        let result = write_bulk_party_statements(
+            destination.path(),
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "pdf/invalid",
+            &[bill("Write Failure", "10.00")],
+            &[],
+            |_| Ok(b"synthetic PDF".to_vec()),
+        )
+        .expect("a partial batch result is returned");
+
+        assert!(result.written.is_empty());
+        assert_eq!(result.failures.len(), 1);
+        assert_eq!(result.failures[0].party, "Write Failure");
+        assert!(result.failures[0].error.contains("could not create"));
+        let manifest = fs::read_to_string(&result.manifest_path).expect("manifest is written");
+        assert!(manifest.contains("Write Failure"));
+        assert!(manifest.contains("could not create"));
     }
 
     #[test]

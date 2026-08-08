@@ -2843,8 +2843,7 @@ fn save_report_download_bytes(
     contents: &[u8],
 ) -> Result<String, String> {
     use tauri::Manager as _;
-    let file_name = portable_export_file_name(file_name)?;
-
+    let file_name = checked_export_file_name(file_name)?;
     // Tauri's own path resolver, so this needs no extra crate and no
     // capability grant.
     let downloads = app
@@ -2855,6 +2854,10 @@ fn save_report_download_bytes(
     let path = write_unique_download(&downloads, &file_name, contents)
         .map_err(|error| format!("Bridge could not write the export: {error}"))?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+fn checked_export_file_name(file_name: &str) -> Result<String, String> {
+    portable_export_file_name(file_name)
 }
 
 /// Reveals an exported file in the OS file manager.
@@ -3243,6 +3246,32 @@ mod party_statement_export_tests {
         pdf["format"] = serde_json::Value::String("pdf".to_string());
         let pdf: ExportPartyStatementRequest = serde_json::from_value(pdf).unwrap();
         assert!(matches!(pdf.format, PartyStatementFormat::Pdf));
+    }
+
+    #[test]
+    fn local_export_file_names_reject_path_like_and_hidden_values() {
+        assert_eq!(
+            checked_export_file_name(" statement.csv ").unwrap(),
+            "statement.csv"
+        );
+        for name in [
+            "",
+            ".hidden.csv",
+            "../statement.csv",
+            "nested/report.csv",
+            "nested\\report.csv",
+        ] {
+            assert!(
+                checked_export_file_name(name).is_err(),
+                "{name:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn statement_party_slug_is_portable_and_nonempty() {
+        assert_eq!(statement_filename_slug("  ../Aarav & Sons  "), "aarav-sons");
+        assert_eq!(statement_filename_slug("///"), "party");
     }
 }
 
