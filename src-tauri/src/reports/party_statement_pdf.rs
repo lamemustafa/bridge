@@ -1,0 +1,436 @@
+//! Renders a [`PartyStatement`] as a printable, text-extractable PDF.
+//!
+//! The PDF uses the PDF-standard Helvetica fonts so it needs no bundled font
+//! asset. Those fonts do not contain the rupee glyph, therefore amounts are
+//! intentionally written as `INR 1,234.50`: no accounting value can disappear
+//! behind an unsupported glyph.
+
+use pdf_writer::{Content, Name, Pdf, Rect, Ref, Str};
+
+use super::party_statement::PartyStatement;
+
+const PAGE_WIDTH: f32 = 595.0;
+const PAGE_HEIGHT: f32 = 842.0;
+const MARGIN: f32 = 42.0;
+const BODY_FONT_SIZE: f32 = 9.0;
+const HEADING_FONT_SIZE: f32 = 12.0;
+const LINE_HEIGHT: f32 = 14.0;
+const MAX_LINE_BYTES: usize = 82;
+const LINES_PER_PAGE: usize = 52;
+
+#[derive(Debug, thiserror::Error)]
+pub enum PartyStatementPdfError {
+    #[error("Bridge could not read a statement date for the PDF ({0})")]
+    InvalidDate(String),
+    #[error("Bridge could not represent an amount in the PDF ({0})")]
+    InvalidAmount(String),
+    #[error("Bridge could not represent statement text in the PDF's built-in font")]
+    UnsupportedText,
+    #[error("Bridge could not allocate PDF pages for this statement")]
+    TooManyPages,
+}
+
+#[derive(Debug)]
+struct PdfLine {
+    text: String,
+    bold: bool,
+}
+
+impl PdfLine {
+    fn body(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            bold: false,
+        }
+    }
+
+    fn bold(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            bold: true,
+        }
+    }
+}
+
+/// Renders `statement` as in-memory PDF bytes.
+///
+/// Every display amount takes the same fail-closed conversion boundary as the
+/// XLSX export before it reaches the document. The PDF keeps the validated
+/// decimal text, rather than writing the lossy floating-point value, so the
+/// printed figure remains the exact model value.
+pub fn render_party_statement_pdf(
+    statement: &PartyStatement,
+) -> Result<Vec<u8>, PartyStatementPdfError> {
+    let lines = statement_lines(statement)?;
+    let page_count = lines.len().div_ceil(LINES_PER_PAGE).max(1);
+    let page_count_i32 =
+        i32::try_from(page_count).map_err(|_| PartyStatementPdfError::TooManyPages)?;
+
+    let catalog_id = Ref::new(1);
+    let pages_id = Ref::new(2);
+    let regular_font_id = Ref::new(3);
+    let bold_font_id = Ref::new(4);
+    let regular_font = Name(b"F1");
+    let bold_font = Name(b"F2");
+    let mut pdf = Pdf::new();
+
+    pdf.catalog(catalog_id).pages(pages_id);
+    let page_ids: Vec<_> = (0..page_count)
+        .map(|index| {
+            i32::try_from(index)
+                .map(|index| Ref::new(10 + index * 2))
+                .map_err(|_| PartyStatementPdfError::TooManyPages)
+        })
+        .collect::<Result<_, _>>()?;
+    pdf.pages(pages_id)
+        .kids(page_ids.iter().copied())
+        .count(page_count_i32);
+    pdf.type1_font(regular_font_id)
+        .base_font(Name(b"Helvetica"));
+    pdf.type1_font(bold_font_id)
+        .base_font(Name(b"Helvetica-Bold"));
+
+    for (page_index, page_lines) in lines.chunks(LINES_PER_PAGE).enumerate() {
+        let page_id = page_ids[page_index];
+        let content_id = i32::try_from(page_index)
+            .map(|index| Ref::new(11 + index * 2))
+            .map_err(|_| PartyStatementPdfError::TooManyPages)?;
+        {
+            let mut page = pdf.page(page_id);
+            page.parent(pages_id)
+                .media_box(Rect::new(0.0, 0.0, PAGE_WIDTH, PAGE_HEIGHT))
+                .contents(content_id);
+            page.resources()
+                .fonts()
+                .pair(regular_font, regular_font_id)
+                .pair(bold_font, bold_font_id);
+        }
+
+        let mut content = Content::new();
+        content.begin_text();
+        for (line_index, line) in page_lines.iter().enumerate() {
+            let font = if line.bold { bold_font } else { regular_font };
+            let font_size = if line.bold {
+                HEADING_FONT_SIZE
+            } else {
+                BODY_FONT_SIZE
+            };
+            let y = PAGE_HEIGHT - MARGIN - (line_index as f32 * LINE_HEIGHT);
+            content
+                .set_font(font, font_size)
+                .set_text_matrix([1.0, 0.0, 0.0, 1.0, MARGIN, y])
+                .show(Str(line.text.as_bytes()));
+        }
+        content.end_text();
+        pdf.stream(content_id, &content.finish());
+    }
+
+    Ok(pdf.finish())
+}
+
+fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStatementPdfError> {
+    let mut lines = Vec::new();
+    push_wrapped(&mut lines, "Party statement", true)?;
+    push_label_value(&mut lines, "Company", &statement.company)?;
+    push_label_value(&mut lines, "Party", &statement.party)?;
+    push_label_value(
+        &mut lines,
+        "As of",
+        &display_date(&statement.as_of_yyyymmdd)?,
+    )?;
+    lines.push(PdfLine::body(""));
+
+    if !statement.unallocated.is_zero() {
+        push_wrapped(
+            &mut lines,
+            "Also carries exposure with no bill reference -- shown separately below, not aged.",
+            false,
+        )?;
+        lines.push(PdfLine::body(""));
+    }
+
+    push_wrapped(
+        &mut lines,
+        "Reference | Bill date | Due date | Amount | Age (days) | Bucket",
+        true,
+    )?;
+    for bill in &statement.bills {
+        let amount = display_amount(&bill.amount)?;
+        let row = format!(
+            "{} | {} | {} | {} | {} | {}",
+            bill.reference,
+            display_date(&bill.bill_date)?,
+            display_date(&bill.due_date)?,
+            amount,
+            bill.age_days,
+            bill.bucket.label(),
+        );
+        push_wrapped(&mut lines, &row, false)?;
+    }
+
+    push_label_value(
+        &mut lines,
+        "Total bills",
+        &display_amount(&statement.bill_total)?,
+    )?;
+    if !statement.unallocated.is_zero() {
+        push_label_value(
+            &mut lines,
+            "Unallocated (no bill reference)",
+            &display_amount(&statement.unallocated)?,
+        )?;
+        push_label_value(
+            &mut lines,
+            "Grand total",
+            &display_amount(&statement.grand_total)?,
+        )?;
+    }
+    Ok(lines)
+}
+
+fn push_label_value(
+    lines: &mut Vec<PdfLine>,
+    label: &str,
+    value: &str,
+) -> Result<(), PartyStatementPdfError> {
+    push_wrapped(lines, &format!("{label}: {value}"), false)
+}
+
+fn push_wrapped(
+    lines: &mut Vec<PdfLine>,
+    text: &str,
+    bold: bool,
+) -> Result<(), PartyStatementPdfError> {
+    if !text.bytes().all(|byte| matches!(byte, b' '..=b'~')) {
+        return Err(PartyStatementPdfError::UnsupportedText);
+    }
+    if text.is_empty() {
+        lines.push(PdfLine::body(""));
+        return Ok(());
+    }
+    for chunk in text.as_bytes().chunks(MAX_LINE_BYTES) {
+        let text = std::str::from_utf8(chunk).expect("ASCII was checked above");
+        lines.push(if bold {
+            PdfLine::bold(text)
+        } else {
+            PdfLine::body(text)
+        });
+    }
+    Ok(())
+}
+
+fn display_date(yyyymmdd: &str) -> Result<String, PartyStatementPdfError> {
+    if yyyymmdd.len() != 8 || !yyyymmdd.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(PartyStatementPdfError::InvalidDate(yyyymmdd.to_string()));
+    }
+    let year = yyyymmdd[0..4]
+        .parse::<i32>()
+        .map_err(|_| PartyStatementPdfError::InvalidDate(yyyymmdd.to_string()))?;
+    let month = yyyymmdd[4..6]
+        .parse::<u32>()
+        .map_err(|_| PartyStatementPdfError::InvalidDate(yyyymmdd.to_string()))?;
+    let day = yyyymmdd[6..8]
+        .parse::<u32>()
+        .map_err(|_| PartyStatementPdfError::InvalidDate(yyyymmdd.to_string()))?;
+    chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .map(|date| date.format("%d-%b-%Y").to_string())
+        .ok_or_else(|| PartyStatementPdfError::InvalidDate(yyyymmdd.to_string()))
+}
+
+fn display_amount(
+    amount: &bridge_tally_core::ExactDecimal,
+) -> Result<String, PartyStatementPdfError> {
+    amount_text_for_pdf(amount.as_str())
+}
+
+fn amount_text_for_pdf(text: &str) -> Result<String, PartyStatementPdfError> {
+    let value = text
+        .parse::<f64>()
+        .map_err(|_| PartyStatementPdfError::InvalidAmount(text.to_string()))?;
+    if !value.is_finite() {
+        return Err(PartyStatementPdfError::InvalidAmount(text.to_string()));
+    }
+    Ok(format!("INR {}", indian_grouped_decimal(text)))
+}
+
+fn indian_grouped_decimal(text: &str) -> String {
+    let (sign, unsigned) = text
+        .strip_prefix('-')
+        .map_or(("", text), |value| ("-", value));
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    let mut grouped = String::with_capacity(text.len() + text.len() / 2);
+    grouped.push_str(sign);
+    let first_group_len = if whole.len() <= 3 {
+        whole.len()
+    } else {
+        let prefix_len = (whole.len() - 3) % 2;
+        if prefix_len == 0 {
+            2
+        } else {
+            prefix_len
+        }
+    };
+    grouped.push_str(&whole[..first_group_len]);
+    let mut remainder = &whole[first_group_len..];
+    while !remainder.is_empty() {
+        grouped.push(',');
+        let group_len = if remainder.len() == 3 { 3 } else { 2 };
+        grouped.push_str(&remainder[..group_len]);
+        remainder = &remainder[group_len..];
+    }
+    if !fraction.is_empty() {
+        grouped.push('.');
+        grouped.push_str(fraction);
+    }
+    grouped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reports::party_statement::build_party_statement;
+    use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
+    use crate::tally::{OpenBillRow, UnallocatedParty};
+    use bridge_tally_core::ExactDecimal;
+
+    fn bill(reference: &str, amount: &str, age_days: u32) -> OpenBillRow {
+        OpenBillRow {
+            party: "Synthetic Party".to_string(),
+            reference: reference.to_string(),
+            bill_date: "20260101".to_string(),
+            due_date: "20260201".to_string(),
+            amount: ExactDecimal::parse(amount).unwrap(),
+            age_days,
+            kind: "receivable",
+        }
+    }
+
+    fn extracted_text(pdf: &[u8]) -> String {
+        // pdf-writer emits uncompressed content streams. Extracting literal
+        // text operands here tests the generated document rather than merely
+        // inspecting the model that was meant to be written.
+        let mut extracted = String::new();
+        let mut remainder = pdf;
+        while let Some(start) = find_bytes(remainder, b"stream\n") {
+            remainder = &remainder[start + b"stream\n".len()..];
+            let Some(end) = find_bytes(remainder, b"\nendstream") else {
+                break;
+            };
+            let content =
+                std::str::from_utf8(&remainder[..end]).expect("statement text streams are ASCII");
+            let mut content_remainder = content;
+            while let Some(open) = content_remainder.find('(') {
+                content_remainder = &content_remainder[open + 1..];
+                let Some(close) = content_remainder.find(')') else {
+                    break;
+                };
+                extracted.push_str(&content_remainder[..close]);
+                extracted.push('\n');
+                content_remainder = &content_remainder[close + 1..];
+            }
+            remainder = &remainder[end + b"\nendstream".len()..];
+        }
+        extracted
+    }
+
+    fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack
+            .windows(needle.len())
+            .position(|window| window == needle)
+    }
+
+    #[test]
+    fn renders_extractable_inr_text_instead_of_an_unsupported_rupee_glyph() {
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "Synthetic Party",
+            &[bill("INV-1", "1250.75", 40)],
+            &[],
+        )
+        .unwrap();
+
+        let pdf = render_party_statement_pdf(&statement).unwrap();
+        let text = extracted_text(&pdf);
+        assert!(text.contains("INR 1,250.75"));
+        assert!(!text.contains('\u{20b9}'));
+    }
+
+    #[test]
+    fn long_party_and_bill_names_are_wrapped_without_being_clipped() {
+        let long_party = "Synthetic Party With A Deliberately Long Ledger Name That Exceeds A Single Printable Statement Line";
+        let long_reference = "SYNTHETIC-REFERENCE-WITH-A-DELIBERATELY-LONG-BILL-NAME-THAT-MUST-WRAP-WITHOUT-CLIPPING";
+        let mut source_bill = bill(long_reference, "1.00", 1);
+        source_bill.party = long_party.to_string();
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            long_party,
+            &[source_bill],
+            &[],
+        )
+        .unwrap();
+
+        let text = extracted_text(&render_party_statement_pdf(&statement).unwrap());
+        // Line wrapping inserts extraction boundaries, but must not lose any
+        // character from either untrusted Tally field.
+        let joined = text.replace('\n', "");
+        assert!(joined.contains(long_party));
+        assert!(joined.contains(long_reference));
+    }
+
+    #[test]
+    fn xlsx_and_pdf_render_the_same_model_total() {
+        let bills = vec![bill("INV-1", "1250.75", 40), bill("INV-2", "49.25", 4)];
+        let unallocated = vec![UnallocatedParty {
+            party: "Synthetic Party".to_string(),
+            amount: ExactDecimal::parse("300.00").unwrap(),
+        }];
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "Synthetic Party",
+            &bills,
+            &unallocated,
+        )
+        .unwrap();
+
+        let xlsx = render_party_statement_xlsx(&statement).unwrap();
+        let pdf_text = extracted_text(&render_party_statement_pdf(&statement).unwrap());
+        assert!(!xlsx.is_empty());
+        assert_eq!(statement.grand_total.as_str(), "1600");
+        assert!(pdf_text.contains("Grand total: INR 1,600"));
+    }
+
+    #[test]
+    fn unsupported_statement_text_fails_instead_of_becoming_blank() {
+        let party = "Party with a non-core glyph: \u{20b9}";
+        let mut source_bill = bill("INV-1", "10.00", 5);
+        source_bill.party = party.to_string();
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            party,
+            &[source_bill],
+            &[],
+        )
+        .unwrap();
+
+        assert!(matches!(
+            render_party_statement_pdf(&statement),
+            Err(PartyStatementPdfError::UnsupportedText)
+        ));
+    }
+
+    #[test]
+    fn an_unrepresentable_amount_fails_instead_of_becoming_zero() {
+        assert_eq!(
+            amount_text_for_pdf("12345678.20").unwrap(),
+            "INR 1,23,45,678.20"
+        );
+        assert!(matches!(
+            amount_text_for_pdf("1e999"),
+            Err(PartyStatementPdfError::InvalidAmount(value)) if value == "1e999"
+        ));
+    }
+}
