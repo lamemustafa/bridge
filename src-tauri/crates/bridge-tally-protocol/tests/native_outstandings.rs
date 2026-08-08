@@ -312,11 +312,11 @@ fn ageing_lab_due_date_anchor_reproduces_tally_overdue_bill_date_does_not() {
 
 // ---------------------------------------------------------------------
 // Grammar rule 2 / empty-response handling: a bare `<ENVELOPE></ENVELOPE>`
-// (22 bytes) is legitimate zero-row success, not an error.
+// (23 bytes) is legitimate zero-row success, not an error.
 // ---------------------------------------------------------------------
 #[test]
 fn empty_bills_response_is_legitimate_zero_row_success() {
-    assert_eq!(BILLS_PAYABLE_BILLWISE_LAB_EMPTY.len(), 22);
+    assert_eq!(BILLS_PAYABLE_BILLWISE_LAB_EMPTY.len(), 23);
     let rows = parse_native_bill_rows(
         BILLS_PAYABLE_BILLWISE_LAB_EMPTY,
         &as_of(BILLWISE_LAB_BOOKS_FROM),
