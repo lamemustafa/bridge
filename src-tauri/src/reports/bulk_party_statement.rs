@@ -52,7 +52,6 @@ pub fn write_bulk_party_statements(
     company: &str,
     as_of_yyyymmdd: &str,
     format: &str,
-    extension: &str,
     open_bills: &[OpenBillRow],
     unallocated_by_party: &[UnallocatedParty],
     render: impl Fn(&PartyStatement) -> Result<Vec<u8>, String>,
@@ -93,7 +92,7 @@ pub fn write_bulk_party_statements(
             "statement-{}-{as_of_yyyymmdd}",
             safe_party_slug(&statement.party)
         );
-        match write_unique_file(destination, &stem, extension, &bytes) {
+        match write_unique_file(destination, &stem, format, &bytes) {
             Ok(path) => written.push(WrittenStatement {
                 party,
                 file_name: file_name(&path)?,
@@ -141,6 +140,16 @@ fn statement_parties(
                 .map(|entry| entry.party.clone()),
         )
         .collect()
+}
+
+/// Counts the non-zero, exact-name parties that a bulk statement would cover.
+/// This is shared by the operator preview and the writer so their scopes
+/// cannot diverge.
+pub fn bulk_party_statement_party_count(
+    open_bills: &[OpenBillRow],
+    unallocated_by_party: &[UnallocatedParty],
+) -> usize {
+    statement_parties(open_bills, unallocated_by_party).len()
 }
 
 /// Converts arbitrary ledger text to a portable ASCII filename component.
@@ -240,7 +249,6 @@ mod tests {
             "Synthetic Books Pvt Ltd",
             "20260808",
             "xlsx",
-            "xlsx",
             &[bill("../../etc/passwd", "15.00")],
             &[],
             |_| Ok(b"synthetic workbook".to_vec()),
@@ -264,7 +272,6 @@ mod tests {
             destination.path(),
             "Synthetic Books Pvt Ltd",
             "20260808",
-            "pdf",
             "pdf",
             &[bill("Good Party", "10.00"), bill("Broken Party", "20.00")],
             &[],
@@ -298,7 +305,6 @@ mod tests {
             "Synthetic Books Pvt Ltd",
             "20260808",
             "xlsx",
-            "xlsx",
             &[bill("A/B", "10.00"), bill("A:B", "20.00")],
             &[],
             |_| Ok(b"synthetic workbook".to_vec()),
@@ -311,5 +317,35 @@ mod tests {
             .written
             .iter()
             .all(|entry| destination.path().join(&entry.file_name).is_file()));
+    }
+
+    #[test]
+    fn party_count_deduplicates_nonzero_bill_and_unallocated_parties() {
+        let unallocated = vec![
+            UnallocatedParty {
+                party: "Bill and On Account".to_string(),
+                amount: ExactDecimal::parse("25.00").expect("synthetic decimal"),
+            },
+            UnallocatedParty {
+                party: "On Account Only".to_string(),
+                amount: ExactDecimal::parse("10.00").expect("synthetic decimal"),
+            },
+            UnallocatedParty {
+                party: "Zero Balance".to_string(),
+                amount: ExactDecimal::zero(),
+            },
+        ];
+
+        assert_eq!(
+            bulk_party_statement_party_count(
+                &[
+                    bill("Bill and On Account", "15.00"),
+                    bill("Bill Only", "5.00"),
+                    bill("Zero Balance", "0"),
+                ],
+                &unallocated,
+            ),
+            3
+        );
     }
 }

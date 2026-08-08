@@ -127,29 +127,21 @@ pub enum OutstandingsLoadResult {
         /// the bills would be short by 96% with nothing to indicate it.
         #[serde(skip_serializing_if = "Option::is_none")]
         unallocated_total: Option<ExactDecimal>,
-        /// Per-party unallocated exposure, largest first.
+        /// Complete per-party unallocated exposure, largest first. The
+        /// frontend applies its display limit locally so the same data can
+        /// also power complete statement exports without a duplicate payload.
         ///
         /// On a book where most balances carry no bill reference, the ageing
         /// buckets describe a rounding error and this list is the actual
         /// answer -- so it is surfaced rather than collapsed into the single
         /// total above. Empty when the path cannot establish it.
         #[serde(skip_serializing_if = "Vec::is_empty")]
-        unallocated_by_party: Vec<UnallocatedParty>,
-        /// Every open bill the native reports returned, so the UI can answer
-        /// "why does this party owe so much" without a second Tally request --
-        /// these rows are already in hand.
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        open_bills: Vec<OpenBillRow>,
-        /// Complete, uncapped statement source rows. Kept separate from the
-        /// display projection so a bulk statement action cannot silently omit
-        /// a party outside the dashboard's UI caps.
+        statement_unallocated_by_party: Vec<UnallocatedParty>,
+        /// Every open bill the native reports returned. The frontend applies
+        /// its display limit locally; this uncapped source is also what the
+        /// complete statement export consumes.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         statement_open_bills: Vec<OpenBillRow>,
-        /// Complete, uncapped unallocated statement source rows; see
-        /// `statement_open_bills` for why this must not reuse the top-ten UI
-        /// projection.
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        statement_unallocated_by_party: Vec<UnallocatedParty>,
     },
     Partial {
         reason_code: String,
@@ -273,7 +265,6 @@ pub enum ExposureDirection {
     Receivable,
     Payable,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutstandingsAgeingAnchor {
@@ -1430,26 +1421,14 @@ impl TallyRuntime {
                     let statement_open_bills =
                         all_open_bill_rows(&receivable_rows, &payable_rows, &as_of);
                     let statement_unallocated_by_party = all_unallocated_parties(&result.residuals);
-                    let open_bills = statement_open_bills
-                        .iter()
-                        .take(MAX_OPEN_BILL_ROWS)
-                        .cloned()
-                        .collect();
-                    let unallocated_by_party = statement_unallocated_by_party
-                        .iter()
-                        .take(10)
-                        .cloned()
-                        .collect();
                     Ok(OutstandingsLoadResult::Complete {
                         report: Box::new(result.report),
                         currency_assertion,
                         ageing_anchor: OutstandingsAgeingAnchor::DueDate,
                         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                         unallocated_total: Some(result.residual_total),
-                        unallocated_by_party,
-                        open_bills,
-                        statement_open_bills,
                         statement_unallocated_by_party,
+                        statement_open_bills,
                     })
                 }
             },
@@ -1887,10 +1866,8 @@ impl TallyRuntime {
                                 // remainder, so it must stay absent rather
                                 // than be reported as zero.
                                 unallocated_total: None,
-                                unallocated_by_party: Vec::new(),
-                                open_bills: Vec::new(),
-                                statement_open_bills: Vec::new(),
                                 statement_unallocated_by_party: Vec::new(),
+                                statement_open_bills: Vec::new(),
                             }),
                             ScanResult::Partial(partial) => {
                                 Ok(partial_result(&partial.reason_code))

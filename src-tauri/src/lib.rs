@@ -91,6 +91,7 @@ pub fn run() {
             commands::reveal_exported_file,
             commands::export_party_statement,
             commands::select_party_statement_destination,
+            commands::preview_bulk_party_statements,
             commands::export_bulk_party_statements,
             commands::fetch_tally_outstandings_all_companies,
             commands::detect_tally_base_currency,

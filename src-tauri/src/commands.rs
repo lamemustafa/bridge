@@ -9,7 +9,9 @@ use crate::db::tally_mirror::{
     WriteFixtureEnrollmentInput, WriteFixtureEnrollmentStatus,
 };
 use crate::gst::{GstDraftRequest, GstReturnDraft};
-use crate::reports::bulk_party_statement::write_bulk_party_statements;
+use crate::reports::bulk_party_statement::{
+    bulk_party_statement_party_count, write_bulk_party_statements,
+};
 use crate::reports::party_statement::{build_party_statement, PartyStatementError};
 use crate::reports::party_statement_pdf::render_party_statement_pdf;
 use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
@@ -2928,9 +2930,22 @@ pub struct ExportBulkPartyStatementsRequest {
     /// exists and is a directory before any statement name is joined to it.
     pub destination: String,
     /// These are complete statement-source rows from the finished local read,
-    /// not the top-ten/2,000-row projections rendered in the dashboard.
+    /// not the dashboard's display projections.
     pub open_bills: Vec<OpenBillRowInput>,
     pub unallocated_by_party: Vec<UnallocatedParty>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewBulkPartyStatementsRequest {
+    /// The same complete rows the export command will consume. This command
+    /// performs no I/O or Tally read; it only makes the pending scope explicit.
+    pub open_bills: Vec<OpenBillRowInput>,
+    pub unallocated_by_party: Vec<UnallocatedParty>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkPartyStatementsPreview {
+    pub party_count: usize,
 }
 
 /// Lets the operator choose where the whole statement batch will be written.
@@ -2944,6 +2959,23 @@ pub async fn select_party_statement_destination() -> Result<Option<String>, Stri
     })
     .await
     .map_err(|_| "Bridge could not open the statement destination picker.".to_string())?
+}
+
+/// Counts the unique, non-zero parties that the bulk writer will process.
+/// Kept beside the writer's source conversion so the confirmation cannot use
+/// a separately implemented frontend approximation of the export scope.
+#[tauri::command]
+pub async fn preview_bulk_party_statements(
+    request: PreviewBulkPartyStatementsRequest,
+) -> Result<BulkPartyStatementsPreview, String> {
+    let open_bills = request
+        .open_bills
+        .into_iter()
+        .map(into_open_bill_row)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(BulkPartyStatementsPreview {
+        party_count: bulk_party_statement_party_count(&open_bills, &request.unallocated_by_party),
+    })
 }
 
 /// Writes a separate statement for every party in the completed source rows.
@@ -2967,7 +2999,6 @@ pub async fn export_bulk_party_statements(
             &request.company,
             &request.as_of_yyyymmdd,
             "xlsx",
-            "xlsx",
             &open_bills,
             &request.unallocated_by_party,
             |statement| render_party_statement_xlsx(statement).map_err(|error| error.to_string()),
@@ -2976,7 +3007,6 @@ pub async fn export_bulk_party_statements(
             &destination,
             &request.company,
             &request.as_of_yyyymmdd,
-            "pdf",
             "pdf",
             &open_bills,
             &request.unallocated_by_party,
