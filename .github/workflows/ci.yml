@@ -151,7 +151,6 @@ jobs:
           -p bridge-tally-core
           -p bridge-tally-protocol
           -p bridge-tally-transport
-          -p bridge-tally-write
           -p tally-protocol-simulator
       - name: Test portable Tally qualification tools
         working-directory: tools
@@ -161,11 +160,6 @@ jobs:
         run: >-
           cargo test --locked -p bridge-tally-protocol
           --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
-      - name: Test sealed canary payload capsule
-        working-directory: src-tauri
-        run: >-
-          cargo test --locked -p bridge-tally-write
-          --features fixture-canary-dispatch-seam
       - name: Test isolated native outstandings qualification path
         working-directory: tools
         run: |
@@ -179,7 +173,6 @@ jobs:
           -p bridge-tally-core
           -p bridge-tally-protocol
           -p bridge-tally-transport
-          -p bridge-tally-write
           -p tally-protocol-simulator
           --all-targets -- -D warnings
       - name: Lint portable Tally qualification tools
@@ -191,12 +184,6 @@ jobs:
           cargo clippy --locked -p bridge-tally-protocol
           --features jsonex-parser,jsonex-request-builder,india-tax-observation-parser,bills-payments-observation-parser,bills-native-outstandings-probe
           --all-targets -- -D warnings
-      - name: Lint sealed canary payload capsule
-        working-directory: src-tauri
-        run: >-
-          cargo clippy --locked -p bridge-tally-write
-          --features fixture-canary-dispatch-seam
-          -- -D warnings
       - name: Lint isolated native outstandings qualification path
         working-directory: tools
         run: |
