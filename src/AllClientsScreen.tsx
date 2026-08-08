@@ -1,0 +1,295 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import React from "react";
+import { ChevronRight, RefreshCw } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { outstandingsPartialState } from "./outstandings-copy";
+
+type CompanyRef = { name: string; guid: string };
+
+type Props = {
+  config: { host: string; port: number };
+  companies: CompanyRef[];
+  onOpenCompany: (company: CompanyRef) => void;
+  /// Returns to the single-company view. The two screens are the same
+  /// question at two altitudes, so the switch has to work both ways.
+  onBack?: () => void;
+};
+
+type Report = {
+  receivable_total: string;
+  payable_total: string;
+  ageing: { days_0_30: string; days_31_60: string; days_61_90: string; days_90_plus: string };
+  open_receivable_bill_count: number;
+  top_parties: Array<{ party: string; oldest_bill_age_days: number | null }>;
+};
+
+type LoadResult =
+  | { state: "complete"; report: Report; unallocated_total?: string }
+  | { state: "partial"; reason_code: string };
+
+type Entry = { company: string; result: LoadResult };
+
+function amountOf(value: string | undefined) {
+  const parsed = Number.parseFloat(value ?? "0");
+  return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
+}
+
+function formatMoney(value: string) {
+  const negative = value.startsWith("-");
+  const unsigned = negative ? value.slice(1) : value;
+  const [whole, fraction] = unsigned.split(".");
+  const tail = whole.slice(-3);
+  const head = whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",");
+  const grouped = head ? `${head},${tail}` : tail;
+  return `${negative ? "−" : ""}₹${grouped}${fraction ? `.${fraction.padEnd(2, "0")}` : ""}`;
+}
+
+/// Compact form for a wide table: a crore figure at full precision makes every
+/// column unreadable, and at this altitude the reader is comparing clients, not
+/// reconciling paise. The exact figure is one click away on the client's own
+/// screen, and in the export.
+function formatCompact(value: string | undefined) {
+  const amount = amountOf(value);
+  if (amount === 0) return "—";
+  if (amount >= 10_000_000) return `₹${(amount / 10_000_000).toFixed(2)} cr`;
+  if (amount >= 100_000) return `₹${(amount / 100_000).toFixed(2)} L`;
+  return `₹${Math.round(amount).toLocaleString("en-IN")}`;
+}
+
+type SortKey = "client" | "receivable" | "overdue" | "unallocated" | "oldest";
+
+/// Severity tiers reuse the ageing ramp used on the single-client screen, so a
+/// chip means the same thing in both places.
+function ageTier(days: number | null) {
+  if (days === null) return 0;
+  if (days <= 30) return 1;
+  if (days <= 60) return 2;
+  if (days <= 90) return 3;
+  return 4;
+}
+
+export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: Props) {
+  const [sort, setSort] = React.useState<{ key: SortKey; desc: boolean }>({ key: "overdue", desc: true });
+  const [entries, setEntries] = React.useState<Entry[] | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const requestVersion = React.useRef(0);
+
+  const load = React.useCallback(async () => {
+    if (companies.length === 0) return;
+    const version = requestVersion.current + 1;
+    requestVersion.current = version;
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await invoke<Entry[]>("fetch_tally_outstandings_all_companies", {
+        request: {
+          config,
+          companies: companies.map((company) => ({
+            company: company.name,
+            expected_company_guid: company.guid,
+          })),
+          currency_assertion: "INR",
+        },
+      });
+      if (requestVersion.current !== version) return;
+      setEntries(next);
+    } catch (cause) {
+      if (requestVersion.current !== version) return;
+      setEntries(null);
+      setError(
+        cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string"
+          ? cause.message
+          : "The local Tally read did not complete.",
+      );
+    } finally {
+      if (requestVersion.current === version) setLoading(false);
+    }
+  }, [config.host, config.port, companies.map((company) => company.guid).join("|")]);
+
+  const rows = React.useMemo(() => {
+    if (!entries) return [];
+    return entries
+      .map((entry) => {
+        const complete = entry.result.state === "complete" ? entry.result : null;
+        const oldest = complete
+          ? complete.report.top_parties.reduce<number | null>(
+              (worst, party) =>
+                party.oldest_bill_age_days === null
+                  ? worst
+                  : Math.max(worst ?? 0, party.oldest_bill_age_days),
+              null,
+            )
+          : null;
+        return {
+          company: entry.company,
+          complete,
+          reasonCode: entry.result.state === "partial" ? entry.result.reason_code : null,
+          receivable: complete ? amountOf(complete.report.receivable_total) : 0,
+          overdue: complete ? amountOf(complete.report.ageing.days_90_plus) : 0,
+          unallocated: complete ? amountOf(complete.unallocated_total) : 0,
+          // How much of this book's exposure Tally cannot age. It is the
+          // single best signal of whether the other numbers can be trusted,
+          // and it varies enormously between books.
+          unallocatedShare: complete && complete.unallocated_total !== undefined
+            ? Math.round(
+                amountOf(complete.unallocated_total)
+                  / Math.max(1, amountOf(complete.unallocated_total) + amountOf(complete.report.receivable_total))
+                  * 100,
+              )
+            : null,
+          oldest,
+        };
+      })
+      .sort((left, right) => {
+        const direction = sort.desc ? -1 : 1;
+        if (sort.key === "client") return left.company.localeCompare(right.company) * direction;
+        if (sort.key === "oldest") {
+          // A book with no aged bill has no "oldest" -- it must not sort as
+          // zero and look the least urgent thing on the screen.
+          const l = left.oldest ?? -1;
+          const r = right.oldest ?? -1;
+          return (l - r) * direction;
+        }
+        return (left[sort.key] - right[sort.key]) * direction;
+      });
+  }, [entries, sort]);
+
+  const totals = React.useMemo(() => rows.reduce(
+    (sum, row) => ({
+      receivable: sum.receivable + row.receivable,
+      overdue: sum.overdue + row.overdue,
+      unallocated: sum.unallocated + row.unallocated,
+    }),
+    { receivable: 0, overdue: 0, unallocated: 0 },
+  ), [rows]);
+
+  const readable = rows.filter((row) => row.complete).length;
+  const largestExposure = Math.max(...rows.map((row) => row.receivable + row.unallocated), 0);
+
+  return (
+    <section className="clients-screen" aria-busy={loading}>
+      <div className="outstandings-heading">
+        <div>
+          <h2>All clients</h2>
+          <p>
+            {entries
+              ? `${readable} of ${rows.length} ${rows.length === 1 ? "book" : "books"} read`
+              : `${companies.length} ${companies.length === 1 ? "book" : "books"} open in Tally`}
+          </p>
+        </div>
+        <div className="outstandings-heading-actions">
+          {onBack && (
+            <button className="secondary-action" type="button" onClick={onBack}>
+              Back to one client
+            </button>
+          )}
+          <button type="button" onClick={() => void load()} disabled={loading || companies.length === 0}>
+            <RefreshCw size={18} className={loading ? "spin" : undefined} />
+            {loading ? "Reading each book…" : entries ? "Refresh" : "Read all clients"}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="outstandings-state error" role="alert"><strong>Read failed</strong><span>{error}</span></div>}
+
+      {companies.length === 0 && (
+        <div className="outstandings-state">
+          <strong>No verified companies yet</strong>
+          <span>Open your client books in Tally and choose them under Manage Tally. Bridge reads each one in turn.</span>
+        </div>
+      )}
+
+      {!entries && !loading && companies.length > 0 && (
+        <div className="outstandings-state">
+          <strong>Ready</strong>
+          <span>Bridge reads each book in turn, one request at a time. Roughly a third of a second per company.</span>
+        </div>
+      )}
+
+      {entries && rows.length > 0 && (
+        <>
+          <div className="clients-totals" role="group" aria-label="Totals across all clients">
+            <div><span>Receivable</span><strong>{formatCompact(String(totals.receivable))}</strong></div>
+            <div><span>Overdue 90+</span><strong>{formatCompact(String(totals.overdue))}</strong></div>
+            <div><span>Unallocated</span><strong>{formatCompact(String(totals.unallocated))}</strong></div>
+          </div>
+
+          <div className="clients-table" role="table" aria-label="Outstandings by client">
+            <div className="clients-row is-head" role="row">
+              {([
+                ["client", "Client"],
+                ["receivable", "Receivable"],
+                ["overdue", "Overdue 90+"],
+                ["unallocated", "Unallocated"],
+                ["oldest", "Oldest"],
+              ] as Array<[SortKey, string]>).map(([key, label]) => (
+                <button
+                  key={key}
+                  role="columnheader"
+                  type="button"
+                  className={sort.key === key ? "is-sorted" : undefined}
+                  aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}
+                  onClick={() => setSort((current) =>
+                    current.key === key
+                      ? { key, desc: !current.desc }
+                      // Money and age default to worst-first; a name defaults
+                      // to A-Z, because "descending name" is never what is
+                      // wanted on first click.
+                      : { key, desc: key !== "client" })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {rows.map((row) => {
+              const partial = row.reasonCode ? outstandingsPartialState(row.reasonCode) : null;
+              return (
+                <button
+                  className="clients-row"
+                  role="row"
+                  type="button"
+                  key={row.company}
+                  onClick={() => {
+                    const match = companies.find((company) => company.name === row.company);
+                    if (match) onOpenCompany(match);
+                  }}
+                >
+                  {/* Magnitude behind the row: which client is biggest is
+                      readable without comparing five columns of digits. */}
+                  <span
+                    className="clients-magnitude"
+                    style={{ width: `${largestExposure > 0 ? Math.max(1, (row.receivable + row.unallocated) / largestExposure * 100) : 0}%` }}
+                    aria-hidden="true"
+                  />
+                  <span role="cell" className="clients-name">
+                    <strong>{row.company}</strong>
+                    {partial
+                      ? <em>{partial.title}</em>
+                      : row.unallocatedShare !== null && (
+                        <em>{row.unallocatedShare}% carries no bill reference</em>
+                      )}
+                  </span>
+                  {/* Every money column in the SAME unit. Mixing full precision
+                      and compact across columns made them uncomparable. */}
+                  <span role="cell">{row.complete ? formatCompact(String(row.receivable)) : "—"}</span>
+                  <span role="cell" className={row.overdue > 0 ? "is-overdue" : undefined}>
+                    {row.complete ? formatCompact(String(row.overdue)) : "—"}
+                  </span>
+                  <span role="cell">{row.complete ? formatCompact(String(row.unallocated)) : "—"}</span>
+                  <span role="cell" className="clients-age">
+                    {row.oldest === null
+                      ? <em className="age-chip is-none">none</em>
+                      : <em className={`age-chip tier-${ageTier(row.oldest)}`}>{row.oldest}d</em>}
+                    <ChevronRight size={16} aria-hidden="true" />
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}

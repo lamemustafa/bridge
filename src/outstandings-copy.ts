@@ -81,7 +81,16 @@ export function isNonRetryableOutstandingsBoundary(value: string) {
   return !outstandingsPartialState(value).retryable;
 }
 
-export function outstandingsAgeingDisclosure(hasUnagedReceivable: boolean) {
+export function outstandingsAgeingDisclosure(
+  hasUnagedReceivable: boolean,
+  unallocatedTotalKnown = false,
+) {
   if (!hasUnagedReceivable) return null;
+  if (unallocatedTotalKnown) {
+    // The native bills path recovers the unallocated balance exactly from the
+    // party ledgers, so the honest disclosure is now "shown separately" rather
+    // than "cannot be proven".
+    return "Receivable includes entries with no bill reference. Tally gives them no bill and no age, so they are excluded from these buckets and shown as Unallocated above.";
+  }
   return "Receivable includes On Account entries that are excluded from these buckets. Tally gives them no bill reference or age. Bridge does not show an On Account amount because this voucher read cannot prove the full unallocated balance.";
 }

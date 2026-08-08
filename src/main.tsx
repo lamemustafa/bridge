@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Building2, Cable, Check, CircleHelp, Cloud, Database, FileText, FolderOpen, KeyRound, Play, RefreshCw, ShieldCheck, UploadCloud } from "lucide-react";
+import { Activity, Building2, Cable, Check, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyProbeCompanySelectionTransition,
@@ -14,6 +14,13 @@ import {
 import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
 import { OutstandingsScreen } from "./OutstandingsScreen";
+import { AllClientsScreen } from "./AllClientsScreen";
+import { GstScreen } from "./GstScreen";
+import { DscScreen } from "./DscScreen";
+import { DocumentsScreen } from "./DocumentsScreen";
+import { AxalScreen } from "./AxalScreen";
+import { MirrorProofScreen } from "./MirrorProofScreen";
+import { ErrorBoundary } from "./ErrorBoundary";
 import "./styles.css";
 
 type TallyConfig = {
@@ -218,7 +225,7 @@ type TallyRuntimeSnapshot = {
   cached_capability_observed_at_unix_ms?: number;
 };
 
-type GstReturnDraft = {
+export type GstReturnDraft = {
   company: string;
   financial_year: string;
   gstr1: {
@@ -237,52 +244,7 @@ type GstReturnDraft = {
   missing_fields: string[];
 };
 
-type DscCertificate = {
-  label: string;
-  common_name?: string | null;
-  organization?: string | null;
-  issuer_name?: string | null;
-  serial_number?: string | null;
-  valid_from?: string | null;
-  valid_to?: string | null;
-  fingerprint?: string | null;
-  parse_error?: string | null;
-};
-
-type DscAttempt = {
-  token_type: string;
-  library_path: string;
-  library_exists: boolean;
-  loaded: boolean;
-  initialized: boolean;
-  slot_count: number;
-  login_success: boolean;
-  certificate_count?: number | null;
-  certificates: DscCertificate[];
-  error?: string | null;
-};
-
-type DscProbeReport = {
-  platform: string;
-  arch: string;
-  force_load: boolean;
-  detect_only: boolean;
-  attempts: DscAttempt[];
-};
-
 type AxalIntegration = "tally" | "documents" | "dsc";
-
-type AxalValidationResponse = {
-  valid: boolean;
-  status?: string | null;
-  last_synced?: string | null;
-  error?: string | null;
-};
-
-type AxalSessionResponse = {
-  credentialSessionId: string;
-  validation: AxalValidationResponse;
-};
 
 type AxalConnectionStatus = {
   connected: boolean;
@@ -297,59 +259,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type DscSyncResponse = {
-  success: boolean;
-  message: string;
-  results?: {
-    created: number;
-    updated: number;
-    skipped: number;
-    errors: string[];
-  } | null;
-};
-
-type DocumentFile = {
-  scanId: string;
-  relativePath: string;
-  size: number;
-  mtime: number;
-  extension?: string | null;
-  mimeType: string;
-  hash?: string | null;
-  contentHash?: string | null;
-  serverFileKey?: string | null;
-  multipartInfo?: {
-    uploadId: string;
-    parts: {
-      partNumber: number;
-      etag: string;
-      size: number;
-      bytesRead: number;
-    }[];
-  } | null;
-};
-
-type ScanDocumentsResponse = {
-  scanSessionId: string;
-  files: DocumentFile[];
-  totalSize: number;
-  skipped: { path: string; reason: string }[];
-};
-
-type SyncDocumentsResponse = {
-  success: boolean;
-  uploadedFiles: DocumentFile[];
-  failedFiles: { relativePath: string; error: string }[];
-  duplicateCount: number;
-  batchIds: string[];
-};
-
-type SelectedDocumentPath = {
-  selectionId: string;
-  displayName: string;
-};
-
-type View = "dashboard" | "outstandings" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -357,6 +267,7 @@ const MIRROR_PAGE_LIMIT = 25;
 
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
+  clients: "All clients",
   outstandings: "Aged outstandings",
   companies: "Connect Tally",
   gst: "GST return readiness",
@@ -462,106 +373,6 @@ function CapabilityRows({
   );
 }
 
-type GapGuidance = {
-  title: string;
-  action: string;
-  retry: "after_change" | "not_useful";
-};
-
-const GAP_GUIDANCE: Record<string, GapGuidance> = {
-  source_cut_atomicity_unavailable: {
-    title: "Atomic source cut is unavailable",
-    action: "No operator action can close this gap in the current Tally profile. The run may still be useful, but it must remain Partial.",
-    retry: "not_useful",
-  },
-  period_report_profile_unobserved: {
-    title: "Ledger-balance profile is not validated",
-    action: "Validate the exact release, mode, report configuration, scenario, optional-voucher behavior, and receipt/delivery-note tracking effects with a synthetic company before enabling this custom cross-view.",
-    retry: "not_useful",
-  },
-  voucher_header_entry_total_unavailable: {
-    title: "Voucher header totals are unavailable",
-    action: "Do not infer header totals from balanced entries. Extend the capability pack and validate the source fields first.",
-    retry: "not_useful",
-  },
-  voucher_entry_applicability_unavailable: {
-    title: "Voucher applicability is incomplete",
-    action: "Classify the voucher type and its book-effect semantics before treating missing entries as an error.",
-    retry: "not_useful",
-  },
-  record_provenance_unavailable: {
-    title: "Raw-record provenance is unavailable",
-    action: "Use a connector path that binds each canonical record to a source-fragment hash, then run a new evidence read.",
-    retry: "after_change",
-  },
-  report_tie_out_unavailable: {
-    title: "Ledger-balance cross-view did not complete",
-    action: "Check that Tally is responsive and the custom read-only report is supported, then run a new evidence read.",
-    retry: "after_change",
-  },
-  capability_profile_changed_during_run: {
-    title: "Capability profile changed during the run",
-    action: "Stabilize the Tally release, mode, loaded company, and endpoint configuration before retrying.",
-    retry: "after_change",
-  },
-  source_changed_during_run: {
-    title: "Source data changed during the run",
-    action: "Run again during a controlled quiet period. A stable reread still does not prove atomic isolation.",
-    retry: "after_change",
-  },
-  minimum_window_response_too_large: {
-    title: "One Tally day exceeds the bounded response limit",
-    action: "Bridge cannot split below one calendar day. Reduce that day's source density or use a future qualified collection filter before starting a new run; retrying unchanged will fail again.",
-    retry: "after_change",
-  },
-  adaptive_window_limit_reached: {
-    title: "Adaptive window safety limit reached",
-    action: "Start a new run for a shorter requested period. Bridge stopped before growing the durable split graph beyond its reviewed bound.",
-    retry: "after_change",
-  },
-};
-
-function guidanceForGap(code: string): GapGuidance {
-  return GAP_GUIDANCE[code] ?? {
-    title: formatIdentifier(code),
-    action: "Inspect the local Proof of Sync and support artifact. Do not retry unchanged until this gap's cause is understood.",
-    retry: "not_useful",
-  };
-}
-
-function GapMap({ codes, available }: { codes: string[]; available: boolean }) {
-  const uniqueCodes = Array.from(new Set(codes)).sort();
-  return (
-    <div className="gap-map">
-      {!available ? (
-        <div className="empty-state compact">
-          <strong>No inspected attempt; Gap Map unavailable</strong>
-          <span>Load evidence or inspect a durable run before interpreting gaps.</span>
-        </div>
-      ) : uniqueCodes.length === 0 ? (
-        <div className="empty-state compact">
-          <strong>No declared gaps in this attempt</strong>
-          <span>This does not establish accuracy unless the attempt is explicitly Verified.</span>
-        </div>
-      ) : uniqueCodes.map((code) => {
-        const guidance = guidanceForGap(code);
-        return (
-          <article className="gap-item" key={code}>
-            <div>
-              <strong>{guidance.title}</strong>
-              <code>{code}</code>
-            </div>
-            <p>{guidance.action}</p>
-            <span className={`retry-guidance retry-${guidance.retry}`}>
-              {guidance.retry === "after_change" ? "Retry only after the stated change" : "Retrying unchanged is not useful"}
-            </span>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
 function TallyErrorNotice({ message }: { message: OperatorError }) {
   const guidance = classifyTallyError(typeof message === "string" ? { message } : message);
   const displayMessage = typeof message === "string" ? message : message.message;
@@ -583,40 +394,6 @@ function TallyErrorNotice({ message }: { message: OperatorError }) {
   );
 }
 
-function CopyTokenButton({ value, label }: { value: string; label: string }) {
-  const [copyState, setCopyState] = React.useState<"idle" | "copied" | "failed">("idle");
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopyState("copied");
-      window.setTimeout(() => setCopyState("idle"), 1500);
-    } catch {
-      setCopyState("failed");
-    }
-  }
-  return (
-    <span className="copy-control">
-      <button className="copy-token" type="button" onClick={() => void copy()} aria-label={`Copy ${label}`}>
-        {copyState === "copied" ? "Copied" : "Copy"}
-      </button>
-      <span className={`copy-status ${copyState === "failed" ? "copy-failed" : ""}`} role="status" aria-live="polite">
-        {copyState === "failed" ? `Copy failed; select the ${label} text manually.` : copyState === "copied" ? `${label} copied.` : ""}
-      </span>
-      {copyState === "failed" && (
-        <input
-          className="copy-fallback"
-          aria-label={`Selectable full ${label}`}
-          readOnly
-          value={value}
-          onFocus={(event) => event.currentTarget.select()}
-        />
-      )}
-    </span>
-  );
-}
-
-const DSC_METADATA_RETENTION_MS = 5 * 60 * 1000;
-
 function App() {
   const currentFinancialYear = React.useMemo(() => getCurrentFinancialYear(), []);
   const [config, setConfig] = React.useState<TallyConfig>({ host: "localhost", port: 9000 });
@@ -634,6 +411,11 @@ function App() {
   const [untrustedDiscoveryError, setUntrustedDiscoveryError] = React.useState<OperatorError | null>(null);
   const [selectedCompany, setSelectedCompany] = React.useState("");
   const [liveCompanyKeys, setLiveCompanyKeys] = React.useState<string[]>([]);
+  // Every company Tally reports as open. Kept separate from
+  // `untrustedDiscoveredCompanies`, which is deliberately cleared once a
+  // company verifies -- clearing that list is what made the other open books
+  // disappear from the UI the moment one was chosen.
+  const [openCompanyNames, setOpenCompanyNames] = React.useState<string[]>([]);
   const [persistedCompanyProfileTotal, setPersistedCompanyProfileTotal] = React.useState(0);
   const [persistedCompanyProfilesLoaded, setPersistedCompanyProfilesLoaded] = React.useState(0);
   const [persistedCompanyProfilesTruncated, setPersistedCompanyProfilesTruncated] = React.useState(false);
@@ -659,53 +441,17 @@ function App() {
   const [gstCompany, setGstCompany] = React.useState("");
   const [gstFinancialYear, setGstFinancialYear] = React.useState(currentFinancialYear.label);
   const [draft, setDraft] = React.useState<GstReturnDraft | null>(null);
-  const [dscReport, setDscReport] = React.useState<DscProbeReport | null>(null);
-  const [dscDetectReport, setDscDetectReport] = React.useState<DscProbeReport | null>(null);
-  const [dscPin, setDscPin] = React.useState("");
-  const [dscError, setDscError] = React.useState<string | null>(null);
-  const [dscAction, setDscAction] = React.useState<"detect" | "extract" | null>(null);
-  const [dscSync, setDscSync] = React.useState<DscSyncResponse | null>(null);
-  const [dscSyncing, setDscSyncing] = React.useState(false);
-  const [axalBaseUrl, setAxalBaseUrl] = React.useState("https://complyeaze.com");
-  const [axalIntegration, setAxalIntegration] = React.useState<AxalIntegration>("dsc");
-  const [axalApiId, setAxalApiId] = React.useState("");
-  const [axalApiKey, setAxalApiKey] = React.useState("");
+  // Owned by App() and shared with the DSC, Documents, and AXAL views --
+  // AxalScreen both reads and writes these two (see its Props comment).
   const [axalSession, setAxalSession] = React.useState<{ id: string; integration: AxalIntegration } | null>(null);
-  const [axalValidation, setAxalValidation] = React.useState<AxalValidationResponse | null>(null);
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
-  const [axalError, setAxalError] = React.useState<string | null>(null);
-  const [axalAction, setAxalAction] = React.useState<"validate" | "status" | null>(null);
-  const [documentPaths, setDocumentPaths] = React.useState<SelectedDocumentPath[]>([]);
-  const [documentScan, setDocumentScan] = React.useState<ScanDocumentsResponse | null>(null);
-  const [documentSync, setDocumentSync] = React.useState<SyncDocumentsResponse | null>(null);
-  const [documentError, setDocumentError] = React.useState<string | null>(null);
-  const [documentAction, setDocumentAction] = React.useState<"scan" | "sync" | null>(null);
   const [view, setView] = React.useState<View>("dashboard");
   const [busy, setBusy] = React.useState(false);
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
   const tallyResultsVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
   const snapshotSelectionVersion = React.useRef(0);
-  const dscRequestVersion = React.useRef(0);
   const mainContentRef = React.useRef<HTMLElement>(null);
-
-  const clearDscSensitiveState = React.useCallback(() => {
-    dscRequestVersion.current += 1;
-    setDscReport(null);
-    setDscDetectReport(null);
-    setDscPin("");
-    setDscSync(null);
-  }, []);
-
-  React.useEffect(() => {
-    if (!dscReport && !dscDetectReport && !dscPin && !dscSync) return;
-    const expiry = window.setTimeout(clearDscSensitiveState, DSC_METADATA_RETENTION_MS);
-    return () => window.clearTimeout(expiry);
-  }, [clearDscSensitiveState, dscDetectReport, dscPin, dscReport, dscSync]);
-
-  React.useEffect(() => {
-    if (view !== "dsc") clearDscSensitiveState();
-  }, [clearDscSensitiveState, view]);
 
   const refreshRuntime = React.useCallback(async () => {
     try {
@@ -739,10 +485,24 @@ function App() {
     }
   }, []);
 
+  // Both of these are backed by the encrypted mirror, and touching the mirror
+  // resolves its key from the OS keychain -- which prompts. Running them on
+  // mount meant every launch prompted before the operator had done anything,
+  // and it defeated the lazy mirror initialisation in the Rust layer entirely.
+  // Fetch each only once a view that actually needs it is open.
   React.useEffect(() => {
+    // Mirror only. The app opens on the dashboard, so including it here would
+    // have kept the boot-time keychain prompt exactly as it was. The dashboard's
+    // "latest attempt" line derives from `snapshotJob`, which a user action
+    // sets -- it does not need the recent-runs list to render.
+    if (view !== "mirror") return;
     void refreshRecentSnapshots();
+  }, [view, refreshRecentSnapshots]);
+
+  React.useEffect(() => {
+    if (view !== "companies" && view !== "outstandings" && view !== "clients") return;
     void refreshPersistedCompanyProfiles();
-  }, [refreshRecentSnapshots, refreshPersistedCompanyProfiles]);
+  }, [view, refreshPersistedCompanyProfiles]);
 
   React.useEffect(() => {
     mainContentRef.current?.focus();
@@ -945,6 +705,8 @@ function App() {
             const discovered = await invoke<UntrustedCompanyCandidate[]>("fetch_tally_companies", { config });
             if (discoveryResultsVersion === tallyResultsVersion.current) {
               setUntrustedDiscoveredCompanies(discovered);
+        setOpenCompanyNames(discovered.map((candidate) => candidate.name));
+              setOpenCompanyNames(discovered.map((candidate) => candidate.name));
             }
           } catch (error) {
             if (discoveryResultsVersion === tallyResultsVersion.current) {
@@ -981,6 +743,7 @@ function App() {
       const discovered = await invoke<UntrustedCompanyCandidate[]>("fetch_tally_companies", { config });
       if (resultsVersion === tallyResultsVersion.current) {
         setUntrustedDiscoveredCompanies(discovered);
+        setOpenCompanyNames(discovered.map((candidate) => candidate.name));
       }
     } catch (error) {
       if (resultsVersion === tallyResultsVersion.current) {
@@ -1021,7 +784,13 @@ function App() {
             setSelectedReadScope(result.selected_read_scope ?? null);
             setPassportSnapshotId(result.passport_snapshot_id ?? null);
             setCompanies((current) => mergeTallyCompanies(liveCompanies, current));
-            setLiveCompanyKeys(nextLiveCompanyKeys);
+            // MERGE, never replace. This probe is scoped to one company via
+            // SVCURRENTCOMPANY, so it returns exactly one row by design --
+            // replacing the live set with it made Bridge forget every other
+            // book open in Tally the moment a company was chosen, which is
+            // what reduced the all-clients read to "1 of 1 book".
+            setLiveCompanyKeys((current) =>
+              Array.from(new Set([...current, ...nextLiveCompanyKeys])));
           },
         },
       );
@@ -1406,251 +1175,17 @@ function App() {
     }
   }
 
-  async function runDsc(detectOnly: boolean) {
-    const pin = dscPin;
-    if (!detectOnly && !pin) {
-      setDscError("Enter the DSC token PIN before extracting certificates.");
-      return;
-    }
-
-    const requestVersion = ++dscRequestVersion.current;
-    setBusy(true);
-    setDscAction(detectOnly ? "detect" : "extract");
-    setDscError(null);
-    setDscReport(null);
-    setDscDetectReport(null);
-    setDscSync(null);
-    if (!detectOnly) {
-      setDscPin("");
-    }
-    try {
-      const result = detectOnly
-        ? await invoke<DscProbeReport>("detect_dsc_token")
-        : await invoke<DscProbeReport>("extract_dsc_certificates", { pins: [pin] });
-      if (requestVersion === dscRequestVersion.current) {
-        if (detectOnly) {
-          setDscDetectReport(result);
-        } else {
-          setDscReport(result);
-        }
-      }
-    } catch (error) {
-      if (requestVersion === dscRequestVersion.current) {
-        setDscError(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      setBusy(false);
-      setDscAction(null);
-    }
-  }
-
-  function axalCredentials() {
-    return {
-      api_key: axalApiKey,
-      api_id: axalApiId,
-      integration: axalIntegration,
-      base_url: axalBaseUrl,
-    };
-  }
-
-  function invalidateAxalSession() {
-    const sessionId = axalSession?.id;
-    setAxalSession(null);
-    setAxalConnection(null);
-    if (sessionId) {
-      void invoke("revoke_axal_credential_session", {
-        credentialSessionId: sessionId,
-      }).catch(() => undefined);
-    }
-  }
-
-  async function validateAxal() {
-    setBusy(true);
-    setAxalAction("validate");
-    setAxalError(null);
-    try {
-      const result = await invoke<AxalSessionResponse>("validate_axal_credentials", {
-        credentials: axalCredentials(),
-      });
-      setAxalValidation(result.validation);
-      setAxalSession({ id: result.credentialSessionId, integration: axalIntegration });
-      setAxalConnection(null);
-    } catch (error) {
-      setAxalError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAxalApiKey("");
-      setBusy(false);
-      setAxalAction(null);
-    }
-  }
-
-  async function checkAxalStatus() {
-    if (!axalSession) {
-      setAxalError("Validate AXAL credentials before checking connection status.");
-      return;
-    }
-    setBusy(true);
-    setAxalAction("status");
-    setAxalError(null);
-    try {
-      const result = await invoke<AxalConnectionStatus>("check_axal_connection_status", {
-        credentialSessionId: axalSession.id,
-      });
-      setAxalConnection(result);
-    } catch (error) {
-      setAxalError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-      setAxalAction(null);
-    }
-  }
-
-  async function syncDscCertificate() {
-    if (!primaryCertificate || !successfulDscAttempt || !axalConnection || axalSession?.integration !== "dsc") {
-      setDscError("Extract a certificate and check AXAL workspace status before syncing.");
-      return;
-    }
-
-    setDscSyncing(true);
-    setDscError(null);
-    try {
-      const holderName =
-        primaryCertificate.common_name || primaryCertificate.organization || primaryCertificate.label;
-      const result = await invoke<DscSyncResponse>("sync_dsc_certificates_to_axal", {
-        request: {
-          credentialSessionId: axalSession.id,
-          workspaceExternalId: axalConnection.workspace.id,
-          certificates: [
-            {
-              holderName,
-              provider: primaryCertificate.issuer_name || "Unknown",
-              serialNumber: primaryCertificate.serial_number || "",
-              tokenType: successfulDscAttempt.token_type,
-              class: "Unknown",
-              purpose: "Digital Signature",
-              issueDate: primaryCertificate.valid_from || "",
-              expirationDate: primaryCertificate.valid_to || "",
-              clientName: holderName,
-              metadata: {
-                organization: primaryCertificate.organization,
-                issuer: primaryCertificate.issuer_name,
-                fingerprint: primaryCertificate.fingerprint,
-                tokenType: successfulDscAttempt.token_type,
-              },
-            },
-          ],
-        },
-      });
-      setDscSync(result);
-    } catch (error) {
-      setDscError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setDscSyncing(false);
-    }
-  }
-
-  async function scanDocuments() {
-    setBusy(true);
-    setDocumentAction("scan");
-    setDocumentError(null);
-    setDocumentSync(null);
-    try {
-      const result = await invoke<ScanDocumentsResponse>("scan_document_paths", {
-        request: {
-          selection_ids: documentPaths.map((path) => path.selectionId),
-          use_hash: true,
-          exclude_hidden_files: true,
-          exclude_zero_byte_files: true,
-        },
-      });
-      setDocumentScan(result);
-    } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-      setDocumentAction(null);
-    }
-  }
-
-  async function chooseDocumentFiles() {
-    setDocumentError(null);
-    try {
-      const paths = await invoke<SelectedDocumentPath[]>("select_document_files");
-      if (paths.length > 0) {
-        setDocumentPaths((current) => [...current, ...paths]);
-        setDocumentScan(null);
-        setDocumentSync(null);
-      }
-    } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function chooseDocumentFolder() {
-    setDocumentError(null);
-    try {
-      const paths = await invoke<SelectedDocumentPath[]>("select_document_folder");
-      if (paths.length > 0) {
-        setDocumentPaths((current) => [...current, ...paths]);
-        setDocumentScan(null);
-        setDocumentSync(null);
-      }
-    } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  function clearDocuments() {
-    void invoke("revoke_document_authorizations", {
-      selectionIds: documentPaths.map((path) => path.selectionId),
-      scanSessionId: documentScan?.scanSessionId ?? null,
-    }).catch(() => undefined);
-    setDocumentPaths([]);
-    setDocumentScan(null);
-    setDocumentSync(null);
-  }
-
-  async function syncDocuments() {
-    if (!documentScan?.files.length || !axalConnection || axalSession?.integration !== "documents") {
-      setDocumentError("Scan files and check AXAL workspace status before syncing documents.");
-      return;
-    }
-
-    setBusy(true);
-    setDocumentAction("sync");
-    setDocumentError(null);
-    try {
-      const result = await invoke<SyncDocumentsResponse>("sync_documents_to_axal", {
-        request: {
-          credentialSessionId: axalSession.id,
-          workspaceExternalId: axalConnection.workspace.id,
-          scanSessionId: documentScan.scanSessionId,
-          files: documentScan.files,
-          maxFilesPerBatch: 20,
-        },
-      });
-      setDocumentSync(result);
-    } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-      setDocumentAction(null);
-    }
-  }
-
-  const successfulDscAttempt = dscReport?.attempts.find(
-    (attempt) => attempt.login_success && attempt.certificates.length > 0,
-  );
-  const detectedDscAttempt = dscDetectReport?.attempts.find(
-    (attempt) => attempt.loaded && attempt.initialized && attempt.slot_count > 0 && !attempt.error,
-  );
-  const primaryCertificate =
-    successfulDscAttempt?.certificates.find((certificate) => certificate.common_name) ??
-    successfulDscAttempt?.certificates[0];
   const gstDraftComplete = draft !== null && draft.missing_fields.length === 0;
   const selectedCompanyRecord = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
   const selectedCompanyLive = !!selectedCompanyRecord && liveCompanyKeys.includes(tallyCompanyKey(selectedCompanyRecord));
   const currentProbeCompanyList = currentProbeCompanies(companies, liveCompanyKeys);
+  // Open in Tally but not already offered as a verified choice. Compared by
+  // name because a discovered candidate has no GUID until it is verified --
+  // establishing that GUID is exactly what choosing it does.
+  const verifiedCompanyNames = new Set(currentProbeCompanyList.map((company) => company.name));
+  const otherOpenCompanies = openCompanyNames
+    .filter((name) => !verifiedCompanyNames.has(name))
+    .map((name) => ({ name }));
   const savedCompanyList = companies.filter((company) => Boolean(company.mirror_company_id));
   const setupConnectionComplete = Boolean(status?.reachable && passport);
   const selectedCompanyReady = tallyReadinessState({
@@ -1757,8 +1292,8 @@ function App() {
             <Activity size={18} /> Dashboard
           </button>
           <button
-            aria-current={["outstandings", "companies"].includes(view) ? "page" : undefined}
-            className={["outstandings", "companies"].includes(view) ? "active" : ""}
+            aria-current={["outstandings", "companies", "clients"].includes(view) ? "page" : undefined}
+            className={["outstandings", "companies", "clients"].includes(view) ? "active" : ""}
             onClick={() => setView(selectedCompanyReady ? "outstandings" : "companies")}
           >
             <Cable size={18} /> Tally
@@ -1784,10 +1319,18 @@ function App() {
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
         <header>
           <div>
-            {view !== "companies" && <p className="eyebrow">{view === "outstandings" ? "Receivables and payables" : "Tally Truth Layer"}</p>}
+            {view !== "companies" && (
+              <p className="eyebrow">
+                {view === "outstandings"
+                  ? "Receivables and payables"
+                  : view === "clients"
+                    ? "Every book open in Tally"
+                    : "Tally Truth Layer"}
+              </p>
+            )}
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
-          {!["outstandings", "companies"].includes(view) && (
+          {!["outstandings", "companies", "clients"].includes(view) && (
             <button className="primary" onClick={checkTally} disabled={tallyAction !== null}>
               <Cable size={18} />
               {tallyAction === "probe" ? "Checking endpoint..." : "Check Tally Endpoint"}
@@ -1795,7 +1338,7 @@ function App() {
           )}
         </header>
 
-        {!["outstandings", "companies"].includes(view) && (
+        {!["outstandings", "companies", "clients"].includes(view) && (
           <section className="company-context-bar" aria-label="Selected Tally company context">
             <div>
               <span>Selected company</span>
@@ -1849,6 +1392,7 @@ function App() {
         )}
 
         {view === "dashboard" && (
+          <ErrorBoundary key="dashboard" label="Tally evidence dashboard">
           <>
             <section className="toolbar">
               <label>
@@ -1984,17 +1528,46 @@ function App() {
               <span>DSC: token detection and certificate extraction</span>
             </section>
           </>
+          </ErrorBoundary>
+        )}
+
+        {view === "clients" && (
+          <ErrorBoundary key="clients" label="All clients">
+          <AllClientsScreen
+            config={config}
+            /* Every company Tally reports open, GUID-verified by the probe --
+               NOT only the ones already saved. Requiring a save first was
+               correct while company discovery could never be trusted
+               (CompanyListV1 returned no HEADER/STATUS); with CompanyListV2
+               the probe verifies every open book on every run, and a firm
+               holding ten client books will not bless each one before a
+               cross-client screen works. */
+            companies={currentProbeCompanyList
+              .filter((company) => company.guid)
+              .map((company) => ({ name: company.name, guid: company.guid as string }))}
+            onOpenCompany={(company) => {
+              setSelectedCompany(tallyCompanyKey({ name: company.name, guid: company.guid }));
+              setView("outstandings");
+            }}
+            onBack={() => setView("outstandings")}
+          />
+          </ErrorBoundary>
         )}
 
         {view === "outstandings" && (
+          <ErrorBoundary key="outstandings" label="Aged outstandings">
           <OutstandingsScreen
             config={config}
             company={selectedCompanyReady && selectedCompanyRecord?.guid ? { name: selectedCompanyRecord.name, guid: selectedCompanyRecord.guid } : undefined}
             onChangeSetup={() => setView("companies")}
+            onViewAllClients={() => setView("clients")}
+            openBookCount={currentProbeCompanyList.filter((entry) => entry.guid).length}
           />
+          </ErrorBoundary>
         )}
 
         {view === "companies" && (
+          <ErrorBoundary key="companies" label="Connect Tally">
           <>
             <TallyReadinessFlow
               config={config}
@@ -2070,6 +1643,35 @@ function App() {
                     </button>
                   </div>
                 )}
+                {/* Switching to another client's book must not require noticing
+                    that "Check Tally again" repopulates a hidden list.
+                    Bridge's company report carries no HEADER/STATUS, so the
+                    probe can never mark it trusted; the verified picker above
+                    therefore only ever lists companies already SAVED, and
+                    every other open book was unreachable once one was saved.
+                    These stay a visually separate, clearly-unverified group --
+                    choosing one runs the scoped bootstrap that verifies it. */}
+                {currentProbeCompanyList.length > 0 && otherOpenCompanies.length > 0 && (
+                  <div className="company-more">
+                    <h3>Other companies open in Tally</h3>
+                    <p>Bridge verifies a company&rsquo;s identity when you choose it.</p>
+                    <div className="company-options" role="list" aria-label="Other companies open in Tally">
+                      {otherOpenCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => (
+                        <button
+                          className="company-option"
+                          type="button"
+                          key={`other-${company.name}-${index}`}
+                          onClick={() => void bootstrapDirectCompany(company.name)}
+                          disabled={snapshotActive || tallyAction !== null}
+                        >
+                          <Building2 size={20} />
+                          <span>{company.name}</span>
+                          <small>{tallyAction === "bootstrap" ? "Checking…" : "Switch to this company"}</small>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="setup-company-footer">
                   {selectedCompany && !selectedCompanyLive ? <p>Open this company in Tally, then check Tally again.</p> : null}
                   {selectedCompanyLive && !selectedCompanyReady && (
@@ -2088,50 +1690,25 @@ function App() {
             )}
 
           </>
+          </ErrorBoundary>
         )}
 
         {view === "gst" && (
-          !draft || !gstDraftComplete ? (
-            <article className="panel wide">
-              <h2>GST calculation unavailable</h2>
-              <div className="empty-state">
-                <FileText size={32} />
-                <strong>No verified GST draft</strong>
-                <span>
-                  {draft
-                    ? draft.missing_fields.join(" ")
-                    : "Use GST preparation on the dashboard to check availability. Zero values are not assumed."}
-                </span>
-              </div>
-            </article>
-          ) : (
-            <section className="grid">
-              <article className="panel">
-                <h2>GSTR-1 draft</h2>
-                <dl>
-                  <div><dt>B2B invoices</dt><dd>{draft.gstr1.b2b_invoice_count}</dd></div>
-                  <div><dt>B2C invoices</dt><dd>{draft.gstr1.b2c_invoice_count}</dd></div>
-                  <div><dt>Credit/debit notes</dt><dd>{draft.gstr1.credit_debit_note_count}</dd></div>
-                  <div><dt>HSN summaries</dt><dd>{draft.gstr1.hsn_summary_count}</dd></div>
-                </dl>
-              </article>
-              <article className="panel">
-                <h2>GSTR-3B draft</h2>
-                <dl>
-                  <div><dt>Taxable value</dt><dd>{draft.gstr3b.outward_taxable_value}</dd></div>
-                  <div><dt>IGST</dt><dd>{draft.gstr3b.integrated_tax}</dd></div>
-                  <div><dt>CGST</dt><dd>{draft.gstr3b.central_tax}</dd></div>
-                  <div><dt>SGST</dt><dd>{draft.gstr3b.state_tax}</dd></div>
-                </dl>
-              </article>
-
-            </section>
-          )
+          <ErrorBoundary key="gst" label="GST return readiness">
+          <GstScreen draft={draft} />
+          </ErrorBoundary>
         )}
 
         {view === "mirror" && (
-          <>
-            {savedCompanyList.length > 0 && (
+          <ErrorBoundary key="mirror" label="Accounting mirror and proof">
+          <MirrorProofScreen
+            config={config}
+            status={status}
+            passport={passport}
+            tallyAction={tallyAction}
+            selectedCompanyRecord={selectedCompanyRecord}
+            selectedCompanyLive={selectedCompanyLive}
+            savedCompanyPicker={savedCompanyList.length > 0 && (
               <section className="panel wide" aria-labelledby="saved-company-heading">
                 <h2 id="saved-company-heading">{selectedCompanyRecord?.mirror_company_id ? "Saved company" : "Choose a saved company"}</h2>
                 <p className="panel-description">Review local Mirror &amp; Proof evidence without contacting Tally.</p>
@@ -2153,135 +1730,8 @@ function App() {
                 )}
               </section>
             )}
-            <article className="panel wide mirror-hero">
-              <div>
-                <p className="eyebrow">Truth state</p>
-                <h2>{latestProof ? `${formatIdentifier(latestProof.outcome)} · ${formatIdentifier(latestProof.verification_state)} ${formatIdentifier(latestProof.pack_id)} attempt` : "No durable Core Accounting run receipt yet"}</h2>
-                <p>
-                  {latestProof
-                    ? `Within this run's declared Core Accounting scope, Bridge persisted ${latestProof.accepted_records} provenance-backed accepted canonical rows, ${latestProof.provenance_unavailable_records} canonical rows with an explicit provenance-unavailable gap, and ${latestProof.rejected_records} rejected rows. These are not Tally source-total counts. ${latestProof.gap_codes.length} declared gap(s) and ${latestProof.warning_codes.length} warning(s).`
-                    : "Endpoint reachability and fetched preview rows do not establish a Verified accounting state."}
-                </p>
-              </div>
-              <div>
-                <span className={`truth-state state-${mirrorTruthState === "verified" ? "supported" : "unknown"}`}>
-                  <CircleHelp size={18} /> {formatIdentifier(mirrorTruthState)}
-                </span>
-                <div className="snapshot-scope" aria-label="Requested accounting period">
-                  <label>From<input disabled={tallyAction !== null || snapshotActive} type="date" value={voucherFrom} onChange={(event) => setVoucherFrom(event.target.value)} /></label>
-                  <label>To<input disabled={tallyAction !== null || snapshotActive} type="date" value={voucherTo} onChange={(event) => setVoucherTo(event.target.value)} /></label>
-                </div>
-                {snapshotJob?.requested_from_yyyymmdd && snapshotJob.requested_to_yyyymmdd && (
-                  <span className="section-note">
-                    Selected run period: {formatTallyDate(snapshotJob.requested_from_yyyymmdd)} to {formatTallyDate(snapshotJob.requested_to_yyyymmdd)}
-                  </span>
-                )}
-                <button className="secondary-action" onClick={() => void refreshSyncEvidence(true)} disabled={!selectedCompanyRecord?.mirror_company_id || tallyAction !== null}>
-                  <RefreshCw size={16} /> {tallyAction === "evidence" ? "Refreshing..." : "Refresh evidence"}
-                </button>
-                <button className="secondary-action" onClick={() => void startCoreSnapshot()} disabled={!selectedCompanyRecord?.mirror_company_id || !selectedCompanyLive || snapshotActive || snapshotStartOutcomeUnknown || tallyAction !== null}>
-                  <Play size={16} /> {tallyAction === "start" ? "Starting..." : "Run read-only Core Accounting evidence read"}
-                </button>
-                {snapshotJob?.resume_available && (
-                  <button className="secondary-action" onClick={() => void resumeCoreSnapshot(snapshotJob.run_id)} disabled={tallyAction !== null}>
-                    <Play size={16} /> {tallyAction === "resume" ? "Resuming..." : "Resume interrupted run"}
-                  </button>
-                )}
-                {snapshotActive && (
-                  <button className="secondary-action" onClick={() => void cancelCoreSnapshot()} disabled={tallyAction !== null}>{tallyAction === "cancel" ? "Cancelling..." : "Cancel active run"}</button>
-                )}
-              </div>
-            </article>
-            <p className="section-note">Reads Bridge's declared Core Accounting v3 scope for this period. It is not a native Trial Balance, a complete-books guarantee, or an atomic Tally snapshot.</p>
-
-            {syncEvidenceError && <TallyErrorNotice message={syncEvidenceError} />}
-            {snapshotError && <TallyErrorNotice message={snapshotError} />}
-            {companyError && <TallyErrorNotice message={companyError} />}
-            {snapshotStartOutcomeUnknown && (
-              <section className="status-strip" role="alert">
-                <span>A previous start outcome is unknown. Inspect the refreshed durable runs before allowing another start.</span>
-                <button className="secondary-action" type="button" onClick={() => setSnapshotStartOutcomeUnknown(false)}>I reviewed the runs; allow a new start</button>
-              </section>
-            )}
-
-            {snapshotJob && (
-              <section className="status-strip" role="status" aria-live="polite">
-                <span className="run-token">Run <code>{snapshotJob.run_id}</code> <CopyTokenButton value={snapshotJob.run_id} label="run ID" /></span>
-                <span>Phase: {formatIdentifier(snapshotJob.phase)}</span>
-                <span>Completed executable windows: {snapshotJob.completed_windows}/{snapshotJob.total_windows}</span>
-                <span>{snapshotJob.verification ? `Result: ${formatIdentifier(snapshotJob.verification)}` : "No verification claim yet"}</span>
-                {snapshotJob.failure_code && <span>Failure: {formatIdentifier(snapshotJob.failure_code)}</span>}
-                {snapshotJob.requires_resume && (
-                  <span>{snapshotJob.resume_available ? "Worker detached: explicit resume required" : "Detached legacy state: inspect only"}</span>
-                )}
-              </section>
-            )}
-
-            {selectedRecentSnapshotRuns.length > 0 && (
-              <article className="panel wide">
-                <div className="panel-heading">
-                  <div>
-                    <h2>Recent durable Core Accounting runs</h2>
-                    <p className="panel-description">Recovery status comes from hash-checked encrypted state, including runs discovered after an app restart.</p>
-                  </div>
-                  <button className="secondary-action" onClick={() => void refreshRecentSnapshots()}>
-                    <RefreshCw size={16} /> Refresh runs
-                  </button>
-                </div>
-                <div className="table-shell">
-                  <table>
-                    <caption>Showing up to 10 of {selectedRecentSnapshotRuns.length} loaded runs for {selectedCompanyRecord?.name}</caption>
-                    <thead><tr><th>Run</th><th>Pack</th><th>Phase</th><th>Executable windows</th><th>Worker</th><th>Action</th></tr></thead>
-                    <tbody>
-                      {selectedRecentSnapshotRuns.slice(0, 10).map((run) => (
-                        <tr key={run.run_id}>
-                          <td><code>{run.run_id}</code> <CopyTokenButton value={run.run_id} label="run ID" /></td>
-                          <td>{formatIdentifier(run.pack_id ?? "unknown")}</td>
-                          <td>{formatIdentifier(run.phase)}</td>
-                          <td>{run.completed_windows}/{run.total_windows}</td>
-                          <td>{run.resume_available ? "Resume available" : run.requires_resume ? "Inspect only" : run.phase === "completed" || run.phase === "partial" || run.phase === "failed" || run.phase === "cancelled" ? "Terminal" : "Active"}</td>
-                          <td><button className="secondary-action" disabled={tallyAction !== null} onClick={() => { snapshotSelectionVersion.current += 1; setSnapshotJob(run); setSnapshotStartOutcomeUnknown(false); }}>Inspect</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </article>
-            )}
-
-            <section className="truth-grid">
-              <article className="truth-card">
-                <span>Endpoint evidence</span>
-                <strong>{status ? (status.compatible ? "Compatible status observed" : status.reachable ? "Reachable; compatibility unknown" : "Not reachable") : "Not checked"}</strong>
-                <small>{status ? `${config.host}:${config.port}` : "Run Check Tally Endpoint to collect a current probe."}</small>
-              </article>
-              <article className="truth-card">
-                <span>Company pin</span>
-                <strong>{selectedCompanyRecord?.mirror_company_id ? "Observed GUID persisted" : "Not established"}</strong>
-                <small>{selectedCompanyRecord?.guid || selectedCompanyRecord?.guid_observed ? "GUID value is stored locally and hidden in this view." : "Select and probe a GUID-bearing company."}</small>
-              </article>
-              <article className="truth-card">
-                <span>Last verified</span>
-                <strong>{formatRuntimeTime(syncEvidence?.core_accounting_freshness.verified_at_unix_ms)}</strong>
-                <small>{syncEvidence ? formatIdentifier(syncEvidence.core_accounting_freshness.state) : "Evidence not loaded"}</small>
-              </article>
-              <article className="truth-card">
-                <span>Local verified checkpoint</span>
-                <strong>{syncEvidence?.core_accounting_freshness.checkpoint_present ? "Bridge receipt committed" : "None"}</strong>
-                <small>{syncEvidence?.core_accounting_freshness.proof_present ? "Bridge committed this local receipt atomically; it is not a Tally source watermark or source-isolation guarantee." : "Partial and failed runs never advance freshness."}</small>
-              </article>
-              <article className="truth-card">
-                <span>Incremental execution</span>
-                <strong>{syncEvidence?.incremental.execution_enabled ? "Enabled" : "Incremental disabled; use a new full planned read"}</strong>
-                <small>
-                  {syncEvidence
-                    ? `${formatIdentifier(syncEvidence.incremental.state)} · ${syncEvidence.incremental.establishment_receipts} receipt(s), ${syncEvidence.incremental.active_checkpoint_heads} head(s)`
-                    : "No exact-scope incremental evidence loaded. A full planned read does not imply source completeness or atomicity."}
-                </small>
-              </article>
-            </section>
-
-            {selectedCompanyRecord?.mirror_company_id && (
+            companyError={companyError}
+            fixtureControls={selectedCompanyRecord?.mirror_company_id && (
               <details className="panel wide fixture-controls" aria-label="Synthetic write fixture">
                 <summary>Synthetic write fixture (advanced)</summary>
                 <div className="panel-heading">
@@ -2324,502 +1774,67 @@ function App() {
                 )}
               </details>
             )}
-
-            <article className="panel wide gap-panel">
-              <div className="panel-heading">
-                <div>
-                  <h2>Gap Map</h2>
-                  <p className="panel-description">Declared limits for the inspected attempt, with remediation and retry guidance. An empty map is not a Verified claim.</p>
-                </div>
-                <span>{activeGapCodes.length} gap{activeGapCodes.length === 1 ? "" : "s"}</span>
-              </div>
-              <GapMap codes={activeGapCodes} available={!!inspectedJob || !!latestProof} />
-              {inspectedJob && <p className="section-note">Gap Map scope: inspected run <code>{inspectedJob.run_id}</code>. This does not replace the separate latest-attempt summary.</p>}
-              {activeWarningCodes.length > 0 && (
-                <div className="warning-list">
-                  <strong>Warnings</strong>
-                  <ul>{activeWarningCodes.map((code) => <li key={code}><code>{code}</code> — {formatIdentifier(code)}</li>)}</ul>
-                </div>
-              )}
-            </article>
-
-            <article className="panel wide mirror-explorer">
-              <div className="panel-heading">
-                <div>
-                  <h2>Local mirror explorer</h2>
-                  <p className="panel-description">Paged, privacy-preserving metadata for the selected company and Core Accounting pack. Names, amounts, source IDs, and payloads are not returned to this view.</p>
-                  <p className="section-note">Totals describe rows currently held in Bridge's local mirror for the selected pack/run state. They are not Tally source counts and may reflect a Partial attempt. Aliases are page-local and may shift after later runs.</p>
-                </div>
-                <button className="secondary-action" onClick={() => void loadMirrorExplorerPage(0)} disabled={!selectedCompanyRecord?.mirror_company_id || tallyAction !== null}>
-                  <Database size={16} /> {tallyAction === "explorer" ? "Loading..." : "Load mirror page"}
-                </button>
-              </div>
-              {mirrorExplorerError && <TallyErrorNotice message={mirrorExplorerError} />}
-              {!mirrorExplorer ? (
-                <div className="empty-state compact"><strong>Mirror page not loaded</strong><span>This local read does not contact Tally and remains available for persisted company pins.</span></div>
-              ) : mirrorExplorer.records.length === 0 ? (
-                <div className="empty-state compact"><strong>No local mirror rows in this selected pack scope</strong><span>The local query completed for this company and pack. This says nothing about records outside that scope.</span></div>
-              ) : (
-                <>
-                  <div className="table-wrap" role="region" aria-label="Paged local mirror records" tabIndex={0}>
-                    <table>
-                      <caption>Showing {mirrorExplorer.offset + 1}-{Math.min(mirrorExplorer.offset + mirrorExplorer.records.length, mirrorExplorer.total_records)} of {mirrorExplorer.total_records} local records. Absence on this page is not absence from the mirror.</caption>
-                      <thead><tr><th>Local alias</th><th>Object</th><th>Identity confidence</th><th>Last batch</th><th>Lifecycle</th></tr></thead>
-                      <tbody>{mirrorExplorer.records.map((record) => (
-                        <tr key={record.local_alias}>
-                          <td>{record.local_alias}</td>
-                          <td>{formatIdentifier(record.object_type)}</td>
-                          <td>{formatIdentifier(record.identity_confidence)}</td>
-                          <td>{formatIdentifier(record.last_batch_state)}</td>
-                          <td>{record.tombstoned ? "Tombstoned" : "Present in local mirror"}</td>
-                        </tr>
-                      ))}</tbody>
-                    </table>
-                  </div>
-                  <div className="pagination" aria-label="Mirror explorer pagination">
-                    <button className="secondary-action" disabled={mirrorExplorer.offset === 0 || tallyAction !== null} onClick={() => void loadMirrorExplorerPage(Math.max(0, mirrorExplorer.offset - mirrorExplorer.limit))}>Previous page</button>
-                    <span>Page {Math.floor(mirrorExplorer.offset / mirrorExplorer.limit) + 1}</span>
-                    <button className="secondary-action" disabled={mirrorExplorer.offset + mirrorExplorer.records.length >= mirrorExplorer.total_records || tallyAction !== null} onClick={() => void loadMirrorExplorerPage(mirrorExplorer.offset + mirrorExplorer.limit)}>Next page</button>
-                  </div>
-                </>
-              )}
-            </article>
-
-            <article className="panel wide">
-              <div className="panel-heading">
-                <div>
-                  <h2>Hash-linked local proof ledger</h2>
-                  <p className="panel-description">Append-only under Bridge's local controls. Hash checks detect inconsistency; this is not a signature, a tamper-proof audit log, or proof that the responder was genuine Tally.</p>
-                </div>
-                <span>Latest {syncEvidence?.latest_proofs.length ?? 0} loaded · 20-row API limit</span>
-              </div>
-              {!latestProof ? (
-                <div className="empty-state compact">
-                  <strong>No proof entries for this company</strong>
-                  <span>A production Core Accounting attempt will append its outcome, gaps, returned-row counts, and local proof hash here.</span>
-                </div>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <caption>Loaded Proof of Sync attempt summaries; accepted/rejected values are returned run-scope rows, not source-completeness counts; older history may not be loaded</caption>
-                    <thead><tr><th>Completed</th><th>Run</th><th>Pack</th><th>Result</th><th>Accepted / rejected returned rows</th><th>Proof hash</th><th>Gaps</th><th>Warnings</th><th>Support export</th></tr></thead>
-                    <tbody>
-                      {syncEvidence?.latest_proofs.map((proof) => (
-                        <tr key={proof.selection_token}>
-                          <td>{formatRuntimeTime(proof.completed_at_unix_ms)}<small>{formatDuration(proof.started_at_unix_ms, proof.completed_at_unix_ms)}</small></td>
-                          <td><code>{proof.run_id}</code> <CopyTokenButton value={proof.run_id} label="run ID" /></td>
-                          <td>{formatIdentifier(proof.pack_id)}</td>
-                          <td>{formatIdentifier(proof.outcome)} · {formatIdentifier(proof.verification_state)} · Local hash check: {proof.integrity_state === "entry_hash_valid" ? "passed" : formatIdentifier(proof.integrity_state)}</td>
-                          <td>{proof.accepted_records} / {proof.rejected_records}</td>
-                          <td><code title="Local consistency commitment; not authenticity">{proof.proof_sha256.slice(0, 12)}...</code> <CopyTokenButton value={proof.proof_sha256} label="local proof hash" /></td>
-                          <td>{proof.gap_codes.length ? proof.gap_codes.map(formatIdentifier).join(", ") : "None declared"}</td>
-                          <td>{proof.warning_codes.length ? proof.warning_codes.map(formatIdentifier).join(", ") : "None declared"}</td>
-                          <td><button className="secondary-action" disabled={proofPreviewSelection?.proofId === proof.selection_token} onClick={() => void previewRedactedProof(proof)}>{proofPreviewSelection?.proofId === proof.selection_token ? "Loading/selected" : "Preview"}</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {proofPreview && (
-                <section className="proof-export-preview" aria-label="Exact redacted Proof of Sync preview">
-                  <div className="panel-heading">
-                    <div>
-                      <h3>Exact redacted support artifact for run {proofPreviewSelection?.runId ?? "unknown"}</h3>
-                      <p className="panel-description">Review these exact local-only bytes before saving. This is a checksum-backed local consistency record, not a signature or proof that the responder was genuine Tally.</p>
-                    </div>
-                    <a
-                      className="secondary-action"
-                      download={`bridge-tally-proof-${proofPreview.payload_sha256.slice(0, 12)}.json`}
-                      href={`data:application/json;charset=utf-8,${encodeURIComponent(proofPreview.json)}`}
-                    >
-                      <FileText size={16} /> Save reviewed JSON
-                    </a>
-                  </div>
-                  <small>Payload checksum: <code>{proofPreview.payload_sha256}</code> <CopyTokenButton value={proofPreview.payload_sha256} label="support artifact checksum" /></small>
-                  <pre>{proofPreview.json}</pre>
-                </section>
-              )}
-              {!!syncEvidence?.latest_reconciliation_mismatches.length && (
-                <section className="proof-export-preview" aria-label="Local reconciliation drill-down">
-                  <h3>Local reconciliation drill-down</h3>
-                  <p className="panel-description">Session-local aliases identify repeated affected records without exposing Tally IDs or book contents. They are deliberately excluded from the public support export.</p>
-                  <ul className="verification-list">
-                    {syncEvidence.latest_reconciliation_mismatches.map((mismatch) => (
-                      <li key={`${mismatch.reason_code}:${mismatch.record_aliases.join(":")}`}>
-                        <strong>{formatIdentifier(mismatch.reason_code)}</strong>: {mismatch.record_aliases.join(", ") || "No record alias available"}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-            </article>
-
-            <section className="grid mirror-details">
-              <article className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <h2>Pack readiness</h2>
-                    <p className="panel-description">Supported means the declared pack contract was observed for this exact profile; it does not mean complete books or a Verified run.</p>
-                  </div>
-                </div>
-                <CapabilityRows capabilities={passport?.packs} labels={PACK_LABELS} />
-              </article>
-
-              <article className="panel">
-                <h2>What “Verified” will require</h2>
-                <ul className="verification-list">
-                  <li>Every requested scope and window completes.</li>
-                  <li>Tally application status and payload validation pass.</li>
-                  <li>The company identity matches the pinned source.</li>
-                  <li>A product-supported atomic source cut or equally strong isolation mechanism is evidenced.</li>
-                  <li>Declared reconciliation checks pass.</li>
-                </ul>
-                <p className="section-note">
-                  Until those results are reported, Bridge will not present previews, counts, or absence of errors as accounting accuracy.
-                </p>
-                {passport?.mode?.toLowerCase().includes("education") && (
-                  <p className="section-note">The currently observed Education profile does not provide atomic source-cut evidence, so current Core Accounting runs remain Partial.</p>
-                )}
-              </article>
-            </section>
-
-            <article className="panel wide runtime-panel">
-              <div className="panel-heading">
-                <div>
-                  <h2>Tally runtime</h2>
-                  <p className="panel-description">
-                    Per-endpoint queue and health evidence. A closed circuit means requests are allowed; it is not proof that a pack is complete.
-                  </p>
-                </div>
-                <button className="secondary-action" onClick={() => void refreshRuntime()}>
-                  <RefreshCw size={16} /> Refresh
-                </button>
-              </div>
-              {runtimeError && <TallyErrorNotice message={runtimeError} />}
-              {runtimeSessions.length === 0 ? (
-                <div className="empty-state compact">
-                  <strong>No endpoint session yet</strong>
-                  <span>Run a Tally endpoint check to create one shared runtime session.</span>
-                </div>
-              ) : (
-                <div className="runtime-list">
-                  {runtimeSessions.map((session) => (
-                    <section className="runtime-session" key={session.session_id}>
-                      <div className="runtime-session-heading">
-                        <div>
-                          <strong>{session.canonical_endpoint}</strong>
-                          <span>{formatIdentifier(session.circuit_state)} circuit · {session.active_requests} active · {session.issued_requests} issued</span>
-                        </div>
-                        <span className={`truth-state state-${session.circuit_state === "closed" ? "supported" : "unknown"}`}>
-                          {formatIdentifier(session.circuit_state)}
-                        </span>
-                      </div>
-                      <dl className="runtime-health">
-                        <div><dt>Consecutive failures</dt><dd>{session.consecutive_failures}</dd></div>
-                        <div><dt>Last success</dt><dd>{formatRuntimeTime(session.last_success_unix_ms)}</dd></div>
-                        <div><dt>Last failure</dt><dd>{formatRuntimeTime(session.last_failure_unix_ms)}</dd></div>
-                        <div><dt>Capability observed</dt><dd>{formatRuntimeTime(session.cached_capability_observed_at_unix_ms)}</dd></div>
-                      </dl>
-                      {session.circuit_retry_after_unix_ms && (
-                        <p className="section-note">Retry after {formatRuntimeTime(session.circuit_retry_after_unix_ms)}.</p>
-                      )}
-                      {session.active_request_ids.length > 0 && (
-                        <div className="active-requests">
-                          {session.active_request_ids.map((requestId) => (
-                            <span className="active-request" key={requestId}>
-                              <code>{requestId}</code>
-                              <CopyTokenButton value={requestId} label="request ID" />
-                              <button onClick={() => void cancelTallyRequest(requestId)}>Cancel request</button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  ))}
-                </div>
-              )}
-            </article>
-          </>
+            voucherFrom={voucherFrom}
+            setVoucherFrom={setVoucherFrom}
+            voucherTo={voucherTo}
+            setVoucherTo={setVoucherTo}
+            syncEvidence={syncEvidence}
+            syncEvidenceError={syncEvidenceError}
+            refreshSyncEvidence={refreshSyncEvidence}
+            latestProof={latestProof}
+            mirrorTruthState={mirrorTruthState}
+            snapshotJob={snapshotJob}
+            setSnapshotJob={setSnapshotJob}
+            snapshotSelectionVersion={snapshotSelectionVersion}
+            snapshotActive={snapshotActive}
+            snapshotError={snapshotError}
+            snapshotStartOutcomeUnknown={snapshotStartOutcomeUnknown}
+            setSnapshotStartOutcomeUnknown={setSnapshotStartOutcomeUnknown}
+            startCoreSnapshot={startCoreSnapshot}
+            cancelCoreSnapshot={cancelCoreSnapshot}
+            resumeCoreSnapshot={resumeCoreSnapshot}
+            selectedRecentSnapshotRuns={selectedRecentSnapshotRuns}
+            refreshRecentSnapshots={refreshRecentSnapshots}
+            inspectedJob={inspectedJob}
+            activeGapCodes={activeGapCodes}
+            activeWarningCodes={activeWarningCodes}
+            mirrorExplorer={mirrorExplorer}
+            mirrorExplorerError={mirrorExplorerError}
+            loadMirrorExplorerPage={loadMirrorExplorerPage}
+            proofPreview={proofPreview}
+            proofPreviewSelection={proofPreviewSelection}
+            previewRedactedProof={previewRedactedProof}
+            runtimeSessions={runtimeSessions}
+            runtimeError={runtimeError}
+            refreshRuntime={refreshRuntime}
+            cancelTallyRequest={cancelTallyRequest}
+          />
+          </ErrorBoundary>
         )}
 
         {view === "dsc" && (
-          <>
-            <section className="toolbar">
-              <label>
-                Token PIN
-                <input
-                  type="password"
-                  value={dscPin}
-                  autoComplete="off"
-                  onChange={(event) => setDscPin(event.target.value)}
-                />
-              </label>
-              <button onClick={() => runDsc(true)} disabled={busy}>
-                <RefreshCw size={18} className={dscAction === "detect" ? "spin" : ""} />
-                {dscAction === "detect" ? "Detecting..." : "Detect Token"}
-              </button>
-              <button onClick={() => runDsc(false)} disabled={busy || !dscPin.trim()}>
-                <KeyRound size={18} className={dscAction === "extract" ? "pulse-icon" : ""} />
-                {dscAction === "extract" ? "Extracting..." : "Extract Certificates"}
-              </button>
-            </section>
-
-            {dscError && <div className="error-banner">{dscError}</div>}
-
-            <section className="grid single-panel-grid">
-              <article className="panel certificate-panel">
-                <h2>Certificate summary</h2>
-                {dscAction ? (
-                  <div className="empty-state compact">
-                    <RefreshCw size={32} className="spin" />
-                    <strong>{dscAction === "detect" ? "Detecting token" : "Reading certificate"}</strong>
-                    <span>This can take a few seconds while the token library initializes.</span>
-                  </div>
-                ) : primaryCertificate ? (
-                  <dl>
-                    <div><dt>Client</dt><dd>{primaryCertificate.common_name || primaryCertificate.organization || primaryCertificate.label}</dd></div>
-                    <div><dt>Expiry</dt><dd>{primaryCertificate.valid_to || "Unknown"}</dd></div>
-                    <div><dt>Serial</dt><dd>{primaryCertificate.serial_number || "Unknown"}</dd></div>
-                    <div><dt>Provider</dt><dd>{successfulDscAttempt?.token_type ?? "Unknown"}</dd></div>
-                    <div><dt>Certificates</dt><dd>{successfulDscAttempt?.certificate_count ?? successfulDscAttempt?.certificates.length ?? 0}</dd></div>
-                    <div><dt>AXAL sync</dt><dd>{dscSync?.message || "Not synced"}</dd></div>
-                  </dl>
-                ) : detectedDscAttempt ? (
-                  <div className="empty-state compact success-state">
-                  <KeyRound size={32} />
-                  <strong>Token detected</strong>
-                  <span>{detectedDscAttempt.token_type} token is available. Extract certificates to show holder details.</span>
-                  </div>
-                ) : (
-                  <div className="empty-state compact">
-                  <KeyRound size={32} />
-                  <strong>No certificate loaded</strong>
-                  <span>Detect the token or extract certificates to show DSC holder details.</span>
-                  </div>
-                )}
-                {primaryCertificate && (
-                  <div className="panel-actions">
-                    <button onClick={syncDscCertificate} disabled={busy || dscSyncing || !axalConnection || axalSession?.integration !== "dsc"}>
-                      <Cloud size={18} className={dscSyncing ? "pulse-icon" : ""} />
-                      {dscSyncing ? "Syncing..." : "Sync Certificate"}
-                    </button>
-                  </div>
-                )}
-                {(dscReport || dscDetectReport) && (
-                  <div className="panel-actions">
-                    <button onClick={clearDscSensitiveState} disabled={busy || dscSyncing}>
-                      Clear certificate details
-                    </button>
-                    <span>Certificate and token details clear automatically after five minutes.</span>
-                  </div>
-                )}
-              </article>
-            </section>
-          </>
+          <ErrorBoundary key="dsc" label="DSC token">
+          <DscScreen busy={busy} setBusy={setBusy} axalConnection={axalConnection} axalSession={axalSession} />
+          </ErrorBoundary>
         )}
 
         {view === "documents" && (
-          <>
-            <section className="toolbar document-toolbar">
-              <button onClick={chooseDocumentFiles} disabled={busy}>
-                <FileText size={18} />
-                Choose Files
-              </button>
-              <button onClick={chooseDocumentFolder} disabled={busy}>
-                <FolderOpen size={18} />
-                Choose Folder
-              </button>
-              <button onClick={clearDocuments} disabled={busy || (documentPaths.length === 0 && !documentScan)}>
-                Clear
-              </button>
-              <button onClick={scanDocuments} disabled={busy || documentPaths.length === 0}>
-                <RefreshCw size={18} className={documentAction === "scan" ? "spin" : ""} />
-                {documentAction === "scan" ? "Scanning..." : "Scan"}
-              </button>
-              <button onClick={syncDocuments} disabled={busy || !documentScan?.files.length || !axalConnection || axalSession?.integration !== "documents"}>
-                <UploadCloud size={18} className={documentAction === "sync" ? "pulse-icon" : ""} />
-                {documentAction === "sync" ? "Syncing..." : "Sync Documents"}
-              </button>
-            </section>
-
-            {documentError && <div className="error-banner">{documentError}</div>}
-
-            <article className="panel wide selected-paths">
-              <div className="panel-heading">
-                <h2>Selected paths</h2>
-                <span>{documentPaths.length} selected</span>
-              </div>
-              {documentPaths.length === 0 ? (
-                <div className="empty-state compact">
-                  <FolderOpen size={32} />
-                  <strong>No paths selected</strong>
-                  <span>Choose files or a folder before scanning.</span>
-                </div>
-              ) : (
-                <div className="path-list">
-                  {documentPaths.map((path) => (
-                    <div key={path.selectionId}>{path.displayName}</div>
-                  ))}
-                </div>
-              )}
-            </article>
-
-            <section className="grid">
-              <article className="panel">
-                <h2>Scan summary</h2>
-                {documentAction === "scan" ? (
-                  <div className="empty-state compact">
-                    <RefreshCw size={32} className="spin" />
-                    <strong>Scanning documents</strong>
-                    <span>Hashing files and preparing document metadata.</span>
-                  </div>
-                ) : (
-                  <dl>
-                    <div><dt>Files</dt><dd>{documentScan?.files.length ?? 0}</dd></div>
-                    <div><dt>Total size</dt><dd>{formatBytes(documentScan?.totalSize ?? 0)}</dd></div>
-                    <div><dt>Skipped</dt><dd>{documentScan?.skipped.length ?? 0}</dd></div>
-                    <div><dt>Workspace</dt><dd>{axalConnection?.workspace.name || "Check AXAL status first"}</dd></div>
-                  </dl>
-                )}
-              </article>
-
-              <article className="panel">
-                <h2>Sync summary</h2>
-                {documentAction === "sync" ? (
-                  <div className="empty-state compact">
-                    <UploadCloud size={32} className="pulse-icon" />
-                    <strong>Uploading documents</strong>
-                    <span>Requesting upload URLs, sending files, and confirming the batch.</span>
-                  </div>
-                ) : (
-                  <dl>
-                    <div><dt>Status</dt><dd>{documentSync ? (documentSync.success ? "Complete" : "Partial") : "Not synced"}</dd></div>
-                    <div><dt>Uploaded</dt><dd>{documentSync?.uploadedFiles.length ?? 0}</dd></div>
-                    <div><dt>Failed</dt><dd>{documentSync?.failedFiles.length ?? 0}</dd></div>
-                    <div><dt>Duplicates</dt><dd>{documentSync?.duplicateCount ?? 0}</dd></div>
-                  </dl>
-                )}
-              </article>
-            </section>
-
-            <article className="panel wide data-grid">
-              <div className="panel-heading">
-                <h2>Files</h2>
-                <span>{formatPreviewCount(documentScan?.files.length ?? 0, "ready")}</span>
-              </div>
-              {!documentScan?.files.length ? (
-                <div className="empty-state compact">
-                  <FolderOpen size={32} />
-                  <strong>No files scanned</strong>
-                  <span>Enter one or more file/folder paths, then scan.</span>
-                </div>
-              ) : (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Path</th>
-                        <th>Type</th>
-                        <th>Size</th>
-                        <th>Hash</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {documentScan.files.slice(0, TABLE_PREVIEW_LIMIT).map((file) => (
-                        <tr key={file.scanId}>
-                          <td>{file.relativePath}</td>
-                          <td>{file.mimeType}</td>
-                          <td>{formatBytes(file.size)}</td>
-                          <td>{file.contentHash ? `${file.contentHash.slice(0, 12)}...` : "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-          </>
+          <ErrorBoundary key="documents" label="Documents">
+          <DocumentsScreen busy={busy} setBusy={setBusy} axalConnection={axalConnection} axalSession={axalSession} />
+          </ErrorBoundary>
         )}
 
         {view === "axal" && (
-          <>
-            <section className="toolbar">
-              <label>
-                Base URL
-                <input value={axalBaseUrl} onChange={(event) => { setAxalBaseUrl(event.target.value); invalidateAxalSession(); }} />
-              </label>
-              <label>
-                Integration
-                <select value={axalIntegration} onChange={(event) => { setAxalIntegration(event.target.value as AxalIntegration); invalidateAxalSession(); }}>
-                  <option value="tally">Tally Prime</option>
-                  <option value="documents">Document Sync</option>
-                  <option value="dsc">DSC Management</option>
-                </select>
-              </label>
-            </section>
-
-            <section className="toolbar secondary-toolbar">
-              <label>
-                API ID
-                <input value={axalApiId} onChange={(event) => { setAxalApiId(event.target.value); invalidateAxalSession(); }} />
-              </label>
-              <label>
-                API Key
-                <input type="password" value={axalApiKey} onChange={(event) => { setAxalApiKey(event.target.value); invalidateAxalSession(); }} />
-              </label>
-              <button onClick={validateAxal} disabled={busy || !axalApiId || !axalApiKey}>
-                <RefreshCw size={18} className={axalAction === "validate" ? "spin" : ""} />
-                {axalAction === "validate" ? "Validating..." : "Validate"}
-              </button>
-              <button onClick={checkAxalStatus} disabled={busy || !axalSession}>
-                <Cloud size={18} className={axalAction === "status" ? "pulse-icon" : ""} />
-                {axalAction === "status" ? "Checking..." : "Check Status"}
-              </button>
-            </section>
-
-            {axalError && <div className="error-banner">{axalError}</div>}
-
-            <section className="grid">
-              <article className="panel">
-                <h2>Credential validation</h2>
-                {axalAction === "validate" ? (
-                  <div className="empty-state compact">
-                    <RefreshCw size={32} className="spin" />
-                    <strong>Validating credentials</strong>
-                    <span>Checking the API key against AXAL.</span>
-                  </div>
-                ) : (
-                  <dl>
-                    <div><dt>Status</dt><dd>{axalValidation ? (axalValidation.valid ? "Valid" : "Invalid") : "Not checked"}</dd></div>
-                    <div><dt>Server state</dt><dd>{axalValidation?.status || "-"}</dd></div>
-                    <div><dt>Last synced</dt><dd>{axalValidation?.last_synced || "-"}</dd></div>
-                    <div><dt>Error</dt><dd>{axalValidation?.error || "-"}</dd></div>
-                  </dl>
-                )}
-              </article>
-
-              <article className="panel">
-                <h2>Workspace status</h2>
-                {axalAction === "status" ? (
-                  <div className="empty-state compact">
-                    <RefreshCw size={32} className="spin" />
-                    <strong>Checking workspace</strong>
-                    <span>Fetching integration status and workspace metadata.</span>
-                  </div>
-                ) : (
-                  <dl>
-                    <div><dt>Connection</dt><dd>{axalConnection ? (axalConnection.connected ? "Connected" : "Disconnected") : "Not checked"}</dd></div>
-                    <div><dt>Status</dt><dd>{axalConnection?.status || "-"}</dd></div>
-                    <div><dt>Workspace</dt><dd>{axalConnection?.workspace.name || "-"}</dd></div>
-                    <div><dt>Plan</dt><dd>{axalConnection?.workspace.billing_plan || "-"}</dd></div>
-                    <div><dt>Storage</dt><dd>{axalConnection ? `${formatBytes(axalConnection.workspace.storage_used)} / ${formatBytes(axalConnection.workspace.storage_limit)}` : "-"}</dd></div>
-                    <div><dt>Last synced</dt><dd>{axalConnection?.last_synced_at || "-"}</dd></div>
-                  </dl>
-                )}
-              </article>
-            </section>
-          </>
+          <ErrorBoundary key="axal" label="AXAL backend">
+          <AxalScreen
+            busy={busy}
+            setBusy={setBusy}
+            axalConnection={axalConnection}
+            axalSession={axalSession}
+            setAxalSession={setAxalSession}
+            setAxalConnection={setAxalConnection}
+          />
+          </ErrorBoundary>
         )}
       </main>
     </div>
@@ -2881,46 +1896,10 @@ function formatRuntimeTime(value?: number): string {
   return new Date(value).toLocaleString();
 }
 
-function formatDuration(startedAt: number, completedAt?: number): string {
-  if (!Number.isFinite(startedAt) || completedAt === undefined || completedAt < startedAt) return "Duration unavailable";
-  const seconds = Math.round((completedAt - startedAt) / 1000);
-  return `Duration ${seconds}s`;
-}
-
 function toTallyDate(value: string): string {
   return value.replace(/-/g, "");
 }
 
-function formatTallyDate(value?: string): string {
-  if (!value || value.length !== 8) {
-    return value || "-";
-  }
-
-  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
-}
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
-  }
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / 1024 ** index;
-  return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
-}
-
-function formatCapabilityEvidence(evidence?: CapabilityEvidence): string {
-  if (!evidence) return "Unknown; qualification evidence unavailable";
-  const reason = evidence.safe_reason_code
-    ? CAPABILITY_REASON_LABELS[evidence.safe_reason_code] ?? formatIdentifier(evidence.safe_reason_code)
-    : "No reason supplied";
-  return `${formatIdentifier(evidence.state)} / ${formatIdentifier(evidence.confidence)} — ${reason}`;
-}
-
-function formatPreviewCount(total: number, label = "loaded"): string {
-  return `Showing ${Math.min(total, TABLE_PREVIEW_LIMIT)} of ${total} returned ${label}; source completeness not established`;
-}
 
 function mergeTallyCompanies(preferred: TallyCompany[], existing: TallyCompany[]): TallyCompany[] {
   const merged = new Map<string, TallyCompany>();

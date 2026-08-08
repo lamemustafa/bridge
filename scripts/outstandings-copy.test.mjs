@@ -92,3 +92,20 @@ test("unaged receivables disclose the ageing scope without inventing an On Accou
   assert.match(disclosure, /cannot prove the full unallocated balance/i);
   assert.equal(outstandingsAgeingDisclosure(false), null);
 });
+
+test("a path that can prove the unallocated balance says so instead of disclaiming it", () => {
+  // The voucher scan derives bills from vouchers and genuinely cannot
+  // establish the unallocated remainder, so its disclaimer is honest. The
+  // native bills path recovers that figure exactly from the party ledgers, so
+  // repeating "Bridge does not show an On Account amount" there would be false
+  // while a screen right above it displays exactly that amount.
+  const known = outstandingsAgeingDisclosure(true, true);
+  assert.match(known, /shown as Unallocated above/i);
+  assert.doesNotMatch(known, /cannot prove/i);
+  assert.doesNotMatch(known, /does not show/i);
+
+  // Absent knowledge must keep the original disclaimer, never silently claim a
+  // figure it does not have.
+  assert.match(outstandingsAgeingDisclosure(true, false), /cannot prove the full unallocated balance/i);
+  assert.equal(outstandingsAgeingDisclosure(false, true), null);
+});
