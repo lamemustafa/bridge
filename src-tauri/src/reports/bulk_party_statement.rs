@@ -36,6 +36,7 @@ pub struct StatementFailure {
 
 #[derive(Serialize)]
 struct StatementManifest<'a> {
+    company: &'a str,
     as_of_yyyymmdd: &'a str,
     format: &'a str,
     written: &'a [WrittenStatement],
@@ -103,6 +104,7 @@ pub fn write_bulk_party_statements(
     }
 
     let manifest = StatementManifest {
+        company,
         as_of_yyyymmdd,
         format,
         written: &written,
@@ -292,6 +294,7 @@ mod tests {
         assert_eq!(result.failures[0].party, "Broken Party");
         let manifest = fs::read_to_string(&result.manifest_path).expect("manifest is written");
         assert!(manifest.contains("20260808"));
+        assert!(manifest.contains("Synthetic Books Pvt Ltd"));
         assert!(manifest.contains("\"amount\": \"10\""));
         assert!(manifest.contains("Broken Party"));
         assert!(manifest.contains("synthetic renderer failure"));
