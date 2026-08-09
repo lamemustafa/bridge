@@ -17,6 +17,7 @@ const HEADING_FONT_SIZE: f32 = 12.0;
 const LINE_HEIGHT: f32 = 14.0;
 const MAX_LINE_BYTES: usize = 82;
 const LINES_PER_PAGE: usize = 52;
+const BODY_LINES_PER_PAGE: usize = LINES_PER_PAGE - 1;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartyStatementPdfError {
@@ -62,7 +63,7 @@ pub fn render_party_statement_pdf(
     statement: &PartyStatement,
 ) -> Result<Vec<u8>, PartyStatementPdfError> {
     let lines = statement_lines(statement)?;
-    let page_count = lines.len().div_ceil(LINES_PER_PAGE).max(1);
+    let page_count = lines.len().div_ceil(BODY_LINES_PER_PAGE).max(1);
     let page_count_i32 =
         i32::try_from(page_count).map_err(|_| PartyStatementPdfError::TooManyPages)?;
 
@@ -90,7 +91,7 @@ pub fn render_party_statement_pdf(
     pdf.type1_font(bold_font_id)
         .base_font(Name(b"Helvetica-Bold"));
 
-    for (page_index, page_lines) in lines.chunks(LINES_PER_PAGE).enumerate() {
+    for (page_index, page_lines) in lines.chunks(BODY_LINES_PER_PAGE).enumerate() {
         let page_id = page_ids[page_index];
         let content_id = i32::try_from(page_index)
             .map(|index| Ref::new(11 + index * 2))
@@ -108,6 +109,16 @@ pub fn render_party_statement_pdf(
 
         let mut content = Content::new();
         content.begin_text();
+        let page_header = format!(
+            "Party statement | Company: {} | Party: {} | Page {} of {page_count}",
+            statement.company,
+            statement.party,
+            page_index + 1,
+        );
+        content
+            .set_font(bold_font, BODY_FONT_SIZE)
+            .set_text_matrix([1.0, 0.0, 0.0, 1.0, MARGIN, PAGE_HEIGHT - MARGIN])
+            .show(Str(page_header.as_bytes()));
         for (line_index, line) in page_lines.iter().enumerate() {
             let font = if line.bold { bold_font } else { regular_font };
             let font_size = if line.bold {
@@ -115,7 +126,7 @@ pub fn render_party_statement_pdf(
             } else {
                 BODY_FONT_SIZE
             };
-            let y = PAGE_HEIGHT - MARGIN - (line_index as f32 * LINE_HEIGHT);
+            let y = PAGE_HEIGHT - MARGIN - ((line_index + 1) as f32 * LINE_HEIGHT);
             content
                 .set_font(font, font_size)
                 .set_text_matrix([1.0, 0.0, 0.0, 1.0, MARGIN, y])
@@ -391,6 +402,29 @@ mod tests {
         let joined = text.replace('\n', "");
         assert!(joined.contains(long_party));
         assert!(joined.contains(long_reference));
+    }
+
+    #[test]
+    fn every_pdf_page_repeats_the_statement_identity() {
+        let bills = (0..110)
+            .map(|index| bill(&format!("INV-{index:03}"), "1.00", 1))
+            .collect::<Vec<_>>();
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "Synthetic Party",
+            &bills,
+            &[],
+        )
+        .unwrap();
+
+        let text = extracted_text(&render_party_statement_pdf(&statement).unwrap());
+        let identity =
+            "Party statement | Company: Synthetic Books Pvt Ltd | Party: Synthetic Party";
+        assert_eq!(text.matches(identity).count(), 3);
+        assert!(text.contains("Page 1 of 3"));
+        assert!(text.contains("Page 2 of 3"));
+        assert!(text.contains("Page 3 of 3"));
     }
 
     #[test]
