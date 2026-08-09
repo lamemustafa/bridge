@@ -29,11 +29,12 @@ type LoadResult =
   | { state: "complete"; report: Report; unallocated_total?: string }
   | { state: "partial"; reason_code: string };
 
-type Entry = { company: string; result: LoadResult };
+type Entry = { company: string; company_guid: string; result: LoadResult };
 
 function amountOf(value: string | undefined) {
-  const parsed = Number.parseFloat(value ?? "0");
-  return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
+  if (!value || !/^-?\d+(?:\.\d+)?$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function formatMoney(value: string) {
@@ -52,6 +53,7 @@ function formatMoney(value: string) {
 /// screen, and in the export.
 function formatCompact(value: string | undefined) {
   const amount = amountOf(value);
+  if (amount === null) return "Amount unavailable";
   if (amount === 0) return "—";
   if (amount >= 10_000_000) return `₹${(amount / 10_000_000).toFixed(2)} cr`;
   if (amount >= 100_000) return `₹${(amount / 100_000).toFixed(2)} L`;
@@ -132,7 +134,6 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
     return entries
       .map((entry) => {
         const complete = entry.result.state === "complete" ? entry.result : null;
-        const companyGuid = companies.find((company) => company.name === entry.company)?.guid ?? entry.company;
         const oldest = complete
           ? complete.report.top_parties.reduce<number | null>(
               (worst, party) =>
@@ -144,19 +145,26 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
           : null;
         return {
           company: entry.company,
-          companyGuid,
+          companyGuid: entry.company_guid,
           complete,
           reasonCode: entry.result.state === "partial" ? entry.result.reason_code : null,
-          receivable: complete ? amountOf(complete.report.receivable_total) : 0,
-          overdue: complete ? amountOf(complete.report.ageing.days_90_plus) : 0,
-          unallocated: complete ? amountOf(complete.unallocated_total) : 0,
+          receivable: complete ? amountOf(complete.report.receivable_total) : null,
+          overdue: complete ? amountOf(complete.report.ageing.days_90_plus) : null,
+          unallocated: complete ? amountOf(complete.unallocated_total) : null,
+          exactAmounts: {
+            receivable: complete ? complete.report.receivable_total : undefined,
+            overdue: complete ? complete.report.ageing.days_90_plus : undefined,
+            unallocated: complete ? complete.unallocated_total : undefined,
+          },
           // How much of this book's exposure Tally cannot age. It is the
           // single best signal of whether the other numbers can be trusted,
           // and it varies enormously between books.
-          unallocatedShare: complete && complete.unallocated_total !== undefined
+          unallocatedShare: complete
+            && amountOf(complete.unallocated_total) !== null
+            && amountOf(complete.report.receivable_total) !== null
             ? Math.round(
-                amountOf(complete.unallocated_total)
-                  / Math.max(1, amountOf(complete.unallocated_total) + amountOf(complete.report.receivable_total))
+                amountOf(complete.unallocated_total)!
+                  / Math.max(1, amountOf(complete.unallocated_total)! + amountOf(complete.report.receivable_total)!)
                   * 100,
               )
             : null,
@@ -173,7 +181,12 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
           const r = right.oldest ?? -1;
           return (l - r) * direction;
         }
-        return (left[sort.key] - right[sort.key]) * direction;
+        const leftAmount = left[sort.key];
+        const rightAmount = right[sort.key];
+        if (leftAmount === null && rightAmount === null) return 0;
+        if (leftAmount === null) return 1;
+        if (rightAmount === null) return -1;
+        return (leftAmount - rightAmount) * direction;
       });
   }, [entries, sort]);
 
@@ -183,7 +196,10 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   );
 
   const readable = rows.filter((row) => row.complete).length;
-  const largestExposure = Math.max(...rows.map((row) => row.receivable + row.unallocated), 0);
+  const largestExposure = Math.max(
+    ...rows.map((row) => row.receivable === null || row.unallocated === null ? 0 : row.receivable + row.unallocated),
+    0,
+  );
 
   const updateGroupLabel = React.useCallback((companyGuid: string, label: string) => {
     setGroupLabels((current) => {
@@ -218,7 +234,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
             readable without comparing five columns of digits. */}
         <span
           className="clients-magnitude"
-          style={{ width: `${largestExposure > 0 ? Math.max(1, (row.receivable + row.unallocated) / largestExposure * 100) : 0}%` }}
+          style={{ width: `${largestExposure > 0 && row.receivable !== null && row.unallocated !== null ? Math.max(1, (row.receivable + row.unallocated) / largestExposure * 100) : 0}%` }}
           aria-hidden="true"
         />
         <span role="cell" className="clients-name">
@@ -229,11 +245,11 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
               <em>{row.unallocatedShare}% carries no bill reference</em>
             )}
         </span>
-        <span role="cell">{row.complete ? formatCompact(String(row.receivable)) : "—"}</span>
-        <span role="cell" className={row.overdue > 0 ? "is-overdue" : undefined}>
-          {row.complete ? formatCompact(String(row.overdue)) : "—"}
+        <span role="cell">{row.complete ? formatCompact(row.exactAmounts.receivable) : "—"}</span>
+        <span role="cell" className={row.overdue !== null && row.overdue > 0 ? "is-overdue" : undefined}>
+          {row.complete ? formatCompact(row.exactAmounts.overdue) : "—"}
         </span>
-        <span role="cell">{row.complete ? formatCompact(String(row.unallocated)) : "—"}</span>
+        <span role="cell">{row.complete ? formatCompact(row.exactAmounts.unallocated) : "—"}</span>
         <span role="cell" className="clients-age">
           {row.oldest === null
             ? <em className="age-chip is-none">none</em>
@@ -336,11 +352,11 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
               <React.Fragment key={group.label}>
                 <div className="clients-row clients-group-total" role="row" aria-label={`Totals for ${group.label}`}>
                   <span role="cell" className="clients-name"><strong>{group.label}</strong><em>Group total</em></span>
-                  <span role="cell">{formatCompact(String(group.totals.receivable))}</span>
-                  <span role="cell" className={group.totals.overdue > 0 ? "is-overdue" : undefined}>
-                    {formatCompact(String(group.totals.overdue))}
+                  <span role="cell">{formatCompact(group.totals.receivable)}</span>
+                  <span role="cell" className={(amountOf(group.totals.overdue) ?? 0) > 0 ? "is-overdue" : undefined}>
+                    {formatCompact(group.totals.overdue)}
                   </span>
-                  <span role="cell">{formatCompact(String(group.totals.unallocated))}</span>
+                  <span role="cell">{formatCompact(group.totals.unallocated)}</span>
                   <span role="cell" />
                 </div>
                 {group.rows.map(renderRow)}

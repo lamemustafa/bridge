@@ -9,7 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 const FILE_NAME: &str = "client-group-labels-v1.json";
 const SCHEMA_VERSION: u8 = 1;
@@ -58,13 +59,61 @@ pub fn save_label(directory: &Path, company_guid: &str, label: &str) -> Result<(
         labels,
     })
     .expect("client group label schema always serializes");
-    std::fs::write(&path, contents)?;
+    write_file_atomically(&path, &contents)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
+}
+
+/// Replacing the label file is a single rename after a fully written sibling
+/// exists. A process interruption can therefore retain the previous labels or
+/// the complete next labels, never a truncated JSON file that loads as none.
+fn write_file_atomically(path: &Path, contents: &[u8]) -> Result<(), std::io::Error> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("missing_label_parent"))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| std::io::Error::other("invalid_label_file_name"))?;
+    for sequence in 1..=10_000_u32 {
+        let temporary = temporary_label_path(parent, file_name, sequence);
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        if let Err(error) = file.write_all(contents).and_then(|_| file.sync_all()) {
+            drop(file);
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+        drop(file);
+        if let Err(error) = std::fs::rename(&temporary, path) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "label_temporary_name_exhausted",
+    ))
+}
+
+fn temporary_label_path(parent: &Path, file_name: &str, sequence: u32) -> PathBuf {
+    parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        sequence
+    ))
 }
 
 fn normalize(labels: ClientGroupLabels) -> ClientGroupLabels {
@@ -107,5 +156,28 @@ mod tests {
 
         save_label(directory.path(), "synthetic-company-guid", "   ").expect("remove label");
         assert!(load(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn replacement_writes_leave_only_a_complete_current_label_file() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        save_label(directory.path(), "synthetic-company-guid", "North practice")
+            .expect("first label");
+        save_label(directory.path(), "synthetic-company-guid", "South practice")
+            .expect("replacement label");
+
+        assert_eq!(
+            load(directory.path()).get("synthetic-company-guid"),
+            Some(&"South practice".to_string())
+        );
+        assert!(directory
+            .path()
+            .read_dir()
+            .expect("directory entries")
+            .all(|entry| !entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")));
     }
 }

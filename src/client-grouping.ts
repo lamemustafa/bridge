@@ -4,26 +4,54 @@ export type ClientGroupLabels = Record<string, string>;
 
 export type GroupableClientRow = {
   companyGuid: string;
-  receivable: number;
-  overdue: number;
-  unallocated: number;
+  exactAmounts: {
+    receivable: string | undefined;
+    overdue: string | undefined;
+    unallocated: string | undefined;
+  };
 };
 
 export type ClientGroup<Row extends GroupableClientRow> = {
   label: string;
   rows: Row[];
-  totals: { receivable: number; overdue: number; unallocated: number };
+  totals: { receivable: string | undefined; overdue: string | undefined; unallocated: string | undefined };
 };
 
 function totalRows(rows: readonly GroupableClientRow[]) {
-  return rows.reduce(
-    (total, row) => ({
-      receivable: total.receivable + row.receivable,
-      overdue: total.overdue + row.overdue,
-      unallocated: total.unallocated + row.unallocated,
-    }),
-    { receivable: 0, overdue: 0, unallocated: 0 },
-  );
+  return {
+    receivable: sumExactDecimals(rows.map((row) => row.exactAmounts.receivable)),
+    overdue: sumExactDecimals(rows.map((row) => row.exactAmounts.overdue)),
+    unallocated: sumExactDecimals(rows.map((row) => row.exactAmounts.unallocated)),
+  };
+}
+
+type ExactParts = { negative: boolean; whole: string; fraction: string };
+
+function parseExactDecimal(value: string | undefined): ExactParts | undefined {
+  const match = value?.match(/^(-?)(\d+)(?:\.(\d+))?$/);
+  if (!match) return undefined;
+  return { negative: match[1] === "-", whole: match[2], fraction: match[3] ?? "" };
+}
+
+/// Adds source decimal strings with `BigInt`, never through IEEE-754. If any
+/// row is not a valid exact decimal, the group total is unavailable rather than
+/// rounded into a believable figure.
+export function sumExactDecimals(values: readonly (string | undefined)[]): string | undefined {
+  const parsed = values.map(parseExactDecimal);
+  if (parsed.some((value) => value === undefined)) return undefined;
+  const exact = parsed as ExactParts[];
+  const scale = Math.max(...exact.map((value) => value.fraction.length), 0);
+  const total = exact.reduce((sum, value) => {
+    const digits = `${value.whole}${value.fraction.padEnd(scale, "0")}`;
+    const scaled = BigInt(digits) * (value.negative ? -1n : 1n);
+    return sum + scaled;
+  }, 0n);
+  const negative = total < 0n;
+  const unsigned = (negative ? -total : total).toString().padStart(scale + 1, "0");
+  const whole = scale === 0 ? unsigned : unsigned.slice(0, -scale);
+  const fraction = scale === 0 ? "" : unsigned.slice(-scale).replace(/0+$/, "");
+  if (whole === "0" && !fraction) return "0";
+  return `${negative ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
 }
 
 /// Groups only labeled rows. Ungrouped companies stay as individual rows so

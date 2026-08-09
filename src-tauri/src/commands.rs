@@ -2160,6 +2160,7 @@ pub struct AllCompaniesEntry {
 #[derive(Debug, Serialize)]
 pub struct CompanyOutstandingsEntry {
     pub company: String,
+    pub company_guid: String,
     pub result: OutstandingsLoadResult,
 }
 
@@ -2236,6 +2237,7 @@ pub async fn fetch_tally_outstandings_all_companies(
         };
         entries.push(CompanyOutstandingsEntry {
             company: entry.company,
+            company_guid: entry.expected_company_guid,
             result: company_sweep_result(result),
         });
     }
