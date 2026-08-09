@@ -161,10 +161,46 @@ fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> {
     let value = text
         .parse::<f64>()
         .map_err(|_| PartyStatementXlsxError::InvalidAmount(text.to_string()))?;
-    if !value.is_finite() {
+    if !value.is_finite() || !same_decimal_value(text, &value.to_string()) {
         return Err(PartyStatementXlsxError::InvalidAmount(text.to_string()));
     }
     Ok(value)
+}
+
+/// `f64::to_string` emits the shortest decimal that round-trips to the binary
+/// value. Comparing numeric decimal forms (rather than their spellings) keeps
+/// harmless source scale such as `42.00`, while rejecting a value whose Excel
+/// number cell would change the amount.
+fn same_decimal_value(left: &str, right: &str) -> bool {
+    canonical_decimal_value(left) == canonical_decimal_value(right)
+}
+
+fn canonical_decimal_value(value: &str) -> Option<String> {
+    let (negative, unsigned) = value
+        .strip_prefix('-')
+        .map_or((false, value), |unsigned| (true, unsigned));
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let whole = whole.trim_start_matches('0');
+    let fraction = fraction.trim_end_matches('0');
+    if whole.is_empty() && fraction.is_empty() {
+        return Some("0".to_string());
+    }
+    let mut canonical = String::with_capacity(value.len());
+    if negative {
+        canonical.push('-');
+    }
+    canonical.push_str(if whole.is_empty() { "0" } else { whole });
+    if !fraction.is_empty() {
+        canonical.push('.');
+        canonical.push_str(fraction);
+    }
+    Some(canonical)
 }
 
 fn excel_date(yyyymmdd: &str) -> Result<ExcelDateTime, PartyStatementXlsxError> {
@@ -199,6 +235,20 @@ mod tests {
                 Err(PartyStatementXlsxError::InvalidAmount(value)) if value == unrepresentable
             ));
         }
+    }
+
+    #[test]
+    fn rejects_a_valid_decimal_that_excel_cannot_represent_exactly() {
+        assert!(matches!(
+            amount_to_f64("9007199254740993"),
+            Err(PartyStatementXlsxError::InvalidAmount(value)) if value == "9007199254740993"
+        ));
+
+        assert_eq!(
+            amount_to_f64("9007199254740992").unwrap(),
+            9007199254740992.0
+        );
+        assert_eq!(amount_to_f64("42.00").unwrap(), 42.0);
     }
     use super::*;
     use crate::reports::party_statement::build_party_statement;

@@ -2935,28 +2935,64 @@ pub async fn export_party_statement(
 
     let mut slug = statement_filename_slug(&statement.party);
     slug.truncate(150);
-    let file_name = format!("statement-{slug}-{}.xlsx", statement.as_of_yyyymmdd);
-    // Same guard as `save_report_download`: the name is built from a party
-    // name pulled from the user's own books, but must never be able to
-    // choose the write location.
-    if file_name.is_empty()
-        || file_name.len() > 200
-        || file_name.contains('/')
-        || file_name.contains('\\')
-        || file_name.contains("..")
-    {
-        return Err("Bridge could not build a safe file name for this export.".to_string());
-    }
+    let stem = format!("statement-{slug}-{}", statement.as_of_yyyymmdd);
 
     let downloads = app
         .path()
         .download_dir()
         .or_else(|_| app.path().home_dir())
         .map_err(|_| "Bridge could not locate a folder to save into.".to_string())?;
-    let path = downloads.join(&file_name);
-    std::fs::write(&path, &bytes)
-        .map_err(|error| format!("Bridge could not write the export: {error}"))?;
+    let path = write_unique_statement_file(&downloads, &stem, "xlsx", &bytes)?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Writes a new statement filename without ever replacing an earlier export.
+/// `create_new` closes the race between checking a candidate and writing it;
+/// a repeat export becomes `-2`, `-3`, and so on rather than a silent loss.
+fn write_unique_statement_file(
+    destination: &std::path::Path,
+    stem: &str,
+    extension: &str,
+    bytes: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    if stem.is_empty()
+        || stem.len() > 190
+        || std::path::Path::new(stem).components().count() != 1
+        || extension.is_empty()
+        || extension.contains('.')
+    {
+        return Err("Bridge could not build a safe file name for this export.".to_string());
+    }
+    for sequence in 1..=10_000_u32 {
+        let suffix = if sequence == 1 {
+            String::new()
+        } else {
+            format!("-{sequence}")
+        };
+        let path = destination.join(format!("{stem}{suffix}.{extension}"));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Bridge could not create the statement export: {error}"
+                ))
+            }
+        };
+        if let Err(error) = std::io::Write::write_all(&mut file, bytes) {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+            return Err(format!(
+                "Bridge could not finish writing the statement export: {error}"
+            ));
+        }
+        return Ok(path);
+    }
+    Err("Bridge could not find an unused statement filename after 10,000 attempts.".to_string())
 }
 
 /// Lower-cases and hyphenates a party name into a filesystem-safe slug,
@@ -2979,6 +3015,41 @@ fn statement_filename_slug(party: &str) -> String {
         "party".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod statement_export_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_statement_exports_get_distinct_new_files() {
+        let destination = tempfile::tempdir().expect("synthetic destination");
+        let first = write_unique_statement_file(
+            destination.path(),
+            "statement-party-20260809",
+            "xlsx",
+            b"one",
+        )
+        .expect("first statement");
+        let second = write_unique_statement_file(
+            destination.path(),
+            "statement-party-20260809",
+            "xlsx",
+            b"two",
+        )
+        .expect("second statement");
+
+        assert_eq!(
+            first.file_name().and_then(|name| name.to_str()),
+            Some("statement-party-20260809.xlsx")
+        );
+        assert_eq!(
+            second.file_name().and_then(|name| name.to_str()),
+            Some("statement-party-20260809-2.xlsx")
+        );
+        assert_eq!(std::fs::read(first).expect("first bytes"), b"one");
+        assert_eq!(std::fs::read(second).expect("second bytes"), b"two");
     }
 }
 
