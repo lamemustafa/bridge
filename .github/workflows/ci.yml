@@ -123,24 +123,25 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          workspaces: src-tauri -> target
+          workspaces: |
+            src-tauri -> target
+            tools -> target
       - name: Test portable Tally truth layer
         working-directory: src-tauri
         run: >-
           cargo test --locked
           -p bridge-tally-canonical
-          -p bridge-tally-compatibility
           -p bridge-tally-core
           -p bridge-tally-incremental
-          -p bridge-tally-live-read
           -p bridge-tally-observability
           -p bridge-tally-protocol
-          -p bridge-tally-qualification
-          -p bridge-tally-read-transport
           -p bridge-tally-runtime
           -p bridge-tally-transport
           -p bridge-tally-write
           -p tally-protocol-simulator
+      - name: Test portable Tally qualification tools
+        working-directory: tools
+        run: cargo test --locked --workspace
       - name: Test disabled protocol evidence features
         working-directory: src-tauri
         run: >-
@@ -152,7 +153,7 @@ jobs:
           cargo test --locked -p bridge-tally-write
           --features fixture-canary-dispatch-seam
       - name: Test isolated native outstandings qualification path
-        working-directory: src-tauri
+        working-directory: tools
         run: |
           cargo test --locked -p bridge-tally-compatibility --features bills-native-outstandings-probe-receipt
           cargo test --locked -p bridge-tally-read-transport --features bills-native-outstandings-probe-transport
@@ -162,19 +163,18 @@ jobs:
         run: >-
           cargo clippy --locked
           -p bridge-tally-canonical
-          -p bridge-tally-compatibility
           -p bridge-tally-core
           -p bridge-tally-incremental
-          -p bridge-tally-live-read
           -p bridge-tally-observability
           -p bridge-tally-protocol
-          -p bridge-tally-qualification
-          -p bridge-tally-read-transport
           -p bridge-tally-runtime
           -p bridge-tally-transport
           -p bridge-tally-write
           -p tally-protocol-simulator
           --all-targets -- -D warnings
+      - name: Lint portable Tally qualification tools
+        working-directory: tools
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Lint disabled protocol evidence features
         working-directory: src-tauri
         run: >-
@@ -188,18 +188,18 @@ jobs:
           --features fixture-canary-dispatch-seam
           -- -D warnings
       - name: Lint isolated native outstandings qualification path
-        working-directory: src-tauri
+        working-directory: tools
         run: |
           cargo clippy --locked -p bridge-tally-compatibility --features bills-native-outstandings-probe-receipt --all-targets -- -D warnings
           cargo clippy --locked -p bridge-tally-read-transport --features bills-native-outstandings-probe-transport --all-targets -- -D warnings
           cargo clippy --locked -p bridge-tally-live-read --features bills-native-outstandings-probe-runner --all-targets -- -D warnings
       - name: Produce parser-only synthetic qualification smoke receipt
-        working-directory: src-tauri
+        working-directory: tools
         run: >-
           cargo run --locked --release -p bridge-tally-qualification --
           run ci-smoke target/tally-qualification-smoke.json 7 3
       - name: Enforce exact Tally compatibility claims
-        working-directory: src-tauri
+        working-directory: tools
         run: >-
           cargo run --locked -p bridge-tally-compatibility --
           gate
@@ -209,7 +209,7 @@ jobs:
           ../docs/tally/compatibility/evidence
           ..
       - name: Reject generated Tally matrix drift
-        working-directory: src-tauri
+        working-directory: tools
         run: >-
           cargo run --locked -p bridge-tally-compatibility --
           check-matrix-markdown
@@ -222,7 +222,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tally-parser-qualification-smoke
-          path: src-tauri/target/tally-qualification-smoke.json
+          path: tools/target/tally-qualification-smoke.json
           if-no-files-found: error
           retention-days: 7
 
@@ -253,7 +253,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          workspaces: src-tauri -> target
+          workspaces: |
+            src-tauri -> target
+            tools -> target
           # A lockfile change creates a cold target cache. On Windows, saving that
           # multi-gigabyte target tree can outlast this job's hard timeout after
           # every test and lint gate has already passed. Keep the registry cache,
@@ -285,7 +287,7 @@ jobs:
           sealed
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace
       - name: Test isolated native outstandings qualification feature
-        working-directory: src-tauri
+        working-directory: tools
         run: >-
           cargo test --locked -p bridge-tally-live-read
           --features bills-native-outstandings-probe-runner
@@ -298,7 +300,7 @@ jobs:
           --features fixture-canary-runtime-dispatch
           -- -D warnings
       - name: Lint isolated native outstandings qualification feature
-        working-directory: src-tauri
+        working-directory: tools
         run: >-
           cargo clippy --locked -p bridge-tally-live-read
           --features bills-native-outstandings-probe-runner
