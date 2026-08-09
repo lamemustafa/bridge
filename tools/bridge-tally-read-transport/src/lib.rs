@@ -363,6 +363,8 @@ mod native_outstandings_tests {
         assert_eq!(error.safe_code(), "response_size_limit_exceeded");
         let observed = simulator.finish().unwrap();
         assert_eq!(observed.request_body_sha256, candidate().request_sha256());
+        assert!(observed.request_processed);
+        assert!(!observed.cancelled);
     }
 
     #[tokio::test]
