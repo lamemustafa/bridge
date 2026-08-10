@@ -107,6 +107,24 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
       - run: node scripts/check-dependency-inventory.mjs --rust
 
+  workflow-consistency:
+    name: Workflow consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.96.0
+      - run: node scripts/check-ci-workflow-consistency.mjs
+
   tally-portable:
     name: Tally portable core
     runs-on: ubuntu-latest
@@ -371,7 +389,7 @@ jobs:
     # this context instead of the individual matrix jobs so docs-only PRs are
     # not blocked by skipped native/bundle checks.
     if: ${{ always() }}
-    needs: [changes, frontend, rust-format, tally-portable, native, bundle-smoke]
+    needs: [changes, frontend, rust-format, workflow-consistency, tally-portable, native, bundle-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
