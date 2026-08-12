@@ -2929,6 +2929,8 @@ pub async fn export_party_statement(
     app: tauri::AppHandle,
     request: ExportPartyStatementRequest,
 ) -> Result<String, String> {
+    use tauri::Manager as _;
+
     let open_bills = request
         .open_bills
         .into_iter()
