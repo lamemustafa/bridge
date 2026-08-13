@@ -11,7 +11,7 @@ adler2 2.0.1
 License: 0BSD OR MIT OR Apache-2.0
 Source: https://github.com/oyvindln/adler2
 
-aho-corasick 1.1.4
+aho-corasick 1.1.5
 License: Unlicense OR MIT
 Source: https://github.com/BurntSushi/aho-corasick
 
@@ -31,7 +31,7 @@ anyhow 1.0.104
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/anyhow
 
-apple-native-keyring-store 1.0.1
+apple-native-keyring-store 1.0.2
 License: MIT OR Apache-2.0
 Source: https://github.com/open-source-cooperative/apple-native-keyring-store.git
 
@@ -47,7 +47,7 @@ asn1-rs-impl 0.2.0
 License: MIT OR Apache-2.0
 Source: https://github.com/rusticata/asn1-rs.git
 
-async-trait 0.1.91
+async-trait 0.1.92
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/async-trait
 
@@ -63,11 +63,11 @@ autocfg 1.5.1
 License: Apache-2.0 OR MIT
 Source: https://github.com/cuviper/autocfg
 
-aws-lc-rs 1.17.3
+aws-lc-rs 1.18.0
 License: ISC AND (Apache-2.0 OR ISC)
 Source: https://github.com/aws/aws-lc-rs
 
-aws-lc-sys 0.43.0
+aws-lc-sys 0.44.0
 License: ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)
 Source: https://github.com/aws/aws-lc-rs
 
@@ -91,7 +91,7 @@ bitflags 1.3.2
 License: MIT OR Apache-2.0
 Source: https://github.com/bitflags/bitflags
 
-bitflags 2.13.0
+bitflags 2.13.1
 License: MIT OR Apache-2.0
 Source: https://github.com/bitflags/bitflags
 
@@ -119,11 +119,11 @@ byteorder 1.5.0
 License: Unlicense OR MIT
 Source: https://github.com/BurntSushi/byteorder
 
-bytes 1.12.0
+bytes 1.12.1
 License: MIT
 Source: https://github.com/tokio-rs/bytes
 
-camino 1.2.3
+camino 1.2.5
 License: MIT OR Apache-2.0
 Source: https://github.com/camino-rs/camino
 
@@ -139,7 +139,7 @@ cargo_toml 0.22.3
 License: Apache-2.0 OR MIT
 Source: https://gitlab.com/lib.rs/cargo_toml
 
-cc 1.2.65
+cc 1.4.2
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/cc-rs
 
@@ -159,15 +159,11 @@ cmake 0.1.58
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/cmake-rs
 
-concurrent-queue 2.5.0
-License: Apache-2.0 OR MIT
-Source: https://github.com/smol-rs/concurrent-queue
-
 const-oid 0.10.2
 License: Apache-2.0 OR MIT
 Source: https://github.com/RustCrypto/formats
 
-cookie 0.18.1
+cookie 0.18.2
 License: MIT OR Apache-2.0
 Source: https://github.com/SergioBenitez/cookie-rs
 
@@ -211,15 +207,15 @@ crc32fast 1.5.0
 License: MIT OR Apache-2.0
 Source: https://github.com/srijs/rust-crc32fast
 
-crossbeam-channel 0.5.15
+crossbeam-channel 0.5.16
 License: MIT OR Apache-2.0
 Source: https://github.com/crossbeam-rs/crossbeam
 
-crossbeam-queue 0.3.12
+crossbeam-queue 0.3.13
 License: MIT OR Apache-2.0
 Source: https://github.com/crossbeam-rs/crossbeam
 
-crossbeam-utils 0.8.21
+crossbeam-utils 0.8.22
 License: MIT OR Apache-2.0
 Source: https://github.com/crossbeam-rs/crossbeam
 
@@ -267,7 +263,7 @@ darling_macro 0.23.0
 License: MIT
 Source: https://github.com/TedDriggs/darling
 
-data-encoding 2.11.0
+data-encoding 2.11.1
 License: MIT
 Source: https://github.com/ia0/data-encoding
 
@@ -307,7 +303,7 @@ dispatch2 0.3.1
 License: Zlib OR Apache-2.0 OR MIT
 Source: https://github.com/madsmtm/objc2
 
-displaydoc 0.2.6
+displaydoc 0.2.7
 License: MIT OR Apache-2.0
 Source: https://github.com/yaahc/displaydoc
 
@@ -335,11 +331,11 @@ dyn-clone 1.0.20
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/dyn-clone
 
-either 1.16.0
+either 1.17.0
 License: MIT OR Apache-2.0
 Source: https://github.com/rayon-rs/either
 
-embed-resource 3.0.9
+embed-resource 3.0.11
 License: MIT
 Source: https://github.com/nabijaczleweli/rust-embed-resource
 
@@ -363,11 +359,11 @@ errno 0.3.14
 License: MIT OR Apache-2.0
 Source: https://github.com/lambda-fairy/rust-errno
 
-event-listener 5.4.1
+event-listener 5.4.2
 License: Apache-2.0 OR MIT
 Source: https://github.com/smol-rs/event-listener
 
-fastrand 2.4.1
+fastrand 2.5.0
 License: Apache-2.0 OR MIT
 Source: https://github.com/smol-rs/fastrand
 
@@ -375,7 +371,7 @@ fdeflate 0.3.7
 License: MIT OR Apache-2.0
 Source: https://github.com/image-rs/fdeflate
 
-find-msvc-tools 0.1.9
+find-msvc-tools 0.1.10
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/cc-rs
 
@@ -399,7 +395,7 @@ foreign-types 0.5.0
 License: MIT OR Apache-2.0
 Source: https://github.com/sfackler/foreign-types
 
-foreign-types-macros 0.2.3
+foreign-types-macros 0.2.4
 License: MIT OR Apache-2.0
 Source: https://github.com/sfackler/foreign-types
 
@@ -415,15 +411,15 @@ fs_extra 1.3.0
 License: MIT
 Source: https://github.com/webdesus/fs_extra
 
-futures-channel 0.3.32
+futures-channel 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
 
-futures-core 0.3.32
+futures-core 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
 
-futures-executor 0.3.32
+futures-executor 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
 
@@ -431,23 +427,23 @@ futures-intrusive 0.5.0
 License: MIT OR Apache-2.0
 Source: https://github.com/Matthias247/futures-intrusive
 
-futures-io 0.3.32
+futures-io 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
 
-futures-macro 0.3.32
+futures-macro 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
 
-futures-sink 0.3.32
+futures-sink 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
 
-futures-task 0.3.32
+futures-task 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
 
-futures-util 0.3.32
+futures-util 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
 
@@ -463,7 +459,7 @@ getrandom 0.4.3
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-random/getrandom
 
-glob 0.3.3
+glob 0.3.4
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/glob
 
@@ -499,15 +495,15 @@ html5ever 0.38.0
 License: MIT OR Apache-2.0
 Source: https://github.com/servo/html5ever
 
-http 1.4.2
+http 1.5.0
 License: MIT OR Apache-2.0
 Source: https://github.com/hyperium/http
 
-http-body 1.0.1
+http-body 1.1.0
 License: MIT
 Source: https://github.com/hyperium/http-body
 
-http-body-util 0.1.3
+http-body-util 0.1.5
 License: MIT
 Source: https://github.com/hyperium/http-body
 
@@ -515,11 +511,11 @@ httparse 1.10.1
 License: MIT OR Apache-2.0
 Source: https://github.com/seanmonstar/httparse
 
-hybrid-array 0.4.13
+hybrid-array 0.4.14
 License: MIT OR Apache-2.0
 Source: https://github.com/RustCrypto/hybrid-array
 
-hyper 1.10.1
+hyper 1.11.0
 License: MIT
 Source: https://github.com/hyperium/hyper
 
@@ -539,31 +535,31 @@ ico 0.5.0
 License: MIT
 Source: https://github.com/mdsteele/rust-ico
 
-icu_collections 2.2.0
+icu_collections 2.3.0
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-icu_locale_core 2.2.0
+icu_locale_core 2.3.0
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-icu_normalizer 2.2.0
+icu_normalizer 2.3.0
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-icu_normalizer_data 2.2.0
+icu_normalizer_data 2.3.0
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-icu_properties 2.2.0
+icu_properties 2.3.0
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-icu_properties_data 2.2.0
+icu_properties_data 2.3.0
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-icu_provider 2.2.0
+icu_provider 2.3.0
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
@@ -591,7 +587,7 @@ infer 0.19.0
 License: MIT
 Source: https://github.com/bojand/infer
 
-ipnet 2.12.0
+ipnet 2.12.1
 License: MIT OR Apache-2.0
 Source: https://github.com/krisprice/ipnet
 
@@ -643,7 +639,7 @@ libsqlite3-sys 0.37.0
 License: MIT
 Source: https://github.com/rusqlite/rusqlite
 
-litemap 0.8.2
+litemap 0.8.3
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
@@ -651,7 +647,7 @@ lock_api 0.4.14
 License: MIT OR Apache-2.0
 Source: https://github.com/Amanieu/parking_lot
 
-log 0.4.32
+log 0.4.33
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/log
 
@@ -663,7 +659,7 @@ matchers 0.2.0
 License: MIT
 Source: https://github.com/hawkw/matchers
 
-memchr 2.8.2
+memchr 2.8.3
 License: Unlicense OR MIT
 Source: https://github.com/BurntSushi/memchr
 
@@ -679,7 +675,7 @@ miniz_oxide 0.8.9
 License: MIT OR Zlib OR Apache-2.0
 Source: https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 
-mio 1.2.1
+mio 1.2.2
 License: MIT
 Source: https://github.com/tokio-rs/mio
 
@@ -703,7 +699,7 @@ num-bigint 0.2.6
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-num/num-bigint
 
-num-bigint 0.4.6
+num-bigint 0.4.8
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-num/num-bigint
 
@@ -711,7 +707,7 @@ num-conv 0.2.2
 License: MIT OR Apache-2.0
 Source: https://github.com/jhpratt/num-conv
 
-num-integer 0.1.46
+num-integer 0.1.47
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-num/num-integer
 
@@ -835,7 +831,7 @@ png 0.18.1
 License: MIT OR Apache-2.0
 Source: https://github.com/image-rs/image-png
 
-potential_utf 0.1.5
+potential_utf 0.1.6
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
@@ -851,7 +847,7 @@ precomputed-hash 0.1.1
 License: MIT
 Source: https://github.com/emilio/precomputed-hash
 
-proc-macro2 1.0.106
+proc-macro2 1.0.107
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/proc-macro2
 
@@ -867,7 +863,7 @@ quick-xml 0.41.0
 License: MIT
 Source: https://github.com/tafia/quick-xml
 
-quote 1.0.45
+quote 1.0.47
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/quote
 
@@ -891,11 +887,11 @@ raw-window-handle 0.6.2
 License: MIT OR Apache-2.0 OR Zlib
 Source: https://github.com/rust-windowing/raw-window-handle
 
-regex 1.12.4
+regex 1.13.1
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/regex
 
-regex-automata 0.4.14
+regex-automata 0.4.18
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/regex
 
@@ -911,7 +907,7 @@ rfd 0.17.2
 License: MIT
 Source: https://github.com/PolyMeilex/rfd
 
-rustc-hash 2.1.2
+rustc-hash 2.1.3
 License: Apache-2.0 OR MIT
 Source: https://github.com/rust-lang/rustc-hash
 
@@ -927,11 +923,11 @@ rustix 1.1.4
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 Source: https://github.com/bytecodealliance/rustix
 
-rustls 0.23.40
+rustls 0.23.43
 License: Apache-2.0 OR MIT OR ISC
 Source: https://github.com/rustls/rustls
 
-rustls-pki-types 1.14.1
+rustls-pki-types 1.15.1
 License: MIT OR Apache-2.0
 Source: https://github.com/rustls/pki-types
 
@@ -939,7 +935,7 @@ rustls-platform-verifier 0.7.0
 License: MIT OR Apache-2.0
 Source: https://github.com/rustls/rustls-platform-verifier
 
-rustls-webpki 0.103.13
+rustls-webpki 0.103.14
 License: ISC
 Source: https://github.com/rustls/webpki
 
@@ -1007,7 +1003,7 @@ serde_json 1.0.151
 License: MIT OR Apache-2.0
 Source: https://github.com/serde-rs/json
 
-serde_repr 0.1.20
+serde_repr 0.1.21
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/serde-repr
 
@@ -1015,11 +1011,11 @@ serde_spanned 1.1.1
 License: MIT OR Apache-2.0
 Source: https://github.com/toml-rs/toml
 
-serde_with 3.21.0
+serde_with 3.22.0
 License: MIT OR Apache-2.0
 Source: https://github.com/jonasbb/serde_with/
 
-serde_with_macros 3.21.0
+serde_with_macros 3.22.0
 License: MIT OR Apache-2.0
 Source: https://github.com/jonasbb/serde_with/
 
@@ -1055,7 +1051,7 @@ signal-hook-registry 1.4.8
 License: MIT OR Apache-2.0
 Source: https://github.com/vorner/signal-hook
 
-simd-adler32 0.3.9
+simd-adler32 0.3.10
 License: MIT
 Source: https://github.com/mcountryman/simd-adler32
 
@@ -1071,7 +1067,7 @@ smallvec 1.15.2
 License: MIT OR Apache-2.0
 Source: https://github.com/servo/rust-smallvec
 
-socket2 0.6.4
+socket2 0.6.5
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/socket2
 
@@ -1079,7 +1075,7 @@ softbuffer 0.4.8
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-windowing/softbuffer
 
-spin 0.9.8
+spin 0.9.9
 License: MIT
 Source: https://github.com/mvdnes/spin-rs.git
 
@@ -1119,7 +1115,7 @@ swift-rs 1.0.7
 License: MIT OR Apache-2.0
 Source: https://github.com/Brendonovich/swift-rs
 
-syn 2.0.118
+syn 2.0.119
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/syn
 
@@ -1183,7 +1179,7 @@ tempfile 3.27.0
 License: MIT OR Apache-2.0
 Source: https://github.com/Stebalien/tempfile
 
-tendril 0.5.0
+tendril 0.5.1
 License: MIT OR Apache-2.0
 Source: https://github.com/servo/html5ever
 
@@ -1191,7 +1187,7 @@ thiserror 1.0.69
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/thiserror
 
-thiserror 2.0.19
+thiserror 2.0.20
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/thiserror
 
@@ -1199,15 +1195,15 @@ thiserror-impl 1.0.69
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/thiserror
 
-thiserror-impl 2.0.19
+thiserror-impl 2.0.20
 License: MIT OR Apache-2.0
 Source: https://github.com/dtolnay/thiserror
 
-thread_local 1.1.9
+thread_local 1.1.10
 License: MIT OR Apache-2.0
 Source: https://github.com/Amanieu/thread_local-rs
 
-time 0.3.49
+time 0.3.55
 License: MIT OR Apache-2.0
 Source: https://github.com/time-rs/time
 
@@ -1215,11 +1211,11 @@ time-core 0.1.9
 License: MIT OR Apache-2.0
 Source: https://github.com/time-rs/time
 
-time-macros 0.2.29
+time-macros 0.2.32
 License: MIT OR Apache-2.0
 Source: https://github.com/time-rs/time
 
-tinystr 0.8.3
+tinystr 0.8.4
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
@@ -1227,7 +1223,7 @@ tokio 1.53.1
 License: MIT
 Source: https://github.com/tokio-rs/tokio
 
-tokio-macros 2.7.0
+tokio-macros 2.7.2
 License: MIT
 Source: https://github.com/tokio-rs/tokio
 
@@ -1235,7 +1231,7 @@ tokio-rustls 0.26.4
 License: MIT OR Apache-2.0
 Source: https://github.com/rustls/tokio-rustls
 
-tokio-stream 0.1.18
+tokio-stream 0.1.19
 License: MIT
 Source: https://github.com/tokio-rs/tokio
 
@@ -1247,7 +1243,7 @@ toml 0.9.12+spec-1.1.0
 License: MIT OR Apache-2.0
 Source: https://github.com/toml-rs/toml
 
-toml 1.1.2+spec-1.1.0
+toml 1.1.4+spec-1.1.0
 License: MIT OR Apache-2.0
 Source: https://github.com/toml-rs/toml
 
@@ -1259,11 +1255,11 @@ toml_datetime 1.1.1+spec-1.1.0
 License: MIT OR Apache-2.0
 Source: https://github.com/toml-rs/toml
 
-toml_parser 1.1.2+spec-1.1.0
+toml_parser 1.1.3+spec-1.1.0
 License: MIT OR Apache-2.0
 Source: https://github.com/toml-rs/toml
 
-toml_writer 1.1.1+spec-1.1.0
+toml_writer 1.1.2+spec-1.1.0
 License: MIT OR Apache-2.0
 Source: https://github.com/toml-rs/toml
 
@@ -1359,10 +1355,6 @@ urlpattern 0.3.0
 License: MIT
 Source: https://github.com/denoland/rust-urlpattern
 
-utf-8 0.7.6
-License: MIT OR Apache-2.0
-Source: https://github.com/SimonSapin/rust-utf8
-
 utf8_iter 1.0.4
 License: Apache-2.0 OR MIT
 Source: https://github.com/hsivonen/utf8_iter
@@ -1399,7 +1391,7 @@ want 0.3.1
 License: MIT
 Source: https://github.com/seanmonstar/want
 
-web_atoms 0.2.5
+web_atoms 0.2.6
 License: MIT OR Apache-2.0
 Source: https://github.com/servo/html5ever
 
@@ -1519,7 +1511,7 @@ winnow 0.7.15
 License: MIT
 Source: https://github.com/winnow-rs/winnow
 
-winnow 1.0.3
+winnow 1.0.4
 License: MIT
 Source: https://github.com/winnow-rs/winnow
 
@@ -1527,7 +1519,7 @@ winreg 0.55.0
 License: MIT
 Source: https://github.com/gentoo90/winreg-rs
 
-writeable 0.6.3
+writeable 0.6.4
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
@@ -1547,7 +1539,7 @@ yoke-derive 0.8.2
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-zerocopy 0.8.55
+zerocopy 0.8.56
 License: BSD-2-Clause OR Apache-2.0 OR MIT
 Source: https://github.com/google/zerocopy
 
@@ -1563,19 +1555,19 @@ zeroize 1.9.0
 License: Apache-2.0 OR MIT
 Source: https://github.com/RustCrypto/utils
 
-zerotrie 0.2.4
+zerotrie 0.2.5
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-zerovec 0.11.6
+zerovec 0.11.7
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-zerovec-derive 0.11.3
+zerovec-derive 0.11.4
 License: Unicode-3.0
 Source: https://github.com/unicode-org/icu4x
 
-zmij 1.0.21
+zmij 1.0.23
 License: MIT
 Source: https://github.com/dtolnay/zmij
 
@@ -2665,7 +2657,7 @@ Apache License 2.0
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- zerocopy 0.8.55
+- zerocopy 0.8.56
 
                                  Apache License
                            Version 2.0, January 2004
@@ -3083,7 +3075,7 @@ Apache License 2.0
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- ipnet 2.12.0
+- ipnet 2.12.1
 
                                  Apache License
                            Version 2.0, January 2004
@@ -3706,18 +3698,18 @@ Apache License 2.0
 -------------------------------------------------------------------------------
 Apache License 2.0
 - crc32fast 1.5.0
-- foreign-types-macros 0.2.3
+- foreign-types-macros 0.2.4
 - foreign-types-shared 0.3.1
 - foreign-types 0.5.0
 - hex 0.4.3
 - quick-error 1.2.3
 - serde_spanned 1.1.1
 - toml 0.9.12+spec-1.1.0
-- toml 1.1.2+spec-1.1.0
+- toml 1.1.4+spec-1.1.0
 - toml_datetime 0.7.5+spec-1.1.0
 - toml_datetime 1.1.1+spec-1.1.0
-- toml_parser 1.1.2+spec-1.1.0
-- toml_writer 1.1.1+spec-1.1.0
+- toml_parser 1.1.3+spec-1.1.0
+- toml_writer 1.1.2+spec-1.1.0
 
                                  Apache License
                            Version 2.0, January 2004
@@ -4339,14 +4331,14 @@ limitations under the License.
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- futures-channel 0.3.32
-- futures-core 0.3.32
-- futures-executor 0.3.32
-- futures-io 0.3.32
-- futures-macro 0.3.32
-- futures-sink 0.3.32
-- futures-task 0.3.32
-- futures-util 0.3.32
+- futures-channel 0.3.34
+- futures-core 0.3.34
+- futures-executor 0.3.34
+- futures-io 0.3.34
+- futures-macro 0.3.34
+- futures-sink 0.3.34
+- futures-task 0.3.34
+- futures-util 0.3.34
 
                               Apache License
                         Version 2.0, January 2004
@@ -5174,7 +5166,7 @@ limitations under the License.
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- cookie 0.18.1
+- cookie 0.18.2
 
                               Apache License
                         Version 2.0, January 2004
@@ -5382,7 +5374,7 @@ limitations under the License.
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- http 1.4.2
+- http 1.5.0
 
                               Apache License
                         Version 2.0, January 2004
@@ -6210,7 +6202,7 @@ limitations under the License.
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- rustls-pki-types 1.14.1
+- rustls-pki-types 1.15.1
 
                               Apache License
                         Version 2.0, January 2004
@@ -6417,7 +6409,7 @@ limitations under the License.
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- apple-native-keyring-store 1.0.1
+- apple-native-keyring-store 1.0.2
 - keyring-core 1.0.0
 - keyring 4.1.6
 
@@ -6839,32 +6831,31 @@ Apache License 2.0
 - base64 0.21.7
 - base64 0.22.1
 - bitflags 1.3.2
-- bitflags 2.13.0
-- camino 1.2.3
-- cc 1.2.65
+- bitflags 2.13.1
+- camino 1.2.5
+- cc 1.4.2
 - cfg-if 1.0.4
 - cmake 0.1.58
-- concurrent-queue 2.5.0
 - core-foundation-sys 0.8.7
 - core-foundation 0.10.1
 - core-foundation 0.9.4
 - core-graphics-types 0.2.0
 - core-graphics 0.25.0
-- crossbeam-channel 0.5.15
-- crossbeam-queue 0.3.12
-- crossbeam-utils 0.8.21
+- crossbeam-channel 0.5.16
+- crossbeam-queue 0.3.13
+- crossbeam-utils 0.8.22
 - der-parser 10.0.0
-- displaydoc 0.2.6
-- either 1.16.0
+- displaydoc 0.2.7
+- either 1.17.0
 - equivalent 1.0.2
 - errno 0.3.14
-- event-listener 5.4.1
-- fastrand 2.4.1
-- find-msvc-tools 0.1.9
+- event-listener 5.4.2
+- fastrand 2.5.0
+- find-msvc-tools 0.1.10
 - flate2 1.1.9
 - fnv 1.0.7
 - form_urlencoded 1.2.2
-- glob 0.3.3
+- glob 0.3.4
 - hashbrown 0.12.3
 - hashbrown 0.16.1
 - hashbrown 0.17.1
@@ -6879,13 +6870,13 @@ Apache License 2.0
 - jobserver 0.1.35
 - lazy_static 1.5.0
 - lock_api 0.4.14
-- log 0.4.32
+- log 0.4.33
 - markup5ever 0.38.0
 - mime 0.3.17
 - muda 0.19.3
 - num-bigint 0.2.6
-- num-bigint 0.4.6
-- num-integer 0.1.46
+- num-bigint 0.4.8
+- num-integer 0.1.47
 - num-traits 0.2.19
 - oid-registry 0.8.1
 - once_cell 1.21.4
@@ -6898,37 +6889,37 @@ Apache License 2.0
 - png 0.17.16
 - png 0.18.1
 - proptest 1.11.0
-- regex-automata 0.4.14
+- regex-automata 0.4.18
 - regex-syntax 0.8.11
-- regex 1.12.4
+- regex 1.13.1
 - rustc_version 0.4.1
 - rusticata-macros 4.1.0
 - rustix 1.1.4
-- rustls 0.23.40
+- rustls 0.23.43
 - rusty-fork 0.3.1
 - scopeguard 1.2.0
 - security-framework-sys 2.17.0
 - security-framework 3.7.0
-- serde_with 3.21.0
-- serde_with_macros 3.21.0
+- serde_with 3.22.0
+- serde_with_macros 3.22.0
 - servo_arc 0.4.3
 - signal-hook-registry 1.4.8
 - smallvec 1.15.2
-- socket2 0.6.4
+- socket2 0.6.5
 - stable_deref_trait 1.2.1
 - string_cache 0.9.0
 - string_cache_codegen 0.6.1
 - system-configuration-sys 0.6.0
 - system-configuration 0.7.0
 - tempfile 3.27.0
-- tendril 0.5.0
-- thread_local 1.1.9
+- tendril 0.5.1
+- thread_local 1.1.10
 - unicode-segmentation 1.13.3
 - url 2.5.8
 - uuid 1.24.0
 - version_check 0.9.5
 - wait-timeout 0.2.1
-- web_atoms 0.2.5
+- web_atoms 0.2.6
 - window-vibrancy 0.6.0
 - wry 0.55.1
 - x509-parser 0.18.1
@@ -7562,7 +7553,7 @@ Apache License 2.0
 - crypto-common 0.2.2
 - digest 0.10.7
 - digest 0.11.3
-- hybrid-array 0.4.13
+- hybrid-array 0.4.14
 - sha2 0.10.9
 - sha2 0.11.0
 
@@ -9833,8 +9824,8 @@ Apache License 2.0
 - allocator-api2 0.2.21
 - anyhow 1.0.104
 - asn1-rs-impl 0.2.0
-- async-trait 0.1.91
-- aws-lc-sys 0.43.0
+- async-trait 0.1.92
+- aws-lc-sys 0.44.0
 - cargo_toml 0.22.3
 - dirs-sys 0.5.0
 - dirs 6.0.0
@@ -9856,13 +9847,13 @@ Apache License 2.0
 - objc2-quartz-core 0.3.2
 - objc2-web-kit 0.3.2
 - pin-project-lite 0.2.17
-- proc-macro2 1.0.106
-- quote 1.0.45
+- proc-macro2 1.0.107
+- quote 1.0.47
 - rand 0.9.5
 - rand_chacha 0.9.0
 - rand_xorshift 0.4.0
 - raw-window-handle 0.6.2
-- rustc-hash 2.1.2
+- rustc-hash 2.1.3
 - semver 1.0.28
 - serde-untagged 0.1.9
 - serde 1.0.229
@@ -9870,12 +9861,12 @@ Apache License 2.0
 - serde_derive 1.0.229
 - serde_derive_internals 0.29.1
 - serde_json 1.0.151
-- serde_repr 0.1.20
+- serde_repr 0.1.21
 - shlex 2.0.1
 - siphasher 1.0.3
 - sqlx-core 0.9.0
 - sqlx-sqlite 0.9.0
-- syn 2.0.118
+- syn 2.0.119
 - syn 3.0.3
 - sync_wrapper 1.0.2
 - tauri-build 2.6.3
@@ -9886,12 +9877,12 @@ Apache License 2.0
 - tauri-utils 2.9.3
 - tauri 2.11.5
 - thiserror-impl 1.0.69
-- thiserror-impl 2.0.19
+- thiserror-impl 2.0.20
 - thiserror 1.0.69
-- thiserror 2.0.19
+- thiserror 2.0.20
 - time-core 0.1.9
-- time-macros 0.2.29
-- time 0.3.49
+- time-macros 0.2.32
+- time 0.3.55
 - typeid 1.0.3
 - unic-char-property 0.9.0
 - unic-char-range 0.9.0
@@ -9899,7 +9890,6 @@ Apache License 2.0
 - unic-ucd-ident 0.9.0
 - unic-ucd-version 0.9.0
 - unicode-ident 1.0.24
-- utf-8 0.7.6
 
 Apache License
 Version 2.0, January 2004
@@ -10280,7 +10270,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -------------------------------------------------------------------------------
 BSD 3-Clause "New" or "Revised" License
 - alloc-stdlib 0.2.4
-- aws-lc-sys 0.43.0
+- aws-lc-sys 0.44.0
 
 Copyright (c) <year> <owner>.
 
@@ -10367,7 +10357,7 @@ THIS SOFTWARE.
 
 -------------------------------------------------------------------------------
 ISC License
-- rustls-webpki 0.103.13
+- rustls-webpki 0.103.14
 
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:
@@ -10392,8 +10382,8 @@ third-party/chromium/LICENSE.
 
 -------------------------------------------------------------------------------
 ISC License
-- aws-lc-rs 1.17.3
-- aws-lc-sys 0.43.0
+- aws-lc-rs 1.18.0
+- aws-lc-sys 0.44.0
 
 ISC License:
 
@@ -10463,7 +10453,7 @@ DEALINGS IN THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- mio 1.2.1
+- mio 1.2.2
 
 Copyright (c) 2014 Carl Lerche and other MIO contributors
 
@@ -10539,7 +10529,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- hyper 1.10.1
+- hyper 1.11.0
 
 Copyright (c) 2014-2026 Sean McArthur
 
@@ -10675,7 +10665,7 @@ DEALINGS IN THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- bytes 1.12.0
+- bytes 1.12.1
 
 Copyright (c) 2018 Carl Lerche
 
@@ -10939,40 +10929,10 @@ DEALINGS IN THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- http-body 1.0.1
+- http-body-util 0.1.5
+- http-body 1.1.0
 
-Copyright (c) 2019-2024 Sean McArthur & Hyper Contributors
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-
--------------------------------------------------------------------------------
-MIT License
-- http-body-util 0.1.3
-
-Copyright (c) 2019-2025 Sean McArthur & Hyper Contributors
+Copyright (c) 2019-2026 Sean McArthur & Hyper Contributors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -11258,7 +11218,7 @@ SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- tokio-macros 2.7.0
+- tokio-macros 2.7.2
 
 MIT License
 
@@ -11403,7 +11363,7 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- tokio-stream 0.1.18
+- tokio-stream 0.1.19
 - tokio-util 0.7.19
 - tokio 1.53.1
 
@@ -11432,7 +11392,7 @@ SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- simd-adler32 0.3.9
+- simd-adler32 0.3.10
 
 MIT License
 
@@ -11460,7 +11420,7 @@ SOFTWARE.
 -------------------------------------------------------------------------------
 MIT License
 - cargo_metadata 0.19.2
-- zmij 1.0.21
+- zmij 1.0.23
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -11490,7 +11450,7 @@ DEALINGS IN THE SOFTWARE.
 -------------------------------------------------------------------------------
 MIT License
 - winnow 0.7.15
-- winnow 1.0.3
+- winnow 1.0.4
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -11514,7 +11474,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- spin 0.9.8
+- spin 0.9.9
 
 The MIT License (MIT)
 
@@ -11570,9 +11530,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- aho-corasick 1.1.4
+- aho-corasick 1.1.5
 - byteorder 1.5.0
-- memchr 2.8.2
+- memchr 2.8.3
 - walkdir 2.5.0
 
 The MIT License (MIT)
@@ -11629,7 +11589,7 @@ SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- data-encoding 2.11.0
+- data-encoding 2.11.1
 
 The MIT License (MIT)
 
@@ -11657,7 +11617,7 @@ SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- aws-lc-sys 0.43.0
+- aws-lc-sys 0.44.0
 
 The MIT License (MIT)
 
@@ -11741,7 +11701,7 @@ THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- embed-resource 3.0.9
+- embed-resource 3.0.11
 
 The MIT License (MIT)
 
@@ -13098,24 +13058,24 @@ authorization of the copyright holder.
 
 -------------------------------------------------------------------------------
 Unicode License v3
-- icu_collections 2.2.0
-- icu_locale_core 2.2.0
-- icu_normalizer 2.2.0
-- icu_normalizer_data 2.2.0
-- icu_properties 2.2.0
-- icu_properties_data 2.2.0
-- icu_provider 2.2.0
-- litemap 0.8.2
-- potential_utf 0.1.5
-- tinystr 0.8.3
-- writeable 0.6.3
+- icu_collections 2.3.0
+- icu_locale_core 2.3.0
+- icu_normalizer 2.3.0
+- icu_normalizer_data 2.3.0
+- icu_properties 2.3.0
+- icu_properties_data 2.3.0
+- icu_provider 2.3.0
+- litemap 0.8.3
+- potential_utf 0.1.6
+- tinystr 0.8.4
+- writeable 0.6.4
 - yoke-derive 0.8.2
 - yoke 0.8.3
 - zerofrom-derive 0.1.7
 - zerofrom 0.1.8
-- zerotrie 0.2.4
-- zerovec-derive 0.11.3
-- zerovec 0.11.6
+- zerotrie 0.2.5
+- zerovec-derive 0.11.4
+- zerovec 0.11.7
 
 UNICODE LICENSE V3
 

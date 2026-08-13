@@ -45,7 +45,7 @@ corepack pnpm run license:all
    Run the executable Tally claim gate:
 
    ```sh
-   cd src-tauri
+   cd tools
    cargo run --locked -p bridge-tally-compatibility -- gate \
      ../docs/tally/compatibility/compatibility-matrix.json \
      ../docs/tally/compatibility/compatibility-surface.json \

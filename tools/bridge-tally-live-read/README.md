@@ -19,7 +19,7 @@ Tauri, database, sync, import, or write dependency. The controller can dispatch
 only the closed `ReadOnlyProfile` variants shared with production; it accepts
 no XML, report name, TDL, payload, or company identifier on the command line.
 
-Run from `src-tauri` after creating `.bridge-live/profile.json` from the
+Run from `tools` after creating `.bridge-live/profile.json` from the
 tracked example:
 
 ```sh
