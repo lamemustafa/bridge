@@ -41,6 +41,10 @@ for (const step of parseWorkflowSteps(workflow)) {
   }
 }
 
+for (const stalePath of staleToolPaths()) {
+  failures.push(`stale tools-workspace path: ${stalePath.file} references ${stalePath.path}`);
+}
+
 if (failures.length) {
   throw new Error(`CI workflow references do not resolve:\n${failures.join("\n")}`);
 }
@@ -107,6 +111,28 @@ function workspaceMetadata(manifestPath) {
   const metadata = JSON.parse(result.stdout);
   metadataByWorkspace.set(manifestPath, metadata);
   return metadata;
+}
+
+function staleToolPaths() {
+  const toolsMetadata = workspaceMetadata(resolve(repositoryRoot, "tools", "Cargo.toml"));
+  const legacyPaths = toolsMetadata.packages.map((candidate) => `src-tauri/crates/${candidate.name}`);
+  const tracked = spawnSync("git", ["-C", repositoryRoot, "ls-files", "-z"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (tracked.error || tracked.status !== 0) {
+    const detail = tracked.error?.message ?? tracked.stderr.trim() ?? "unknown error";
+    throw new Error(`git ls-files failed: ${detail}`);
+  }
+
+  const stale = [];
+  for (const file of tracked.stdout.split("\0").filter(Boolean)) {
+    const contents = readFileSync(resolve(repositoryRoot, file), "utf8");
+    for (const path of legacyPaths) {
+      if (contents.includes(path)) stale.push({ file, path });
+    }
+  }
+  return stale;
 }
 
 function relativePath(path) {

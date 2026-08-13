@@ -144,30 +144,31 @@ function walkFiles(directory) {
 
 const tauriRoot = fileURLToPath(new URL("../src-tauri", import.meta.url)).replaceAll("\\", "/");
 const protocolManifest = `${tauriRoot}/crates/bridge-tally-protocol/Cargo.toml`;
+const toolsRoot = fileURLToPath(new URL("../tools", import.meta.url)).replaceAll("\\", "/");
 const protocolModule = `${tauriRoot}/crates/bridge-tally-protocol/src/bills_native_outstandings_probe.rs`;
 const protocolLib = `${tauriRoot}/crates/bridge-tally-protocol/src/lib.rs`;
 const allowedManifests = new Set([
   protocolManifest,
-  `${tauriRoot}/crates/bridge-tally-compatibility/Cargo.toml`,
-  `${tauriRoot}/crates/bridge-tally-live-read/Cargo.toml`,
-  `${tauriRoot}/crates/bridge-tally-read-transport/Cargo.toml`,
+  `${toolsRoot}/bridge-tally-compatibility/Cargo.toml`,
+  `${toolsRoot}/bridge-tally-live-read/Cargo.toml`,
+  `${toolsRoot}/bridge-tally-read-transport/Cargo.toml`,
 ]);
 const allowedRust = new Set([
   protocolModule,
   protocolLib,
-  `${tauriRoot}/crates/bridge-tally-compatibility/src/bills_native_outstandings_probe_receipt.rs`,
-  `${tauriRoot}/crates/bridge-tally-compatibility/src/lib.rs`,
-  `${tauriRoot}/crates/bridge-tally-live-read/src/bin/native_outstandings_probe.rs`,
-  `${tauriRoot}/crates/bridge-tally-live-read/src/lib.rs`,
-  `${tauriRoot}/crates/bridge-tally-live-read/src/native_outstandings_qualification.rs`,
-  `${tauriRoot}/crates/bridge-tally-read-transport/src/lib.rs`,
+  `${toolsRoot}/bridge-tally-compatibility/src/bills_native_outstandings_probe_receipt.rs`,
+  `${toolsRoot}/bridge-tally-compatibility/src/lib.rs`,
+  `${toolsRoot}/bridge-tally-live-read/src/bin/native_outstandings_probe.rs`,
+  `${toolsRoot}/bridge-tally-live-read/src/lib.rs`,
+  `${toolsRoot}/bridge-tally-live-read/src/native_outstandings_qualification.rs`,
+  `${toolsRoot}/bridge-tally-read-transport/src/lib.rs`,
 ]);
-for (const path of walkFiles(tauriRoot)) {
+for (const path of [...walkFiles(tauriRoot), ...walkFiles(toolsRoot)]) {
   if (path.endsWith("/Cargo.toml") && !allowedManifests.has(path)) {
     const contents = readFileSync(path, "utf8");
     for (const feature of qualificationOnlyFeatures) {
       if (contents.includes(feature)) {
-        throw new Error(`qualification-only Bills probe enabled outside reviewed manifests: ${path.slice(tauriRoot.length + 1)}`);
+        throw new Error(`qualification-only Bills probe enabled outside reviewed manifests: ${relativeCheckedPath(path)}`);
       }
     }
   }
@@ -179,10 +180,15 @@ for (const path of walkFiles(tauriRoot)) {
       "LedgerOutstandingsCandidateV0",
     ]) {
       if (contents.includes(identifier)) {
-        throw new Error(`qualification-only Bills probe referenced outside its module: ${path.slice(tauriRoot.length + 1)}`);
+        throw new Error(`qualification-only Bills probe referenced outside its module: ${relativeCheckedPath(path)}`);
       }
     }
   }
+}
+
+function relativeCheckedPath(path) {
+  const scannedRoot = path.startsWith(`${toolsRoot}/`) ? toolsRoot : tauriRoot;
+  return path.slice(scannedRoot.length + 1);
 }
 
 const productionSurfaces = [
