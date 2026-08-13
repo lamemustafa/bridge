@@ -3,11 +3,11 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "5161158bf6d871f91e5afe2f1230738f84ee240be73a76514b335678477f1913"
+      "sha256": "0a617b9ed0fb08c3860a5daca1578e7380f8d24bc0824f7b30601d8618c70d6e"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
-      "sha256": "c09463ec79311307c1e10f1fe8bee3e72c5b421bea31b4a5868973b5a68e76ed"
+      "sha256": "0625e0d73eca4a171e5ae99098e02bc2ada534d5024e529979e49658ee108794"
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
@@ -71,7 +71,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "fa83020b46612c3e0c7a72fc4ea14d578cbb2c4e3a12c6788d085f61337facd0"
+      "sha256": "c5289de502cffc87bff56107d31b0a11dd1db75b4b4b844db786cda669a8554b"
     },
     {
       "path": "scripts/check-tally-live-read-boundary.mjs",
@@ -95,7 +95,7 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "83571510f7a2c5610862743863eebd4386c73b338987598d10cdcdb4a36174c7"
+      "sha256": "be6f715bbfea62084ef8ecd6a248f4de21e6534e27c78bdcaa6f1c8158475335"
     },
     {
       "path": "src-tauri/Cargo.toml",
@@ -494,5 +494,5 @@
       "sha256": "4db20793f6dafbb99816533ed74fc9a9a98d18a12fe5227d87b35df2150bf5f4"
     }
   ],
-  "manifest_sha256": "8faeb2e0119d1ef156ceb163482a43b59f1edd41d1c807b26e3d7f1d75be9e59"
+  "manifest_sha256": "bd60aa10f5806aee31e98762ce4928324b8dc1a3eada4367d535a281d8d0cf53"
 }
