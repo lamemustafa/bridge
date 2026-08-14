@@ -36,11 +36,12 @@ struct PendingBillRow {
 }
 
 /// Parses the flat Bills Receivable/Payable response into fully resolved
-/// rows. `books_from_year` supplies the century for the two-digit display
-/// dates (see [`super::date::parse_native_display_date`]).
+/// rows. The pinned book window resolves their two-digit display dates (see
+/// [`super::date::parse_native_display_date`]).
 pub fn parse_native_bill_rows(
     xml: &str,
-    books_from_year: u32,
+    books_from: &bridge_tally_primitives::TallyDate,
+    as_of: &bridge_tally_primitives::TallyDate,
 ) -> Result<Vec<NativeBillRow>, NativeOutstandingsError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -192,13 +193,14 @@ pub fn parse_native_bill_rows(
 
     pending
         .into_iter()
-        .map(|row| finalize_bill_row(row, books_from_year))
+        .map(|row| finalize_bill_row(row, books_from, as_of))
         .collect()
 }
 
 fn finalize_bill_row(
     row: PendingBillRow,
-    books_from_year: u32,
+    books_from: &bridge_tally_primitives::TallyDate,
+    as_of: &bridge_tally_primitives::TallyDate,
 ) -> Result<NativeBillRow, NativeOutstandingsError> {
     let closing_balance = row
         .closing_balance
@@ -210,8 +212,8 @@ fn finalize_bill_row(
         .ok_or(NativeOutstandingsError::InvalidResponse(
             "bills_fixed_row_missing_billdue",
         ))?;
-    let bill_date = parse_native_display_date(&row.bill_date_raw, books_from_year)?;
-    let due_date = parse_native_display_date(&due_date_raw, books_from_year)?;
+    let bill_date = parse_native_display_date(&row.bill_date_raw, books_from, as_of)?;
+    let due_date = parse_native_display_date(&due_date_raw, books_from, as_of)?;
     Ok(NativeBillRow {
         party: row.party,
         reference: row.reference,

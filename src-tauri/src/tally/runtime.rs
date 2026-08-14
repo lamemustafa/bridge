@@ -1270,13 +1270,6 @@ impl TallyRuntime {
                         return Ok(partial_result("as_of_precedes_books_from"));
                     }
                     let books_from = extent.books_from().clone();
-                    // The two-digit year in a display date ("1-Apr-24") is
-                    // resolved against the book's own start, never the wall
-                    // clock.
-                    let Ok(books_from_year) = books_from.as_str()[..4].parse::<u32>() else {
-                        return Ok(partial_result("company_books_from_year_unreadable"));
-                    };
-
                     let mut total_bytes = 0usize;
                     let read =
                         |kind| render_native_bills_request(kind, &company, &books_from, &as_of);
@@ -1332,8 +1325,8 @@ impl TallyRuntime {
                     }
 
                     let receivable_rows =
-                        parse_native_bill_rows(&receivable_body, books_from_year)?;
-                    let payable_rows = parse_native_bill_rows(&payable_body, books_from_year)?;
+                        parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;
+                    let payable_rows = parse_native_bill_rows(&payable_body, &books_from, &as_of)?;
                     let ledger_rows = parse_native_ledger_snapshot(&ledger_body)?;
 
                     // Ageing anchors on the DUE date. Measured 2026-08-07: on a

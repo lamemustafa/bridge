@@ -61,34 +61,36 @@ pub fn compute_native_outstandings(
             .map_err(|_| NativeOutstandingsError::ArithmeticOverflow)?;
         receivable_total = add(&receivable_total, &amount)?;
 
-        let age = days_between(bill_anchor_date(row, anchor), as_of)?;
+        let age = overdue_days(bill_anchor_date(row, anchor), as_of)?;
         if let Some(tally_overdue) = row.tally_overdue_days {
-            let age_from_due = days_between(&row.due_date, as_of)?;
+            let age_from_due = overdue_days(&row.due_date, as_of)?.unwrap_or(0);
             if i64::from(age_from_due) != tally_overdue {
                 overdue_crosscheck_mismatches += 1;
             }
         }
-
-        let (bucket, count) = match age {
-            0..=30 => (&mut ageing.days_0_30, &mut ageing_bill_counts.days_0_30),
-            31..=60 => (&mut ageing.days_31_60, &mut ageing_bill_counts.days_31_60),
-            61..=90 => (&mut ageing.days_61_90, &mut ageing_bill_counts.days_61_90),
-            _ => (
-                &mut ageing.days_90_plus,
-                &mut ageing_bill_counts.days_90_plus,
-            ),
-        };
-        *bucket = add(bucket, &amount)?;
-        *count = count
-            .checked_add(1)
-            .ok_or(NativeOutstandingsError::ArithmeticOverflow)?;
 
         let totals = parties.entry(row.party.clone()).or_default();
         totals.receivable = Some(add(
             totals.receivable.as_ref().unwrap_or(&ExactDecimal::zero()),
             &amount,
         )?);
-        totals.oldest_bill_age = Some(totals.oldest_bill_age.map_or(age, |oldest| oldest.max(age)));
+        if let Some(age) = age {
+            let (bucket, count) = match age {
+                0..=30 => (&mut ageing.days_0_30, &mut ageing_bill_counts.days_0_30),
+                31..=60 => (&mut ageing.days_31_60, &mut ageing_bill_counts.days_31_60),
+                61..=90 => (&mut ageing.days_61_90, &mut ageing_bill_counts.days_61_90),
+                _ => (
+                    &mut ageing.days_90_plus,
+                    &mut ageing_bill_counts.days_90_plus,
+                ),
+            };
+            *bucket = add(bucket, &amount)?;
+            *count = count
+                .checked_add(1)
+                .ok_or(NativeOutstandingsError::ArithmeticOverflow)?;
+            totals.oldest_bill_age =
+                Some(totals.oldest_bill_age.map_or(age, |oldest| oldest.max(age)));
+        }
     }
 
     for row in payable_rows
@@ -101,14 +103,17 @@ pub fn compute_native_outstandings(
             .map_err(|_| NativeOutstandingsError::ArithmeticOverflow)?;
         payable_total = add(&payable_total, &amount)?;
 
-        let age = days_between(bill_anchor_date(row, anchor), as_of)?;
+        let age = overdue_days(bill_anchor_date(row, anchor), as_of)?;
 
         let totals = parties.entry(row.party.clone()).or_default();
         totals.payable = Some(add(
             totals.payable.as_ref().unwrap_or(&ExactDecimal::zero()),
             &amount,
         )?);
-        totals.oldest_bill_age = Some(totals.oldest_bill_age.map_or(age, |oldest| oldest.max(age)));
+        if let Some(age) = age {
+            totals.oldest_bill_age =
+                Some(totals.oldest_bill_age.map_or(age, |oldest| oldest.max(age)));
+        }
     }
 
     let mut top_parties = parties
@@ -242,6 +247,17 @@ fn add(left: &ExactDecimal, right: &ExactDecimal) -> Result<ExactDecimal, Native
 /// bill age without going through the full report computation.
 pub fn age_in_days(from: &TallyDate, to: &TallyDate) -> Result<u32, NativeOutstandingsError> {
     days_between(from, to)
+}
+
+/// A bill whose due date has not arrived has zero overdue days in Tally's
+/// `BILLOVERDUE` column, but no bill age to place into the ageing buckets.
+/// Keep that state distinct from a bill due today: the latter is aged zero,
+/// while the former is absent from ageing and from `oldest_bill_age_days`.
+fn overdue_days(from: &TallyDate, to: &TallyDate) -> Result<Option<u32>, NativeOutstandingsError> {
+    if from > to {
+        return Ok(None);
+    }
+    days_between(from, to).map(Some)
 }
 
 fn days_between(from: &TallyDate, to: &TallyDate) -> Result<u32, NativeOutstandingsError> {

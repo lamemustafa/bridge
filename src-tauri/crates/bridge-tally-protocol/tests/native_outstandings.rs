@@ -7,7 +7,7 @@
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_ledger_snapshot,
-    AgeingAnchor, NativeOutstandingsError,
+    AgeingAnchor, NativeBillRow, NativeOutstandingsError,
 };
 
 const BILLS_RECEIVABLE_BILLWISE_LAB: &str =
@@ -21,10 +21,11 @@ const BILLS_RECEIVABLE_AGEING_LAB: &str =
 
 /// `BOOKSFROM` for "Bridge Billwise Lab", from `company_extent_9000.xml`
 /// (`<BOOKSFROM TYPE="Date">20240401</BOOKSFROM>`).
-const BILLWISE_LAB_BOOKS_FROM_YEAR: u32 = 2024;
+const BILLWISE_LAB_BOOKS_FROM: &str = "20240401";
 /// `BOOKSFROM` for "Bridge Ageing Lab", from `company_extent_9000.xml`
 /// (`<BOOKSFROM TYPE="Date">20260401</BOOKSFROM>`).
-const AGEING_LAB_BOOKS_FROM_YEAR: u32 = 2026;
+const AGEING_LAB_BOOKS_FROM: &str = "20260401";
+const NATIVE_CAPTURE_AS_OF: &str = "20260731";
 
 const BILLWISE_LAB_COMPANY: &str = "Bridge Billwise Lab";
 
@@ -43,14 +44,57 @@ fn assert_exact(actual: &ExactDecimal, canonical: &str) {
     assert_eq!(actual.as_str(), canonical);
 }
 
+#[test]
+fn not_yet_due_bill_is_reported_without_becoming_overdue() {
+    let receivable = [NativeBillRow {
+        party: "Synthetic customer".to_string(),
+        reference: "SYNTHETIC-FUTURE-DUE".to_string(),
+        bill_date: as_of("20260701"),
+        due_date: as_of("20260830"),
+        closing_balance: ExactDecimal::parse("-100.00").unwrap(),
+        // Tally reports zero overdue days until the due date arrives.
+        tally_overdue_days: Some(0),
+    }];
+
+    let result = compute_native_outstandings(
+        "Synthetic Company",
+        &receivable,
+        &[],
+        &[],
+        AgeingAnchor::DueDate,
+        &as_of("20260731"),
+        0,
+    )
+    .expect("a future-due bill must not abort the report");
+
+    assert_exact(&result.report.receivable_total, "100");
+    assert_eq!(result.report.ageing.days_0_30, ExactDecimal::zero());
+    assert_eq!(result.report.ageing.days_90_plus, ExactDecimal::zero());
+    assert_eq!(result.report.open_receivable_bill_count, 0);
+    assert_eq!(result.report.ageing_bill_counts.days_0_30, 0);
+    assert_eq!(result.report.ageing_bill_counts.days_90_plus, 0);
+    assert_eq!(
+        result.report.top_parties[0].oldest_bill_age_days, None,
+        "a future-due bill must not be presented as the oldest overdue bill"
+    );
+    assert_eq!(
+        result.overdue_crosscheck_mismatches, 0,
+        "zero overdue days must agree with Tally's own BILLOVERDUE"
+    );
+}
+
 // ---------------------------------------------------------------------
 // A: Bills Receivable on Billwise Lab — 48 rows, sum(BILLCL) = -4514597.00,
 // all negative, 10 distinct parties.
 // ---------------------------------------------------------------------
 #[test]
 fn bills_receivable_billwise_lab_matches_measured_totals() {
-    let rows = parse_native_bill_rows(BILLS_RECEIVABLE_BILLWISE_LAB, BILLWISE_LAB_BOOKS_FROM_YEAR)
-        .expect("the real Billwise Lab capture parses");
+    let rows = parse_native_bill_rows(
+        BILLS_RECEIVABLE_BILLWISE_LAB,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
+    )
+    .expect("the real Billwise Lab capture parses");
 
     assert_eq!(rows.len(), 48);
 
@@ -77,12 +121,16 @@ fn bills_receivable_billwise_lab_matches_measured_totals() {
 // ---------------------------------------------------------------------
 #[test]
 fn ageing_buckets_billwise_lab_match_measured_values_at_as_of() {
-    let receivable_rows =
-        parse_native_bill_rows(BILLS_RECEIVABLE_BILLWISE_LAB, BILLWISE_LAB_BOOKS_FROM_YEAR)
-            .unwrap();
+    let receivable_rows = parse_native_bill_rows(
+        BILLS_RECEIVABLE_BILLWISE_LAB,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
+    )
+    .unwrap();
     let payable_rows = parse_native_bill_rows(
         BILLS_PAYABLE_BILLWISE_LAB_EMPTY,
-        BILLWISE_LAB_BOOKS_FROM_YEAR,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
     )
     .unwrap();
     let ledgers = parse_native_ledger_snapshot(LEDGER_SNAPSHOT_BILLWISE_LAB).unwrap();
@@ -147,12 +195,16 @@ fn ageing_buckets_billwise_lab_match_measured_values_at_as_of() {
 // ---------------------------------------------------------------------
 #[test]
 fn on_account_residuals_billwise_lab_match_measured_totals() {
-    let receivable_rows =
-        parse_native_bill_rows(BILLS_RECEIVABLE_BILLWISE_LAB, BILLWISE_LAB_BOOKS_FROM_YEAR)
-            .unwrap();
+    let receivable_rows = parse_native_bill_rows(
+        BILLS_RECEIVABLE_BILLWISE_LAB,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
+    )
+    .unwrap();
     let payable_rows = parse_native_bill_rows(
         BILLS_PAYABLE_BILLWISE_LAB_EMPTY,
-        BILLWISE_LAB_BOOKS_FROM_YEAR,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
     )
     .unwrap();
     let ledgers = parse_native_ledger_snapshot(LEDGER_SNAPSHOT_BILLWISE_LAB).unwrap();
@@ -206,8 +258,12 @@ fn on_account_residuals_billwise_lab_match_measured_totals() {
 // ---------------------------------------------------------------------
 #[test]
 fn ageing_lab_due_date_anchor_reproduces_tally_overdue_bill_date_does_not() {
-    let rows = parse_native_bill_rows(BILLS_RECEIVABLE_AGEING_LAB, AGEING_LAB_BOOKS_FROM_YEAR)
-        .expect("the real Ageing Lab capture parses");
+    let rows = parse_native_bill_rows(
+        BILLS_RECEIVABLE_AGEING_LAB,
+        &as_of(AGEING_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
+    )
+    .expect("the real Ageing Lab capture parses");
     assert_eq!(rows.len(), 5);
 
     // SVTODATE that produced these BILLOVERDUE values: 1-Apr-24 + 851 days
@@ -263,7 +319,8 @@ fn empty_bills_response_is_legitimate_zero_row_success() {
     assert_eq!(BILLS_PAYABLE_BILLWISE_LAB_EMPTY.len(), 22);
     let rows = parse_native_bill_rows(
         BILLS_PAYABLE_BILLWISE_LAB_EMPTY,
-        BILLWISE_LAB_BOOKS_FROM_YEAR,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
     )
     .expect("a bare ENVELOPE is success, not an error");
     assert!(rows.is_empty());
@@ -313,7 +370,11 @@ fn ledger_snapshot_ignores_the_cmpinfo_counter_trap() {
 #[test]
 fn status_bearing_bills_response_fails_closed() {
     let xml = "<ENVELOPE><STATUS>0</STATUS></ENVELOPE>";
-    let result = parse_native_bill_rows(xml, BILLWISE_LAB_BOOKS_FROM_YEAR);
+    let result = parse_native_bill_rows(
+        xml,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
+    );
     assert_eq!(result, Err(NativeOutstandingsError::TallyReportedFailure));
 }
 
@@ -323,7 +384,11 @@ fn status_bearing_bills_response_fails_closed() {
 #[test]
 fn billcl_before_any_billfixed_fails_closed() {
     let xml = "<ENVELOPE><BILLCL>-100.00</BILLCL></ENVELOPE>";
-    let result = parse_native_bill_rows(xml, BILLWISE_LAB_BOOKS_FROM_YEAR);
+    let result = parse_native_bill_rows(
+        xml,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
+    );
     assert_eq!(
         result,
         Err(NativeOutstandingsError::InvalidResponse(
@@ -343,7 +408,11 @@ fn billfixed_missing_billcl_fails_closed() {
         <BILLFIXED><BILLDATE>1-Apr-24</BILLDATE><BILLREF>INV-2</BILLREF><BILLPARTY>P</BILLPARTY></BILLFIXED>\
         <BILLCL>-10.00</BILLCL><BILLDUE>1-Apr-24</BILLDUE><BILLOVERDUE>1</BILLOVERDUE>\
         </ENVELOPE>";
-    let result = parse_native_bill_rows(xml, BILLWISE_LAB_BOOKS_FROM_YEAR);
+    let result = parse_native_bill_rows(
+        xml,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
+    );
     assert_eq!(
         result,
         Err(NativeOutstandingsError::InvalidResponse(

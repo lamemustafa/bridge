@@ -35,14 +35,26 @@ fn as_of() -> TallyDate {
     TallyDate::parse("20260731").expect("valid as-of")
 }
 
+fn books_from(yyyymmdd: &str) -> TallyDate {
+    TallyDate::parse(yyyymmdd).expect("valid books-from date")
+}
+
 /// The whole thesis in one assertion: one native request reproduces the
 /// 54-request, 8.30 s voucher scan exactly.
 #[test]
 fn billwise_lab_reproduces_the_unit_a_exit_criteria_exactly() {
-    let receivable = parse_native_bill_rows(&fixture("bills_receivable_billwise_lab.xml"), 2024)
-        .expect("receivable rows parse");
-    let payable = parse_native_bill_rows(&fixture("bills_payable_billwise_lab_empty.xml"), 2024)
-        .expect("empty payable parses as success, not failure");
+    let receivable = parse_native_bill_rows(
+        &fixture("bills_receivable_billwise_lab.xml"),
+        &books_from("20240401"),
+        &as_of(),
+    )
+    .expect("receivable rows parse");
+    let payable = parse_native_bill_rows(
+        &fixture("bills_payable_billwise_lab_empty.xml"),
+        &books_from("20240401"),
+        &as_of(),
+    )
+    .expect("empty payable parses as success, not failure");
     let ledgers = parse_native_ledger_snapshot(&fixture("ledger_snapshot_billwise_lab.xml"))
         .expect("ledger snapshot parses");
 
@@ -93,10 +105,18 @@ fn billwise_lab_reproduces_the_unit_a_exit_criteria_exactly() {
 /// rest, and it must equal Unit A's separately derived payable figure.
 #[test]
 fn billwise_lab_residual_equals_unit_a_payable_total_to_the_rupee() {
-    let receivable = parse_native_bill_rows(&fixture("bills_receivable_billwise_lab.xml"), 2024)
-        .expect("receivable rows parse");
-    let payable = parse_native_bill_rows(&fixture("bills_payable_billwise_lab_empty.xml"), 2024)
-        .expect("payable parses");
+    let receivable = parse_native_bill_rows(
+        &fixture("bills_receivable_billwise_lab.xml"),
+        &books_from("20240401"),
+        &as_of(),
+    )
+    .expect("receivable rows parse");
+    let payable = parse_native_bill_rows(
+        &fixture("bills_payable_billwise_lab_empty.xml"),
+        &books_from("20240401"),
+        &as_of(),
+    )
+    .expect("payable parses");
     let ledgers = parse_native_ledger_snapshot(&fixture("ledger_snapshot_billwise_lab.xml"))
         .expect("ledger snapshot parses");
 
@@ -129,9 +149,18 @@ fn billwise_lab_residual_equals_unit_a_payable_total_to_the_rupee() {
 /// residual is the answer -- a report that omitted it would be short by 96%.
 #[test]
 fn aarav_residual_dominates_and_every_bill_carrying_party_reconciles_exactly() {
-    let receivable =
-        parse_native_bill_rows(&fixture("bills_receivable_aarav.xml"), 2024).expect("parse");
-    let payable = parse_native_bill_rows(&fixture("bills_payable_aarav.xml"), 2024).expect("parse");
+    let receivable = parse_native_bill_rows(
+        &fixture("bills_receivable_aarav.xml"),
+        &books_from("20240401"),
+        &as_of(),
+    )
+    .expect("parse");
+    let payable = parse_native_bill_rows(
+        &fixture("bills_payable_aarav.xml"),
+        &books_from("20240401"),
+        &as_of(),
+    )
+    .expect("parse");
     let ledgers =
         parse_native_ledger_snapshot(&fixture("ledger_snapshot_aarav.xml")).expect("parse");
 
@@ -193,8 +222,12 @@ fn aarav_residual_dominates_and_every_bill_carrying_party_reconciles_exactly() {
 /// period exists.
 #[test]
 fn due_date_anchor_matches_tallys_own_overdue_column_where_bill_date_does_not() {
-    let rows =
-        parse_native_bill_rows(&fixture("bills_receivable_ageing_lab.xml"), 2026).expect("parse");
+    let rows = parse_native_bill_rows(
+        &fixture("bills_receivable_ageing_lab.xml"),
+        &books_from("20260401"),
+        &as_of(),
+    )
+    .expect("parse");
     assert_eq!(rows.len(), 5);
     let as_of = as_of();
 
@@ -237,7 +270,8 @@ fn due_date_anchor_matches_tallys_own_overdue_column_where_bill_date_does_not() 
 fn unloaded_company_response_fails_closed() {
     let result = parse_native_bill_rows(
         &fixture("bills_receivable_unloaded_company_failure.xml"),
-        2024,
+        &books_from("20240401"),
+        &as_of(),
     );
     assert!(
         result.is_err(),
