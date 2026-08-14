@@ -393,6 +393,25 @@ mod tests {
     }
 
     #[test]
+    fn renders_bill_direction_for_mixed_party_documents() {
+        let mut payable = bill("BILL-1", "1250.75", 40);
+        payable.kind = "payable";
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "Synthetic Party",
+            &[bill("INV-1", "1250.75", 40), payable],
+            &[],
+        )
+        .unwrap();
+
+        let text = extracted_text(&render_party_statement_pdf(&statement).unwrap());
+        assert!(text.contains("Reference | Bill date | Due date | Direction | Amount"));
+        assert!(text.contains("INV-1 | 01-Jan-2026 | 01-Feb-2026 | Receivable"));
+        assert!(text.contains("BILL-1 | 01-Jan-2026 | 01-Feb-2026 | Payable"));
+    }
+
+    #[test]
     fn long_party_and_bill_names_are_wrapped_without_being_clipped() {
         let long_party = "Synthetic Party With A Deliberately Long Ledger Name That Exceeds A Single Printable Statement Line";
         let long_reference = "SYNTHETIC-REFERENCE-WITH-A-DELIBERATELY-LONG-BILL-NAME-THAT-MUST-WRAP-WITHOUT-CLIPPING";
