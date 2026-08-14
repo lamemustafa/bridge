@@ -24,6 +24,8 @@ pub enum PartyStatementXlsxError {
     InvalidDate(String),
     #[error("Bridge could not represent an amount in the spreadsheet ({0})")]
     InvalidAmount(String),
+    #[error("Bridge could not classify a statement bill direction ({0})")]
+    InvalidDirection(String),
 }
 
 /// Renders `statement` as an in-memory `.xlsx` file.
@@ -71,6 +73,7 @@ pub fn render_party_statement_xlsx(
         "Reference",
         "Bill date",
         "Due date",
+        "Direction",
         "Amount",
         "Age (days)",
         "Bucket",
@@ -86,21 +89,22 @@ pub fn render_party_statement_xlsx(
         worksheet.write_string(row, 0, bill.reference.as_str())?;
         worksheet.write_datetime_with_format(row, 1, excel_date(&bill.bill_date)?, &date_format)?;
         worksheet.write_datetime_with_format(row, 2, excel_date(&bill.due_date)?, &date_format)?;
+        worksheet.write_string(row, 3, bill_direction_label(bill.kind)?)?;
         worksheet.write_number_with_format(
             row,
-            3,
+            4,
             amount_to_f64(bill.amount.as_str())?,
             &amount_format,
         )?;
-        worksheet.write_number(row, 4, bill.age_days)?;
-        worksheet.write_string(row, 5, bill.bucket.label())?;
+        worksheet.write_number(row, 5, bill.age_days)?;
+        worksheet.write_string(row, 6, bill.bucket.label())?;
         row += 1;
     }
 
-    worksheet.write_string_with_format(row, 0, "Total bills", &bold)?;
+    worksheet.write_string_with_format(row, 0, "Total bill magnitudes (not net)", &bold)?;
     worksheet.write_number_with_format(
         row,
-        3,
+        4,
         amount_to_f64(statement.bill_total.as_str())?,
         &bold_amount_format,
     )?;
@@ -110,7 +114,7 @@ pub fn render_party_statement_xlsx(
         worksheet.write_string(row, 0, "Unallocated (no bill reference)")?;
         worksheet.write_number_with_format(
             row,
-            3,
+            4,
             amount_to_f64(statement.unallocated.as_str())?,
             &amount_format,
         )?;
@@ -119,7 +123,7 @@ pub fn render_party_statement_xlsx(
         worksheet.write_string_with_format(row, 0, "Grand total", &bold)?;
         worksheet.write_number_with_format(
             row,
-            3,
+            4,
             amount_to_f64(statement.grand_total.as_str())?,
             &bold_amount_format,
         )?;
@@ -132,9 +136,10 @@ pub fn render_party_statement_xlsx(
     worksheet.set_column_width(0, 30)?;
     worksheet.set_column_width(1, 13)?;
     worksheet.set_column_width(2, 13)?;
-    worksheet.set_column_width(3, 16)?;
-    worksheet.set_column_width(4, 11)?;
-    worksheet.set_column_width(5, 13)?;
+    worksheet.set_column_width(3, 27)?;
+    worksheet.set_column_width(4, 16)?;
+    worksheet.set_column_width(5, 11)?;
+    worksheet.set_column_width(6, 13)?;
 
     workbook
         .save_to_buffer()
@@ -165,6 +170,14 @@ fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> {
         return Err(PartyStatementXlsxError::InvalidAmount(text.to_string()));
     }
     Ok(value)
+}
+
+fn bill_direction_label(kind: &str) -> Result<&'static str, PartyStatementXlsxError> {
+    match kind {
+        "receivable" => Ok("Receivable (they owe you)"),
+        "payable" => Ok("Payable (you owe them)"),
+        _ => Err(PartyStatementXlsxError::InvalidDirection(kind.to_string())),
+    }
 }
 
 /// `f64::to_string` emits the shortest decimal that round-trips to the binary
@@ -249,6 +262,22 @@ mod tests {
             9007199254740992.0
         );
         assert_eq!(amount_to_f64("42.00").unwrap(), 42.0);
+    }
+
+    #[test]
+    fn bill_direction_labels_make_mixed_party_amounts_unambiguous() {
+        assert_eq!(
+            bill_direction_label("receivable").unwrap(),
+            "Receivable (they owe you)"
+        );
+        assert_eq!(
+            bill_direction_label("payable").unwrap(),
+            "Payable (you owe them)"
+        );
+        assert!(matches!(
+            bill_direction_label("unknown"),
+            Err(PartyStatementXlsxError::InvalidDirection(_))
+        ));
     }
     use super::*;
     use crate::reports::party_statement::build_party_statement;
