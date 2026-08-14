@@ -199,8 +199,8 @@ fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> {
 
 fn bill_direction_label(kind: &str) -> Result<&'static str, PartyStatementXlsxError> {
     match kind {
-        "receivable" => Ok("Receivable (they owe you)"),
-        "payable" => Ok("Payable (you owe them)"),
+        "receivable" => Ok("Receivable"),
+        "payable" => Ok("Payable"),
         _ => Err(PartyStatementXlsxError::InvalidDirection(kind.to_string())),
     }
 }
@@ -298,14 +298,8 @@ mod tests {
 
     #[test]
     fn bill_direction_labels_make_mixed_party_amounts_unambiguous() {
-        assert_eq!(
-            bill_direction_label("receivable").unwrap(),
-            "Receivable (they owe you)"
-        );
-        assert_eq!(
-            bill_direction_label("payable").unwrap(),
-            "Payable (you owe them)"
-        );
+        assert_eq!(bill_direction_label("receivable").unwrap(), "Receivable");
+        assert_eq!(bill_direction_label("payable").unwrap(), "Payable");
         assert!(matches!(
             bill_direction_label("unknown"),
             Err(PartyStatementXlsxError::InvalidDirection(_))

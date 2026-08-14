@@ -25,6 +25,8 @@ pub enum PartyStatementPdfError {
     InvalidDate(String),
     #[error("Bridge could not represent an amount in the PDF ({0})")]
     InvalidAmount(String),
+    #[error("Bridge could not classify a statement bill direction ({0})")]
+    InvalidDirection(String),
     #[error("Bridge could not represent statement text in the PDF's built-in font")]
     UnsupportedText,
     #[error("Bridge could not allocate PDF pages for this statement")]
@@ -162,16 +164,17 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
 
     push_wrapped(
         &mut lines,
-        "Reference | Bill date | Due date | Amount | Age (days) | Bucket",
+        "Reference | Bill date | Due date | Direction | Amount | Age (days) | Bucket",
         true,
     )?;
     for bill in &statement.bills {
         let amount = display_amount(&bill.amount)?;
         let row = format!(
-            "{} | {} | {} | {} | {} | {}",
+            "{} | {} | {} | {} | {} | {} | {}",
             bill.reference,
             display_date(&bill.bill_date)?,
             display_date(&bill.due_date)?,
+            bill_direction_label(bill.kind)?,
             amount,
             bill.age_days,
             bill.bucket.label(),
@@ -181,7 +184,7 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
 
     push_label_value(
         &mut lines,
-        "Total bills",
+        "Total bill magnitudes (not net)",
         &display_amount(&statement.bill_total)?,
     )?;
     if !statement.unallocated.is_zero() {
@@ -197,6 +200,14 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
         )?;
     }
     Ok(lines)
+}
+
+fn bill_direction_label(kind: &str) -> Result<&'static str, PartyStatementPdfError> {
+    match kind {
+        "receivable" => Ok("Receivable"),
+        "payable" => Ok("Payable"),
+        _ => Err(PartyStatementPdfError::InvalidDirection(kind.to_string())),
+    }
 }
 
 fn push_label_value(
