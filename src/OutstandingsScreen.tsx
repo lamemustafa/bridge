@@ -54,7 +54,7 @@ type OpenBill = {
   bill_date: string;
   due_date: string;
   amount: string;
-  age_days: number;
+  age_days: number | null;
   kind: "receivable" | "payable";
 };
 
@@ -724,7 +724,9 @@ function renderPartyBills(bills: Array<OpenBill> | undefined, currencyAssertion:
               {hasCreditPeriod && <em className="party-bill-due">due {formatDate(bill.due_date)}</em>}
             </span>
             <strong role="cell">{formatMoney(bill.amount, currencyAssertion)}</strong>
-            <em role="cell" className={`age-chip tier-${ageTier(bill.age_days)}`}>{bill.age_days}d</em>
+            {bill.age_days === null
+              ? <em role="cell" className="age-chip is-none">not due</em>
+              : <em role="cell" className={`age-chip tier-${ageTier(bill.age_days)}`}>{bill.age_days}d</em>}
           </div>
         );
       })}
