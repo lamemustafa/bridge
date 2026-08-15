@@ -229,6 +229,7 @@ fn file_name(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tally::ExposureDirection;
     use bridge_tally_core::ExactDecimal;
 
     fn bill(party: &str, amount: &str) -> OpenBillRow {
@@ -238,7 +239,7 @@ mod tests {
             bill_date: "20260101".to_string(),
             due_date: "20260201".to_string(),
             amount: ExactDecimal::parse(amount).expect("synthetic decimal"),
-            age_days: 40,
+            age_days: Some(40),
             kind: "receivable",
         }
     }
@@ -328,14 +329,17 @@ mod tests {
             UnallocatedParty {
                 party: "Bill and On Account".to_string(),
                 amount: ExactDecimal::parse("25.00").expect("synthetic decimal"),
+                direction: ExposureDirection::Receivable,
             },
             UnallocatedParty {
                 party: "On Account Only".to_string(),
                 amount: ExactDecimal::parse("10.00").expect("synthetic decimal"),
+                direction: ExposureDirection::Receivable,
             },
             UnallocatedParty {
                 party: "Zero Balance".to_string(),
                 amount: ExactDecimal::zero(),
+                direction: ExposureDirection::Receivable,
             },
         ];
 

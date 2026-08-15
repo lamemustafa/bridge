@@ -251,14 +251,6 @@ pub struct OpenBillRow {
     pub kind: &'static str,
 }
 
-/// Caps how many bill rows cross into the UI.
-///
-/// Every row is already parsed, so this bounds only the serialized payload and
-/// what the screen must render. A book past this many OPEN bills is well
-/// outside anything measured, so the uncapped statement source is sent
-/// separately rather than letting the bulk action reuse this display cap.
-const MAX_OPEN_BILL_ROWS: usize = 2_000;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExposureDirection {
@@ -2395,6 +2387,89 @@ mod tests {
             selected_read_scope: None,
             passport_snapshot_id: None,
         }
+    }
+
+    #[test]
+    fn future_due_bill_from_raw_native_bytes_reaches_the_statement_source() {
+        let books_from = TallyDate::parse("20260401").expect("synthetic book start");
+        let as_of = TallyDate::parse("20260731").expect("synthetic as-of date");
+        let bills_xml = "<ENVELOPE>\
+            <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>FUTURE-1</BILLREF><BILLPARTY>Synthetic Party</BILLPARTY></BILLFIXED>\
+            <BILLCL>-100.00</BILLCL><BILLDUE>1-Aug-26</BILLDUE><BILLOVERDUE>0</BILLOVERDUE>\
+            </ENVELOPE>";
+        let ledger_xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>";
+        let receivable = parse_native_bill_rows(bills_xml, &books_from, &as_of)
+            .expect("a future due date in raw native bytes must parse");
+        let ledgers = parse_native_ledger_snapshot(ledger_xml)
+            .expect("the synthetic raw ledger response must parse");
+        let computed = compute_native_outstandings(
+            "Synthetic Company",
+            &receivable,
+            &[],
+            &ledgers,
+            AgeingAnchor::DueDate,
+            &as_of,
+            bills_xml.len() + ledger_xml.len(),
+        )
+        .expect("a future-due bill must not abort the native computation");
+        assert_eq!(computed.report.receivable_total.as_str(), "100");
+        assert_eq!(computed.report.top_parties[0].oldest_bill_age_days, None);
+        assert_eq!(computed.report.ageing.days_0_30, ExactDecimal::zero());
+        assert_eq!(computed.report.ageing.days_31_60, ExactDecimal::zero());
+        assert_eq!(computed.report.ageing.days_61_90, ExactDecimal::zero());
+        assert_eq!(computed.report.ageing.days_90_plus, ExactDecimal::zero());
+
+        let statement_rows = all_open_bill_rows(&receivable, &[], &as_of);
+        assert_eq!(
+            statement_rows.len(),
+            1,
+            "a future-due bill must remain available to the statement source"
+        );
+        assert_eq!(statement_rows[0].amount.as_str(), "100.00");
+        assert_eq!(statement_rows[0].age_days, None);
+        let statement = crate::reports::party_statement::build_party_statement(
+            "Synthetic Company",
+            as_of.as_str(),
+            "Synthetic Party",
+            &statement_rows,
+            &[],
+        )
+        .expect("the future-due bill must build a party statement");
+        assert_eq!(statement.bills.len(), 1);
+        assert_eq!(statement.bills[0].reference, "FUTURE-1");
+        assert_eq!(statement.bills[0].age_days, None);
+        assert_eq!(statement.bills[0].bucket, None);
+        assert_eq!(statement.bill_total.as_str(), "100");
+
+        let destination = tempfile::tempdir().expect("synthetic destination");
+        let bulk = crate::reports::bulk_party_statement::write_bulk_party_statements(
+            destination.path(),
+            "Synthetic Company",
+            as_of.as_str(),
+            "xlsx",
+            &statement_rows,
+            &[],
+            |party_statement| {
+                crate::reports::party_statement_xlsx::render_party_statement_xlsx(party_statement)
+                    .map_err(|error| error.to_string())
+            },
+        )
+        .expect("a bulk run must write the future-due party statement");
+        assert_eq!(bulk.written.len(), 1);
+        let workbook = std::fs::File::open(destination.path().join(&bulk.written[0].file_name))
+            .expect("the bulk statement file exists");
+        let mut archive = zip::ZipArchive::new(workbook).expect("bulk output is an XLSX archive");
+        let mut workbook_text = String::new();
+        for entry_name in ["xl/worksheets/sheet1.xml", "xl/sharedStrings.xml"] {
+            let mut entry = archive
+                .by_name(entry_name)
+                .expect("the XLSX statement entry exists");
+            std::io::Read::read_to_string(&mut entry, &mut workbook_text)
+                .expect("the workbook XML is readable");
+        }
+        assert!(workbook_text.contains("FUTURE-1"));
+        assert!(workbook_text.contains("Not due"));
+        assert!(workbook_text.contains("Unaged"));
     }
 
     #[cfg(feature = "voucher-scan")]
