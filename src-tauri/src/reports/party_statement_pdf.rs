@@ -8,6 +8,7 @@
 use pdf_writer::{Content, Name, Pdf, Rect, Ref, Str};
 
 use super::party_statement::PartyStatement;
+use crate::tally::ExposureDirection;
 
 const PAGE_WIDTH: f32 = 595.0;
 const PAGE_HEIGHT: f32 = 842.0;
@@ -27,6 +28,8 @@ pub enum PartyStatementPdfError {
     InvalidAmount(String),
     #[error("Bridge could not classify a statement bill direction ({0})")]
     InvalidDirection(String),
+    #[error("Bridge found an inconsistent statement age state")]
+    InvalidAgeState,
     #[error("Bridge could not represent statement text in the PDF's built-in font")]
     UnsupportedText,
     #[error("Bridge could not allocate PDF pages for this statement")]
@@ -169,6 +172,11 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
     )?;
     for bill in &statement.bills {
         let amount = display_amount(&bill.amount)?;
+        let (age, bucket) = match (bill.age_days, bill.bucket) {
+            (Some(age_days), Some(bucket)) => (age_days.to_string(), bucket.label()),
+            (None, None) => ("Not due".to_string(), "Unaged"),
+            _ => return Err(PartyStatementPdfError::InvalidAgeState),
+        };
         let row = format!(
             "{} | {} | {} | {} | {} | {} | {}",
             bill.reference,
@@ -176,8 +184,8 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
             display_date(&bill.due_date)?,
             bill_direction_label(bill.kind)?,
             amount,
-            bill.age_days,
-            bill.bucket.label(),
+            age,
+            bucket,
         );
         push_wrapped(&mut lines, &row, false)?;
     }
@@ -188,9 +196,18 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
         &display_amount(&statement.bill_total)?,
     )?;
     if !statement.unallocated.is_zero() {
+        let direction =
+            statement
+                .unallocated_direction
+                .ok_or(PartyStatementPdfError::InvalidDirection(
+                    "unallocated direction missing".to_string(),
+                ))?;
         push_label_value(
             &mut lines,
-            "Unallocated (no bill reference)",
+            &format!(
+                "Unallocated {} (no bill reference)",
+                exposure_direction_label(direction)
+            ),
             &display_amount(&statement.unallocated)?,
         )?;
         push_label_value(
@@ -204,9 +221,16 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
 
 fn bill_direction_label(kind: &str) -> Result<&'static str, PartyStatementPdfError> {
     match kind {
-        "receivable" => Ok("Receivable"),
-        "payable" => Ok("Payable"),
+        "receivable" => Ok(exposure_direction_label(ExposureDirection::Receivable)),
+        "payable" => Ok(exposure_direction_label(ExposureDirection::Payable)),
         _ => Err(PartyStatementPdfError::InvalidDirection(kind.to_string())),
+    }
+}
+
+fn exposure_direction_label(direction: ExposureDirection) -> &'static str {
+    match direction {
+        ExposureDirection::Receivable => "Receivable",
+        ExposureDirection::Payable => "Payable",
     }
 }
 
@@ -312,7 +336,7 @@ mod tests {
     use super::*;
     use crate::reports::party_statement::build_party_statement;
     use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
-    use crate::tally::{OpenBillRow, UnallocatedParty};
+    use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
     use bridge_tally_core::ExactDecimal;
     use std::io::{Cursor, Read};
     use zip::ZipArchive;
@@ -324,7 +348,7 @@ mod tests {
             bill_date: "20260101".to_string(),
             due_date: "20260201".to_string(),
             amount: ExactDecimal::parse(amount).unwrap(),
-            age_days,
+            age_days: Some(age_days),
             kind: "receivable",
         }
     }
@@ -463,6 +487,7 @@ mod tests {
         let unallocated = vec![UnallocatedParty {
             party: "Synthetic Party".to_string(),
             amount: ExactDecimal::parse("300.00").unwrap(),
+            direction: ExposureDirection::Receivable,
         }];
         let statement = build_party_statement(
             "Synthetic Books Pvt Ltd",
@@ -479,6 +504,33 @@ mod tests {
         // `1600` appears only in the XLSX grand-total cell for this fixture.
         assert!(xlsx_sheet_xml(&xlsx).contains("<v>1600</v>"));
         assert!(pdf_text.contains("Grand total: INR 1,600"));
+    }
+
+    #[test]
+    fn renders_not_due_and_unallocated_direction_in_the_pdf_text() {
+        let mut future_due = bill("FUTURE-1", "100.00", 0);
+        future_due.age_days = None;
+        let unallocated = vec![UnallocatedParty {
+            party: "Synthetic Party".to_string(),
+            amount: ExactDecimal::parse("42.00").unwrap(),
+            direction: ExposureDirection::Payable,
+        }];
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "Synthetic Party",
+            &[future_due],
+            &unallocated,
+        )
+        .unwrap();
+        let pdf = render_party_statement_pdf(&statement).unwrap();
+        let text = extracted_text(&pdf);
+        let joined = text.replace('\n', "");
+        assert!(text.contains("FUTURE-1"));
+        assert!(pdf.windows(b"Not due".len()).any(|bytes| bytes == b"Not due"));
+        assert!(pdf.windows(b"Unaged".len()).any(|bytes| bytes == b"Unaged"));
+        assert!(joined.contains("Unaged"));
+        assert!(joined.contains("Unallocated Payable"));
     }
 
     #[test]

@@ -356,6 +356,26 @@ mod tests {
     }
 
     #[test]
+    fn renders_unallocated_direction_in_the_workbook_text() {
+        let unallocated = vec![UnallocatedParty {
+            party: "On Account Only".to_string(),
+            amount: ExactDecimal::parse("42.00").unwrap(),
+            direction: ExposureDirection::Payable,
+        }];
+        let statement =
+            build_party_statement("Lab Co", "20260808", "On Account Only", &[], &unallocated)
+                .unwrap();
+        let bytes = render_party_statement_xlsx(&statement).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut text = String::new();
+        for name in ["xl/worksheets/sheet1.xml", "xl/sharedStrings.xml"] {
+            let mut entry = archive.by_name(name).unwrap();
+            std::io::Read::read_to_string(&mut entry, &mut text).unwrap();
+        }
+        assert!(text.contains("Unallocated Payable (no bill reference)"));
+    }
+
+    #[test]
     fn an_invalid_date_is_rejected_rather_than_written_as_a_string() {
         let statement = build_party_statement(
             "Lab Co",
