@@ -17,11 +17,18 @@ const MONTH_ABBREVIATIONS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-/// Parses one native display date inside the pinned company's book window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeDisplayDateRole {
+    BillDate,
+    DueDate,
+}
+
+/// Parses one native display date using the pinned company's book window.
 /// The two-digit year in `raw` may be valid in more than one century, so
 /// resolving against `BooksFrom`'s century alone can silently place an active
 /// bill a century in the past. Exactly one valid calendar date must fall in
-/// `[books_from, as_of]`; zero or multiple candidates fail closed.
+/// the role-appropriate portion of the window; zero or multiple candidates
+/// fail closed.
 ///
 /// Fails closed — rather than guessing — when the lexeme does not match the
 /// exact three-part `D[D]-MMM-YY` shape, or when the resolved year/month/day
@@ -30,6 +37,7 @@ pub fn parse_native_display_date(
     raw: &str,
     books_from: &TallyDate,
     as_of: &TallyDate,
+    role: NativeDisplayDateRole,
 ) -> Result<TallyDate, NativeOutstandingsError> {
     let trimmed = raw.trim();
     let mut parts = trimmed.split('-');
@@ -88,7 +96,12 @@ pub fn parse_native_display_date(
             continue;
         };
         has_calendar_candidate = true;
-        if &candidate >= books_from && &candidate <= as_of {
+        if &candidate >= books_from
+            && match role {
+                NativeDisplayDateRole::BillDate => &candidate <= as_of,
+                NativeDisplayDateRole::DueDate => true,
+            }
+        {
             candidates.push(candidate);
         }
     }
@@ -122,19 +135,19 @@ mod tests {
         let books_from = TallyDate::parse("20240401").unwrap();
         let as_of = TallyDate::parse("20260731").unwrap();
         assert_eq!(
-            parse_native_display_date("1-Apr-24", &books_from, &as_of)
+            parse_native_display_date("1-Apr-24", &books_from, &as_of, NativeDisplayDateRole::BillDate)
                 .unwrap()
                 .as_str(),
             "20240401"
         );
         assert_eq!(
-            parse_native_display_date("31-May-26", &books_from, &as_of)
+            parse_native_display_date("31-May-26", &books_from, &as_of, NativeDisplayDateRole::BillDate)
                 .unwrap()
                 .as_str(),
             "20260531"
         );
         assert_eq!(
-            parse_native_display_date("2-Jul-26", &books_from, &as_of)
+            parse_native_display_date("2-Jul-26", &books_from, &as_of, NativeDisplayDateRole::BillDate)
                 .unwrap()
                 .as_str(),
             "20260702"
@@ -146,7 +159,7 @@ mod tests {
         let books_from = TallyDate::parse("19990401").unwrap();
         let as_of = TallyDate::parse("20260731").unwrap();
         assert_eq!(
-            parse_native_display_date("1-Apr-26", &books_from, &as_of)
+            parse_native_display_date("1-Apr-26", &books_from, &as_of, NativeDisplayDateRole::BillDate)
                 .unwrap()
                 .as_str(),
             "20260401",
@@ -159,7 +172,7 @@ mod tests {
         let books_from = TallyDate::parse("19000101").unwrap();
         let as_of = TallyDate::parse("21001231").unwrap();
         assert_eq!(
-            parse_native_display_date("1-Apr-26", &books_from, &as_of),
+            parse_native_display_date("1-Apr-26", &books_from, &as_of, NativeDisplayDateRole::BillDate),
             Err(NativeOutstandingsError::InvalidDate(
                 "native_date_year_ambiguous_book_window"
             ))
@@ -184,10 +197,40 @@ mod tests {
             "1-XXX-24",
         ] {
             assert!(
-                parse_native_display_date(raw, &books_from, &as_of).is_err(),
+                parse_native_display_date(raw, &books_from, &as_of, NativeDisplayDateRole::BillDate).is_err(),
                 "expected {raw:?} to be rejected"
             );
         }
-        assert!(parse_native_display_date("29-Feb-24", &books_from, &as_of).is_ok());
+        assert!(parse_native_display_date("29-Feb-24", &books_from, &as_of, NativeDisplayDateRole::BillDate).is_ok());
+    }
+
+    #[test]
+    fn due_date_can_fall_after_as_of_without_widening_the_bill_date_window() {
+        let books_from = TallyDate::parse("20260401").unwrap();
+        let as_of = TallyDate::parse("20260731").unwrap();
+        assert_eq!(
+            parse_native_display_date("1-Aug-26", &books_from, &as_of, NativeDisplayDateRole::DueDate)
+                .unwrap()
+                .as_str(),
+            "20260801"
+        );
+        assert_eq!(
+            parse_native_display_date("1-Aug-26", &books_from, &as_of, NativeDisplayDateRole::BillDate),
+            Err(NativeOutstandingsError::InvalidDate(
+                "native_date_year_outside_book_window"
+            ))
+        );
+    }
+
+    #[test]
+    fn due_date_still_rejects_an_ambiguous_two_digit_year() {
+        let books_from = TallyDate::parse("19000101").unwrap();
+        let as_of = TallyDate::parse("21001231").unwrap();
+        assert_eq!(
+            parse_native_display_date("1-Apr-26", &books_from, &as_of, NativeDisplayDateRole::DueDate),
+            Err(NativeOutstandingsError::InvalidDate(
+                "native_date_year_ambiguous_book_window"
+            ))
+        );
     }
 }

@@ -155,9 +155,14 @@ fn open_bill_rows(
         .chain(payable.iter().map(|row| (row, "payable")))
         .filter_map(|(row, kind)| {
             let amount = row.closing_balance.abs().ok()?;
-            let age_days =
-                bridge_tally_protocol::native_outstandings::age_in_days(&row.due_date, as_of)
-                    .ok()?;
+            let age_days = if &row.due_date > as_of {
+                None
+            } else {
+                Some(
+                    bridge_tally_protocol::native_outstandings::age_in_days(&row.due_date, as_of)
+                        .ok()?,
+                )
+            };
             Some(OpenBillRow {
                 party: row.party.clone(),
                 reference: row.reference.clone(),
@@ -195,6 +200,11 @@ fn top_unallocated_parties(
             residual.amount.abs().ok().map(|amount| UnallocatedParty {
                 party: residual.party.clone(),
                 amount,
+                direction: if residual.amount.is_negative() {
+                    ExposureDirection::Receivable
+                } else {
+                    ExposureDirection::Payable
+                },
             })
         })
         .collect::<Vec<_>>();
@@ -215,7 +225,7 @@ pub struct OpenBillRow {
     pub bill_date: String,
     pub due_date: String,
     pub amount: ExactDecimal,
-    pub age_days: u32,
+    pub age_days: Option<u32>,
     /// `receivable` for a debit-balance bill, `payable` for a credit one.
     /// Named by balance direction because that is what Tally's two reports
     /// actually scope by -- a supplier advance is a receivable bill.
@@ -236,10 +246,18 @@ pub struct OpenBillRow {
 /// disclosing it -- see `open_bills_truncated`.
 const MAX_OPEN_BILL_ROWS: usize = 2_000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExposureDirection {
+    Receivable,
+    Payable,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnallocatedParty {
     pub party: String,
     pub amount: ExactDecimal,
+    pub direction: ExposureDirection,
 }
 
 fn partial_result(reason_code: &str) -> OutstandingsLoadResult {

@@ -23,7 +23,7 @@ use quick_xml::Reader;
 
 use bridge_tally_primitives::ExactDecimal;
 
-use super::date::parse_native_display_date;
+use super::date::{parse_native_display_date, NativeDisplayDateRole};
 use super::model::{LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError};
 
 struct PendingBillRow {
@@ -212,8 +212,18 @@ fn finalize_bill_row(
         .ok_or(NativeOutstandingsError::InvalidResponse(
             "bills_fixed_row_missing_billdue",
         ))?;
-    let bill_date = parse_native_display_date(&row.bill_date_raw, books_from, as_of)?;
-    let due_date = parse_native_display_date(&due_date_raw, books_from, as_of)?;
+    let bill_date = parse_native_display_date(
+        &row.bill_date_raw,
+        books_from,
+        as_of,
+        NativeDisplayDateRole::BillDate,
+    )?;
+    let due_date = parse_native_display_date(
+        &due_date_raw,
+        books_from,
+        as_of,
+        NativeDisplayDateRole::DueDate,
+    )?;
     Ok(NativeBillRow {
         party: row.party,
         reference: row.reference,
