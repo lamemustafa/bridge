@@ -2856,7 +2856,7 @@ pub struct OpenBillRowInput {
     pub bill_date: String,
     pub due_date: String,
     pub amount: bridge_tally_core::ExactDecimal,
-    pub age_days: u32,
+    pub age_days: Option<u32>,
     pub kind: String,
 }
 

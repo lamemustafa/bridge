@@ -7,7 +7,7 @@
 
 use bridge_tally_core::ExactDecimal;
 
-use crate::tally::{OpenBillRow, UnallocatedParty};
+use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
 
 /// Which ageing bucket a bill's age falls into. Boundaries match
 /// `bridge_tally_protocol::native_outstandings::compute` exactly, so a
@@ -51,10 +51,10 @@ pub struct StatementBill {
     pub bill_date: String,
     pub due_date: String,
     pub amount: ExactDecimal,
-    pub age_days: u32,
+    pub age_days: Option<u32>,
     /// `receivable` or `payable` -- see `OpenBillRow::kind`.
     pub kind: &'static str,
-    pub bucket: AgeingBucket,
+    pub bucket: Option<AgeingBucket>,
 }
 
 /// Per-bucket subtotals across a party's bill table. Sums to exactly the
@@ -87,6 +87,7 @@ pub struct PartyStatement {
     /// always has the full `unallocated_by_party` slice in hand -- there is
     /// no "not computed" case at this layer, unlike the report-level total.
     pub unallocated: ExactDecimal,
+    pub unallocated_direction: Option<ExposureDirection>,
     /// `bill_total + unallocated`. Kept as a field, not left for a caller to
     /// recompute, so every consumer of a `PartyStatement` sees the same
     /// figure the exact-decimal addition actually produced.
@@ -128,7 +129,7 @@ pub fn build_party_statement(
             amount: row.amount.clone(),
             age_days: row.age_days,
             kind: row.kind,
-            bucket: AgeingBucket::for_age(row.age_days),
+            bucket: row.age_days.map(AgeingBucket::for_age),
         })
         .collect();
     // Oldest first: largest age first, then the same tie-breaks
@@ -142,11 +143,11 @@ pub fn build_party_statement(
             .then_with(|| left.reference.cmp(&right.reference))
     });
 
-    let unallocated = unallocated_by_party
+    let (unallocated, unallocated_direction) = unallocated_by_party
         .iter()
         .find(|entry| entry.party == party)
-        .map(|entry| entry.amount.clone())
-        .unwrap_or_else(ExactDecimal::zero);
+        .map(|entry| (entry.amount.clone(), Some(entry.direction)))
+        .unwrap_or_else(|| (ExactDecimal::zero(), None));
 
     if bills.is_empty() && unallocated.is_zero() {
         return Err(PartyStatementError::PartyNotFound);
@@ -163,15 +164,17 @@ pub fn build_party_statement(
         bill_total = bill_total
             .checked_add(&bill.amount)
             .map_err(|_| PartyStatementError::ArithmeticOverflow)?;
-        let bucket_subtotal = match bill.bucket {
-            AgeingBucket::Days0To30 => &mut subtotals.days_0_30,
-            AgeingBucket::Days31To60 => &mut subtotals.days_31_60,
-            AgeingBucket::Days61To90 => &mut subtotals.days_61_90,
-            AgeingBucket::Days90Plus => &mut subtotals.days_90_plus,
-        };
-        *bucket_subtotal = bucket_subtotal
-            .checked_add(&bill.amount)
-            .map_err(|_| PartyStatementError::ArithmeticOverflow)?;
+        if let Some(bucket) = bill.bucket {
+            let bucket_subtotal = match bucket {
+                AgeingBucket::Days0To30 => &mut subtotals.days_0_30,
+                AgeingBucket::Days31To60 => &mut subtotals.days_31_60,
+                AgeingBucket::Days61To90 => &mut subtotals.days_61_90,
+                AgeingBucket::Days90Plus => &mut subtotals.days_90_plus,
+            };
+            *bucket_subtotal = bucket_subtotal
+                .checked_add(&bill.amount)
+                .map_err(|_| PartyStatementError::ArithmeticOverflow)?;
+        }
     }
 
     let grand_total = bill_total
@@ -186,6 +189,7 @@ pub fn build_party_statement(
         subtotals,
         bill_total,
         unallocated,
+        unallocated_direction,
         grand_total,
     })
 }
@@ -207,7 +211,7 @@ mod tests {
             bill_date: "20260101".to_string(),
             due_date: "20260201".to_string(),
             amount: ExactDecimal::parse(amount).unwrap(),
-            age_days,
+            age_days: Some(age_days),
             kind,
         }
     }
@@ -216,6 +220,7 @@ mod tests {
         UnallocatedParty {
             party: party.to_string(),
             amount: ExactDecimal::parse(amount).unwrap(),
+            direction: ExposureDirection::Receivable,
         }
     }
 

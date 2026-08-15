@@ -10,6 +10,7 @@
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, XlsxError};
 
 use super::party_statement::PartyStatement;
+use crate::tally::ExposureDirection;
 
 /// Indian-grouping number format (lakh/crore, not thousands) -- the grouping
 /// every figure on the Outstandings screen already uses.
@@ -26,6 +27,8 @@ pub enum PartyStatementXlsxError {
     InvalidAmount(String),
     #[error("Bridge could not classify a statement bill direction ({0})")]
     InvalidDirection(String),
+    #[error("Bridge found an inconsistent statement age state")]
+    InvalidAgeState,
 }
 
 /// Renders `statement` as an in-memory `.xlsx` file.
@@ -96,8 +99,17 @@ pub fn render_party_statement_xlsx(
             amount_to_f64(bill.amount.as_str())?,
             &amount_format,
         )?;
-        worksheet.write_number(row, 5, bill.age_days)?;
-        worksheet.write_string(row, 6, bill.bucket.label())?;
+        match (bill.age_days, bill.bucket) {
+            (Some(age_days), Some(bucket)) => {
+                worksheet.write_number(row, 5, age_days)?;
+                worksheet.write_string(row, 6, bucket.label())?;
+            }
+            (None, None) => {
+                worksheet.write_string(row, 5, "Not due")?;
+                worksheet.write_string(row, 6, "Unaged")?;
+            }
+            _ => return Err(PartyStatementXlsxError::InvalidAgeState),
+        }
         row += 1;
     }
 
@@ -111,7 +123,20 @@ pub fn render_party_statement_xlsx(
     row += 1;
 
     if has_unallocated {
-        worksheet.write_string(row, 0, "Unallocated (no bill reference)")?;
+        let direction =
+            statement
+                .unallocated_direction
+                .ok_or(PartyStatementXlsxError::InvalidDirection(
+                    "unallocated direction missing".to_string(),
+                ))?;
+        worksheet.write_string(
+            row,
+            0,
+            format!(
+                "Unallocated {} (no bill reference)",
+                exposure_direction_label(direction)
+            ),
+        )?;
         worksheet.write_number_with_format(
             row,
             4,
@@ -177,6 +202,13 @@ fn bill_direction_label(kind: &str) -> Result<&'static str, PartyStatementXlsxEr
         "receivable" => Ok("Receivable (they owe you)"),
         "payable" => Ok("Payable (you owe them)"),
         _ => Err(PartyStatementXlsxError::InvalidDirection(kind.to_string())),
+    }
+}
+
+fn exposure_direction_label(direction: ExposureDirection) -> &'static str {
+    match direction {
+        ExposureDirection::Receivable => "Receivable",
+        ExposureDirection::Payable => "Payable",
     }
 }
 
@@ -281,7 +313,7 @@ mod tests {
     }
     use super::*;
     use crate::reports::party_statement::build_party_statement;
-    use crate::tally::{OpenBillRow, UnallocatedParty};
+    use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
     use bridge_tally_core::ExactDecimal;
 
     fn bill(reference: &str, amount: &str, age_days: u32) -> OpenBillRow {
@@ -291,7 +323,7 @@ mod tests {
             bill_date: "20260101".to_string(),
             due_date: "20260201".to_string(),
             amount: ExactDecimal::parse(amount).unwrap(),
-            age_days,
+            age_days: Some(age_days),
             kind: "receivable",
         }
     }
@@ -302,6 +334,7 @@ mod tests {
         let unallocated = vec![UnallocatedParty {
             party: "Aarav Textiles".to_string(),
             amount: ExactDecimal::parse("300.00").unwrap(),
+            direction: ExposureDirection::Receivable,
         }];
         let statement =
             build_party_statement("Lab Co", "20260808", "Aarav Textiles", &bills, &unallocated)
@@ -319,6 +352,7 @@ mod tests {
         let unallocated = vec![UnallocatedParty {
             party: "On Account Only".to_string(),
             amount: ExactDecimal::parse("42.00").unwrap(),
+            direction: ExposureDirection::Receivable,
         }];
         let statement =
             build_party_statement("Lab Co", "20260808", "On Account Only", &[], &unallocated)
