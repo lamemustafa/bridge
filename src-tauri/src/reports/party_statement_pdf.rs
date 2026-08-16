@@ -527,7 +527,9 @@ mod tests {
         let text = extracted_text(&pdf);
         let joined = text.replace('\n', "");
         assert!(text.contains("FUTURE-1"));
-        assert!(pdf.windows(b"Not due".len()).any(|bytes| bytes == b"Not due"));
+        assert!(pdf
+            .windows(b"Not due".len())
+            .any(|bytes| bytes == b"Not due"));
         assert!(pdf.windows(b"Unaged".len()).any(|bytes| bytes == b"Unaged"));
         assert!(joined.contains("Unaged"));
         assert!(joined.contains("Unallocated Payable"));
