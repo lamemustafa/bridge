@@ -135,21 +135,36 @@ mod tests {
         let books_from = TallyDate::parse("20240401").unwrap();
         let as_of = TallyDate::parse("20260731").unwrap();
         assert_eq!(
-            parse_native_display_date("1-Apr-24", &books_from, &as_of, NativeDisplayDateRole::BillDate)
-                .unwrap()
-                .as_str(),
+            parse_native_display_date(
+                "1-Apr-24",
+                &books_from,
+                &as_of,
+                NativeDisplayDateRole::BillDate
+            )
+            .unwrap()
+            .as_str(),
             "20240401"
         );
         assert_eq!(
-            parse_native_display_date("31-May-26", &books_from, &as_of, NativeDisplayDateRole::BillDate)
-                .unwrap()
-                .as_str(),
+            parse_native_display_date(
+                "31-May-26",
+                &books_from,
+                &as_of,
+                NativeDisplayDateRole::BillDate
+            )
+            .unwrap()
+            .as_str(),
             "20260531"
         );
         assert_eq!(
-            parse_native_display_date("2-Jul-26", &books_from, &as_of, NativeDisplayDateRole::BillDate)
-                .unwrap()
-                .as_str(),
+            parse_native_display_date(
+                "2-Jul-26",
+                &books_from,
+                &as_of,
+                NativeDisplayDateRole::BillDate
+            )
+            .unwrap()
+            .as_str(),
             "20260702"
         );
     }
@@ -159,9 +174,14 @@ mod tests {
         let books_from = TallyDate::parse("19990401").unwrap();
         let as_of = TallyDate::parse("20260731").unwrap();
         assert_eq!(
-            parse_native_display_date("1-Apr-26", &books_from, &as_of, NativeDisplayDateRole::BillDate)
-                .unwrap()
-                .as_str(),
+            parse_native_display_date(
+                "1-Apr-26",
+                &books_from,
+                &as_of,
+                NativeDisplayDateRole::BillDate
+            )
+            .unwrap()
+            .as_str(),
             "20260401",
             "a 1999 book that is active in 2026 must not parse 26 as 1926"
         );
@@ -172,7 +192,12 @@ mod tests {
         let books_from = TallyDate::parse("19000101").unwrap();
         let as_of = TallyDate::parse("21001231").unwrap();
         assert_eq!(
-            parse_native_display_date("1-Apr-26", &books_from, &as_of, NativeDisplayDateRole::BillDate),
+            parse_native_display_date(
+                "1-Apr-26",
+                &books_from,
+                &as_of,
+                NativeDisplayDateRole::BillDate
+            ),
             Err(NativeOutstandingsError::InvalidDate(
                 "native_date_year_ambiguous_book_window"
             ))
@@ -197,11 +222,23 @@ mod tests {
             "1-XXX-24",
         ] {
             assert!(
-                parse_native_display_date(raw, &books_from, &as_of, NativeDisplayDateRole::BillDate).is_err(),
+                parse_native_display_date(
+                    raw,
+                    &books_from,
+                    &as_of,
+                    NativeDisplayDateRole::BillDate
+                )
+                .is_err(),
                 "expected {raw:?} to be rejected"
             );
         }
-        assert!(parse_native_display_date("29-Feb-24", &books_from, &as_of, NativeDisplayDateRole::BillDate).is_ok());
+        assert!(parse_native_display_date(
+            "29-Feb-24",
+            &books_from,
+            &as_of,
+            NativeDisplayDateRole::BillDate
+        )
+        .is_ok());
     }
 
     #[test]
@@ -209,13 +246,23 @@ mod tests {
         let books_from = TallyDate::parse("20260401").unwrap();
         let as_of = TallyDate::parse("20260731").unwrap();
         assert_eq!(
-            parse_native_display_date("1-Aug-26", &books_from, &as_of, NativeDisplayDateRole::DueDate)
-                .unwrap()
-                .as_str(),
+            parse_native_display_date(
+                "1-Aug-26",
+                &books_from,
+                &as_of,
+                NativeDisplayDateRole::DueDate
+            )
+            .unwrap()
+            .as_str(),
             "20260801"
         );
         assert_eq!(
-            parse_native_display_date("1-Aug-26", &books_from, &as_of, NativeDisplayDateRole::BillDate),
+            parse_native_display_date(
+                "1-Aug-26",
+                &books_from,
+                &as_of,
+                NativeDisplayDateRole::BillDate
+            ),
             Err(NativeOutstandingsError::InvalidDate(
                 "native_date_year_outside_book_window"
             ))
@@ -227,7 +274,12 @@ mod tests {
         let books_from = TallyDate::parse("19000101").unwrap();
         let as_of = TallyDate::parse("21001231").unwrap();
         assert_eq!(
-            parse_native_display_date("1-Apr-26", &books_from, &as_of, NativeDisplayDateRole::DueDate),
+            parse_native_display_date(
+                "1-Apr-26",
+                &books_from,
+                &as_of,
+                NativeDisplayDateRole::DueDate
+            ),
             Err(NativeOutstandingsError::InvalidDate(
                 "native_date_year_ambiguous_book_window"
             ))
