@@ -2,6 +2,7 @@ import React from "react";
 import { Building2, ChevronRight, Download, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { isNonRetryableOutstandingsBoundary, outstandingsAgeingDisclosure, outstandingsPartialState } from "./outstandings-copy";
+import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstandings-csv";
 import { canStartOutstandingsRead } from "./outstandings-currency";
 
 type Props = {
@@ -574,46 +575,44 @@ function reportToCsv(
   unallocatedTotal: string | undefined,
   unallocatedByParty: Array<{ party: string; amount: string }> | undefined,
 ) {
-  const cell = (value: string | number) => {
-    const text = String(value);
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-  };
-  const row = (...values: Array<string | number>) => values.map(cell).join(",");
+  const text = csvTextCell;
+  const number = csvNumericCell;
+  const row = (...values: Array<CsvCell>) => csvRow(...values);
 
   const lines = [
-    row("Bridge — aged outstandings"),
-    row("Company", report.company_name),
-    row("As of", formatDate(report.as_of_yyyymmdd)),
-    row("Currency", "INR"),
+    row(text("Bridge — aged outstandings")),
+    row(text("Company"), text(report.company_name)),
+    row(text("As of"), text(formatDate(report.as_of_yyyymmdd))),
+    row(text("Currency"), text("INR")),
     "",
-    row("Measure", "Amount"),
-    row("Receivable", report.receivable_total),
-    row("Payable", report.payable_total),
-    ...(unallocatedTotal === undefined ? [] : [row("Unallocated (no bill reference)", unallocatedTotal)]),
+    row(text("Measure"), text("Amount")),
+    row(text("Receivable"), number(report.receivable_total)),
+    row(text("Payable"), number(report.payable_total)),
+    ...(unallocatedTotal === undefined ? [] : [row(text("Unallocated (no bill reference)"), number(unallocatedTotal))]),
     "",
-    row("Receivable ageing (bill references only)", "Amount", "Bills"),
-    row("0-30 days", report.ageing.days_0_30, report.ageing_bill_counts.days_0_30),
-    row("31-60 days", report.ageing.days_31_60, report.ageing_bill_counts.days_31_60),
-    row("61-90 days", report.ageing.days_61_90, report.ageing_bill_counts.days_61_90),
-    row("90+ days", report.ageing.days_90_plus, report.ageing_bill_counts.days_90_plus),
+    row(text("Receivable ageing (bill references only)"), text("Amount"), text("Bills")),
+    row(text("0-30 days"), number(report.ageing.days_0_30), number(report.ageing_bill_counts.days_0_30)),
+    row(text("31-60 days"), number(report.ageing.days_31_60), number(report.ageing_bill_counts.days_31_60)),
+    row(text("61-90 days"), number(report.ageing.days_61_90), number(report.ageing_bill_counts.days_61_90)),
+    row(text("90+ days"), number(report.ageing.days_90_plus), number(report.ageing_bill_counts.days_90_plus)),
     "",
-    row("Party", "Receivable", "Payable", "Outstanding", "Oldest bill (days)"),
+    row(text("Party"), text("Receivable"), text("Payable"), text("Outstanding"), text("Oldest bill (days)")),
     ...report.top_parties.map((party) => row(
-      party.party,
-      party.receivable,
-      party.payable,
-      party.outstanding_total,
-      party.oldest_bill_age_days === null ? "no bill reference" : party.oldest_bill_age_days,
+      text(party.party),
+      number(party.receivable),
+      number(party.payable),
+      number(party.outstanding_total),
+      party.oldest_bill_age_days === null ? text("no bill reference") : number(party.oldest_bill_age_days),
     )),
   ];
 
   if (unallocatedByParty && unallocatedByParty.length > 0) {
-    lines.push("", row("Unallocated by party", "Amount"));
-    for (const entry of unallocatedByParty) lines.push(row(entry.party, entry.amount));
+    lines.push("", row(text("Unallocated by party"), text("Amount")));
+    for (const entry of unallocatedByParty) lines.push(row(text(entry.party), number(entry.amount)));
   }
 
   if (report.has_unaged_receivable) {
-    lines.push("", row("Note", "Receivable includes entries with no bill reference. Tally gives them no bill and no age, so they are excluded from the ageing buckets."));
+    lines.push("", row(text("Note"), text("Receivable includes entries with no bill reference. Tally gives them no bill and no age, so they are excluded from the ageing buckets.")));
   }
   return lines.join("\n");
 }
