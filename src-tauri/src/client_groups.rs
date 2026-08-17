@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 const FILE_NAME: &str = "client-group-labels-v1.json";
 const SCHEMA_VERSION: u8 = 1;
+const SORT_FILE_NAME: &str = "client-sort-preference-v1.json";
+const SORT_SCHEMA_VERSION: u8 = 1;
 
 pub type ClientGroupLabels = BTreeMap<String, String>;
 
@@ -40,8 +42,13 @@ pub struct ClientSortPreference {
 struct ClientGroupLabelsFile {
     version: u8,
     labels: ClientGroupLabels,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    sort: Option<ClientSortPreference>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ClientSortPreferenceFile {
+    version: u8,
+    sort: ClientSortPreference,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -59,19 +66,24 @@ pub enum ClientGroupLabelsError {
 }
 
 pub fn load(directory: &Path) -> ClientGroupLabels {
-    try_load(directory)
-        .map(|file| file.labels)
-        .unwrap_or_default()
+    try_load(directory).unwrap_or_default()
 }
 
 pub fn load_sort_preference(directory: &Path) -> Option<ClientSortPreference> {
-    try_load(directory).ok().and_then(|file| file.sort)
+    let contents = std::fs::read_to_string(directory.join(SORT_FILE_NAME)).ok()?;
+    if contents.trim().is_empty() {
+        return None;
+    }
+    let file = serde_json::from_str::<ClientSortPreferenceFile>(&contents).ok()?;
+    (file.version == SORT_SCHEMA_VERSION).then_some(file.sort)
 }
 
-fn try_load(directory: &Path) -> Result<ClientGroupLabelsFile, ClientGroupLabelsError> {
+fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsError> {
     let contents = match std::fs::read_to_string(directory.join(FILE_NAME)) {
         Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(empty_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ClientGroupLabels::new())
+        }
         Err(error) => return Err(ClientGroupLabelsError::Read(error)),
     };
     if contents.trim().is_empty() {
@@ -87,19 +99,7 @@ fn try_load(directory: &Path) -> Result<ClientGroupLabelsFile, ClientGroupLabels
         });
     }
 
-    Ok(ClientGroupLabelsFile {
-        version: SCHEMA_VERSION,
-        labels: normalize(file.labels),
-        sort: file.sort,
-    })
-}
-
-fn empty_file() -> ClientGroupLabelsFile {
-    ClientGroupLabelsFile {
-        version: SCHEMA_VERSION,
-        labels: ClientGroupLabels::new(),
-        sort: None,
-    }
+    Ok(normalize(file.labels))
 }
 
 pub fn save_label(
@@ -107,39 +107,43 @@ pub fn save_label(
     company_guid: &str,
     label: &str,
 ) -> Result<(), ClientGroupLabelsError> {
-    let mut file = try_load(directory)?;
+    let mut labels = try_load(directory)?;
     let company_guid = company_guid.trim();
     let label = label.trim();
     if label.is_empty() {
-        file.labels.remove(company_guid);
+        labels.remove(company_guid);
     } else {
-        file.labels
-            .insert(company_guid.to_string(), label.to_string());
+        labels.insert(company_guid.to_string(), label.to_string());
     }
 
-    save_file(directory, file)
+    let contents = serde_json::to_vec_pretty(&ClientGroupLabelsFile {
+        version: SCHEMA_VERSION,
+        labels,
+    })
+    .expect("client group label schema always serializes");
+    save_bytes(directory, FILE_NAME, &contents).map_err(ClientGroupLabelsError::Write)
 }
 
 pub fn save_sort_preference(
     directory: &Path,
     sort: ClientSortPreference,
-) -> Result<(), ClientGroupLabelsError> {
-    let mut file = try_load(directory)?;
-    file.sort = Some(sort);
-    save_file(directory, file)
+) -> Result<(), std::io::Error> {
+    let contents = serde_json::to_vec_pretty(&ClientSortPreferenceFile {
+        version: SORT_SCHEMA_VERSION,
+        sort,
+    })
+    .expect("client sort preference schema always serializes");
+    save_bytes(directory, SORT_FILE_NAME, &contents)
 }
 
-fn save_file(directory: &Path, file: ClientGroupLabelsFile) -> Result<(), ClientGroupLabelsError> {
-    std::fs::create_dir_all(directory).map_err(ClientGroupLabelsError::Write)?;
-    let path = directory.join(FILE_NAME);
-    let contents =
-        serde_json::to_vec_pretty(&file).expect("client preference schema always serializes");
-    write_file_atomically(&path, &contents).map_err(ClientGroupLabelsError::Write)?;
+fn save_bytes(directory: &Path, file_name: &str, contents: &[u8]) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(directory)?;
+    let path = directory.join(file_name);
+    write_file_atomically(&path, contents)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(ClientGroupLabelsError::Write)?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
 }
@@ -345,6 +349,38 @@ mod tests {
         assert_eq!(
             load(directory.path()).get("synthetic-company-guid"),
             Some(&"North practice".to_string())
+        );
+    }
+
+    #[test]
+    fn sort_storage_remains_readable_by_the_old_v1_label_contract() {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct OldClientGroupLabelsFile {
+            version: u8,
+            labels: ClientGroupLabels,
+        }
+
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        save_label(directory.path(), "existing-guid", "Existing practice")
+            .expect("save existing label");
+        save_sort_preference(
+            directory.path(),
+            ClientSortPreference {
+                key: ClientSortKey::Oldest,
+                desc: true,
+            },
+        )
+        .expect("save new sort preference");
+
+        let raw_labels = std::fs::read(directory.path().join(FILE_NAME))
+            .expect("read label bytes after new writer");
+        let old_reader: OldClientGroupLabelsFile = serde_json::from_slice(&raw_labels)
+            .expect("the previous release must still parse the label file after rollback");
+        assert_eq!(old_reader.version, SCHEMA_VERSION);
+        assert_eq!(
+            old_reader.labels.get("existing-guid"),
+            Some(&"Existing practice".to_string())
         );
     }
 }
