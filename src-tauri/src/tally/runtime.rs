@@ -2414,10 +2414,11 @@ mod tests {
         .expect("a future-due bill must not abort the native computation");
         assert_eq!(computed.report.receivable_total.as_str(), "100");
         assert_eq!(computed.report.top_parties[0].oldest_bill_age_days, None);
-        assert_eq!(computed.report.ageing.days_0_30, ExactDecimal::zero());
+        assert_eq!(computed.report.ageing.days_0_30.as_str(), "100");
         assert_eq!(computed.report.ageing.days_31_60, ExactDecimal::zero());
         assert_eq!(computed.report.ageing.days_61_90, ExactDecimal::zero());
         assert_eq!(computed.report.ageing.days_90_plus, ExactDecimal::zero());
+        assert_eq!(computed.report.open_receivable_bill_count, 1);
 
         let statement_rows = all_open_bill_rows(&receivable, &[], &as_of);
         assert_eq!(
