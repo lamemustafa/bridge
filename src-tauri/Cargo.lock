@@ -409,11 +409,8 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bridge-tally-canonical",
  "bridge-tally-core",
- "bridge-tally-incremental",
  "bridge-tally-protocol",
- "bridge-tally-runtime",
  "bridge-tally-transport",
  "chrono",
  "cryptoki",
@@ -445,15 +442,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bridge-tally-canonical"
-version = "0.1.0"
-dependencies = [
- "bridge-tally-core",
- "bridge-tally-protocol",
- "sha2 0.11.0",
-]
-
-[[package]]
 name = "bridge-tally-core"
 version = "0.1.0"
 dependencies = [
@@ -464,23 +452,6 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror 2.0.20",
  "tokio",
-]
-
-[[package]]
-name = "bridge-tally-incremental"
-version = "0.1.0"
-dependencies = [
- "bridge-tally-core",
- "serde",
-]
-
-[[package]]
-name = "bridge-tally-observability"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "sha2 0.11.0",
 ]
 
 [[package]]
@@ -507,15 +478,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bridge-tally-runtime"
-version = "0.1.0"
-dependencies = [
- "bridge-tally-observability",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
 name = "bridge-tally-transport"
 version = "0.1.0"
 dependencies = [
@@ -526,19 +488,6 @@ dependencies = [
  "tally-protocol-simulator",
  "thiserror 2.0.20",
  "tokio",
-]
-
-[[package]]
-name = "bridge-tally-write"
-version = "0.1.0"
-dependencies = [
- "bridge-tally-core",
- "bridge-tally-protocol",
- "bridge-tally-transport",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -5262,7 +5211,6 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
- "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
