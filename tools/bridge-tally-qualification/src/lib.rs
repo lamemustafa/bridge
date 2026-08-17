@@ -291,7 +291,7 @@ impl EnvironmentEvidence {
             build_embedded_bridge_commit: option_env!("BRIDGE_QUALIFICATION_COMMIT")
                 .map(str::to_owned),
             executable_sha256: hex::encode(Sha256::digest(executable_bytes)),
-            cargo_lock_sha256: hex::encode(Sha256::digest(include_bytes!("../../../Cargo.lock"))),
+            cargo_lock_sha256: hex::encode(Sha256::digest(include_bytes!("../../Cargo.lock"))),
             rustc_version: env!("BRIDGE_QUALIFICATION_RUSTC_VERSION").to_owned(),
             target_triple: env!("BRIDGE_QUALIFICATION_TARGET").to_owned(),
             target_os: std::env::consts::OS.to_owned(),

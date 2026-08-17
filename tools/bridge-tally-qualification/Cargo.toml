@@ -9,12 +9,12 @@ edition = "2021"
 rust-version = "1.96"
 
 [dependencies]
-bridge-tally-protocol = { path = "../bridge-tally-protocol" }
+bridge-tally-protocol = { path = "../../src-tauri/crates/bridge-tally-protocol" }
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
-tally-protocol-simulator = { path = "../tally-protocol-simulator" }
+tally-protocol-simulator = { path = "../../src-tauri/crates/tally-protocol-simulator" }
 tempfile = "3"
 thiserror = "2"
 

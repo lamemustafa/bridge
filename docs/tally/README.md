@@ -59,11 +59,11 @@ mode is tested as Education mode; Bridge does not bypass its restrictions.
 The simulator and fixture rules live in
 [`src-tauri/crates/tally-protocol-simulator`](../../src-tauri/crates/tally-protocol-simulator/README.md).
 The parser-only evidence contract lives in
-[`src-tauri/crates/bridge-tally-qualification`](../../src-tauri/crates/bridge-tally-qualification/README.md).
+[`tools/bridge-tally-qualification`](../../tools/bridge-tally-qualification/README.md).
 The separate live-observation DTO and release gate live in
-[`src-tauri/crates/bridge-tally-compatibility`](../../src-tauri/crates/bridge-tally-compatibility/README.md).
+[`tools/bridge-tally-compatibility`](../../tools/bridge-tally-compatibility/README.md).
 That crate performs no network requests. The separate
-[`bridge-tally-live-read`](../../src-tauri/crates/bridge-tally-live-read/README.md)
+[`bridge-tally-live-read`](../../tools/bridge-tally-live-read/README.md)
 controller requires a reviewed synthetic fixture and two interactive
 confirmations, and exposes only byte-identical sealed production read profiles.
 See the [Education runbook](./compatibility/live-education-runbook.md). No

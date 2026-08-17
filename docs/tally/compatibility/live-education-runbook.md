@@ -86,7 +86,7 @@ any network request.
 
 ## Run
 
-From `src-tauri`:
+From `tools`:
 
 ```powershell
 cargo run --locked -p bridge-tally-live-read -- run `

@@ -11,18 +11,13 @@ const checkRust = modes.size === 0 || modes.has("--rust");
 const firstPartyRustPackages = new Set([
   "bridge",
   "bridge-tally-canonical",
-  "bridge-tally-compatibility",
   "bridge-tally-core",
   "bridge-tally-incremental",
-  "bridge-tally-live-read",
   "bridge-tally-observability",
   "bridge-tally-primitives",
   "bridge-tally-protocol",
-  "bridge-tally-qualification",
-  "bridge-tally-read-transport",
   "bridge-tally-runtime",
   "bridge-tally-transport",
-  "bridge-tally-write",
   "tally-protocol-simulator",
 ]);
 

@@ -11,6 +11,7 @@ rust-version = "1.96"
 default-run = "bridge"
 
 [features]
+voucher-scan = []
 # Deliberately disabled in shipped builds. This feature enables the separately
 # reviewed, one-send synthetic-canary command boundary and never a generic write API.
 fixture-canary-dispatch-seam = []
@@ -23,15 +24,11 @@ live-calibration-harness = []
 members = [
   ".",
   "crates/bridge-tally-canonical",
-  "crates/bridge-tally-compatibility",
   "crates/bridge-tally-core",
   "crates/bridge-tally-incremental",
-  "crates/bridge-tally-live-read",
   "crates/bridge-tally-observability",
   "crates/bridge-tally-primitives",
   "crates/bridge-tally-protocol",
-  "crates/bridge-tally-qualification",
-  "crates/bridge-tally-read-transport",
   "crates/bridge-tally-runtime",
   "crates/bridge-tally-transport",
   "crates/bridge-tally-write",

@@ -4,7 +4,9 @@
 *.ico binary
 *.png binary
 
-# Live Tally captures are byte-exact evidence. Their retained byte length and
-# SHA-256 are asserted in tests, so line-ending normalisation would silently
+# Test fixtures are byte-exact evidence. Their retained byte length and
+# SHA-256 may be asserted in tests, so line-ending normalisation would silently
 # rewrite the evidence and make those assertions machine-dependent.
-src-tauri/crates/bridge-tally-protocol/tests/fixtures/*_live.xml -text
+src-tauri/crates/bridge-tally-protocol/tests/fixtures/** -text
+src-tauri/crates/tally-protocol-simulator/fixtures/** -text
+docs/tally/compatibility/fixtures/** -text

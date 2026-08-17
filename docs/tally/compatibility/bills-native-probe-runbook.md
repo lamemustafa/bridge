@@ -22,7 +22,7 @@ the following exist together:
 Build or invoke only the required-feature binary from the repository root:
 
 ```sh
-cargo run --locked --manifest-path src-tauri/Cargo.toml \
+cargo run --locked --manifest-path tools/Cargo.toml \
   -p bridge-tally-live-read \
   --features bills-native-outstandings-probe-runner \
   --bin bridge-tally-native-outstandings-probe -- \

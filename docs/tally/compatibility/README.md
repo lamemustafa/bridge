@@ -40,7 +40,7 @@ atomicity, accounting correctness, performance support, or any write behavior.
 Checksums detect accidental change; only the reviewed signature supplies claim
 authority.
 
-Run the checked-in gate from `src-tauri`:
+Run the checked-in gate from `tools`:
 
 ```sh
 cargo run --locked -p bridge-tally-compatibility -- gate \

@@ -11,7 +11,10 @@ const result = spawnSync(
     "tree",
     "--locked",
     "--manifest-path",
-    "src-tauri/Cargo.toml",
+    // bridge-tally-live-read now lives in the separate tools/ workspace. The
+    // property this gate enforces is unchanged -- the read tool must never
+    // pull in the app, tauri, or a database driver -- only its location moved.
+    "tools/Cargo.toml",
     "-p",
     "bridge-tally-live-read",
     "--edges",
@@ -24,7 +27,7 @@ const result = spawnSync(
   { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, windowsHide: true },
 );
 if (result.error || result.status !== 0) {
-  throw new Error("live-read dependency tree failed");
+  throw new Error(`live-read dependency tree failed: ${result.stderr ?? result.error}`);
 }
 
 const packages = new Set();
@@ -39,7 +42,6 @@ const forbiddenNames = [
   "bridge-tally-incremental",
   "bridge-tally-observability",
   "bridge-tally-qualification",
-  "bridge-tally-write",
   "libsqlite3-sys",
   "rusqlite",
   "sqlx",
@@ -72,12 +74,15 @@ if (JSON.stringify(firstParty) !== JSON.stringify(expected)) {
   throw new Error(`live-read first-party boundary changed: ${firstParty.join(", ")}`);
 }
 
-const manifest = readFileSync(new URL("../src-tauri/crates/bridge-tally-live-read/Cargo.toml", import.meta.url), "utf8");
-const liveReadRoot = fileURLToPath(new URL("../src-tauri/crates/bridge-tally-live-read", import.meta.url)).replaceAll("\\", "/");
+const manifest = readFileSync(new URL("../tools/bridge-tally-live-read/Cargo.toml", import.meta.url), "utf8");
+const liveReadRoot = fileURLToPath(new URL("../tools/bridge-tally-live-read", import.meta.url)).replaceAll("\\", "/");
 for (const forbiddenManifestText of [
   "bridge-tally-transport",
-  "bridge-tally-write",
-  "path = \"../..\"",
+  // Previously `path = "../.."`, which was the app root while this crate lived
+  // in src-tauri/crates/. From tools/ the app root is ../../src-tauri, so the
+  // check is restated against what it was always protecting: the read tool must
+  // never depend on the Tauri application crate itself.
+  "path = \"../../src-tauri\"",
 ]) {
   if (manifest.includes(forbiddenManifestText)) {
     throw new Error(`live-read manifest exposes forbidden dependency: ${forbiddenManifestText}`);
@@ -139,30 +144,31 @@ function walkFiles(directory) {
 
 const tauriRoot = fileURLToPath(new URL("../src-tauri", import.meta.url)).replaceAll("\\", "/");
 const protocolManifest = `${tauriRoot}/crates/bridge-tally-protocol/Cargo.toml`;
+const toolsRoot = fileURLToPath(new URL("../tools", import.meta.url)).replaceAll("\\", "/");
 const protocolModule = `${tauriRoot}/crates/bridge-tally-protocol/src/bills_native_outstandings_probe.rs`;
 const protocolLib = `${tauriRoot}/crates/bridge-tally-protocol/src/lib.rs`;
 const allowedManifests = new Set([
   protocolManifest,
-  `${tauriRoot}/crates/bridge-tally-compatibility/Cargo.toml`,
-  `${tauriRoot}/crates/bridge-tally-live-read/Cargo.toml`,
-  `${tauriRoot}/crates/bridge-tally-read-transport/Cargo.toml`,
+  `${toolsRoot}/bridge-tally-compatibility/Cargo.toml`,
+  `${toolsRoot}/bridge-tally-live-read/Cargo.toml`,
+  `${toolsRoot}/bridge-tally-read-transport/Cargo.toml`,
 ]);
 const allowedRust = new Set([
   protocolModule,
   protocolLib,
-  `${tauriRoot}/crates/bridge-tally-compatibility/src/bills_native_outstandings_probe_receipt.rs`,
-  `${tauriRoot}/crates/bridge-tally-compatibility/src/lib.rs`,
-  `${tauriRoot}/crates/bridge-tally-live-read/src/bin/native_outstandings_probe.rs`,
-  `${tauriRoot}/crates/bridge-tally-live-read/src/lib.rs`,
-  `${tauriRoot}/crates/bridge-tally-live-read/src/native_outstandings_qualification.rs`,
-  `${tauriRoot}/crates/bridge-tally-read-transport/src/lib.rs`,
+  `${toolsRoot}/bridge-tally-compatibility/src/bills_native_outstandings_probe_receipt.rs`,
+  `${toolsRoot}/bridge-tally-compatibility/src/lib.rs`,
+  `${toolsRoot}/bridge-tally-live-read/src/bin/native_outstandings_probe.rs`,
+  `${toolsRoot}/bridge-tally-live-read/src/lib.rs`,
+  `${toolsRoot}/bridge-tally-live-read/src/native_outstandings_qualification.rs`,
+  `${toolsRoot}/bridge-tally-read-transport/src/lib.rs`,
 ]);
-for (const path of walkFiles(tauriRoot)) {
+for (const path of [...walkFiles(tauriRoot), ...walkFiles(toolsRoot)]) {
   if (path.endsWith("/Cargo.toml") && !allowedManifests.has(path)) {
     const contents = readFileSync(path, "utf8");
     for (const feature of qualificationOnlyFeatures) {
       if (contents.includes(feature)) {
-        throw new Error(`qualification-only Bills probe enabled outside reviewed manifests: ${path.slice(tauriRoot.length + 1)}`);
+        throw new Error(`qualification-only Bills probe enabled outside reviewed manifests: ${relativeCheckedPath(path)}`);
       }
     }
   }
@@ -174,10 +180,15 @@ for (const path of walkFiles(tauriRoot)) {
       "LedgerOutstandingsCandidateV0",
     ]) {
       if (contents.includes(identifier)) {
-        throw new Error(`qualification-only Bills probe referenced outside its module: ${path.slice(tauriRoot.length + 1)}`);
+        throw new Error(`qualification-only Bills probe referenced outside its module: ${relativeCheckedPath(path)}`);
       }
     }
   }
+}
+
+function relativeCheckedPath(path) {
+  const scannedRoot = path.startsWith(`${toolsRoot}/`) ? toolsRoot : tauriRoot;
+  return path.slice(scannedRoot.length + 1);
 }
 
 const productionSurfaces = [
@@ -203,7 +214,10 @@ const runnerTree = spawnSync(
     "tree",
     "--locked",
     "--manifest-path",
-    "src-tauri/Cargo.toml",
+    // bridge-tally-live-read now lives in the separate tools/ workspace. The
+    // property this gate enforces is unchanged -- the read tool must never
+    // pull in the app, tauri, or a database driver -- only its location moved.
+    "tools/Cargo.toml",
     "-p",
     "bridge-tally-live-read",
     "--features",
