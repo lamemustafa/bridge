@@ -1403,7 +1403,7 @@ impl TallyRuntime {
                 async move {
                     // Pin identity first: a currency read against the wrong
                     // company is worse than none.
-                    client
+                    let extent = client
                         .fetch_company_book_extent(&company, &expected_company_guid)
                         .await?;
                     let body = client
@@ -1412,6 +1412,12 @@ impl TallyRuntime {
                     let NativePairedRead::Stable { body, .. } = body else {
                         anyhow::bail!("Tally currency masters changed between paired reads");
                     };
+                    let closing_extent = client
+                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .await?;
+                    if closing_extent != extent {
+                        anyhow::bail!("Tally company book changed during currency detection");
+                    }
                     Ok(parse_company_currency(&body)?)
                 }
             },
@@ -2122,6 +2128,7 @@ mod tests {
     use crate::tally::TallyProduct;
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn validation_lab_future_bill_stays_unaged_in_open_bill_output() {
@@ -2144,6 +2151,87 @@ mod tests {
             .expect("captured future-due bill remains present");
         assert_eq!(future.amount.as_str(), "22222.00");
         assert_eq!(future.age_days, None);
+    }
+
+    #[tokio::test]
+    async fn detect_base_currency_rejects_book_drift_after_the_currency_read() {
+        const EXTENT: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        const CURRENCY: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><CURRENCY>0</CURRENCY></CMPINFO></DESC><DATA><COLLECTION><CURRENCY NAME="Rs." RESERVEDNAME=""><MAILINGNAME TYPE="String">Indian Rupees</MAILINGNAME></CURRENCY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+
+        let closing_extent = EXTENT.replace(
+            "<LASTVOUCHERDATE TYPE=\"Date\">20260401</LASTVOUCHERDATE>",
+            "<LASTVOUCHERDATE TYPE=\"Date\">20260402</LASTVOUCHERDATE>",
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic currency server");
+        let address = listener.local_addr().expect("synthetic server address");
+        let server = tokio::spawn(async move {
+            let responses = [
+                EXTENT,
+                STATUS,
+                EXTENT,
+                STATUS,
+                CURRENCY,
+                STATUS,
+                CURRENCY,
+                STATUS,
+                closing_extent.as_str(),
+                STATUS,
+                closing_extent.as_str(),
+                STATUS,
+            ];
+            for (index, body) in responses.into_iter().enumerate() {
+                let (mut socket, _) =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
+                        .await
+                        .expect("currency request timed out")
+                        .expect("accept currency request");
+                let mut request = [0_u8; 16 * 1024];
+                let bytes_read = socket.read(&mut request).await.expect("read request");
+                let expected_method = if index % 2 == 0 {
+                    "POST /"
+                } else {
+                    "GET /status"
+                };
+                assert!(
+                    String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_method),
+                    "request {index} did not preserve paired-read health bracketing"
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write response");
+            }
+        });
+
+        let runtime = TallyRuntime::default();
+        let result = runtime
+            .detect_base_currency(
+                TallyConfig {
+                    host: address.ip().to_string(),
+                    port: address.port(),
+                },
+                "Aarav Trading Company Demo".to_string(),
+                "bb8ad19e-6aef-4239-a917-87fec0c6215e".to_string(),
+            )
+            .await;
+
+        let error = result.expect_err("closing extent drift must reject the currency");
+        assert!(
+            error
+                .to_string()
+                .contains("book changed during currency detection"),
+            "unexpected error: {error:#}"
+        );
+        server.await.expect("synthetic currency server task");
     }
 
     fn synthetic_probe_result() -> TallyProbeResult {
