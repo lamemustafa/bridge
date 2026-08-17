@@ -74,20 +74,24 @@ pub fn compute_native_outstandings(
             totals.receivable.as_ref().unwrap_or(&ExactDecimal::zero()),
             &amount,
         )?);
+        // Tally keeps a future-due open bill in its first ageing bucket even
+        // though BILLOVERDUE is empty and no overdue age can truthfully be
+        // claimed. Bucket membership and bill age are therefore distinct:
+        // count the bill and its amount, but retain `None` for oldest age.
+        let (bucket, count) = match age {
+            None | Some(0..=30) => (&mut ageing.days_0_30, &mut ageing_bill_counts.days_0_30),
+            Some(31..=60) => (&mut ageing.days_31_60, &mut ageing_bill_counts.days_31_60),
+            Some(61..=90) => (&mut ageing.days_61_90, &mut ageing_bill_counts.days_61_90),
+            Some(_) => (
+                &mut ageing.days_90_plus,
+                &mut ageing_bill_counts.days_90_plus,
+            ),
+        };
+        *bucket = add(bucket, &amount)?;
+        *count = count
+            .checked_add(1)
+            .ok_or(NativeOutstandingsError::ArithmeticOverflow)?;
         if let Some(age) = age {
-            let (bucket, count) = match age {
-                0..=30 => (&mut ageing.days_0_30, &mut ageing_bill_counts.days_0_30),
-                31..=60 => (&mut ageing.days_31_60, &mut ageing_bill_counts.days_31_60),
-                61..=90 => (&mut ageing.days_61_90, &mut ageing_bill_counts.days_61_90),
-                _ => (
-                    &mut ageing.days_90_plus,
-                    &mut ageing_bill_counts.days_90_plus,
-                ),
-            };
-            *bucket = add(bucket, &amount)?;
-            *count = count
-                .checked_add(1)
-                .ok_or(NativeOutstandingsError::ArithmeticOverflow)?;
             totals.oldest_bill_age =
                 Some(totals.oldest_bill_age.map_or(age, |oldest| oldest.max(age)));
         }
@@ -173,9 +177,11 @@ pub fn compute_native_outstandings(
 
 /// Per-party residual: `ledger CLOSINGBALANCE - sum(receivable BILLCL) -
 /// sum(payable BILLCL)`. The native Bills Receivable/Payable reports only
-/// ever list NAMED bills, so any non-zero residual on a bill-wise ledger is
+/// ever list NAMED bills, so any non-zero residual on a party ledger is
 /// exactly that party's on-account exposure — present in the ledger balance
-/// but invisible to (and therefore unaged by) the bill-level reports.
+/// but invisible to (and therefore unaged by) the bill-level reports. A
+/// Sundry Debtor/Creditor with bill-wise tracking disabled has no bill rows
+/// by construction, so its entire balance is such a residual.
 fn compute_residuals(
     receivable_rows: &[NativeBillRow],
     payable_rows: &[NativeBillRow],
@@ -203,7 +209,7 @@ fn compute_residuals(
     let mut residuals = Vec::new();
     let mut residual_total = ExactDecimal::zero();
     let mut has_unaged_receivable = false;
-    for ledger in ledgers.iter().filter(|ledger| ledger.bill_wise_on) {
+    for ledger in ledgers.iter().filter(|ledger| is_party_ledger(ledger)) {
         let zero = ExactDecimal::zero();
         let receivable_sum = receivable_sums.get(ledger.name.as_str()).unwrap_or(&zero);
         let payable_sum = payable_sums.get(ledger.name.as_str()).unwrap_or(&zero);
@@ -229,6 +235,14 @@ fn compute_residuals(
         });
     }
     Ok((residuals, residual_total, has_unaged_receivable))
+}
+
+fn is_party_ledger(ledger: &LedgerSnapshotEntry) -> bool {
+    ledger.bill_wise_on
+        || ledger
+            .parent
+            .as_deref()
+            .is_some_and(|parent| matches!(parent.trim(), "Sundry Debtors" | "Sundry Creditors"))
 }
 
 fn bill_anchor_date(row: &NativeBillRow, anchor: AgeingAnchor) -> &TallyDate {

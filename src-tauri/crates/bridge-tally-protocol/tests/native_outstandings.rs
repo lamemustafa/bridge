@@ -18,6 +18,12 @@ const LEDGER_SNAPSHOT_BILLWISE_LAB: &str =
     include_str!("fixtures/native/ledger_snapshot_billwise_lab.xml");
 const BILLS_RECEIVABLE_AGEING_LAB: &str =
     include_str!("fixtures/native/bills_receivable_ageing_lab.xml");
+const BILLS_RECEIVABLE_VALIDATION_LAB: &str =
+    include_str!("fixtures/native/bills_receivable_validation_lab.xml");
+const BILLS_PAYABLE_VALIDATION_LAB: &str =
+    include_str!("fixtures/native/bills_payable_validation_lab.xml");
+const LEDGER_SNAPSHOT_VALIDATION_LAB: &str =
+    include_str!("fixtures/native/ledger_snapshot_validation_lab.xml");
 
 /// `BOOKSFROM` for "Bridge Billwise Lab", from `company_extent_9000.xml`
 /// (`<BOOKSFROM TYPE="Date">20240401</BOOKSFROM>`).
@@ -26,6 +32,10 @@ const BILLWISE_LAB_BOOKS_FROM: &str = "20240401";
 /// (`<BOOKSFROM TYPE="Date">20260401</BOOKSFROM>`).
 const AGEING_LAB_BOOKS_FROM: &str = "20260401";
 const NATIVE_CAPTURE_AS_OF: &str = "20260731";
+/// `BOOKSFROM` for the purpose-built `Bridge Validation Lab`, observed via
+/// the paired `CompanyBookExtentV1` read that bracketed the 2026-08-17 capture.
+const VALIDATION_LAB_BOOKS_FROM: &str = "20250401";
+const VALIDATION_CAPTURE_AS_OF: &str = "20260817";
 
 const BILLWISE_LAB_COMPANY: &str = "Bridge Billwise Lab";
 
@@ -52,7 +62,8 @@ fn not_yet_due_bill_is_reported_without_becoming_overdue() {
         bill_date: as_of("20260701"),
         due_date: as_of("20260830"),
         closing_balance: ExactDecimal::parse("-100.00").unwrap(),
-        // Tally reports zero overdue days until the due date arrives.
+        // Some rows encode not-yet-overdue as zero; the captured validation
+        // book encodes it as empty. Neither representation is an overdue age.
         tally_overdue_days: Some(0),
     }];
 
@@ -68,10 +79,10 @@ fn not_yet_due_bill_is_reported_without_becoming_overdue() {
     .expect("a future-due bill must not abort the report");
 
     assert_exact(&result.report.receivable_total, "100");
-    assert_eq!(result.report.ageing.days_0_30, ExactDecimal::zero());
+    assert_exact(&result.report.ageing.days_0_30, "100");
     assert_eq!(result.report.ageing.days_90_plus, ExactDecimal::zero());
-    assert_eq!(result.report.open_receivable_bill_count, 0);
-    assert_eq!(result.report.ageing_bill_counts.days_0_30, 0);
+    assert_eq!(result.report.open_receivable_bill_count, 1);
+    assert_eq!(result.report.ageing_bill_counts.days_0_30, 1);
     assert_eq!(result.report.ageing_bill_counts.days_90_plus, 0);
     assert_eq!(
         result.report.top_parties[0].oldest_bill_age_days, None,
@@ -81,6 +92,94 @@ fn not_yet_due_bill_is_reported_without_becoming_overdue() {
         result.overdue_crosscheck_mismatches, 0,
         "zero overdue days must agree with Tally's own BILLOVERDUE"
     );
+}
+
+#[test]
+fn validation_lab_empty_billoverdue_parses_as_not_applicable() {
+    let rows = parse_native_bill_rows(
+        BILLS_RECEIVABLE_VALIDATION_LAB,
+        &as_of(VALIDATION_LAB_BOOKS_FROM),
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+    )
+    .expect("the captured empty BILLOVERDUE value must not fail the read");
+
+    assert_eq!(rows.len(), 5);
+    let future = rows
+        .iter()
+        .find(|row| row.reference == "ALPHA-FUTURE")
+        .expect("the captured future-due bill is present");
+    assert_eq!(future.due_date.as_str(), "20261001");
+    assert_eq!(future.tally_overdue_days, None);
+}
+
+#[test]
+fn validation_lab_accounts_for_every_debtor_rupee_and_matches_tally_ageing() {
+    let receivable = parse_native_bill_rows(
+        BILLS_RECEIVABLE_VALIDATION_LAB,
+        &as_of(VALIDATION_LAB_BOOKS_FROM),
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+    )
+    .expect("captured receivables parse");
+    let payable = parse_native_bill_rows(
+        BILLS_PAYABLE_VALIDATION_LAB,
+        &as_of(VALIDATION_LAB_BOOKS_FROM),
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+    )
+    .expect("captured payables parse");
+    let ledgers = parse_native_ledger_snapshot(LEDGER_SNAPSHOT_VALIDATION_LAB)
+        .expect("captured ledger snapshot parses");
+
+    let result = compute_native_outstandings(
+        "Bridge Validation Lab",
+        &receivable,
+        &payable,
+        &ledgers,
+        AgeingAnchor::DueDate,
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+        BILLS_RECEIVABLE_VALIDATION_LAB.len()
+            + BILLS_PAYABLE_VALIDATION_LAB.len()
+            + LEDGER_SNAPSHOT_VALIDATION_LAB.len(),
+    )
+    .expect("validation-book outstandings compute");
+
+    assert_exact(&result.report.receivable_total, "255553");
+    assert_exact(&result.report.payable_total, "66666");
+    assert_exact(&result.report.ageing.days_0_30, "244442");
+    assert_eq!(result.report.ageing.days_31_60, ExactDecimal::zero());
+    assert_eq!(result.report.ageing.days_61_90, ExactDecimal::zero());
+    assert_exact(&result.report.ageing.days_90_plus, "11111");
+    assert_eq!(result.report.ageing_bill_counts.days_0_30, 4);
+    assert_eq!(result.report.ageing_bill_counts.days_31_60, 0);
+    assert_eq!(result.report.ageing_bill_counts.days_61_90, 0);
+    assert_eq!(result.report.ageing_bill_counts.days_90_plus, 1);
+    assert_eq!(result.report.open_receivable_bill_count, 5);
+
+    let beta = result
+        .residuals
+        .iter()
+        .find(|residual| residual.party == "BVL Beta Supplies")
+        .expect("a bill-wise-off debtor must remain visible as an unaged residual");
+    assert_exact(&beta.amount, "-33333");
+    let gamma = result
+        .residuals
+        .iter()
+        .find(|residual| residual.party == "BVL Gamma Opening")
+        .expect("the named-opening residual remains visible");
+    assert_exact(&gamma.amount, "-44444");
+    assert_eq!(
+        result.residuals.len(),
+        7,
+        "only Sundry Debtor/Creditor ledgers belong in party residuals"
+    );
+    assert_exact(&result.residual_total, "77777");
+    assert!(result.report.has_unaged_receivable);
+
+    let accounted_debtor_exposure = result
+        .report
+        .receivable_total
+        .checked_add(&result.residual_total)
+        .expect("validation-book accounting remains exact");
+    assert_exact(&accounted_debtor_exposure, "333330");
 }
 
 // ---------------------------------------------------------------------
@@ -417,6 +516,36 @@ fn billfixed_missing_billcl_fails_closed() {
         result,
         Err(NativeOutstandingsError::InvalidResponse(
             "bills_fixed_row_missing_billcl"
+        ))
+    );
+}
+
+#[test]
+fn self_closing_empty_billoverdue_is_none_and_still_rejects_duplicates() {
+    let one_empty = "<ENVELOPE>\
+        <BILLFIXED><BILLDATE>1-Aug-26</BILLDATE><BILLREF>FUTURE</BILLREF><BILLPARTY>P</BILLPARTY></BILLFIXED>\
+        <BILLCL>-10.00</BILLCL><BILLDUE>1-Oct-26</BILLDUE><BILLOVERDUE/>\
+        </ENVELOPE>";
+    let rows = parse_native_bill_rows(
+        one_empty,
+        &as_of(VALIDATION_LAB_BOOKS_FROM),
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+    )
+    .expect("a self-closing empty value has the same field-specific meaning");
+    assert_eq!(rows[0].tally_overdue_days, None);
+
+    let duplicate = one_empty.replace(
+        "<BILLOVERDUE/>",
+        "<BILLOVERDUE/><BILLOVERDUE>0</BILLOVERDUE>",
+    );
+    assert_eq!(
+        parse_native_bill_rows(
+            &duplicate,
+            &as_of(VALIDATION_LAB_BOOKS_FROM),
+            &as_of(VALIDATION_CAPTURE_AS_OF),
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "bills_duplicate_billoverdue"
         ))
     );
 }

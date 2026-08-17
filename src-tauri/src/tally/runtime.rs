@@ -2123,6 +2123,29 @@ mod tests {
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
 
+    #[test]
+    fn validation_lab_future_bill_stays_unaged_in_open_bill_output() {
+        let receivable = parse_native_bill_rows(
+            include_str!(
+                "../../crates/bridge-tally-protocol/tests/fixtures/native/bills_receivable_validation_lab.xml"
+            ),
+            &TallyDate::parse("20250401").expect("captured BooksFrom"),
+            &TallyDate::parse("20260817").expect("capture as-of"),
+        )
+        .expect("captured validation-book rows parse");
+        let rows = open_bill_rows(
+            &receivable,
+            &[],
+            &TallyDate::parse("20260817").expect("capture as-of"),
+        );
+        let future = rows
+            .iter()
+            .find(|row| row.reference == "ALPHA-FUTURE")
+            .expect("captured future-due bill remains present");
+        assert_eq!(future.amount.as_str(), "22222.00");
+        assert_eq!(future.age_days, None);
+    }
+
     fn synthetic_probe_result() -> TallyProbeResult {
         TallyProbeResult {
             connection: ConnectionStatus {

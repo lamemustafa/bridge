@@ -59,10 +59,11 @@ pub enum AgeingAnchor {
 /// One outstanding bill row from the flat Bills Receivable/Payable report.
 ///
 /// `tally_overdue_days` is Tally's own `BILLOVERDUE` counter, measured
-/// against the requested `SVTODATE`. It is retained only as an independent
-/// cross-check against Bridge's own ageing computation and must never be
-/// used as ageing's source of truth (it is not recomputed for an as-of date
-/// other than the one that was requested).
+/// against the requested `SVTODATE`. Tally leaves it empty when the counter
+/// is not applicable, including a future-due bill. It is retained only as an
+/// independent cross-check against Bridge's own ageing computation and must
+/// never be used as ageing's source of truth (it is not recomputed for an
+/// as-of date other than the one that was requested).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeBillRow {
     pub party: String,

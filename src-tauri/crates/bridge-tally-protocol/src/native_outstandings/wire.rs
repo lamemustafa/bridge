@@ -32,6 +32,7 @@ struct PendingBillRow {
     bill_date_raw: String,
     closing_balance: Option<ExactDecimal>,
     due_date_raw: Option<String>,
+    overdue_seen: bool,
     overdue: Option<i64>,
 }
 
@@ -84,6 +85,7 @@ pub fn parse_native_bill_rows(
                             bill_date_raw,
                             closing_balance: None,
                             due_date_raw: None,
+                            overdue_seen: false,
                             overdue: None,
                         });
                     }
@@ -128,14 +130,7 @@ pub fn parse_native_bill_rows(
                                 .ok_or(NativeOutstandingsError::InvalidResponse(
                                     "bills_scalar_before_fixed",
                                 ))?;
-                        if row.overdue.is_some() {
-                            return Err(NativeOutstandingsError::InvalidResponse(
-                                "bills_duplicate_billoverdue",
-                            ));
-                        }
-                        row.overdue = Some(text.trim().parse::<i64>().map_err(|_| {
-                            NativeOutstandingsError::InvalidResponse("bills_overdue_invalid")
-                        })?);
+                        set_bill_overdue(row, &text)?;
                     }
                     _ => {
                         return Err(NativeOutstandingsError::InvalidResponse(
@@ -153,6 +148,16 @@ pub fn parse_native_bill_rows(
                 }
                 if name.as_slice() == b"STATUS" {
                     return Err(NativeOutstandingsError::TallyReportedFailure);
+                }
+                if name.as_slice() == b"BILLOVERDUE" {
+                    let row =
+                        pending
+                            .last_mut()
+                            .ok_or(NativeOutstandingsError::InvalidResponse(
+                                "bills_scalar_before_fixed",
+                            ))?;
+                    set_bill_overdue(row, "")?;
+                    continue;
                 }
                 return Err(NativeOutstandingsError::InvalidResponse(
                     "bills_unexpected_empty_element",
@@ -195,6 +200,25 @@ pub fn parse_native_bill_rows(
         .into_iter()
         .map(|row| finalize_bill_row(row, books_from, as_of))
         .collect()
+}
+
+fn set_bill_overdue(row: &mut PendingBillRow, text: &str) -> Result<(), NativeOutstandingsError> {
+    if row.overdue_seen {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "bills_duplicate_billoverdue",
+        ));
+    }
+    row.overdue_seen = true;
+    let text = text.trim();
+    row.overdue = if text.is_empty() {
+        None
+    } else {
+        Some(
+            text.parse::<i64>()
+                .map_err(|_| NativeOutstandingsError::InvalidResponse("bills_overdue_invalid"))?,
+        )
+    };
+    Ok(())
 }
 
 fn finalize_bill_row(
