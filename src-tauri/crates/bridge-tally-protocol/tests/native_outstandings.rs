@@ -549,3 +549,58 @@ fn self_closing_empty_billoverdue_is_none_and_still_rejects_duplicates() {
         ))
     );
 }
+
+#[test]
+fn bills_sanitize_illegal_numeric_references_before_decoding_text_fields() {
+    let xml = "<ENVELOPE>\
+        <BILLFIXED><BILLDATE>1-Apr-24</BILLDATE><BILLREF>&#4; REFERENCE</BILLREF><BILLPARTY>&#4; PARTY</BILLPARTY></BILLFIXED>\
+        <BILLCL>-10.00</BILLCL><BILLDUE>1-Apr-24</BILLDUE><BILLOVERDUE>1</BILLOVERDUE>\
+        </ENVELOPE>";
+    let rows = parse_native_bill_rows(
+        xml,
+        &as_of(BILLWISE_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
+    )
+    .expect("Tally's illegal text references are made XML-1.0-safe at the boundary");
+
+    assert_eq!(rows[0].party, "\u{fffd}#4; PARTY");
+    assert_eq!(rows[0].reference, "\u{fffd}#4; REFERENCE");
+}
+
+#[test]
+fn ledger_snapshot_sanitizes_illegal_numeric_references_before_decoding_text_fields() {
+    let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+        <LEDGER NAME=\"&#4; LEDGER\"><PARENT>&#4; PARENT</PARENT><CLOSINGBALANCE>-10.00</CLOSINGBALANCE>\
+        <OPENINGBALANCE>0.00</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+        </COLLECTION></DATA></BODY></ENVELOPE>";
+    let rows = parse_native_ledger_snapshot(xml)
+        .expect("Tally's illegal text references are made XML-1.0-safe at the boundary");
+
+    assert_eq!(rows[0].name, "\u{fffd}#4; LEDGER");
+    assert_eq!(rows[0].parent.as_deref(), Some("\u{fffd}#4; PARENT"));
+}
+
+#[test]
+fn illegal_numeric_references_in_amounts_remain_fail_closed() {
+    let bills = "<ENVELOPE>\
+        <BILLFIXED><BILLDATE>1-Apr-24</BILLDATE><BILLREF>REFERENCE</BILLREF><BILLPARTY>PARTY</BILLPARTY></BILLFIXED>\
+        <BILLCL>&#4; -10.00</BILLCL><BILLDUE>1-Apr-24</BILLDUE><BILLOVERDUE>1</BILLOVERDUE>\
+        </ENVELOPE>";
+    assert_eq!(
+        parse_native_bill_rows(
+            bills,
+            &as_of(BILLWISE_LAB_BOOKS_FROM),
+            &as_of(NATIVE_CAPTURE_AS_OF),
+        ),
+        Err(NativeOutstandingsError::InvalidAmount)
+    );
+
+    let ledgers = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+        <LEDGER NAME=\"LEDGER\"><PARENT>PARENT</PARENT><CLOSINGBALANCE>&#4; -10.00</CLOSINGBALANCE>\
+        <OPENINGBALANCE>0.00</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+        </COLLECTION></DATA></BODY></ENVELOPE>";
+    assert_eq!(
+        parse_native_ledger_snapshot(ledgers),
+        Err(NativeOutstandingsError::InvalidAmount)
+    );
+}

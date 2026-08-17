@@ -23,6 +23,8 @@ use quick_xml::Reader;
 
 use bridge_tally_primitives::ExactDecimal;
 
+use crate::tolerant_xml::sanitize_invalid_numeric_references;
+
 use super::date::{parse_native_display_date, NativeDisplayDateRole};
 use super::model::{LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError};
 
@@ -44,7 +46,8 @@ pub fn parse_native_bill_rows(
     books_from: &bridge_tally_primitives::TallyDate,
     as_of: &bridge_tally_primitives::TallyDate,
 ) -> Result<Vec<NativeBillRow>, NativeOutstandingsError> {
-    let mut reader = Reader::from_str(xml);
+    let sanitized = sanitize_invalid_numeric_references(xml);
+    let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(true);
 
     let mut root_seen = false;
@@ -347,7 +350,8 @@ fn parse_ledger_amount(text: &str) -> Result<ExactDecimal, NativeOutstandingsErr
 pub fn parse_native_ledger_snapshot(
     xml: &str,
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
-    let mut reader = Reader::from_str(xml);
+    let sanitized = sanitize_invalid_numeric_references(xml);
+    let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(true);
 
     let mut path = Vec::<Vec<u8>>::new();
