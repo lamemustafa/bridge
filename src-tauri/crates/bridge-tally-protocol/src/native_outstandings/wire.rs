@@ -289,10 +289,13 @@ fn parse_bill_fixed(
                 }
             }
             Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"BILLFIXED") => break,
-            Event::Empty(_) => {
-                return Err(NativeOutstandingsError::InvalidResponse(
-                    "bills_fixed_field_empty",
-                ))
+            Event::Empty(child) => {
+                let code = if child.name().as_ref().eq_ignore_ascii_case(b"BILLPARTY") {
+                    "bills_fixed_empty_billparty"
+                } else {
+                    "bills_fixed_field_empty"
+                };
+                return Err(NativeOutstandingsError::InvalidResponse(code));
             }
             Event::Eof => {
                 return Err(NativeOutstandingsError::InvalidResponse(
@@ -302,10 +305,16 @@ fn parse_bill_fixed(
             _ => {}
         }
     }
+    let party = party.ok_or(NativeOutstandingsError::InvalidResponse(
+        "bills_fixed_missing_billparty",
+    ))?;
+    if party.trim().is_empty() {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "bills_fixed_empty_billparty",
+        ));
+    }
     Ok((
-        party.ok_or(NativeOutstandingsError::InvalidResponse(
-            "bills_fixed_missing_billparty",
-        ))?,
+        party,
         reference.ok_or(NativeOutstandingsError::InvalidResponse(
             "bills_fixed_missing_billref",
         ))?,

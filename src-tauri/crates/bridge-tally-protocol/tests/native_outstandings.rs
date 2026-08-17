@@ -521,6 +521,80 @@ fn billfixed_missing_billcl_fails_closed() {
 }
 
 #[test]
+fn empty_bill_party_from_raw_bytes_fails_closed_before_double_counting() {
+    let bills = "<ENVELOPE>\
+        <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>SYNTHETIC-INV-1</BILLREF><BILLPARTY></BILLPARTY></BILLFIXED>\
+        <BILLCL>-100.00</BILLCL><BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>30</BILLOVERDUE>\
+        </ENVELOPE>";
+    let ledger_bytes = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+        <LEDGER NAME=\"Synthetic Customer\"><PARENT>Sundry Debtors</PARENT>\
+        <CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0.00</OPENINGBALANCE>\
+        <ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+        </COLLECTION></DATA></BODY></ENVELOPE>";
+
+    let result = parse_native_bill_rows(
+        bills,
+        &as_of(AGEING_LAB_BOOKS_FROM),
+        &as_of(NATIVE_CAPTURE_AS_OF),
+    )
+    .and_then(|receivable| {
+        let ledgers = parse_native_ledger_snapshot(ledger_bytes)?;
+        compute_native_outstandings(
+            "Synthetic Company",
+            &receivable,
+            &[],
+            &ledgers,
+            AgeingAnchor::DueDate,
+            &as_of(NATIVE_CAPTURE_AS_OF),
+            bills.len() + ledger_bytes.len(),
+        )
+    });
+
+    match result {
+        Err(error) => assert_eq!(
+            error,
+            NativeOutstandingsError::InvalidResponse("bills_fixed_empty_billparty")
+        ),
+        Ok(result) => {
+            assert_exact(&result.report.receivable_total, "100");
+            assert_exact(&result.residual_total, "100");
+            let disclosed_total = result
+                .report
+                .receivable_total
+                .checked_add(&result.residual_total)
+                .expect("the pinned synthetic total is in range");
+            assert_exact(&disclosed_total, "200");
+            panic!(
+                "the raw-byte read completed with a double-counted total of {}",
+                disclosed_total.as_str()
+            );
+        }
+    }
+}
+
+#[test]
+fn whitespace_and_self_closing_bill_party_use_the_distinct_empty_party_error() {
+    for party in ["<BILLPARTY> \n\t </BILLPARTY>", "<BILLPARTY/>"] {
+        let xml = format!(
+            "<ENVELOPE><BILLFIXED><BILLDATE>1-Jul-26</BILLDATE>\
+             <BILLREF>SYNTHETIC-INV-1</BILLREF>{party}</BILLFIXED>\
+             <BILLCL>-100.00</BILLCL><BILLDUE>1-Jul-26</BILLDUE>\
+             <BILLOVERDUE>30</BILLOVERDUE></ENVELOPE>"
+        );
+        assert_eq!(
+            parse_native_bill_rows(
+                &xml,
+                &as_of(AGEING_LAB_BOOKS_FROM),
+                &as_of(NATIVE_CAPTURE_AS_OF),
+            ),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "bills_fixed_empty_billparty"
+            ))
+        );
+    }
+}
+
+#[test]
 fn self_closing_empty_billoverdue_is_none_and_still_rejects_duplicates() {
     let one_empty = "<ENVELOPE>\
         <BILLFIXED><BILLDATE>1-Aug-26</BILLDATE><BILLREF>FUTURE</BILLREF><BILLPARTY>P</BILLPARTY></BILLFIXED>\
