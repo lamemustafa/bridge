@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use super::party_statement::{build_party_statement, PartyStatement};
-use crate::tally::{OpenBillRow, UnallocatedParty};
+use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BulkPartyStatementResult {
@@ -25,7 +25,8 @@ pub struct BulkPartyStatementResult {
 pub struct WrittenStatement {
     pub party: String,
     pub file_name: String,
-    pub amount: String,
+    pub receivable_amount: String,
+    pub payable_amount: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,7 +82,13 @@ pub fn write_bulk_party_statements(
                 continue;
             }
         };
-        let amount = statement.grand_total.as_str().to_string();
+        let (receivable_amount, payable_amount) = match statement_directional_totals(&statement) {
+            Ok(totals) => totals,
+            Err(error) => {
+                failures.push(StatementFailure { party, error });
+                continue;
+            }
+        };
         let bytes = match render(&statement) {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -97,7 +104,8 @@ pub fn write_bulk_party_statements(
             Ok(path) => written.push(WrittenStatement {
                 party,
                 file_name: file_name(&path)?,
-                amount,
+                receivable_amount,
+                payable_amount,
             }),
             Err(error) => failures.push(StatementFailure { party, error }),
         }
@@ -125,6 +133,37 @@ pub fn write_bulk_party_statements(
         written,
         failures,
     })
+}
+
+fn statement_directional_totals(statement: &PartyStatement) -> Result<(String, String), String> {
+    let mut receivable = bridge_tally_core::ExactDecimal::zero();
+    let mut payable = bridge_tally_core::ExactDecimal::zero();
+    for bill in &statement.bills {
+        let total = match bill.kind {
+            "receivable" => &mut receivable,
+            "payable" => &mut payable,
+            _ => return Err("Bridge found an unknown statement direction.".to_string()),
+        };
+        *total = total
+            .checked_add(&bill.amount)
+            .map_err(|_| "Bridge could not total a statement direction exactly.".to_string())?;
+    }
+    if !statement.unallocated.is_zero() {
+        let total = match statement.unallocated_direction {
+            Some(ExposureDirection::Receivable) => &mut receivable,
+            Some(ExposureDirection::Payable) => &mut payable,
+            None => {
+                return Err("Bridge found an unallocated amount without a direction.".to_string())
+            }
+        };
+        *total = total
+            .checked_add(&statement.unallocated)
+            .map_err(|_| "Bridge could not total a statement direction exactly.".to_string())?;
+    }
+    Ok((
+        receivable.as_str().to_string(),
+        payable.as_str().to_string(),
+    ))
 }
 
 fn statement_parties(
@@ -290,15 +329,44 @@ mod tests {
 
         assert_eq!(result.written.len(), 1);
         assert_eq!(result.written[0].party, "Good Party");
-        assert_eq!(result.written[0].amount, "10");
+        assert_eq!(result.written[0].receivable_amount, "10");
+        assert_eq!(result.written[0].payable_amount, "0");
         assert_eq!(result.failures.len(), 1);
         assert_eq!(result.failures[0].party, "Broken Party");
         let manifest = fs::read_to_string(&result.manifest_path).expect("manifest is written");
         assert!(manifest.contains("20260808"));
         assert!(manifest.contains("Synthetic Books Pvt Ltd"));
-        assert!(manifest.contains("\"amount\": \"10\""));
+        assert!(manifest.contains("\"receivable_amount\": \"10\""));
+        assert!(manifest.contains("\"payable_amount\": \"0\""));
+        assert!(!manifest.contains("\"amount\":"));
         assert!(manifest.contains("Broken Party"));
         assert!(manifest.contains("synthetic renderer failure"));
+    }
+
+    #[test]
+    fn manifest_totals_keep_receivable_and_payable_directions_separate() {
+        let destination = tempfile::tempdir().expect("temporary destination");
+        let mut payable_bill = bill("Mixed Party", "4.00");
+        payable_bill.kind = "payable";
+        let unallocated = [UnallocatedParty {
+            party: "Mixed Party".to_string(),
+            amount: ExactDecimal::parse("3.00").expect("synthetic decimal"),
+            direction: ExposureDirection::Payable,
+        }];
+
+        let result = write_bulk_party_statements(
+            destination.path(),
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "pdf",
+            &[bill("Mixed Party", "10.00"), payable_bill],
+            &unallocated,
+            |_| Ok(b"synthetic PDF".to_vec()),
+        )
+        .expect("mixed statement writes");
+
+        assert_eq!(result.written[0].receivable_amount, "10");
+        assert_eq!(result.written[0].payable_amount, "7");
     }
 
     #[test]
