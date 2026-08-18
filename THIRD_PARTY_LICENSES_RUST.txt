@@ -463,7 +463,7 @@ glob 0.3.4
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/glob
 
-h2 0.4.15
+h2 0.4.16
 License: MIT
 Source: https://github.com/hyperium/h2
 
@@ -10634,7 +10634,7 @@ DEALINGS IN THE SOFTWARE.
 
 -------------------------------------------------------------------------------
 MIT License
-- h2 0.4.15
+- h2 0.4.16
 
 Copyright (c) 2017 h2 authors
 
