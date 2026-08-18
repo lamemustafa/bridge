@@ -3,7 +3,7 @@
 import React from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { ClientGroupLabels, groupClientRows } from "./client-grouping";
+import { applyClientGroupLabel, ClientGroupLabels, groupClientRows, rollbackFailedClientGroupLabel } from "./client-grouping";
 import { outstandingsPartialState } from "./outstandings-copy";
 
 type CompanyRef = { name: string; guid: string };
@@ -79,18 +79,25 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   const [error, setError] = React.useState<string | null>(null);
   const [groupLabels, setGroupLabels] = React.useState<ClientGroupLabels>({});
   const [groupLabelError, setGroupLabelError] = React.useState<string | null>(null);
+  const persistedGroupLabels = React.useRef<ClientGroupLabels>({});
   const requestVersion = React.useRef(0);
 
   React.useEffect(() => {
     let active = true;
     void invoke<ClientGroupLabels>("load_client_group_labels")
       .then((labels) => {
-        if (active) setGroupLabels(labels);
+        if (active) {
+          persistedGroupLabels.current = labels;
+          setGroupLabels(labels);
+        }
       })
       // A label is optional. If its local config cannot be read, continue as
       // ungrouped instead of turning the report into a failed screen.
       .catch(() => {
-        if (active) setGroupLabels({});
+        if (active) {
+          persistedGroupLabels.current = {};
+          setGroupLabels({});
+        }
       });
     return () => {
       active = false;
@@ -202,19 +209,31 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   );
 
   const updateGroupLabel = React.useCallback((companyGuid: string, label: string) => {
-    setGroupLabels((current) => {
-      const next = { ...current };
-      if (label.trim()) next[companyGuid] = label;
-      else delete next[companyGuid];
-      return next;
-    });
+    setGroupLabels((current) => applyClientGroupLabel(current, companyGuid, label));
   }, []);
 
   const saveGroupLabel = React.useCallback((companyGuid: string, label: string) => {
+    const attemptedLabel = label.trim();
     setGroupLabelError(null);
     void invoke("save_client_group_label", {
-      request: { company_guid: companyGuid, label },
-    }).catch(() => setGroupLabelError("Bridge could not save this group label. Your figures are unchanged."));
+      request: { company_guid: companyGuid, label: attemptedLabel },
+    })
+      .then(() => {
+        persistedGroupLabels.current = applyClientGroupLabel(
+          persistedGroupLabels.current,
+          companyGuid,
+          attemptedLabel,
+        );
+      })
+      .catch(() => {
+        setGroupLabels((current) => rollbackFailedClientGroupLabel(
+          current,
+          companyGuid,
+          attemptedLabel,
+          persistedGroupLabels.current,
+        ));
+        setGroupLabelError("Bridge could not save this group label. The previous label was restored; your figures are unchanged.");
+      });
   }, []);
 
   const renderRow = (row: (typeof rows)[number]) => {

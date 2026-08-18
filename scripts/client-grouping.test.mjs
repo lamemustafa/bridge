@@ -4,7 +4,28 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { groupClientRows, sumExactDecimals } from "../src/client-grouping.ts";
+import { applyClientGroupLabel, groupClientRows, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
+
+test("a failed optimistic label save restores only the value that actually failed", () => {
+  const persisted = { "synthetic-company-guid": "Original" };
+  const optimistic = applyClientGroupLabel(persisted, "synthetic-company-guid", "North");
+  assert.deepEqual(
+    rollbackFailedClientGroupLabel(optimistic, "synthetic-company-guid", "North", persisted),
+    persisted,
+  );
+
+  const newerEdit = applyClientGroupLabel(optimistic, "synthetic-company-guid", "Newer edit");
+  assert.deepEqual(
+    rollbackFailedClientGroupLabel(newerEdit, "synthetic-company-guid", "North", persisted),
+    newerEdit,
+    "a late failure must not erase typing that happened after the failed attempt",
+  );
+  assert.deepEqual(
+    rollbackFailedClientGroupLabel({ "synthetic-company-guid": "North" }, "synthetic-company-guid", "North", {}),
+    {},
+    "a failed first save returns the company to ungrouped",
+  );
+});
 
 test("applying a group label preserves every company figure byte-for-byte", () => {
   const row = {

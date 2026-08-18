@@ -2,6 +2,30 @@
 
 export type ClientGroupLabels = Record<string, string>;
 
+export function applyClientGroupLabel(
+  labels: ClientGroupLabels,
+  companyGuid: string,
+  label: string,
+): ClientGroupLabels {
+  const next = { ...labels };
+  const normalized = label.trim();
+  if (normalized) next[companyGuid] = normalized;
+  else delete next[companyGuid];
+  return next;
+}
+
+export function rollbackFailedClientGroupLabel(
+  current: ClientGroupLabels,
+  companyGuid: string,
+  attemptedLabel: string,
+  persisted: ClientGroupLabels,
+): ClientGroupLabels {
+  if ((current[companyGuid] ?? "").trim() !== attemptedLabel.trim()) {
+    return current;
+  }
+  return applyClientGroupLabel(current, companyGuid, persisted[companyGuid] ?? "");
+}
+
 export type GroupableClientRow = {
   companyGuid: string;
   exactAmounts: {
