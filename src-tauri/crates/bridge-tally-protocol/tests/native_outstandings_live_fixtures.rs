@@ -22,7 +22,7 @@
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_ledger_snapshot,
-    AgeingAnchor,
+    AgeingAnchor, NativeMasterSnapshot,
 };
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/native");
@@ -66,8 +66,10 @@ fn billwise_lab_reproduces_the_unit_a_exit_criteria_exactly() {
         "Bridge Billwise Lab",
         &receivable,
         &payable,
-        &ledgers,
-        &[],
+        NativeMasterSnapshot {
+            ledgers: &ledgers,
+            groups: &[],
+        },
         AgeingAnchor::DueDate,
         &as_of(),
         11_030,
@@ -126,8 +128,10 @@ fn billwise_lab_residual_equals_unit_a_payable_total_to_the_rupee() {
         "Bridge Billwise Lab",
         &receivable,
         &payable,
-        &ledgers,
-        &[],
+        NativeMasterSnapshot {
+            ledgers: &ledgers,
+            groups: &[],
+        },
         AgeingAnchor::DueDate,
         &as_of(),
         11_030,
@@ -174,8 +178,10 @@ fn aarav_residual_dominates_and_every_bill_carrying_party_reconciles_exactly() {
         "Aarav Trading Company Demo",
         &receivable,
         &payable,
-        &ledgers,
-        &[],
+        NativeMasterSnapshot {
+            ledgers: &ledgers,
+            groups: &[],
+        },
         AgeingAnchor::DueDate,
         &as_of(),
         51_003,

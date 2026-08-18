@@ -21,6 +21,7 @@ use bridge_tally_protocol::native_outstandings::{
     compute_native_outstandings, parse_company_currency, parse_native_bill_rows,
     parse_native_ledger_snapshot, render_company_currency_request, render_native_bills_request,
     render_native_ledger_snapshot_request, AgeingAnchor, CompanyCurrency, NativeBillsReportKind,
+    NativeMasterSnapshot,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -1405,8 +1406,10 @@ impl TallyRuntime {
                         &company,
                         &receivable_rows,
                         &payable_rows,
-                        &ledger_rows,
-                        &group_rows,
+                        NativeMasterSnapshot {
+                            ledgers: &ledger_rows,
+                            groups: &group_rows,
+                        },
                         AgeingAnchor::DueDate,
                         &as_of,
                         total_bytes,
@@ -2234,8 +2237,10 @@ mod tests {
             "Synthetic Company",
             &rows,
             &[],
-            &[],
-            &[],
+            NativeMasterSnapshot {
+                ledgers: &[],
+                groups: &[],
+            },
             AgeingAnchor::DueDate,
             &TallyDate::parse("20260817").expect("synthetic as-of"),
             0,

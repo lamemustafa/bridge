@@ -19,6 +19,13 @@ struct PartyAccumulator {
     oldest_bill_age: Option<u32>,
 }
 
+/// Ledger and group masters captured for the same native outstandings read.
+/// Group ancestry is required to classify nested party ledgers correctly.
+pub struct NativeMasterSnapshot<'a> {
+    pub ledgers: &'a [LedgerSnapshotEntry],
+    pub groups: &'a [TallyNamedMaster],
+}
+
 /// Computes a drop-in [`OutstandingsReport`] plus on-account residual
 /// evidence from the native Bills Receivable/Payable rows and the ledger
 /// snapshot, per TALLY_PROTOCOL_REFERENCE ground truth captured 2026-08-07.
@@ -30,8 +37,7 @@ pub fn compute_native_outstandings(
     company_name: &str,
     receivable_rows: &[NativeBillRow],
     payable_rows: &[NativeBillRow],
-    ledgers: &[LedgerSnapshotEntry],
-    groups: &[TallyNamedMaster],
+    masters: NativeMasterSnapshot<'_>,
     anchor: AgeingAnchor,
     as_of: &TallyDate,
     source_bytes: usize,
@@ -162,8 +168,12 @@ pub fn compute_native_outstandings(
         .and_then(|value| value.checked_add(ageing_bill_counts.days_90_plus))
         .ok_or(NativeOutstandingsError::ArithmeticOverflow)?;
 
-    let (residuals, residual_total, has_unaged_receivable) =
-        compute_residuals(receivable_rows, payable_rows, ledgers, groups)?;
+    let (residuals, residual_total, has_unaged_receivable) = compute_residuals(
+        receivable_rows,
+        payable_rows,
+        masters.ledgers,
+        masters.groups,
+    )?;
 
     let report = OutstandingsReport {
         company_name: company_name.to_string(),

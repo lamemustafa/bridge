@@ -23,7 +23,7 @@ mod model;
 mod request;
 mod wire;
 
-pub use compute::{age_in_days, compute_native_outstandings};
+pub use compute::{age_in_days, compute_native_outstandings, NativeMasterSnapshot};
 pub use date::{parse_native_display_date, NativeDisplayDateRole};
 pub use model::{
     AgeingAnchor, CompanyCurrency, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
