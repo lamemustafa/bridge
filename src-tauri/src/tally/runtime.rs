@@ -2406,7 +2406,10 @@ mod tests {
             "Synthetic Company",
             &receivable,
             &[],
-            &ledgers,
+            NativeMasterSnapshot {
+                ledgers: &ledgers,
+                groups: &[],
+            },
             AgeingAnchor::DueDate,
             &as_of,
             bills_xml.len() + ledger_xml.len(),
