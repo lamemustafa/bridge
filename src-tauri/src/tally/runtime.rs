@@ -144,6 +144,8 @@ pub enum OutstandingsLoadResult {
 ///
 /// Ageing anchors on the DUE date to match the report and Tally's own
 /// `BILLOVERDUE` column; where no credit period exists the two dates coincide.
+const MISSING_BILL_REFERENCE_LABEL: &str = "No reference reported";
+
 fn open_bill_rows(
     receivable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
     payable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
@@ -165,7 +167,11 @@ fn open_bill_rows(
             };
             Some(OpenBillRow {
                 party: row.party.clone(),
-                reference: row.reference.clone(),
+                reference: if row.reference.trim().is_empty() {
+                    MISSING_BILL_REFERENCE_LABEL.to_string()
+                } else {
+                    row.reference.clone()
+                },
                 bill_date: row.bill_date.as_str().to_string(),
                 due_date: row.due_date.as_str().to_string(),
                 amount,
@@ -2151,6 +2157,40 @@ mod tests {
             .expect("captured future-due bill remains present");
         assert_eq!(future.amount.as_str(), "22222.00");
         assert_eq!(future.age_days, None);
+    }
+
+    #[test]
+    fn raw_empty_bill_references_preserve_each_amount_and_get_explicit_label() {
+        let raw_bills = "<ENVELOPE>\
+            <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF></BILLREF><BILLPARTY>Synthetic Customer</BILLPARTY></BILLFIXED>\
+            <BILLCL>-40.00</BILLCL><BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>30</BILLOVERDUE>\
+            <BILLFIXED><BILLDATE>2-Jul-26</BILLDATE><BILLREF> \n\t </BILLREF><BILLPARTY>Synthetic Customer</BILLPARTY></BILLFIXED>\
+            <BILLCL>-60.00</BILLCL><BILLDUE>2-Jul-26</BILLDUE><BILLOVERDUE>29</BILLOVERDUE>\
+            </ENVELOPE>";
+        let as_of = TallyDate::parse("20260731").expect("synthetic as-of");
+        let parsed = parse_native_bill_rows(
+            raw_bills,
+            &TallyDate::parse("20250401").expect("synthetic BooksFrom"),
+            &as_of,
+        )
+        .expect("paired empty BILLREF values remain parseable");
+        let rows = open_bill_rows(&parsed, &[], &as_of);
+
+        assert_eq!(rows.len(), 2, "empty identities must not collapse rows");
+        let total = rows
+            .iter()
+            .try_fold(ExactDecimal::zero(), |sum, row| {
+                sum.checked_add(&row.amount)
+            })
+            .expect("synthetic bill total remains exact");
+        assert_eq!(total.as_str(), "100", "neither amount may be lost");
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.reference.as_str())
+                .collect::<Vec<_>>(),
+            vec!["No reference reported", "No reference reported"],
+            "client-facing rows must disclose the missing identity",
+        );
     }
 
     #[tokio::test]
