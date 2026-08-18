@@ -1,17 +1,16 @@
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::xml_read_profiles::ValidatedCompanyName;
+use crate::outstandings_shared::{OutstandingsError, PinnedCompany};
+use crate::tolerant_xml::sanitize_invalid_numeric_references;
 
 use super::{
-    tolerant_xml::sanitize_invalid_numeric_references,
     wire::{
-        CompanyCollection, Envelope, Header, LedgerCollection, RawBillAllocation, RawLedgerEntry,
-        RawVoucher, RawWitnessVoucher, VoucherCollection, WitnessVoucherCollection,
+        Envelope, Header, LedgerCollection, RawBillAllocation, RawLedgerEntry, RawVoucher,
+        RawWitnessVoucher, VoucherCollection, WitnessVoucherCollection,
     },
-    AlterIdRange, BillAllocation, BillReferenceKind, CompanyBookExtent, DateWindow, LedgerEntry,
-    LedgerOpeningCoverage, MoneyValue, OutstandingsError, PinnedCompany, Voucher, VoucherAlterId,
-    VoucherAlterIdHighWater, WitnessVoucher,
+    AlterIdRange, BillAllocation, BillReferenceKind, DateWindow, LedgerEntry,
+    LedgerOpeningCoverage, MoneyValue, Voucher, VoucherAlterId, WitnessVoucher,
 };
 
 pub(super) struct ParsedSegment {
@@ -22,61 +21,6 @@ pub(super) struct ParsedSegment {
 pub(super) struct ParsedWitnessSegment {
     pub(super) vouchers: Vec<WitnessVoucher>,
     pub(super) raw_row_count: usize,
-}
-
-pub fn parse_company_book_extent(
-    xml: &str,
-    expected_name: &str,
-    expected_guid: &str,
-) -> Result<CompanyBookExtent, OutstandingsError> {
-    require_complete_envelope(xml)?;
-    let sanitized = sanitize_invalid_numeric_references(xml);
-    let parsed: Envelope<CompanyCollection> = quick_xml::de::from_str(&sanitized)
-        .map_err(|_| OutstandingsError::InvalidResponse("company_extent_xml_invalid"))?;
-    require_success(&parsed.header)?;
-    let mut matching = parsed
-        .body
-        .data
-        .collection
-        .companies
-        .into_iter()
-        .filter(|raw| raw.guid.text.trim().eq_ignore_ascii_case(expected_guid));
-    let raw = matching
-        .next()
-        .ok_or(OutstandingsError::CompanyIdentityMismatch)?;
-    if matching.next().is_some() {
-        return Err(OutstandingsError::InvalidResponse(
-            "company_identity_ambiguous",
-        ));
-    }
-    let name = required(raw.name.text, "company_name_missing")?;
-    let guid = required(raw.guid.text, "company_guid_missing")?;
-    if raw.attribute_name != name
-        || name != expected_name
-        || !guid.eq_ignore_ascii_case(expected_guid)
-    {
-        return Err(OutstandingsError::CompanyIdentityMismatch);
-    }
-    let name =
-        ValidatedCompanyName::new(name).map_err(|_| OutstandingsError::InvalidCompanyIdentity)?;
-    let company = PinnedCompany::verified(name, guid)?;
-    let books_from = parse_date(raw.books_from.text)?;
-    let last_voucher_date = parse_date(raw.last_voucher_date.text)?;
-    let voucher_alter_id_high_water = raw
-        .alter_voucher_id
-        .map(|value| VoucherAlterIdHighWater::parse(&value.text))
-        .transpose()?;
-    if books_from > last_voucher_date {
-        return Err(OutstandingsError::InvalidResponse(
-            "company_extent_reversed",
-        ));
-    }
-    Ok(CompanyBookExtent::new(
-        company,
-        books_from,
-        last_voucher_date,
-        voucher_alter_id_high_water,
-    ))
 }
 
 /// Detect bill-wise OPENING balances on ledger masters.

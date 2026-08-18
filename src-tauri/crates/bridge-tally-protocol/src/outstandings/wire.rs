@@ -1,58 +1,12 @@
 use serde::Deserialize;
 
-#[derive(Deserialize)]
-pub(super) struct Envelope<T> {
-    #[serde(rename = "HEADER")]
-    pub(super) header: Header,
-    #[serde(rename = "BODY")]
-    pub(super) body: Body<T>,
-}
-
-#[derive(Deserialize)]
-pub(super) struct Header {
-    #[serde(rename = "STATUS")]
-    pub(super) status: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct Body<T> {
-    #[serde(rename = "DATA")]
-    pub(super) data: Data<T>,
-}
-
-#[derive(Deserialize)]
-pub(super) struct Data<T> {
-    #[serde(rename = "COLLECTION")]
-    pub(super) collection: T,
-}
-
-#[derive(Default, Deserialize)]
-pub(super) struct Value {
-    #[serde(rename = "$text", default)]
-    pub(super) text: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct CompanyCollection {
-    #[serde(rename = "COMPANY", default)]
-    pub(super) companies: Vec<RawCompany>,
-}
-
-#[derive(Deserialize)]
-pub(super) struct RawCompany {
-    #[serde(rename = "@NAME")]
-    pub(super) attribute_name: String,
-    #[serde(rename = "NAME")]
-    pub(super) name: Value,
-    #[serde(rename = "GUID")]
-    pub(super) guid: Value,
-    #[serde(rename = "BOOKSFROM")]
-    pub(super) books_from: Value,
-    #[serde(rename = "LASTVOUCHERDATE")]
-    pub(super) last_voucher_date: Value,
-    #[serde(rename = "ALTVCHID", default)]
-    pub(super) alter_voucher_id: Option<Value>,
-}
+// The generic envelope scaffold (`Envelope`/`Header`/`Body`/`Data`) and the
+// bare-text `Value` leaf live in `crate::outstandings_shared` because
+// `CompanyBookExtent` parsing -- needed by both the native and voucher-scan
+// read paths -- uses them too. Re-exported here (rather than duplicated) so
+// this module's own scan-only collections keep the same names they always
+// had.
+pub(super) use crate::outstandings_shared::{Envelope, Header, Value};
 
 #[derive(Deserialize)]
 pub(super) struct RawLedgerMaster {

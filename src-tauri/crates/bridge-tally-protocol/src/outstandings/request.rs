@@ -4,7 +4,6 @@ use super::{AlterIdRange, NarrowDateWindow, PinnedCompany};
 enum CollectionName {
     VoucherOutstandingsV1,
     VoucherEmptyPartitionWitnessV1,
-    CompanyBookExtentV1,
     LedgerOpeningCoverageV1,
 }
 
@@ -13,7 +12,6 @@ impl CollectionName {
         match self {
             Self::VoucherOutstandingsV1 => "BridgeVoucherOutstandingsV1",
             Self::VoucherEmptyPartitionWitnessV1 => "BridgeVoucherEmptyPartitionWitnessV1",
-            Self::CompanyBookExtentV1 => "BridgeCompanyBookExtentV1",
             Self::LedgerOpeningCoverageV1 => "BridgeLedgerOpeningCoverageV1",
         }
     }
@@ -22,7 +20,6 @@ impl CollectionName {
 #[derive(Clone, Copy)]
 enum ObjectType {
     Voucher,
-    Company,
     Ledger,
 }
 
@@ -30,7 +27,6 @@ impl ObjectType {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Voucher => "Voucher",
-            Self::Company => "Company",
             Self::Ledger => "Ledger",
         }
     }
@@ -87,27 +83,6 @@ impl VoucherFetchField {
 }
 
 #[derive(Clone, Copy)]
-enum CompanyFetchField {
-    Name,
-    Guid,
-    BooksFrom,
-    LastVoucherDate,
-    AlterVoucherId,
-}
-
-impl CompanyFetchField {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Name => "Name",
-            Self::Guid => "GUID",
-            Self::BooksFrom => "BooksFrom",
-            Self::LastVoucherDate => "LastVoucherDate",
-            Self::AlterVoucherId => "ALTVCHID",
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
 enum LedgerFetchField {
     Guid,
     Name,
@@ -155,12 +130,6 @@ struct VoucherCollectionDefinition {
     filter: FilterName,
 }
 
-struct CompanyCollectionDefinition {
-    name: CollectionName,
-    object_type: ObjectType,
-    fetch: &'static [CompanyFetchField],
-}
-
 const OUTSTANDINGS_DEFINITION: VoucherCollectionDefinition = VoucherCollectionDefinition {
     name: CollectionName::VoucherOutstandingsV1,
     object_type: ObjectType::Voucher,
@@ -193,18 +162,6 @@ const EMPTY_PARTITION_WITNESS_DEFINITION: VoucherCollectionDefinition =
         ],
         filter: FilterName::EmptyPartitionWitnessDateV1,
     };
-
-const COMPANY_EXTENT_DEFINITION: CompanyCollectionDefinition = CompanyCollectionDefinition {
-    name: CollectionName::CompanyBookExtentV1,
-    object_type: ObjectType::Company,
-    fetch: &[
-        CompanyFetchField::Name,
-        CompanyFetchField::Guid,
-        CompanyFetchField::BooksFrom,
-        CompanyFetchField::LastVoucherDate,
-        CompanyFetchField::AlterVoucherId,
-    ],
-};
 
 /// Wire request admitted to the outstandings-specific transport cap. Only the
 /// closed profile builder in this module can construct it.
@@ -407,22 +364,6 @@ fn render_empty_partition_witness(company: &str, from: &str, to: &str) -> String
     )
 }
 
-pub(crate) fn render_company_book_extent(company: &str) -> String {
-    format!(
-        r#"<ENVELOPE>
-  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>{collection}</ID></HEADER>
-  <BODY><DESC>
-    <STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES>
-    <TDL><TDLMESSAGE><COLLECTION NAME="{collection}" ISMODIFY="No"><TYPE>{object_type}</TYPE><FETCH>{fetch}</FETCH></COLLECTION></TDLMESSAGE></TDL>
-  </DESC></BODY>
-</ENVELOPE>"#,
-        collection = COMPANY_EXTENT_DEFINITION.name.as_str(),
-        company = xml_escape(company),
-        object_type = COMPANY_EXTENT_DEFINITION.object_type.as_str(),
-        fetch = render_company_fetch(COMPANY_EXTENT_DEFINITION.fetch),
-    )
-}
-
 pub(crate) fn render_ledger_opening_coverage(company: &str) -> String {
     format!(
         r#"<ENVELOPE>
@@ -445,14 +386,6 @@ pub(crate) fn render_ledger_opening_coverage(company: &str) -> String {
 }
 
 fn render_voucher_fetch(fields: &[VoucherFetchField]) -> String {
-    fields
-        .iter()
-        .map(|field| field.as_str())
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn render_company_fetch(fields: &[CompanyFetchField]) -> String {
     fields
         .iter()
         .map(|field| field.as_str())
@@ -484,7 +417,6 @@ mod tests {
         assert_eq!(xml.matches("ALLLEDGERENTRIES.*").count(), 1);
         assert!(xml.contains("Synthetic &amp; Company"));
         assert!(xml.contains("$AlterID &gt; 400 AND $AlterID &lt;= 800"));
-        assert!(render_company_book_extent("Synthetic").contains("ALTVCHID"));
     }
 
     #[test]

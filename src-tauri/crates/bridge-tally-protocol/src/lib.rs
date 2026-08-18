@@ -25,7 +25,22 @@ pub mod india_tax_observation;
 pub mod jsonex;
 #[cfg(feature = "jsonex-request-builder")]
 pub mod jsonex_request;
+pub mod native_outstandings;
+/// The legacy voucher-scan outstandings path: date/AlterID-partitioned
+/// wildcard voucher fetch, segment/witness completeness proofs, and bill
+/// computation from voucher allocations. Superseded by `native_outstandings`,
+/// which is always compiled. Gated because it cannot execute in a shipped
+/// build: the only non-test constructor for its width calibration is behind
+/// `live-calibration-harness`, which implies this feature.
+#[cfg(feature = "voucher-scan")]
 pub mod outstandings;
+/// The outstandings report contract and the company-identity/book-extent
+/// read shared by `outstandings` and `native_outstandings`. Deliberately
+/// ungated: `native_outstandings` depends on it, so gating it with
+/// `outstandings` would break the always-on native path. See the module docs
+/// for why this is scoped the way it is.
+pub mod outstandings_shared;
+mod tolerant_xml;
 pub mod xml_read_profiles;
 
 pub const BRIDGE_LEDGER_EXPORT_SCHEMA: &str = "bridge.tally.ledgers/1";
@@ -782,6 +797,22 @@ pub fn parse_companies_for_interactive_discovery(xml: &str) -> anyhow::Result<Ve
     parse_company_rows_with_limit(xml, Some(MAX_INTERACTIVE_DISCOVERY_COMPANIES))
 }
 
+/// Parses Tally's documented `Company` collection shape returned by
+/// `ReadOnlyProfile::CompanyListV2` (`<DATA><COLLECTION><COMPANY NAME="..">`
+/// rows, each carrying a nested `<GUID>` element). Unlike
+/// `parse_companies_for_interactive_discovery`, this requires the ordinary
+/// `HEADER/STATUS=1` export success envelope — the trust check is satisfied,
+/// not bypassed.
+///
+/// Company rows are read only from beneath `ENVELOPE/BODY/DATA/COLLECTION`.
+/// A real response also carries a `BODY/DESC/CMPINFO` block of bare counter
+/// elements, including a `<COMPANY>0</COMPANY>` row count; because that block
+/// sits outside `DATA`, it is never mistaken for a company row.
+pub fn parse_companies_from_collection(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
+    validate_export_response(xml)?;
+    parse_company_collection_rows(xml)
+}
+
 /// Validates the fixed, documented `List of Ledgers` collection used only to
 /// bootstrap a scoped company identity on responders that reject Bridge's
 /// custom report profile. Ledger names, balances, and identities are inspected
@@ -1184,6 +1215,122 @@ fn parse_company_rows_with_limit(
         }
     }
     Ok(records)
+}
+
+/// Reads `<COMPANY>` rows strictly from beneath `ENVELOPE/BODY/DATA/COLLECTION`.
+/// This scoping is deliberate: `BODY/DESC/CMPINFO` also carries a bare
+/// `<COMPANY>0</COMPANY>` object counter, and scanning for the element name
+/// anywhere in the document would misread that counter as a company row.
+fn parse_company_collection_rows(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
+    let mut reader = configured_reader(xml);
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut collection_seen = false;
+    let mut records = Vec::new();
+    loop {
+        match reader.read_event()? {
+            Event::Start(element)
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && element.name().as_ref().eq_ignore_ascii_case(b"COMPANY") =>
+            {
+                if records.len() >= MAX_INTERACTIVE_DISCOVERY_COMPANIES {
+                    anyhow::bail!(
+                        "company collection exceeded the safe row limit: Tally returned more than {MAX_INTERACTIVE_DISCOVERY_COMPANIES} companies"
+                    );
+                }
+                records.push(parse_company_collection_row(&mut reader, &element)?);
+            }
+            Event::Empty(element)
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && element.name().as_ref().eq_ignore_ascii_case(b"COMPANY") =>
+            {
+                anyhow::bail!("company collection omitted the company GUID");
+            }
+            Event::Start(element) => {
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"])
+                    && element.name().as_ref().eq_ignore_ascii_case(b"COLLECTION")
+                {
+                    collection_seen = true;
+                }
+                path.push(element.name().as_ref().to_ascii_uppercase());
+            }
+            Event::Empty(element)
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"])
+                    && element.name().as_ref().eq_ignore_ascii_case(b"COLLECTION") =>
+            {
+                collection_seen = true;
+            }
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !path.is_empty() {
+        anyhow::bail!("company collection response ended before its root closed");
+    }
+    if !collection_seen {
+        anyhow::bail!("company collection response omitted BODY/DATA/COLLECTION");
+    }
+    Ok(records)
+}
+
+fn parse_company_collection_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> anyhow::Result<TallyCompany> {
+    validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
+    let name = attr_value(reader, element, b"NAME")
+        .map(|value| normalized_standard_value(&value, "company name"))
+        .transpose()?
+        .ok_or_else(|| anyhow::anyhow!("company collection omitted the company name"))?;
+    let row_name = element.name().as_ref().to_ascii_uppercase();
+    let mut guid = None::<String>;
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
+                validate_only_attributes(&child, &[b"TYPE"])?;
+                if guid
+                    .replace(normalized_standard_value(
+                        &read_required_text(reader, child.name())?,
+                        "company GUID",
+                    )?)
+                    .is_some()
+                {
+                    anyhow::bail!("company collection repeated the company GUID");
+                }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
+                anyhow::bail!("company collection contained an empty company GUID");
+            }
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(&row_name) => break,
+            // Tally echoes the company name as a CHILD element as well as the
+            // row attribute, and may carry other descriptive fields. Skipping
+            // an unrecognised child is safe here because identity comes from
+            // the NAME attribute and the GUID element, both of which are
+            // required below -- whereas rejecting the row outright made every
+            // real response unparseable while a hand-written fixture passed.
+            // (Measured 2026-08-07: the live row is
+            // `<COMPANY NAME="..." RESERVEDNAME=""><NAME .../><GUID .../></COMPANY>`.)
+            Event::Start(child) => {
+                let name = child.name().as_ref().to_vec();
+                reader.read_to_end(quick_xml::name::QName(&name).to_owned())?;
+            }
+            Event::Empty(_) => {}
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("company collection row contained unexpected text")
+            }
+            Event::CData(_) | Event::DocType(_) | Event::PI(_) => {
+                anyhow::bail!("company collection row contained a forbidden XML construct")
+            }
+            Event::Eof => anyhow::bail!("company collection row ended before COMPANY closed"),
+            _ => {}
+        }
+    }
+    let guid =
+        guid.ok_or_else(|| anyhow::anyhow!("company collection omitted the company GUID"))?;
+    Ok(TallyCompany {
+        name,
+        guid: Some(guid),
+    })
 }
 
 pub fn parse_group_source_records_with_evidence(

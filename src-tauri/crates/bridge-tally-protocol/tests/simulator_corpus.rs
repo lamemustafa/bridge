@@ -1,7 +1,7 @@
 use bridge_tally_protocol::{
     decode_xml_bytes, decode_xml_bytes_limited, export_status, parse_companies,
-    parse_companies_for_interactive_discovery, parse_companies_with_evidence,
-    parse_group_source_records_with_evidence, parse_import_result,
+    parse_companies_for_interactive_discovery, parse_companies_from_collection,
+    parse_companies_with_evidence, parse_group_source_records_with_evidence, parse_import_result,
     parse_ledger_source_records_with_evidence, parse_ledgers, parse_ledgers_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, parse_voucher_source_records_with_evidence,
@@ -617,6 +617,103 @@ fn interactive_company_discovery_stops_before_materializing_an_oversized_listing
     let error = parse_companies_for_interactive_discovery(&format!("<ENVELOPE>{rows}</ENVELOPE>"))
         .expect_err("untrusted discovery must stop at the display ceiling");
     assert!(error.to_string().contains("listing limit exceeded"));
+}
+
+/// Measured live 2026-08-07: the `Company` collection response
+/// (`ReadOnlyProfile::CompanyListV2`) for a Tally instance with three loaded
+/// companies. `CMPINFO` deliberately carries a bare `<COMPANY>0</COMPANY>`
+/// object counter ahead of `DATA` — the same trap `scripts/tally_probe.py`
+/// documents — so every test below also proves that counter is never
+/// mistaken for a fourth company row.
+const COMPANY_COLLECTION_LIVE_RESPONSE: &str = r#"<ENVELOPE>
+ <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>
+ <BODY><DESC><CMPINFO><COMPANY>0</COMPANY><GROUP>0</GROUP><LEDGER>0</LEDGER></CMPINFO></DESC>
+  <DATA><COLLECTION>
+   <COMPANY NAME="Aarav Trading Company Demo"><GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID></COMPANY>
+   <COMPANY NAME="Bridge Ageing Lab"><GUID TYPE="String">eebb9a9f-1679-4468-9e8f-814c729674cb</GUID></COMPANY>
+   <COMPANY NAME="Bridge Billwise Lab"><GUID TYPE="String">75f7566d-7a4f-431a-9642-e93a9d06d57d</GUID></COMPANY>
+  </COLLECTION></DATA>
+ </BODY>
+</ENVELOPE>"#;
+
+#[test]
+fn company_collection_response_parses_three_companies_with_correct_guids() {
+    let companies = parse_companies_from_collection(COMPANY_COLLECTION_LIVE_RESPONSE)
+        .expect("shaped Company collection response must parse");
+    assert_eq!(companies.len(), 3);
+    assert_eq!(companies[0].name, "Aarav Trading Company Demo");
+    assert_eq!(
+        companies[0].guid.as_deref(),
+        Some("bb8ad19e-6aef-4239-a917-87fec0c6215e")
+    );
+    assert_eq!(companies[1].name, "Bridge Ageing Lab");
+    assert_eq!(
+        companies[1].guid.as_deref(),
+        Some("eebb9a9f-1679-4468-9e8f-814c729674cb")
+    );
+    assert_eq!(companies[2].name, "Bridge Billwise Lab");
+    assert_eq!(
+        companies[2].guid.as_deref(),
+        Some("75f7566d-7a4f-431a-9642-e93a9d06d57d")
+    );
+}
+
+#[test]
+fn company_collection_response_never_counts_the_cmpinfo_object_counter() {
+    // The exact same response also proves the `CMPINFO/COMPANY` counter
+    // (a bare `<COMPANY>0</COMPANY>`, sitting under `DESC`, outside `DATA`)
+    // never inflates the row count above the three real `DATA/COLLECTION`
+    // rows.
+    let companies = parse_companies_from_collection(COMPANY_COLLECTION_LIVE_RESPONSE)
+        .expect("shaped Company collection response must parse");
+    assert_eq!(companies.len(), 3);
+    for company in &companies {
+        assert_ne!(company.name, "0");
+    }
+}
+
+#[test]
+fn company_collection_response_fails_closed_on_status_zero() {
+    let failure = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Could not find Company ''</LINEERROR></DATA></BODY></ENVELOPE>"#;
+    let error = parse_companies_from_collection(failure)
+        .expect_err("STATUS 0 must not be promoted to a trusted empty result");
+    assert!(error.to_string().contains("export request failed"));
+}
+
+#[test]
+fn company_collection_response_parses_an_empty_collection_without_erroring() {
+    let empty = r#"<ENVELOPE>
+ <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>
+ <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>
+  <DATA><COLLECTION></COLLECTION></DATA>
+ </BODY>
+</ENVELOPE>"#;
+    let companies = parse_companies_from_collection(empty)
+        .expect("an empty collection is a legitimate zero-row result, not an error");
+    assert!(companies.is_empty());
+}
+
+#[test]
+fn company_collection_requires_the_collection_envelope() {
+    let incomplete =
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA/></BODY></ENVELOPE>"#;
+    assert!(parse_companies_from_collection(incomplete).is_err());
+}
+
+#[test]
+fn every_company_collection_row_requires_a_guid() {
+    for row in [
+        r#"<COMPANY NAME="Synthetic Company"></COMPANY>"#,
+        r#"<COMPANY NAME="Synthetic Company"/>"#,
+    ] {
+        let xml = format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{row}</COLLECTION></DATA></BODY></ENVELOPE>"
+        );
+        assert!(
+            parse_companies_from_collection(&xml).is_err(),
+            "GUID-less row must fail: {row}"
+        );
+    }
 }
 
 #[test]

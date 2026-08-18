@@ -4,30 +4,67 @@ pub mod db;
 pub mod documents;
 pub mod dsc;
 pub mod gst;
+// Crate-internal only: the previously separate `bridge-tally-observability` crate had exactly
+// one consumer inside this crate, so it does not need to be reachable from outside `bridge_lib`.
+mod observability;
 pub mod sync;
 pub mod tally;
 
+use std::path::PathBuf;
 use tauri::Manager;
+use tokio::sync::OnceCell;
 
-fn initialize_tally_mirror(app: &tauri::App) -> anyhow::Result<()> {
-    let app_data_directory = app.path().app_data_dir()?;
-    std::fs::create_dir_all(&app_data_directory)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&app_data_directory, std::fs::Permissions::from_mode(0o700))?;
+/// Holds everything needed to open the encrypted Tally mirror without doing any of the actual
+/// (keychain-touching, disk-touching) work until a caller genuinely needs the mirror.
+///
+/// The mirror is expensive to open on macOS: resolving its SQLCipher key from the OS keychain
+/// triggers an authorisation prompt. Most Bridge sessions (native outstandings reads, company
+/// discovery/probe, base-currency detection, CSV export) never touch the mirror at all, so eagerly
+/// opening it on every app start means paying that prompt for no reason. Initialising lazily, on
+/// first use, means the prompt is shown only to sessions that exercise a feature that truly needs
+/// the mirror (snapshot, mirror-explorer, write-fixture, proof export).
+pub struct LazyTallyMirror {
+    app_data_directory: PathBuf,
+    repository: OnceCell<db::tally_mirror::TallyMirrorRepository>,
+}
+
+impl LazyTallyMirror {
+    pub fn new(app_data_directory: PathBuf) -> Self {
+        Self {
+            app_data_directory,
+            repository: OnceCell::new(),
+        }
     }
 
-    let database_path = app_data_directory.join("tally-mirror-v1.db");
-    let _initialization_lock = db::encrypted::lock_mirror_initialization(&database_path)?;
-    let key_store = db::OsMirrorKeyStore::for_database(&database_path);
-    let resolved_key = db::resolve_mirror_key(&database_path, &key_store)?;
-    let pool =
-        tauri::async_runtime::block_on(db::connect_encrypted(&database_path, resolved_key.key))?;
-    let repository = db::tally_mirror::TallyMirrorRepository::new(pool);
-    tauri::async_runtime::block_on(repository.migrate())?;
-    app.manage(repository);
-    Ok(())
+    /// Returns the initialised mirror repository, performing the (at most once) initialisation
+    /// work on first call. `OnceCell::get_or_try_init` guarantees that concurrent callers racing
+    /// this accessor observe exactly one initialisation attempt: the first caller runs it while
+    /// later callers await the same in-flight attempt rather than starting their own.
+    pub async fn get(&self) -> anyhow::Result<&db::tally_mirror::TallyMirrorRepository> {
+        self.repository
+            .get_or_try_init(|| async {
+                std::fs::create_dir_all(&self.app_data_directory)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(
+                        &self.app_data_directory,
+                        std::fs::Permissions::from_mode(0o700),
+                    )?;
+                }
+
+                let database_path = self.app_data_directory.join("tally-mirror-v1.db");
+                let _initialization_lock =
+                    db::encrypted::lock_mirror_initialization(&database_path)?;
+                let key_store = db::OsMirrorKeyStore::for_database(&database_path);
+                let resolved_key = db::resolve_mirror_key(&database_path, &key_store)?;
+                let pool = db::connect_encrypted(&database_path, resolved_key.key).await?;
+                let repository = db::tally_mirror::TallyMirrorRepository::new(pool);
+                repository.migrate().await?;
+                Ok(repository)
+            })
+            .await
+    }
 }
 
 pub fn run() {
@@ -37,7 +74,8 @@ pub fn run() {
         .manage(tally::TallyRuntime::default())
         .manage(sync::coordinator::SnapshotCoordinator::default())
         .setup(|app| {
-            initialize_tally_mirror(app)?;
+            let app_data_directory = app.path().app_data_dir()?;
+            app.manage(LazyTallyMirror::new(app_data_directory));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,10 +84,12 @@ pub fn run() {
             commands::bootstrap_direct_tally_company,
             commands::save_tally_setup,
             commands::enroll_tally_write_fixture,
-            #[cfg(feature = "fixture-canary-runtime-dispatch")]
-            commands::dispatch_tally_synthetic_canary,
             commands::tally_write_fixture_enrollment_status,
             commands::revoke_tally_write_fixture_enrollment,
+            commands::save_report_download,
+            commands::reveal_exported_file,
+            commands::fetch_tally_outstandings_all_companies,
+            commands::detect_tally_base_currency,
             commands::tally_persisted_company_profiles,
             commands::tally_mirror_explorer_page,
             commands::tally_sync_evidence,
@@ -79,6 +119,86 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Bridge");
+}
+
+#[cfg(test)]
+mod lazy_tally_mirror_concurrency_tests {
+    //! `LazyTallyMirror::get()` is built directly on `tokio::sync::OnceCell::get_or_try_init`,
+    //! which is exactly what supplies the "one initialisation, not two" guarantee under
+    //! concurrent callers required by this change: the first caller to reach the cell runs the
+    //! initialisation future while every other concurrent caller awaits that same in-flight
+    //! attempt instead of starting its own.
+    //!
+    //! This test proves that guarantee by racing many tasks against a shared `OnceCell` using
+    //! the identical `get_or_try_init` call `LazyTallyMirror::get()` makes, and asserting the
+    //! initialisation closure ran exactly once.
+    //!
+    //! It deliberately does NOT call `LazyTallyMirror::get()` end-to-end. A real call resolves
+    //! the SQLCipher key through the OS keychain (`db::OsMirrorKeyStore` -> `keyring::Entry`),
+    //! which would create or query a real macOS keychain item from an automated `cargo test`
+    //! process outside any app bundle/code signature — the very kind of environment-dependent,
+    //! potentially interactive behaviour this change exists to avoid triggering on every launch.
+    //! The `keyring` dependency is built without a mockable backend (feature `v1` only), so there
+    //! is no offline/deterministic way to substitute a fake credential store for that path. That
+    //! makes the keychain-touching portion of initialisation untestable offline; this test proves
+    //! the concurrency mechanism it relies on instead of asserting something it cannot honestly
+    //! demonstrate.
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::{Barrier, OnceCell};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_callers_observe_exactly_one_initialization() {
+        const CONCURRENT_CALLERS: usize = 16;
+
+        let cell: Arc<OnceCell<u32>> = Arc::new(OnceCell::new());
+        let init_calls = Arc::new(AtomicUsize::new(0));
+        // Every task waits at the barrier so they all call `get_or_try_init` at (as close to)
+        // the same instant as possible, maximising the chance of a real race rather than an
+        // accidentally-serialised sequence of calls.
+        let barrier = Arc::new(Barrier::new(CONCURRENT_CALLERS));
+
+        let tasks: Vec<_> = (0..CONCURRENT_CALLERS)
+            .map(|_| {
+                let cell = Arc::clone(&cell);
+                let init_calls = Arc::clone(&init_calls);
+                let barrier = Arc::clone(&barrier);
+                tokio::spawn(async move {
+                    barrier.wait().await;
+                    cell.get_or_try_init(|| async {
+                        init_calls.fetch_add(1, Ordering::SeqCst);
+                        // Hold the in-flight initialisation open for long enough that, absent
+                        // `OnceCell`'s mutual exclusion, other callers would very likely start
+                        // their own concurrent initialisation attempt.
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        Ok::<u32, anyhow::Error>(42)
+                    })
+                    .await
+                    .copied()
+                })
+            })
+            .collect();
+
+        let mut results = Vec::with_capacity(CONCURRENT_CALLERS);
+        for task in tasks {
+            results.push(task.await.expect("initialization task must not panic"));
+        }
+
+        assert_eq!(
+            init_calls.load(Ordering::SeqCst),
+            1,
+            "initialization must run at most once under concurrent access"
+        );
+        for result in results {
+            assert_eq!(
+                result.expect("initialization must succeed"),
+                42,
+                "every concurrent caller must observe the single initialization's value"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

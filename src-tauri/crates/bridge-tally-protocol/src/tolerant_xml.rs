@@ -69,7 +69,7 @@ fn find_numeric_reference_terminator(reference: &str) -> Option<usize> {
     search.find(';')
 }
 
-pub(super) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
+pub(crate) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
     sanitize_invalid_numeric_references_with_marker_search_observer(xml, || {})
 }
 
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn real_invalid_character_reference_is_narrowly_repaired() {
-        let capture = include_str!("../../tests/fixtures/unit_a_invalid_char_ref_live.xml");
+        let capture = include_str!("../tests/fixtures/unit_a_invalid_char_ref_live.xml");
         assert!(capture.contains("&#4;"));
         let sanitized = sanitize_invalid_numeric_references(capture);
         assert!(!sanitized.contains("&#4;"));

@@ -30,17 +30,21 @@ payload-commitment capsule. Sealing consumes the non-cloneable prepared canary,
 so one prepared instance cannot yield a second capsule; the capsule has no raw
 XML accessor or callback escape hatch.
 
-The separately disabled runtime-dispatch feature adds one constrained internal
-sequence: it derives the fixed canary only from an enrolled local company pin,
+The lower-level write crate retains a separately disabled runtime-dispatch
+feature for its sealed coordinator tests. The application manifest deliberately
+does not forward that feature, so no supported Bridge application build exposes
+a canary Tauri command or a runtime path that can send the canary. The dormant
+coordinator derives the fixed canary only from an enrolled local company pin,
 performs the exact one-time preflight read, repeats durable admission, and then
 consumes the capsule once to POST through Bridge's bounded loopback transport.
 Its raw request and response remain sealed, it has no generic payload API,
-retry loop, persistence hook, or UI route. Only a build with the explicit
-non-default `fixture-canary-runtime-dispatch` feature exposes one Tauri command;
-that command accepts no payload, XML, target override, retry choice, evidence,
-or digest and returns only a final-verdict identifier and timestamp. It rechecks
-an explicit disposable-fixture acknowledgement and backup acknowledgement before
-starting the sealed sequence. The canonical loopback origin must match the
+retry loop, persistence hook, or UI route. Dormant application source includes
+a command adapter behind the same undeclared application feature; it is not
+part of any manifest-supported build. That adapter accepts no payload, XML,
+target override, retry choice, evidence, or digest and would return only a
+final-verdict identifier and timestamp. The coordinator rechecks an explicit
+disposable-fixture acknowledgement and backup acknowledgement before starting
+the sealed sequence. The canonical loopback origin must match the
 enrolled source pin before the one-time reservation, and is rechecked from the
 prepared fixture before preflight and is revalidated on the exclusive dispatch
 lease immediately before import. The coordinator claims durable exact preflight

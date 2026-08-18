@@ -3,7 +3,6 @@ mod compute;
 mod model;
 mod parser;
 mod request;
-mod tolerant_xml;
 mod wire;
 
 pub use completeness::{
@@ -17,20 +16,28 @@ pub use completeness::{
 };
 pub use compute::compute_outstandings;
 pub use model::{
-    AgeingBillCounts, AgeingBuckets, AlterIdRange, BillAllocation, BillReferenceKind,
-    CompanyBookExtent, CompleteScan, CompleteSegment, CompleteWitnessPair,
-    CorroboratedDatePartition, DateBoundaryProfile, DateWindow, EmptyDateWindowVerification,
-    EmptyDateWindowWitness, EmptyPartitionControlProvenance, EmptyPartitionWitness, LedgerEntry,
-    LedgerOpeningCoverage, MoneyValue, NarrowDateWindow, OutstandingsError, OutstandingsReport,
-    PartialScan, PartyOutstanding, PinnedCompany, ScanResult, SegmentVerification,
-    StrictlyWiderDateCover, Voucher, VoucherAlterId, VoucherAlterIdHighWater,
+    AlterIdRange, BillAllocation, BillReferenceKind, CompanyBookExtent, CompleteScan,
+    CompleteSegment, CompleteWitnessPair, CorroboratedDatePartition, DateBoundaryProfile,
+    DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness,
+    EmptyPartitionControlProvenance, EmptyPartitionWitness, LedgerEntry, LedgerOpeningCoverage,
+    MoneyValue, NarrowDateWindow, OutstandingsError, PartialScan, PinnedCompany, ScanResult,
+    SegmentVerification, StrictlyWiderDateCover, Voucher, VoucherAlterId, VoucherAlterIdHighWater,
     WitnessPairVerification, WitnessVoucher,
 };
-pub use parser::{parse_company_book_extent, parse_ledger_opening_coverage};
+// The shared report contract itself (`OutstandingsReport` and its
+// constituents) lives ungated in `crate::outstandings_shared` because
+// `native_outstandings` -- always compiled -- also produces it. Re-exported
+// here too so existing `outstandings::` call sites inside this gated module
+// keep working unchanged.
+pub use crate::outstandings_shared::parse_company_book_extent;
+pub use crate::outstandings_shared::{
+    AgeingBillCounts, AgeingBuckets, OutstandingsReport, PartyOutstanding,
+};
+pub use parser::parse_ledger_opening_coverage;
 pub(crate) use request::render_ledger_opening_coverage;
 pub(crate) use request::{
-    render_company_book_extent, render_empty_partition_witness_template,
-    render_outstandings_template, render_outstandings_vouchers,
+    render_empty_partition_witness_template, render_outstandings_template,
+    render_outstandings_vouchers,
 };
 pub use request::{
     voucher_empty_partition_witness_request, voucher_outstandings_request,

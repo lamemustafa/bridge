@@ -15,6 +15,12 @@ jsonex-request-builder = ["dep:serde_json"]
 india-tax-observation-parser = []
 bills-payments-observation-parser = []
 bills-native-outstandings-probe = []
+# Legacy voucher-scan outstandings path (`outstandings` module): reads every
+# voucher in a date/AlterID-partitioned wildcard scan and derives outstandings
+# from bill allocations. Superseded by the native Bills Receivable/Payable +
+# List of Ledgers path (`native_outstandings`, always compiled). Not a
+# default feature: no shipped build takes this path today.
+voucher-scan = []
 
 [dependencies]
 anyhow = "1"

@@ -6,7 +6,7 @@ use crate::db::tally_mirror::{
     LocalReconciliationMismatch, ProofSummary, RedactedProofExport, ReviewedSetupInput,
     SelectedReadObservationCommitmentMaterial, SelectedReadObservationInput,
     SelectedReadScopeCommitmentMaterial, SelectedReadScopeInput, SourceIdentityInput,
-    TallyMirrorRepository, WriteFixtureEnrollmentInput, WriteFixtureEnrollmentStatus,
+    WriteFixtureEnrollmentInput, WriteFixtureEnrollmentStatus,
 };
 use crate::gst::{GstDraftRequest, GstReturnDraft};
 use crate::sync::coordinator::{SnapshotCoordinator, SnapshotJobStatus};
@@ -36,14 +36,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::State;
 use zeroize::Zeroizing;
-
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-use crate::tally::{
-    canary_preflight_preparation::PrepareSealedCanaryPreflightRequest,
-    canary_runtime_dispatch_coordinator::{
-        run_sealed_canary_runtime_sequence, SealedCanaryRuntimeSequenceRequest,
-    },
-};
 
 const MAX_DSC_PIN_BYTES: usize = 128;
 
@@ -220,6 +212,27 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
         tally_state_may_have_changed: false,
         remediation,
     }
+}
+
+/// Produces the typed command error for the encrypted Tally mirror failing to initialise on
+/// first use (denied keychain authorisation, or a local disk/storage failure). The mirror was
+/// never opened, so no local or Tally state changed; retrying after the operator resolves the
+/// underlying keychain/disk issue is safe.
+fn mirror_unavailable_command_error(_error: anyhow::Error) -> TallyCommandError {
+    tally_command_error(
+        "tally_mirror_unavailable",
+        "Operation",
+        "The encrypted Tally mirror could not be opened. Its operating-system credential may have been denied, or local storage is unavailable.",
+        "safe",
+        false,
+        "Approve the operating-system credential prompt for Bridge, or verify local disk access, then retry.",
+    )
+}
+
+/// Same failure as [`mirror_unavailable_command_error`], for the handful of mirror-backed
+/// commands that report errors as a plain `String` rather than a [`TallyCommandError`].
+fn mirror_unavailable_string_error(_error: anyhow::Error) -> String {
+    "The encrypted Tally mirror could not be opened. Its operating-system credential may have been denied, or local storage is unavailable.".to_string()
 }
 
 #[tauri::command]
@@ -831,38 +844,16 @@ pub struct TallyWriteFixtureEnrollmentResponse {
     pub review_cleanup_warning: Option<&'static str>,
 }
 
-/// Explicit, non-default operator input for the one synthetic fixture canary.
-/// The command derives its payload solely from the active enrolled company pin;
-/// it accepts neither XML nor a generic write operation.
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-#[derive(Debug, Deserialize)]
-pub struct DispatchTallySyntheticCanaryRequest {
-    pub config: TallyConfig,
-    pub mirror_company_id: String,
-    pub review_commitment_sha256: String,
-    pub explicit_dispatch_confirmation: bool,
-    pub synthetic_company_confirmed: bool,
-    pub backup_guidance_acknowledged: bool,
-}
-
-/// Redacted terminal receipt for the one sealed synthetic fixture canary.
-/// No payload, request, response, target, company identity, or digest is
-/// serialized across the Tauri boundary.
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-#[derive(Debug, Serialize)]
-pub struct DispatchTallySyntheticCanaryResponse {
-    pub final_verdict_id: String,
-    pub recorded_at_unix_ms: i64,
-    pub tally_requests_attempted: u8,
-    pub tally_writes_attempted: u8,
-}
-
 #[tauri::command]
 pub async fn save_tally_setup(
     request: SaveTallySetupRequest,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<SavedTallySetup, TallyCommandError> {
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_command_error)?;
     let canonical_origin = EndpointKey::from_config(&request.config)
         .map(|endpoint| endpoint.as_str().to_string())
         .map_err(|_| {
@@ -1100,9 +1091,13 @@ fn reconcile_review_cleanup(
 #[tauri::command]
 pub async fn enroll_tally_write_fixture(
     request: EnrollTallyWriteFixtureRequest,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<TallyWriteFixtureEnrollmentResponse, TallyCommandError> {
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_command_error)?;
     let canonical_origin = EndpointKey::from_config(&request.config)
         .map(|endpoint| endpoint.as_str().to_string())
         .map_err(|_| {
@@ -1235,132 +1230,15 @@ pub async fn enroll_tally_write_fixture(
     }
 }
 
-/// Executes exactly one sealed synthetic fixture canary only in a build that
-/// explicitly enables the non-default runtime-dispatch feature. The durable
-/// sequence reserves the fixed payload, reads its preflight state, consumes one
-/// dispatch claim, sends once, and records only a digest-only verdict. It has
-/// no retry path. A failure before the durable dispatch claim proves no import
-/// was sent; a failure after that claim is an unknown Tally outcome. Neither
-/// case may be retried automatically or manually.
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-#[tauri::command]
-pub async fn dispatch_tally_synthetic_canary(
-    request: DispatchTallySyntheticCanaryRequest,
-    mirror: State<'_, TallyMirrorRepository>,
-    runtime: State<'_, TallyRuntime>,
-) -> Result<DispatchTallySyntheticCanaryResponse, TallyCommandError> {
-    EndpointKey::from_config(&request.config).map_err(|_| {
-        tally_command_error(
-            "endpoint_configuration_invalid",
-            "Endpoint configuration",
-            "Tally endpoint validation failed before the synthetic canary started.",
-            "after_change",
-            false,
-            "Use the separately reviewed loopback endpoint, then start a new enrollment review.",
-        )
-    })?;
-    if request.mirror_company_id.trim().is_empty() || request.mirror_company_id.len() > 128 {
-        return Err(tally_command_error(
-            "fixture_company_scope_invalid",
-            "Tally application",
-            "The persisted synthetic fixture scope is invalid.",
-            "after_change",
-            false,
-            "Probe, save, and enroll one GUID-bearing disposable synthetic company before retrying.",
-        ));
-    }
-    if request.review_commitment_sha256.len() != 64
-        || !request
-            .review_commitment_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(tally_command_error(
-            "fixture_review_commitment_invalid",
-            "Operation",
-            "The reviewed synthetic-fixture commitment is invalid.",
-            "after_change",
-            false,
-            "Probe, review, and enroll the disposable synthetic fixture again before attempting a canary.",
-        ));
-    }
-    if !request.explicit_dispatch_confirmation
-        || !request.synthetic_company_confirmed
-        || !request.backup_guidance_acknowledged
-    {
-        return Err(tally_command_error(
-            "synthetic_canary_explicit_confirmation_required",
-            "Operation",
-            "The synthetic canary requires all explicit operator confirmations before it can start.",
-            "safe",
-            false,
-            "Confirm the disposable synthetic company, offline backup guidance, and one-time dispatch action before retrying.",
-        ));
-    }
-
-    let result = run_sealed_canary_runtime_sequence(
-        &mirror,
-        &runtime,
-        SealedCanaryRuntimeSequenceRequest {
-            config: request.config,
-            preparation: PrepareSealedCanaryPreflightRequest {
-                company_id: request.mirror_company_id,
-                review_commitment_sha256: request.review_commitment_sha256,
-                explicit_opt_in: request.explicit_dispatch_confirmation,
-                synthetic_company_confirmed: request.synthetic_company_confirmed,
-                backup_guidance_acknowledged: request.backup_guidance_acknowledged,
-            },
-        },
-    )
-    .await
-    .map_err(|error| match error {
-        crate::tally::canary_runtime_dispatch_coordinator::SealedCanaryRuntimeSequenceError::PreDispatch => {
-            synthetic_canary_pre_dispatch_error()
-        }
-        crate::tally::canary_runtime_dispatch_coordinator::SealedCanaryRuntimeSequenceError::OutcomeUnknown => {
-            synthetic_canary_outcome_unknown_error()
-        }
-    })?;
-
-    Ok(DispatchTallySyntheticCanaryResponse {
-        final_verdict_id: result.final_verdict_id,
-        recorded_at_unix_ms: result.recorded_at_unix_ms,
-        tally_requests_attempted: 4,
-        tally_writes_attempted: 1,
-    })
-}
-
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-fn synthetic_canary_pre_dispatch_error() -> TallyCommandError {
-    TallyCommandError {
-        code: "synthetic_canary_pre_dispatch_failed",
-        category: "Operation",
-        message: "The synthetic canary did not reach its durable dispatch claim. No Tally import was sent.".to_owned(),
-        retry: "after_change",
-        local_state_changed: true,
-        tally_state_may_have_changed: false,
-        remediation: "Inspect the local fixture state and the preflight read result, then revoke the fixture and create a new reviewed enrollment before another canary.",
-    }
-}
-
-#[cfg(feature = "fixture-canary-runtime-dispatch")]
-fn synthetic_canary_outcome_unknown_error() -> TallyCommandError {
-    TallyCommandError {
-        code: "synthetic_canary_outcome_unknown",
-        category: "Tally application",
-        message: "The one-time synthetic canary did not return a recorded final verdict. Tally state may have changed; do not retry or send another write.".to_owned(),
-        retry: "never",
-        local_state_changed: true,
-        tally_state_may_have_changed: true,
-        remediation: "Inspect the local fixture status and the dedicated synthetic company in Tally, preserve the result for review, and revoke the fixture before any new enrollment.",
-    }
-}
-
 #[tauri::command]
 pub async fn tally_write_fixture_enrollment_status(
     request: TallyWriteFixtureCompanyRequest,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
 ) -> Result<WriteFixtureEnrollmentStatus, TallyCommandError> {
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_command_error)?;
     mirror
         .write_fixture_enrollment_status(&request.mirror_company_id)
         .await
@@ -1379,8 +1257,12 @@ pub async fn tally_write_fixture_enrollment_status(
 #[tauri::command]
 pub async fn revoke_tally_write_fixture_enrollment(
     request: TallyWriteFixtureCompanyRequest,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
 ) -> Result<WriteFixtureEnrollmentStatus, TallyCommandError> {
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_command_error)?;
     mirror
         .revoke_write_fixture_enrollment(
             &request.mirror_company_id,
@@ -1488,8 +1370,12 @@ fn capability_items(profile: &bridge_tally_core::CapabilityProfile) -> Vec<Capab
 
 #[tauri::command]
 pub async fn tally_persisted_company_profiles(
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
 ) -> Result<crate::db::tally_mirror::PersistedCompanyProfilePage, String> {
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_string_error)?;
     mirror
         .persisted_company_profiles()
         .await
@@ -1507,8 +1393,12 @@ pub struct TallyMirrorExplorerRequest {
 #[tauri::command]
 pub async fn tally_mirror_explorer_page(
     request: TallyMirrorExplorerRequest,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
 ) -> Result<crate::db::tally_mirror::MirrorExplorerPage, String> {
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_string_error)?;
     mirror
         .mirror_explorer_page(
             &request.mirror_company_id,
@@ -1545,11 +1435,15 @@ pub struct TallyEvidenceResponse {
 #[tauri::command]
 pub async fn tally_sync_evidence(
     request: TallyEvidenceRequest,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
 ) -> Result<TallyEvidenceResponse, String> {
     if request.mirror_company_id.trim().is_empty() {
         return Err("Select a company with an observed stable identity".to_string());
     }
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_string_error)?;
     mirror
         .snapshot_source_pin(&request.mirror_company_id)
         .await
@@ -1611,11 +1505,15 @@ pub struct RedactedProofExportRequest {
 #[tauri::command]
 pub async fn preview_tally_redacted_proof(
     request: RedactedProofExportRequest,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
 ) -> Result<RedactedProofExport, String> {
     if request.mirror_company_id.trim().is_empty() || request.proof_id.trim().is_empty() {
         return Err("Select a proof for an observed Tally company".to_string());
     }
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_string_error)?;
     mirror
         .snapshot_source_pin(&request.mirror_company_id)
         .await
@@ -1661,10 +1559,14 @@ fn first_calendar_day_canary_window(
 #[tauri::command]
 pub async fn start_tally_core_snapshot(
     request: StartCoreSnapshotRequest,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
     runtime: State<'_, TallyRuntime>,
     coordinator: State<'_, SnapshotCoordinator>,
 ) -> Result<SnapshotJobStatus, String> {
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_string_error)?;
     validate_date_range(&request.from, &request.to)?;
     let pin = mirror
         .snapshot_source_pin(&request.mirror_company_id)
@@ -1796,7 +1698,7 @@ pub async fn start_tally_core_snapshot(
         freshness_target_seconds: 86_400,
     };
     coordinator
-        .start(plan, connector, mirror.inner().clone())
+        .start(plan, connector, mirror.clone())
         .await
         .map_err(str::to_string)
 }
@@ -1804,24 +1706,29 @@ pub async fn start_tally_core_snapshot(
 #[tauri::command]
 pub async fn tally_snapshot_status(
     run_id: String,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
     coordinator: State<'_, SnapshotCoordinator>,
 ) -> Result<SnapshotJobStatus, String> {
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_string_error)?;
     coordinator
-        .status(&run_id, mirror.inner())
+        .status(&run_id, mirror)
         .await
         .map_err(str::to_string)
 }
 
 #[tauri::command]
 pub async fn tally_recent_snapshot_runs(
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
     coordinator: State<'_, SnapshotCoordinator>,
 ) -> Result<Vec<SnapshotJobStatus>, String> {
-    coordinator
-        .recent(mirror.inner(), 20)
+    let mirror = mirror
+        .get()
         .await
-        .map_err(str::to_string)
+        .map_err(mirror_unavailable_string_error)?;
+    coordinator.recent(mirror, 20).await.map_err(str::to_string)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1833,10 +1740,14 @@ pub struct ResumeCoreSnapshotRequest {
 #[tauri::command]
 pub async fn resume_tally_core_snapshot(
     request: ResumeCoreSnapshotRequest,
-    mirror: State<'_, TallyMirrorRepository>,
+    mirror: State<'_, crate::LazyTallyMirror>,
     runtime: State<'_, TallyRuntime>,
     coordinator: State<'_, SnapshotCoordinator>,
 ) -> Result<SnapshotJobStatus, String> {
+    let mirror = mirror
+        .get()
+        .await
+        .map_err(mirror_unavailable_string_error)?;
     let store = SqliteSnapshotStateStore::new(mirror.pool_clone());
     store
         .migrate()
@@ -1920,7 +1831,7 @@ pub async fn resume_tally_core_snapshot(
     )
     .map_err(|_| "The stored Core Accounting snapshot profile is invalid".to_string())?;
     coordinator
-        .start(plan, connector, mirror.inner().clone())
+        .start(plan, connector, mirror.clone())
         .await
         .map_err(str::to_string)
 }
@@ -2190,6 +2101,104 @@ pub async fn fetch_tally_outstandings(
         .map_err(tally_runtime_command_error)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AllCompaniesOutstandingsRequest {
+    pub config: TallyConfig,
+    pub companies: Vec<AllCompaniesEntry>,
+    pub currency_assertion: OutstandingsCurrencyAssertion,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AllCompaniesEntry {
+    pub company: String,
+    pub expected_company_guid: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompanyOutstandingsEntry {
+    pub company: String,
+    pub result: OutstandingsLoadResult,
+}
+
+fn company_sweep_result(
+    result: Result<OutstandingsLoadResult, &'static str>,
+) -> OutstandingsLoadResult {
+    result.unwrap_or_else(|reason_code| OutstandingsLoadResult::Partial {
+        reason_code: reason_code.to_string(),
+        synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
+/// Reads outstandings for several companies in one action.
+///
+/// This is the read Tally structurally will not do: it is per-company by
+/// design, so a firm holding ten client books has no way to ask one question
+/// across them. At roughly 0.35s per company on the native path, ten books
+/// answer in about four seconds.
+///
+/// **Reads run strictly one after another, never concurrently.** Tally's
+/// gateway serialises anyway, and the project rule is one live request at a
+/// time with a health check between -- issuing these in parallel is the
+/// documented way to hang or crash the instance the user is working in.
+///
+/// A company that fails does not abort the rest: its own typed Partial is
+/// recorded and the sweep continues, because one unreadable book must not
+/// hide the nine that read cleanly.
+#[tauri::command]
+pub async fn fetch_tally_outstandings_all_companies(
+    request: AllCompaniesOutstandingsRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<Vec<CompanyOutstandingsEntry>, TallyCommandError> {
+    if request.companies.is_empty() {
+        return Ok(Vec::new());
+    }
+    let as_of =
+        TallyDate::parse(chrono::Local::now().format("%Y%m%d").to_string()).map_err(|_| {
+            tally_command_error(
+                "current_date_invalid",
+                "Bridge application",
+                "Bridge could not construct today's outstandings date.",
+                "after_change",
+                false,
+                "Check the workstation date and time, then repeat the read-only action.",
+            )
+        })?;
+
+    let mut entries = Vec::with_capacity(request.companies.len());
+    for entry in request.companies {
+        let result = if validate_company_name(&entry.company).is_err() {
+            Err("company_selection_invalid")
+        } else {
+            match runtime
+                .detect_base_currency(
+                    request.config.clone(),
+                    entry.company.clone(),
+                    entry.expected_company_guid.clone(),
+                )
+                .await
+            {
+                Err(_) => Err("company_currency_probe_failed"),
+                Ok(currency) if !currency.is_inr => Err("company_base_currency_not_inr"),
+                Ok(_) => runtime
+                    .fetch_outstandings(
+                        request.config.clone(),
+                        entry.company.clone(),
+                        entry.expected_company_guid.clone(),
+                        as_of.clone(),
+                        request.currency_assertion,
+                    )
+                    .await
+                    .map_err(|_| "company_outstandings_read_failed"),
+            }
+        };
+        entries.push(CompanyOutstandingsEntry {
+            company: entry.company,
+            result: company_sweep_result(result),
+        });
+    }
+    Ok(entries)
+}
+
 #[tauri::command]
 pub fn cancel_tally_request(
     request_id: String,
@@ -2355,14 +2364,14 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 #[cfg(test)]
 mod tests {
     use super::{
-        first_calendar_day_canary_window, reconcile_review_cleanup,
-        reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
-        tally_runtime_command_error, validate_dsc_pins, OutstandingsRequest, PersistedTallyCompany,
-        SavedTallySetup,
+        company_sweep_result, first_calendar_day_canary_window, portable_export_file_name,
+        reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
+        tally_command_error, tally_runtime_command_error, validate_dsc_pins, write_unique_download,
+        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
     };
     use crate::tally::{
-        ConnectionStatus, OutstandingsCurrencyAssertion, SelectedReadObservation, TallyCompany,
-        TallyProbeResult, TallyProduct,
+        ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
+        SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
@@ -2400,6 +2409,69 @@ mod tests {
             rejected.is_err(),
             "unsupported currencies must not start a scan"
         );
+    }
+
+    #[test]
+    fn company_sweep_keeps_probe_and_read_failures_in_band() {
+        let outcomes = [
+            Ok(OutstandingsLoadResult::Partial {
+                reason_code: "first_book_partial".to_string(),
+                synced_at_unix_ms: 1,
+            }),
+            Err("company_currency_probe_failed"),
+            Err("company_outstandings_read_failed"),
+            Ok(OutstandingsLoadResult::Partial {
+                reason_code: "last_book_partial".to_string(),
+                synced_at_unix_ms: 2,
+            }),
+        ]
+        .into_iter()
+        .map(company_sweep_result)
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            outcomes.len(),
+            4,
+            "one bad book must not truncate the sweep"
+        );
+        assert!(matches!(
+            &outcomes[1],
+            OutstandingsLoadResult::Partial { reason_code, .. }
+                if reason_code == "company_currency_probe_failed"
+        ));
+        assert!(matches!(
+            &outcomes[2],
+            OutstandingsLoadResult::Partial { reason_code, .. }
+                if reason_code == "company_outstandings_read_failed"
+        ));
+        assert!(matches!(
+            &outcomes[3],
+            OutstandingsLoadResult::Partial { reason_code, .. }
+                if reason_code == "last_book_partial"
+        ));
+    }
+
+    #[test]
+    fn export_names_are_portable_and_reserved_devices_are_neutralized() {
+        assert_eq!(
+            portable_export_file_name("outstandings-A:B?C.csv").unwrap(),
+            "outstandings-A-B-C.csv"
+        );
+        assert_eq!(portable_export_file_name("CON.csv").unwrap(), "_CON.csv");
+        assert!(portable_export_file_name("../outside.csv").is_err());
+        assert!(portable_export_file_name("nested/report.csv").is_err());
+    }
+
+    #[test]
+    fn report_downloads_never_overwrite_an_existing_file() {
+        let directory = tempfile::tempdir().expect("temporary download directory");
+        let first = write_unique_download(directory.path(), "report.csv", b"first").unwrap();
+        let second = write_unique_download(directory.path(), "report.csv", b"second").unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "report.csv");
+        assert_eq!(second.file_name().unwrap(), "report-2.csv");
+        assert_eq!(std::fs::read(first).unwrap(), b"first");
+        assert_eq!(std::fs::read(second).unwrap(), b"second");
     }
 
     #[test]
@@ -2451,32 +2523,6 @@ mod tests {
         ));
         assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
         assert_eq!(discovery_limit.category, "Discovery listing");
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    #[test]
-    fn synthetic_canary_pre_dispatch_failure_is_truthful_and_redacted() {
-        let error = super::synthetic_canary_pre_dispatch_error();
-        let json = serde_json::to_string(&error).expect("serialize canary error");
-        assert_eq!(error.code, "synthetic_canary_pre_dispatch_failed");
-        assert_eq!(error.retry, "after_change");
-        assert!(error.local_state_changed);
-        assert!(!error.tally_state_may_have_changed);
-        assert!(!json.contains("127.0.0.1"));
-        assert!(!json.contains("xml"));
-    }
-
-    #[cfg(feature = "fixture-canary-runtime-dispatch")]
-    #[test]
-    fn synthetic_canary_failure_is_terminal_and_does_not_expose_transport_detail() {
-        let error = super::synthetic_canary_outcome_unknown_error();
-        let json = serde_json::to_string(&error).expect("serialize canary error");
-        assert_eq!(error.code, "synthetic_canary_outcome_unknown");
-        assert_eq!(error.retry, "never");
-        assert!(error.local_state_changed);
-        assert!(error.tally_state_may_have_changed);
-        assert!(!json.contains("127.0.0.1"));
-        assert!(!json.contains("xml"));
     }
 
     #[test]
@@ -2629,4 +2675,199 @@ mod tests {
         );
         assert_eq!(populated.identity_evidence_state, "verified");
     }
+}
+
+fn portable_export_file_name(file_name: &str) -> Result<String, String> {
+    let trimmed = file_name.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 200
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
+        || trimmed.starts_with('.')
+    {
+        return Err("Bridge could not build a safe file name for this export.".to_string());
+    }
+
+    let mut sanitized = trimmed
+        .chars()
+        .map(|character| {
+            if character.is_control()
+                || matches!(character, '<' | '>' | ':' | '"' | '|' | '?' | '*')
+            {
+                '-'
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    while sanitized.ends_with([' ', '.']) {
+        sanitized.pop();
+    }
+    if sanitized.is_empty() {
+        return Err("Bridge could not build a safe file name for this export.".to_string());
+    }
+
+    let stem = sanitized
+        .split_once('.')
+        .map_or(sanitized.as_str(), |(stem, _)| stem);
+    let upper_stem = stem.to_ascii_uppercase();
+    let reserved = matches!(upper_stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || upper_stem.strip_prefix("COM").is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        })
+        || upper_stem.strip_prefix("LPT").is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        });
+    if reserved {
+        sanitized.insert(0, '_');
+    }
+    Ok(sanitized)
+}
+
+fn write_unique_download(
+    directory: &std::path::Path,
+    file_name: &str,
+    contents: &[u8],
+) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write as _;
+
+    let path = std::path::Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("report");
+    let extension = path.extension().and_then(|value| value.to_str());
+    for number in 1_u32..=10_000 {
+        let candidate_name = if number == 1 {
+            file_name.to_string()
+        } else if let Some(extension) = extension {
+            format!("{stem}-{number}.{extension}")
+        } else {
+            format!("{stem}-{number}")
+        };
+        let candidate = directory.join(candidate_name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(contents).and_then(|()| file.sync_all()) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&candidate);
+                    return Err(error);
+                }
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "too many exports already use this file name",
+    ))
+}
+
+/// Writes an exported report to the user's Downloads folder and returns the
+/// full path.
+///
+/// The browser route (`Blob` + an `<a download>` click) silently does nothing
+/// inside the Tauri webview -- there is no download handler and the app
+/// declares no plugin permissions -- so the button appeared to work and
+/// produced no file. Writing from Rust needs no new dependency and no
+/// capability grant, and returning the path lets the UI say where it went
+/// instead of leaving the user to guess.
+#[tauri::command]
+pub async fn save_report_download(
+    app: tauri::AppHandle,
+    file_name: String,
+    contents: String,
+) -> Result<String, String> {
+    use tauri::Manager as _;
+    let file_name = portable_export_file_name(&file_name)?;
+
+    // Tauri's own path resolver, so this needs no extra crate and no
+    // capability grant.
+    let downloads = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .map_err(|_| "Bridge could not locate a folder to save into.".to_string())?;
+    let path = write_unique_download(&downloads, &file_name, contents.as_bytes())
+        .map_err(|error| format!("Bridge could not write the export: {error}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Reveals an exported file in the OS file manager.
+///
+/// Only ever called with a path this process just wrote, and the path is
+/// re-checked as an existing file before being handed to the platform tool --
+/// so a caller cannot use this to launch an arbitrary target.
+#[tauri::command]
+pub async fn reveal_exported_file(path: String) -> Result<(), String> {
+    let target = std::path::PathBuf::from(&path);
+    if !target.is_file() {
+        return Err("Bridge could not find that export any more.".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg("-R").arg(&target);
+        command
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer");
+        // `explorer` wants the selector and path as one argument.
+        command.arg(format!("/select,{}", target.display()));
+        command
+    };
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let mut command = {
+        let parent = target.parent().unwrap_or(&target);
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(parent);
+        command
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Bridge could not open the folder: {error}"))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BaseCurrencyRequest {
+    pub config: TallyConfig,
+    pub company: String,
+    pub expected_company_guid: String,
+}
+
+/// Establishes a company's base currency from Tally.
+#[tauri::command]
+pub async fn detect_tally_base_currency(
+    request: BaseCurrencyRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<bridge_tally_protocol::native_outstandings::CompanyCurrency, TallyCommandError> {
+    validate_company_name(&request.company).map_err(|message| {
+        tally_command_error(
+            "company_selection_invalid",
+            "Tally application",
+            message,
+            "after_change",
+            false,
+            "Select the intended GUID-bearing company and repeat the read-only action.",
+        )
+    })?;
+    runtime
+        .detect_base_currency(
+            request.config,
+            request.company,
+            request.expected_company_guid,
+        )
+        .await
+        .map_err(tally_runtime_command_error)
 }
