@@ -4,7 +4,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { isNonRetryableOutstandingsBoundary, outstandingsAgeingDisclosure, outstandingsPartialReason, outstandingsPartialState } from "../src/outstandings-copy.ts";
+import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialReason, outstandingsPartialState } from "../src/outstandings-copy.ts";
+
+test("the backend ageing anchor is disclosed in the bucket label", () => {
+  assert.equal(outstandingsAgeingAnchorLabel("due_date"), "aged from due date");
+  assert.equal(outstandingsAgeingAnchorLabel("bill_date"), "aged from bill date");
+});
+
+test("new native and sweep boundaries have operator-readable reasons", () => {
+  assert.match(outstandingsPartialReason("native_overdue_crosscheck_mismatch"), /overdue-day cross-check/i);
+  assert.match(outstandingsPartialReason("company_currency_probe_failed"), /base currency/i);
+  assert.match(outstandingsPartialReason("company_base_currency_not_inr"), /not INR/i);
+  assert.match(outstandingsPartialReason("company_outstandings_read_failed"), /company read failed/i);
+});
 
 test("uncalibrated sizing says the voucher read was not sent", () => {
   const message = outstandingsPartialReason("outstandings_segment_sizing_uncalibrated");

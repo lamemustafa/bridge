@@ -1,7 +1,7 @@
 import React from "react";
 import { Building2, ChevronRight, Download, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { isNonRetryableOutstandingsBoundary, outstandingsAgeingDisclosure, outstandingsPartialState } from "./outstandings-copy";
+import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialState, type OutstandingsAgeingAnchor } from "./outstandings-copy";
 import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstandings-csv";
 import { canStartOutstandingsRead } from "./outstandings-currency";
 
@@ -64,6 +64,7 @@ type LoadResult =
       state: "complete";
       report: Report;
       currency_assertion: string;
+      ageing_anchor: OutstandingsAgeingAnchor;
       synced_at_unix_ms: number;
       // Absent when the read path cannot establish it. Absent is not zero and
       // must never render as zero.
@@ -398,7 +399,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
               ) : <h3>Receivable ageing</h3>}
               <span>
                 {view === "ageing"
-                  ? `bill references only · as of ${formatDate(completeResult.report.as_of_yyyymmdd)}`
+                  ? `bill references only · ${outstandingsAgeingAnchorLabel(completeResult.ageing_anchor)} · as of ${formatDate(completeResult.report.as_of_yyyymmdd)}`
                   : `no bill reference · ${unallocatedParties.length} ${unallocatedParties.length === 1 ? "party" : "parties"}`}
               </span>
             </div>

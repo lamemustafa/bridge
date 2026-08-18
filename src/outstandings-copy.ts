@@ -1,6 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
+export type OutstandingsAgeingAnchor = "due_date" | "bill_date";
+
+export function outstandingsAgeingAnchorLabel(anchor: OutstandingsAgeingAnchor) {
+  return anchor === "due_date" ? "aged from due date" : "aged from bill date";
+}
+
 export function outstandingsPartialReason(value: string) {
+  if (value === "native_overdue_crosscheck_mismatch") {
+    return "Tally's overdue-day cross-check disagreed with the bill due dates, so Bridge withheld the totals";
+  }
+  if (value === "company_currency_probe_failed") {
+    return "Bridge could not verify this company's base currency";
+  }
+  if (value === "company_base_currency_not_inr") {
+    return "this company's verified base currency is not INR";
+  }
+  if (value === "company_outstandings_read_failed") {
+    return "this company read failed while the remaining companies continued";
+  }
   if (value === "tally_segment_latency_trending_restart_recommended") {
     return "comparable segments kept slowing toward the safety deadline; Tally may need a restart before another sync";
   }
