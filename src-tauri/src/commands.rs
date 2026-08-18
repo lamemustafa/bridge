@@ -2801,7 +2801,7 @@ fn save_report_download_bytes(
     contents: &[u8],
 ) -> Result<String, String> {
     use tauri::Manager as _;
-    let file_name = portable_export_file_name(&file_name)?;
+    let file_name = portable_export_file_name(file_name)?;
 
     // Tauri's own path resolver, so this needs no extra crate and no
     // capability grant.
