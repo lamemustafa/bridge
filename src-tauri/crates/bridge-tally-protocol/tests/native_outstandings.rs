@@ -9,6 +9,7 @@ use bridge_tally_protocol::native_outstandings::{
     age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_ledger_snapshot,
     AgeingAnchor, NativeBillRow, NativeOutstandingsError,
 };
+use bridge_tally_protocol::parse_group_source_records_with_evidence;
 
 const BILLS_RECEIVABLE_BILLWISE_LAB: &str =
     include_str!("fixtures/native/bills_receivable_billwise_lab.xml");
@@ -55,6 +56,42 @@ fn assert_exact(actual: &ExactDecimal, canonical: &str) {
 }
 
 #[test]
+fn nested_debtor_ledger_from_raw_group_and_ledger_bytes_is_not_dropped() {
+    let group_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
+        <COMPANYCONTEXT SCHEMA="bridge.tally.groups/1" OBJECTTYPE="GROUP" NAME="Synthetic Company" GUID="synthetic-company-guid" RECORDCOUNT="2"/>
+        <GROUP NAME="North Region" GUID="north-region-guid" MASTERID="1" ALTERID="1"><PARENT>Sundry Debtors</PARENT></GROUP>
+        <GROUP NAME="Sundry Debtors" GUID="debtors-guid" MASTERID="2" ALTERID="2"><PARENT>Primary</PARENT></GROUP>
+        </BODY></ENVELOPE>"#;
+    let ledger_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+        <LEDGER NAME="Nested Customer"><PARENT>North Region</PARENT>
+        <CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0.00</OPENINGBALANCE>
+        <ISBILLWISEON>No</ISBILLWISEON></LEDGER>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let groups = parse_group_source_records_with_evidence(group_bytes)
+        .expect("raw group hierarchy parses")
+        .records
+        .into_iter()
+        .map(|row| row.record)
+        .collect::<Vec<_>>();
+    let ledgers = parse_native_ledger_snapshot(ledger_bytes).expect("raw ledger snapshot parses");
+
+    let result = compute_native_outstandings(
+        "Synthetic Company",
+        &[],
+        &[],
+        &ledgers,
+        &groups,
+        AgeingAnchor::DueDate,
+        &as_of(NATIVE_CAPTURE_AS_OF),
+        group_bytes.len() + ledger_bytes.len(),
+    )
+    .expect("nested debtor ancestry is complete");
+
+    assert_exact(&result.residual_total, "100");
+    assert_eq!(result.residuals[0].party, "Nested Customer");
+}
+
+#[test]
 fn not_yet_due_bill_is_reported_without_becoming_overdue() {
     let receivable = [NativeBillRow {
         party: "Synthetic customer".to_string(),
@@ -70,6 +107,7 @@ fn not_yet_due_bill_is_reported_without_becoming_overdue() {
     let result = compute_native_outstandings(
         "Synthetic Company",
         &receivable,
+        &[],
         &[],
         &[],
         AgeingAnchor::DueDate,
@@ -113,6 +151,132 @@ fn validation_lab_empty_billoverdue_parses_as_not_applicable() {
 }
 
 #[test]
+fn absent_billoverdue_is_not_the_same_as_present_but_empty() {
+    let xml = "<ENVELOPE>\
+        <BILLFIXED><BILLDATE>1-Aug-26</BILLDATE><BILLREF>FUTURE</BILLREF><BILLPARTY>P</BILLPARTY></BILLFIXED>\
+        <BILLCL>-10.00</BILLCL><BILLDUE>1-Oct-26</BILLDUE>\
+        </ENVELOPE>";
+    assert_eq!(
+        parse_native_bill_rows(
+            xml,
+            &as_of(VALIDATION_LAB_BOOKS_FROM),
+            &as_of(VALIDATION_CAPTURE_AS_OF),
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "bills_fixed_row_missing_billoverdue"
+        ))
+    );
+}
+
+#[test]
+fn report_direction_contradictions_in_raw_bill_bytes_fail_closed() {
+    let parse = |amount: &str| {
+        parse_native_bill_rows(
+            &format!(
+                "<ENVELOPE><BILLFIXED><BILLDATE>1-Jul-26</BILLDATE>\
+                 <BILLREF>SIGN</BILLREF><BILLPARTY>P</BILLPARTY></BILLFIXED>\
+                 <BILLCL>{amount}</BILLCL><BILLDUE>1-Jul-26</BILLDUE>\
+                 <BILLOVERDUE>30</BILLOVERDUE></ENVELOPE>"
+            ),
+            &as_of(VALIDATION_LAB_BOOKS_FROM),
+            &as_of(VALIDATION_CAPTURE_AS_OF),
+        )
+        .expect("synthetic row parses")
+    };
+
+    let positive_receivable = parse("100.00");
+    assert_eq!(
+        compute_native_outstandings(
+            "Synthetic Company",
+            &positive_receivable,
+            &[],
+            &[],
+            &[],
+            AgeingAnchor::DueDate,
+            &as_of(VALIDATION_CAPTURE_AS_OF),
+            0,
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "receivable_bill_sign_contradiction"
+        ))
+    );
+
+    let negative_payable = parse("-100.00");
+    assert_eq!(
+        compute_native_outstandings(
+            "Synthetic Company",
+            &[],
+            &negative_payable,
+            &[],
+            &[],
+            AgeingAnchor::DueDate,
+            &as_of(VALIDATION_CAPTURE_AS_OF),
+            0,
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "payable_bill_sign_contradiction"
+        ))
+    );
+}
+
+#[test]
+fn unaged_receivable_classification_uses_the_residual_not_the_net_ledger_sign() {
+    let receivable = parse_native_bill_rows(
+        "<ENVELOPE><BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>R</BILLREF>\
+         <BILLPARTY>Receivable flips payable</BILLPARTY></BILLFIXED><BILLCL>-100.00</BILLCL>\
+         <BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>30</BILLOVERDUE></ENVELOPE>",
+        &as_of(VALIDATION_LAB_BOOKS_FROM),
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+    )
+    .expect("raw receivable parses");
+    let payable = parse_native_bill_rows(
+        "<ENVELOPE><BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>P</BILLREF>\
+         <BILLPARTY>Payable flips receivable</BILLPARTY></BILLFIXED><BILLCL>100.00</BILLCL>\
+         <BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>30</BILLOVERDUE></ENVELOPE>",
+        &as_of(VALIDATION_LAB_BOOKS_FROM),
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+    )
+    .expect("raw payable parses");
+    let ledgers = parse_native_ledger_snapshot(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+         <LEDGER NAME=\"Receivable flips payable\"><PARENT>Sundry Debtors</PARENT>\
+         <CLOSINGBALANCE>-50.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+         <LEDGER NAME=\"Payable flips receivable\"><PARENT>Sundry Creditors</PARENT>\
+         <CLOSINGBALANCE>50.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+         </COLLECTION></DATA></BODY></ENVELOPE>",
+    )
+    .expect("raw ledgers parse");
+
+    let payable_residual = compute_native_outstandings(
+        "Synthetic Company",
+        &receivable,
+        &[],
+        &ledgers[..1],
+        &[],
+        AgeingAnchor::DueDate,
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+        0,
+    )
+    .expect("positive residual computes");
+    assert!(!payable_residual.report.has_unaged_receivable);
+    assert_eq!(payable_residual.residuals[0].amount.as_str(), "50");
+
+    let receivable_residual = compute_native_outstandings(
+        "Synthetic Company",
+        &[],
+        &payable,
+        &ledgers[1..],
+        &[],
+        AgeingAnchor::DueDate,
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+        0,
+    )
+    .expect("negative residual computes");
+    assert!(receivable_residual.report.has_unaged_receivable);
+    assert_eq!(receivable_residual.residuals[0].amount.as_str(), "-50");
+}
+
+#[test]
 fn validation_lab_accounts_for_every_debtor_rupee_and_matches_tally_ageing() {
     let receivable = parse_native_bill_rows(
         BILLS_RECEIVABLE_VALIDATION_LAB,
@@ -134,6 +298,7 @@ fn validation_lab_accounts_for_every_debtor_rupee_and_matches_tally_ageing() {
         &receivable,
         &payable,
         &ledgers,
+        &[],
         AgeingAnchor::DueDate,
         &as_of(VALIDATION_CAPTURE_AS_OF),
         BILLS_RECEIVABLE_VALIDATION_LAB.len()
@@ -239,6 +404,7 @@ fn ageing_buckets_billwise_lab_match_measured_values_at_as_of() {
         &receivable_rows,
         &payable_rows,
         &ledgers,
+        &[],
         AgeingAnchor::DueDate,
         &as_of("20260731"),
         BILLS_RECEIVABLE_BILLWISE_LAB.len(),
@@ -270,6 +436,7 @@ fn ageing_buckets_billwise_lab_match_measured_values_at_as_of() {
         &receivable_rows,
         &payable_rows,
         &ledgers,
+        &[],
         AgeingAnchor::BillDate,
         &as_of("20260731"),
         BILLS_RECEIVABLE_BILLWISE_LAB.len(),
@@ -313,6 +480,7 @@ fn on_account_residuals_billwise_lab_match_measured_totals() {
         &receivable_rows,
         &payable_rows,
         &ledgers,
+        &[],
         AgeingAnchor::DueDate,
         &as_of("20260731"),
         BILLS_RECEIVABLE_BILLWISE_LAB.len(),
@@ -345,7 +513,10 @@ fn on_account_residuals_billwise_lab_match_measured_totals() {
     expect_residual("Sunrise Electronics", "30000");
 
     assert_exact(&result.residual_total, "105000");
-    assert!(result.report.has_unaged_receivable);
+    assert!(
+        !result.report.has_unaged_receivable,
+        "the measured Rs 1,05,000 residual is payable exposure, not receivable"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -544,6 +715,7 @@ fn empty_bill_party_from_raw_bytes_fails_closed_before_double_counting() {
             &receivable,
             &[],
             &ledgers,
+            &[],
             AgeingAnchor::DueDate,
             &as_of(NATIVE_CAPTURE_AS_OF),
             bills.len() + ledger_bytes.len(),
@@ -652,6 +824,18 @@ fn ledger_snapshot_sanitizes_illegal_numeric_references_before_decoding_text_fie
 
     assert_eq!(rows[0].name, "\u{fffd}#4; LEDGER");
     assert_eq!(rows[0].parent.as_deref(), Some("\u{fffd}#4; PARENT"));
+}
+
+#[test]
+fn ledger_snapshot_requires_the_collection_even_when_status_is_success() {
+    assert_eq!(
+        parse_native_ledger_snapshot(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA/></BODY></ENVELOPE>"
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "ledger_collection_missing"
+        ))
+    );
 }
 
 #[test]

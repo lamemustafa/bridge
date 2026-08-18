@@ -14,9 +14,10 @@
 //!   total for the same book.
 //! - The Ageing Lab expectations come from Tally's own `BILLOVERDUE` column.
 //!
-//! That matters because of the trap recorded in the hub as "a fixture must
-//! prove its own premise": a test whose expectations are copied from the
-//! implementation it checks will survive the implementation being wrong.
+//! That matters because `TALLY_PROTOCOL_REFERENCE.md` defines VERIFIED
+//! evidence as a live observation with a captured request and response: a test
+//! whose expectations are copied from the implementation it checks will
+//! survive the implementation being wrong.
 
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
@@ -66,6 +67,7 @@ fn billwise_lab_reproduces_the_unit_a_exit_criteria_exactly() {
         &receivable,
         &payable,
         &ledgers,
+        &[],
         AgeingAnchor::DueDate,
         &as_of(),
         11_030,
@@ -125,6 +127,7 @@ fn billwise_lab_residual_equals_unit_a_payable_total_to_the_rupee() {
         &receivable,
         &payable,
         &ledgers,
+        &[],
         AgeingAnchor::DueDate,
         &as_of(),
         11_030,
@@ -172,6 +175,7 @@ fn aarav_residual_dominates_and_every_bill_carrying_party_reconciles_exactly() {
         &receivable,
         &payable,
         &ledgers,
+        &[],
         AgeingAnchor::DueDate,
         &as_of(),
         51_003,

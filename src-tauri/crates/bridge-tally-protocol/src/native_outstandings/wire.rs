@@ -239,6 +239,11 @@ fn finalize_bill_row(
         .ok_or(NativeOutstandingsError::InvalidResponse(
             "bills_fixed_row_missing_billdue",
         ))?;
+    if !row.overdue_seen {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "bills_fixed_row_missing_billoverdue",
+        ));
+    }
     let bill_date = parse_native_display_date(
         &row.bill_date_raw,
         books_from,
@@ -365,6 +370,7 @@ pub fn parse_native_ledger_snapshot(
 
     let mut path = Vec::<Vec<u8>>::new();
     let mut status_seen = false;
+    let mut collection_seen = false;
     let mut entries = Vec::new();
 
     loop {
@@ -387,6 +393,9 @@ pub fn parse_native_ledger_snapshot(
                     status_seen = true;
                     continue;
                 }
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                }
                 if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"LEDGER"
                 {
@@ -397,6 +406,10 @@ pub fn parse_native_ledger_snapshot(
             }
             Event::Empty(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                    continue;
+                }
                 if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"LEDGER"
                 {
@@ -425,6 +438,11 @@ pub fn parse_native_ledger_snapshot(
     }
     if !status_seen {
         return Err(NativeOutstandingsError::TallyReportedFailure);
+    }
+    if !collection_seen {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "ledger_collection_missing",
+        ));
     }
     Ok(entries)
 }
@@ -597,41 +615,90 @@ use super::model::CompanyCurrency;
 /// `<DATA>`, because the same `CMPINFO` counter block that inflates a naive
 /// ledger scan also carries a bare `<CURRENCY>0</CURRENCY>`.
 pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutstandingsError> {
-    let data = xml
-        .find("<DATA>")
-        .and_then(|start| {
-            xml[start..]
-                .find("</DATA>")
-                .map(|end| &xml[start + 6..start + end])
-        })
-        .unwrap_or("");
-
+    let sanitized = sanitize_invalid_numeric_references(xml);
+    let mut reader = Reader::from_str(&sanitized);
+    reader.config_mut().trim_text(true);
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut status_seen = false;
+    let mut collection_seen = false;
     let mut rows = Vec::new();
-    let mut rest = data;
-    while let Some(start) = rest.find("<CURRENCY ") {
-        let after = &rest[start..];
-        let Some(end) = after.find("</CURRENCY>") else {
-            break;
-        };
-        let block = &after[..end];
-        let name = currency_attribute(block, "NAME").unwrap_or_default();
-        let mailing = currency_element_text(block, "MAILINGNAME").unwrap_or_default();
-        if !name.trim().is_empty() {
-            rows.push((name.trim().to_string(), mailing.trim().to_string()));
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|_| NativeOutstandingsError::InvalidResponse("currency_xml_malformed"))?;
+        match event {
+            Event::Start(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path.is_empty() && name != b"ENVELOPE" {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_root_not_envelope",
+                    ));
+                }
+                if path_is(&path, &[b"ENVELOPE", b"HEADER"]) && name == b"STATUS" {
+                    let text = read_element_text(&mut reader, element.name())?;
+                    if text.trim() != "1" {
+                        return Err(NativeOutstandingsError::TallyReportedFailure);
+                    }
+                    status_seen = true;
+                    continue;
+                }
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                }
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name == b"CURRENCY"
+                {
+                    rows.push(parse_currency_row(&mut reader, &element)?);
+                    continue;
+                }
+                path.push(name);
+            }
+            Event::Empty(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                } else if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name == b"CURRENCY"
+                {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_row_empty",
+                    ));
+                }
+            }
+            Event::End(element) => {
+                let expected = path.pop().ok_or(NativeOutstandingsError::InvalidResponse(
+                    "currency_unexpected_close",
+                ))?;
+                if expected != element.name().as_ref().to_ascii_uppercase() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_unexpected_close",
+                    ));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
         }
-        rest = &after[end + "</CURRENCY>".len()..];
+    }
+    if !path.is_empty() {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "currency_envelope_unterminated",
+        ));
+    }
+    if !status_seen {
+        return Err(NativeOutstandingsError::TallyReportedFailure);
+    }
+    if !collection_seen {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "currency_collection_missing",
+        ));
     }
 
     let currency_count = rows.len();
     let (symbol, mailing_name) = rows.into_iter().next().unwrap_or_default();
     // Only a single defined currency lets this read name the BASE currency.
-    // Tally's Indian symbol is the literal "Rs."; the mailing name is the
-    // durable signal, so both are checked.
-    let is_inr = currency_count == 1
-        && (mailing_name.eq_ignore_ascii_case("Indian Rupees")
-            || symbol == "Rs."
-            || symbol == "₹"
-            || symbol.eq_ignore_ascii_case("INR"));
+    // "Rs." is shared by several currencies, so only the observed Indian
+    // mailing identity is authoritative enough to put ₹ before real money.
+    let is_inr = currency_count == 1 && mailing_name.eq_ignore_ascii_case("Indian Rupees");
 
     Ok(CompanyCurrency {
         symbol,
@@ -641,20 +708,45 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
     })
 }
 
-fn currency_attribute(block: &str, name: &str) -> Option<String> {
-    let needle = format!("{name}=\"");
-    let start = block.find(&needle)? + needle.len();
-    let end = block[start..].find('"')? + start;
-    Some(block[start..end].to_string())
-}
-
-fn currency_element_text(block: &str, name: &str) -> Option<String> {
-    let open = format!("<{name}");
-    let start = block.find(&open)?;
-    let content_start = block[start..].find('>')? + start + 1;
-    let close = format!("</{name}>");
-    let end = block[content_start..].find(&close)? + content_start;
-    Some(block[content_start..end].to_string())
+fn parse_currency_row(
+    reader: &mut Reader<&[u8]>,
+    element: &BytesStart<'_>,
+) -> Result<(String, String), NativeOutstandingsError> {
+    let symbol = attribute_value(element, b"NAME").ok_or(
+        NativeOutstandingsError::InvalidResponse("currency_name_missing"),
+    )?;
+    let mut mailing_name = None;
+    loop {
+        match reader
+            .read_event()
+            .map_err(|_| NativeOutstandingsError::InvalidResponse("currency_xml_malformed"))?
+        {
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"MAILINGNAME") => {
+                let text = read_element_text(reader, child.name())?;
+                if mailing_name.replace(text).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_duplicate_mailing_name",
+                    ));
+                }
+            }
+            Event::Start(_) => skip_subtree(reader)?,
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"MAILINGNAME") => {
+                if mailing_name.replace(String::new()).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_duplicate_mailing_name",
+                    ));
+                }
+            }
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"CURRENCY") => break,
+            Event::Eof => {
+                return Err(NativeOutstandingsError::InvalidResponse(
+                    "currency_row_unterminated",
+                ))
+            }
+            _ => {}
+        }
+    }
+    Ok((symbol, mailing_name.unwrap_or_default()))
 }
 
 #[cfg(test)]
@@ -692,6 +784,24 @@ mod currency_tests {
             .replace("Indian Rupees", "US Dollars")
             .replace(r#"NAME="Rs.""#, r#"NAME="$""#);
         let currency = parse_company_currency(&xml).expect("parses");
+        assert!(!currency.is_inr);
+    }
+
+    #[test]
+    fn failed_or_structurally_incomplete_currency_collections_fail_closed() {
+        for xml in [
+            "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>failed</LINEERROR></DATA></BODY></ENVELOPE>",
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA/></BODY></ENVELOPE>",
+            "<not-xml",
+        ] {
+            assert!(parse_company_currency(xml).is_err(), "{xml}");
+        }
+    }
+
+    #[test]
+    fn common_rs_symbol_does_not_prove_indian_rupees() {
+        let xml = LIVE.replace("Indian Rupees", "Pakistani Rupees");
+        let currency = parse_company_currency(&xml).expect("shaped collection parses");
         assert!(!currency.is_inr);
     }
 }

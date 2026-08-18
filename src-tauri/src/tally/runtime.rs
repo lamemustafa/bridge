@@ -15,6 +15,7 @@ use crate::tally::runtime_control::{
     ReadAttempt, ReadExecutionError, ReadFailureClass, ReadOperation, ReadRetryPolicy,
     TELEMETRY_PREVIEW_SCHEMA,
 };
+use crate::tally::tdl_engine;
 use bridge_tally_core::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     compute_native_outstandings, parse_company_currency, parse_native_bill_rows,
@@ -30,6 +31,7 @@ use bridge_tally_protocol::outstandings::{
     WitnessPairVerification,
 };
 use bridge_tally_protocol::outstandings_shared::OutstandingsReport;
+use bridge_tally_protocol::{parse_group_source_records_with_evidence, verify_company_context};
 use bridge_tally_transport::TallyTransportError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -107,6 +109,10 @@ pub enum OutstandingsLoadResult {
     Complete {
         report: Box<OutstandingsReport>,
         currency_assertion: OutstandingsCurrencyAssertion,
+        /// The date whose distance from `report.as_of_yyyymmdd` determines
+        /// the serialized ageing buckets. Consumers must disclose this rather
+        /// than inferring it from the read path.
+        ageing_anchor: OutstandingsAgeingAnchor,
         synced_at_unix_ms: i64,
         /// Total exposure carrying no bill reference, when the read path can
         /// establish it. `None` means "not computed", which is not the same as
@@ -259,6 +265,13 @@ pub enum ExposureDirection {
     Payable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutstandingsAgeingAnchor {
+    DueDate,
+    BillDate,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnallocatedParty {
     pub party: String,
@@ -271,6 +284,12 @@ fn partial_result(reason_code: &str) -> OutstandingsLoadResult {
         reason_code: reason_code.to_string(),
         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
     }
+}
+
+fn native_crosscheck_partial_reason(
+    result: &bridge_tally_protocol::native_outstandings::NativeOutstandingsResult,
+) -> Option<&'static str> {
+    (result.overdue_crosscheck_mismatches > 0).then_some("native_overdue_crosscheck_mismatch")
 }
 
 #[cfg(feature = "voucher-scan")]
@@ -1252,7 +1271,7 @@ impl TallyRuntime {
     /// Outstandings via Tally's own `TYPE=Data` bills reports plus one ledger
     /// snapshot.
     ///
-    /// Three paired reads, bracketed by a GUID-pinned company extent probe
+    /// Four paired reads, bracketed by a GUID-pinned company extent probe
     /// before and after. The extent probe is what binds identity: the native
     /// report carries **no GUID anywhere**, so it cannot be identity-checked
     /// from its own bytes. It does fail closed on an unloaded company
@@ -1309,6 +1328,22 @@ impl TallyRuntime {
                     };
                     total_bytes += encoded_bytes;
 
+                    // A ledger's immediate parent can be an arbitrary custom
+                    // subgroup. Reuse the existing GUID-bound group profile so
+                    // bill-wise-off party ledgers can be resolved all the way
+                    // to Sundry Debtors/Creditors rather than disappearing.
+                    let groups = client
+                        .fetch_native_report_paired(tdl_engine::groups_request(&company))
+                        .await?;
+                    let NativePairedRead::Stable {
+                        body: group_body,
+                        encoded_bytes,
+                    } = groups
+                    else {
+                        return Ok(partial_result("native_group_snapshot_drifted"));
+                    };
+                    total_bytes += encoded_bytes;
+
                     let payable = client
                         .fetch_native_report_paired(read(NativeBillsReportKind::Payable))
                         .await?;
@@ -1352,6 +1387,13 @@ impl TallyRuntime {
                         parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;
                     let payable_rows = parse_native_bill_rows(&payable_body, &books_from, &as_of)?;
                     let ledger_rows = parse_native_ledger_snapshot(&ledger_body)?;
+                    let parsed_groups = parse_group_source_records_with_evidence(&group_body)?;
+                    verify_company_context(&parsed_groups.evidence, &expected_company_guid)?;
+                    let group_rows = parsed_groups
+                        .records
+                        .into_iter()
+                        .map(|row| row.record)
+                        .collect::<Vec<_>>();
 
                     // Ageing anchors on the DUE date. Measured 2026-08-07: on a
                     // bill carrying a 30-day credit period Tally's own
@@ -1364,14 +1406,20 @@ impl TallyRuntime {
                         &receivable_rows,
                         &payable_rows,
                         &ledger_rows,
+                        &group_rows,
                         AgeingAnchor::DueDate,
                         &as_of,
                         total_bytes,
                     )?;
 
+                    if let Some(reason_code) = native_crosscheck_partial_reason(&result) {
+                        return Ok(partial_result(reason_code));
+                    }
+
                     Ok(OutstandingsLoadResult::Complete {
                         report: Box::new(result.report),
                         currency_assertion,
+                        ageing_anchor: OutstandingsAgeingAnchor::DueDate,
                         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                         unallocated_total: Some(result.residual_total),
                         unallocated_by_party: top_unallocated_parties(&result.residuals),
@@ -1806,6 +1854,7 @@ impl TallyRuntime {
                             ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
                                 report: Box::new(compute_outstandings(&scan, as_of)?),
                                 currency_assertion,
+                                ageing_anchor: OutstandingsAgeingAnchor::BillDate,
                                 synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                                 // The voucher scan derives bills from vouchers
                                 // and cannot establish the unallocated
@@ -2137,6 +2186,18 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
+    fn ageing_anchor_serializes_as_an_explicit_wire_contract() {
+        assert_eq!(
+            serde_json::to_value(OutstandingsAgeingAnchor::DueDate).unwrap(),
+            serde_json::json!("due_date")
+        );
+        assert_eq!(
+            serde_json::to_value(OutstandingsAgeingAnchor::BillDate).unwrap(),
+            serde_json::json!("bill_date")
+        );
+    }
+
+    #[test]
     fn validation_lab_future_bill_stays_unaged_in_open_bill_output() {
         let receivable = parse_native_bill_rows(
             include_str!(
@@ -2157,6 +2218,34 @@ mod tests {
             .expect("captured future-due bill remains present");
         assert_eq!(future.amount.as_str(), "22222.00");
         assert_eq!(future.age_days, None);
+    }
+
+    #[test]
+    fn raw_overdue_disagreement_withholds_native_complete() {
+        let rows = parse_native_bill_rows(
+            "<ENVELOPE><BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>MISMATCH</BILLREF>\
+             <BILLPARTY>Synthetic Customer</BILLPARTY></BILLFIXED><BILLCL>-100.00</BILLCL>\
+             <BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>31</BILLOVERDUE></ENVELOPE>",
+            &TallyDate::parse("20250401").expect("synthetic BooksFrom"),
+            &TallyDate::parse("20260817").expect("synthetic as-of"),
+        )
+        .expect("raw bill parses");
+        let computed = compute_native_outstandings(
+            "Synthetic Company",
+            &rows,
+            &[],
+            &[],
+            &[],
+            AgeingAnchor::DueDate,
+            &TallyDate::parse("20260817").expect("synthetic as-of"),
+            0,
+        )
+        .expect("arithmetic still computes for diagnostic comparison");
+        assert_eq!(computed.overdue_crosscheck_mismatches, 1);
+        assert_eq!(
+            native_crosscheck_partial_reason(&computed),
+            Some("native_overdue_crosscheck_mismatch")
+        );
     }
 
     #[test]

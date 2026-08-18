@@ -2120,6 +2120,15 @@ pub struct CompanyOutstandingsEntry {
     pub result: OutstandingsLoadResult,
 }
 
+fn company_sweep_result(
+    result: Result<OutstandingsLoadResult, &'static str>,
+) -> OutstandingsLoadResult {
+    result.unwrap_or_else(|reason_code| OutstandingsLoadResult::Partial {
+        reason_code: reason_code.to_string(),
+        synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
 /// Reads outstandings for several companies in one action.
 ///
 /// This is the read Tally structurally will not do: it is per-company by
@@ -2157,29 +2166,34 @@ pub async fn fetch_tally_outstandings_all_companies(
 
     let mut entries = Vec::with_capacity(request.companies.len());
     for entry in request.companies {
-        validate_company_name(&entry.company).map_err(|message| {
-            tally_command_error(
-                "company_selection_invalid",
-                "Tally application",
-                message,
-                "after_change",
-                false,
-                "Select the intended GUID-bearing company and repeat the read-only action.",
-            )
-        })?;
-        let result = runtime
-            .fetch_outstandings(
-                request.config.clone(),
-                entry.company.clone(),
-                entry.expected_company_guid.clone(),
-                as_of.clone(),
-                request.currency_assertion,
-            )
-            .await
-            .map_err(tally_runtime_command_error)?;
+        let result = if validate_company_name(&entry.company).is_err() {
+            Err("company_selection_invalid")
+        } else {
+            match runtime
+                .detect_base_currency(
+                    request.config.clone(),
+                    entry.company.clone(),
+                    entry.expected_company_guid.clone(),
+                )
+                .await
+            {
+                Err(_) => Err("company_currency_probe_failed"),
+                Ok(currency) if !currency.is_inr => Err("company_base_currency_not_inr"),
+                Ok(_) => runtime
+                    .fetch_outstandings(
+                        request.config.clone(),
+                        entry.company.clone(),
+                        entry.expected_company_guid.clone(),
+                        as_of.clone(),
+                        request.currency_assertion,
+                    )
+                    .await
+                    .map_err(|_| "company_outstandings_read_failed"),
+            }
+        };
         entries.push(CompanyOutstandingsEntry {
             company: entry.company,
-            result,
+            result: company_sweep_result(result),
         });
     }
     Ok(entries)
@@ -2350,14 +2364,14 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 #[cfg(test)]
 mod tests {
     use super::{
-        first_calendar_day_canary_window, reconcile_review_cleanup,
-        reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
-        tally_runtime_command_error, validate_dsc_pins, OutstandingsRequest, PersistedTallyCompany,
-        SavedTallySetup,
+        company_sweep_result, first_calendar_day_canary_window, portable_export_file_name,
+        reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
+        tally_command_error, tally_runtime_command_error, validate_dsc_pins, write_unique_download,
+        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
     };
     use crate::tally::{
-        ConnectionStatus, OutstandingsCurrencyAssertion, SelectedReadObservation, TallyCompany,
-        TallyProbeResult, TallyProduct,
+        ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
+        SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
@@ -2395,6 +2409,69 @@ mod tests {
             rejected.is_err(),
             "unsupported currencies must not start a scan"
         );
+    }
+
+    #[test]
+    fn company_sweep_keeps_probe_and_read_failures_in_band() {
+        let outcomes = [
+            Ok(OutstandingsLoadResult::Partial {
+                reason_code: "first_book_partial".to_string(),
+                synced_at_unix_ms: 1,
+            }),
+            Err("company_currency_probe_failed"),
+            Err("company_outstandings_read_failed"),
+            Ok(OutstandingsLoadResult::Partial {
+                reason_code: "last_book_partial".to_string(),
+                synced_at_unix_ms: 2,
+            }),
+        ]
+        .into_iter()
+        .map(company_sweep_result)
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            outcomes.len(),
+            4,
+            "one bad book must not truncate the sweep"
+        );
+        assert!(matches!(
+            &outcomes[1],
+            OutstandingsLoadResult::Partial { reason_code, .. }
+                if reason_code == "company_currency_probe_failed"
+        ));
+        assert!(matches!(
+            &outcomes[2],
+            OutstandingsLoadResult::Partial { reason_code, .. }
+                if reason_code == "company_outstandings_read_failed"
+        ));
+        assert!(matches!(
+            &outcomes[3],
+            OutstandingsLoadResult::Partial { reason_code, .. }
+                if reason_code == "last_book_partial"
+        ));
+    }
+
+    #[test]
+    fn export_names_are_portable_and_reserved_devices_are_neutralized() {
+        assert_eq!(
+            portable_export_file_name("outstandings-A:B?C.csv").unwrap(),
+            "outstandings-A-B-C.csv"
+        );
+        assert_eq!(portable_export_file_name("CON.csv").unwrap(), "_CON.csv");
+        assert!(portable_export_file_name("../outside.csv").is_err());
+        assert!(portable_export_file_name("nested/report.csv").is_err());
+    }
+
+    #[test]
+    fn report_downloads_never_overwrite_an_existing_file() {
+        let directory = tempfile::tempdir().expect("temporary download directory");
+        let first = write_unique_download(directory.path(), "report.csv", b"first").unwrap();
+        let second = write_unique_download(directory.path(), "report.csv", b"second").unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "report.csv");
+        assert_eq!(second.file_name().unwrap(), "report-2.csv");
+        assert_eq!(std::fs::read(first).unwrap(), b"first");
+        assert_eq!(std::fs::read(second).unwrap(), b"second");
     }
 
     #[test]
@@ -2600,6 +2677,99 @@ mod tests {
     }
 }
 
+fn portable_export_file_name(file_name: &str) -> Result<String, String> {
+    let trimmed = file_name.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 200
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
+        || trimmed.starts_with('.')
+    {
+        return Err("Bridge could not build a safe file name for this export.".to_string());
+    }
+
+    let mut sanitized = trimmed
+        .chars()
+        .map(|character| {
+            if character.is_control()
+                || matches!(character, '<' | '>' | ':' | '"' | '|' | '?' | '*')
+            {
+                '-'
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    while sanitized.ends_with([' ', '.']) {
+        sanitized.pop();
+    }
+    if sanitized.is_empty() {
+        return Err("Bridge could not build a safe file name for this export.".to_string());
+    }
+
+    let stem = sanitized
+        .split_once('.')
+        .map_or(sanitized.as_str(), |(stem, _)| stem);
+    let upper_stem = stem.to_ascii_uppercase();
+    let reserved = matches!(upper_stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || upper_stem.strip_prefix("COM").is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        })
+        || upper_stem.strip_prefix("LPT").is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        });
+    if reserved {
+        sanitized.insert(0, '_');
+    }
+    Ok(sanitized)
+}
+
+fn write_unique_download(
+    directory: &std::path::Path,
+    file_name: &str,
+    contents: &[u8],
+) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write as _;
+
+    let path = std::path::Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("report");
+    let extension = path.extension().and_then(|value| value.to_str());
+    for number in 1_u32..=10_000 {
+        let candidate_name = if number == 1 {
+            file_name.to_string()
+        } else if let Some(extension) = extension {
+            format!("{stem}-{number}.{extension}")
+        } else {
+            format!("{stem}-{number}")
+        };
+        let candidate = directory.join(candidate_name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(contents).and_then(|()| file.sync_all()) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&candidate);
+                    return Err(error);
+                }
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "too many exports already use this file name",
+    ))
+}
+
 /// Writes an exported report to the user's Downloads folder and returns the
 /// full path.
 ///
@@ -2616,20 +2786,7 @@ pub async fn save_report_download(
     contents: String,
 ) -> Result<String, String> {
     use tauri::Manager as _;
-    // Refuse anything that could escape the directory. The caller builds this
-    // name from a company name, which is attacker-controlled only in the sense
-    // that it comes from the user's own books -- but a name containing `../`
-    // or a separator must never be able to choose the write location.
-    let trimmed = file_name.trim();
-    if trimmed.is_empty()
-        || trimmed.len() > 200
-        || trimmed.contains('/')
-        || trimmed.contains('\\')
-        || trimmed.contains("..")
-        || trimmed.starts_with('.')
-    {
-        return Err("Bridge could not build a safe file name for this export.".to_string());
-    }
+    let file_name = portable_export_file_name(&file_name)?;
 
     // Tauri's own path resolver, so this needs no extra crate and no
     // capability grant.
@@ -2638,8 +2795,7 @@ pub async fn save_report_download(
         .download_dir()
         .or_else(|_| app.path().home_dir())
         .map_err(|_| "Bridge could not locate a folder to save into.".to_string())?;
-    let path = downloads.join(trimmed);
-    std::fs::write(&path, contents.as_bytes())
+    let path = write_unique_download(&downloads, &file_name, contents.as_bytes())
         .map_err(|error| format!("Bridge could not write the export: {error}"))?;
     Ok(path.to_string_lossy().into_owned())
 }

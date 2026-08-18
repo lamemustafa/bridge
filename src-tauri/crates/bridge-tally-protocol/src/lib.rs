@@ -1224,6 +1224,7 @@ fn parse_company_rows_with_limit(
 fn parse_company_collection_rows(xml: &str) -> anyhow::Result<Vec<TallyCompany>> {
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
+    let mut collection_seen = false;
     let mut records = Vec::new();
     loop {
         match reader.read_event()? {
@@ -1242,21 +1243,22 @@ fn parse_company_collection_rows(xml: &str) -> anyhow::Result<Vec<TallyCompany>>
                 if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && element.name().as_ref().eq_ignore_ascii_case(b"COMPANY") =>
             {
-                if records.len() >= MAX_INTERACTIVE_DISCOVERY_COMPANIES {
-                    anyhow::bail!(
-                        "company collection exceeded the safe row limit: Tally returned more than {MAX_INTERACTIVE_DISCOVERY_COMPANIES} companies"
-                    );
-                }
-                validate_only_attributes(&element, &[b"NAME", b"RESERVEDNAME"])?;
-                let name = attr_value(&reader, &element, b"NAME")
-                    .map(|value| normalized_standard_value(&value, "company name"))
-                    .transpose()?
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("company collection omitted the company name")
-                    })?;
-                records.push(TallyCompany { name, guid: None });
+                anyhow::bail!("company collection omitted the company GUID");
             }
-            Event::Start(element) => path.push(element.name().as_ref().to_ascii_uppercase()),
+            Event::Start(element) => {
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"])
+                    && element.name().as_ref().eq_ignore_ascii_case(b"COLLECTION")
+                {
+                    collection_seen = true;
+                }
+                path.push(element.name().as_ref().to_ascii_uppercase());
+            }
+            Event::Empty(element)
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"])
+                    && element.name().as_ref().eq_ignore_ascii_case(b"COLLECTION") =>
+            {
+                collection_seen = true;
+            }
             Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
             Event::Eof => break,
             _ => {}
@@ -1264,6 +1266,9 @@ fn parse_company_collection_rows(xml: &str) -> anyhow::Result<Vec<TallyCompany>>
     }
     if !path.is_empty() {
         anyhow::bail!("company collection response ended before its root closed");
+    }
+    if !collection_seen {
+        anyhow::bail!("company collection response omitted BODY/DATA/COLLECTION");
     }
     Ok(records)
 }
@@ -1320,7 +1325,12 @@ fn parse_company_collection_row(
             _ => {}
         }
     }
-    Ok(TallyCompany { name, guid })
+    let guid =
+        guid.ok_or_else(|| anyhow::anyhow!("company collection omitted the company GUID"))?;
+    Ok(TallyCompany {
+        name,
+        guid: Some(guid),
+    })
 }
 
 pub fn parse_group_source_records_with_evidence(

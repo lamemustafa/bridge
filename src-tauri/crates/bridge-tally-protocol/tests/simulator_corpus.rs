@@ -694,6 +694,29 @@ fn company_collection_response_parses_an_empty_collection_without_erroring() {
 }
 
 #[test]
+fn company_collection_requires_the_collection_envelope() {
+    let incomplete =
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA/></BODY></ENVELOPE>"#;
+    assert!(parse_companies_from_collection(incomplete).is_err());
+}
+
+#[test]
+fn every_company_collection_row_requires_a_guid() {
+    for row in [
+        r#"<COMPANY NAME="Synthetic Company"></COMPANY>"#,
+        r#"<COMPANY NAME="Synthetic Company"/>"#,
+    ] {
+        let xml = format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{row}</COLLECTION></DATA></BODY></ENVELOPE>"
+        );
+        assert!(
+            parse_companies_from_collection(&xml).is_err(),
+            "GUID-less row must fail: {row}"
+        );
+    }
+}
+
+#[test]
 fn standard_ledger_identity_bootstrap_requires_repeated_scoped_context() {
     let row = |tag: &str, guid: &str| {
         format!(

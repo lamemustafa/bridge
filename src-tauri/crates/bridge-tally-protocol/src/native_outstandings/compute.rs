@@ -5,6 +5,7 @@ use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use crate::outstandings_shared::{
     AgeingBillCounts, AgeingBuckets, OutstandingsReport, PartyOutstanding,
 };
+use crate::TallyNamedMaster;
 
 use super::model::{
     AgeingAnchor, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
@@ -30,6 +31,7 @@ pub fn compute_native_outstandings(
     receivable_rows: &[NativeBillRow],
     payable_rows: &[NativeBillRow],
     ledgers: &[LedgerSnapshotEntry],
+    groups: &[TallyNamedMaster],
     anchor: AgeingAnchor,
     as_of: &TallyDate,
     source_bytes: usize,
@@ -55,6 +57,11 @@ pub fn compute_native_outstandings(
         .iter()
         .filter(|row| !row.closing_balance.is_zero())
     {
+        if !row.closing_balance.is_negative() {
+            return Err(NativeOutstandingsError::InvalidResponse(
+                "receivable_bill_sign_contradiction",
+            ));
+        }
         let amount = row
             .closing_balance
             .abs()
@@ -101,6 +108,11 @@ pub fn compute_native_outstandings(
         .iter()
         .filter(|row| !row.closing_balance.is_zero())
     {
+        if row.closing_balance.is_negative() {
+            return Err(NativeOutstandingsError::InvalidResponse(
+                "payable_bill_sign_contradiction",
+            ));
+        }
         let amount = row
             .closing_balance
             .abs()
@@ -151,7 +163,7 @@ pub fn compute_native_outstandings(
         .ok_or(NativeOutstandingsError::ArithmeticOverflow)?;
 
     let (residuals, residual_total, has_unaged_receivable) =
-        compute_residuals(receivable_rows, payable_rows, ledgers)?;
+        compute_residuals(receivable_rows, payable_rows, ledgers, groups)?;
 
     let report = OutstandingsReport {
         company_name: company_name.to_string(),
@@ -186,6 +198,7 @@ fn compute_residuals(
     receivable_rows: &[NativeBillRow],
     payable_rows: &[NativeBillRow],
     ledgers: &[LedgerSnapshotEntry],
+    groups: &[TallyNamedMaster],
 ) -> Result<(Vec<PartyResidual>, ExactDecimal, bool), NativeOutstandingsError> {
     let mut receivable_sums = BTreeMap::<&str, ExactDecimal>::new();
     for row in receivable_rows {
@@ -209,7 +222,11 @@ fn compute_residuals(
     let mut residuals = Vec::new();
     let mut residual_total = ExactDecimal::zero();
     let mut has_unaged_receivable = false;
-    for ledger in ledgers.iter().filter(|ledger| is_party_ledger(ledger)) {
+    let group_parents = group_parent_map(groups)?;
+    for ledger in ledgers {
+        if !is_party_ledger(ledger, &group_parents, groups.is_empty())? {
+            continue;
+        }
         let zero = ExactDecimal::zero();
         let receivable_sum = receivable_sums.get(ledger.name.as_str()).unwrap_or(&zero);
         let payable_sum = payable_sums.get(ledger.name.as_str()).unwrap_or(&zero);
@@ -227,7 +244,7 @@ fn compute_residuals(
             // balance in this data; a non-zero residual there is exposure
             // the Bills Receivable report cannot see and therefore cannot
             // age.
-            has_unaged_receivable |= ledger.closing_balance.is_negative();
+            has_unaged_receivable |= residual.is_negative();
         }
         residuals.push(PartyResidual {
             party: ledger.name.clone(),
@@ -237,12 +254,66 @@ fn compute_residuals(
     Ok((residuals, residual_total, has_unaged_receivable))
 }
 
-fn is_party_ledger(ledger: &LedgerSnapshotEntry) -> bool {
-    ledger.bill_wise_on
-        || ledger
-            .parent
-            .as_deref()
-            .is_some_and(|parent| matches!(parent.trim(), "Sundry Debtors" | "Sundry Creditors"))
+fn group_parent_map(
+    groups: &[TallyNamedMaster],
+) -> Result<BTreeMap<String, Option<String>>, NativeOutstandingsError> {
+    let mut parents = BTreeMap::new();
+    for group in groups {
+        let name = normalized_group_name(&group.name);
+        if name.is_empty() || parents.contains_key(&name) {
+            return Err(NativeOutstandingsError::InvalidResponse(
+                "group_name_missing_or_duplicate",
+            ));
+        }
+        parents.insert(
+            name,
+            group
+                .parent
+                .as_deref()
+                .map(normalized_group_name)
+                .filter(|parent| !parent.is_empty()),
+        );
+    }
+    Ok(parents)
+}
+
+fn is_party_ledger(
+    ledger: &LedgerSnapshotEntry,
+    group_parents: &BTreeMap<String, Option<String>>,
+    allow_unresolved_legacy_parent: bool,
+) -> Result<bool, NativeOutstandingsError> {
+    if ledger.bill_wise_on {
+        return Ok(true);
+    }
+    let Some(parent) = ledger.parent.as_deref() else {
+        return Ok(false);
+    };
+    let mut current = normalized_group_name(parent);
+    for _ in 0..=group_parents.len() {
+        if matches!(current.as_str(), "sundry debtors" | "sundry creditors") {
+            return Ok(true);
+        }
+        if current == "primary" || current.is_empty() {
+            return Ok(false);
+        }
+        match group_parents.get(&current) {
+            Some(Some(parent)) => current = parent.clone(),
+            Some(None) => return Ok(false),
+            None if allow_unresolved_legacy_parent => return Ok(false),
+            None => {
+                return Err(NativeOutstandingsError::InvalidResponse(
+                    "ledger_group_parent_unresolved",
+                ))
+            }
+        }
+    }
+    Err(NativeOutstandingsError::InvalidResponse(
+        "group_parent_cycle",
+    ))
+}
+
+fn normalized_group_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
 }
 
 fn bill_anchor_date(row: &NativeBillRow, anchor: AgeingAnchor) -> &TallyDate {
