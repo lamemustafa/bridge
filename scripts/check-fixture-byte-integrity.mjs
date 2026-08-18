@@ -11,9 +11,12 @@ const fixtureDirectories = [
   "src-tauri/crates/tally-protocol-simulator/fixtures",
   "docs/tally/compatibility/fixtures",
 ];
-const discoveredFixtureDirectories = walkDirectories(repositoryRoot)
+const repositoryDirectories = walkDirectories(repositoryRoot)
+  .map((directory) => relative(repositoryRoot, directory).replaceAll("\\", "/"));
+const ignoredDirectories = gitIgnoredPaths(repositoryDirectories);
+const discoveredFixtureDirectories = repositoryDirectories
+  .filter((directory) => !ignoredDirectories.has(directory))
   .filter((directory) => directory.endsWith("/fixture") || directory.endsWith("/fixtures"))
-  .map((directory) => relative(repositoryRoot, directory).replaceAll("\\", "/"))
   .sort();
 const unexpectedFixtureDirectories = discoveredFixtureDirectories.filter(
   (directory) => !fixtureDirectories.includes(directory),
@@ -100,9 +103,28 @@ function walkDirectories(directory) {
   return directories;
 }
 
-function runGit(args, { allowFailure = false } = {}) {
+function gitIgnoredPaths(paths) {
+  if (!paths.length) return new Set();
+  const result = runGit(["check-ignore", "-z", "--stdin"], {
+    allowFailure: true,
+    input: `${paths.join("\0")}\0`,
+  });
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(`git check-ignore failed with status ${result.status}`);
+  }
+  return new Set(
+    result.stdout
+      .toString("utf8")
+      .split("\0")
+      .filter(Boolean)
+      .map((path) => path.replaceAll("\\", "/")),
+  );
+}
+
+function runGit(args, { allowFailure = false, input } = {}) {
   const result = spawnSync("git", args, {
     cwd: repositoryRoot,
+    input,
     maxBuffer: 64 * 1024 * 1024,
     windowsHide: true,
   });

@@ -176,7 +176,7 @@ fn write_file_atomically(path: &Path, contents: &[u8]) -> Result<(), std::io::Er
             return Err(error);
         }
         drop(file);
-        if let Err(error) = std::fs::rename(&temporary, path) {
+        if let Err(error) = replace_file(&temporary, path) {
             let _ = std::fs::remove_file(&temporary);
             return Err(error);
         }
@@ -186,6 +186,45 @@ fn write_file_atomically(path: &Path, contents: &[u8]) -> Result<(), std::io::Er
         std::io::ErrorKind::AlreadyExists,
         "label_temporary_name_exhausted",
     ))
+}
+
+#[cfg(not(windows))]
+fn replace_file(temporary: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    std::fs::rename(temporary, destination)
+}
+
+#[cfg(windows)]
+fn replace_file(temporary: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let temporary = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: both buffers are NUL-terminated and remain alive for the call.
+    // The source is a newly created sibling owned by this process. The flags
+    // provide Windows' replace-existing behavior and request durable metadata.
+    let replaced = unsafe {
+        MoveFileExW(
+            temporary.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if replaced == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn temporary_label_path(parent: &Path, file_name: &str, sequence: u32) -> PathBuf {
@@ -350,6 +389,35 @@ mod tests {
             load(directory.path()).get("synthetic-company-guid"),
             Some(&"North practice".to_string())
         );
+    }
+
+    #[test]
+    fn replacement_sort_write_keeps_only_the_latest_complete_preference() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        save_sort_preference(
+            directory.path(),
+            ClientSortPreference {
+                key: ClientSortKey::Overdue,
+                desc: true,
+            },
+        )
+        .expect("first sort preference");
+        let latest = ClientSortPreference {
+            key: ClientSortKey::Client,
+            desc: false,
+        };
+        save_sort_preference(directory.path(), latest.clone()).expect("replacement preference");
+
+        assert_eq!(load_sort_preference(directory.path()), Some(latest));
+        assert!(directory
+            .path()
+            .read_dir()
+            .expect("directory entries")
+            .all(|entry| !entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")));
     }
 
     #[test]

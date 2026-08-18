@@ -3,7 +3,7 @@
 import React from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { applyClientGroupLabel, ClientGroupLabels, groupClientRows, rollbackFailedClientGroupLabel } from "./client-grouping";
+import { applyClientGroupLabel, ClientGroupLabels, groupClientRows, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
 import { outstandingsPartialState } from "./outstandings-copy";
 
 type CompanyRef = { name: string; guid: string };
@@ -95,6 +95,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   const [groupLabelError, setGroupLabelError] = React.useState<string | null>(null);
   const persistedGroupLabels = React.useRef<ClientGroupLabels>({});
   const requestVersion = React.useRef(0);
+  const sortChangedDuringLoad = React.useRef(false);
 
   React.useEffect(() => {
     let active = true;
@@ -122,7 +123,13 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
     let active = true;
     void invoke<SortPreference | null>("load_client_sort_preference")
       .then((preference) => {
-        if (active && isSortPreference(preference)) setSort(preference);
+        if (active && isSortPreference(preference)) {
+          setSort((current) => reconcileLoadedSortPreference(
+            current,
+            preference,
+            sortChangedDuringLoad.current,
+          ));
+        }
       })
       // Sorting is an optional local display preference. Keep the safe default
       // if its config file cannot be read.
@@ -266,6 +273,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
 
   const changeSort = React.useCallback((key: SortKey) => {
     const next = sort.key === key ? { key, desc: !sort.desc } : { key, desc: key !== "client" };
+    sortChangedDuringLoad.current = true;
     setSort(next);
     void invoke("save_client_sort_preference", { preference: next }).catch(() => {});
   }, [sort]);

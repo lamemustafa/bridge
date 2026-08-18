@@ -34,3 +34,22 @@ test("an unregistered fixture directory fails the byte-integrity gate", async ()
     await rm(directory, { force: true, recursive: true });
   }
 });
+
+test("a git-ignored fixture directory is outside the byte-integrity inventory", async () => {
+  const ignoredRoot = join(root, "dist");
+  await mkdir(ignoredRoot, { recursive: true });
+  const directory = await mkdtemp(join(ignoredRoot, ".fixture-integrity-"));
+  const fixtureDirectory = join(directory, "fixtures");
+
+  try {
+    await mkdir(fixtureDirectory, { recursive: true });
+    await writeFile(join(fixtureDirectory, "synthetic.xml"), "<ignored-fixture />\n");
+    assert.doesNotThrow(() => execFileSync(
+      process.execPath,
+      ["scripts/check-fixture-byte-integrity.mjs"],
+      { cwd: root, encoding: "utf8", stdio: "pipe" },
+    ));
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});

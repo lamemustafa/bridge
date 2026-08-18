@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { applyClientGroupLabel, groupClientRows, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
+import { applyClientGroupLabel, groupClientRows, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
 
 test("a failed optimistic label save restores only the value that actually failed", () => {
   const persisted = { "synthetic-company-guid": "Original" };
@@ -25,6 +25,13 @@ test("a failed optimistic label save restores only the value that actually faile
     {},
     "a failed first save returns the company to ungrouped",
   );
+});
+
+test("a late preference load cannot overwrite a sort chosen during startup", () => {
+  const current = { key: "client", desc: false };
+  const persisted = { key: "overdue", desc: true };
+  assert.deepEqual(reconcileLoadedSortPreference(current, persisted, true), current);
+  assert.deepEqual(reconcileLoadedSortPreference(current, persisted, false), persisted);
 });
 
 test("applying a group label preserves every company figure byte-for-byte", () => {
