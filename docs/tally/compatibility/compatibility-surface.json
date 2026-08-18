@@ -95,7 +95,7 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "59012d808bcc29d0abe31d74c6f97d7afe2aa6acd33ec188fabf61d8b92f10cc"
+      "sha256": "7aac9a6af2fdab6e117af7d3aa26ba04434701fe02d3010010fa3f3793236212"
     },
     {
       "path": "src-tauri/Cargo.toml",
@@ -434,5 +434,5 @@
       "sha256": "a27f294ee15e407b69fdfc73609e8708ac0509b6e6a8872daef5451fde61a8db"
     }
   ],
-  "manifest_sha256": "95e55d137ec3ef4b4de570dc0dab554bc926ca75435284342629312ed2d7725e"
+  "manifest_sha256": "ded2577b0f66b63d6ea65fe3d315d69dce68b0fa930f2b6d9106b7e0b52b526d"
 }
