@@ -219,7 +219,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "0386381576aac2c6efcb4fa87d8a6bf983e6046c06b9a728436cd8b1784457fa"
+      "sha256": "052b45f94751a01a1b7960cd861d1c122b49f0b80088b0434fc33e958396992d"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -434,5 +434,5 @@
       "sha256": "a27f294ee15e407b69fdfc73609e8708ac0509b6e6a8872daef5451fde61a8db"
     }
   ],
-  "manifest_sha256": "7ea8b0b85a4d42e61e4ce757dbb9a4a51f14f911376dbdca391d3592e325c381"
+  "manifest_sha256": "dbc291f1951893d3b55b9f71b8124ff3cd99a73acff484c8167a448beeaad2cb"
 }
