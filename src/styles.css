@@ -2129,6 +2129,7 @@ button.outstandings-party {
 .party-bills-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 14px;
   padding-top: 4px;
 }
 

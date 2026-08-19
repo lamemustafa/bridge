@@ -2,4 +2,5 @@
 //! `fetch_tally_outstandings` -- no module here issues a Tally request.
 
 pub mod party_statement;
+pub mod party_statement_pdf;
 pub mod party_statement_xlsx;

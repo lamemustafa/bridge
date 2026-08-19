@@ -199,8 +199,8 @@ fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> {
 
 fn bill_direction_label(kind: &str) -> Result<&'static str, PartyStatementXlsxError> {
     match kind {
-        "receivable" => Ok("Receivable (they owe you)"),
-        "payable" => Ok("Payable (you owe them)"),
+        "receivable" => Ok("Receivable"),
+        "payable" => Ok("Payable"),
         _ => Err(PartyStatementXlsxError::InvalidDirection(kind.to_string())),
     }
 }
@@ -298,14 +298,8 @@ mod tests {
 
     #[test]
     fn bill_direction_labels_make_mixed_party_amounts_unambiguous() {
-        assert_eq!(
-            bill_direction_label("receivable").unwrap(),
-            "Receivable (they owe you)"
-        );
-        assert_eq!(
-            bill_direction_label("payable").unwrap(),
-            "Payable (you owe them)"
-        );
+        assert_eq!(bill_direction_label("receivable").unwrap(), "Receivable");
+        assert_eq!(bill_direction_label("payable").unwrap(), "Payable");
         assert!(matches!(
             bill_direction_label("unknown"),
             Err(PartyStatementXlsxError::InvalidDirection(_))
@@ -359,6 +353,26 @@ mod tests {
                 .unwrap();
         let bytes = render_party_statement_xlsx(&statement).unwrap();
         assert!(bytes.len() > 200);
+    }
+
+    #[test]
+    fn renders_unallocated_direction_in_the_workbook_text() {
+        let unallocated = vec![UnallocatedParty {
+            party: "On Account Only".to_string(),
+            amount: ExactDecimal::parse("42.00").unwrap(),
+            direction: ExposureDirection::Payable,
+        }];
+        let statement =
+            build_party_statement("Lab Co", "20260808", "On Account Only", &[], &unallocated)
+                .unwrap();
+        let bytes = render_party_statement_xlsx(&statement).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut text = String::new();
+        for name in ["xl/worksheets/sheet1.xml", "xl/sharedStrings.xml"] {
+            let mut entry = archive.by_name(name).unwrap();
+            std::io::Read::read_to_string(&mut entry, &mut text).unwrap();
+        }
+        assert!(text.contains("Unallocated Payable (no bill reference)"));
     }
 
     #[test]
