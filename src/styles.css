@@ -1078,6 +1078,33 @@ h2 {
   font-weight: 700;
 }
 
+.error-boundary-panel {
+  border-color: #f0b8ad;
+  background: #fff5f2;
+}
+
+.error-boundary-panel h2 {
+  margin: 0 0 6px;
+  color: #9b2c1f;
+  font-size: 16px;
+}
+
+.error-boundary-panel p {
+  margin: 0 0 14px;
+  color: #71433b;
+  overflow-wrap: anywhere;
+}
+
+.error-boundary-panel button {
+  background: #1f6a4a;
+  color: white;
+  border: 0;
+  border-radius: 14px;
+  padding: 8px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .setup-company {
   display: grid;
   gap: 18px;
@@ -1415,8 +1442,18 @@ summary:focus-visible,
 
 .outstandings-totals {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   border-bottom: 1px solid #e6ebe7;
+}
+
+.outstandings-totals em {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  font-style: normal;
+  letter-spacing: 0.02em;
+  color: #8a9c92;
+  cursor: help;
 }
 
 .outstandings-totals div {
@@ -1437,23 +1474,88 @@ summary:focus-visible,
 
 .outstandings-totals strong {
   display: block;
-  margin-top: 8px;
-  font-size: 36px;
+  margin-top: 10px;
+  font-size: 32px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: #16241c;
   font-variant-numeric: tabular-nums;
 }
 
 .outstandings-ageing {
-  display: grid;
-  grid-template-columns: 1.25fr repeat(4, minmax(120px, 1fr));
+  padding: 24px 30px 26px;
   border-bottom: 1px solid #e6ebe7;
 }
 
-.outstandings-ageing > div {
-  padding: 22px 20px;
+.ageing-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
-.outstandings-ageing > div + div {
-  border-left: 1px solid #eef2ef;
+.ageing-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.ageing-heading span {
+  color: #7d9086;
+  font-size: 12px;
+}
+
+/* Bucket | bar | amount | count. The bar is the point: three empty buckets and
+   one full one is a fact a reader should get in one glance, not by comparing
+   four numbers. */
+.ageing-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 150px 64px;
+  align-items: center;
+  gap: 14px;
+  padding: 5px 0;
+}
+
+.ageing-bucket {
+  font-size: 12px;
+  color: #61756a;
+  font-variant-numeric: tabular-nums;
+}
+
+.ageing-track {
+  position: relative;
+  height: 22px;
+  border-radius: 5px;
+  background: #f1f5f2;
+  overflow: hidden;
+}
+
+.ageing-fill {
+  display: block;
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  transition: width 260ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Sequential ramp, light -> dark with rising chroma. Monotonic lightness is the
+   requirement for a ramp; every bar is direct-labelled, which discharges the
+   low contrast of the lightest steps. */
+.ageing-fill.tier-1 { background: #f4e6c8; }
+.ageing-fill.tier-2 { background: #e8c47e; }
+.ageing-fill.tier-3 { background: #d19a35; }
+.ageing-fill.tier-4 { background: #a3690f; }
+
+.ageing-row strong {
+  font-size: 15px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #16241c;
+}
+
+.ageing-count {
+  font-size: 12px;
+  color: #8a9c92;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .outstandings-ageing strong {
@@ -1508,6 +1610,49 @@ summary:focus-visible,
   grid-column: 2 / 4;
   font-size: 12px;
   text-align: right;
+}
+
+.outstandings-column-headers {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 180px 110px;
+  align-items: center;
+  gap: 18px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eef2ef;
+}
+
+.outstandings-column-headers button {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7d9086;
+  text-align: right;
+  cursor: pointer;
+}
+
+.outstandings-column-headers button:first-child {
+  text-align: left;
+}
+
+.outstandings-column-headers button:hover {
+  color: #16241c;
+}
+
+.outstandings-column-headers button[aria-sort="ascending"],
+.outstandings-column-headers button[aria-sort="descending"] {
+  color: #1f6a4a;
+}
+
+.outstandings-column-headers button[aria-sort="ascending"]::after {
+  content: " \2191";
+}
+
+.outstandings-column-headers button[aria-sort="descending"]::after {
+  content: " \2193";
 }
 
 .outstandings-party {
@@ -1727,4 +1872,534 @@ summary:focus-visible,
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---- Exposure composition strip -------------------------------------------
+   The three headline figures are routinely orders of magnitude apart. Equal
+   tiles imply equal weight, so the proportion gets its own mark. */
+
+.exposure-share {
+  padding: 18px 30px 20px;
+  border-bottom: 1px solid #e6ebe7;
+}
+
+.exposure-share-track {
+  display: flex;
+  gap: 2px; /* surface gap between adjacent fills */
+  height: 10px;
+  margin-bottom: 12px;
+}
+
+.exposure-share-slice {
+  min-width: 3px; /* a real but tiny share must stay visible */
+  border-radius: 2px;
+}
+
+.exposure-share-slice.is-receivable { background: #1f6a4a; }
+.exposure-share-slice.is-payable { background: #7fae97; }
+.exposure-share-slice.is-unallocated { background: #c9d5ce; }
+
+.exposure-share-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.exposure-share-key li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #61756a;
+}
+
+.exposure-share-key i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.exposure-share-key i.is-receivable { background: #1f6a4a; }
+.exposure-share-key i.is-payable { background: #7fae97; }
+.exposure-share-key i.is-unallocated { background: #c9d5ce; }
+
+.exposure-share-key b {
+  color: #16241c;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Party rows ----------------------------------------------------------- */
+
+.outstandings-party {
+  position: relative;
+  isolation: isolate;
+}
+
+/* Magnitude sits behind the row rather than in its own column, so rank is
+   legible without spending horizontal space or asking the reader to compare
+   ten right-aligned numbers. */
+.party-magnitude {
+  position: absolute;
+  left: -10px;
+  top: 6px;
+  bottom: 6px;
+  z-index: -1;
+  border-radius: 5px;
+  background: linear-gradient(90deg, rgba(31, 106, 74, 0.09), rgba(31, 106, 74, 0.02));
+}
+
+.party-age {
+  text-align: right;
+}
+
+.age-chip {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Same ramp as the ageing bars, so a chip and a bar mean the same thing. */
+.age-chip.tier-1 { background: #f4e6c8; color: #5c4711; }
+.age-chip.tier-2 { background: #e8c47e; color: #533f0c; }
+.age-chip.tier-3 { background: #d19a35; color: #402f06; }
+.age-chip.tier-4 { background: #a3690f; color: #fff; }
+.age-chip.is-none { background: #eef2ef; color: #7d9086; }
+
+/* Long numbers must never clip. A rupee crore figure is wider than a lakh one,
+   and a fixed 3-column grid silently truncates the largest -- which is exactly
+   the number that matters most. */
+.outstandings-totals strong {
+  overflow-wrap: anywhere;
+  font-size: clamp(20px, 2.1vw, 30px);
+}
+
+.outstandings-export-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 30px;
+  border-bottom: 1px solid #e6ebe7;
+  background: #f2f8f4;
+  color: #1f4a36;
+  font-size: 13px;
+}
+
+.outstandings-export-notice button {
+  border: 0;
+  background: none;
+  color: #1f6a4a;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.view-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: #eef2ef;
+}
+
+.view-switch button {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 11px;
+  background: none;
+  color: #61756a;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.view-switch button.is-on {
+  background: #fff;
+  color: #16241c;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(22, 36, 28, 0.1);
+}
+
+/* No count column here -- unallocated exposure has no bills by definition,
+   so every row would otherwise print a dead em-dash. */
+.ageing-row.is-party {
+  grid-template-columns: minmax(0, 150px) minmax(0, 1fr) 150px;
+}
+
+.ageing-party {
+  font-size: 13px;
+  color: #27352e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Unallocated is not part of the ageing severity ramp — it has no age at all,
+   so it must not borrow a colour that encodes one. */
+.ageing-fill.is-unallocated {
+  background: #b6c6bd;
+}
+
+.company-more {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #eef2ef;
+}
+
+.company-more h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.company-more > p {
+  margin: 0 0 12px;
+  color: #61756a;
+  font-size: 13px;
+}
+
+.export-notice-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* ---- Party bills drill-down ------------------------------------------------
+   Each party row expands in place to its open bills. Reusing the row grid
+   and the same age-chip ramp keeps the drill-down reading as part of the
+   same table rather than a nested card. */
+
+button.outstandings-party {
+  display: grid;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid #eef2ef;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  appearance: none;
+}
+
+.outstandings-party.is-expandable:hover {
+  background: #f7faf7;
+}
+
+.party-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.party-caret {
+  flex-shrink: 0;
+  color: #7d9086;
+  transition: transform 160ms ease;
+}
+
+.party-caret.is-open {
+  transform: rotate(90deg);
+}
+
+.outstandings-party-bills {
+  padding: 4px 0 16px 30px;
+  border-top: 1px solid #eef2ef;
+  background: #f9fbfa;
+}
+
+.party-bills-empty {
+  margin: 0;
+  padding: 12px 0 0;
+  color: #61756a;
+  font-size: 13px;
+}
+
+.party-bills-table {
+  padding-top: 6px;
+}
+
+.party-bills-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.party-statement-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: #3f6b52;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.party-statement-action:hover {
+  text-decoration: underline;
+}
+
+.party-bills-heading,
+.party-bill-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px 150px 64px;
+  align-items: center;
+  gap: 14px;
+}
+
+.party-bills-heading {
+  padding: 6px 0;
+  color: #8a9c92;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.party-bills-heading span:nth-child(n + 3),
+.party-bill-row strong,
+.party-bill-row .age-chip {
+  justify-self: end;
+}
+
+.party-bill-row {
+  padding: 7px 0;
+  border-top: 1px solid #eef2ef;
+}
+
+.party-bill-reference,
+.party-bill-dates {
+  font-variant-numeric: tabular-nums;
+}
+
+.party-bill-reference {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #27352e;
+  font-size: 13px;
+}
+
+.party-bill-dates {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #27352e;
+  font-size: 13px;
+}
+
+/* Bill date and due date only diverge when the party carries a credit
+   period -- the reason Tally's ageing can outrun a naive bill-date
+   calculation. Surfaced, not hidden. */
+.party-bill-due {
+  font-style: normal;
+  color: #7d9086;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.party-bill-row strong {
+  font-size: 13px;
+  color: #16241c;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 860px) {
+  .party-bills-heading,
+  .party-bill-row {
+    grid-template-columns: minmax(0, 1fr) 150px 120px 52px;
+  }
+}
+
+@media (max-width: 520px) {
+  .outstandings-party-bills {
+    padding-left: 20px;
+  }
+
+  .party-bills-heading,
+  .party-bill-row {
+    grid-template-columns: 1fr auto;
+    row-gap: 4px;
+  }
+
+  .party-bills-heading span:nth-child(2),
+  .party-bill-row .party-bill-dates {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ---- All clients (cross-company) ----------------------------------------- */
+
+.clients-screen {
+  overflow: hidden;
+  border: 1px solid #dce4de;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.clients-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  border-bottom: 1px solid #e6ebe7;
+}
+
+.clients-totals div {
+  padding: 20px 30px;
+}
+
+.clients-totals div + div {
+  border-left: 1px solid #e6ebe7;
+}
+
+.clients-totals span {
+  display: block;
+  color: #61756a;
+  font-size: 13px;
+}
+
+.clients-totals strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+  color: #16241c;
+  font-variant-numeric: tabular-nums;
+}
+
+.clients-table {
+  padding: 8px 30px 26px;
+}
+
+.clients-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px 120px 120px 70px;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 56px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid #eef2ef;
+  background: none;
+  text-align: right;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.clients-row.is-head {
+  border-top: 0;
+  padding-bottom: 10px;
+  color: #61756a;
+  font-size: 12px;
+  cursor: default;
+}
+
+.clients-row:not(.is-head):hover {
+  background: #f7faf8;
+}
+
+.clients-row > span {
+  font-variant-numeric: tabular-nums;
+}
+
+.clients-name,
+.clients-row.is-head > span:first-child {
+  text-align: left;
+}
+
+.clients-name strong {
+  display: block;
+  font-size: 14px;
+}
+
+.clients-name em {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-style: normal;
+  color: #8a9c92;
+}
+
+/* Overdue is the one number on this screen a partner acts on. */
+.clients-row .is-overdue {
+  color: #8a5a0c;
+  font-weight: 600;
+}
+
+/* ---- All clients: magnitude, sorting, chips ------------------------------- */
+
+.clients-row {
+  position: relative;
+  isolation: isolate;
+  grid-template-columns: minmax(0, 1fr) 120px 120px 120px 96px;
+}
+
+.clients-magnitude {
+  position: absolute;
+  left: -10px;
+  top: 6px;
+  bottom: 6px;
+  z-index: -1;
+  border-radius: 5px;
+  background: linear-gradient(90deg, rgba(31, 106, 74, 0.09), rgba(31, 106, 74, 0.02));
+}
+
+.clients-row.is-head button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #7d9086;
+  font-size: 12px;
+  text-align: right;
+  cursor: pointer;
+}
+
+.clients-row.is-head button:first-child {
+  text-align: left;
+}
+
+.clients-row.is-head button:hover {
+  color: #16241c;
+}
+
+.clients-row.is-head button.is-sorted {
+  color: #1f6a4a;
+  font-weight: 600;
+}
+
+.clients-row.is-head button.is-sorted::after {
+  content: "";
+  margin-left: 5px;
+}
+
+.clients-row.is-head button[aria-sort="descending"]::after { content: " ↓"; }
+.clients-row.is-head button[aria-sort="ascending"]::after { content: " ↑"; }
+
+/* Age chip plus a chevron, so the row reads as somewhere to go rather than a
+   dead cell. */
+.clients-age {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.clients-age svg {
+  color: #a8bab0;
+  flex-shrink: 0;
+}
+
+.clients-row:hover .clients-age svg {
+  color: #1f6a4a;
 }

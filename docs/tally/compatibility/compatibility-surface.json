@@ -79,7 +79,7 @@
     },
     {
       "path": "scripts/outstandings-copy.test.mjs",
-      "sha256": "77a8d992e00e02a1da22d19d6701a567e89e87124265c8e2b2b6394f93d5fe8b"
+      "sha256": "8c9adb100a45704ca8ba72203a397defca3e8b01a297e96043c543cc052b980a"
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
@@ -359,7 +359,7 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "d51921b342436ef431b0e771702b1331ec16d1b346693f9adc1f5918995e5426"
+      "sha256": "be442a765fbf8f3440abb6c4673e5baefec8f628743c314693f9d5ebed276dab"
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
@@ -367,15 +367,19 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "ead26567bb7f256bd7f92f9988d4a655884801246f6f38f4979125f0e2069bbc"
+      "sha256": "afdcba045263ee790264c171bb9a3e5286f565b6c6aa27036a33c7f4c1382ba1"
     },
     {
       "path": "src/outstandings-copy.ts",
-      "sha256": "948a310fa1d3c94d1fc46a940be11cb6ab27bb5d166e7ed966291ddb3d4d3f65"
+      "sha256": "a2bcf820f694443ac122e91aa98fb354b6e2d5c6be3e1e9503b368a3a0a4f696"
+    },
+    {
+      "path": "src/outstandings-csv.ts",
+      "sha256": "3c836edf03c6d71e26e726e4b31f2c4ae9c98acb703629b2e24b578b33145796"
     },
     {
       "path": "src/styles.css",
-      "sha256": "0dd2517e24e126118cee071058946ab0301055ebdbd7985641448523ee468504"
+      "sha256": "33bd1f956b6b1ece2924fa8741fec9cb46a4b3b912c421b435b587c2e6293d6d"
     },
     {
       "path": "src/tally-company-selection.ts",
@@ -430,5 +434,5 @@
       "sha256": "a27f294ee15e407b69fdfc73609e8708ac0509b6e6a8872daef5451fde61a8db"
     }
   ],
-  "manifest_sha256": "e1e2d20a7e13f22c6f1369d333a71f47c83f3b877483daa86218e7ea723b9e45"
+  "manifest_sha256": "2df5d7ae948cf4a53a183fa7683c5ab26fc856bc581cbc691401a6572849682b"
 }

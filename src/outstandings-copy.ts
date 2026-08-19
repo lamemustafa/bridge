@@ -1,6 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
+export type OutstandingsAgeingAnchor = "due_date" | "bill_date";
+
+export function outstandingsAgeingAnchorLabel(anchor: OutstandingsAgeingAnchor) {
+  return anchor === "due_date" ? "aged from due date" : "aged from bill date";
+}
+
 export function outstandingsPartialReason(value: string) {
+  if (value === "native_overdue_crosscheck_mismatch") {
+    return "Tally's overdue-day cross-check disagreed with the bill due dates, so Bridge withheld the totals";
+  }
+  if (value === "company_currency_probe_failed") {
+    return "Bridge could not verify this company's base currency";
+  }
+  if (value === "company_base_currency_not_inr") {
+    return "this company's verified base currency is not INR";
+  }
+  if (value === "company_outstandings_read_failed") {
+    return "this company read failed while the remaining companies continued";
+  }
   if (value === "tally_segment_latency_trending_restart_recommended") {
     return "comparable segments kept slowing toward the safety deadline; Tally may need a restart before another sync";
   }
@@ -81,7 +99,16 @@ export function isNonRetryableOutstandingsBoundary(value: string) {
   return !outstandingsPartialState(value).retryable;
 }
 
-export function outstandingsAgeingDisclosure(hasUnagedReceivable: boolean) {
+export function outstandingsAgeingDisclosure(
+  hasUnagedReceivable: boolean,
+  unallocatedTotalKnown = false,
+) {
   if (!hasUnagedReceivable) return null;
+  if (unallocatedTotalKnown) {
+    // The native bills path recovers the unallocated balance exactly from the
+    // party ledgers, so the honest disclosure is now "shown separately" rather
+    // than "cannot be proven".
+    return "Receivable includes entries with no bill reference. Tally gives them no bill and no age, so they are excluded from these buckets and shown as Unallocated above.";
+  }
   return "Receivable includes On Account entries that are excluded from these buckets. Tally gives them no bill reference or age. Bridge does not show an On Account amount because this voucher read cannot prove the full unallocated balance.";
 }
