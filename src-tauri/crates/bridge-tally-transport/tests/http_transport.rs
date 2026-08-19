@@ -361,24 +361,33 @@ async fn post_sites_send_exact_utf16_request_and_round_trip_non_ascii_text() {
             .with_encoding(WireEncoding::Utf16Le);
         let simulator = Simulator::spawn(plan).expect("spawn Unicode simulator");
         let transport = TallyHttpTransport::new(endpoint(&simulator)).expect("build transport");
-        let response_text = if decoded_only {
-            transport
+        let (response_text, request_body_sha256) = if decoded_only {
+            let response = transport
                 .post_xml_decoded(xml.to_owned())
                 .await
-                .expect("decoded POST")
-                .into_text()
+                .expect("decoded POST");
+            let request_body_sha256 = response
+                .request_body_sha256()
+                .expect("POST exposes its exact request entity digest")
+                .to_owned();
+            (response.into_text(), request_body_sha256)
         } else {
-            transport
+            let response = transport
                 .post_xml(xml.to_owned())
                 .await
-                .expect("retained POST")
-                .into_text()
+                .expect("retained POST");
+            let request_body_sha256 = response
+                .request_body_sha256()
+                .expect("POST exposes its exact request entity digest")
+                .to_owned();
+            (response.into_text(), request_body_sha256)
         };
         assert_eq!(response_text, xml);
         let observed = simulator.finish().expect("finish Unicode simulator");
         assert!(observed.request_content_type_is_tally_xml_utf16);
         assert_eq!(observed.request_body_bytes, encoded_request.len());
         assert_eq!(observed.request_body_sha256, sha256_hex(&encoded_request));
+        assert_eq!(request_body_sha256, observed.request_body_sha256);
     }
 }
 

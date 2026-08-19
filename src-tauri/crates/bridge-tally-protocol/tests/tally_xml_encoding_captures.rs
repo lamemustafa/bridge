@@ -69,9 +69,26 @@ fn response_content_type_must_agree_with_the_expected_encoding() {
 }
 
 #[test]
-fn missing_ambiguous_or_non_xml_content_types_fail_closed() {
-    for content_type in [
+fn missing_charset_defers_to_expected_encoding_while_invalid_content_types_fail_closed() {
+    let utf8 = decode_tally_xml_response_bytes_limited(
+        LED_ASCII,
         "text/xml",
+        ExpectedTallyTextEncoding::Utf8,
+        LED_ASCII.len(),
+    )
+    .expect("missing charset must defer to the UTF-8 expectation");
+    assert_eq!(utf8.encoding, TallyTextEncoding::Utf8);
+
+    let utf16 = decode_tally_xml_response_bytes_limited(
+        LED_UTF16,
+        "text/xml",
+        ExpectedTallyTextEncoding::Utf16Le,
+        LED_UTF16.len(),
+    )
+    .expect("missing charset must defer to the UTF-16LE expectation");
+    assert_eq!(utf16.encoding, TallyTextEncoding::Utf16Le);
+
+    for content_type in [
         "application/xml; charset=utf-16",
         "text/xml; charset=utf-16; charset=utf-16",
         "text/xml; charset=utf-16; boundary=unexpected",
@@ -87,6 +104,22 @@ fn missing_ambiguous_or_non_xml_content_types_fail_closed() {
             TallyTextDecodeError::UnsupportedContentType,
         );
     }
+}
+
+#[test]
+fn utf8_without_charset_cannot_reach_the_xml_parser_under_a_utf16_expectation() {
+    let decoded = decode_tally_xml_response_bytes_limited(
+        LED_ASCII,
+        "text/xml",
+        ExpectedTallyTextEncoding::Utf16Le,
+        LED_ASCII.len() * 4,
+    )
+    .expect("the even-length UTF-8 capture is byte-valid as UTF-16LE code units");
+    assert_eq!(decoded.encoding, TallyTextEncoding::Utf16Le);
+    assert!(
+        bridge_tally_protocol::parse_ledgers(&decoded.text).is_err(),
+        "UTF-8 bytes decoded under a UTF-16LE expectation must not become valid ledger XML",
+    );
 }
 
 #[test]

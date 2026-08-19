@@ -134,6 +134,9 @@ pub const SELECTED_VOUCHER_QUERY_PROFILE_ID: &str = BRIDGE_SELECTED_VOUCHER_EXPO
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedReadObservation {
+    /// SHA-256 of the exact HTTP entity bytes dispatched for the selected read.
+    /// Pre-U1 UTF-8 observations and current UTF-16LE observations therefore
+    /// retain one stable meaning even though their wire encodings differ.
     pub request_sha256: String,
     /// SHA-256 of the decoded XML re-encoded as UTF-8, not of the wire bytes.
     pub decoded_response_sha256: String,
@@ -537,6 +540,20 @@ impl TallyClient {
         Ok((response.into_text(), encoded_bytes))
     }
 
+    async fn post_xml_with_request_wire_sha256(
+        &self,
+        xml: String,
+    ) -> anyhow::Result<(String, String)> {
+        let response = self.http.post_xml_decoded(xml).await?;
+        let request_sha256 = response
+            .request_body_sha256()
+            .ok_or_else(|| anyhow::anyhow!("Tally POST omitted request wire commitment"))?
+            .to_owned();
+        self.record_observed_body_bytes(response.encoded_bytes());
+        self.record_observed_encoding(response.encoding());
+        Ok((response.into_text(), request_sha256))
+    }
+
     #[cfg(feature = "voucher-scan")]
     async fn post_outstandings_xml_with_encoded_bytes(
         &self,
@@ -833,8 +850,7 @@ impl TallyClient {
         expected_company_guid: &str,
     ) -> anyhow::Result<SelectedReadObservation> {
         let request = tdl_engine::ledgers_request(company);
-        let request_sha256 = sha256_hex(request.as_bytes());
-        let xml = self.post_xml(request).await?;
+        let (xml, request_sha256) = self.post_xml_with_request_wire_sha256(request).await?;
         let decoded_response_sha256 = sha256_hex(xml.as_bytes());
         bridge_tally_protocol::validate_exact_selected_export_structure(&xml, "LEDGER")?;
         let parsed = parse_ledger_source_records_with_evidence(&xml)?;
@@ -881,8 +897,7 @@ impl TallyClient {
         to: &str,
     ) -> anyhow::Result<SelectedReadObservation> {
         let request = tdl_engine::selected_vouchers_request(company, from, to);
-        let request_sha256 = sha256_hex(request.as_bytes());
-        let xml = self.post_xml(request).await?;
+        let (xml, request_sha256) = self.post_xml_with_request_wire_sha256(request).await?;
         let decoded_response_sha256 = sha256_hex(xml.as_bytes());
         bridge_tally_protocol::validate_exact_selected_export_structure(&xml, "VOUCHER")?;
         let parsed = parse_selected_voucher_source_records_with_evidence(&xml)?;
@@ -1153,6 +1168,7 @@ mod tests {
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TransportId,
     };
     use std::time::Duration;
+    use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -1200,6 +1216,28 @@ mod tests {
             detect_product("prefix Tally ERP 9 Server is Running suffix"),
             TallyProduct::Unknown
         ));
+    }
+
+    #[tokio::test]
+    async fn selected_read_request_digest_matches_the_dispatched_wire_entity() {
+        let plan = ScenarioPlan::new(Fixture::NormalExport).with_encoding(WireEncoding::Utf16Le);
+        let simulator = Simulator::spawn(plan).expect("spawn synthetic Tally endpoint");
+        let client = TallyClient::new(TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        })
+        .expect("build synthetic Tally client");
+
+        let observation = client
+            .qualify_selected_ledgers(
+                "BRIDGE SYNTHETIC BOOK",
+                "00000000-0000-4000-8000-000000000001",
+            )
+            .await
+            .expect("qualify synthetic selected-ledger read");
+        let dispatched = simulator.finish().expect("finish synthetic Tally exchange");
+
+        assert_eq!(observation.request_sha256, dispatched.request_body_sha256);
     }
 
     #[test]

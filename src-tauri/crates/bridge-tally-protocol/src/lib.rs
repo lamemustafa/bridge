@@ -796,9 +796,12 @@ pub fn validate_tally_xml_response_content_type(
         }
         declared = Some(value.trim());
     }
+    let Some(declared) = declared else {
+        return Ok(());
+    };
     let declared = match declared {
-        Some(value) if value.eq_ignore_ascii_case("utf-8") => ExpectedTallyTextEncoding::Utf8,
-        Some(value) if value.eq_ignore_ascii_case("utf-16") => ExpectedTallyTextEncoding::Utf16Le,
+        value if value.eq_ignore_ascii_case("utf-8") => ExpectedTallyTextEncoding::Utf8,
+        value if value.eq_ignore_ascii_case("utf-16") => ExpectedTallyTextEncoding::Utf16Le,
         _ => return Err(TallyTextDecodeError::UnsupportedContentType),
     };
     if declared != expected {
@@ -825,6 +828,56 @@ pub fn decode_tally_xml_response_bytes_limited(
         text: decoded.text,
         encoding: decoded.encoding,
     })
+}
+
+#[cfg(test)]
+mod tally_xml_response_contract_tests {
+    use super::*;
+
+    #[test]
+    fn missing_charset_defers_to_expected_encoding_without_weakening_byte_checks() {
+        const XML: &str = "<ENVELOPE />";
+
+        let utf8 = decode_tally_xml_response_bytes_limited(
+            XML.as_bytes(),
+            "text/xml",
+            ExpectedTallyTextEncoding::Utf8,
+            1024,
+        )
+        .expect("bare XML content type accepts expected UTF-8 bytes");
+        assert_eq!(utf8.text, XML);
+        assert_eq!(utf8.encoding, TallyTextEncoding::Utf8);
+
+        let utf16_bytes = encode_tally_xml_request_utf16le(XML);
+        let utf16 = decode_tally_xml_response_bytes_limited(
+            &utf16_bytes,
+            "text/xml",
+            ExpectedTallyTextEncoding::Utf16Le,
+            1024,
+        )
+        .expect("bare XML content type accepts expected UTF-16LE bytes");
+        assert_eq!(utf16.text, XML);
+        assert_eq!(utf16.encoding, TallyTextEncoding::Utf16LeBom);
+
+        assert_eq!(
+            decode_tally_xml_response_bytes_limited(
+                XML.as_bytes(),
+                "text/xml; charset=utf-16",
+                ExpectedTallyTextEncoding::Utf8,
+                1024,
+            ),
+            Err(TallyTextDecodeError::DeclaredEncodingMismatch),
+        );
+        assert_eq!(
+            decode_tally_xml_response_bytes_limited(
+                &utf16_bytes,
+                "text/xml",
+                ExpectedTallyTextEncoding::Utf8,
+                1024,
+            ),
+            Err(TallyTextDecodeError::ObservedEncodingMismatch),
+        );
+    }
 }
 
 fn encode_sha256(bytes: impl AsRef<[u8]>) -> String {

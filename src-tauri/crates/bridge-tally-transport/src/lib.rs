@@ -23,6 +23,9 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const STATUS_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
+/// Maximum UTF-8 byte length of an XML source string accepted before UTF-16LE
+/// wire encoding. This preserves the pre-U1 request-cap contract; the encoded
+/// HTTP entity is mathematically bounded to at most twice this size plus its BOM.
 pub const XML_REQUEST_MAX_BYTES: usize = 32 * 1024 * 1024;
 pub const XML_RESPONSE_MAX_BYTES: usize = 32 * 1024 * 1024;
 /// Sealed exception for the voucher-scan wildcard outstandings request only
@@ -62,6 +65,7 @@ impl Default for TallyEndpointConfig {
 pub struct TransportPolicy {
     pub request_timeout: Duration,
     pub status_response_max_bytes: usize,
+    /// UTF-8 byte limit for the XML source string before wire encoding.
     pub xml_request_max_bytes: usize,
     pub xml_response_max_bytes: usize,
 }
@@ -115,6 +119,7 @@ pub struct TallyHttpResponse {
     encoding: TallyTextEncoding,
     encoded_body: Vec<u8>,
     encoded_bytes: usize,
+    request_body_sha256: Option<String>,
     http_status: u16,
 }
 
@@ -152,6 +157,12 @@ impl TallyHttpResponse {
         self.encoded_bytes
     }
 
+    /// SHA-256 of the exact HTTP entity bytes dispatched for a POST request.
+    /// Status GET responses have no request entity and return `None`.
+    pub fn request_body_sha256(&self) -> Option<&str> {
+        self.request_body_sha256.as_deref()
+    }
+
     pub fn http_status(&self) -> u16 {
         self.http_status
     }
@@ -165,6 +176,7 @@ pub struct TallyDecodedHttpResponse {
     decoded_bytes: usize,
     encoded_sha256: String,
     decoded_sha256: String,
+    request_body_sha256: Option<String>,
     http_status: u16,
 }
 
@@ -207,6 +219,12 @@ impl TallyDecodedHttpResponse {
 
     pub fn decoded_sha256(&self) -> &str {
         &self.decoded_sha256
+    }
+
+    /// SHA-256 of the exact HTTP entity bytes dispatched for a POST request.
+    /// Status GET responses have no request entity and return `None`.
+    pub fn request_body_sha256(&self) -> Option<&str> {
+        self.request_body_sha256.as_deref()
     }
 
     pub fn http_status(&self) -> u16 {
@@ -265,6 +283,45 @@ impl TallyTransportError {
             Self::InvalidEncoding { .. } => "response_encoding_invalid",
         }
     }
+}
+
+struct PreparedTallyXmlRequest {
+    body: Vec<u8>,
+    body_sha256: String,
+}
+
+fn prepare_tally_xml_request(
+    xml: &str,
+    xml_source_max_bytes: usize,
+) -> Result<PreparedTallyXmlRequest, TallyTransportError> {
+    prepare_tally_xml_request_with_encoder(
+        xml,
+        xml_source_max_bytes,
+        encode_tally_xml_request_utf16le,
+    )
+}
+
+fn prepare_tally_xml_request_with_encoder(
+    xml: &str,
+    xml_source_max_bytes: usize,
+    encoder: impl FnOnce(&str) -> Vec<u8>,
+) -> Result<PreparedTallyXmlRequest, TallyTransportError> {
+    if xml.len() > xml_source_max_bytes {
+        return Err(TallyTransportError::RequestTooLarge {
+            limit: xml_source_max_bytes,
+        });
+    }
+    let encoded_length_upper_bound = xml
+        .len()
+        .checked_mul(2)
+        .and_then(|length| length.checked_add(2))
+        .ok_or(TallyTransportError::RequestTooLarge {
+            limit: xml_source_max_bytes,
+        })?;
+    let body = encoder(xml);
+    debug_assert!(body.len() <= encoded_length_upper_bound);
+    let body_sha256 = hex_digest(Sha256::digest(&body));
+    Ok(PreparedTallyXmlRequest { body, body_sha256 })
 }
 
 #[derive(Clone)]
@@ -354,12 +411,8 @@ impl TallyHttpTransport {
     }
 
     pub async fn post_xml(&self, xml: String) -> Result<TallyHttpResponse, TallyTransportError> {
-        let body = encode_tally_xml_request_utf16le(&xml);
-        if body.len() > self.policy.xml_request_max_bytes {
-            return Err(TallyTransportError::RequestTooLarge {
-                limit: self.policy.xml_request_max_bytes,
-            });
-        }
+        let PreparedTallyXmlRequest { body, body_sha256 } =
+            prepare_tally_xml_request(&xml, self.policy.xml_request_max_bytes)?;
         let content_length = body.len();
         let url = endpoint_url(&self.config, "/")?;
         let response = self
@@ -371,12 +424,14 @@ impl TallyHttpTransport {
             .send()
             .await
             .map_err(classify_request_error)?;
-        read_response(
+        let mut response = read_response(
             response,
             self.policy.xml_response_max_bytes,
             TALLY_XML_POST_RESPONSE_ENCODING,
         )
-        .await
+        .await?;
+        response.request_body_sha256 = Some(body_sha256);
+        Ok(response)
     }
 
     pub async fn post_xml_decoded(
@@ -407,12 +462,8 @@ impl TallyHttpTransport {
         xml: String,
         response_max_bytes: usize,
     ) -> Result<TallyDecodedHttpResponse, TallyTransportError> {
-        let body = encode_tally_xml_request_utf16le(&xml);
-        if body.len() > self.policy.xml_request_max_bytes {
-            return Err(TallyTransportError::RequestTooLarge {
-                limit: self.policy.xml_request_max_bytes,
-            });
-        }
+        let PreparedTallyXmlRequest { body, body_sha256 } =
+            prepare_tally_xml_request(&xml, self.policy.xml_request_max_bytes)?;
         let content_length = body.len();
         let url = endpoint_url(&self.config, "/")?;
         let response = self
@@ -424,12 +475,14 @@ impl TallyHttpTransport {
             .send()
             .await
             .map_err(classify_request_error)?;
-        read_decoded_response(
+        let mut response = read_decoded_response(
             response,
             response_max_bytes,
             TALLY_XML_POST_RESPONSE_ENCODING,
         )
-        .await
+        .await?;
+        response.request_body_sha256 = Some(body_sha256);
+        Ok(response)
     }
 }
 
@@ -535,6 +588,7 @@ async fn read_response(
         encoding: decoded.encoding,
         encoded_body: bytes,
         encoded_bytes,
+        request_body_sha256: None,
         http_status: head.http_status,
     })
 }
@@ -625,6 +679,7 @@ async fn read_decoded_response(
         decoded_bytes: decoded.decoded_bytes,
         encoded_sha256: hex_digest(encoded_sha256.finalize()),
         decoded_sha256: decoded.decoded_sha256,
+        request_body_sha256: None,
         http_status: head.http_status,
     })
 }
@@ -753,5 +808,36 @@ mod unit_tests {
             expanded.validate(),
             Err(TallyTransportError::PolicyInvalid { .. })
         ));
+    }
+
+    #[test]
+    fn oversized_xml_source_is_rejected_before_wire_encoding() {
+        let error = match prepare_tally_xml_request_with_encoder(&"X".repeat(65), 64, |source| {
+            panic!(
+                "wire encoder must not run for an oversized XML source of {} bytes",
+                source.len()
+            )
+        }) {
+            Err(error) => error,
+            Ok(prepared) => panic!(
+                "oversized XML source unexpectedly produced {} wire bytes",
+                prepared.body.len()
+            ),
+        };
+        assert_eq!(error, TallyTransportError::RequestTooLarge { limit: 64 });
+    }
+
+    #[test]
+    fn xml_request_cap_is_inclusive_for_utf8_source_bytes() {
+        let source = "éé";
+        assert_eq!(source.len(), 4);
+        let prepared = prepare_tally_xml_request(source, source.len())
+            .expect("exact source-byte boundary is accepted");
+        assert_eq!(prepared.body, encode_tally_xml_request_utf16le(source));
+        assert_eq!(prepared.body.len(), 6);
+        assert_eq!(
+            prepared.body_sha256,
+            hex_digest(Sha256::digest(&prepared.body))
+        );
     }
 }
