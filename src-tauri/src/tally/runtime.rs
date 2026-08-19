@@ -127,19 +127,21 @@ pub enum OutstandingsLoadResult {
         /// the bills would be short by 96% with nothing to indicate it.
         #[serde(skip_serializing_if = "Option::is_none")]
         unallocated_total: Option<ExactDecimal>,
-        /// Per-party unallocated exposure, largest first.
+        /// Complete per-party unallocated exposure, largest first. The
+        /// frontend applies its display limit locally so the same data can
+        /// also power complete statement exports without a duplicate payload.
         ///
         /// On a book where most balances carry no bill reference, the ageing
         /// buckets describe a rounding error and this list is the actual
         /// answer -- so it is surfaced rather than collapsed into the single
         /// total above. Empty when the path cannot establish it.
         #[serde(skip_serializing_if = "Vec::is_empty")]
-        unallocated_by_party: Vec<UnallocatedParty>,
-        /// Every open bill the native reports returned, so the UI can answer
-        /// "why does this party owe so much" without a second Tally request --
-        /// these rows are already in hand.
+        statement_unallocated_by_party: Vec<UnallocatedParty>,
+        /// Every open bill the native reports returned. The frontend applies
+        /// its display limit locally; this uncapped source is also what the
+        /// complete statement export consumes.
         #[serde(skip_serializing_if = "Vec::is_empty")]
-        open_bills: Vec<OpenBillRow>,
+        statement_open_bills: Vec<OpenBillRow>,
     },
     Partial {
         reason_code: String,
@@ -153,7 +155,7 @@ pub enum OutstandingsLoadResult {
 /// `BILLOVERDUE` column; where no credit period exists the two dates coincide.
 const MISSING_BILL_REFERENCE_LABEL: &str = "No reference reported";
 
-fn open_bill_rows(
+fn all_open_bill_rows(
     receivable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
     payable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
     as_of: &TallyDate,
@@ -194,16 +196,15 @@ fn open_bill_rows(
             .then_with(|| left.party.cmp(&right.party))
             .then_with(|| left.reference.cmp(&right.reference))
     });
-    rows.truncate(MAX_OPEN_BILL_ROWS);
     rows
 }
 
-/// Ranks parties by unallocated exposure, largest first.
+/// Returns every unallocated party ranked by exposure, largest first.
 ///
 /// Zero residuals are dropped rather than listed: a party whose ledger agrees
 /// exactly with its bills has nothing unallocated, and showing it as a zero row
 /// buries the parties that do.
-fn top_unallocated_parties(
+fn all_unallocated_parties(
     residuals: &[bridge_tally_protocol::native_outstandings::PartyResidual],
 ) -> Vec<UnallocatedParty> {
     let mut ranked = residuals
@@ -227,7 +228,6 @@ fn top_unallocated_parties(
             .cmp_magnitude(&left.amount)
             .then_with(|| left.party.cmp(&right.party))
     });
-    ranked.truncate(10);
     ranked
 }
 
@@ -251,21 +251,12 @@ pub struct OpenBillRow {
     pub kind: &'static str,
 }
 
-/// Caps how many bill rows cross into the UI.
-///
-/// Every row is already parsed, so this bounds only the serialized payload and
-/// what the screen must render. A book past this many OPEN bills is well
-/// outside anything measured, and silently truncating would be worse than
-/// disclosing it -- see `open_bills_truncated`.
-const MAX_OPEN_BILL_ROWS: usize = 2_000;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExposureDirection {
     Receivable,
     Payable,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutstandingsAgeingAnchor {
@@ -1419,14 +1410,17 @@ impl TallyRuntime {
                         return Ok(partial_result(reason_code));
                     }
 
+                    let statement_open_bills =
+                        all_open_bill_rows(&receivable_rows, &payable_rows, &as_of);
+                    let statement_unallocated_by_party = all_unallocated_parties(&result.residuals);
                     Ok(OutstandingsLoadResult::Complete {
                         report: Box::new(result.report),
                         currency_assertion,
                         ageing_anchor: OutstandingsAgeingAnchor::DueDate,
                         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                         unallocated_total: Some(result.residual_total),
-                        unallocated_by_party: top_unallocated_parties(&result.residuals),
-                        open_bills: open_bill_rows(&receivable_rows, &payable_rows, &as_of),
+                        statement_unallocated_by_party,
+                        statement_open_bills,
                     })
                 }
             },
@@ -1864,8 +1858,8 @@ impl TallyRuntime {
                                 // remainder, so it must stay absent rather
                                 // than be reported as zero.
                                 unallocated_total: None,
-                                unallocated_by_party: Vec::new(),
-                                open_bills: Vec::new(),
+                                statement_unallocated_by_party: Vec::new(),
+                                statement_open_bills: Vec::new(),
                             }),
                             ScanResult::Partial(partial) => {
                                 Ok(partial_result(&partial.reason_code))
@@ -2210,7 +2204,7 @@ mod tests {
             &TallyDate::parse("20260817").expect("capture as-of"),
         )
         .expect("captured validation-book rows parse");
-        let rows = open_bill_rows(
+        let rows = all_open_bill_rows(
             &receivable,
             &[],
             &TallyDate::parse("20260817").expect("capture as-of"),
@@ -2268,7 +2262,7 @@ mod tests {
             &as_of,
         )
         .expect("paired empty BILLREF values remain parseable");
-        let rows = open_bill_rows(&parsed, &[], &as_of);
+        let rows = all_open_bill_rows(&parsed, &[], &as_of);
 
         assert_eq!(rows.len(), 2, "empty identities must not collapse rows");
         let total = rows
@@ -2393,6 +2387,93 @@ mod tests {
             selected_read_scope: None,
             passport_snapshot_id: None,
         }
+    }
+
+    #[test]
+    fn future_due_bill_from_raw_native_bytes_reaches_the_statement_source() {
+        let books_from = TallyDate::parse("20260401").expect("synthetic book start");
+        let as_of = TallyDate::parse("20260731").expect("synthetic as-of date");
+        let bills_xml = "<ENVELOPE>\
+            <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>FUTURE-1</BILLREF><BILLPARTY>Synthetic Party</BILLPARTY></BILLFIXED>\
+            <BILLCL>-100.00</BILLCL><BILLDUE>1-Aug-26</BILLDUE><BILLOVERDUE>0</BILLOVERDUE>\
+            </ENVELOPE>";
+        let ledger_xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>";
+        let receivable = parse_native_bill_rows(bills_xml, &books_from, &as_of)
+            .expect("a future due date in raw native bytes must parse");
+        let ledgers = parse_native_ledger_snapshot(ledger_xml)
+            .expect("the synthetic raw ledger response must parse");
+        let computed = compute_native_outstandings(
+            "Synthetic Company",
+            &receivable,
+            &[],
+            NativeMasterSnapshot {
+                ledgers: &ledgers,
+                groups: &[],
+            },
+            AgeingAnchor::DueDate,
+            &as_of,
+            bills_xml.len() + ledger_xml.len(),
+        )
+        .expect("a future-due bill must not abort the native computation");
+        assert_eq!(computed.report.receivable_total.as_str(), "100");
+        assert_eq!(computed.report.top_parties[0].oldest_bill_age_days, None);
+        assert_eq!(computed.report.ageing.days_0_30.as_str(), "100");
+        assert_eq!(computed.report.ageing.days_31_60, ExactDecimal::zero());
+        assert_eq!(computed.report.ageing.days_61_90, ExactDecimal::zero());
+        assert_eq!(computed.report.ageing.days_90_plus, ExactDecimal::zero());
+        assert_eq!(computed.report.open_receivable_bill_count, 1);
+
+        let statement_rows = all_open_bill_rows(&receivable, &[], &as_of);
+        assert_eq!(
+            statement_rows.len(),
+            1,
+            "a future-due bill must remain available to the statement source"
+        );
+        assert_eq!(statement_rows[0].amount.as_str(), "100.00");
+        assert_eq!(statement_rows[0].age_days, None);
+        let statement = crate::reports::party_statement::build_party_statement(
+            "Synthetic Company",
+            as_of.as_str(),
+            "Synthetic Party",
+            &statement_rows,
+            &[],
+        )
+        .expect("the future-due bill must build a party statement");
+        assert_eq!(statement.bills.len(), 1);
+        assert_eq!(statement.bills[0].reference, "FUTURE-1");
+        assert_eq!(statement.bills[0].age_days, None);
+        assert_eq!(statement.bills[0].bucket, None);
+        assert_eq!(statement.bill_total.as_str(), "100");
+
+        let destination = tempfile::tempdir().expect("synthetic destination");
+        let bulk = crate::reports::bulk_party_statement::write_bulk_party_statements(
+            destination.path(),
+            "Synthetic Company",
+            as_of.as_str(),
+            "xlsx",
+            &statement_rows,
+            &[],
+            |party_statement| {
+                crate::reports::party_statement_xlsx::render_party_statement_xlsx(party_statement)
+                    .map_err(|error| error.to_string())
+            },
+        )
+        .expect("a bulk run must write the future-due party statement");
+        assert_eq!(bulk.written.len(), 1);
+        let workbook = std::fs::File::open(destination.path().join(&bulk.written[0].file_name))
+            .expect("the bulk statement file exists");
+        let mut archive = zip::ZipArchive::new(workbook).expect("bulk output is an XLSX archive");
+        let mut workbook_text = String::new();
+        for entry_name in ["xl/worksheets/sheet1.xml", "xl/sharedStrings.xml"] {
+            let mut entry = archive
+                .by_name(entry_name)
+                .expect("the XLSX statement entry exists");
+            std::io::Read::read_to_string(&mut entry, &mut workbook_text)
+                .expect("the workbook XML is readable");
+        }
+        assert!(workbook_text.contains("FUTURE-1"));
+        assert!(workbook_text.contains("Not due"));
+        assert!(workbook_text.contains("Unaged"));
     }
 
     #[cfg(feature = "voucher-scan")]

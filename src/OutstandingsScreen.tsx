@@ -59,6 +59,12 @@ type OpenBill = {
   kind: "receivable" | "payable";
 };
 
+// These limits bound only what the dashboard renders. The Tauri result keeps
+// complete statement-source rows so an export is never silently narrowed by a
+// presentation cap.
+const DISPLAY_OPEN_BILL_ROW_LIMIT = 2_000;
+const DISPLAY_UNALLOCATED_PARTY_LIMIT = 10;
+
 type LoadResult =
   | {
       state: "complete";
@@ -69,11 +75,10 @@ type LoadResult =
       // Absent when the read path cannot establish it. Absent is not zero and
       // must never render as zero.
       unallocated_total?: string;
-      unallocated_by_party?: Array<{ party: string; amount: string }>;
-      // Absent on the voucher-scan path, which reads no per-bill detail.
-      // Absent must never render as "no open bills" -- it means the
-      // party row cannot be expanded at all.
-      open_bills?: Array<OpenBill>;
+      // Complete, uncapped rows. The dashboard applies its own display caps;
+      // statement exports always use these complete sources.
+      statement_open_bills?: Array<OpenBill>;
+      statement_unallocated_by_party?: Array<{ party: string; amount: string }>;
     }
   | { state: "partial"; reason_code: string; synced_at_unix_ms: number };
 
@@ -85,8 +90,14 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
   const [loading, setLoading] = React.useState(false);
   const [inrAssertedCompanyGuid, setInrAssertedCompanyGuid] = React.useState<string | null>(null);
   const [view, setView] = React.useState<"ageing" | "unallocated">("ageing");
-  const [exportNotice, setExportNotice] = React.useState<{ message: string; path?: string } | null>(null);
+  const [exportNotice, setExportNotice] = React.useState<{
+    message: string;
+    path?: string;
+    location?: string;
+    failures?: Array<{ party: string; error: string }>;
+  } | null>(null);
   const [expandedParty, setExpandedParty] = React.useState<string | null>(null);
+  const [bulkStatementExporting, setBulkStatementExporting] = React.useState(false);
   const [partySort, setPartySort] = React.useState<PartySort | null>(null);
   const [currencyCheck, setCurrencyCheck] = React.useState<"idle" | "checking" | "inr" | "undetermined">("idle");
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
@@ -178,11 +189,15 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
   // some renders and not others, which React rejects outright with "Rendered
   // more hooks than during the previous render" -- and the whole screen blanks.
   const inrCompleteResult = isInrCompleteResult(result) ? result : null;
-  // null when open_bills is absent entirely (voucher-scan path) -- distinct
-  // from a party simply having no rows in a present-but-partial array.
-  const openBillsByParty = React.useMemo(
-    () => billsByParty(inrCompleteResult?.open_bills),
+  const displayOpenBills = React.useMemo(
+    () => inrCompleteResult?.statement_open_bills?.slice(0, DISPLAY_OPEN_BILL_ROW_LIMIT),
     [inrCompleteResult],
+  );
+  // null when statement rows are absent entirely (voucher-scan path) --
+  // distinct from a party simply having no rows in the display projection.
+  const openBillsByParty = React.useMemo(
+    () => billsByParty(displayOpenBills),
+    [displayOpenBills],
   );
 
   // On a book where most balances carry no bill reference, the ageing panel
@@ -233,7 +248,8 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
   const composition = report
     ? exposureComposition(report, completeResult?.unallocated_total)
     : null;
-  const unallocatedParties = completeResult?.unallocated_by_party ?? [];
+  const unallocatedParties = completeResult?.statement_unallocated_by_party
+    ?.slice(0, DISPLAY_UNALLOCATED_PARTY_LIMIT) ?? [];
   const largestUnallocated = Math.max(...unallocatedParties.map((entry) => amountOf(entry.amount)), 0);
   const largestExposure = report
     ? Math.max(...report.top_parties.map((party) => amountOf(party.outstanding_total)), 0)
@@ -262,6 +278,38 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
   const ageingDisclosure = report && completeResult?.unallocated_total === undefined
     && outstandingsAgeingDisclosure(report.has_unaged_receivable);
   const unsupportedCurrencyAssertion = result?.state === "complete" && !completeResult;
+  const batchStatementRowsAvailable = completeResult !== null
+    && (completeResult.statement_open_bills !== undefined
+      || completeResult.statement_unallocated_by_party !== undefined);
+  const exportAllPartyStatements = async (format: "xlsx" | "pdf") => {
+    if (!completeResult) return;
+    try {
+      const destination = await invoke<string | null>("select_party_statement_destination");
+      if (!destination) return;
+      const preview = await previewBulkPartyStatements(completeResult);
+      if (preview.party_count === 0) {
+        setExportNotice({ message: "No parties with outstanding balances are available for statements." });
+        return;
+      }
+      const label = format === "xlsx" ? "Excel" : "PDF";
+      const confirmed = window.confirm(
+        `Create ${preview.party_count} ${label} statement${preview.party_count === 1 ? "" : "s"} in:\n${destination}\n\nThe dashboard shows only its largest parties. This batch includes every party with a non-zero outstanding balance.`,
+      );
+      if (!confirmed) return;
+      setBulkStatementExporting(true);
+      const batch = await exportBulkPartyStatements(completeResult, destination, format);
+      setExportNotice({
+        message: `${batch.written.length} ${label} statement${batch.written.length === 1 ? "" : "s"} written`,
+        path: batch.manifest_path,
+        location: batch.destination,
+        failures: batch.failures,
+      });
+    } catch (cause) {
+      setExportNotice({ message: operatorMessage(cause) });
+    } finally {
+      setBulkStatementExporting(false);
+    }
+  };
   return (
     <section className="outstandings-screen" aria-busy={loading}>
       <div className="outstandings-heading">
@@ -302,6 +350,28 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
               Export
             </button>
           )}
+          {batchStatementRowsAvailable && (
+            <>
+              <button
+                className="secondary-action"
+                type="button"
+                disabled={bulkStatementExporting}
+                onClick={() => void exportAllPartyStatements("xlsx")}
+              >
+                <Download size={16} />
+                {bulkStatementExporting ? "Writing statements…" : "All Excel statements"}
+              </button>
+              <button
+                className="secondary-action"
+                type="button"
+                disabled={bulkStatementExporting}
+                onClick={() => void exportAllPartyStatements("pdf")}
+              >
+                <Download size={16} />
+                All PDF statements
+              </button>
+            </>
+          )}
           <button className="secondary-action" type="button" onClick={onChangeSetup}>Manage Tally</button>
           {!outstandingsUnavailable && (
             <button type="button" onClick={load} disabled={loading}>
@@ -315,7 +385,9 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
       {exportNotice && (
         <div className="outstandings-export-notice" role="status">
           <span>
-            {exportNotice.path ? <>Saved <strong>{exportNotice.message}</strong> to Downloads</> : exportNotice.message}
+            {exportNotice.path
+              ? <>Saved <strong>{exportNotice.message}</strong> to {exportNotice.location ?? "Downloads"}</>
+              : exportNotice.message}
           </span>
           <span className="export-notice-actions">
             {exportNotice.path && (
@@ -325,6 +397,13 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
             )}
             <button type="button" onClick={() => setExportNotice(null)} aria-label="Dismiss">Dismiss</button>
           </span>
+          {exportNotice.failures && exportNotice.failures.length > 0 && (
+            <ul className="outstandings-export-failures">
+              {exportNotice.failures.map((failure) => (
+                <li key={failure.party}><strong>{failure.party}</strong>: {failure.error}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
       {error && <div className="outstandings-state error" role="alert"><strong>Read failed</strong><span>{error}</span></div>}
@@ -553,9 +632,9 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
 }
 
 /// Builds one party's statement in the selected format via the Rust command
-/// and writes it to Downloads. Sends the `open_bills`/`unallocated_by_party`
-/// rows this screen already holds from `fetch_tally_outstandings` -- Bridge
-/// never reads Tally a second time to produce a statement.
+/// and writes it to Downloads. Sends the complete statement source rows this
+/// screen already holds from `fetch_tally_outstandings` -- Bridge never reads
+/// Tally a second time to produce a statement.
 async function exportPartyStatement(
   result: InrCompleteResult,
   party: string,
@@ -567,8 +646,48 @@ async function exportPartyStatement(
       as_of_yyyymmdd: result.report.as_of_yyyymmdd,
       party,
       format,
-      open_bills: result.open_bills ?? [],
-      unallocated_by_party: result.unallocated_by_party ?? [],
+      open_bills: result.statement_open_bills ?? [],
+      unallocated_by_party: result.statement_unallocated_by_party ?? [],
+    },
+  });
+}
+
+type BulkPartyStatementResult = {
+  destination: string;
+  manifest_path: string;
+  written: Array<{ party: string; file_name: string; amount: string }>;
+  failures: Array<{ party: string; error: string }>;
+};
+
+type BulkPartyStatementsPreview = { party_count: number };
+
+/// Uses the complete statement-source rows returned by the finished read. The
+/// dashboard's top-ten and drill-down projections are intentionally not used:
+/// a batch must not silently omit a party beyond a display cap.
+async function exportBulkPartyStatements(
+  result: InrCompleteResult,
+  destination: string,
+  format: "xlsx" | "pdf",
+) {
+  return invoke<BulkPartyStatementResult>("export_bulk_party_statements", {
+    request: {
+      company: result.report.company_name,
+      as_of_yyyymmdd: result.report.as_of_yyyymmdd,
+      destination,
+      format,
+      open_bills: result.statement_open_bills ?? [],
+      unallocated_by_party: result.statement_unallocated_by_party ?? [],
+    },
+  });
+}
+
+/// Uses the same complete source rows and backend counting rule as the writer,
+/// so the confirmation names the exact scope before any files are created.
+async function previewBulkPartyStatements(result: InrCompleteResult) {
+  return invoke<BulkPartyStatementsPreview>("preview_bulk_party_statements", {
+    request: {
+      open_bills: result.statement_open_bills ?? [],
+      unallocated_by_party: result.statement_unallocated_by_party ?? [],
     },
   });
 }
@@ -581,7 +700,11 @@ async function exportPartyStatement(
 /// because a figure that needs a caveat on screen needs it in the file too --
 /// the file is what gets forwarded.
 async function exportCsv(result: InrCompleteResult) {
-  const csv = reportToCsv(result.report, result.unallocated_total, result.unallocated_by_party);
+  const csv = reportToCsv(
+    result.report,
+    result.unallocated_total,
+    result.statement_unallocated_by_party,
+  );
   const slug = result.report.company_name.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
   // A BOM so Excel reads UTF-8 party names instead of mojibake -- Indian
   // ledger names routinely carry non-ASCII characters.
@@ -697,7 +820,7 @@ function ageingRows(report: Report) {
 }
 
 /// Groups open bills by exact party name for the drill-down. Returns null
-/// when `open_bills` is absent entirely (the voucher-scan path never sends
+/// when statement rows are absent entirely (the voucher-scan path never sends
 /// it) -- that null is what tells a row it must not be expandable at all,
 /// distinct from a present array that simply has no rows for this party.
 function billsByParty(openBills: Array<OpenBill> | undefined): Map<string, Array<OpenBill>> | null {

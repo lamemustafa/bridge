@@ -9,6 +9,9 @@ use crate::db::tally_mirror::{
     WriteFixtureEnrollmentInput, WriteFixtureEnrollmentStatus,
 };
 use crate::gst::{GstDraftRequest, GstReturnDraft};
+use crate::reports::bulk_party_statement::{
+    bulk_party_statement_party_count, write_bulk_party_statements,
+};
 use crate::reports::party_statement::{build_party_statement, PartyStatementError};
 use crate::reports::party_statement_pdf::render_party_statement_pdf;
 use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
@@ -2916,6 +2919,100 @@ pub enum PartyStatementFormat {
     #[default]
     Xlsx,
     Pdf,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExportBulkPartyStatementsRequest {
+    pub company: String,
+    pub as_of_yyyymmdd: String,
+    pub format: PartyStatementFormat,
+    /// Chosen by the native folder picker. The command still checks that it
+    /// exists and is a directory before any statement name is joined to it.
+    pub destination: String,
+    /// These are complete statement-source rows from the finished local read,
+    /// not the dashboard's display projections.
+    pub open_bills: Vec<OpenBillRowInput>,
+    pub unallocated_by_party: Vec<UnallocatedParty>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewBulkPartyStatementsRequest {
+    /// The same complete rows the export command will consume. This command
+    /// performs no I/O or Tally read; it only makes the pending scope explicit.
+    pub open_bills: Vec<OpenBillRowInput>,
+    pub unallocated_by_party: Vec<UnallocatedParty>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkPartyStatementsPreview {
+    pub party_count: usize,
+}
+
+/// Lets the operator choose where the whole statement batch will be written.
+#[tauri::command]
+pub async fn select_party_statement_destination() -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(|| {
+        Ok(rfd::FileDialog::new()
+            .set_title("Choose a folder for party statements")
+            .pick_folder()
+            .map(|path| path.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|_| "Bridge could not open the statement destination picker.".to_string())?
+}
+
+/// Counts the unique, non-zero parties that the bulk writer will process.
+/// Kept beside the writer's source conversion so the confirmation cannot use
+/// a separately implemented frontend approximation of the export scope.
+#[tauri::command]
+pub async fn preview_bulk_party_statements(
+    request: PreviewBulkPartyStatementsRequest,
+) -> Result<BulkPartyStatementsPreview, String> {
+    let open_bills = request
+        .open_bills
+        .into_iter()
+        .map(into_open_bill_row)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(BulkPartyStatementsPreview {
+        party_count: bulk_party_statement_party_count(&open_bills, &request.unallocated_by_party),
+    })
+}
+
+/// Writes a separate statement for every party in the completed source rows.
+/// A failed party remains visible in the returned result and manifest while
+/// the remaining parties continue, so an operator cannot mistake a partial
+/// batch for a complete send-ready set.
+#[tauri::command]
+pub async fn export_bulk_party_statements(
+    request: ExportBulkPartyStatementsRequest,
+) -> Result<crate::reports::bulk_party_statement::BulkPartyStatementResult, String> {
+    let open_bills = request
+        .open_bills
+        .into_iter()
+        .map(into_open_bill_row)
+        .collect::<Result<Vec<_>, _>>()?;
+    let destination = std::path::PathBuf::from(request.destination);
+
+    match request.format {
+        PartyStatementFormat::Xlsx => write_bulk_party_statements(
+            &destination,
+            &request.company,
+            &request.as_of_yyyymmdd,
+            "xlsx",
+            &open_bills,
+            &request.unallocated_by_party,
+            |statement| render_party_statement_xlsx(statement).map_err(|error| error.to_string()),
+        ),
+        PartyStatementFormat::Pdf => write_bulk_party_statements(
+            &destination,
+            &request.company,
+            &request.as_of_yyyymmdd,
+            "pdf",
+            &open_bills,
+            &request.unallocated_by_party,
+            |statement| render_party_statement_pdf(statement).map_err(|error| error.to_string()),
+        ),
+    }
 }
 
 /// Builds one party's aged-bills statement in the requested format and writes
