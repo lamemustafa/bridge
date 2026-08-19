@@ -29,6 +29,7 @@ pub struct ObservedRequest {
     /// Sanitized transport metadata used by integration tests. The simulator
     /// never retains arbitrary request headers or the request body.
     pub request_content_type_is_tally_xml_utf16: bool,
+    pub request_content_type_is_plain_tally_xml: bool,
     pub bytes_received: usize,
     pub request_body_bytes: usize,
     pub request_body_sha256: String,
@@ -256,6 +257,7 @@ fn serve_request(
         method,
         path,
         request_content_type_is_tally_xml_utf16: has_tally_xml_utf16_content_type(&request),
+        request_content_type_is_plain_tally_xml: has_plain_tally_xml_content_type(&request),
         bytes_received: request.len(),
         request_body_bytes: request_body.len(),
         request_body_sha256: hex::encode(Sha256::digest(request_body)),
@@ -468,6 +470,14 @@ fn request_line(request: &[u8]) -> (String, String) {
 }
 
 fn has_tally_xml_utf16_content_type(request: &[u8]) -> bool {
+    has_exactly_one_content_type(request, "text/xml; charset=utf-16")
+}
+
+fn has_plain_tally_xml_content_type(request: &[u8]) -> bool {
+    has_exactly_one_content_type(request, "text/xml")
+}
+
+fn has_exactly_one_content_type(request: &[u8], expected: &str) -> bool {
     let Some(header_end) = find_bytes(request, b"\r\n\r\n") else {
         return false;
     };
@@ -479,7 +489,7 @@ fn has_tally_xml_utf16_content_type(request: &[u8]) -> bool {
     });
     matches!(
         (content_types.next(), content_types.next()),
-        (Some(value), None) if value.eq_ignore_ascii_case("text/xml; charset=utf-16")
+        (Some(value), None) if value.eq_ignore_ascii_case(expected)
     )
 }
 
@@ -612,9 +622,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tally_xml_utf16_content_type_classifier_is_exact_and_case_insensitive() {
+    fn tally_xml_content_type_classifiers_are_exact_and_case_insensitive() {
         assert!(has_tally_xml_utf16_content_type(
             b"POST / HTTP/1.1\r\ncontent-type: TEXT/XML; CHARSET=UTF-16\r\n\r\n<E />"
+        ));
+        assert!(!has_plain_tally_xml_content_type(
+            b"POST / HTTP/1.1\r\ncontent-type: TEXT/XML; CHARSET=UTF-16\r\n\r\n<E />"
+        ));
+        assert!(has_plain_tally_xml_content_type(
+            b"GET /status HTTP/1.1\r\ncontent-type: TEXT/XML\r\n\r\n"
+        ));
+        assert!(!has_tally_xml_utf16_content_type(
+            b"GET /status HTTP/1.1\r\ncontent-type: TEXT/XML\r\n\r\n"
         ));
         assert!(!has_tally_xml_utf16_content_type(
             b"POST / HTTP/1.1\r\nContent-Type: application/xml; charset=utf-8\r\n\r\n<E />"

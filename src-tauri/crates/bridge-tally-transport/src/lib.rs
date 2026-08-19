@@ -34,8 +34,13 @@ pub const XML_RESPONSE_MAX_BYTES: usize = 32 * 1024 * 1024;
 pub const OUTSTANDINGS_XML_RESPONSE_MAX_BYTES: usize = 40 * 1024 * 1024;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
-const TALLY_XML_CONTENT_TYPE: &str = "text/xml; charset=utf-16";
-const TALLY_XML_RESPONSE_ENCODING: ExpectedTallyTextEncoding = ExpectedTallyTextEncoding::Utf16Le;
+// `/status` is a bodyless ASCII-only liveness probe. Keep its pre-U1 UTF-8
+// contract so build-specific charset mirroring cannot create a false outage.
+const TALLY_STATUS_CONTENT_TYPE: &str = "text/xml";
+const TALLY_STATUS_RESPONSE_ENCODING: ExpectedTallyTextEncoding = ExpectedTallyTextEncoding::Utf8;
+const TALLY_XML_POST_CONTENT_TYPE: &str = "text/xml; charset=utf-16";
+const TALLY_XML_POST_RESPONSE_ENCODING: ExpectedTallyTextEncoding =
+    ExpectedTallyTextEncoding::Utf16Le;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -317,14 +322,14 @@ impl TallyHttpTransport {
         let response = self
             .client
             .get(url)
-            .header(CONTENT_TYPE, TALLY_XML_CONTENT_TYPE)
+            .header(CONTENT_TYPE, TALLY_STATUS_CONTENT_TYPE)
             .send()
             .await
             .map_err(classify_request_error)?;
         read_response(
             response,
             self.policy.status_response_max_bytes,
-            TALLY_XML_RESPONSE_ENCODING,
+            TALLY_STATUS_RESPONSE_ENCODING,
         )
         .await
     }
@@ -336,14 +341,14 @@ impl TallyHttpTransport {
         let response = self
             .client
             .get(url)
-            .header(CONTENT_TYPE, TALLY_XML_CONTENT_TYPE)
+            .header(CONTENT_TYPE, TALLY_STATUS_CONTENT_TYPE)
             .send()
             .await
             .map_err(classify_request_error)?;
         read_decoded_response(
             response,
             self.policy.status_response_max_bytes,
-            TALLY_XML_RESPONSE_ENCODING,
+            TALLY_STATUS_RESPONSE_ENCODING,
         )
         .await
     }
@@ -360,7 +365,7 @@ impl TallyHttpTransport {
         let response = self
             .client
             .post(url)
-            .header(CONTENT_TYPE, TALLY_XML_CONTENT_TYPE)
+            .header(CONTENT_TYPE, TALLY_XML_POST_CONTENT_TYPE)
             .header(CONTENT_LENGTH, content_length)
             .body(body)
             .send()
@@ -369,7 +374,7 @@ impl TallyHttpTransport {
         read_response(
             response,
             self.policy.xml_response_max_bytes,
-            TALLY_XML_RESPONSE_ENCODING,
+            TALLY_XML_POST_RESPONSE_ENCODING,
         )
         .await
     }
@@ -413,13 +418,18 @@ impl TallyHttpTransport {
         let response = self
             .client
             .post(url)
-            .header(CONTENT_TYPE, TALLY_XML_CONTENT_TYPE)
+            .header(CONTENT_TYPE, TALLY_XML_POST_CONTENT_TYPE)
             .header(CONTENT_LENGTH, content_length)
             .body(body)
             .send()
             .await
             .map_err(classify_request_error)?;
-        read_decoded_response(response, response_max_bytes, TALLY_XML_RESPONSE_ENCODING).await
+        read_decoded_response(
+            response,
+            response_max_bytes,
+            TALLY_XML_POST_RESPONSE_ENCODING,
+        )
+        .await
     }
 }
 

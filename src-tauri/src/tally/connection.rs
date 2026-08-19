@@ -1165,6 +1165,15 @@ mod tests {
         [headers.as_bytes(), &body].concat()
     }
 
+    fn utf8_status_response(body: impl AsRef<str>) -> Vec<u8> {
+        let body = body.as_ref().as_bytes();
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        [headers.as_bytes(), body].concat()
+    }
+
     #[test]
     fn detects_tallyprime_status() {
         assert!(matches!(
@@ -1330,7 +1339,7 @@ mod tests {
             );
             let body = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
             socket
-                .write_all(&utf16_xml_response(body))
+                .write_all(&utf8_status_response(body))
                 .await
                 .expect("write Tally response");
         });
@@ -1435,8 +1444,13 @@ mod tests {
                     4 | 6 | 8 | 10 => OPTIONAL_VOUCHERS,
                     _ => STATUS,
                 };
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
                 socket
-                    .write_all(&utf16_xml_response(body))
+                    .write_all(&response)
                     .await
                     .expect("write paired response");
             }
@@ -1566,8 +1580,13 @@ mod tests {
                     String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_prefix),
                     "request {index} did not follow the required read/health-check sequence"
                 );
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
                 socket
-                    .write_all(&utf16_xml_response(body))
+                    .write_all(&response)
                     .await
                     .expect("write paired response");
             }
@@ -1636,16 +1655,24 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            for body in [
+            for (index, body) in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
                 "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let mut request = [0_u8; 8192];
                 let bytes_read = socket.read(&mut request).await.expect("read Tally request");
                 assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+                let response = if index == 0 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
                 socket
-                    .write_all(&utf16_xml_response(body))
+                    .write_all(&response)
                     .await
                     .expect("write Tally response");
             }
@@ -1828,17 +1855,25 @@ mod tests {
             // collection attempt (which the collection parser rejects, since
             // it never satisfies `HEADER/STATUS`), and once more for the
             // `V1` fallback that follows.
-            for body in [
+            for (index, body) in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
                 "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
                 "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let mut request = [0_u8; 8192];
                 let bytes_read = socket.read(&mut request).await.expect("read Tally request");
                 assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+                let response = if index == 0 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
                 socket
-                    .write_all(&utf16_xml_response(body))
+                    .write_all(&response)
                     .await
                     .expect("write Tally response");
             }
@@ -1881,17 +1916,25 @@ mod tests {
         let server = tokio::spawn(async move {
             // Same shaped `STATUS=0` failure for both the `V2` collection
             // attempt and the `V1` fallback that follows it.
-            for body in [
+            for (index, body) in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
                 "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Could not find Company ''</LINEERROR></DATA></BODY></ENVELOPE>",
                 "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Could not find Company ''</LINEERROR></DATA></BODY></ENVELOPE>",
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let mut request = [0_u8; 8192];
                 let bytes_read = socket.read(&mut request).await.expect("read Tally request");
                 assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+                let response = if index == 0 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
                 socket
-                    .write_all(&utf16_xml_response(body))
+                    .write_all(&response)
                     .await
                     .expect("write Tally response");
             }
@@ -1936,16 +1979,24 @@ mod tests {
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
             let mut requests = Vec::new();
-            for body in [
+            for (index, body) in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
                 "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Aarav Trading Company Demo\"><GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Ageing Lab\"><GUID TYPE=\"String\">eebb9a9f-1679-4468-9e8f-814c729674cb</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Billwise Lab\"><GUID TYPE=\"String\">75f7566d-7a4f-431a-9642-e93a9d06d57d</GUID></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let mut request = [0_u8; 8192];
                 let bytes_read = socket.read(&mut request).await.expect("read Tally request");
                 requests.push(request[..bytes_read].to_vec());
+                let response = if index == 0 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
                 socket
-                    .write_all(&utf16_xml_response(body))
+                    .write_all(&response)
                     .await
                     .expect("write Tally response");
             }

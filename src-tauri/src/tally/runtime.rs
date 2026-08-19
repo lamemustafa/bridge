@@ -2191,6 +2191,15 @@ mod tests {
         [headers.as_bytes(), &body].concat()
     }
 
+    fn utf8_status_response(body: impl AsRef<str>) -> Vec<u8> {
+        let body = body.as_ref().as_bytes();
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        [headers.as_bytes(), body].concat()
+    }
+
     #[test]
     fn ageing_anchor_serializes_as_an_explicit_wire_contract() {
         assert_eq!(
@@ -2338,10 +2347,12 @@ mod tests {
                     String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_method),
                     "request {index} did not preserve paired-read health bracketing"
                 );
-                socket
-                    .write_all(&utf16_xml_response(body))
-                    .await
-                    .expect("write response");
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
+                socket.write_all(&response).await.expect("write response");
             }
         });
 

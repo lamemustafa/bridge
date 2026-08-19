@@ -135,12 +135,14 @@ character in the UTF-16 response.
 having no request body (51 → 102 response bytes). A UTF-16 body without the
 UTF-16 charset header returned `Unknown Request, cannot be processed`.
 
-**Consequence.** Every XML read, including `/status`, declares UTF-16. Response
-decoding requires both the caller's expected encoding and the response charset;
-either a contradictory declaration or a contradictory BOM fails closed.
-BOM-less UTF-16LE is an explicit observed encoding, not an inference from NUL
-placement. Tolerant repair of illegal numeric character references remains
-required after decoding (§1.1).
+**Consequence.** Every XML POST read declares UTF-16. The bodyless, fixed-ASCII
+`/status` liveness probe deliberately remains plain `text/xml` and expects the
+measured UTF-8 response, avoiding a false outage on builds that do not mirror a
+charset header on a bodyless GET. Response decoding requires both the caller's
+expected encoding and the response charset; either a contradictory declaration
+or a contradictory BOM fails closed. BOM-less UTF-16LE is an explicit observed
+encoding, not an inference from NUL placement. Tolerant repair of illegal
+numeric character references remains required after decoding (§1.1).
 
 ## 2. Two request families — and why it matters
 

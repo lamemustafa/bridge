@@ -383,32 +383,39 @@ async fn post_sites_send_exact_utf16_request_and_round_trip_non_ascii_text() {
 }
 
 #[tokio::test]
-async fn status_sites_deliberately_request_utf16_without_a_body() {
+async fn status_sites_request_plain_xml_and_decode_exact_measured_utf8_bytes() {
+    const STATUS: &[u8] = b"<RESPONSE>TallyPrime Server is Running</RESPONSE>\r\n";
+    assert_eq!(STATUS.len(), 51);
     for decoded_only in [false, true] {
-        let plan = ScenarioPlan::new(Fixture::ProductStatus(
-            tally_protocol_simulator::ProductStatus::TallyPrime,
+        let plan = ScenarioPlan::new(Fixture::SyntheticXml(
+            std::str::from_utf8(STATUS)
+                .expect("measured status bytes are UTF-8")
+                .to_owned(),
         ))
-        .with_encoding(WireEncoding::Utf16Le);
+        .with_encoding(WireEncoding::Utf8);
         let simulator = Simulator::spawn(plan).expect("spawn status simulator");
         let transport = TallyHttpTransport::new(endpoint(&simulator)).expect("build transport");
         let response_text = if decoded_only {
-            transport
+            let response = transport
                 .get_status_decoded()
                 .await
-                .expect("decoded status")
-                .into_text()
+                .expect("decoded status");
+            assert_eq!(response.encoding(), TallyTextEncoding::Utf8);
+            assert_eq!(response.encoded_bytes(), STATUS.len());
+            assert_eq!(response.encoded_sha256(), sha256_hex(STATUS));
+            response.into_text()
         } else {
-            transport
-                .get_status()
-                .await
-                .expect("retained status")
-                .into_text()
+            let response = transport.get_status().await.expect("retained status");
+            assert_eq!(response.encoding(), TallyTextEncoding::Utf8);
+            assert_eq!(response.encoded_body(), STATUS);
+            response.into_text()
         };
-        assert!(response_text.contains("TallyPrime"));
+        assert_eq!(response_text.as_bytes(), STATUS);
         let observed = simulator.finish().expect("finish status simulator");
         assert_eq!(observed.method, "GET");
         assert_eq!(observed.path, "/status");
-        assert!(observed.request_content_type_is_tally_xml_utf16);
+        assert!(observed.request_content_type_is_plain_tally_xml);
+        assert!(!observed.request_content_type_is_tally_xml_utf16);
         assert_eq!(observed.request_body_bytes, 0);
     }
 }
