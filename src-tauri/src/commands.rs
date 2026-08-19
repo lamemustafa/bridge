@@ -9,6 +9,8 @@ use crate::db::tally_mirror::{
     WriteFixtureEnrollmentInput, WriteFixtureEnrollmentStatus,
 };
 use crate::gst::{GstDraftRequest, GstReturnDraft};
+use crate::reports::party_statement::{build_party_statement, PartyStatementError};
+use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
 use crate::sync::coordinator::{SnapshotCoordinator, SnapshotJobStatus};
 use crate::sync::reconciliation::ExternalReferenceCatalog;
 use crate::sync::snapshot::{
@@ -21,11 +23,11 @@ use crate::tally::validators::{
 };
 use crate::tally::{
     company_source_identity, core_snapshot_start_authorized, source_lineage,
-    CachedProbeReservation, ConnectionStatus, EndpointKey, OutstandingsCurrencyAssertion,
-    OutstandingsLoadResult, RuntimeTallyConnector, SelectedReadObservation,
-    SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyLedger, TallyRuntime,
-    TallySessionSnapshot, TallyTelemetryPreviewExport, TallyVoucher,
-    SELECTED_LEDGER_QUERY_PROFILE_ID, SELECTED_VOUCHER_QUERY_PROFILE_ID,
+    CachedProbeReservation, ConnectionStatus, EndpointKey, OpenBillRow,
+    OutstandingsCurrencyAssertion, OutstandingsLoadResult, RuntimeTallyConnector,
+    SelectedReadObservation, SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyLedger,
+    TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport, TallyVoucher,
+    UnallocatedParty, SELECTED_LEDGER_QUERY_PROFILE_ID, SELECTED_VOUCHER_QUERY_PROFILE_ID,
 };
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityState,
@@ -2837,6 +2839,218 @@ pub async fn reveal_exported_file(path: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("Bridge could not open the folder: {error}"))
+}
+
+/// Wire counterpart of [`OpenBillRow`] for this command's argument only.
+///
+/// `OpenBillRow::kind` is `&'static str`, which makes `OpenBillRow` itself
+/// unable to derive `Deserialize` -- embedding it in another struct's derive
+/// would need a `'de: 'static` bound the Tauri IPC deserializer (borrowing
+/// from a short-lived request buffer) cannot satisfy. This struct carries
+/// `kind` as a plain `String` instead and is validated into an `OpenBillRow`
+/// by `into_open_bill_row` below.
+#[derive(Debug, Deserialize)]
+pub struct OpenBillRowInput {
+    pub party: String,
+    pub reference: String,
+    pub bill_date: String,
+    pub due_date: String,
+    pub amount: bridge_tally_core::ExactDecimal,
+    pub age_days: Option<u32>,
+    pub kind: String,
+}
+
+fn into_open_bill_row(input: OpenBillRowInput) -> Result<OpenBillRow, String> {
+    let kind: &'static str = match input.kind.as_str() {
+        "receivable" => "receivable",
+        "payable" => "payable",
+        other => {
+            return Err(format!(
+                "Bridge received an unrecognised bill kind ({other}) and could not build the statement."
+            ))
+        }
+    };
+    Ok(OpenBillRow {
+        party: input.party,
+        reference: input.reference,
+        bill_date: input.bill_date,
+        due_date: input.due_date,
+        amount: input.amount,
+        age_days: input.age_days,
+        kind,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExportPartyStatementRequest {
+    pub company: String,
+    pub as_of_yyyymmdd: String,
+    pub party: String,
+    /// The `open_bills`/`unallocated_by_party` rows the frontend already
+    /// holds from `fetch_tally_outstandings`. This command reads no Tally
+    /// endpoint of its own -- `OutstandingsLoadResult::Complete` already
+    /// carries every fact a statement needs.
+    pub open_bills: Vec<OpenBillRowInput>,
+    pub unallocated_by_party: Vec<UnallocatedParty>,
+}
+
+/// Builds one party's aged-bills statement as an `.xlsx` workbook and writes
+/// it to the user's Downloads folder.
+///
+/// Mirrors `save_report_download` exactly: Tauri's own path resolver, the
+/// same filename-traversal guard, and the full written path returned so the
+/// UI can say where the file went instead of leaving the operator to guess.
+#[tauri::command]
+pub async fn export_party_statement(
+    app: tauri::AppHandle,
+    request: ExportPartyStatementRequest,
+) -> Result<String, String> {
+    use tauri::Manager as _;
+
+    let open_bills = request
+        .open_bills
+        .into_iter()
+        .map(into_open_bill_row)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let statement = build_party_statement(
+        &request.company,
+        &request.as_of_yyyymmdd,
+        &request.party,
+        &open_bills,
+        &request.unallocated_by_party,
+    )
+    .map_err(|error| match error {
+        PartyStatementError::PartyNotFound => {
+            "Bridge no longer has exposure on record for this party — refresh and try again."
+                .to_string()
+        }
+        PartyStatementError::ArithmeticOverflow => {
+            "Bridge could not total this party's statement exactly.".to_string()
+        }
+    })?;
+
+    let bytes = render_party_statement_xlsx(&statement)
+        .map_err(|error| format!("Bridge could not build the statement: {error}"))?;
+
+    let mut slug = statement_filename_slug(&statement.party);
+    slug.truncate(150);
+    let stem = format!("statement-{slug}-{}", statement.as_of_yyyymmdd);
+
+    let downloads = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .map_err(|_| "Bridge could not locate a folder to save into.".to_string())?;
+    let path = write_unique_statement_file(&downloads, &stem, "xlsx", &bytes)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Writes a new statement filename without ever replacing an earlier export.
+/// `create_new` closes the race between checking a candidate and writing it;
+/// a repeat export becomes `-2`, `-3`, and so on rather than a silent loss.
+fn write_unique_statement_file(
+    destination: &std::path::Path,
+    stem: &str,
+    extension: &str,
+    bytes: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    if stem.is_empty()
+        || stem.len() > 190
+        || std::path::Path::new(stem).components().count() != 1
+        || extension.is_empty()
+        || extension.contains('.')
+    {
+        return Err("Bridge could not build a safe file name for this export.".to_string());
+    }
+    for sequence in 1..=10_000_u32 {
+        let suffix = if sequence == 1 {
+            String::new()
+        } else {
+            format!("-{sequence}")
+        };
+        let path = destination.join(format!("{stem}{suffix}.{extension}"));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Bridge could not create the statement export: {error}"
+                ))
+            }
+        };
+        if let Err(error) = std::io::Write::write_all(&mut file, bytes) {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+            return Err(format!(
+                "Bridge could not finish writing the statement export: {error}"
+            ));
+        }
+        return Ok(path);
+    }
+    Err("Bridge could not find an unused statement filename after 10,000 attempts.".to_string())
+}
+
+/// Lower-cases and hyphenates a party name into a filesystem-safe slug,
+/// collapsing runs of punctuation/whitespace into a single `-` rather than
+/// leaving `statement----------20260808.xlsx`.
+fn statement_filename_slug(party: &str) -> String {
+    let mut slug = String::with_capacity(party.len());
+    let mut previous_was_dash = false;
+    for ch in party.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            previous_was_dash = false;
+        } else if !previous_was_dash {
+            slug.push('-');
+            previous_was_dash = true;
+        }
+    }
+    let trimmed = slug.trim_matches('-');
+    if trimmed.is_empty() {
+        "party".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod statement_export_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_statement_exports_get_distinct_new_files() {
+        let destination = tempfile::tempdir().expect("synthetic destination");
+        let first = write_unique_statement_file(
+            destination.path(),
+            "statement-party-20260809",
+            "xlsx",
+            b"one",
+        )
+        .expect("first statement");
+        let second = write_unique_statement_file(
+            destination.path(),
+            "statement-party-20260809",
+            "xlsx",
+            b"two",
+        )
+        .expect("second statement");
+
+        assert_eq!(
+            first.file_name().and_then(|name| name.to_str()),
+            Some("statement-party-20260809.xlsx")
+        );
+        assert_eq!(
+            second.file_name().and_then(|name| name.to_str()),
+            Some("statement-party-20260809-2.xlsx")
+        );
+        assert_eq!(std::fs::read(first).expect("first bytes"), b"one");
+        assert_eq!(std::fs::read(second).expect("second bytes"), b"two");
+    }
 }
 
 #[derive(Debug, Deserialize)]
