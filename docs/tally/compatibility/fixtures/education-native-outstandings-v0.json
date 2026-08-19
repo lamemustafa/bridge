@@ -88,7 +88,7 @@
     {
       "scenario_id": "education-to-date-20260701",
       "to_date": "20260701",
-      "request_sha256": "b169cf8022d6ed6e0f2425d966c289e36953f7c1a60bdd861d02da4bd0da8467",
+      "request_sha256": "b505cc537d4dde5d7b5b0d165d32e6470a7ac0d79c99b4b9c5560522ac1847d7",
       "scope_sha256": "cd5b3291d7a34300e57a4b3f7f941e01f7b727d74d1356d76d6215d54a83088f",
       "expected_accounting_facts": [
         "OPEN-001 remains INR 250.00 debit",
@@ -100,7 +100,7 @@
     {
       "scenario_id": "education-to-date-20260702",
       "to_date": "20260702",
-      "request_sha256": "52a9e96dc800140ec6ec264fe3ea635ecf6c4c85a6af767c4cfc37d66a1bc026",
+      "request_sha256": "e7958f7a30a5d99c77f93fc8335f06b2c5d805494df3c881c91f2f47fbf2d5a0",
       "scope_sha256": "37f060d8834aae8c753f3901898108b4969a3a4dae646eb017df1a5f3cbd8823",
       "expected_accounting_facts": [
         "OPEN-001 remains INR 250.00 debit",
@@ -113,7 +113,7 @@
     {
       "scenario_id": "education-to-date-20260731",
       "to_date": "20260731",
-      "request_sha256": "45447855b2dfb98fba648d8813ae6a127e279926127587b664faf04f8e8cf321",
+      "request_sha256": "5df5e84cf45cfac1db5794533f29b555de63d113fb3bc7369f1b76f1984a904f",
       "scope_sha256": "744371330ab70936d47264f126630ae6508393fd20a7d25083904f8ed4883c30",
       "expected_accounting_facts": [
         "OPEN-001 remains INR 250.00 debit",

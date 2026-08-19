@@ -1488,13 +1488,17 @@ fn canonical_origin(family: LoopbackFamily, port: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator};
+    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator, WireEncoding};
 
     const COMPANY: &str =
         "BRIDGE-PR18-NATIVE-OUTSTANDINGS-COMPANY-019f605f-e6cf-77b2-ac95-31722887a911";
     const PARTY: &str =
         "BRIDGE-PR18-NATIVE-OUTSTANDINGS-PARTY-019f605f-e6cf-77b2-ac95-31722887a911";
     const COMPANY_GUID: &str = "00000000-0000-4000-8000-000000000001";
+
+    fn utf16_plan(fixture: Fixture) -> ScenarioPlan {
+        ScenarioPlan::new(fixture).with_encoding(WireEncoding::Utf16Le)
+    }
     const PARTY_GUID: &str = "00000000-0000-4000-8000-000000000101";
 
     fn company_xml() -> String {
@@ -1683,14 +1687,14 @@ mod tests {
 
     async fn run_exact_sequence_once() -> Result<(), &'static str> {
         let mut plans = vec![
-            ScenarioPlan::new(Fixture::SyntheticXml(company_xml())),
-            ScenarioPlan::new(Fixture::SyntheticXml(ledger_xml())),
+            utf16_plan(Fixture::SyntheticXml(company_xml())),
+            utf16_plan(Fixture::SyntheticXml(ledger_xml())),
         ];
         for bracket in 0..4 {
-            plans.push(ScenarioPlan::new(Fixture::SyntheticXml(company_xml())));
-            plans.push(ScenarioPlan::new(Fixture::SyntheticXml(ledger_xml())));
+            plans.push(utf16_plan(Fixture::SyntheticXml(company_xml())));
+            plans.push(utf16_plan(Fixture::SyntheticXml(ledger_xml())));
             if bracket < 3 {
-                plans.push(ScenarioPlan::new(Fixture::ExportStatusOne));
+                plans.push(utf16_plan(Fixture::ExportStatusOne));
             }
         }
         assert_eq!(plans.len(), 13);
@@ -1750,21 +1754,21 @@ mod tests {
 
     async fn run_candidate_failure_sequence_once() -> Result<(), &'static str> {
         let mut plans = vec![
-            ScenarioPlan::new(Fixture::SyntheticXml(company_xml())),
-            ScenarioPlan::new(Fixture::SyntheticXml(ledger_xml())),
+            utf16_plan(Fixture::SyntheticXml(company_xml())),
+            utf16_plan(Fixture::SyntheticXml(ledger_xml())),
         ];
         let candidates = [
-            ScenarioPlan::new(Fixture::ExportStatusZero),
-            ScenarioPlan::new(Fixture::ExportStatusOne).with_http_status(503),
-            ScenarioPlan::new(Fixture::ExportStatusMissing),
+            utf16_plan(Fixture::ExportStatusZero),
+            utf16_plan(Fixture::ExportStatusOne).with_http_status(503),
+            utf16_plan(Fixture::ExportStatusMissing),
         ];
         for candidate_plan in candidates {
-            plans.push(ScenarioPlan::new(Fixture::SyntheticXml(company_xml())));
-            plans.push(ScenarioPlan::new(Fixture::SyntheticXml(ledger_xml())));
+            plans.push(utf16_plan(Fixture::SyntheticXml(company_xml())));
+            plans.push(utf16_plan(Fixture::SyntheticXml(ledger_xml())));
             plans.push(candidate_plan);
         }
-        plans.push(ScenarioPlan::new(Fixture::SyntheticXml(company_xml())));
-        plans.push(ScenarioPlan::new(Fixture::SyntheticXml(ledger_xml())));
+        plans.push(utf16_plan(Fixture::SyntheticXml(company_xml())));
+        plans.push(utf16_plan(Fixture::SyntheticXml(ledger_xml())));
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let loaded = loaded(simulator.address().port());
         let preflight = confirm_preflight_challenge(&loaded, "PREFLIGHT test").unwrap();
