@@ -34,6 +34,17 @@ pub struct ObservedRequest {
     pub request_body_sha256: String,
     pub request_processed: bool,
     pub cancelled: bool,
+    /// The client stopped consuming a response after the request was processed.
+    /// This is observable in bounded-response transport tests and is not a
+    /// simulator failure.
+    pub client_stopped_reading_response: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseWriteOutcome {
+    Complete,
+    Cancelled,
+    ClientStoppedReading,
 }
 
 pub struct Simulator {
@@ -250,6 +261,7 @@ fn serve_request(
         request_body_sha256: hex::encode(Sha256::digest(request_body)),
         request_processed: false,
         cancelled: cancelled.load(Ordering::Acquire),
+        client_stopped_reading_response: false,
     };
     if observed.cancelled {
         return Ok(observed);
@@ -262,9 +274,10 @@ fn serve_request(
             observed.request_processed = true;
             stream.write_all(headers.as_bytes())?;
             stream.flush()?;
-            observed.cancelled =
-                write_framed_body(&mut stream, &body, plan.framing, None, cancelled)?;
-            finish_complete_response(&mut stream, observed.cancelled)?;
+            record_response_write_outcome(
+                &mut observed,
+                write_complete_response(&mut stream, &body, plan.framing, None, cancelled)?,
+            );
         }
         Delivery::SlowHeaders(delay) => {
             if sleep_cancellable(delay, cancelled) {
@@ -274,9 +287,10 @@ fn serve_request(
             observed.request_processed = true;
             stream.write_all(headers.as_bytes())?;
             stream.flush()?;
-            observed.cancelled =
-                write_framed_body(&mut stream, &body, plan.framing, None, cancelled)?;
-            finish_complete_response(&mut stream, observed.cancelled)?;
+            record_response_write_outcome(
+                &mut observed,
+                write_complete_response(&mut stream, &body, plan.framing, None, cancelled)?,
+            );
         }
         Delivery::SlowBody { chunk_bytes, delay } => {
             if chunk_bytes == 0 {
@@ -288,14 +302,16 @@ fn serve_request(
             observed.request_processed = true;
             stream.write_all(headers.as_bytes())?;
             stream.flush()?;
-            observed.cancelled = write_framed_body(
-                &mut stream,
-                &body,
-                plan.framing,
-                Some((chunk_bytes, delay)),
-                cancelled,
-            )?;
-            finish_complete_response(&mut stream, observed.cancelled)?;
+            record_response_write_outcome(
+                &mut observed,
+                write_complete_response(
+                    &mut stream,
+                    &body,
+                    plan.framing,
+                    Some((chunk_bytes, delay)),
+                    cancelled,
+                )?,
+            );
         }
         Delivery::ResetBeforeBody => {
             stream.write_all(headers.as_bytes())?;
@@ -313,15 +329,57 @@ fn serve_request(
     Ok(observed)
 }
 
-fn finish_complete_response(stream: &mut TcpStream, cancelled: bool) -> io::Result<()> {
-    if !cancelled {
-        stream.flush()?;
-        stream.shutdown(Shutdown::Write)?;
-        // Give Windows' loopback stack time to deliver the FIN and buffered body before the
-        // server thread drops the socket. Immediate drop is observably flaky under parallel CI.
-        thread::sleep(Duration::from_millis(5));
+fn record_response_write_outcome(observed: &mut ObservedRequest, outcome: ResponseWriteOutcome) {
+    match outcome {
+        ResponseWriteOutcome::Complete => {}
+        ResponseWriteOutcome::Cancelled => observed.cancelled = true,
+        ResponseWriteOutcome::ClientStoppedReading => {
+            observed.client_stopped_reading_response = true;
+        }
     }
+}
+
+fn write_complete_response(
+    stream: &mut TcpStream,
+    body: &[u8],
+    framing: ResponseFraming,
+    slow_delivery: Option<(usize, Duration)>,
+    cancelled: &AtomicBool,
+) -> io::Result<ResponseWriteOutcome> {
+    match write_framed_body(stream, body, framing, slow_delivery, cancelled) {
+        Ok(true) => Ok(ResponseWriteOutcome::Cancelled),
+        Ok(false) => match finish_complete_response(stream) {
+            Ok(()) => Ok(ResponseWriteOutcome::Complete),
+            Err(error) if client_stopped_reading(&error) => {
+                Ok(ResponseWriteOutcome::ClientStoppedReading)
+            }
+            Err(error) => Err(error),
+        },
+        Err(error) if client_stopped_reading(&error) => {
+            Ok(ResponseWriteOutcome::ClientStoppedReading)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn finish_complete_response(stream: &mut TcpStream) -> io::Result<()> {
+    stream.flush()?;
+    stream.shutdown(Shutdown::Write)?;
+    // Give Windows' loopback stack time to deliver the FIN and buffered body before the
+    // server thread drops the socket. Immediate drop is observably flaky under parallel CI.
+    thread::sleep(Duration::from_millis(5));
     Ok(())
+}
+
+fn client_stopped_reading(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::WouldBlock
+    )
 }
 
 fn read_request(
