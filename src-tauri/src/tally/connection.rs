@@ -153,8 +153,9 @@ const BODY_BYTES_UNAVAILABLE: u64 = u64::MAX;
 const ENCODING_UNAVAILABLE: u8 = 0;
 const ENCODING_UTF8: u8 = 1;
 const ENCODING_UTF8_BOM: u8 = 2;
-const ENCODING_UTF16_LE_BOM: u8 = 3;
-const ENCODING_UTF16_BE_BOM: u8 = 4;
+const ENCODING_UTF16_LE: u8 = 3;
+const ENCODING_UTF16_LE_BOM: u8 = 4;
+const ENCODING_UTF16_BE_BOM: u8 = 5;
 
 impl TallyClient {
     pub fn new(config: TallyConfig) -> anyhow::Result<Self> {
@@ -938,6 +939,7 @@ impl TallyClient {
         let value = match encoding {
             TallyTextEncoding::Utf8 => ENCODING_UTF8,
             TallyTextEncoding::Utf8Bom => ENCODING_UTF8_BOM,
+            TallyTextEncoding::Utf16Le => ENCODING_UTF16_LE,
             TallyTextEncoding::Utf16LeBom => ENCODING_UTF16_LE_BOM,
             TallyTextEncoding::Utf16BeBom => ENCODING_UTF16_BE_BOM,
         };
@@ -948,6 +950,7 @@ impl TallyClient {
         let reason = match self.observed_encoding.load(Ordering::Acquire) {
             ENCODING_UTF8 => "utf8_observed",
             ENCODING_UTF8_BOM => "utf8_bom_observed",
+            ENCODING_UTF16_LE => "utf16_le_observed",
             ENCODING_UTF16_LE_BOM => "utf16_le_bom_observed",
             ENCODING_UTF16_BE_BOM => "utf16_be_bom_observed",
             _ => {
@@ -969,6 +972,7 @@ impl TallyClient {
         match self.observed_encoding.load(Ordering::Acquire) {
             ENCODING_UTF8 => Ok("utf8"),
             ENCODING_UTF8_BOM => Ok("utf8_bom"),
+            ENCODING_UTF16_LE => Ok("utf16le"),
             ENCODING_UTF16_LE_BOM => Ok("utf16le_bom"),
             ENCODING_UTF16_BE_BOM => Ok("utf16be_bom"),
             _ => anyhow::bail!("response_encoding_not_observed"),
@@ -1152,6 +1156,15 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
+    fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
+        let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-16\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        [headers.as_bytes(), &body].concat()
+    }
+
     #[test]
     fn detects_tallyprime_status() {
         assert!(matches!(
@@ -1316,12 +1329,8 @@ mod tests {
                 "request should go directly to the Tally endpoint"
             );
             let body = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
             socket
-                .write_all(response.as_bytes())
+                .write_all(&utf16_xml_response(body))
                 .await
                 .expect("write Tally response");
         });
@@ -1426,12 +1435,8 @@ mod tests {
                     4 | 6 | 8 | 10 => OPTIONAL_VOUCHERS,
                     _ => STATUS,
                 };
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write paired response");
             }
@@ -1501,7 +1506,13 @@ mod tests {
         assert_eq!(closing_extent, extent, "synthetic book did not change");
         assert_eq!(
             client.observed_body_bytes(),
-            Some(u64::try_from(OPTIONAL_VOUCHERS.len()).expect("fixture length fits u64")),
+            Some(
+                u64::try_from(
+                    bridge_tally_protocol::encode_tally_xml_request_utf16le(OPTIONAL_VOUCHERS)
+                        .len(),
+                )
+                .expect("encoded fixture length fits u64"),
+            ),
             "closing extent evidence must not overwrite the larger voucher payload"
         );
         server.await.expect("synthetic Tally server task");
@@ -1555,12 +1566,8 @@ mod tests {
                     String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_prefix),
                     "request {index} did not follow the required read/health-check sequence"
                 );
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write paired response");
             }
@@ -1603,12 +1610,8 @@ mod tests {
                 "ledger fetch should use Tally's XML POST endpoint"
             );
             let body = "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>";
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
             socket
-                .write_all(response.as_bytes())
+                .write_all(&utf16_xml_response(body))
                 .await
                 .expect("write Tally response");
         });
@@ -1641,12 +1644,8 @@ mod tests {
                 let mut request = [0_u8; 8192];
                 let bytes_read = socket.read(&mut request).await.expect("read Tally request");
                 assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write Tally response");
             }
@@ -1702,7 +1701,7 @@ mod tests {
             probe.profile.features[&CapabilityFeatureId::EncodingBehaviour]
                 .safe_reason_code
                 .as_deref(),
-            Some("utf8_observed")
+            Some("utf16_le_bom_observed")
         );
         for feature in [
             CapabilityFeatureId::PracticalResponseLimit,
@@ -1729,12 +1728,8 @@ mod tests {
             let mut request = [0_u8; 8192];
             let bytes_read = socket.read(&mut request).await.expect("read Tally request");
             assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
             socket
-                .write_all(response.as_bytes())
+                .write_all(&utf16_xml_response(body))
                 .await
                 .expect("write Tally response");
         });
@@ -1766,12 +1761,8 @@ mod tests {
             let mut request = [0_u8; 8192];
             let bytes_read = socket.read(&mut request).await.expect("read Tally request");
             assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
             socket
-                .write_all(response.as_bytes())
+                .write_all(&utf16_xml_response(body))
                 .await
                 .expect("write Tally response");
         });
@@ -1804,12 +1795,8 @@ mod tests {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let mut request = [0_u8; 8192];
                 assert!(socket.read(&mut request).await.expect("read Tally request") > 0);
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write Tally response");
             }
@@ -1850,12 +1837,8 @@ mod tests {
                 let mut request = [0_u8; 8192];
                 let bytes_read = socket.read(&mut request).await.expect("read Tally request");
                 assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write Tally response");
             }
@@ -1907,12 +1890,8 @@ mod tests {
                 let mut request = [0_u8; 8192];
                 let bytes_read = socket.read(&mut request).await.expect("read Tally request");
                 assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write Tally response");
             }
@@ -1964,13 +1943,9 @@ mod tests {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let mut request = [0_u8; 8192];
                 let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-                requests.push(String::from_utf8_lossy(&request[..bytes_read]).into_owned());
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                requests.push(request[..bytes_read].to_vec());
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write Tally response");
             }
@@ -2006,10 +1981,20 @@ mod tests {
 
         let post_request = requests
             .iter()
-            .find(|request| request.starts_with("POST"))
+            .find(|request| request.starts_with(b"POST"))
             .expect("exactly one POST request was sent");
-        assert!(post_request.contains("<TYPE>Collection</TYPE>"));
-        assert!(post_request.contains("<ID>BridgeCompanyExtent</ID>"));
-        assert!(post_request.contains("<FETCH>NAME,GUID</FETCH>"));
+        let body_start = post_request
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|position| position + 4)
+            .expect("POST request has complete HTTP headers");
+        let post_xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+            &post_request[body_start..],
+            post_request.len(),
+        )
+        .expect("POST request uses decodable UTF-16 XML");
+        assert!(post_xml.text.contains("<TYPE>Collection</TYPE>"));
+        assert!(post_xml.text.contains("<ID>BridgeCompanyExtent</ID>"));
+        assert!(post_xml.text.contains("<FETCH>NAME,GUID</FETCH>"));
     }
 }

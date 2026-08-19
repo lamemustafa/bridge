@@ -19,7 +19,9 @@ with their evidence and date. Never add an unverified claim without marking it.
 
 ## 0. Observation environment
 
-All VERIFIED entries below were established on **2026-07-29** against:
+The primary baseline for VERIFIED entries was established on **2026-07-29**
+against the environment below. Later dated entries state their own synthetic
+environment and evidence boundary.
 
 | | |
 | --- | --- |
@@ -45,8 +47,9 @@ Education-mode-specific and are marked as such. Raw captures live in `.bridge-li
 
 - `GET /status` → `<RESPONSE>TallyPrime Server is Running</RESPONSE>`. Use as a liveness
   probe; it is cheap (milliseconds) and safe.
-- Requests are `POST` to `/` with `Content-Type: text/xml`. Responses come back as
-  `text/xml; charset=utf-8`.
+- Requests are `POST` to `/`. The request charset controls the response charset;
+  Bridge's read path uses `Content-Type: text/xml; charset=utf-16` and a
+  BOM-prefixed UTF-16LE body. See §1.2.
 - **The gateway serialises requests.** A single long-running request blocks every other
   caller, including `/status`. An unresponsive gateway does not imply a hung or crashed
   Tally — it may simply be busy behind another request.
@@ -112,6 +115,32 @@ property that matters.**
 
 **One real parser requirement:** `&` is returned XML-escaped inside attribute values
 (`NAME="ZZ Ram &amp; Sons Pvt Ltd"`). Attribute values must be unescaped before comparison.
+
+### 1.2 Request charset controls response charset
+
+**VERIFIED 2026-08-19.** Matched requests against a synthetic validation book
+established that Tally mirrors the XML request charset. An ASCII/UTF-8 request
+returned literal `?` substitutions for a Devanagari ledger name; a UTF-16LE
+request with `Content-Type: text/xml; charset=utf-16` returned the exact name.
+The UTF-16 request body carried an `FF FE` BOM. The response declared
+`text/xml; charset=utf-16` but carried no BOM (first bytes `3c 00 45 00`).
+
+The byte cost was exactly 2x for matched responses: 7,114 → 14,228 bytes for a
+ledger collection and 1,170 → 2,340 bytes for Bills Receivable. Decoded
+character counts and offsets were identical; the bills pair differed at 16
+positions, each `?` in the UTF-8 response versus the intended Devanagari
+character in the UTF-16 response.
+
+`GET /status` also mirrored only the request `Content-Type` header despite
+having no request body (51 → 102 response bytes). A UTF-16 body without the
+UTF-16 charset header returned `Unknown Request, cannot be processed`.
+
+**Consequence.** Every XML read, including `/status`, declares UTF-16. Response
+decoding requires both the caller's expected encoding and the response charset;
+either a contradictory declaration or a contradictory BOM fails closed.
+BOM-less UTF-16LE is an explicit observed encoding, not an inference from NUL
+placement. Tolerant repair of illegal numeric character references remains
+required after decoding (§1.1).
 
 ## 2. Two request families — and why it matters
 

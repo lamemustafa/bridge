@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bridge_tally_protocol::TallyTextEncoding;
+use bridge_tally_protocol::{encode_tally_xml_request_utf16le, TallyTextEncoding};
 use bridge_tally_transport::{
     TallyDecodedHttpResponse, TallyEndpointConfig, TallyHttpResponse, TallyHttpTransport,
     TallyTransportError, TransportPolicy,
@@ -93,33 +93,19 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[tokio::test]
-async fn production_transport_decodes_utf16_across_closed_framing_modes() {
-    let cases = [
-        (
-            WireEncoding::Utf16Le,
-            ResponseFraming::ContentLength,
-            TallyTextEncoding::Utf16LeBom,
-        ),
-        (
-            WireEncoding::Utf16Be,
-            ResponseFraming::Chunked { chunk_bytes: 7 },
-            TallyTextEncoding::Utf16BeBom,
-        ),
-        (
-            WireEncoding::Utf8Bom,
-            ResponseFraming::ConnectionClose,
-            TallyTextEncoding::Utf8Bom,
-        ),
-    ];
-
-    for (wire_encoding, framing, expected_encoding) in cases {
+async fn retained_body_transport_decodes_expected_utf16_across_closed_framing_modes() {
+    for framing in [
+        ResponseFraming::ContentLength,
+        ResponseFraming::Chunked { chunk_bytes: 7 },
+        ResponseFraming::ConnectionClose,
+    ] {
         let plan = ScenarioPlan::new(Fixture::ExportStatusOne)
-            .with_encoding(wire_encoding)
+            .with_encoding(WireEncoding::Utf16Le)
             .with_framing(framing);
         let expected_encoded_body = plan.response_bytes();
         let (simulator, result) = post_synthetic(plan, None, "<ENVELOPE />").await;
         let response = result.expect("read encoded synthetic response");
-        assert_eq!(response.encoding(), expected_encoding);
+        assert_eq!(response.encoding(), TallyTextEncoding::Utf16LeBom);
         assert_eq!(response.http_status(), 200);
         assert!(response.text().contains("<STATUS>1</STATUS>"));
         assert!(response.encoded_bytes() > 0);
@@ -128,7 +114,7 @@ async fn production_transport_decodes_utf16_across_closed_framing_modes() {
         assert_eq!(observed.method, "POST");
         assert_eq!(observed.path, "/");
         assert!(
-            observed.request_content_type_is_tally_xml,
+            observed.request_content_type_is_tally_xml_utf16,
             "Tally's XML gateway requires the documented XML media type"
         );
         assert!(observed.request_processed);
@@ -136,31 +122,14 @@ async fn production_transport_decodes_utf16_across_closed_framing_modes() {
 }
 
 #[tokio::test]
-async fn decoded_only_transport_streams_all_encodings_without_retaining_wire_body() {
-    for (encoding, framing, expected_encoding) in [
-        (
-            WireEncoding::Utf8,
-            ResponseFraming::ContentLength,
-            TallyTextEncoding::Utf8,
-        ),
-        (
-            WireEncoding::Utf8Bom,
-            ResponseFraming::ConnectionClose,
-            TallyTextEncoding::Utf8Bom,
-        ),
-        (
-            WireEncoding::Utf16Le,
-            ResponseFraming::Chunked { chunk_bytes: 1 },
-            TallyTextEncoding::Utf16LeBom,
-        ),
-        (
-            WireEncoding::Utf16Be,
-            ResponseFraming::Chunked { chunk_bytes: 3 },
-            TallyTextEncoding::Utf16BeBom,
-        ),
+async fn decoded_only_transport_streams_expected_utf16_without_retaining_wire_body() {
+    for framing in [
+        ResponseFraming::ContentLength,
+        ResponseFraming::ConnectionClose,
+        ResponseFraming::Chunked { chunk_bytes: 1 },
     ] {
         let plan = ScenarioPlan::new(Fixture::ExportStatusOne)
-            .with_encoding(encoding)
+            .with_encoding(WireEncoding::Utf16Le)
             .with_framing(framing);
         let encoded = plan.response_bytes();
         let expected_text = Fixture::ExportStatusOne.body();
@@ -168,7 +137,7 @@ async fn decoded_only_transport_streams_all_encodings_without_retaining_wire_bod
         let response = result.expect("stream decoded-only response");
 
         assert_eq!(response.text(), expected_text);
-        assert_eq!(response.encoding(), expected_encoding);
+        assert_eq!(response.encoding(), TallyTextEncoding::Utf16LeBom);
         assert_eq!(response.encoded_bytes(), encoded.len());
         assert_eq!(response.decoded_bytes(), expected_text.len());
         assert_eq!(response.encoded_sha256(), sha256_hex(&encoded));
@@ -180,7 +149,7 @@ async fn decoded_only_transport_streams_all_encodings_without_retaining_wire_bod
         assert!(!format!("{response:?}").contains("<ENVELOPE>"));
         let observed = simulator.finish().expect("finish decoded-only simulator");
         assert!(
-            observed.request_content_type_is_tally_xml,
+            observed.request_content_type_is_tally_xml_utf16,
             "decoded-only transport must preserve Tally's documented XML media type"
         );
     }
@@ -233,8 +202,9 @@ async fn exact_encoded_cap_is_inclusive_for_all_framing_modes() {
     ] {
         let (simulator, result) = post_synthetic(
             ScenarioPlan::new(Fixture::Oversized {
-                minimum_bytes: LIMIT,
+                minimum_bytes: (LIMIT - 2) / 2,
             })
+            .with_encoding(WireEncoding::Utf16Le)
             .with_framing(framing),
             Some(policy(LIMIT, Duration::from_secs(2))),
             "<E />",
@@ -247,7 +217,7 @@ async fn exact_encoded_cap_is_inclusive_for_all_framing_modes() {
 }
 
 #[tokio::test]
-async fn declared_and_streamed_cap_plus_one_fail_closed() {
+async fn declared_and_streamed_above_cap_fail_closed() {
     const LIMIT: usize = 512;
     for (framing, declared_by_peer) in [
         (ResponseFraming::ContentLength, true),
@@ -256,8 +226,9 @@ async fn declared_and_streamed_cap_plus_one_fail_closed() {
     ] {
         let (simulator, result) = post_synthetic(
             ScenarioPlan::new(Fixture::Oversized {
-                minimum_bytes: LIMIT + 1,
+                minimum_bytes: LIMIT / 2,
             })
+            .with_encoding(WireEncoding::Utf16Le)
             .with_framing(framing),
             Some(policy(LIMIT, Duration::from_secs(2))),
             "<E />",
@@ -278,11 +249,16 @@ async fn declared_and_streamed_cap_plus_one_fail_closed() {
 #[tokio::test]
 async fn truncated_declared_body_is_never_partial_success() {
     let fixture = Fixture::ExportStatusOne;
-    let actual_bytes = fixture.body().len();
+    let actual_bytes = ScenarioPlan::new(fixture.clone())
+        .with_encoding(WireEncoding::Utf16Le)
+        .response_bytes()
+        .len();
     let (simulator, result) = post_synthetic(
-        ScenarioPlan::new(fixture).with_framing(ResponseFraming::DeclaredContentLength {
-            bytes: actual_bytes + 17,
-        }),
+        ScenarioPlan::new(fixture)
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::DeclaredContentLength {
+                bytes: actual_bytes + 17,
+            }),
         None,
         "<E />",
     )
@@ -340,7 +316,9 @@ async fn non_identity_content_encoding_is_rejected_before_body_interpretation() 
         ),
     ] {
         let (simulator, result) = post_synthetic(
-            ScenarioPlan::new(Fixture::ExportStatusOne).with_content_encoding(encoding),
+            ScenarioPlan::new(Fixture::ExportStatusOne)
+                .with_encoding(WireEncoding::Utf16Le)
+                .with_content_encoding(encoding),
             None,
             "<E />",
         )
@@ -350,6 +328,88 @@ async fn non_identity_content_encoding_is_rejected_before_body_interpretation() 
             None => assert!(result.is_ok(), "identity encoding must pass"),
         }
         drop(simulator);
+    }
+}
+
+#[tokio::test]
+async fn declared_and_observed_encoding_disagreements_fail_closed() {
+    for (plan, code) in [
+        (
+            ScenarioPlan::new(Fixture::ExportStatusOne).with_encoding(WireEncoding::Utf8),
+            "declared_encoding_mismatch",
+        ),
+        (
+            ScenarioPlan::new(Fixture::ExportStatusOne).with_encoding(WireEncoding::Utf16Be),
+            "observed_encoding_mismatch",
+        ),
+    ] {
+        let (simulator, result) = post_synthetic(plan, None, "<E />").await;
+        assert_eq!(
+            result.expect_err("encoding disagreement must fail"),
+            TallyTransportError::InvalidEncoding { code },
+        );
+        simulator.finish().expect("finish mismatch simulator");
+    }
+}
+
+#[tokio::test]
+async fn post_sites_send_exact_utf16_request_and_round_trip_non_ascii_text() {
+    let xml = "<ENVELOPE><LEDGER>BVL एप्सिलॉन ट्रेडर्स</LEDGER></ENVELOPE>";
+    let encoded_request = encode_tally_xml_request_utf16le(xml);
+    for decoded_only in [false, true] {
+        let plan = ScenarioPlan::new(Fixture::SyntheticXml(xml.to_owned()))
+            .with_encoding(WireEncoding::Utf16Le);
+        let simulator = Simulator::spawn(plan).expect("spawn Unicode simulator");
+        let transport = TallyHttpTransport::new(endpoint(&simulator)).expect("build transport");
+        let response_text = if decoded_only {
+            transport
+                .post_xml_decoded(xml.to_owned())
+                .await
+                .expect("decoded POST")
+                .into_text()
+        } else {
+            transport
+                .post_xml(xml.to_owned())
+                .await
+                .expect("retained POST")
+                .into_text()
+        };
+        assert_eq!(response_text, xml);
+        let observed = simulator.finish().expect("finish Unicode simulator");
+        assert!(observed.request_content_type_is_tally_xml_utf16);
+        assert_eq!(observed.request_body_bytes, encoded_request.len());
+        assert_eq!(observed.request_body_sha256, sha256_hex(&encoded_request));
+    }
+}
+
+#[tokio::test]
+async fn status_sites_deliberately_request_utf16_without_a_body() {
+    for decoded_only in [false, true] {
+        let plan = ScenarioPlan::new(Fixture::ProductStatus(
+            tally_protocol_simulator::ProductStatus::TallyPrime,
+        ))
+        .with_encoding(WireEncoding::Utf16Le);
+        let simulator = Simulator::spawn(plan).expect("spawn status simulator");
+        let transport = TallyHttpTransport::new(endpoint(&simulator)).expect("build transport");
+        let response_text = if decoded_only {
+            transport
+                .get_status_decoded()
+                .await
+                .expect("decoded status")
+                .into_text()
+        } else {
+            transport
+                .get_status()
+                .await
+                .expect("retained status")
+                .into_text()
+        };
+        assert!(response_text.contains("TallyPrime"));
+        let observed = simulator.finish().expect("finish status simulator");
+        assert_eq!(observed.method, "GET");
+        assert_eq!(observed.path, "/status");
+        assert!(observed.request_content_type_is_tally_xml_utf16);
+        assert_eq!(observed.request_body_bytes, 0);
     }
 }
 

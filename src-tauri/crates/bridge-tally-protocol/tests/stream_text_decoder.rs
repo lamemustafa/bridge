@@ -1,6 +1,6 @@
 use bridge_tally_protocol::{
-    decode_tally_text_bytes_limited, StreamDecodedTallyText, TallyTextDecodeError,
-    TallyTextEncoding, TallyTextStreamDecoder,
+    decode_tally_text_bytes_limited, ExpectedTallyTextEncoding, StreamDecodedTallyText,
+    TallyTextDecodeError, TallyTextEncoding, TallyTextStreamDecoder,
 };
 use sha2::{Digest, Sha256};
 
@@ -47,6 +47,19 @@ fn decode_chunks(
     max_decoded_bytes: usize,
 ) -> Result<StreamDecodedTallyText, TallyTextDecodeError> {
     let mut decoder = TallyTextStreamDecoder::new(max_decoded_bytes);
+    for chunk in chunks {
+        decoder.push_chunk(&chunk)?;
+    }
+    decoder.finish()
+}
+
+fn decode_expected_chunks(
+    chunks: impl IntoIterator<Item = Vec<u8>>,
+    max_decoded_bytes: usize,
+    expected: ExpectedTallyTextEncoding,
+) -> Result<StreamDecodedTallyText, TallyTextDecodeError> {
+    let mut decoder =
+        TallyTextStreamDecoder::new_with_expected_encoding(max_decoded_bytes, expected);
     for chunk in chunks {
         decoder.push_chunk(&chunk)?;
     }
@@ -215,6 +228,45 @@ fn decoded_digest_is_chunk_and_wire_encoding_independent() {
         observed.push(decoded.decoded_sha256);
     }
     assert!(observed.iter().all(|digest| digest == &observed[0]));
+}
+
+#[test]
+fn explicit_utf16_contract_streams_captured_bomless_bytes_without_sniffing() {
+    let bytes = include_bytes!("fixtures/encoding/led-utf16.bin");
+    for chunk_bytes in [1, 2, 3, 7, 1024, bytes.len()] {
+        let decoded = decode_expected_chunks(
+            bytes.chunks(chunk_bytes).map(<[u8]>::to_vec),
+            bytes.len(),
+            ExpectedTallyTextEncoding::Utf16Le,
+        )
+        .expect("explicit expected encoding must decode every chunking");
+        assert_eq!(decoded.encoding, TallyTextEncoding::Utf16Le);
+        assert!(decoded.text.contains("BVL एप्सिलॉन ट्रेडर्स"));
+    }
+}
+
+#[test]
+fn explicit_encoding_contract_rejects_a_contradictory_bom() {
+    for (bytes, expected) in [
+        (
+            encode("<E />", WireEncoding::Utf16Le),
+            ExpectedTallyTextEncoding::Utf8,
+        ),
+        (
+            encode("<E />", WireEncoding::Utf16Be),
+            ExpectedTallyTextEncoding::Utf16Le,
+        ),
+        (
+            encode("<E />", WireEncoding::Utf8Bom),
+            ExpectedTallyTextEncoding::Utf16Le,
+        ),
+    ] {
+        assert_eq!(
+            decode_expected_chunks(bytes.iter().map(|byte| vec![*byte]), bytes.len(), expected,)
+                .expect_err("contradictory BOM must fail"),
+            TallyTextDecodeError::ObservedEncodingMismatch,
+        );
+    }
 }
 
 #[test]

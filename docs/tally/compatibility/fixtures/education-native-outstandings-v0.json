@@ -4,7 +4,7 @@
   "dataset_tier": "synthetic_small",
   "candidate": {
     "profile_id": "native_ledger_outstandings_candidate_v0",
-    "template_sha256": "bc3b87484adb9a10cc15f6c9042853bb1047278896bcf0f495b93e7e6b428526",
+    "template_sha256": "7779fec88fdd10a623bd7f37c42fee2adf9d08c4a6b53a0d4d7afe763501dcd4",
     "observation_posture": "profile_unobserved",
     "request_shape_immutable": true
   },

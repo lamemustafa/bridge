@@ -28,7 +28,7 @@ pub struct ObservedRequest {
     pub path: String,
     /// Sanitized transport metadata used by integration tests. The simulator
     /// never retains arbitrary request headers or the request body.
-    pub request_content_type_is_tally_xml: bool,
+    pub request_content_type_is_tally_xml_utf16: bool,
     pub bytes_received: usize,
     pub request_body_bytes: usize,
     pub request_body_sha256: String,
@@ -255,7 +255,7 @@ fn serve_request(
     let mut observed = ObservedRequest {
         method,
         path,
-        request_content_type_is_tally_xml: has_tally_xml_content_type(&request),
+        request_content_type_is_tally_xml_utf16: has_tally_xml_utf16_content_type(&request),
         bytes_received: request.len(),
         request_body_bytes: request_body.len(),
         request_body_sha256: hex::encode(Sha256::digest(request_body)),
@@ -467,7 +467,7 @@ fn request_line(request: &[u8]) -> (String, String) {
     )
 }
 
-fn has_tally_xml_content_type(request: &[u8]) -> bool {
+fn has_tally_xml_utf16_content_type(request: &[u8]) -> bool {
     let Some(header_end) = find_bytes(request, b"\r\n\r\n") else {
         return false;
     };
@@ -479,7 +479,7 @@ fn has_tally_xml_content_type(request: &[u8]) -> bool {
     });
     matches!(
         (content_types.next(), content_types.next()),
-        (Some(value), None) if value.eq_ignore_ascii_case("text/xml; charset=utf-8")
+        (Some(value), None) if value.eq_ignore_ascii_case("text/xml; charset=utf-16")
     )
 }
 
@@ -504,7 +504,7 @@ fn response_headers(plan: &ScenarioPlan, body_len: usize) -> String {
         {
             "; charset=utf-8"
         }
-        WireEncoding::Utf8 | WireEncoding::Utf8Bom => "",
+        WireEncoding::Utf8 | WireEncoding::Utf8Bom => "; charset=utf-8",
     };
     let framing = match plan.framing {
         ResponseFraming::ContentLength => format!("Content-Length: {body_len}\r\n"),
@@ -612,14 +612,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tally_xml_content_type_classifier_is_exact_and_case_insensitive() {
-        assert!(has_tally_xml_content_type(
-            b"POST / HTTP/1.1\r\ncontent-type: TEXT/XML; CHARSET=UTF-8\r\n\r\n<E />"
+    fn tally_xml_utf16_content_type_classifier_is_exact_and_case_insensitive() {
+        assert!(has_tally_xml_utf16_content_type(
+            b"POST / HTTP/1.1\r\ncontent-type: TEXT/XML; CHARSET=UTF-16\r\n\r\n<E />"
         ));
-        assert!(!has_tally_xml_content_type(
+        assert!(!has_tally_xml_utf16_content_type(
             b"POST / HTTP/1.1\r\nContent-Type: application/xml; charset=utf-8\r\n\r\n<E />"
         ));
-        assert!(!has_tally_xml_content_type(
+        assert!(!has_tally_xml_utf16_content_type(
             b"POST / HTTP/1.1\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Type: application/xml\r\n\r\n<E />"
         ));
     }

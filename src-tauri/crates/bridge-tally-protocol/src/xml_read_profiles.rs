@@ -17,7 +17,10 @@ use crate::outstandings::{
 use crate::outstandings_shared::render_company_book_extent;
 #[cfg(feature = "voucher-scan")]
 use crate::outstandings_shared::PinnedCompany;
-use crate::{BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_LEDGER_WRITE_READBACK_SCHEMA};
+use crate::{
+    encode_tally_xml_request_utf16le, BRIDGE_LEDGER_EXPORT_SCHEMA,
+    BRIDGE_LEDGER_WRITE_READBACK_SCHEMA,
+};
 
 const TEMPLATE_COMPANY: &str = "BRIDGE TEMPLATE COMPANY";
 const TEMPLATE_FROM: &str = "20000101";
@@ -245,7 +248,7 @@ impl ReadOnlyProfileId {
                 TEMPLATE_TO,
             ),
         };
-        sha256_hex(template.as_bytes())
+        sha256_hex(&encode_tally_xml_request_utf16le(&template))
     }
 }
 
@@ -1078,60 +1081,66 @@ mod tests {
         let mut expected: Vec<(ReadOnlyProfileId, &str)> = vec![
             (
                 ReadOnlyProfileId::CompanyListV1,
-                "d5c134051e1d298a278e27284fbb5ab1a9d00e0006a70f9777c4e38cebbb16de",
+                "8905c041a75929f157be704ca9dd076a37995dc7936e0ad71c9361406a8fb694",
             ),
             (
                 ReadOnlyProfileId::CompanyListV2,
-                "f484b6f1e19a622d351c77dbe14b319524cb0cd5a02414dd2d9a6141721b1bad",
+                "09396e22eb8a4f51214c417730599a381ddd5752e42e3dd44103409b4daaccae",
             ),
             (
                 ReadOnlyProfileId::CompanyBookExtentV1,
-                "38038f96473b2bf036d78aca2eea85f96738ace3bf0e691bbfa14ddd165784f4",
+                "eab1b8be8b379077746ff4d63cea98a662374f5bb6a6dcea282e1d8dbae8f190",
             ),
             (
                 ReadOnlyProfileId::StandardLedgerIdentityV1,
-                "e3aa5a36e7a42fd895ed34c818036bfb7ee3528c116697707ec49ae8ac682aad",
+                "3f38d58a88c8bb99180290b2fb17a3057d6149f78d81e08ba3d9bfc2d595dd95",
             ),
             (
                 ReadOnlyProfileId::StandardLedgerCatalogV1,
-                "e3aa5a36e7a42fd895ed34c818036bfb7ee3528c116697707ec49ae8ac682aad",
+                "3f38d58a88c8bb99180290b2fb17a3057d6149f78d81e08ba3d9bfc2d595dd95",
             ),
             (
                 ReadOnlyProfileId::LedgersV1,
-                "aec4ffa397fde63e82ead885f70e1327d2b5f542d7ee167e291a2e86524c17b0",
+                "a4a29d043d8f0c11c5f358043cb510554e8307f93a5c45676d2f073ad68f87fd",
             ),
             (
                 ReadOnlyProfileId::LedgerCanaryReadbackV1,
-                "a2c79877d828c504c18253945bb128bbde6a5dd6d173c4427de99e92aa777cb5",
+                "6659ce0840da754a7cc3bf5272aa2b13c4b1ec2e9f9099555835276d3a478b76",
             ),
             (
                 ReadOnlyProfileId::VouchersV2,
-                "efd9b5f5148afff213090f57bd6bd5d3f58db6d1112ec27ef118dd29eac50385",
+                "81cc3da69ab58cd857603342898a2b3142ade321d5fea38de76c425612ccf6df",
             ),
             (
                 ReadOnlyProfileId::VouchersV3,
-                "2e68f0ab8e57ded8cc1948b6785598e2f1e0947fcc431975d15fd63131df478d",
+                "8dbe02d0645ff6b055ea8f6fb63d27af90dc41e81ee42b39ee7d2b407ab4aa3b",
             ),
         ];
         #[cfg(feature = "voucher-scan")]
         expected.extend([
             (
                 ReadOnlyProfileId::LedgerOpeningCoverageV1,
-                "64528ba2deddc0b640bc6c557d50baed252c0ba2aadc5e42fea0fd6e1c0c30bf",
+                "ae607d1d0ae4347f30e03ae3f7ee6c9a48b936be1cf71bb63ea1966727871efb",
             ),
             (
                 ReadOnlyProfileId::VoucherOutstandingsV1,
-                "7e4025038bf85345d0a55b9437be339c8829b1f699abaaa52bbdfa6affcb1dae",
+                "165b40352eda40491a189d58ac81777b307bb709c65afb1f3555f19f0df0edd9",
             ),
             (
                 ReadOnlyProfileId::VoucherEmptyPartitionWitnessV1,
-                "73a9a71e437a8556d18123fad739fa10a7e859a1d462b5ce88d6e42d52811d8d",
+                "7e9d3befbb8ef32503e0fe960c78aedcbf8a8075c056a8de1ad40846e6d109bc",
             ),
         ]);
-        for (profile, digest) in expected {
-            assert_eq!(profile.template_sha256(), digest);
-            assert_eq!(profile.template_sha256().len(), 64);
-        }
+        let observed = expected
+            .iter()
+            .map(|(profile, _)| (profile.as_str(), profile.template_sha256()))
+            .collect::<Vec<_>>();
+        let sealed = expected
+            .iter()
+            .map(|(profile, digest)| (profile.as_str(), (*digest).to_string()))
+            .collect::<Vec<_>>();
+        assert!(observed.iter().all(|(_, digest)| digest.len() == 64));
+        assert_eq!(observed, sealed);
     }
 
     #[test]

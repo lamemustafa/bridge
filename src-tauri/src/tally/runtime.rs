@@ -2182,6 +2182,15 @@ mod tests {
     use std::collections::BTreeMap;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
+        let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-16\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        [headers.as_bytes(), &body].concat()
+    }
+
     #[test]
     fn ageing_anchor_serializes_as_an_explicit_wire_contract() {
         assert_eq!(
@@ -2329,12 +2338,8 @@ mod tests {
                     String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_method),
                     "request {index} did not preserve paired-read health bracketing"
                 );
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write response");
             }

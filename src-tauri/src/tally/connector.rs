@@ -536,11 +536,20 @@ pub(crate) fn simulator_test_lock() -> &'static tokio::sync::Mutex<()> {
 mod tests {
     use super::*;
     use std::net::SocketAddr;
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator};
+    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator, WireEncoding};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         task::JoinHandle,
     };
+
+    fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
+        let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-16\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        [headers.as_bytes(), &body].concat()
+    }
 
     async fn spawn_method_routed_server(
         post_responses: Vec<String>,
@@ -600,12 +609,8 @@ mod tests {
                     posts_remaining -= 1;
                     post_responses.next().expect("next routed POST response")
                 };
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write routed response");
             }
@@ -1073,7 +1078,7 @@ mod tests {
         ]
         .into_iter()
         .map(Fixture::SyntheticXml)
-        .map(ScenarioPlan::new)
+        .map(|fixture| ScenarioPlan::new(fixture).with_encoding(WireEncoding::Utf16Le))
         .collect();
         let simulator = SequenceSimulator::spawn(plans).expect("spawn sequence simulator");
         let company = CompanyRef {

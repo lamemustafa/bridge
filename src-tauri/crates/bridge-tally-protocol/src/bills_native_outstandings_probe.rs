@@ -8,6 +8,8 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
+use crate::encode_tally_xml_request_utf16le;
+
 const TEMPLATE_COMPANY: &str = "BRIDGE TEMPLATE COMPANY";
 const TEMPLATE_LEDGER: &str = "BRIDGE TEMPLATE LEDGER";
 const TEMPLATE_TO_DATE: &str = "20000101";
@@ -125,10 +127,9 @@ impl NativeOutstandingsProbeProfileId {
 
     pub fn template_sha256(self) -> String {
         match self {
-            Self::LedgerOutstandingsCandidateV0 => sha256_hex(
-                render_ledger_outstandings(TEMPLATE_COMPANY, TEMPLATE_LEDGER, TEMPLATE_TO_DATE)
-                    .as_bytes(),
-            ),
+            Self::LedgerOutstandingsCandidateV0 => sha256_hex(&encode_tally_xml_request_utf16le(
+                &render_ledger_outstandings(TEMPLATE_COMPANY, TEMPLATE_LEDGER, TEMPLATE_TO_DATE),
+            )),
         }
     }
 }
@@ -162,7 +163,7 @@ impl NativeLedgerOutstandingsProbeScope {
             self.to_date.as_str(),
         );
         SealedNativeLedgerOutstandingsProbe {
-            rendered_xml_sha256: sha256_hex(rendered_xml.as_bytes()),
+            wire_request_sha256: sha256_hex(&encode_tally_xml_request_utf16le(&rendered_xml)),
             scope_sha256: scope_sha256(
                 self.company.as_str(),
                 self.ledger.as_str(),
@@ -196,7 +197,7 @@ impl fmt::Debug for NativeLedgerOutstandingsProbeScope {
 #[derive(Clone, PartialEq, Eq)]
 pub struct SealedNativeLedgerOutstandingsProbe {
     rendered_xml: String,
-    rendered_xml_sha256: String,
+    wire_request_sha256: String,
     scope_sha256: String,
 }
 
@@ -218,7 +219,7 @@ impl SealedNativeLedgerOutstandingsProbe {
     }
 
     pub fn request_sha256(&self) -> &str {
-        &self.rendered_xml_sha256
+        &self.wire_request_sha256
     }
 
     pub fn scope_sha256(&self) -> &str {
@@ -490,11 +491,11 @@ mod tests {
         let sealed = probe("BRIDGE SYNTHETIC BOOK", "BRIDGE PARTY", "20260402");
         assert_eq!(
             sealed.template_sha256(),
-            "bc3b87484adb9a10cc15f6c9042853bb1047278896bcf0f495b93e7e6b428526"
+            "7779fec88fdd10a623bd7f37c42fee2adf9d08c4a6b53a0d4d7afe763501dcd4"
         );
         assert_eq!(
             sealed.request_sha256(),
-            "e99eebe225f8b023fe55b4d151c0fd18315b61580df5d47945235a8a6bda3822"
+            "8bd7c0e6612259c3ea85566d6fdad08ec89b5aec32bf9e5fa629995b3db6aabd"
         );
         assert_eq!(
             sealed.scope_sha256(),
@@ -502,7 +503,7 @@ mod tests {
         );
         assert_eq!(
             sealed.request_sha256(),
-            sha256_hex(sealed.rendered_xml().as_bytes())
+            sha256_hex(&encode_tally_xml_request_utf16le(sealed.rendered_xml()))
         );
 
         let other_scope = probe("BRIDGE SYNTHETIC BOOK", "BRIDGE PARTY 2", "20260402");
