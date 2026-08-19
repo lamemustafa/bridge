@@ -588,6 +588,23 @@ mod tests {
     }
 
     #[test]
+    fn invalid_statement_date_fails_instead_of_using_a_default() {
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "not-a-date",
+            "Synthetic Party",
+            &[bill("INV-1", "10.00", 5)],
+            &[],
+        )
+        .expect("the renderer owns document-date validation");
+
+        assert!(matches!(
+            render_party_statement_pdf(&statement),
+            Err(PartyStatementPdfError::InvalidDate(value)) if value == "not-a-date"
+        ));
+    }
+
+    #[test]
     fn an_unrepresentable_amount_fails_instead_of_becoming_zero() {
         assert_eq!(
             amount_text_for_pdf("12345678.20").unwrap(),
