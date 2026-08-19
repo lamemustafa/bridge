@@ -1,4 +1,5 @@
 pub mod axal;
+pub mod client_groups;
 pub mod commands;
 pub mod db;
 pub mod documents;
@@ -94,6 +95,8 @@ pub fn run() {
             commands::preview_bulk_party_statements,
             commands::export_bulk_party_statements,
             commands::fetch_tally_outstandings_all_companies,
+            commands::load_client_group_labels,
+            commands::save_client_group_label,
             commands::detect_tally_base_currency,
             commands::tally_persisted_company_profiles,
             commands::tally_mirror_explorer_page,
@@ -228,5 +231,25 @@ mod security_config_tests {
         assert!(!csp.contains("unsafe-inline"));
         assert!(!csp.contains("https://"));
         assert!(csp.contains("default-src 'none'"));
+    }
+}
+
+#[cfg(test)]
+mod client_group_label_mount_tests {
+    #[test]
+    fn group_label_load_path_is_mirror_and_keychain_free() {
+        let commands = include_str!("commands.rs");
+        let start = commands
+            .find("pub fn load_client_group_labels")
+            .expect("group-label load command");
+        let end = commands[start..]
+            .find("pub struct AllCompaniesOutstandingsRequest")
+            .map(|offset| start + offset)
+            .expect("end of group-label commands");
+        let group_label_commands = &commands[start..end];
+
+        assert!(group_label_commands.contains("app_config_dir"));
+        assert!(!group_label_commands.contains("LazyTallyMirror"));
+        assert!(!group_label_commands.contains("keyring"));
     }
 }

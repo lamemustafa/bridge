@@ -797,8 +797,14 @@ function comparePartiesBy(sort: PartySort) {
 }
 
 function amountOf(value: string) {
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
+  if (!/^-?\d+(?:\.\d+)?$/.test(value)) {
+    throw new Error("Bridge could not read an outstandings amount.");
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error("Bridge could not read an outstandings amount.");
+  }
+  return parsed;
 }
 
 /// Ageing rows carry their own bar width. Widths are relative to the LARGEST

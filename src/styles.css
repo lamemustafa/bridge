@@ -2255,33 +2255,53 @@ button.outstandings-party {
   background: #fff;
 }
 
-.clients-totals {
+.client-group-labels {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 2fr);
+  gap: 20px 30px;
+  padding: 20px 30px;
+  border-bottom: 1px solid #e6ebe7;
+  background: #fbfcfb;
+}
+
+.client-group-labels h3,
+.client-group-labels p {
+  margin: 0;
+}
+
+.client-group-labels h3 {
+  color: #16241c;
+  font-size: 14px;
+}
+
+.client-group-labels p,
+.client-group-label-grid label > span {
+  color: #61756a;
+  font-size: 12px;
+}
+
+.client-group-labels p {
+  margin-top: 4px;
+}
+
+.client-group-label-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  border-bottom: 1px solid #e6ebe7;
+  gap: 12px;
 }
 
-.clients-totals div {
-  padding: 20px 30px;
-}
-
-.clients-totals div + div {
-  border-left: 1px solid #e6ebe7;
-}
-
-.clients-totals span {
+.client-group-label-grid label > span {
   display: block;
-  color: #61756a;
-  font-size: 13px;
+  margin-bottom: 4px;
 }
 
-.clients-totals strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 26px;
-  letter-spacing: -0.02em;
-  color: #16241c;
-  font-variant-numeric: tabular-nums;
+.client-group-label-grid input {
+  width: 100%;
+}
+
+.client-group-label-error {
+  grid-column: 1 / -1;
+  color: #a13f32 !important;
 }
 
 .clients-table {
@@ -2311,6 +2331,20 @@ button.outstandings-party {
   color: #61756a;
   font-size: 12px;
   cursor: default;
+}
+
+.clients-group-total {
+  min-height: 48px;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: #eef5f0;
+  color: #1f4f36;
+  cursor: default;
+}
+
+.clients-group-total .clients-name em {
+  color: #587968;
 }
 
 .clients-row:not(.is-head):hover {
@@ -2411,4 +2445,20 @@ button.outstandings-party {
 
 .clients-row:hover .clients-age svg {
   color: #1f6a4a;
+}
+
+@media (max-width: 520px) {
+  .client-group-labels {
+    grid-template-columns: 1fr;
+    padding: 20px;
+  }
+
+  .client-group-label-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .clients-table {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
 }
