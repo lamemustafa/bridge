@@ -3,7 +3,7 @@
 import React from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { applyClientGroupLabel, ClientGroupLabels, groupClientRows, rollbackFailedClientGroupLabel } from "./client-grouping";
+import { applyClientGroupLabel, ClientGroupLabels, groupClientRows, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
 import { outstandingsPartialState } from "./outstandings-copy";
 
 type CompanyRef = { name: string; guid: string };
@@ -61,6 +61,20 @@ function formatCompact(value: string | undefined) {
 }
 
 type SortKey = "client" | "receivable" | "overdue" | "unallocated" | "oldest";
+type SortPreference = { key: SortKey; desc: boolean };
+
+const defaultSort: SortPreference = { key: "overdue", desc: true };
+
+function isSortPreference(value: unknown): value is SortPreference {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && "key" in value
+      && "desc" in value
+      && ["client", "receivable", "overdue", "unallocated", "oldest"].includes(String(value.key))
+      && typeof value.desc === "boolean",
+  );
+}
 
 /// Severity tiers reuse the ageing ramp used on the single-client screen, so a
 /// chip means the same thing in both places.
@@ -73,7 +87,7 @@ function ageTier(days: number | null) {
 }
 
 export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: Props) {
-  const [sort, setSort] = React.useState<{ key: SortKey; desc: boolean }>({ key: "overdue", desc: true });
+  const [sort, setSort] = React.useState<SortPreference>(defaultSort);
   const [entries, setEntries] = React.useState<Entry[] | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -81,6 +95,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   const [groupLabelError, setGroupLabelError] = React.useState<string | null>(null);
   const persistedGroupLabels = React.useRef<ClientGroupLabels>({});
   const requestVersion = React.useRef(0);
+  const sortChangedDuringLoad = React.useRef(false);
 
   React.useEffect(() => {
     let active = true;
@@ -99,6 +114,26 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
           setGroupLabels({});
         }
       });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let active = true;
+    void invoke<SortPreference | null>("load_client_sort_preference")
+      .then((preference) => {
+        if (active && isSortPreference(preference)) {
+          setSort((current) => reconcileLoadedSortPreference(
+            current,
+            preference,
+            sortChangedDuringLoad.current,
+          ));
+        }
+      })
+      // Sorting is an optional local display preference. Keep the safe default
+      // if its config file cannot be read.
+      .catch(() => {});
     return () => {
       active = false;
     };
@@ -236,6 +271,13 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
       });
   }, []);
 
+  const changeSort = React.useCallback((key: SortKey) => {
+    const next = sort.key === key ? { key, desc: !sort.desc } : { key, desc: key !== "client" };
+    sortChangedDuringLoad.current = true;
+    setSort(next);
+    void invoke("save_client_sort_preference", { preference: next }).catch(() => {});
+  }, [sort]);
+
   const renderRow = (row: (typeof rows)[number]) => {
     const partial = row.reasonCode ? outstandingsPartialState(row.reasonCode) : null;
     return (
@@ -358,10 +400,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
                   type="button"
                   className={sort.key === key ? "is-sorted" : undefined}
                   aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}
-                  onClick={() => setSort((current) =>
-                    current.key === key
-                      ? { key, desc: !current.desc }
-                      : { key, desc: key !== "client" })}
+                  onClick={() => changeSort(key)}
                 >
                   {label}
                 </button>

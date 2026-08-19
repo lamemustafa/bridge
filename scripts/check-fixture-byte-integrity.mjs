@@ -11,6 +11,23 @@ const fixtureDirectories = [
   "src-tauri/crates/tally-protocol-simulator/fixtures",
   "docs/tally/compatibility/fixtures",
 ];
+const repositoryDirectories = walkDirectories(repositoryRoot)
+  .map((directory) => relative(repositoryRoot, directory).replaceAll("\\", "/"));
+const ignoredDirectories = gitIgnoredPaths(repositoryDirectories);
+const discoveredFixtureDirectories = repositoryDirectories
+  .filter((directory) => !ignoredDirectories.has(directory))
+  .filter((directory) => directory.endsWith("/fixture") || directory.endsWith("/fixtures"))
+  .sort();
+const unexpectedFixtureDirectories = discoveredFixtureDirectories.filter(
+  (directory) => !fixtureDirectories.includes(directory),
+);
+if (unexpectedFixtureDirectories.length) {
+  throw new Error(
+    "unexpected fixture directories are not covered by byte-integrity policy:\n" +
+      unexpectedFixtureDirectories.map((directory) => `- ${directory}`).join("\n") +
+      "\nRegister each directory in fixtureDirectories and .gitattributes before adding fixtures.",
+  );
+}
 const fixtures = fixtureDirectories
   .flatMap((directory) => {
     const paths = walkFiles(join(repositoryRoot, directory));
@@ -40,6 +57,10 @@ if (attributeFailures.length) {
 
 const byteFailures = [];
 for (const fixture of fixtures) {
+  // In CI the checkout materialises this file from the same HEAD blob, so this
+  // comparison cannot independently establish captured-byte provenance there.
+  // The checked .gitattributes rule is the meaningful CI protection; this
+  // comparison still catches local worktree conversion or mutation.
   const committed = runGit(["show", "--no-textconv", `HEAD:${fixture}`], { allowFailure: true });
   if (committed.status !== 0) {
     // A new fixture has no blob until its first commit. Attribute coverage still
@@ -72,9 +93,38 @@ function walkFiles(directory) {
   return paths;
 }
 
-function runGit(args, { allowFailure = false } = {}) {
+function walkDirectories(directory) {
+  const directories = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || [".git", "node_modules", "target"].includes(entry.name)) continue;
+    const path = join(directory, entry.name);
+    directories.push(path, ...walkDirectories(path));
+  }
+  return directories;
+}
+
+function gitIgnoredPaths(paths) {
+  if (!paths.length) return new Set();
+  const result = runGit(["check-ignore", "-z", "--stdin"], {
+    allowFailure: true,
+    input: `${paths.join("\0")}\0`,
+  });
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(`git check-ignore failed with status ${result.status}`);
+  }
+  return new Set(
+    result.stdout
+      .toString("utf8")
+      .split("\0")
+      .filter(Boolean)
+      .map((path) => path.replaceAll("\\", "/")),
+  );
+}
+
+function runGit(args, { allowFailure = false, input } = {}) {
   const result = spawnSync("git", args, {
     cwd: repositoryRoot,
+    input,
     maxBuffer: 64 * 1024 * 1024,
     windowsHide: true,
   });

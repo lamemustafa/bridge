@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "309fe37d7038a4a1eb6197edf32f652af50ded2017a55d55466e577b878b05ed"
+      "sha256": "04c2796dc7b382a0582c82d0bc86f3b9b819b7bf46df6cf23a36b385f0f2e832"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
@@ -71,7 +71,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "bc58b4532fc7279bdbaef868ff4ecda87fcb353647a2cbac7dd7cd06ee423cf3"
+      "sha256": "d6a5107c4c556fbf7e494f98b743d737cc47fa8bd01cecdc942066c53b4d5e86"
     },
     {
       "path": "scripts/check-tally-live-read-boundary.mjs",
@@ -99,7 +99,7 @@
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "3bb11f1d204fa55443e80686a1def19210b8756ace49585cb308b27e649b52a1"
+      "sha256": "c9bd8222ce43a2c6eb09efd4c61c2ac8093c581806a8b8776f3f5c42e5130ea3"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/Cargo.toml",
@@ -219,7 +219,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "8d13e54b487bf27984ed988abee126d90e63a21a72d12aa21a819796bff4c569"
+      "sha256": "1788dbf6f84c47399ce645989468e93b5b9d41e59cfac11639d3caa96bf3adb7"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -303,7 +303,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "5582994d94163235a885bce0d44eadc11b6d8eb9a36898610e94c2b1141efbae"
+      "sha256": "5a2e2c35da52a7c3b01c5810882a1eb3a9ea45fac82556b1eee1a715989585b9"
     },
     {
       "path": "src-tauri/src/sync/coordinator.rs",
@@ -434,5 +434,5 @@
       "sha256": "a27f294ee15e407b69fdfc73609e8708ac0509b6e6a8872daef5451fde61a8db"
     }
   ],
-  "manifest_sha256": "ded2577b0f66b63d6ea65fe3d315d69dce68b0fa930f2b6d9106b7e0b52b526d"
+  "manifest_sha256": "225d2dfef642da0ee454a240247d616eba2ed60e19fa139ebbc5d9cff06fe0c1"
 }

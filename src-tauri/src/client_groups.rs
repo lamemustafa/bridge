@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Operator-owned company filing labels.
+//! Operator-owned company filing labels and all-client sort preference.
 //!
 //! These labels deliberately live in the ordinary application configuration
 //! directory, not in the encrypted Tally mirror. They are an operator's filing
-//! choice rather than accounting data, and reading them must never resolve the
-//! mirror key or prompt the operating-system keychain.
+//! choice rather than accounting data. They contain neither accounting figures
+//! nor mirror state, and reading them must never resolve the mirror key or
+//! prompt the operating-system keychain.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -14,14 +15,40 @@ use std::path::{Path, PathBuf};
 
 const FILE_NAME: &str = "client-group-labels-v1.json";
 const SCHEMA_VERSION: u8 = 1;
+const SORT_FILE_NAME: &str = "client-sort-preference-v1.json";
+const SORT_SCHEMA_VERSION: u8 = 1;
 
 pub type ClientGroupLabels = BTreeMap<String, String>;
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientSortKey {
+    Client,
+    Receivable,
+    Overdue,
+    Unallocated,
+    Oldest,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ClientSortPreference {
+    pub key: ClientSortKey,
+    pub desc: bool,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ClientGroupLabelsFile {
     version: u8,
     labels: ClientGroupLabels,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ClientSortPreferenceFile {
+    version: u8,
+    sort: ClientSortPreference,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -40,6 +67,15 @@ pub enum ClientGroupLabelsError {
 
 pub fn load(directory: &Path) -> ClientGroupLabels {
     try_load(directory).unwrap_or_default()
+}
+
+pub fn load_sort_preference(directory: &Path) -> Option<ClientSortPreference> {
+    let contents = std::fs::read_to_string(directory.join(SORT_FILE_NAME)).ok()?;
+    if contents.trim().is_empty() {
+        return None;
+    }
+    let file = serde_json::from_str::<ClientSortPreferenceFile>(&contents).ok()?;
+    (file.version == SORT_SCHEMA_VERSION).then_some(file.sort)
 }
 
 fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsError> {
@@ -80,19 +116,34 @@ pub fn save_label(
         labels.insert(company_guid.to_string(), label.to_string());
     }
 
-    std::fs::create_dir_all(directory).map_err(ClientGroupLabelsError::Write)?;
-    let path = directory.join(FILE_NAME);
     let contents = serde_json::to_vec_pretty(&ClientGroupLabelsFile {
         version: SCHEMA_VERSION,
         labels,
     })
     .expect("client group label schema always serializes");
-    write_file_atomically(&path, &contents).map_err(ClientGroupLabelsError::Write)?;
+    save_bytes(directory, FILE_NAME, &contents).map_err(ClientGroupLabelsError::Write)
+}
+
+pub fn save_sort_preference(
+    directory: &Path,
+    sort: ClientSortPreference,
+) -> Result<(), std::io::Error> {
+    let contents = serde_json::to_vec_pretty(&ClientSortPreferenceFile {
+        version: SORT_SCHEMA_VERSION,
+        sort,
+    })
+    .expect("client sort preference schema always serializes");
+    save_bytes(directory, SORT_FILE_NAME, &contents)
+}
+
+fn save_bytes(directory: &Path, file_name: &str, contents: &[u8]) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(directory)?;
+    let path = directory.join(file_name);
+    write_file_atomically(&path, contents)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(ClientGroupLabelsError::Write)?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
 }
@@ -125,7 +176,7 @@ fn write_file_atomically(path: &Path, contents: &[u8]) -> Result<(), std::io::Er
             return Err(error);
         }
         drop(file);
-        if let Err(error) = std::fs::rename(&temporary, path) {
+        if let Err(error) = replace_file(&temporary, path) {
             let _ = std::fs::remove_file(&temporary);
             return Err(error);
         }
@@ -135,6 +186,45 @@ fn write_file_atomically(path: &Path, contents: &[u8]) -> Result<(), std::io::Er
         std::io::ErrorKind::AlreadyExists,
         "label_temporary_name_exhausted",
     ))
+}
+
+#[cfg(not(windows))]
+fn replace_file(temporary: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    std::fs::rename(temporary, destination)
+}
+
+#[cfg(windows)]
+fn replace_file(temporary: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let temporary = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: both buffers are NUL-terminated and remain alive for the call.
+    // The source is a newly created sibling owned by this process. The flags
+    // provide Windows' replace-existing behavior and request durable metadata.
+    let replaced = unsafe {
+        MoveFileExW(
+            temporary.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if replaced == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn temporary_label_path(parent: &Path, file_name: &str, sequence: u32) -> PathBuf {
@@ -280,5 +370,85 @@ mod tests {
             Err(ClientGroupLabelsError::Read(_))
         ));
         assert!(unreadable_path.is_dir());
+    }
+
+    #[test]
+    fn sort_preference_survives_a_reload_without_changing_group_labels() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        save_label(directory.path(), "synthetic-company-guid", "North practice")
+            .expect("save label");
+        let sort = ClientSortPreference {
+            key: ClientSortKey::Unallocated,
+            desc: false,
+        };
+
+        save_sort_preference(directory.path(), sort.clone()).expect("save sort preference");
+
+        assert_eq!(load_sort_preference(directory.path()), Some(sort));
+        assert_eq!(
+            load(directory.path()).get("synthetic-company-guid"),
+            Some(&"North practice".to_string())
+        );
+    }
+
+    #[test]
+    fn replacement_sort_write_keeps_only_the_latest_complete_preference() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        save_sort_preference(
+            directory.path(),
+            ClientSortPreference {
+                key: ClientSortKey::Overdue,
+                desc: true,
+            },
+        )
+        .expect("first sort preference");
+        let latest = ClientSortPreference {
+            key: ClientSortKey::Client,
+            desc: false,
+        };
+        save_sort_preference(directory.path(), latest.clone()).expect("replacement preference");
+
+        assert_eq!(load_sort_preference(directory.path()), Some(latest));
+        assert!(directory
+            .path()
+            .read_dir()
+            .expect("directory entries")
+            .all(|entry| !entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")));
+    }
+
+    #[test]
+    fn sort_storage_remains_readable_by_the_old_v1_label_contract() {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct OldClientGroupLabelsFile {
+            version: u8,
+            labels: ClientGroupLabels,
+        }
+
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        save_label(directory.path(), "existing-guid", "Existing practice")
+            .expect("save existing label");
+        save_sort_preference(
+            directory.path(),
+            ClientSortPreference {
+                key: ClientSortKey::Oldest,
+                desc: true,
+            },
+        )
+        .expect("save new sort preference");
+
+        let raw_labels = std::fs::read(directory.path().join(FILE_NAME))
+            .expect("read label bytes after new writer");
+        let old_reader: OldClientGroupLabelsFile = serde_json::from_slice(&raw_labels)
+            .expect("the previous release must still parse the label file after rollback");
+        assert_eq!(old_reader.version, SCHEMA_VERSION);
+        assert_eq!(
+            old_reader.labels.get("existing-guid"),
+            Some(&"Existing practice".to_string())
+        );
     }
 }

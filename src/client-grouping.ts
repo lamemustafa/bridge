@@ -26,6 +26,14 @@ export function rollbackFailedClientGroupLabel(
   return applyClientGroupLabel(current, companyGuid, persisted[companyGuid] ?? "");
 }
 
+export function reconcileLoadedSortPreference<Sort>(
+  current: Sort,
+  persisted: Sort,
+  userChangedSort: boolean,
+): Sort {
+  return userChangedSort ? current : persisted;
+}
+
 export type GroupableClientRow = {
   companyGuid: string;
   exactAmounts: {
