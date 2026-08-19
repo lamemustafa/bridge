@@ -431,10 +431,6 @@ futures-io 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
 
-futures-macro 0.3.34
-License: MIT OR Apache-2.0
-Source: https://github.com/rust-lang/futures-rs
-
 futures-sink 0.3.34
 License: MIT OR Apache-2.0
 Source: https://github.com/rust-lang/futures-rs
@@ -4335,7 +4331,6 @@ Apache License 2.0
 - futures-core 0.3.34
 - futures-executor 0.3.34
 - futures-io 0.3.34
-- futures-macro 0.3.34
 - futures-sink 0.3.34
 - futures-task 0.3.34
 - futures-util 0.3.34
