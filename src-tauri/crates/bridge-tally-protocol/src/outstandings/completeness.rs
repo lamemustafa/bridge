@@ -637,6 +637,7 @@ mod tests {
             reporting.from().clone(),
             reporting.to().clone(),
             Some(high_water),
+            None,
         )
     }
 

@@ -1089,7 +1089,7 @@ mod tests {
             ),
             (
                 ReadOnlyProfileId::CompanyBookExtentV1,
-                "eab1b8be8b379077746ff4d63cea98a662374f5bb6a6dcea282e1d8dbae8f190",
+                "f46420fd96ee567069d1bf70c7895e76c75482b5370fc52e97aea64b8950d3a5",
             ),
             (
                 ReadOnlyProfileId::StandardLedgerIdentityV1,

@@ -114,12 +114,40 @@ impl VoucherAlterIdHighWater {
     }
 }
 
+/// Tally's MASTER alteration high-water mark (`ALTMSTID`) -- the analogue of
+/// [`VoucherAlterIdHighWater`] on the master axis (GROUP, LEDGER, and every
+/// other master, as opposed to VOUCHER). A GROUP or LEDGER edit between the
+/// group-phase and ledger-phase reads of an outstandings core window moves
+/// this value but leaves `ALTVCHID`, `BooksFrom`, `LastVoucherDate`, `GUID`
+/// untouched, so this field is what lets the paired-extent bracket in
+/// `connector.rs` (`closing_extent != opening_extent`) detect that a master
+/// was edited mid-window. See `docs/tally/TEST_CORPUS.md` for a captured
+/// instance of two extents that agreed on every other field while differing
+/// only here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MasterAlterIdHighWater(u64);
+
+impl MasterAlterIdHighWater {
+    pub fn parse(value: &str) -> Result<Self, OutstandingsError> {
+        let value = value
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| OutstandingsError::InvalidResponse("company_altmstid_invalid"))?;
+        Ok(Self(value))
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanyBookExtent {
     company: PinnedCompany,
     books_from: TallyDate,
     last_voucher_date: TallyDate,
     voucher_alter_id_high_water: Option<VoucherAlterIdHighWater>,
+    master_alter_id_high_water: Option<MasterAlterIdHighWater>,
 }
 
 impl CompanyBookExtent {
@@ -128,12 +156,14 @@ impl CompanyBookExtent {
         books_from: TallyDate,
         last_voucher_date: TallyDate,
         voucher_alter_id_high_water: Option<VoucherAlterIdHighWater>,
+        master_alter_id_high_water: Option<MasterAlterIdHighWater>,
     ) -> Self {
         Self {
             company,
             books_from,
             last_voucher_date,
             voucher_alter_id_high_water,
+            master_alter_id_high_water,
         }
     }
 
@@ -148,6 +178,9 @@ impl CompanyBookExtent {
     }
     pub fn voucher_alter_id_high_water(&self) -> Option<VoucherAlterIdHighWater> {
         self.voucher_alter_id_high_water
+    }
+    pub fn master_alter_id_high_water(&self) -> Option<MasterAlterIdHighWater> {
+        self.master_alter_id_high_water
     }
 }
 
@@ -257,6 +290,8 @@ struct RawCompany {
     last_voucher_date: Value,
     #[serde(rename = "ALTVCHID", default)]
     alter_voucher_id: Option<Value>,
+    #[serde(rename = "ALTMSTID", default)]
+    alter_master_id: Option<Value>,
 }
 
 pub fn parse_company_book_extent(
@@ -301,6 +336,10 @@ pub fn parse_company_book_extent(
         .alter_voucher_id
         .map(|value| VoucherAlterIdHighWater::parse(&value.text))
         .transpose()?;
+    let master_alter_id_high_water = raw
+        .alter_master_id
+        .map(|value| MasterAlterIdHighWater::parse(&value.text))
+        .transpose()?;
     if books_from > last_voucher_date {
         return Err(OutstandingsError::InvalidResponse(
             "company_extent_reversed",
@@ -311,6 +350,7 @@ pub fn parse_company_book_extent(
         books_from,
         last_voucher_date,
         voucher_alter_id_high_water,
+        master_alter_id_high_water,
     ))
 }
 
@@ -348,7 +388,7 @@ fn parse_date(value: String) -> Result<TallyDate, OutstandingsError> {
 // --- Request rendering for the paired `CompanyBookExtentV1` read. ---
 
 const COMPANY_EXTENT_COLLECTION_NAME: &str = "BridgeCompanyBookExtentV1";
-const COMPANY_EXTENT_FETCH: &str = "Name, GUID, BooksFrom, LastVoucherDate, ALTVCHID";
+const COMPANY_EXTENT_FETCH: &str = "Name, GUID, BooksFrom, LastVoucherDate, ALTVCHID, ALTMSTID";
 
 pub(crate) fn render_company_book_extent(company: &str) -> String {
     format!(
@@ -383,6 +423,7 @@ mod tests {
         let xml = render_company_book_extent("Synthetic & Company");
         assert!(xml.contains("<ID>BridgeCompanyBookExtentV1</ID>"));
         assert!(xml.contains("ALTVCHID"));
+        assert!(xml.contains("ALTMSTID"));
         assert!(xml.contains("Synthetic &amp; Company"));
         assert!(!xml.contains("<COMPUTE>"));
         assert!(!xml.contains("$$NumItems"));
