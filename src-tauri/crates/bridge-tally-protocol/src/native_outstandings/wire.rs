@@ -519,11 +519,13 @@ pub fn parse_native_group_snapshot_with_evidence(
                     entries.push(NativeGroupSnapshotEntry {
                         record,
                         raw_source_sha256: sha256_hex(
-                            sanitized.original_fragment(event_start, record_end).map_err(|_| {
-                                NativeOutstandingsError::InvalidResponse(
-                                    "group_row_boundaries_invalid",
-                                )
-                            })?,
+                            sanitized
+                                .original_fragment(event_start, record_end)
+                                .map_err(|_| {
+                                    NativeOutstandingsError::InvalidResponse(
+                                        "group_row_boundaries_invalid",
+                                    )
+                                })?,
                         ),
                     });
                     continue;
@@ -1040,6 +1042,9 @@ mod group_tests {
             hexadecimal[1].raw_source_sha256,
             sha256_hex(hexadecimal_fragment)
         );
-        assert_ne!(decimal[1].raw_source_sha256, hexadecimal[1].raw_source_sha256);
+        assert_ne!(
+            decimal[1].raw_source_sha256,
+            hexadecimal[1].raw_source_sha256
+        );
     }
 }
