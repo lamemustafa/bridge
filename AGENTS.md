@@ -139,10 +139,18 @@ a reasoning error:
 - `grep -c '<VOUCHER'` also matched `<VOUCHERNUMBER>` and `<VOUCHERTYPENAME>`
 - a narrow `grep -A1` window missed a difference that reversed a finding
 - a harness recorded failed connections as "0 rows" instead of erroring
+- a framed-protocol test double truncated a request and measured itself instead of the code
+- a diagnostic log outgrew every retrieval tool, leaving four hypotheses untested for days
 
 Therefore: write responses to a file and inspect the file; count structure, do not substring
 match; **any tool that can report "nothing found" must distinguish that from "the request
-failed"**; and repeat anything anomalous before believing it.
+failed"**; and repeat anything anomalous before believing it. A test double speaking a framed
+protocol must read to the terminator, parse the declared length, and read exactly that many
+bytes; never assume one read suffices, because a silently truncating double measures itself.
+The same distinction applies to error paths: assert the typed error variant so a transport
+failure cannot pass as proof of a protocol failure; never match only an error-message substring.
+A harness, probe, or gate must bound diagnostic output at its source: aggregate or cap per-item
+emissions so the resulting evidence remains retrievable.
 
 ### P6. Change one variable at a time, and record confidence
 
