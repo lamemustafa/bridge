@@ -7,7 +7,7 @@
 
 use crate::{
     CanonicalPackWindow, CanonicalText, CapabilityPackId, CoreAccountingBatch, ExactDecimal,
-    LedgerEntryPolarity, PackBatch, PackSchemaVersion, ReadWindow, SourceCountScope,
+    ForeignText, LedgerEntryPolarity, PackBatch, PackSchemaVersion, ReadWindow, SourceCountScope,
     SourceCountScopeDescriptor, SourceIdentity, SourceIdentityKind, SourceRecordId, TallyDate,
     TallyError, TransportId,
 };
@@ -337,7 +337,7 @@ fn validate_core_reference_integrity(batch: &CoreAccountingBatch) -> Result<(), 
         .collect::<BTreeSet<_>>();
     for group in &batch.groups {
         SourceRecordId::parse(group.source_id.clone())?;
-        CanonicalText::parse(group.name.clone())?;
+        ForeignText::from_tally(group.name.clone());
         if group
             .parent_source_id
             .as_deref()
@@ -348,7 +348,7 @@ fn validate_core_reference_integrity(batch: &CoreAccountingBatch) -> Result<(), 
     }
     for ledger in &batch.ledgers {
         SourceRecordId::parse(ledger.source_id.clone())?;
-        CanonicalText::parse(ledger.name.clone())?;
+        ForeignText::from_tally(ledger.name.clone());
         if ledger
             .parent_source_id
             .as_deref()
@@ -361,7 +361,7 @@ fn validate_core_reference_integrity(batch: &CoreAccountingBatch) -> Result<(), 
     }
     for voucher_type in &batch.voucher_types {
         SourceRecordId::parse(voucher_type.source_id.clone())?;
-        CanonicalText::parse(voucher_type.name.clone())?;
+        ForeignText::from_tally(voucher_type.name.clone());
     }
     for voucher in &batch.vouchers {
         SourceRecordId::parse(voucher.source_id.clone())?;

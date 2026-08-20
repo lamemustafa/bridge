@@ -73,6 +73,137 @@ pub(crate) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
     sanitize_invalid_numeric_references_with_marker_search_observer(xml, || {})
 }
 
+/// XML parsing sometimes needs a narrow, reversible repair for Tally's
+/// invalid numeric references.  Parsers must still attest the bytes Tally
+/// actually returned, rather than the repaired representation they consumed.
+pub(crate) struct SanitizedXml<'a> {
+    original: &'a str,
+    text: Cow<'a, str>,
+    /// Each sanitized byte boundary maps to the corresponding original byte
+    /// boundary.  Absent means the text was borrowed and positions are exact.
+    original_boundaries: Option<Vec<usize>>,
+}
+
+impl<'a> SanitizedXml<'a> {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    pub(crate) fn original_fragment(&self, start: usize, end: usize) -> anyhow::Result<&'a [u8]> {
+        let (start, end) = match &self.original_boundaries {
+            Some(boundaries) => (
+                *boundaries
+                    .get(start)
+                    .ok_or_else(|| anyhow::anyhow!("sanitised XML fragment start was invalid"))?,
+                *boundaries
+                    .get(end)
+                    .ok_or_else(|| anyhow::anyhow!("sanitised XML fragment end was invalid"))?,
+            ),
+            None => (start, end),
+        };
+        let fragment = self
+            .original
+            .as_bytes()
+            .get(start..end)
+            .ok_or_else(|| anyhow::anyhow!("original XML fragment boundaries were invalid"))?;
+        if fragment.is_empty() {
+            anyhow::bail!("original XML record fragment was empty");
+        }
+        Ok(fragment)
+    }
+}
+
+pub(crate) fn sanitize_invalid_numeric_references_with_provenance(xml: &str) -> SanitizedXml<'_> {
+    let sanitized = sanitize_invalid_numeric_references(xml);
+    let Cow::Owned(text) = sanitized else {
+        return SanitizedXml {
+            original: xml,
+            text: Cow::Borrowed(xml),
+            original_boundaries: None,
+        };
+    };
+
+    // The sanitizer changes only two source atom forms.  Replaying that small
+    // grammar gives every repaired-parser offset its raw-wire boundary.
+    let mut source = 0;
+    let mut output = 0;
+    let mut boundaries = Vec::with_capacity(text.len() + 1);
+    boundaries.push(0);
+    while source < xml.len() {
+        let source_tail = &xml[source..];
+        let output_tail = &text[output..];
+        if source_tail.starts_with('\u{fffd}')
+            && source_tail['\u{fffd}'.len_utf8()..].starts_with("#65533;")
+            && output_tail.starts_with("\u{fffd}#65533;")
+        {
+            append_replaced_boundaries(
+                &mut boundaries,
+                "\u{fffd}#65533;".len(),
+                source,
+                source + '\u{fffd}'.len_utf8(),
+            );
+            source += '\u{fffd}'.len_utf8();
+            output += "\u{fffd}#65533;".len();
+            continue;
+        }
+        if source_tail.starts_with("&#") {
+            if let Some(relative_end) = find_numeric_reference_terminator(&source_tail[1..]) {
+                let token_end = source + 1 + relative_end;
+                let token = &xml[source + 2..token_end];
+                let parsed = token
+                    .strip_prefix('x')
+                    .or_else(|| token.strip_prefix('X'))
+                    .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                    .or_else(|| token.parse::<u32>().ok());
+                let source_end = token_end + 1;
+                let ambiguous_replacement =
+                    parsed == Some(0xfffd) && collides_with_marker_form(&xml[source_end..]);
+                if parsed.is_some_and(|value| !is_xml_10_char(value)) || ambiguous_replacement {
+                    let replacement_len =
+                        "\u{fffd}".len() + format!("#{};", parsed.unwrap_or_default()).len();
+                    append_replaced_boundaries(
+                        &mut boundaries,
+                        replacement_len,
+                        source,
+                        source_end,
+                    );
+                    source = source_end;
+                    output += replacement_len;
+                    continue;
+                }
+            }
+        }
+        let width = source_tail
+            .chars()
+            .next()
+            .expect("source is non-empty")
+            .len_utf8();
+        boundaries.extend((source + 1)..=source + width);
+        source += width;
+        output += width;
+    }
+    debug_assert_eq!(output, text.len());
+    debug_assert_eq!(boundaries.len(), text.len() + 1);
+    SanitizedXml {
+        original: xml,
+        text: Cow::Owned(text),
+        original_boundaries: Some(boundaries),
+    }
+}
+
+fn append_replaced_boundaries(
+    boundaries: &mut Vec<usize>,
+    replacement_len: usize,
+    source_start: usize,
+    source_end: usize,
+) {
+    debug_assert_eq!(boundaries.last().copied(), Some(source_start));
+    boundaries.extend(std::iter::repeat_n(source_start, replacement_len));
+    *boundaries
+        .last_mut()
+        .expect("replacement has a final boundary") = source_end;
+}
+
 fn sanitize_invalid_numeric_references_with_marker_search_observer(
     xml: &str,
     mut observe_replacement_marker_search: impl FnMut(),

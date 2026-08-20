@@ -275,6 +275,9 @@ pub struct ExportEvidence {
     pub company_context: Option<CompanyContextEvidence>,
     pub schema: Option<String>,
     pub object_type: Option<String>,
+    /// A count Bridge obtained by parsing rows. It is not a Tally-reported
+    /// count and must never be promoted to source-count evidence.
+    pub observed_record_count: Option<u64>,
     pub source_record_count: Option<u64>,
     pub identified_record_count: u64,
     pub duplicate_identities: Vec<DuplicateIdentityEvidence>,
@@ -1673,8 +1676,8 @@ pub fn parse_native_ledger_source_records_with_evidence(
     xml: &str,
     expected_company_guid: &str,
 ) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyLedger>>> {
-    let sanitized = tolerant_xml::sanitize_invalid_numeric_references(xml);
-    let mut reader = configured_reader(&sanitized);
+    let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
+    let mut reader = configured_reader(sanitized.as_str());
     let mut path = Vec::<Vec<u8>>::new();
     let mut status_seen = false;
     let mut collection_seen = false;
@@ -1731,7 +1734,7 @@ pub fn parse_native_ledger_source_records_with_evidence(
                         identity_kind: Some(ParsedSourceIdentityKind::Guid),
                         identities: identities_for_row,
                         alter_id,
-                        raw_source_sha256: source_fragment_sha256(
+                        raw_source_sha256: source_fragment_sha256_from_sanitized(
                             &sanitized,
                             record_start,
                             record_end,
@@ -1782,7 +1785,7 @@ pub fn parse_native_ledger_source_records_with_evidence(
     Ok(ParsedExport {
         records,
         evidence: ExportEvidence {
-            source_record_count: Some(source_record_count),
+            observed_record_count: Some(source_record_count),
             identified_record_count: source_record_count,
             duplicate_identities,
             company_guid_prefix_match_count,
@@ -1806,6 +1809,24 @@ pub fn parse_native_voucher_type_source_records_with_evidence(
         b"VOUCHERTYPE",
         "VOUCHERTYPE",
         parse_native_voucher_type_collection_row,
+        false,
+    )
+}
+
+/// Parses the native `List of Groups` collection used by the core window.
+/// Group names are mutable display text; a selected read therefore requires
+/// the observed GUID rather than deriving an identity from the name.
+pub fn parse_native_group_source_records_with_evidence(
+    xml: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>> {
+    parse_native_collection_with_identity_evidence(
+        xml,
+        expected_company_guid,
+        b"GROUP",
+        "group",
+        parse_native_group_collection_row,
+        false,
     )
 }
 
@@ -1817,8 +1838,8 @@ pub fn parse_native_voucher_source_records_with_evidence(
     xml: &str,
     expected_company_guid: &str,
 ) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyVoucher>>> {
-    let sanitized = tolerant_xml::sanitize_invalid_numeric_references(xml);
-    let mut reader = configured_reader(&sanitized);
+    let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
+    let mut reader = configured_reader(sanitized.as_str());
     let mut path = Vec::<Vec<u8>>::new();
     let mut status_seen = false;
     let mut collection_seen = false;
@@ -1881,7 +1902,7 @@ pub fn parse_native_voucher_source_records_with_evidence(
                         identity_kind: Some(ParsedSourceIdentityKind::Guid),
                         identities: identities_for_row,
                         alter_id,
-                        raw_source_sha256: source_fragment_sha256(
+                        raw_source_sha256: source_fragment_sha256_from_sanitized(
                             &sanitized,
                             record_start,
                             record_end,
@@ -1917,6 +1938,7 @@ pub fn parse_native_voucher_source_records_with_evidence(
             company_guid_prefix_match_count,
             company_guid_prefix_mismatch_count,
         },
+        true,
     )
 }
 
@@ -1929,9 +1951,10 @@ fn parse_native_collection_with_identity_evidence<T>(
         &mut Reader<&[u8]>,
         &quick_xml::events::BytesStart<'_>,
     ) -> anyhow::Result<(T, ParsedSourceIdentities, Option<String>)>,
+    allow_empty_without_row_identity: bool,
 ) -> anyhow::Result<ParsedExport<ParsedSourceRecord<T>>> {
-    let sanitized = tolerant_xml::sanitize_invalid_numeric_references(xml);
-    let mut reader = configured_reader(&sanitized);
+    let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
+    let mut reader = configured_reader(sanitized.as_str());
     let mut path = Vec::<Vec<u8>>::new();
     let mut status_seen = false;
     let mut collection_seen = false;
@@ -1991,7 +2014,7 @@ fn parse_native_collection_with_identity_evidence<T>(
                         identity_kind: Some(ParsedSourceIdentityKind::Guid),
                         identities: identities_for_row,
                         alter_id,
-                        raw_source_sha256: source_fragment_sha256(
+                        raw_source_sha256: source_fragment_sha256_from_sanitized(
                             &sanitized,
                             record_start,
                             record_end,
@@ -2027,6 +2050,7 @@ fn parse_native_collection_with_identity_evidence<T>(
             company_guid_prefix_match_count,
             company_guid_prefix_mismatch_count,
         },
+        allow_empty_without_row_identity,
     )
 }
 
@@ -2043,6 +2067,7 @@ struct NativeCollectionState<T> {
 fn native_collection_export<T>(
     object_type: &str,
     state: NativeCollectionState<T>,
+    allow_empty_without_row_identity: bool,
 ) -> anyhow::Result<ParsedExport<ParsedSourceRecord<T>>> {
     if !state.path.is_empty() {
         anyhow::bail!("native {object_type} collection ended before its root closed");
@@ -2053,7 +2078,9 @@ fn native_collection_export<T>(
     if !state.collection_seen {
         anyhow::bail!("native {object_type} collection omitted BODY/DATA/COLLECTION");
     }
-    if state.company_guid_prefix_match_count == 0 {
+    if state.company_guid_prefix_match_count == 0
+        && (!allow_empty_without_row_identity || !state.records.is_empty())
+    {
         anyhow::bail!("native {object_type} collection did not bind to the requested company");
     }
     let mut duplicate_identities = state
@@ -2072,7 +2099,7 @@ fn native_collection_export<T>(
     Ok(ParsedExport {
         records: state.records,
         evidence: ExportEvidence {
-            source_record_count: Some(source_record_count),
+            observed_record_count: Some(source_record_count),
             identified_record_count: source_record_count,
             duplicate_identities,
             company_guid_prefix_match_count: state.company_guid_prefix_match_count,
@@ -2311,10 +2338,98 @@ fn parse_native_voucher_type_collection_row(
     Ok((record, identities, alter_id))
 }
 
+fn parse_native_group_collection_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> anyhow::Result<(TallyNamedMaster, ParsedSourceIdentities, Option<String>)> {
+    validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
+    let name = attr_value(reader, element, b"NAME")
+        .ok_or_else(|| anyhow::anyhow!("native group row omitted NAME"))?;
+    let mut record = TallyNamedMaster { name, parent: None };
+    let mut identities = ParsedSourceIdentities::default();
+    let mut alter_id = None;
+    let mut parent_seen = false;
+    let mut guid_seen = false;
+    let mut master_id_seen = false;
+    let mut alter_id_seen = false;
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"GUID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut guid_seen, true) {
+                        anyhow::bail!("native group row repeated GUID");
+                    }
+                    identities.guid = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?
+                    .map(|guid| guid.to_ascii_lowercase());
+                }
+                b"MASTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut master_id_seen, true) {
+                        anyhow::bail!("native group row repeated MASTERID");
+                    }
+                    identities.master_id = validated_optional_identifier(Some(
+                        read_required_text(reader, child.name())?,
+                    ))?;
+                }
+                b"ALTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut alter_id_seen, true) {
+                        anyhow::bail!("native group row repeated ALTERID");
+                    }
+                    alter_id = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?;
+                }
+                b"PARENT" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut parent_seen, true) {
+                        anyhow::bail!("native group row repeated PARENT");
+                    }
+                    record.parent = read_optional_text(reader, child.name())?;
+                }
+                _ => {
+                    let child_name = child.name().as_ref().to_vec();
+                    reader.read_to_end(QName(&child_name).to_owned())?;
+                }
+            },
+            Event::Empty(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"GUID" | b"MASTERID" | b"ALTERID" | b"PARENT" => {
+                    anyhow::bail!("native group row omitted a required field");
+                }
+                _ => {}
+            },
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"GROUP") => break,
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("native group row contained unexpected text");
+            }
+            Event::Eof => anyhow::bail!("native group row ended before GROUP closed"),
+            _ => {}
+        }
+    }
+    if !guid_seen || identities.guid.is_none() {
+        anyhow::bail!("native group row omitted GUID");
+    }
+    if !master_id_seen || identities.master_id.is_none() {
+        anyhow::bail!("native group row omitted MASTERID");
+    }
+    if !alter_id_seen || alter_id.is_none() {
+        anyhow::bail!("native group row omitted ALTERID");
+    }
+    if !parent_seen || record.parent.is_none() {
+        anyhow::bail!("native group row omitted PARENT");
+    }
+    Ok((record, identities, alter_id))
+}
+
 fn parse_native_voucher_collection_row(
     reader: &mut Reader<&[u8]>,
     element: &quick_xml::events::BytesStart<'_>,
-    xml: &str,
+    sanitized: &tolerant_xml::SanitizedXml<'_>,
 ) -> anyhow::Result<(TallyVoucher, ParsedSourceIdentities, Option<String>)> {
     validate_only_attributes(element, &[b"REMOTEID", b"VCHKEY", b"VCHTYPE", b"OBJVIEW"])?;
     let remote_id = attr_value(reader, element, b"REMOTEID")
@@ -2398,8 +2513,8 @@ fn parse_native_voucher_collection_row(
                 b"ALLLEDGERENTRIES.LIST" => {
                     validate_only_attributes(&child, &[])?;
                     let mut entry = parse_native_voucher_ledger_entry(reader)?;
-                    entry.raw_source_sha256 = source_fragment_sha256(
-                        xml,
+                    entry.raw_source_sha256 = source_fragment_sha256_from_sanitized(
+                        sanitized,
                         entry_start,
                         reader.buffer_position() as usize,
                     )?;
@@ -2446,7 +2561,6 @@ fn parse_native_voucher_collection_row(
         || voucher.voucher_type.is_none()
         || voucher.cancelled.is_none()
         || voucher.optional.is_none()
-        || voucher.ledger_entries.is_empty()
     {
         anyhow::bail!("native voucher row omitted a required accounting field");
     }
@@ -4333,6 +4447,14 @@ fn source_fragment_sha256(xml: &str, start: usize, end: usize) -> anyhow::Result
         anyhow::bail!("Tally record fragment was empty");
     }
     Ok(sha256_hex(fragment))
+}
+
+fn source_fragment_sha256_from_sanitized(
+    sanitized: &tolerant_xml::SanitizedXml<'_>,
+    start: usize,
+    end: usize,
+) -> anyhow::Result<String> {
+    Ok(sha256_hex(sanitized.original_fragment(start, end)?))
 }
 
 fn parse_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<TallyCompany> {

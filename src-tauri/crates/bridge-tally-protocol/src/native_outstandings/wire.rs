@@ -24,7 +24,9 @@ use sha2::{Digest, Sha256};
 
 use bridge_tally_primitives::ExactDecimal;
 
-use crate::tolerant_xml::sanitize_invalid_numeric_references;
+use crate::tolerant_xml::{
+    sanitize_invalid_numeric_references, sanitize_invalid_numeric_references_with_provenance,
+};
 use crate::TallyNamedMaster;
 
 use super::date::{parse_native_display_date, NativeDisplayDateRole};
@@ -477,8 +479,8 @@ pub struct NativeGroupSnapshotEntry {
 pub fn parse_native_group_snapshot_with_evidence(
     xml: &str,
 ) -> Result<Vec<NativeGroupSnapshotEntry>, NativeOutstandingsError> {
-    let sanitized = sanitize_invalid_numeric_references(xml);
-    let mut reader = Reader::from_str(&sanitized);
+    let sanitized = sanitize_invalid_numeric_references_with_provenance(xml);
+    let mut reader = Reader::from_str(sanitized.as_str());
     reader.config_mut().trim_text(true);
 
     let mut path = Vec::<Vec<u8>>::new();
@@ -514,17 +516,15 @@ pub fn parse_native_group_snapshot_with_evidence(
                 {
                     let record = parse_group_row(&mut reader, &element)?;
                     let record_end = reader.buffer_position() as usize;
-                    let bytes = sanitized.as_bytes().get(event_start..record_end).ok_or(
-                        NativeOutstandingsError::InvalidResponse("group_row_boundaries_invalid"),
-                    )?;
-                    if bytes.is_empty() {
-                        return Err(NativeOutstandingsError::InvalidResponse(
-                            "group_row_evidence_missing",
-                        ));
-                    }
                     entries.push(NativeGroupSnapshotEntry {
                         record,
-                        raw_source_sha256: sha256_hex(bytes),
+                        raw_source_sha256: sha256_hex(
+                            sanitized.original_fragment(event_start, record_end).map_err(|_| {
+                                NativeOutstandingsError::InvalidResponse(
+                                    "group_row_boundaries_invalid",
+                                )
+                            })?,
+                        ),
                     });
                     continue;
                 }
@@ -1021,5 +1021,25 @@ mod group_tests {
                 "group_parent_missing"
             ))
         );
+    }
+
+    #[test]
+    fn group_evidence_hashes_the_unsanitised_wire_fragment() {
+        let decimal = parse_native_group_snapshot_with_evidence(LIVE_SHAPE)
+            .expect("decimal illegal reference remains parseable");
+        let hexadecimal_xml = LIVE_SHAPE.replace("&#4;", "&#x4;");
+        let hexadecimal = parse_native_group_snapshot_with_evidence(&hexadecimal_xml)
+            .expect("hexadecimal illegal reference remains parseable");
+
+        let decimal_fragment =
+            b"<GROUP NAME=\"Sundry Debtors\"><PARENT>&#4; Primary</PARENT></GROUP>";
+        let hexadecimal_fragment =
+            b"<GROUP NAME=\"Sundry Debtors\"><PARENT>&#x4; Primary</PARENT></GROUP>";
+        assert_eq!(decimal[1].raw_source_sha256, sha256_hex(decimal_fragment));
+        assert_eq!(
+            hexadecimal[1].raw_source_sha256,
+            sha256_hex(hexadecimal_fragment)
+        );
+        assert_ne!(decimal[1].raw_source_sha256, hexadecimal[1].raw_source_sha256);
     }
 }
