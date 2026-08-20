@@ -73,15 +73,56 @@ pub(crate) fn sanitize_invalid_numeric_references(xml: &str) -> Cow<'_, str> {
     sanitize_invalid_numeric_references_with_marker_search_observer(xml, || {})
 }
 
+/// One sanitizer replacement: sanitized-text bytes `[output_start, output_end)`
+/// were produced from original-text bytes `[source_start, source_end)`.
+/// Repairs are recorded in ascending, non-overlapping `output_start` order.
+struct RepairSpan {
+    output_start: usize,
+    output_end: usize,
+    source_start: usize,
+    source_end: usize,
+}
+
+/// Translate a sanitized-text offset back to the original text using a
+/// sparse repair list, reproducing the exact mapping a dense per-byte
+/// boundary table would give: any offset strictly inside a repaired span
+/// collapses to that span's original start (the whole replacement reads
+/// back as one atom), the offset immediately after a span resolves to that
+/// span's original end, and offsets outside any span translate 1:1 through
+/// the constant offset ("drift") left by the nearest preceding span (zero
+/// drift before the first repair).
+///
+/// `sanitized_len` bounds `offset` exactly like the old table's length did:
+/// valid offsets are `0..=sanitized_len`.
+fn resolve_original_offset(
+    repairs: &[RepairSpan],
+    sanitized_len: usize,
+    offset: usize,
+) -> Option<usize> {
+    if offset > sanitized_len {
+        return None;
+    }
+    // Last span whose output_start is <= offset, if any.
+    let idx = repairs.partition_point(|span| span.output_start <= offset);
+    Some(match idx.checked_sub(1).map(|i| &repairs[i]) {
+        Some(span) if offset < span.output_end => span.source_start,
+        Some(span) => span.source_end + (offset - span.output_end),
+        None => offset,
+    })
+}
+
 /// XML parsing sometimes needs a narrow, reversible repair for Tally's
 /// invalid numeric references.  Parsers must still attest the bytes Tally
 /// actually returned, rather than the repaired representation they consumed.
 pub(crate) struct SanitizedXml<'a> {
     original: &'a str,
     text: Cow<'a, str>,
-    /// Each sanitized byte boundary maps to the corresponding original byte
-    /// boundary.  Absent means the text was borrowed and positions are exact.
-    original_boundaries: Option<Vec<usize>>,
+    /// Sparse provenance: only the repaired spans are recorded, not one
+    /// entry per sanitized byte.  Repairs are rare (a handful per response,
+    /// even on large ones), so this keeps memory proportional to the repair
+    /// count instead of the response size.  Absent means the text was
+    /// borrowed and positions are exact.
+    repairs: Option<Vec<RepairSpan>>,
 }
 
 impl<'a> SanitizedXml<'a> {
@@ -89,18 +130,20 @@ impl<'a> SanitizedXml<'a> {
         &self.text
     }
 
+    fn resolve(&self, offset: usize) -> Option<usize> {
+        match &self.repairs {
+            Some(repairs) => resolve_original_offset(repairs, self.text.len(), offset),
+            None => Some(offset),
+        }
+    }
+
     pub(crate) fn original_fragment(&self, start: usize, end: usize) -> anyhow::Result<&'a [u8]> {
-        let (start, end) = match &self.original_boundaries {
-            Some(boundaries) => (
-                *boundaries
-                    .get(start)
-                    .ok_or_else(|| anyhow::anyhow!("sanitised XML fragment start was invalid"))?,
-                *boundaries
-                    .get(end)
-                    .ok_or_else(|| anyhow::anyhow!("sanitised XML fragment end was invalid"))?,
-            ),
-            None => (start, end),
-        };
+        let start = self
+            .resolve(start)
+            .ok_or_else(|| anyhow::anyhow!("sanitised XML fragment start was invalid"))?;
+        let end = self
+            .resolve(end)
+            .ok_or_else(|| anyhow::anyhow!("sanitised XML fragment end was invalid"))?;
         let fragment = self
             .original
             .as_bytes()
@@ -119,16 +162,18 @@ pub(crate) fn sanitize_invalid_numeric_references_with_provenance(xml: &str) -> 
         return SanitizedXml {
             original: xml,
             text: Cow::Borrowed(xml),
-            original_boundaries: None,
+            repairs: None,
         };
     };
 
     // The sanitizer changes only two source atom forms.  Replaying that small
-    // grammar gives every repaired-parser offset its raw-wire boundary.
+    // grammar gives every repaired-parser offset its raw-wire boundary. Only
+    // the repaired spans themselves are recorded -- untouched runs between
+    // repairs need no entry because `resolve_original_offset` derives their
+    // mapping from the drift left by the nearest preceding repair.
     let mut source = 0;
     let mut output = 0;
-    let mut boundaries = Vec::with_capacity(text.len() + 1);
-    boundaries.push(0);
+    let mut repairs = Vec::new();
     while source < xml.len() {
         let source_tail = &xml[source..];
         let output_tail = &text[output..];
@@ -142,14 +187,16 @@ pub(crate) fn sanitize_invalid_numeric_references_with_provenance(xml: &str) -> 
             && collides_with_marker_form(&source_tail['\u{fffd}'.len_utf8()..])
             && output_tail.starts_with("\u{fffd}#65533;")
         {
-            append_replaced_boundaries(
-                &mut boundaries,
-                "\u{fffd}#65533;".len(),
-                source,
-                source + '\u{fffd}'.len_utf8(),
-            );
-            source += '\u{fffd}'.len_utf8();
-            output += "\u{fffd}#65533;".len();
+            let replacement_len = "\u{fffd}#65533;".len();
+            let source_end = source + '\u{fffd}'.len_utf8();
+            repairs.push(RepairSpan {
+                output_start: output,
+                output_end: output + replacement_len,
+                source_start: source,
+                source_end,
+            });
+            source = source_end;
+            output += replacement_len;
             continue;
         }
         if source_tail.starts_with("&#") {
@@ -167,12 +214,12 @@ pub(crate) fn sanitize_invalid_numeric_references_with_provenance(xml: &str) -> 
                 if parsed.is_some_and(|value| !is_xml_10_char(value)) || ambiguous_replacement {
                     let replacement_len =
                         "\u{fffd}".len() + format!("#{};", parsed.unwrap_or_default()).len();
-                    append_replaced_boundaries(
-                        &mut boundaries,
-                        replacement_len,
-                        source,
+                    repairs.push(RepairSpan {
+                        output_start: output,
+                        output_end: output + replacement_len,
+                        source_start: source,
                         source_end,
-                    );
+                    });
                     source = source_end;
                     output += replacement_len;
                     continue;
@@ -184,30 +231,21 @@ pub(crate) fn sanitize_invalid_numeric_references_with_provenance(xml: &str) -> 
             .next()
             .expect("source is non-empty")
             .len_utf8();
-        boundaries.extend((source + 1)..=source + width);
         source += width;
         output += width;
     }
     debug_assert_eq!(output, text.len());
-    debug_assert_eq!(boundaries.len(), text.len() + 1);
+    debug_assert_eq!(source, xml.len());
+    debug_assert_eq!(
+        resolve_original_offset(&repairs, text.len(), text.len()),
+        Some(xml.len()),
+        "sparse provenance must cover the whole sanitized text"
+    );
     SanitizedXml {
         original: xml,
         text: Cow::Owned(text),
-        original_boundaries: Some(boundaries),
+        repairs: Some(repairs),
     }
-}
-
-fn append_replaced_boundaries(
-    boundaries: &mut Vec<usize>,
-    replacement_len: usize,
-    source_start: usize,
-    source_end: usize,
-) {
-    debug_assert_eq!(boundaries.last().copied(), Some(source_start));
-    boundaries.extend(std::iter::repeat_n(source_start, replacement_len));
-    *boundaries
-        .last_mut()
-        .expect("replacement has a final boundary") = source_end;
 }
 
 fn sanitize_invalid_numeric_references_with_marker_search_observer(
@@ -305,6 +343,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::{
+        collides_with_marker_form, find_numeric_reference_terminator, is_xml_10_char,
         sanitize_invalid_numeric_references,
         sanitize_invalid_numeric_references_with_marker_search_observer,
         sanitize_invalid_numeric_references_with_provenance, MARKER_FORM_SEARCH_BYTES,
@@ -533,5 +572,148 @@ mod tests {
             .original_fragment(row_start, row_end)
             .expect("row boundaries must resolve to a valid original slice");
         assert_eq!(fragment, "ACME\u{fffd}#4;LTD".as_bytes());
+    }
+
+    #[test]
+    fn provenance_storage_scales_with_repair_count_not_input_size() {
+        // A couple of repairs embedded in a large body of otherwise
+        // unremarkable text must not force a per-byte allocation. The old
+        // dense table held one `usize` per sanitized byte (~256 MiB at the
+        // accepted 32 MiB response cap, since Tally's reserved-root marker
+        // `&#4;` makes every real group/ledger response trigger a repair);
+        // the sparse table must stay proportional to the repair count
+        // instead of the response size.
+        let padding = "x".repeat(300_000);
+        let xml = format!("<A>{padding}&#4;{padding}&#4;{padding}</A>");
+        let sanitized = sanitize_invalid_numeric_references_with_provenance(&xml);
+        assert!(sanitized.as_str().len() > 600_000);
+        let repair_count = sanitized
+            .repairs
+            .as_ref()
+            .expect("two illegal references must trigger sanitisation")
+            .len();
+        assert_eq!(
+            repair_count, 2,
+            "sparse storage must hold one entry per repair, not per byte"
+        );
+    }
+
+    /// Independent reimplementation of the old dense, one-entry-per-byte
+    /// provenance table (`boundaries[output_offset] == original_offset`).
+    /// Kept only in tests to cross-check the new sparse
+    /// `resolve_original_offset` translation; production code no longer
+    /// builds a table this large.
+    fn brute_force_boundaries(xml: &str) -> (String, Vec<usize>) {
+        let sanitized = sanitize_invalid_numeric_references(xml);
+        let std::borrow::Cow::Owned(text) = sanitized else {
+            return (xml.to_string(), (0..=xml.len()).collect());
+        };
+        let mut source = 0;
+        let mut output = 0;
+        let mut boundaries = Vec::with_capacity(text.len() + 1);
+        boundaries.push(0);
+        while source < xml.len() {
+            let source_tail = &xml[source..];
+            let output_tail = &text[output..];
+            if source_tail.starts_with('\u{fffd}')
+                && collides_with_marker_form(&source_tail['\u{fffd}'.len_utf8()..])
+                && output_tail.starts_with("\u{fffd}#65533;")
+            {
+                brute_force_append_replaced(
+                    &mut boundaries,
+                    "\u{fffd}#65533;".len(),
+                    source,
+                    source + '\u{fffd}'.len_utf8(),
+                );
+                source += '\u{fffd}'.len_utf8();
+                output += "\u{fffd}#65533;".len();
+                continue;
+            }
+            if source_tail.starts_with("&#") {
+                if let Some(relative_end) = find_numeric_reference_terminator(&source_tail[1..]) {
+                    let token_end = source + 1 + relative_end;
+                    let token = &xml[source + 2..token_end];
+                    let parsed = token
+                        .strip_prefix('x')
+                        .or_else(|| token.strip_prefix('X'))
+                        .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                        .or_else(|| token.parse::<u32>().ok());
+                    let source_end = token_end + 1;
+                    let ambiguous_replacement =
+                        parsed == Some(0xfffd) && collides_with_marker_form(&xml[source_end..]);
+                    if parsed.is_some_and(|value| !is_xml_10_char(value)) || ambiguous_replacement {
+                        let replacement_len =
+                            "\u{fffd}".len() + format!("#{};", parsed.unwrap_or_default()).len();
+                        brute_force_append_replaced(
+                            &mut boundaries,
+                            replacement_len,
+                            source,
+                            source_end,
+                        );
+                        source = source_end;
+                        output += replacement_len;
+                        continue;
+                    }
+                }
+            }
+            let width = source_tail
+                .chars()
+                .next()
+                .expect("source is non-empty")
+                .len_utf8();
+            boundaries.extend((source + 1)..=source + width);
+            source += width;
+            output += width;
+        }
+        debug_assert_eq!(output, text.len());
+        debug_assert_eq!(boundaries.len(), text.len() + 1);
+        (text, boundaries)
+    }
+
+    fn brute_force_append_replaced(
+        boundaries: &mut Vec<usize>,
+        replacement_len: usize,
+        source_start: usize,
+        source_end: usize,
+    ) {
+        debug_assert_eq!(boundaries.last().copied(), Some(source_start));
+        boundaries.extend(std::iter::repeat_n(source_start, replacement_len));
+        *boundaries
+            .last_mut()
+            .expect("replacement has a final boundary") = source_end;
+    }
+
+    /// Property-style check: for every offset in a range of inputs covering
+    /// no repairs, a repair at the very start, one at the very end, adjacent
+    /// repairs with no gap between them, and a literal U+FFFD followed by a
+    /// marker-shaped suffix, the new sparse translation must agree with the
+    /// brute-force dense byte map at every single offset.
+    #[test]
+    fn sparse_translation_matches_bruteforce_byte_map_across_repair_shapes() {
+        let cases = [
+            "no repairs at all in this plain ASCII text",
+            "&#4;repair sitting at the very start of the text",
+            "repair sitting at the very end of the text&#4;",
+            "&#1;&#2;adjacent repairs with no gap between them",
+            "ACME\u{fffd}#4;LTD literal FFFD followed by a marker-shaped suffix",
+        ];
+        for xml in cases {
+            let sanitized = sanitize_invalid_numeric_references_with_provenance(xml);
+            let (brute_text, boundaries) = brute_force_boundaries(xml);
+            assert_eq!(
+                sanitized.as_str(),
+                brute_text,
+                "sparse and dense builders must sanitize {xml:?} identically"
+            );
+            for (offset, &expected) in boundaries.iter().enumerate() {
+                let actual = sanitized
+                    .resolve(offset)
+                    .unwrap_or_else(|| panic!("offset {offset} must resolve for {xml:?}"));
+                assert_eq!(
+                    actual, expected,
+                    "offset {offset} diverged from the dense byte map for {xml:?}"
+                );
+            }
+        }
     }
 }
