@@ -1378,7 +1378,8 @@ impl TallyRuntime {
                         parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;
                     let payable_rows = parse_native_bill_rows(&payable_body, &books_from, &as_of)?;
                     let ledger_rows = parse_native_ledger_snapshot(&ledger_body)?;
-                    let group_rows = parse_native_group_snapshot(&group_body)?;
+                    let group_rows =
+                        parse_native_group_snapshot(&group_body, &expected_company_guid)?;
 
                     // Ageing anchors on the DUE date. Measured 2026-08-07: on a
                     // bill carrying a 30-day credit period Tally's own

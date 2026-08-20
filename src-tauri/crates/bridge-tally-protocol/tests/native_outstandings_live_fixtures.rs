@@ -24,12 +24,36 @@ use bridge_tally_protocol::native_outstandings::{
     age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_group_snapshot,
     parse_native_ledger_snapshot, AgeingAnchor, NativeGroupSnapshot, NativeMasterSnapshot,
 };
+use bridge_tally_protocol::{decode_tally_xml_response_bytes_limited, ExpectedTallyTextEncoding};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/native");
 
 fn fixture(name: &str) -> String {
     std::fs::read_to_string(format!("{FIXTURES}/{name}"))
         .unwrap_or_else(|error| panic!("fixture {name} unreadable: {error}"))
+}
+
+/// The `Aarav Trading Company Demo` company GUID, as captured live in
+/// `group_snapshot_aarav_with_identity.utf16le.xml`.
+const AARAV_COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+
+/// `group_snapshot_aarav.xml` predates the request being widened to fetch
+/// `GUID, MASTERID, ALTERID` (see `render_native_group_snapshot_request`)
+/// and so carries no row identity at all -- it can no longer bind to a
+/// company and is superseded here by the later capture that carries the
+/// same 28 rows plus their GUIDs.
+const GROUP_SNAPSHOT_AARAV_WITH_IDENTITY: &[u8] =
+    include_bytes!("fixtures/native/group_snapshot_aarav_with_identity.utf16le.xml");
+
+fn decode_utf16le(bytes: &[u8]) -> String {
+    decode_tally_xml_response_bytes_limited(
+        bytes,
+        "text/xml; charset=utf-16",
+        ExpectedTallyTextEncoding::Utf16Le,
+        bytes.len(),
+    )
+    .expect("captured BOM-less UTF-16LE response decodes")
+    .text
 }
 
 fn as_of() -> TallyDate {
@@ -170,7 +194,11 @@ fn aarav_residual_dominates_and_every_bill_carrying_party_reconciles_exactly() {
     .expect("parse");
     let ledgers =
         parse_native_ledger_snapshot(&fixture("ledger_snapshot_aarav.xml")).expect("parse");
-    let groups = parse_native_group_snapshot(&fixture("group_snapshot_aarav.xml")).expect("parse");
+    let groups = parse_native_group_snapshot(
+        &decode_utf16le(GROUP_SNAPSHOT_AARAV_WITH_IDENTITY),
+        AARAV_COMPANY_GUID,
+    )
+    .expect("parse");
 
     assert_eq!(receivable.len(), 22);
     assert_eq!(payable.len(), 21);
@@ -337,6 +365,25 @@ fn ledger_parser_ignores_the_cmpinfo_counter_elements() {
         .count();
     assert_eq!(sundry, 10);
 }
+/// A real group snapshot captured from one company must not be accepted as
+/// evidence for a different one. This is the exact substitution Tally is
+/// known to make silently: this response is genuinely from
+/// `Aarav Trading Company Demo`, and asking for a different company's GUID
+/// must fail closed rather than quietly classify ledgers under the wrong
+/// company's group ancestry.
+#[test]
+fn a_real_group_snapshot_does_not_bind_to_a_different_companys_guid() {
+    const WR2_COMPANY_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
+    let result = parse_native_group_snapshot(
+        &decode_utf16le(GROUP_SNAPSHOT_AARAV_WITH_IDENTITY),
+        WR2_COMPANY_GUID,
+    );
+    assert!(
+        result.is_err(),
+        "a captured Aarav response must not bind to the wr2 company's GUID"
+    );
+}
+
 #[test]
 fn real_captured_company_collection_yields_all_three() {
     let xml = std::fs::read_to_string(concat!(
