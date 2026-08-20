@@ -285,9 +285,57 @@ fn compute_residuals(
     Ok((residuals, residual_total, has_unaged_receivable))
 }
 
+/// A group's resolved ancestry link plus the identity key predefined-party
+/// classification matches against. See [`group_identity_key`].
+struct GroupAncestry {
+    parent: Option<String>,
+    identity: String,
+}
+
+/// The identity a group is classified by: Tally's own immutable
+/// `RESERVEDNAME` when a reader captured it, falling back to the group's
+/// (mutable) `NAME` only when no `RESERVEDNAME` evidence exists at all.
+///
+/// `RESERVEDNAME` is Tally's field for exactly this purpose: a predefined
+/// group carries its original identity there for life, impervious to the
+/// group later being renamed over `Import Data`. Matching `NAME` instead is
+/// the defect this classification used to have -- rename "Sundry Debtors"
+/// and every one of its ledgers silently vanishes from the outstandings
+/// report with no error.
+///
+/// The three states of `reserved_name`, and why each is handled the way it
+/// is:
+/// - `Some(non-empty)`: a trustworthy predefined identity. Used outright,
+///   even where it disagrees with the group's current `NAME` -- that
+///   disagreement is exactly the renamed-group case this function exists to
+///   still get right.
+/// - `Some("")`: Tally's own explicit signal that this specific group is
+///   user-created, not predefined. This is deliberately NOT treated as "no
+///   evidence, fall back to NAME": a custom group a user happens to name
+///   "Sundry Debtors" is not the predefined group Tally ships (predefined
+///   groups cannot be deleted, only renamed, so the real one -- wherever its
+///   `NAME` now points -- is a different row carrying the non-empty
+///   `RESERVEDNAME`). Falling back to `NAME` here would let that lookalike
+///   masquerade as the real predefined group, reintroducing a mirror image
+///   of the very bug being fixed. A ledger under such a group can still
+///   reach the report through `is_party_ledger`'s other trigger
+///   (`bill_wise_on`); only a bill-wise-off ledger there is affected.
+/// - `None`: this row carries no `RESERVEDNAME` evidence at all -- an older
+///   capture, a Tally build that omits it, or (for
+///   [`NativeGroupSnapshot::LegacyFixtureWithoutGroups`]) no group data at
+///   all. There is nothing to trust or distrust, so this falls back to the
+///   pre-fix behavior of matching by `NAME`, so those callers are not
+///   suddenly broken by this change.
+fn group_identity_key(group: &TallyNamedMaster) -> String {
+    match group.reserved_name.as_deref() {
+        Some(reserved) => normalized_group_name(reserved),
+        None => normalized_group_name(&group.name),
+    }
+}
+
 fn group_parent_map(
     groups: &[TallyNamedMaster],
-) -> Result<BTreeMap<String, Option<String>>, NativeOutstandingsError> {
+) -> Result<BTreeMap<String, GroupAncestry>, NativeOutstandingsError> {
     let mut parents = BTreeMap::new();
     for group in groups {
         let name = normalized_group_name(&group.name);
@@ -298,11 +346,14 @@ fn group_parent_map(
         }
         parents.insert(
             name,
-            group
-                .parent
-                .as_deref()
-                .map(normalized_group_name)
-                .filter(|parent| !parent.is_empty()),
+            GroupAncestry {
+                parent: group
+                    .parent
+                    .as_deref()
+                    .map(normalized_group_name)
+                    .filter(|parent| !parent.is_empty()),
+                identity: group_identity_key(group),
+            },
         );
     }
     Ok(parents)
@@ -310,7 +361,7 @@ fn group_parent_map(
 
 fn is_party_ledger(
     ledger: &LedgerSnapshotEntry,
-    group_parents: &BTreeMap<String, Option<String>>,
+    group_parents: &BTreeMap<String, GroupAncestry>,
     allow_unresolved_legacy_parent: bool,
 ) -> Result<bool, NativeOutstandingsError> {
     if ledger.bill_wise_on {
@@ -321,15 +372,27 @@ fn is_party_ledger(
     };
     let mut current = normalized_group_name(parent);
     for _ in 0..=group_parents.len() {
-        if matches!(current.as_str(), "sundry debtors" | "sundry creditors") {
+        // A group not present in the snapshot at all (including every group,
+        // for the legacy no-ancestry fixture path) carries no RESERVEDNAME
+        // evidence to look up, so the raw name is matched directly -- the
+        // same NAME-only behavior this classification always had for that
+        // case.
+        let identity = group_parents
+            .get(&current)
+            .map(|ancestry| ancestry.identity.as_str())
+            .unwrap_or(current.as_str());
+        if matches!(identity, "sundry debtors" | "sundry creditors") {
             return Ok(true);
         }
         if current == "primary" || current.is_empty() {
             return Ok(false);
         }
         match group_parents.get(&current) {
-            Some(Some(parent)) => current = parent.clone(),
-            Some(None) => return Ok(false),
+            Some(GroupAncestry {
+                parent: Some(parent),
+                ..
+            }) => current = parent.clone(),
+            Some(GroupAncestry { parent: None, .. }) => return Ok(false),
             None if allow_unresolved_legacy_parent => return Ok(false),
             None => {
                 return Err(NativeOutstandingsError::InvalidResponse(

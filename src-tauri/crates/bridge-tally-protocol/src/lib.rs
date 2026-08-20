@@ -106,6 +106,17 @@ pub struct ParsedLedgerPeriodBalanceReport {
 pub struct TallyNamedMaster {
     pub name: String,
     pub parent: Option<String>,
+    /// Tally's `RESERVEDNAME` attribute: the immutable identity of a
+    /// predefined group (e.g. `"Sundry Debtors"`), untouched by renaming the
+    /// group's `name`. Distinguished three ways by readers that populate it:
+    /// `Some(non-empty)` is a trustworthy predefined identity; `Some("")` is
+    /// Tally's own explicit signal that the row is a user-created master,
+    /// definitively not predefined; `None` means this reader never captured
+    /// the attribute at all (either an older capture, or a master kind this
+    /// crate does not read `RESERVEDNAME` for), carrying no signal either
+    /// way. Readers that do not parse `RESERVEDNAME` leave this `None`.
+    #[serde(default)]
+    pub reserved_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -1618,6 +1629,7 @@ fn parse_named_master_source_records(
                     record: TallyNamedMaster {
                         name: attr_value(&reader, &element, b"NAME").unwrap_or_default(),
                         parent: None,
+                        reserved_name: None,
                     },
                     source_id,
                     identity_kind,
@@ -2257,7 +2269,11 @@ fn parse_native_voucher_type_collection_row(
     validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
     let name = attr_value(reader, element, b"NAME")
         .ok_or_else(|| anyhow::anyhow!("native voucher type row omitted NAME"))?;
-    let mut record = TallyNamedMaster { name, parent: None };
+    let mut record = TallyNamedMaster {
+        name,
+        parent: None,
+        reserved_name: None,
+    };
     let mut identities = ParsedSourceIdentities::default();
     let mut alter_id = None;
     let mut parent_seen = false;
@@ -2345,7 +2361,11 @@ fn parse_native_group_collection_row(
     validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
     let name = attr_value(reader, element, b"NAME")
         .ok_or_else(|| anyhow::anyhow!("native group row omitted NAME"))?;
-    let mut record = TallyNamedMaster { name, parent: None };
+    let mut record = TallyNamedMaster {
+        name,
+        parent: None,
+        reserved_name: None,
+    };
     let mut identities = ParsedSourceIdentities::default();
     let mut alter_id = None;
     let mut parent_seen = false;
@@ -4497,7 +4517,11 @@ fn parse_named_master(
     element_name: &[u8],
     name: String,
 ) -> anyhow::Result<TallyNamedMaster> {
-    let mut record = TallyNamedMaster { name, parent: None };
+    let mut record = TallyNamedMaster {
+        name,
+        parent: None,
+        reserved_name: None,
+    };
     let mut parent_seen = false;
     loop {
         match reader.read_event()? {

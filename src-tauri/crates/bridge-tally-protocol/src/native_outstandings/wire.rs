@@ -642,6 +642,12 @@ fn parse_group_row(
     let name = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("group_name_missing"),
     )?;
+    // Unlike `attribute_value`, this keeps "present but empty" distinct from
+    // "absent entirely" -- RESERVEDNAME's empty string is itself a fact
+    // (Tally's own signal that the row is user-created), not the absence of
+    // one. See `TallyNamedMaster::reserved_name` and
+    // `super::compute::group_identity_key` for how each state is used.
+    let reserved_name = raw_attribute_value(element, b"RESERVEDNAME");
     let mut parent = None;
     let mut parent_seen = false;
     let mut guid = None;
@@ -699,7 +705,14 @@ fn parse_group_row(
             "group_parent_missing",
         ));
     }
-    Ok((TallyNamedMaster { name, parent }, guid))
+    Ok((
+        TallyNamedMaster {
+            name,
+            parent,
+            reserved_name,
+        },
+        guid,
+    ))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -847,6 +860,26 @@ fn attribute_value(element: &BytesStart<'_>, key: &[u8]) -> Option<String> {
         })
         .map(|value| value.into_owned())
         .filter(|value| !value.trim().is_empty())
+}
+
+/// Like [`attribute_value`], but returns the attribute's raw value verbatim
+/// -- including an empty string -- instead of folding "empty" into `None`.
+/// `attribute_value` exists for identity attributes (like `NAME`) that must
+/// never legitimately be empty, so treating an empty value as absent is
+/// correct there. `RESERVEDNAME` is different: an empty value is itself
+/// meaningful (Tally's own "this group is user-created" signal), and must
+/// stay distinguishable from the attribute never having been sent at all.
+fn raw_attribute_value(element: &BytesStart<'_>, key: &[u8]) -> Option<String> {
+    element
+        .attributes()
+        .flatten()
+        .find(|attribute| attribute.key.as_ref().eq_ignore_ascii_case(key))
+        .and_then(|attribute| {
+            attribute
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .ok()
+        })
+        .map(|value| value.into_owned())
 }
 
 fn path_is(path: &[Vec<u8>], expected: &[&[u8]]) -> bool {
@@ -1250,6 +1283,34 @@ mod group_tests {
             Err(NativeOutstandingsError::InvalidResponse(
                 "group_company_guid_unverified"
             ))
+        );
+    }
+
+    /// `RESERVEDNAME` parsing must keep three states distinct: a real
+    /// (non-empty) predefined identity, Tally's own explicit empty-string
+    /// "this is user-created" signal, and the attribute being absent
+    /// entirely (an older capture, or a build that omits it). Folding the
+    /// empty-string case into "absent" would let a custom group merely named
+    /// like a predefined one pass as the identity fallback -- see
+    /// `native_outstandings::compute::group_identity_key` for how the
+    /// distinction is used.
+    #[test]
+    fn reserved_name_attribute_parsing_distinguishes_present_empty_and_absent() {
+        let xml = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><GROUP NAME="WR5 Renamed Suspense" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Sundry Debtors" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Old Capture Group"><GUID>11111111-1111-1111-1111-111111111111-00000003</GUID><PARENT>Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let groups = parse_native_group_snapshot(xml, COMPANY_GUID).expect("parses");
+        assert_eq!(
+            groups[0].reserved_name.as_deref(),
+            Some("Sundry Debtors"),
+            "a renamed predefined group keeps its immutable RESERVEDNAME identity"
+        );
+        assert_eq!(
+            groups[1].reserved_name.as_deref(),
+            Some(""),
+            "an empty RESERVEDNAME is Tally's own signal, not a missing value"
+        );
+        assert_eq!(
+            groups[2].reserved_name, None,
+            "a row that never carried the attribute at all must stay None, not empty-string"
         );
     }
 }

@@ -160,6 +160,14 @@ pub fn render_native_voucher_export_request(
 /// the complete group ancestry and durable master identity the core reader
 /// needs. `GUID`, `MASTERID`, and `ALTERID` were captured from both supported
 /// Tally Education books; mutable `NAME` is never an identity fallback.
+/// `RESERVEDNAME` is explicitly requested too, so predefined-party
+/// classification survives a user renaming "Sundry Debtors"/"Sundry
+/// Creditors" -- measured live, Tally already emits `RESERVEDNAME` as a row
+/// attribute even without being asked (both `group_snapshot_wr2.xml` and the
+/// pre-GUID-widening `group_snapshot_aarav.xml` fixture carry it on every
+/// row), but it is listed here anyway, the same way `NAME` is listed despite
+/// being emitted unconditionally too: this FETCH is the explicit contract of
+/// what the reader depends on, not merely what happens to already arrive.
 ///
 /// Unlike the legacy export profile, this stays in Tally's native Collection
 /// family: it defines no report/form/part/line/field stack and invokes no TDL
@@ -167,7 +175,7 @@ pub fn render_native_voucher_export_request(
 /// bracket establish completeness for this snapshot.
 pub fn render_native_group_snapshot_request(company: &str) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Groups" ISMODIFY="Yes"><FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Groups" ISMODIFY="Yes"><FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
     )
 }
@@ -244,7 +252,8 @@ mod tests {
         let group_xml = render_native_group_snapshot_request("A & B <Co>");
         assert!(group_xml.contains("A &amp; B &lt;Co&gt;"));
         assert!(group_xml.contains(r#"<ID>List of Groups</ID>"#));
-        assert!(group_xml.contains(r#"<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH>"#));
+        assert!(group_xml
+            .contains(r#"<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH>"#));
         assert!(!group_xml.contains("<REPORT>"));
         assert!(!group_xml.contains("<FORM>"));
         assert!(!group_xml.contains("<PART>"));

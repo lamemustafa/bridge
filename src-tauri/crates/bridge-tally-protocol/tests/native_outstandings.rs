@@ -6,11 +6,16 @@
 
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
-    age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_ledger_snapshot,
-    AgeingAnchor, NativeBillRow, NativeGroupSnapshot, NativeMasterSnapshot,
-    NativeOutstandingsError,
+    age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_group_snapshot,
+    parse_native_ledger_snapshot, AgeingAnchor, NativeBillRow, NativeGroupSnapshot,
+    NativeMasterSnapshot, NativeOutstandingsError,
 };
 use bridge_tally_protocol::parse_group_source_records_with_evidence;
+
+/// A synthetic company GUID used to bind the native group snapshot rows
+/// constructed in this file, matching the pattern of the real captured GUIDs
+/// (`<company-guid>-<row-sequence>`).
+const RESERVEDNAME_TESTS_COMPANY_GUID: &str = "11111111-1111-1111-1111-111111111111";
 
 const BILLS_RECEIVABLE_BILLWISE_LAB: &str =
     include_str!("fixtures/native/bills_receivable_billwise_lab.xml");
@@ -143,6 +148,223 @@ fn complete_group_snapshot_refuses_empty_or_unresolved_ancestry() {
             NativeOutstandingsError::InvalidResponse(expected_code)
         );
     }
+}
+
+/// U2 -- the silent-empty-report defect: classifying a party group by
+/// mutable `NAME` instead of Tally's immutable `RESERVEDNAME`. Renaming
+/// "Sundry Debtors" over `Import Data` / `All Masters` succeeds in live
+/// Tally (measured 2026-08-20, WR2 Unicode Lab) and leaves `RESERVEDNAME`
+/// untouched; before this fix, that rename made Bridge classify zero
+/// parties under the renamed group and produce an empty report with no
+/// error.
+#[test]
+fn renamed_sundry_debtors_group_still_classifies_its_ledgers_by_reservedname() {
+    let group_xml = format!(
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+        <GROUP NAME="WR5 Renamed Suspense" RESERVEDNAME="Sundry Debtors"><GUID>{guid}-00000001</GUID><PARENT>Primary</PARENT></GROUP>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#,
+        guid = RESERVEDNAME_TESTS_COMPANY_GUID,
+    );
+    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
+        .expect("renamed predefined group snapshot parses");
+    assert_eq!(
+        groups[0].name, "WR5 Renamed Suspense",
+        "sanity: NAME really did change"
+    );
+    assert_eq!(
+        groups[0].reserved_name.as_deref(),
+        Some("Sundry Debtors"),
+        "sanity: RESERVEDNAME kept the original identity through the rename"
+    );
+
+    let ledgers = parse_native_ledger_snapshot(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+         <LEDGER NAME=\"Renamed Group Customer\"><PARENT>WR5 Renamed Suspense</PARENT>\
+         <CLOSINGBALANCE>-500.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE>\
+         <ISBILLWISEON>No</ISBILLWISEON></LEDGER>\
+         </COLLECTION></DATA></BODY></ENVELOPE>",
+    )
+    .expect("raw ledger snapshot parses");
+
+    let result = compute_native_outstandings(
+        "Synthetic Company",
+        &[],
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &ledgers,
+            groups: NativeGroupSnapshot::Complete(&groups),
+        },
+        AgeingAnchor::DueDate,
+        &as_of(NATIVE_CAPTURE_AS_OF),
+        group_xml.len(),
+    )
+    .expect("renamed-group ancestry resolves");
+
+    // Before the fix, classification matched on NAME ("wr5 renamed
+    // suspense" != "sundry debtors"), so this ledger was silently dropped
+    // and `residuals` was empty -- a legitimately configured book reporting
+    // zero receivables with no error.
+    assert_eq!(
+        result.residuals.len(),
+        1,
+        "a ledger under the renamed predefined group must still be classified as a party"
+    );
+    assert_eq!(result.residuals[0].party, "Renamed Group Customer");
+    assert_exact(&result.residual_total, "500");
+}
+
+/// The Sundry Creditors mirror of
+/// `renamed_sundry_debtors_group_still_classifies_its_ledgers_by_reservedname`.
+#[test]
+fn renamed_sundry_creditors_group_still_classifies_its_ledgers_by_reservedname() {
+    let group_xml = format!(
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+        <GROUP NAME="WR5 Renamed Payables" RESERVEDNAME="Sundry Creditors"><GUID>{guid}-00000001</GUID><PARENT>Primary</PARENT></GROUP>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#,
+        guid = RESERVEDNAME_TESTS_COMPANY_GUID,
+    );
+    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
+        .expect("renamed predefined group snapshot parses");
+
+    let ledgers = parse_native_ledger_snapshot(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+         <LEDGER NAME=\"Renamed Group Vendor\"><PARENT>WR5 Renamed Payables</PARENT>\
+         <CLOSINGBALANCE>750.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE>\
+         <ISBILLWISEON>No</ISBILLWISEON></LEDGER>\
+         </COLLECTION></DATA></BODY></ENVELOPE>",
+    )
+    .expect("raw ledger snapshot parses");
+
+    let result = compute_native_outstandings(
+        "Synthetic Company",
+        &[],
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &ledgers,
+            groups: NativeGroupSnapshot::Complete(&groups),
+        },
+        AgeingAnchor::DueDate,
+        &as_of(NATIVE_CAPTURE_AS_OF),
+        group_xml.len(),
+    )
+    .expect("renamed-group ancestry resolves");
+
+    assert_eq!(
+        result.residuals.len(),
+        1,
+        "a ledger under the renamed predefined creditors group must still be classified as a party"
+    );
+    assert_eq!(result.residuals[0].party, "Renamed Group Vendor");
+    assert_exact(&result.residual_total, "750");
+}
+
+/// The deliberate other-direction case: a USER-CREATED group that merely
+/// happens to be named "Sundry Debtors". Predefined groups cannot be
+/// deleted, only renamed, so if a real predefined "Sundry Debtors" group
+/// exists in this book it is a different row (carrying the non-empty
+/// RESERVEDNAME) -- this row's empty RESERVEDNAME is Tally's own signal that
+/// THIS group is not it. Falling back to NAME here would let the lookalike
+/// masquerade as the predefined group, reviving the identical name/identity
+/// confusion this fix removes, just pointed the other way. A book that has
+/// always used a custom group named "Sundry Debtors" for its receivables
+/// does lose those ledgers from this classification path -- but only for
+/// ledgers with bill-wise tracking off; a bill-wise-on ledger there still
+/// reaches the report through `is_party_ledger`'s other trigger.
+#[test]
+fn user_created_group_merely_named_sundry_debtors_is_not_treated_as_predefined() {
+    let group_xml = format!(
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+        <GROUP NAME="Sundry Debtors" RESERVEDNAME=""><GUID>{guid}-00000001</GUID><PARENT>Primary</PARENT></GROUP>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#,
+        guid = RESERVEDNAME_TESTS_COMPANY_GUID,
+    );
+    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
+        .expect("custom lookalike group snapshot parses");
+    assert_eq!(
+        groups[0].reserved_name.as_deref(),
+        Some(""),
+        "sanity: Tally's own empty RESERVEDNAME marks this row user-created"
+    );
+
+    let ledgers = parse_native_ledger_snapshot(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+         <LEDGER NAME=\"Lookalike Group Customer\"><PARENT>Sundry Debtors</PARENT>\
+         <CLOSINGBALANCE>-500.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE>\
+         <ISBILLWISEON>No</ISBILLWISEON></LEDGER>\
+         </COLLECTION></DATA></BODY></ENVELOPE>",
+    )
+    .expect("raw ledger snapshot parses");
+
+    let result = compute_native_outstandings(
+        "Synthetic Company",
+        &[],
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &ledgers,
+            groups: NativeGroupSnapshot::Complete(&groups),
+        },
+        AgeingAnchor::DueDate,
+        &as_of(NATIVE_CAPTURE_AS_OF),
+        group_xml.len(),
+    )
+    .expect("lookalike-group ancestry resolves");
+
+    assert_eq!(
+        result.residuals.len(),
+        0,
+        "a group merely named \"Sundry Debtors\", with RESERVEDNAME explicitly empty, must not be trusted as the predefined party group"
+    );
+    assert_exact(&result.residual_total, "0");
+}
+
+/// A group snapshot that carries no `RESERVEDNAME` evidence at all for a
+/// row (an older capture, or a Tally build that omits the attribute) must
+/// still classify that row by `NAME`, exactly as before this fix -- so
+/// callers on such a capture are not suddenly broken.
+#[test]
+fn group_snapshot_row_without_reservedname_evidence_falls_back_to_name() {
+    let group_xml = format!(
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+        <GROUP NAME="Sundry Debtors"><GUID>{guid}-00000001</GUID><PARENT>Primary</PARENT></GROUP>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#,
+        guid = RESERVEDNAME_TESTS_COMPANY_GUID,
+    );
+    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
+        .expect("group snapshot without RESERVEDNAME evidence parses");
+    assert_eq!(
+        groups[0].reserved_name, None,
+        "sanity: this capture carries no RESERVEDNAME evidence at all"
+    );
+
+    let ledgers = parse_native_ledger_snapshot(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+         <LEDGER NAME=\"Fallback Customer\"><PARENT>Sundry Debtors</PARENT>\
+         <CLOSINGBALANCE>-500.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE>\
+         <ISBILLWISEON>No</ISBILLWISEON></LEDGER>\
+         </COLLECTION></DATA></BODY></ENVELOPE>",
+    )
+    .expect("raw ledger snapshot parses");
+
+    let result = compute_native_outstandings(
+        "Synthetic Company",
+        &[],
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &ledgers,
+            groups: NativeGroupSnapshot::Complete(&groups),
+        },
+        AgeingAnchor::DueDate,
+        &as_of(NATIVE_CAPTURE_AS_OF),
+        group_xml.len(),
+    )
+    .expect("fallback-by-name ancestry resolves");
+
+    assert_eq!(
+        result.residuals.len(),
+        1,
+        "with no RESERVEDNAME evidence at all, classification must still fall back to NAME"
+    );
+    assert_exact(&result.residual_total, "500");
 }
 
 #[test]

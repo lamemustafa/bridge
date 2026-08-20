@@ -754,7 +754,7 @@ mod tests {
             voucher_type_request.contains("<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH>")
         );
         assert!(render_native_group_snapshot_request(COMPANY)
-            .contains("<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH>"));
+            .contains("<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH>"));
         assert!(!voucher_type_request.contains("<REPORT>"));
         let probe_from = TallyDate::parse("20260401").unwrap();
         let probe_to = TallyDate::parse("20260930").unwrap();
