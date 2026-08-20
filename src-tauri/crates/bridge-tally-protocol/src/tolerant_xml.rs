@@ -132,8 +132,14 @@ pub(crate) fn sanitize_invalid_numeric_references_with_provenance(xml: &str) -> 
     while source < xml.len() {
         let source_tail = &xml[source..];
         let output_tail = &text[output..];
+        // A literal U+FFFD is expanded whenever the ORIGINAL text after it
+        // collides with the marker form -- i.e. matches `#<digits>;` for ANY
+        // digit sequence, not only `#65533;`. This must call the exact same
+        // `collides_with_marker_form` predicate the sanitizer uses (see the
+        // marker-search branch above `sanitize_invalid_numeric_references_with_marker_search_observer`),
+        // or the two can silently drift apart again.
         if source_tail.starts_with('\u{fffd}')
-            && source_tail['\u{fffd}'.len_utf8()..].starts_with("#65533;")
+            && collides_with_marker_form(&source_tail['\u{fffd}'.len_utf8()..])
             && output_tail.starts_with("\u{fffd}#65533;")
         {
             append_replaced_boundaries(
@@ -300,7 +306,8 @@ mod tests {
 
     use super::{
         sanitize_invalid_numeric_references,
-        sanitize_invalid_numeric_references_with_marker_search_observer, MARKER_FORM_SEARCH_BYTES,
+        sanitize_invalid_numeric_references_with_marker_search_observer,
+        sanitize_invalid_numeric_references_with_provenance, MARKER_FORM_SEARCH_BYTES,
         MAX_MARKER_FORM_BYTES, NUMERIC_REFERENCE_SEARCHES,
         NUMERIC_REFERENCE_TERMINATOR_SEARCH_BYTES,
     };
@@ -454,5 +461,77 @@ mod tests {
             large <= small * 6,
             "marker-form searches without terminators must scale linearly: {small} -> {large}"
         );
+    }
+
+    /// Regression coverage for the sanitizer/replay desync: a literal U+FFFD
+    /// followed by ANY `#<digits>;` text (not only the `#65533;` literal) is
+    /// expanded by the sanitizer, so the provenance replay must recognise the
+    /// same general marker form or its boundary bookkeeping desyncs from the
+    /// sanitized text -- tripping the `debug_assert_eq!`s in
+    /// `sanitize_invalid_numeric_references_with_provenance` in debug builds,
+    /// and returning wrong-offset bytes from `original_fragment` in release.
+    fn assert_provenance_round_trips(xml: &str, expected_sanitized: &str) {
+        let sanitized = sanitize_invalid_numeric_references_with_provenance(xml);
+        assert_eq!(
+            sanitized.as_str(),
+            expected_sanitized,
+            "provenance replay must sanitize identically to the plain sanitizer"
+        );
+        assert_eq!(
+            sanitize_invalid_numeric_references(xml).as_ref(),
+            expected_sanitized,
+            "both sanitizer entry points must agree on the sanitized text"
+        );
+        let whole = sanitized
+            .original_fragment(0, sanitized.as_str().len())
+            .expect("boundaries must cover the whole sanitized text without desyncing");
+        assert_eq!(
+            whole,
+            xml.as_bytes(),
+            "the full-span original fragment must be exactly the original source bytes"
+        );
+    }
+
+    #[test]
+    fn provenance_round_trips_literal_marker_colliding_with_short_digit_reference() {
+        // "#4;" is not "#65533;", so the naive literal check in the replay
+        // used to miss this and desync the boundary vector.
+        assert_provenance_round_trips("ACME\u{fffd}#4;LTD", "ACME\u{fffd}#65533;#4;LTD");
+    }
+
+    #[test]
+    fn provenance_round_trips_literal_marker_colliding_with_another_digit_reference() {
+        // A second, distinct digit sequence confirms the fix covers the
+        // general `#<digits>;` marker form rather than special-casing `#4;`.
+        assert_provenance_round_trips("ACME\u{fffd}#12;LTD", "ACME\u{fffd}#65533;#12;LTD");
+    }
+
+    #[test]
+    fn provenance_round_trips_literal_marker_colliding_with_65533_digit_reference() {
+        // The original "#65533;" literal must keep working once the check is
+        // generalised, since it is itself just one instance of the marker form.
+        assert_provenance_round_trips("ACME\u{fffd}#65533;LTD", "ACME\u{fffd}#65533;#65533;LTD");
+    }
+
+    #[test]
+    fn provenance_original_fragment_returns_correct_original_bytes_for_a_row() {
+        // Mirrors how native_outstandings/wire.rs and lib.rs actually use the
+        // provenance API: slice a record's worth of SANITIZED text and demand
+        // the exact ORIGINAL bytes back, not merely that no panic occurs.
+        let xml = "<ROW>ACME\u{fffd}#4;LTD</ROW><ROW>OTHER</ROW>";
+        let sanitized = sanitize_invalid_numeric_references_with_provenance(xml);
+        let sanitized_text = sanitized.as_str();
+        assert_eq!(
+            sanitized_text,
+            "<ROW>ACME\u{fffd}#65533;#4;LTD</ROW><ROW>OTHER</ROW>"
+        );
+
+        let row_start = sanitized_text.find("<ROW>").expect("first ROW open tag") + "<ROW>".len();
+        let row_end = sanitized_text.find("</ROW>").expect("first ROW close tag");
+
+        let fragment = sanitized
+            .original_fragment(row_start, row_end)
+            .expect("row boundaries must resolve to a valid original slice");
+        assert_eq!(fragment, "ACME\u{fffd}#4;LTD".as_bytes());
     }
 }
