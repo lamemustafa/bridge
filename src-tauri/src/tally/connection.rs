@@ -1190,6 +1190,110 @@ mod tests {
         [headers.as_bytes(), body].concat()
     }
 
+    async fn read_complete_http_request(
+        socket: &mut (impl tokio::io::AsyncRead + Unpin),
+    ) -> Vec<u8> {
+        const HEADER_TERMINATOR: &[u8] = b"\r\n\r\n";
+        const MAX_TEST_HEADER_BYTES: usize = 64 * 1024;
+
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let header_end = loop {
+            if let Some(offset) = request
+                .windows(HEADER_TERMINATOR.len())
+                .position(|window| window == HEADER_TERMINATOR)
+            {
+                break offset + HEADER_TERMINATOR.len();
+            }
+            let bytes_read = socket
+                .read(&mut chunk)
+                .await
+                .expect("read synthetic HTTP request headers");
+            assert!(
+                bytes_read > 0,
+                "synthetic HTTP request ended before its headers were complete"
+            );
+            request.extend_from_slice(&chunk[..bytes_read]);
+            assert!(
+                request.len() <= MAX_TEST_HEADER_BYTES,
+                "synthetic HTTP request headers exceeded {MAX_TEST_HEADER_BYTES} bytes"
+            );
+        };
+
+        let headers = std::str::from_utf8(&request[..header_end - HEADER_TERMINATOR.len()])
+            .expect("synthetic HTTP request headers must be UTF-8");
+        let mut lines = headers.split("\r\n");
+        let request_line = lines
+            .next()
+            .expect("synthetic HTTP request must contain a request line");
+        let mut request_line_parts = request_line.split_ascii_whitespace();
+        let method = request_line_parts
+            .next()
+            .expect("synthetic HTTP request method is missing");
+        request_line_parts
+            .next()
+            .expect("synthetic HTTP request target is missing");
+        let version = request_line_parts
+            .next()
+            .expect("synthetic HTTP request version is missing");
+        assert_eq!(version, "HTTP/1.1", "synthetic request must use HTTP/1.1");
+        assert!(
+            request_line_parts.next().is_none(),
+            "synthetic HTTP request line has unexpected fields"
+        );
+
+        let mut content_length = None;
+        for header in lines {
+            let (name, value) = header
+                .split_once(':')
+                .expect("synthetic HTTP request contains a malformed header");
+            assert!(
+                !name.eq_ignore_ascii_case("transfer-encoding"),
+                "synthetic HTTP request must use Content-Length framing"
+            );
+            if name.eq_ignore_ascii_case("content-length") {
+                assert!(
+                    content_length.is_none(),
+                    "synthetic HTTP request contains duplicate Content-Length headers"
+                );
+                content_length = Some(
+                    value
+                        .trim()
+                        .parse::<usize>()
+                        .expect("synthetic HTTP request has an invalid Content-Length"),
+                );
+            }
+        }
+        let content_length = match content_length {
+            Some(length) => length,
+            None if method == "GET" || method == "HEAD" => 0,
+            None => panic!("synthetic HTTP request body is missing Content-Length"),
+        };
+        let request_end = header_end
+            .checked_add(content_length)
+            .expect("synthetic HTTP request length overflowed usize");
+        assert!(
+            request.len() <= request_end,
+            "synthetic HTTP request contains bytes beyond Content-Length"
+        );
+
+        while request.len() < request_end {
+            let remaining = request_end - request.len();
+            let chunk_length = remaining.min(chunk.len());
+            let bytes_read = socket
+                .read(&mut chunk[..chunk_length])
+                .await
+                .expect("read synthetic HTTP request body");
+            assert!(
+                bytes_read > 0,
+                "synthetic HTTP request ended before its Content-Length body was complete"
+            );
+            request.extend_from_slice(&chunk[..bytes_read]);
+        }
+
+        request
+    }
+
     #[test]
     fn detects_tallyprime_status() {
         assert!(matches!(
@@ -1369,10 +1473,9 @@ mod tests {
                 .expect("Tally request timed out")
                 .expect("accept Tally request");
             let (mut socket, _) = accepted;
-            let mut request = [0_u8; 2048];
-            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
+            let request = read_complete_http_request(&mut socket).await;
             assert!(
-                String::from_utf8_lossy(&request[..bytes_read]).starts_with("GET /status HTTP/1.1"),
+                String::from_utf8_lossy(&request).starts_with("GET /status HTTP/1.1"),
                 "request should go directly to the Tally endpoint"
             );
             let body = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
@@ -1468,13 +1571,9 @@ mod tests {
                         .await
                         .expect("paired request timed out")
                         .expect("accept paired request");
-                let mut request = [0_u8; 16 * 1024];
-                let bytes_read = socket
-                    .read(&mut request)
-                    .await
-                    .expect("read paired request");
+                let request = read_complete_http_request(&mut socket).await;
                 assert!(
-                    String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_prefix),
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let body = match index {
@@ -1604,18 +1703,14 @@ mod tests {
                         .await
                         .expect("paired request timed out")
                         .expect("accept paired request");
-                let mut request = [0_u8; 16 * 1024];
-                let bytes_read = socket
-                    .read(&mut request)
-                    .await
-                    .expect("read paired request");
+                let request = read_complete_http_request(&mut socket).await;
                 let expected_prefix = if index % 2 == 0 {
                     "POST / HTTP/1.1"
                 } else {
                     "GET /status HTTP/1.1"
                 };
                 assert!(
-                    String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_prefix),
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let response = if index % 2 == 0 {
@@ -1660,10 +1755,9 @@ mod tests {
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-            let mut request = [0_u8; 8192];
-            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
+            let request = read_complete_http_request(&mut socket).await;
             assert!(
-                String::from_utf8_lossy(&request[..bytes_read]).starts_with("POST / HTTP/1.1"),
+                String::from_utf8_lossy(&request).starts_with("POST / HTTP/1.1"),
                 "ledger fetch should use Tally's XML POST endpoint"
             );
             let body = "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>";
@@ -1701,9 +1795,8 @@ mod tests {
             .enumerate()
             {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-                assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(!request.is_empty(), "synthetic Tally request must not be empty");
                 let response = if index == 0 {
                     utf8_status_response(body)
                 } else {
@@ -1790,9 +1883,11 @@ mod tests {
         let server = tokio::spawn(async move {
             let body = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-            let mut request = [0_u8; 8192];
-            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-            assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+            let request = read_complete_http_request(&mut socket).await;
+            assert!(
+                !request.is_empty(),
+                "synthetic Tally request must not be empty"
+            );
             socket
                 .write_all(&utf16_xml_response(body))
                 .await
@@ -1823,9 +1918,11 @@ mod tests {
         let server = tokio::spawn(async move {
             let body = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>";
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-            let mut request = [0_u8; 8192];
-            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-            assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+            let request = read_complete_http_request(&mut socket).await;
+            assert!(
+                !request.is_empty(),
+                "synthetic Tally request must not be empty"
+            );
             socket
                 .write_all(&utf16_xml_response(body))
                 .await
@@ -1858,8 +1955,8 @@ mod tests {
         let server = tokio::spawn(async move {
             for body in [direct, standard] {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                assert!(socket.read(&mut request).await.expect("read Tally request") > 0);
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(!request.is_empty());
                 socket
                     .write_all(&utf16_xml_response(body))
                     .await
@@ -1902,9 +1999,8 @@ mod tests {
             .enumerate()
             {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-                assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(!request.is_empty(), "synthetic Tally request must not be empty");
                 let response = if index == 0 {
                     utf8_status_response(body)
                 } else {
@@ -1963,9 +2059,8 @@ mod tests {
             .enumerate()
             {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-                assert!(bytes_read > 0, "synthetic Tally request must not be empty");
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(!request.is_empty(), "synthetic Tally request must not be empty");
                 let response = if index == 0 {
                     utf8_status_response(body)
                 } else {
@@ -2025,9 +2120,8 @@ mod tests {
             .enumerate()
             {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-                requests.push(request[..bytes_read].to_vec());
+                let request = read_complete_http_request(&mut socket).await;
+                requests.push(request);
                 let response = if index == 0 {
                     utf8_status_response(body)
                 } else {
