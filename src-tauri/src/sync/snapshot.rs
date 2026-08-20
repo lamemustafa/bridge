@@ -4458,7 +4458,9 @@ mod tests {
             )
         };
         let native_groups = || {
-            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION /></DATA></BODY></ENVELOPE>".to_string()
+            format!(
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><GROUP NAME="Primary"><GUID TYPE="String">{company_guid}-00000000</GUID><PARENT TYPE="String">Primary</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">0</MASTERID></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#
+            )
         };
         let native_ledgers = || {
             format!(
@@ -4501,6 +4503,14 @@ mod tests {
             ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
                 .with_encoding(WireEncoding::Utf16Le),
             ScenarioPlan::new(Fixture::SyntheticXml(native_voucher_types()))
+                .with_encoding(WireEncoding::Utf16Le),
+            // The voucher export is bracketed by paired, GUID-verified book
+            // extent reads. Keep these distinct from the intentionally
+            // oversized voucher response below so the test exercises the
+            // voucher-only adaptive split contract.
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
                 .with_encoding(WireEncoding::Utf16Le),
             ScenarioPlan::new(Fixture::Oversized {
                 minimum_bytes: TEST_RESPONSE_LIMIT + 1,
@@ -4564,7 +4574,7 @@ mod tests {
                 .count(),
             2
         );
-        assert_eq!(requests.len(), 14);
+        assert_eq!(requests.len(), 16);
         assert!(requests.iter().all(|request| request.request_processed));
     }
 

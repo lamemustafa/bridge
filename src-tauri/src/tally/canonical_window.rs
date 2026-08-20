@@ -8,11 +8,11 @@
 
 use bridge_tally_core::{
     source_count_scope_fingerprint, CanonicalPackWindow, CanonicalText, CoreAccountingBatch,
-    ExactDecimal, GroupRecord, LedgerEntryPolarity, LedgerEntryRecord, LedgerRecord,
-    ObservedSourceIdentities, PackBatch, RawSourceSha256, RequestContext, SourceAlterId,
-    SourceCountScope, SourceCountScopeDescriptor, SourceIdentityKind, SourceRecordEvidence,
-    SourceRecordId, SourceReportedCountEvidence, TallyDate, TallyError, VoucherRecord,
-    VoucherTypeRecord,
+    ExactDecimal, ForeignMasterTextDiagnostic, ForeignText, GroupRecord, LedgerEntryPolarity,
+    LedgerEntryRecord, LedgerRecord, ObservedSourceIdentities, PackBatch, RawSourceSha256,
+    RequestContext, SourceAlterId, SourceCountScope, SourceCountScopeDescriptor,
+    SourceIdentityKind, SourceRecordEvidence, SourceRecordId, SourceReportedCountEvidence,
+    TallyDate, TallyError, VoucherRecord, VoucherTypeRecord,
 };
 use bridge_tally_protocol::{
     ParsedExport, ParsedSourceIdentityKind, ParsedSourceRecord, TallyLedger, TallyNamedMaster,
@@ -37,11 +37,18 @@ pub(super) fn build_core_window(
     if requested_from.as_str() > requested_to.as_str() {
         return Err(invalid_data("requested_window_invalid"));
     }
-    let group_count = required_source_count(&groups, "group_source_count_missing")?;
-    let ledger_count = required_source_count(&ledgers, "ledger_source_count_missing")?;
-    let voucher_type_count =
-        required_source_count(&voucher_types, "voucher_type_source_count_missing")?;
-    let voucher_count = required_source_count(&vouchers, "voucher_source_count_missing")?;
+    let _group_count = required_observed_or_source_count(&groups, "group_record_count_missing")?;
+    let _ledger_count = required_observed_or_source_count(&ledgers, "ledger_record_count_missing")?;
+    let _voucher_type_count =
+        required_observed_or_source_count(&voucher_types, "voucher_type_record_count_missing")?;
+    let _voucher_count =
+        required_observed_or_source_count(&vouchers, "voucher_record_count_missing")?;
+    let source_record_counts = [
+        groups.evidence.source_record_count,
+        ledgers.evidence.source_record_count,
+        voucher_types.evidence.source_record_count,
+        vouchers.evidence.source_record_count,
+    ];
     validate_selected_voucher_window(
         context.window.from_yyyymmdd.as_str(),
         context.window.to_yyyymmdd.as_str(),
@@ -59,8 +66,9 @@ pub(super) fn build_core_window(
     )?;
     for source in groups.records {
         let source_id = required_source_id(&source, "group_identity_missing")?;
+        let diagnostic_source_id = source_id.clone();
         let evidence = source_evidence("group", source_id.clone(), &source)?;
-        let name = required_text(&source.record.name, "group_name_missing")?;
+        let name = required_foreign_text(&source.record.name, "group_name_missing")?;
         let parent_source_id = resolve_group_parent(
             source.record.parent.as_deref(),
             &group_ids_by_name,
@@ -68,9 +76,10 @@ pub(super) fn build_core_window(
         )?;
         batch.groups.push(GroupRecord {
             source_id,
-            name,
+            name: name.clone().into_string(),
             parent_source_id,
         });
+        record_foreign_master_text_diagnostic(&mut batch, "group", &diagnostic_source_id, &name);
         record_evidence.push(evidence);
     }
 
@@ -83,8 +92,9 @@ pub(super) fn build_core_window(
     )?;
     for source in ledgers.records {
         let source_id = required_source_id(&source, "ledger_identity_missing")?;
+        let diagnostic_source_id = source_id.clone();
         let evidence = source_evidence("ledger", source_id.clone(), &source)?;
-        let name = required_text(&source.record.name, "ledger_name_missing")?;
+        let name = required_foreign_text(&source.record.name, "ledger_name_missing")?;
         let parent_source_id = resolve_optional_reference(
             source.record.parent.as_deref(),
             &group_ids_by_name,
@@ -99,10 +109,11 @@ pub(super) fn build_core_window(
             .transpose()?;
         batch.ledgers.push(LedgerRecord {
             source_id,
-            name,
+            name: name.clone().into_string(),
             parent_source_id,
             opening_balance,
         });
+        record_foreign_master_text_diagnostic(&mut batch, "ledger", &diagnostic_source_id, &name);
         record_evidence.push(evidence);
     }
 
@@ -115,11 +126,19 @@ pub(super) fn build_core_window(
     )?;
     for source in voucher_types.records {
         let source_id = required_source_id(&source, "voucher_type_identity_missing")?;
+        let diagnostic_source_id = source_id.clone();
         let evidence = source_evidence("voucher_type", source_id.clone(), &source)?;
-        let name = required_text(&source.record.name, "voucher_type_name_missing")?;
-        batch
-            .voucher_types
-            .push(VoucherTypeRecord { source_id, name });
+        let name = required_foreign_text(&source.record.name, "voucher_type_name_missing")?;
+        batch.voucher_types.push(VoucherTypeRecord {
+            source_id,
+            name: name.clone().into_string(),
+        });
+        record_foreign_master_text_diagnostic(
+            &mut batch,
+            "voucher_type",
+            &diagnostic_source_id,
+            &name,
+        );
         record_evidence.push(evidence);
     }
 
@@ -136,14 +155,12 @@ pub(super) fn build_core_window(
             &voucher_type_ids_by_name,
             "voucher_type_reference_missing",
         )?;
-        let date_yyyymmdd = required_text(
-            source
-                .record
-                .date
-                .as_deref()
-                .ok_or_else(|| invalid_data("voucher_date_missing"))?,
-            "voucher_date_missing",
-        )?;
+        let date_yyyymmdd = source
+            .record
+            .date
+            .as_deref()
+            .ok_or_else(|| invalid_data("voucher_date_missing"))?
+            .to_string();
         let voucher_date = TallyDate::parse(date_yyyymmdd.clone())
             .map_err(|_| invalid_data("voucher_date_invalid"))?;
         if voucher_date.as_str() < requested_from.as_str()
@@ -156,7 +173,9 @@ pub(super) fn build_core_window(
             .voucher_number
             .as_deref()
             .filter(|value| !value.trim().is_empty())
-            .map(|value| required_text(value, "voucher_number_invalid"))
+            .map(|value| {
+                required_foreign_text(value, "voucher_number_invalid").map(ForeignText::into_string)
+            })
             .transpose()?;
         let cancelled = source
             .record
@@ -212,20 +231,30 @@ pub(super) fn build_core_window(
         record_evidence.push(voucher_evidence);
     }
 
-    let source_counts = vec![
-        count_evidence(context, "group", group_count, SourceCountScope::Complete)?,
-        count_evidence(context, "ledger", ledger_count, SourceCountScope::Complete)?,
-        count_evidence(
-            context,
-            "voucher_type",
-            voucher_type_count,
-            SourceCountScope::Complete,
-        )?,
-        count_evidence(context, "voucher", voucher_count, SourceCountScope::Window)?,
-    ];
+    // Native collections do not carry an independent count from Tally.  Their
+    // parsed row count validates the parser only; it must not be mislabeled as
+    // source-reported completeness evidence. A qualification consequently
+    // remains incomplete until an independent witness is deliberately added.
+    let source_counts = source_record_counts
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .map(|counts| {
+            Ok(vec![
+                count_evidence(context, "group", counts[0], SourceCountScope::Complete)?,
+                count_evidence(context, "ledger", counts[1], SourceCountScope::Complete)?,
+                count_evidence(
+                    context,
+                    "voucher_type",
+                    counts[2],
+                    SourceCountScope::Complete,
+                )?,
+                count_evidence(context, "voucher", counts[3], SourceCountScope::Window)?,
+            ])
+        })
+        .transpose()?;
     let window = CanonicalPackWindow {
         batch: PackBatch::CoreAccounting(batch),
-        source_counts: Some(source_counts),
+        source_counts,
         record_evidence: Some(record_evidence),
     };
     window.validate_source_count_evidence()?;
@@ -251,7 +280,7 @@ pub(super) fn validate_selected_voucher_window(
     for source in &vouchers.records {
         let source_id = required_source_id(source, "voucher_identity_missing")?;
         source_evidence("voucher", source_id, source)?;
-        required_text(
+        required_foreign_text(
             source
                 .record
                 .voucher_type
@@ -259,14 +288,12 @@ pub(super) fn validate_selected_voucher_window(
                 .ok_or_else(|| invalid_data("voucher_type_missing"))?,
             "voucher_type_missing",
         )?;
-        let date = required_text(
-            source
-                .record
-                .date
-                .as_deref()
-                .ok_or_else(|| invalid_data("voucher_date_missing"))?,
-            "voucher_date_missing",
-        )?;
+        let date = source
+            .record
+            .date
+            .as_deref()
+            .ok_or_else(|| invalid_data("voucher_date_missing"))?
+            .to_string();
         let voucher_date =
             TallyDate::parse(date).map_err(|_| invalid_data("voucher_date_invalid"))?;
         if voucher_date.as_str() < requested_from.as_str()
@@ -286,13 +313,13 @@ pub(super) fn validate_selected_voucher_window(
             .record
             .voucher_number
             .as_deref()
-            .map(|value| required_text(value, "voucher_number_invalid"))
+            .map(|value| required_foreign_text(value, "voucher_number_invalid"))
             .transpose()?;
         source
             .record
             .party_ledger_name
             .as_deref()
-            .map(|value| required_text(value, "voucher_party_ledger_name_invalid"))
+            .map(|value| required_foreign_text(value, "voucher_party_ledger_name_invalid"))
             .transpose()?;
         let declared_entries = source
             .record
@@ -306,7 +333,7 @@ pub(super) fn validate_selected_voucher_window(
             if entry.entry_index == 0 || !entry_indices.insert(entry.entry_index) {
                 return Err(invalid_data("voucher_ledger_entry_index_invalid"));
             }
-            required_text(&entry.ledger_name, "voucher_ledger_name_invalid")?;
+            required_foreign_text(&entry.ledger_name, "voucher_ledger_name_invalid")?;
             ExactDecimal::parse(entry.amount.clone())?;
             RawSourceSha256::parse(entry.raw_source_sha256.clone())?;
         }
@@ -314,13 +341,14 @@ pub(super) fn validate_selected_voucher_window(
     Ok(())
 }
 
-fn required_source_count<T>(
+fn required_observed_or_source_count<T>(
     export: &ParsedExport<T>,
     code: &'static str,
 ) -> Result<u64, TallyError> {
     export
         .evidence
-        .source_record_count
+        .observed_record_count
+        .or(export.evidence.source_record_count)
         .ok_or_else(|| protocol_error(code))
 }
 
@@ -337,8 +365,8 @@ where
     let mut ids = BTreeMap::new();
     for source in records {
         let source_id = required_source_id(source, missing_identity_code)?;
-        let canonical_name = required_text(name(&source.record), invalid_name_code)?;
-        if ids.insert(canonical_name, source_id).is_some() {
+        let foreign_name = required_foreign_text(name(&source.record), invalid_name_code)?;
+        if ids.insert(foreign_name.into_string(), source_id).is_some() {
             return Err(invalid_data(duplicate_name_code));
         }
     }
@@ -388,7 +416,7 @@ fn resolve_required_reference(
     ids_by_name: &BTreeMap<String, String>,
     missing_code: &'static str,
 ) -> Result<String, TallyError> {
-    let name = required_text(value, missing_code)?;
+    let name = required_foreign_text(value, missing_code)?.into_string();
     ids_by_name
         .get(&name)
         .cloned()
@@ -476,10 +504,30 @@ fn required_source_id<T>(
         .ok_or_else(|| invalid_data(code))
 }
 
-fn required_text(value: &str, code: &'static str) -> Result<String, TallyError> {
-    CanonicalText::parse(value.to_string())
-        .map(|value| value.as_str().to_string())
-        .map_err(|_| invalid_data(code))
+fn required_foreign_text(value: &str, code: &'static str) -> Result<ForeignText, TallyError> {
+    if value.is_empty() {
+        return Err(invalid_data(code));
+    }
+    Ok(ForeignText::from_tally(value.to_string()))
+}
+
+fn record_foreign_master_text_diagnostic(
+    batch: &mut CoreAccountingBatch,
+    object_type: &str,
+    source_id: &str,
+    name: &ForeignText,
+) {
+    let Some(diagnostic) = name.document_rendering_diagnostic() else {
+        return;
+    };
+    batch
+        .foreign_master_text_diagnostics
+        .push(ForeignMasterTextDiagnostic {
+            object_type: object_type.to_string(),
+            source_id: source_id.to_string(),
+            stored_name: name.as_str().to_string(),
+            likely_intended_spelling: diagnostic.likely_intended_spelling,
+        });
 }
 
 fn derived_ledger_entry_id(
@@ -552,11 +600,13 @@ mod tests {
         SourceIdentity, SourceIdentityKind, TallyError,
     };
     use bridge_tally_protocol::{
-        parse_group_source_records_with_evidence, parse_ledger_source_records_with_evidence,
+        decode_tally_xml_response_bytes_limited, parse_group_source_records_with_evidence,
+        parse_ledger_source_records_with_evidence,
+        parse_native_voucher_source_records_with_evidence,
         parse_voucher_source_records_with_evidence,
-        parse_voucher_type_source_records_with_evidence, ParsedExport, ParsedSourceRecord,
-        TallyLedger, TallyNamedMaster, TallyVoucher, BRIDGE_GROUP_EXPORT_SCHEMA,
-        BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_VOUCHER_EXPORT_SCHEMA,
+        parse_voucher_type_source_records_with_evidence, ExpectedTallyTextEncoding, ParsedExport,
+        ParsedSourceRecord, TallyLedger, TallyNamedMaster, TallyVoucher,
+        BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_VOUCHER_EXPORT_SCHEMA,
         BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
     };
 
@@ -814,6 +864,55 @@ mod tests {
     }
 
     #[test]
+    fn captured_svtodate_bound_drop_fails_closed_before_canonicalisation() {
+        let bytes = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/response-illegal-svtodate-bound-dropped-wr2.utf16le.xml"
+        );
+        let xml = decode_tally_xml_response_bytes_limited(
+            bytes,
+            "text/xml; charset=utf-16",
+            ExpectedTallyTextEncoding::Utf16Le,
+            bytes.len(),
+        )
+        .expect("captured UTF-16LE response decodes")
+        .text;
+        let vouchers = parse_native_voucher_source_records_with_evidence(
+            &xml,
+            "61c6de69-1748-461c-ad3f-162cb949df9f",
+        )
+        .expect("captured response has structurally valid native vouchers");
+
+        let error = validate_selected_voucher_window("20260401", "20260430", &vouchers)
+            .expect_err("out-of-window response rows must fail closed");
+        assert!(matches!(
+            error,
+            TallyError::InvalidData { code } if code == "voucher_date_outside_requested_window"
+        ));
+    }
+
+    #[test]
+    fn foreign_master_name_with_c1_control_is_retained_and_diagnosed_verbatim() {
+        let mojibake = "ZZ Curly âQuotedâ Ledger";
+        let (mut ledgers, mut vouchers) = ledgers_and_vouchers(mojibake, mojibake);
+        ledgers.records[0].record.name = mojibake.to_string();
+        vouchers.records[0].record.ledger_entries[0].ledger_name = mojibake.to_string();
+
+        let window = build_core_window(&context(), groups(), ledgers, voucher_types(), vouchers)
+            .expect("foreign text must not reject an otherwise valid company window");
+        let PackBatch::CoreAccounting(batch) = window.batch else {
+            panic!("wrong pack");
+        };
+        assert_eq!(batch.ledgers[0].name, mojibake);
+        assert_eq!(batch.foreign_master_text_diagnostics.len(), 1);
+        assert_eq!(
+            batch.foreign_master_text_diagnostics[0]
+                .likely_intended_spelling
+                .as_deref(),
+            Some("ZZ Curly “Quoted” Ledger")
+        );
+    }
+
+    #[test]
     fn invalid_requested_window_fails_before_source_rows_are_canonicalized() {
         for (from, to) in [("20260230", "20260731"), ("20260801", "20260731")] {
             let mut request = context();
@@ -838,9 +937,12 @@ mod tests {
         invalid_amount.records[0].record.ledger_entries[0].amount = "not-an-amount".to_string();
         assert!(validate_selected_voucher_window("20260701", "20260731", &invalid_amount).is_err());
 
-        let mut invalid_name = vouchers.clone();
-        invalid_name.records[0].record.ledger_entries[0].ledger_name = " x ".to_string();
-        assert!(validate_selected_voucher_window("20260701", "20260731", &invalid_name).is_err());
+        let mut foreign_name = vouchers.clone();
+        foreign_name.records[0].record.ledger_entries[0].ledger_name = " x ".to_string();
+        assert!(
+            validate_selected_voucher_window("20260701", "20260731", &foreign_name).is_ok(),
+            "Tally-originated master text is not a Bridge canonical token"
+        );
 
         let mut invalid_alter_id = vouchers;
         invalid_alter_id.records[0].alter_id = Some("contains whitespace".to_string());

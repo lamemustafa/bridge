@@ -1081,7 +1081,7 @@ fn validate_selected_ledgers(
         if let Some(alter_id) = &source.alter_id {
             bridge_tally_core::SourceAlterId::parse(alter_id.clone())?;
         }
-        let name = bridge_tally_core::CanonicalText::parse(source.record.name.clone())?;
+        let name = bridge_tally_core::ForeignText::from_tally(source.record.name.clone());
         if !names.insert(name.as_str().to_string()) {
             anyhow::bail!("Selected ledger response repeated a normalized name");
         }
@@ -1093,7 +1093,7 @@ fn validate_selected_ledgers(
         .flatten()
         .filter(|value| !value.trim().is_empty())
         {
-            bridge_tally_core::CanonicalText::parse(value.clone())?;
+            bridge_tally_core::ForeignText::from_tally(value.clone());
         }
         if let Some(opening_balance) = source
             .record

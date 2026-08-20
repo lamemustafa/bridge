@@ -8,16 +8,16 @@ use bridge_tally_core::{
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
 use bridge_tally_protocol::{
     native_outstandings::{
-        parse_native_group_snapshot_with_evidence, render_native_group_snapshot_request,
-        render_native_ledger_export_request, render_native_voucher_export_request,
-        render_native_voucher_type_export_request,
+        render_native_group_snapshot_request, render_native_ledger_export_request,
+        render_native_voucher_export_request, render_native_voucher_type_export_request,
     },
     outstandings_shared::{parse_company_book_extent, CompanyBookExtent},
     parse_companies, parse_ledger_period_balance_report,
+    parse_native_group_source_records_with_evidence,
     parse_native_ledger_source_records_with_evidence,
     parse_native_voucher_source_records_with_evidence,
-    parse_native_voucher_type_source_records_with_evidence, ExportEvidence, ParsedExport,
-    ParsedSourceIdentities, ParsedSourceIdentityKind, ParsedSourceRecord, TallyNamedMaster,
+    parse_native_voucher_type_source_records_with_evidence, ParsedExport, ParsedSourceRecord,
+    TallyNamedMaster,
 };
 use bridge_tally_transport::TallyTransportError;
 use sha2::{Digest, Sha256};
@@ -125,19 +125,25 @@ impl RuntimeTallyConnector {
             .await?;
         let native_group_request = render_native_group_snapshot_request(&company_name);
         let first_group_xml = self
-            .post_xml_validated(native_group_request.clone(), |xml| {
-                parse_native_group_snapshot_with_evidence(xml).is_ok()
+            .post_xml_validated(native_group_request.clone(), {
+                let validation_guid = expected_guid.clone();
+                move |xml| {
+                    parse_native_group_source_records_with_evidence(xml, &validation_guid).is_ok()
+                }
             })
             .await?;
         let second_group_xml = self
-            .post_xml_validated(native_group_request, |xml| {
-                parse_native_group_snapshot_with_evidence(xml).is_ok()
+            .post_xml_validated(native_group_request, {
+                let validation_guid = expected_guid.clone();
+                move |xml| {
+                    parse_native_group_source_records_with_evidence(xml, &validation_guid).is_ok()
+                }
             })
             .await?;
         if first_group_xml != second_group_xml {
             return Err(invalid_data("native_group_snapshot_drifted"));
         }
-        let groups = native_groups_for_core_window(&first_group_xml)?;
+        let groups = native_groups_for_core_window(&first_group_xml, &expected_guid)?;
         let closing_extent = self
             .read_pinned_company_book_extent(&company_name, &expected_guid)
             .await?;
@@ -195,6 +201,13 @@ impl RuntimeTallyConnector {
         )
         .map_err(|_| protocol_error("voucher_type_export_invalid"))?;
 
+        // A native Voucher collection has no envelope company GUID. For a
+        // non-empty response its row GUIDs bind the company; for a valid
+        // empty window the same unchanged, GUID-verified book extent bracket
+        // used for groups authenticates the selected book out of band.
+        let voucher_opening_extent = self
+            .read_pinned_company_book_extent(&company_name, &expected_guid)
+            .await?;
         let validation_guid = expected_guid.clone();
         let voucher_xml = self
             .post_xml_validated(
@@ -212,6 +225,12 @@ impl RuntimeTallyConnector {
         let vouchers =
             parse_native_voucher_source_records_with_evidence(&voucher_xml, &expected_guid)
                 .map_err(|_| protocol_error("voucher_export_invalid"))?;
+        let voucher_closing_extent = self
+            .read_pinned_company_book_extent(&company_name, &expected_guid)
+            .await?;
+        if voucher_closing_extent != voucher_opening_extent {
+            return Err(invalid_data("company_book_changed_during_voucher_read"));
+        }
 
         build_core_window(context, groups, ledgers, voucher_types, vouchers)
     }
@@ -500,54 +519,10 @@ pub fn company_source_identity(lineage: &str, company_guid: &str) -> SourceIdent
 
 fn native_groups_for_core_window(
     xml: &str,
+    expected_company_guid: &str,
 ) -> Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>, TallyError> {
-    let records = parse_native_group_snapshot_with_evidence(xml)
-        .map_err(|_| protocol_error("group_export_invalid"))?
-        .into_iter()
-        .map(|entry| {
-            // Tally's native Group collection does not return master IDs. A
-            // group name is the reference token used by both Group parents and
-            // Ledger parents, so use a namespaced deterministic fallback while
-            // retaining the hash of the exact consumed row as source evidence.
-            // This never impersonates a GUID and duplicate names still fail
-            // closed in `build_core_window`.
-            let source_id = format!(
-                "bridge-native-group-name:v1:{}",
-                sha256_hex(entry.record.name.as_bytes())
-            );
-            ParsedSourceRecord {
-                record: entry.record,
-                source_id: Some(source_id),
-                identity_kind: Some(ParsedSourceIdentityKind::Fallback),
-                identities: ParsedSourceIdentities::default(),
-                alter_id: None,
-                raw_source_sha256: entry.raw_source_sha256,
-            }
-        })
-        .collect::<Vec<_>>();
-    let source_record_count =
-        u64::try_from(records.len()).map_err(|_| protocol_error("group_export_count_invalid"))?;
-    Ok(ParsedExport {
-        records,
-        // Native Collections do not emit the broken `$$NumItems` report
-        // field. The paired equal collection snapshot is the completeness
-        // witness, and this is its observed row count.
-        evidence: ExportEvidence {
-            source_record_count: Some(source_record_count),
-            ..ExportEvidence::default()
-        },
-    })
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        output.push(HEX[usize::from(byte >> 4)] as char);
-        output.push(HEX[usize::from(byte & 0x0f)] as char);
-    }
-    output
+    parse_native_group_source_records_with_evidence(xml, expected_company_guid)
+        .map_err(|_| protocol_error("group_export_invalid"))
 }
 
 fn company_guids_equal(left: &str, right: &str) -> bool {
@@ -684,17 +659,36 @@ mod tests {
         [headers.as_bytes(), body].concat()
     }
 
+    fn decode_bomless_utf16le_capture(bytes: &[u8]) -> String {
+        bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
+            bytes,
+            "text/xml; charset=utf-16",
+            bridge_tally_protocol::ExpectedTallyTextEncoding::Utf16Le,
+            bytes.len(),
+        )
+        .expect("captured BOM-less UTF-16LE response decodes")
+        .text
+    }
+
     fn company_extent(company_name: &str, company_guid: &str) -> String {
         format!(
             r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="{company_name}"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">{company_name}</NAME><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         )
     }
 
-    fn native_groups(groups: &[(&str, &str)]) -> String {
+    fn native_groups(company_guid: &str, groups: &[(&str, &str)]) -> String {
+        let groups = if groups.is_empty() {
+            &[("Primary", "Primary")][..]
+        } else {
+            groups
+        };
         let rows = groups
             .iter()
-            .map(|(name, parent)| {
-                format!(r#"<GROUP NAME="{name}"><PARENT>{parent}</PARENT></GROUP>"#)
+            .enumerate()
+            .map(|(index, (name, parent))| {
+                format!(
+                    r#"<GROUP NAME="{name}"><GUID TYPE="String">{company_guid}-{index:08x}</GUID><PARENT TYPE="String">{parent}</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">{index}</MASTERID></GROUP>"#
+                )
             })
             .collect::<String>();
         format!(
@@ -732,8 +726,8 @@ mod tests {
 
         const COMPANY_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
         const COMPANY: &str = "WR2 Unicode Lab";
-        const GROUPS: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_wr2.xml"
+        const GROUPS: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_wr2_with_identity.utf16le.xml"
         );
         const LEDGERS: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_wr2_core_window.xml"
@@ -751,6 +745,8 @@ mod tests {
         assert!(
             voucher_type_request.contains("<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH>")
         );
+        assert!(render_native_group_snapshot_request(COMPANY)
+            .contains("<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH>"));
         assert!(!voucher_type_request.contains("<REPORT>"));
         assert!(render_native_voucher_export_request(COMPANY, "20260401", "20260930")
             .contains("ALLLEDGERENTRIES.LEDGERNAME, ALLLEDGERENTRIES.AMOUNT, ALLLEDGERENTRIES.ISDEEMEDPOSITIVE"));
@@ -786,9 +782,10 @@ mod tests {
             vouchers.records[0].record.ledger_entries[0].ledger_name,
             "नमस्ते ट्रेडर्स"
         );
+        let groups = decode_bomless_utf16le_capture(GROUPS);
         let window = build_core_window(
             &context,
-            native_groups_for_core_window(GROUPS).expect("captured groups parse"),
+            native_groups_for_core_window(&groups, COMPANY_GUID).expect("captured groups parse"),
             parse_native_ledger_source_records_with_evidence(LEDGERS, COMPANY_GUID)
                 .expect("captured ledgers parse"),
             parse_native_voucher_type_source_records_with_evidence(VOUCHER_TYPES, COMPANY_GUID)
@@ -840,8 +837,8 @@ mod tests {
         use std::collections::{BTreeMap, BTreeSet};
 
         const COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
-        const GROUPS: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_aarav.xml"
+        const GROUPS: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_aarav_with_identity.utf16le.xml"
         );
         const LEDGERS: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_aarav.xml"
@@ -851,7 +848,9 @@ mod tests {
         // window consequently cannot be constructed without fabricating two inputs, so exercise
         // the captured Group and Ledger bytes through the exact production conversion and parent
         // resolution paths instead.
-        let groups = native_groups_for_core_window(GROUPS).expect("captured groups parse");
+        let group_xml = decode_bomless_utf16le_capture(GROUPS);
+        let groups =
+            native_groups_for_core_window(&group_xml, COMPANY_GUID).expect("captured groups parse");
         let ledgers = parse_native_ledger_source_records_with_evidence(LEDGERS, COMPANY_GUID)
             .expect("captured ledgers parse");
         assert_eq!((groups.records.len(), ledgers.records.len()), (28, 88));
@@ -861,7 +860,7 @@ mod tests {
             .map(|group| {
                 (
                     group.record.name.clone(),
-                    group.source_id.clone().expect("native group fallback ID"),
+                    group.source_id.clone().expect("native group GUID"),
                 )
             })
             .collect::<BTreeMap<_, _>>();
@@ -1121,6 +1120,7 @@ mod tests {
                     amount: ExactDecimal::parse("0").unwrap(),
                     polarity: bridge_tally_core::LedgerEntryPolarity::Debit,
                 }],
+                ..bridge_tally_core::CoreAccountingBatch::default()
             }),
             source_counts: None,
             record_evidence: Some(vec![bridge_tally_core::SourceRecordEvidence {
@@ -1230,6 +1230,14 @@ mod tests {
     #[tokio::test]
     async fn direct_company_snapshot_probe_reverifies_scoped_identity_before_core_exports() {
         let _simulator_guard = simulator_test_lock().lock().await;
+        assert!(
+            parse_native_group_source_records_with_evidence(
+                &native_groups("scoped-guid", &[]),
+                "scoped-guid"
+            )
+            .is_ok(),
+            "synthetic native groups satisfy the production identity parser"
+        );
         let direct = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>direct-guid-must-not-escape</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
         let standard = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\"><SyntheticLedger NAME=\"synthetic-ledger\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">ledger-guid</GUID><PARENT TYPE=\"String\">Primary</PARENT><BRIDGECOMPANYGUID TYPE=\"String\">scoped-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE=\"String\">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>";
         let (address, server) = spawn_method_routed_server(vec![
@@ -1244,8 +1252,8 @@ mod tests {
             standard.to_string(),
             company_extent("Synthetic Company", "scoped-guid"),
             company_extent("Synthetic Company", "scoped-guid"),
-            native_groups(&[]),
-            native_groups(&[]),
+            native_groups("scoped-guid", &[]),
+            native_groups("scoped-guid", &[]),
             company_extent("Synthetic Company", "scoped-guid"),
             company_extent("Synthetic Company", "scoped-guid"),
             company_extent("Synthetic Company", "scoped-guid"),
@@ -1255,7 +1263,11 @@ mod tests {
             company_extent("Synthetic Company", "scoped-guid"),
             company_extent("Synthetic Company", "scoped-guid"),
             native_voucher_types("scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
             native_vouchers("scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
         ])
         .await;
         let config = TallyConfig {
@@ -1288,21 +1300,19 @@ mod tests {
             .probe()
             .await
             .expect("scoped re-verification should admit the snapshot probe");
-        assert!(core_snapshot_start_authorized(
-            probe
-                .profile
-                .packs
-                .get(&CapabilityPackId::CoreAccounting)
-                .unwrap()
-        ));
         let methods = server.await.expect("join routed Tally server");
-        assert_eq!(
-            methods,
-            [
-                "GET", "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST",
-                "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST",
-            ]
+        let core_evidence = probe
+            .profile
+            .packs
+            .get(&CapabilityPackId::CoreAccounting)
+            .unwrap();
+        assert!(
+            core_snapshot_start_authorized(core_evidence),
+            "core evidence was {core_evidence:?}; methods were {methods:?}"
         );
+        assert_eq!(methods.len(), 23);
+        assert_eq!(methods[0], "GET");
+        assert!(methods[1..].iter().all(|method| method == "POST"));
     }
 
     #[tokio::test]
@@ -1329,8 +1339,8 @@ mod tests {
                 company_collection_xml.clone(),
                 company_extent("Synthetic Company", company_guid),
                 company_extent("Synthetic Company", company_guid),
-                native_groups(&[]),
-                native_groups(&[]),
+                native_groups(company_guid, &[]),
+                native_groups(company_guid, &[]),
                 company_extent("Synthetic Company", company_guid),
                 company_extent("Synthetic Company", company_guid),
                 company_extent("Synthetic Company", company_guid),
@@ -1340,7 +1350,11 @@ mod tests {
                 company_extent("Synthetic Company", company_guid),
                 company_extent("Synthetic Company", company_guid),
                 native_voucher_types(company_guid),
+                company_extent("Synthetic Company", company_guid),
+                company_extent("Synthetic Company", company_guid),
                 native_vouchers(company_guid),
+                company_extent("Synthetic Company", company_guid),
+                company_extent("Synthetic Company", company_guid),
             ]);
         }
         post_responses.push(company_xml.clone());
@@ -1440,7 +1454,7 @@ mod tests {
                 .iter()
                 .filter(|method| method.as_str() == "POST")
                 .count(),
-            32
+            40
         );
     }
 
@@ -1448,8 +1462,8 @@ mod tests {
     async fn same_context_snapshot_read_does_not_reuse_pre_run_canary_rows() {
         let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "synthetic-company-guid";
-        let empty_native_groups = native_groups(&[]);
-        let second_group = native_groups(&[("Post-start Assets", "")]);
+        let empty_native_groups = native_groups(company_guid, &[]);
+        let second_group = native_groups(company_guid, &[("Post-start Assets", "Primary")]);
         let plans = [
             company_extent("Synthetic Company", company_guid),
             company_extent("Synthetic Company", company_guid),
@@ -1464,7 +1478,11 @@ mod tests {
             company_extent("Synthetic Company", company_guid),
             company_extent("Synthetic Company", company_guid),
             native_voucher_types(company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
             native_vouchers(company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
             company_extent("Synthetic Company", company_guid),
             company_extent("Synthetic Company", company_guid),
             second_group.clone(),
@@ -1478,7 +1496,11 @@ mod tests {
             company_extent("Synthetic Company", company_guid),
             company_extent("Synthetic Company", company_guid),
             native_voucher_types(company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
             native_vouchers(company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
         ]
         .into_iter()
         .map(Fixture::SyntheticXml)
@@ -1519,19 +1541,22 @@ mod tests {
         let PackBatch::CoreAccounting(pre_run_batch) = pre_run_canary.batch else {
             panic!("expected core canary batch");
         };
-        assert!(pre_run_batch.groups.is_empty());
+        assert_eq!(pre_run_batch.groups.len(), 1);
+        assert_eq!(pre_run_batch.groups[0].name, "Primary");
 
         let snapshot_window = connector.read_pack_window(&context).await.unwrap();
         let PackBatch::CoreAccounting(snapshot_batch) = snapshot_window.batch else {
             panic!("expected core snapshot batch");
         };
         assert_eq!(snapshot_batch.groups.len(), 1);
-        assert!(snapshot_batch.groups[0]
-            .source_id
-            .starts_with("bridge-native-group-name:v1:"));
+        assert_eq!(snapshot_batch.groups[0].name, "Post-start Assets");
+        assert_eq!(
+            snapshot_batch.groups[0].source_id,
+            format!("{company_guid}-00000000")
+        );
 
         let requests = simulator.finish().expect("finish sequence simulator");
-        assert_eq!(requests.len(), 28);
+        assert_eq!(requests.len(), 36);
         assert!(requests.iter().all(|request| request.method == "POST"));
     }
 
