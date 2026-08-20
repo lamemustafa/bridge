@@ -345,18 +345,7 @@ where
     Ok(ids)
 }
 
-fn resolve_optional_reference(
-    value: Option<&str>,
-    ids_by_name: &BTreeMap<String, String>,
-    missing_code: &'static str,
-) -> Result<Option<String>, TallyError> {
-    value
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| resolve_required_reference(value, ids_by_name, missing_code))
-        .transpose()
-}
-
-fn resolve_group_parent(
+pub(super) fn resolve_optional_reference(
     value: Option<&str>,
     ids_by_name: &BTreeMap<String, String>,
     missing_code: &'static str,
@@ -364,12 +353,34 @@ fn resolve_group_parent(
     let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
         return Ok(None);
     };
-    // `Primary` is Tally's reserved top-level classification, not one of the exported Group
-    // masters. Preserve the canonical tree root as `None`; every other named parent must resolve.
-    if value.trim().eq_ignore_ascii_case("primary") {
+    if is_tally_reserved_root(value) {
         return Ok(None);
     }
     resolve_required_reference(value, ids_by_name, missing_code).map(Some)
+}
+
+pub(super) fn resolve_group_parent(
+    value: Option<&str>,
+    ids_by_name: &BTreeMap<String, String>,
+    missing_code: &'static str,
+) -> Result<Option<String>, TallyError> {
+    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    if is_tally_reserved_root(value) {
+        return Ok(None);
+    }
+    resolve_required_reference(value, ids_by_name, missing_code).map(Some)
+}
+
+fn is_tally_reserved_root(value: &str) -> bool {
+    const SANITIZED_ROOT_MARKER: &str = "\u{fffd}#4;";
+
+    let value = value.trim();
+    // Captures from two companies observed this marker only on Tally's reserved root (30 group
+    // parents and one ledger parent). Match the marker rather than its English display name.
+    // Keep the plain spelling because the legacy export path still emits it.
+    value.starts_with(SANITIZED_ROOT_MARKER) || value.eq_ignore_ascii_case("primary")
 }
 
 fn resolve_required_reference(
@@ -418,6 +429,7 @@ fn source_evidence<T>(
         Some(ParsedSourceIdentityKind::Guid) => SourceIdentityKind::Guid,
         Some(ParsedSourceIdentityKind::RemoteId) => SourceIdentityKind::RemoteId,
         Some(ParsedSourceIdentityKind::MasterId) => SourceIdentityKind::MasterId,
+        Some(ParsedSourceIdentityKind::Fallback) => SourceIdentityKind::Fallback,
         None => return Err(invalid_data("source_identity_kind_missing")),
     };
     Ok(SourceRecordEvidence {
@@ -500,6 +512,7 @@ fn parsed_identity_kind_code(kind: ParsedSourceIdentityKind) -> &'static [u8] {
         ParsedSourceIdentityKind::Guid => b"guid",
         ParsedSourceIdentityKind::RemoteId => b"remote_id",
         ParsedSourceIdentityKind::MasterId => b"master_id",
+        ParsedSourceIdentityKind::Fallback => b"fallback",
     }
 }
 
@@ -608,6 +621,28 @@ mod tests {
     fn valid_window() -> CanonicalPackWindow {
         let (ledgers, vouchers) = ledgers_and_vouchers("Cash", "Cash");
         build_core_window(&context(), groups(), ledgers, voucher_types(), vouchers).unwrap()
+    }
+
+    #[test]
+    fn tally_reserved_root_accepts_marker_and_legacy_plain_forms_for_both_parent_paths() {
+        let group_ids_by_name = BTreeMap::from([("Assets".to_string(), "group-guid".to_string())]);
+
+        for value in ["\u{fffd}#4; Primary", "Primary"] {
+            assert_eq!(
+                resolve_group_parent(Some(value), &group_ids_by_name, "group_parent_missing")
+                    .unwrap(),
+                None
+            );
+            assert_eq!(
+                resolve_optional_reference(
+                    Some(value),
+                    &group_ids_by_name,
+                    "ledger_parent_group_missing"
+                )
+                .unwrap(),
+                None
+            );
+        }
     }
 
     #[test]

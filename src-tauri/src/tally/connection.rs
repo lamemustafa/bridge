@@ -28,8 +28,13 @@ use bridge_tally_protocol::outstandings::{
     WitnessPairVerification,
 };
 use bridge_tally_protocol::{
+    native_outstandings::{
+        render_native_ledger_export_request, render_native_voucher_export_request,
+    },
     outstandings_shared::{parse_company_book_extent, CompanyBookExtent},
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
+    parse_native_ledger_source_records_with_evidence,
+    parse_native_voucher_source_records_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
     xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName},
@@ -635,10 +640,28 @@ impl TallyClient {
         company: &str,
         expected_company_guid: &str,
     ) -> anyhow::Result<Vec<TallyLedger>> {
-        let xml = self.post_xml(tdl_engine::ledgers_request(company)).await?;
-        let parsed = xml_parser::parse_ledgers_with_evidence(&xml)?;
-        xml_parser::verify_company_context(&parsed.evidence, expected_company_guid)?;
-        Ok(parsed.records)
+        let opening_extent = self
+            .fetch_company_book_extent(company, expected_company_guid)
+            .await?;
+        let paired = self
+            .fetch_native_report_paired(render_native_ledger_export_request(company))
+            .await?;
+        let NativePairedRead::Stable { body, .. } = paired else {
+            anyhow::bail!("Tally native ledger collection changed between paired reads");
+        };
+        let parsed =
+            parse_native_ledger_source_records_with_evidence(&body, expected_company_guid)?;
+        let closing_extent = self
+            .fetch_company_book_extent(company, expected_company_guid)
+            .await?;
+        if closing_extent != opening_extent {
+            anyhow::bail!("Tally company book changed during native ledger read");
+        }
+        Ok(parsed
+            .records
+            .into_iter()
+            .map(|record| record.record)
+            .collect())
     }
 
     /// Reads the documented standard ledger collection as an explicitly limited
@@ -882,11 +905,15 @@ impl TallyClient {
         to: &str,
     ) -> anyhow::Result<Vec<TallyVoucher>> {
         let xml = self
-            .post_xml(tdl_engine::vouchers_request(company, from, to))
+            .post_xml(render_native_voucher_export_request(company, from, to))
             .await?;
-        let parsed = xml_parser::parse_vouchers_with_evidence(&xml)?;
-        xml_parser::verify_company_context(&parsed.evidence, expected_company_guid)?;
-        Ok(parsed.records)
+        let parsed =
+            parse_native_voucher_source_records_with_evidence(&xml, expected_company_guid)?;
+        Ok(parsed
+            .records
+            .into_iter()
+            .map(|record| record.record)
+            .collect())
     }
 
     pub async fn qualify_selected_vouchers(
@@ -1754,17 +1781,41 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-            let request = read_complete_http_request(&mut socket).await;
-            assert!(
-                String::from_utf8_lossy(&request).starts_with("POST / HTTP/1.1"),
-                "ledger fetch should use Tally's XML POST endpoint"
-            );
-            let body = "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>";
-            socket
-                .write_all(&utf16_xml_response(body))
-                .await
-                .expect("write Tally response");
+            let extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+            for (index, body) in [
+                extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>",
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>",
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let (mut socket, _) = listener.accept().await.expect("accept Tally request");
+                let request = read_complete_http_request(&mut socket).await;
+                let expected = if index == 1 || index == 3 || index == 5 || index == 7 {
+                    "GET /status HTTP/1.1"
+                } else {
+                    "POST / HTTP/1.1"
+                };
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected),
+                    "ledger fetch did not preserve its extent/read sequence"
+                );
+                let response = if index == 1 || index == 3 || index == 5 || index == 7 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write Tally response");
+            }
         });
 
         let client = TallyClient::new(TallyConfig {
@@ -1777,7 +1828,12 @@ mod tests {
             .await
             .expect_err("STATUS 0 must not become an empty ledger result");
         server.await.expect("synthetic Tally server task");
-        assert!(error.to_string().contains("export request failed"));
+        assert!(
+            error
+                .to_string()
+                .contains("native ledger collection did not report success"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[tokio::test]

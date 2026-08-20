@@ -1435,6 +1435,7 @@ fn identity_kind_label(kind: ParsedSourceIdentityKind) -> &'static str {
         ParsedSourceIdentityKind::Guid => "guid",
         ParsedSourceIdentityKind::RemoteId => "remote_id",
         ParsedSourceIdentityKind::MasterId => "master_id",
+        ParsedSourceIdentityKind::Fallback => "fallback",
     }
 }
 

@@ -5,10 +5,19 @@ use bridge_tally_core::{
     EvidenceConfidence, ExactDecimal, PackBatch, ProbeResult, ReadResponseScope, ReadWindow,
     RequestContext, SourceIdentity, TallyConnector, TallyError, CORE_ACCOUNTING_SCHEMA_VERSION,
 };
+use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
 use bridge_tally_protocol::{
-    parse_companies, parse_group_source_records_with_evidence, parse_ledger_period_balance_report,
-    parse_ledger_source_records_with_evidence, parse_voucher_source_records_with_evidence,
-    parse_voucher_type_source_records_with_evidence, verify_company_context,
+    native_outstandings::{
+        parse_native_group_snapshot_with_evidence, render_native_group_snapshot_request,
+        render_native_ledger_export_request, render_native_voucher_export_request,
+        render_native_voucher_type_export_request,
+    },
+    outstandings_shared::{parse_company_book_extent, CompanyBookExtent},
+    parse_companies, parse_ledger_period_balance_report,
+    parse_native_ledger_source_records_with_evidence,
+    parse_native_voucher_source_records_with_evidence,
+    parse_native_voucher_type_source_records_with_evidence, ExportEvidence, ParsedExport,
+    ParsedSourceIdentities, ParsedSourceIdentityKind, ParsedSourceRecord, TallyNamedMaster,
 };
 use bridge_tally_transport::TallyTransportError;
 use sha2::{Digest, Sha256};
@@ -104,74 +113,137 @@ impl RuntimeTallyConnector {
 
         let company_name = self.company.display_name.clone();
         let expected_guid = self.company.identity.company_guid.clone();
-        let validation_guid = expected_guid.clone();
-        let group_xml = self
-            .post_xml_validated(tdl_engine::groups_request(&company_name), move |xml| {
-                parse_group_source_records_with_evidence(xml)
-                    .and_then(|parsed| verify_company_context(&parsed.evidence, &validation_guid))
-                    .is_ok()
+        // Native Collection exports deliberately carry no company GUID. Bind
+        // the group rows out-of-band: each extent response is GUID-verified,
+        // each extent is internally paired, and the unchanged opening/closing
+        // extent brackets two equal native collection responses. This is not weaker
+        // than the retired report field: Tally renders FIELD amounts for
+        // display and has been observed dropping their sign, so it cannot be
+        // a trustworthy company-authentication channel for a money path.
+        let opening_extent = self
+            .read_pinned_company_book_extent(&company_name, &expected_guid)
+            .await?;
+        let native_group_request = render_native_group_snapshot_request(&company_name);
+        let first_group_xml = self
+            .post_xml_validated(native_group_request.clone(), |xml| {
+                parse_native_group_snapshot_with_evidence(xml).is_ok()
             })
             .await?;
-        let groups = parse_group_source_records_with_evidence(&group_xml)
-            .map_err(|_| protocol_error("group_export_invalid"))?;
-        verify_company_context(&groups.evidence, &expected_guid)
-            .map_err(|_| invalid_data("company_identity_mismatch"))?;
+        let second_group_xml = self
+            .post_xml_validated(native_group_request, |xml| {
+                parse_native_group_snapshot_with_evidence(xml).is_ok()
+            })
+            .await?;
+        if first_group_xml != second_group_xml {
+            return Err(invalid_data("native_group_snapshot_drifted"));
+        }
+        let groups = native_groups_for_core_window(&first_group_xml)?;
+        let closing_extent = self
+            .read_pinned_company_book_extent(&company_name, &expected_guid)
+            .await?;
+        if closing_extent != opening_extent {
+            return Err(invalid_data("company_book_changed_during_group_read"));
+        }
 
+        // Unlike the native Group collection, every Ledger row carries a
+        // master GUID. Pair the collection and bracket it with the same
+        // GUID-verified book extent used above, then require at least one row
+        // to bind to the selected company. A foreign per-row prefix remains
+        // evidence, not a hard failure: imported masters may retain it.
+        let ledger_opening_extent = self
+            .read_pinned_company_book_extent(&company_name, &expected_guid)
+            .await?;
+        let native_ledger_request = render_native_ledger_export_request(&company_name);
         let validation_guid = expected_guid.clone();
-        let ledger_xml = self
-            .post_xml_validated(tdl_engine::ledgers_request(&company_name), move |xml| {
-                parse_ledger_source_records_with_evidence(xml)
-                    .and_then(|parsed| verify_company_context(&parsed.evidence, &validation_guid))
-                    .is_ok()
+        let first_ledger_xml = self
+            .post_xml_validated(native_ledger_request.clone(), move |xml| {
+                parse_native_ledger_source_records_with_evidence(xml, &validation_guid).is_ok()
             })
             .await?;
-        let ledgers = parse_ledger_source_records_with_evidence(&ledger_xml)
-            .map_err(|_| protocol_error("ledger_export_invalid"))?;
-        verify_company_context(&ledgers.evidence, &expected_guid)
-            .map_err(|_| invalid_data("company_identity_mismatch"))?;
+        let validation_guid = expected_guid.clone();
+        let second_ledger_xml = self
+            .post_xml_validated(native_ledger_request, move |xml| {
+                parse_native_ledger_source_records_with_evidence(xml, &validation_guid).is_ok()
+            })
+            .await?;
+        if first_ledger_xml != second_ledger_xml {
+            return Err(invalid_data("native_ledger_snapshot_drifted"));
+        }
+        let ledgers =
+            parse_native_ledger_source_records_with_evidence(&first_ledger_xml, &expected_guid)
+                .map_err(|_| protocol_error("ledger_export_invalid"))?;
+        let ledger_closing_extent = self
+            .read_pinned_company_book_extent(&company_name, &expected_guid)
+            .await?;
+        if ledger_closing_extent != ledger_opening_extent {
+            return Err(invalid_data("company_book_changed_during_ledger_read"));
+        }
 
         let validation_guid = expected_guid.clone();
         let voucher_type_xml = self
             .post_xml_validated(
-                tdl_engine::voucher_types_request(&company_name),
+                render_native_voucher_type_export_request(&company_name),
                 move |xml| {
-                    parse_voucher_type_source_records_with_evidence(xml)
-                        .and_then(|parsed| {
-                            verify_company_context(&parsed.evidence, &validation_guid)
-                        })
+                    parse_native_voucher_type_source_records_with_evidence(xml, &validation_guid)
                         .is_ok()
                 },
             )
             .await?;
-        let voucher_types = parse_voucher_type_source_records_with_evidence(&voucher_type_xml)
-            .map_err(|_| protocol_error("voucher_type_export_invalid"))?;
-        verify_company_context(&voucher_types.evidence, &expected_guid)
-            .map_err(|_| invalid_data("company_identity_mismatch"))?;
+        let voucher_types = parse_native_voucher_type_source_records_with_evidence(
+            &voucher_type_xml,
+            &expected_guid,
+        )
+        .map_err(|_| protocol_error("voucher_type_export_invalid"))?;
 
         let validation_guid = expected_guid.clone();
         let voucher_xml = self
             .post_xml_validated(
-                tdl_engine::vouchers_request(
+                render_native_voucher_export_request(
                     &company_name,
                     &context.window.from_yyyymmdd,
                     &context.window.to_yyyymmdd,
                 ),
                 move |xml| {
-                    parse_voucher_source_records_with_evidence(xml)
-                        .and_then(|parsed| {
-                            verify_company_context(&parsed.evidence, &validation_guid)
-                        })
-                        .is_ok()
+                    parse_native_voucher_source_records_with_evidence(xml, &validation_guid).is_ok()
                 },
             )
             .await
             .map_err(classify_voucher_window_error)?;
-        let vouchers = parse_voucher_source_records_with_evidence(&voucher_xml)
-            .map_err(|_| protocol_error("voucher_export_invalid"))?;
-        verify_company_context(&vouchers.evidence, &expected_guid)
-            .map_err(|_| invalid_data("company_identity_mismatch"))?;
+        let vouchers =
+            parse_native_voucher_source_records_with_evidence(&voucher_xml, &expected_guid)
+                .map_err(|_| protocol_error("voucher_export_invalid"))?;
 
         build_core_window(context, groups, ledgers, voucher_types, vouchers)
+    }
+
+    async fn read_pinned_company_book_extent(
+        &self,
+        company_name: &str,
+        expected_guid: &str,
+    ) -> Result<CompanyBookExtent, TallyError> {
+        let company = ValidatedCompanyName::new(company_name.to_owned())
+            .map_err(|_| invalid_data("company_name_invalid"))?;
+        let request = ReadOnlyProfile::CompanyBookExtentV1 { company: &company }.render();
+        let first_guid = expected_guid.to_owned();
+        let first_xml = self
+            .post_xml_validated(request.clone(), move |xml| {
+                parse_company_book_extent(xml, company_name, &first_guid).is_ok()
+            })
+            .await?;
+        let second_guid = expected_guid.to_owned();
+        let second_xml = self
+            .post_xml_validated(request, move |xml| {
+                parse_company_book_extent(xml, company_name, &second_guid).is_ok()
+            })
+            .await?;
+        let first = parse_company_book_extent(&first_xml, company_name, expected_guid)
+            .map_err(|_| invalid_data("company_identity_mismatch"))?;
+        let second = parse_company_book_extent(&second_xml, company_name, expected_guid)
+            .map_err(|_| invalid_data("company_identity_mismatch"))?;
+        if first != second {
+            return Err(invalid_data("company_book_extent_drifted"));
+        }
+        Ok(first)
     }
 
     async fn snapshot_probe(&self) -> Result<ProbeResult, TallyError> {
@@ -426,6 +498,58 @@ pub fn company_source_identity(lineage: &str, company_guid: &str) -> SourceIdent
     }
 }
 
+fn native_groups_for_core_window(
+    xml: &str,
+) -> Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>, TallyError> {
+    let records = parse_native_group_snapshot_with_evidence(xml)
+        .map_err(|_| protocol_error("group_export_invalid"))?
+        .into_iter()
+        .map(|entry| {
+            // Tally's native Group collection does not return master IDs. A
+            // group name is the reference token used by both Group parents and
+            // Ledger parents, so use a namespaced deterministic fallback while
+            // retaining the hash of the exact consumed row as source evidence.
+            // This never impersonates a GUID and duplicate names still fail
+            // closed in `build_core_window`.
+            let source_id = format!(
+                "bridge-native-group-name:v1:{}",
+                sha256_hex(entry.record.name.as_bytes())
+            );
+            ParsedSourceRecord {
+                record: entry.record,
+                source_id: Some(source_id),
+                identity_kind: Some(ParsedSourceIdentityKind::Fallback),
+                identities: ParsedSourceIdentities::default(),
+                alter_id: None,
+                raw_source_sha256: entry.raw_source_sha256,
+            }
+        })
+        .collect::<Vec<_>>();
+    let source_record_count =
+        u64::try_from(records.len()).map_err(|_| protocol_error("group_export_count_invalid"))?;
+    Ok(ParsedExport {
+        records,
+        // Native Collections do not emit the broken `$$NumItems` report
+        // field. The paired equal collection snapshot is the completeness
+        // witness, and this is its observed row count.
+        evidence: ExportEvidence {
+            source_record_count: Some(source_record_count),
+            ..ExportEvidence::default()
+        },
+    })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        output.push(HEX[usize::from(byte >> 4)] as char);
+        output.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    output
+}
+
 fn company_guids_equal(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
 }
@@ -558,6 +682,275 @@ mod tests {
             body.len()
         );
         [headers.as_bytes(), body].concat()
+    }
+
+    fn company_extent(company_name: &str, company_guid: &str) -> String {
+        format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="{company_name}"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">{company_name}</NAME><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+        )
+    }
+
+    fn native_groups(groups: &[(&str, &str)]) -> String {
+        let rows = groups
+            .iter()
+            .map(|(name, parent)| {
+                format!(r#"<GROUP NAME="{name}"><PARENT>{parent}</PARENT></GROUP>"#)
+            })
+            .collect::<String>();
+        format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{rows}</COLLECTION></DATA></BODY></ENVELOPE>"#
+        )
+    }
+
+    fn native_ledgers(company_guid: &str) -> String {
+        format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
+        )
+    }
+
+    fn native_voucher_types(company_guid: &str) -> String {
+        format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHERTYPE NAME="Synthetic Voucher Type"><GUID TYPE="String">{company_guid}-00000002</GUID><PARENT TYPE="String">Synthetic Voucher Type</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">2</MASTERID></VOUCHERTYPE></COLLECTION></DATA></BODY></ENVELOPE>"#
+        )
+    }
+
+    fn native_vouchers(company_guid: &str) -> String {
+        format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER REMOTEID="{company_guid}-00000003"><DATE TYPE="Date">20260701</DATE><GUID>{company_guid}-00000003</GUID><VOUCHERTYPENAME>Synthetic Voucher Type</VOUCHERTYPENAME><VOUCHERNUMBER>1</VOUCHERNUMBER><ISCANCELLED TYPE="Logical">No</ISCANCELLED><ISOPTIONAL TYPE="Logical">No</ISOPTIONAL><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">3</MASTERID><ALLLEDGERENTRIES.LIST><LEDGERNAME TYPE="String">Synthetic Ledger</LEDGERNAME><ISDEEMEDPOSITIVE TYPE="Logical">Yes</ISDEEMEDPOSITIVE><AMOUNT TYPE="Amount">-1.00</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME TYPE="String">Synthetic Ledger</LEDGERNAME><ISDEEMEDPOSITIVE TYPE="Logical">No</ISDEEMEDPOSITIVE><AMOUNT TYPE="Amount">1.00</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"#
+        )
+    }
+
+    #[test]
+    fn captured_wr2_native_core_window_builds_without_report_field_amounts() {
+        use bridge_tally_protocol::{
+            native_outstandings::{
+                render_native_voucher_export_request, render_native_voucher_type_export_request,
+            },
+            parse_native_voucher_source_records_with_evidence,
+            parse_native_voucher_type_source_records_with_evidence,
+        };
+
+        const COMPANY_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
+        const COMPANY: &str = "WR2 Unicode Lab";
+        const GROUPS: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_wr2.xml"
+        );
+        const LEDGERS: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_wr2_core_window.xml"
+        );
+        const VOUCHER_TYPES: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/voucher_types_native_wr2.xml"
+        );
+        const VOUCHERS: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/vouchers_native_wr2.xml"
+        );
+
+        let voucher_type_request = render_native_voucher_type_export_request(COMPANY);
+        assert!(voucher_type_request.contains("<TYPE>Collection</TYPE>"));
+        assert!(voucher_type_request.contains("<ID>List of VoucherTypes</ID>"));
+        assert!(
+            voucher_type_request.contains("<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH>")
+        );
+        assert!(!voucher_type_request.contains("<REPORT>"));
+        assert!(render_native_voucher_export_request(COMPANY, "20260401", "20260930")
+            .contains("ALLLEDGERENTRIES.LEDGERNAME, ALLLEDGERENTRIES.AMOUNT, ALLLEDGERENTRIES.ISDEEMEDPOSITIVE"));
+
+        let context = RequestContext {
+            run_id: "wr2-native-core-window".to_string(),
+            company: CompanyRef {
+                identity: company_source_identity("synthetic-lineage", COMPANY_GUID),
+                display_name: COMPANY.to_string(),
+            },
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260401".to_string(),
+                to_yyyymmdd: "20260930".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let vouchers = parse_native_voucher_source_records_with_evidence(VOUCHERS, COMPANY_GUID)
+            .expect("captured vouchers parse");
+        assert_eq!(vouchers.records[0].record.ledger_entries.len(), 2);
+        assert_eq!(
+            vouchers.records[0]
+                .record
+                .ledger_entries
+                .iter()
+                .map(|entry| entry.amount.as_str())
+                .collect::<Vec<_>>(),
+            ["-101.01", "101.01"]
+        );
+        assert_eq!(
+            vouchers.records[0].record.ledger_entries[0].ledger_name,
+            "नमस्ते ट्रेडर्स"
+        );
+        let window = build_core_window(
+            &context,
+            native_groups_for_core_window(GROUPS).expect("captured groups parse"),
+            parse_native_ledger_source_records_with_evidence(LEDGERS, COMPANY_GUID)
+                .expect("captured ledgers parse"),
+            parse_native_voucher_type_source_records_with_evidence(VOUCHER_TYPES, COMPANY_GUID)
+                .expect("captured voucher types parse"),
+            vouchers,
+        )
+        .expect("captured native core window builds");
+        let PackBatch::CoreAccounting(batch) = window.batch else {
+            panic!("wrong pack");
+        };
+        assert_eq!(
+            (
+                batch.groups.len(),
+                batch.ledgers.len(),
+                batch.voucher_types.len(),
+                batch.vouchers.len(),
+            ),
+            (29, 9, 24, 3)
+        );
+        assert_eq!(
+            batch
+                .ledgers
+                .iter()
+                .filter(|ledger| ledger.parent_source_id.is_none())
+                .count(),
+            1
+        );
+        assert_eq!(batch.ledger_entries.len(), 6);
+        for (voucher, expected_amounts) in batch.vouchers.iter().zip([
+            ["-101.01", "101.01"],
+            ["-102.02", "102.02"],
+            ["-103.03", "103.03"],
+        ]) {
+            let amounts = batch
+                .ledger_entries
+                .iter()
+                .filter(|entry| entry.voucher_source_id == voucher.source_id)
+                .map(|entry| entry.amount.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                amounts,
+                expected_amounts.map(|amount| ExactDecimal::parse(amount).expect("test decimal"))
+            );
+        }
+    }
+
+    #[test]
+    fn captured_aarav_native_master_parents_resolve_to_the_canonical_tree() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        const COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+        const GROUPS: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_aarav.xml"
+        );
+        const LEDGERS: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_aarav.xml"
+        );
+
+        // There is no captured voucher or voucher-type export for this company. The complete
+        // window consequently cannot be constructed without fabricating two inputs, so exercise
+        // the captured Group and Ledger bytes through the exact production conversion and parent
+        // resolution paths instead.
+        let groups = native_groups_for_core_window(GROUPS).expect("captured groups parse");
+        let ledgers = parse_native_ledger_source_records_with_evidence(LEDGERS, COMPANY_GUID)
+            .expect("captured ledgers parse");
+        assert_eq!((groups.records.len(), ledgers.records.len()), (28, 88));
+        let group_ids_by_name = groups
+            .records
+            .iter()
+            .map(|group| {
+                (
+                    group.record.name.clone(),
+                    group.source_id.clone().expect("native group fallback ID"),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            group_ids_by_name.len(),
+            28,
+            "captured group names remain unique"
+        );
+        let group_source_ids = group_ids_by_name
+            .values()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let resolved_group_parents = groups
+            .records
+            .iter()
+            .map(|group| {
+                crate::tally::canonical_window::resolve_group_parent(
+                    group.record.parent.as_deref(),
+                    &group_ids_by_name,
+                    "group_parent_missing",
+                )
+                .expect("captured group parent resolves")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolved_group_parents
+                .iter()
+                .filter(|parent| parent.is_none())
+                .count(),
+            15,
+            "every captured reserved-root group remains rooted at None"
+        );
+        assert!(resolved_group_parents
+            .iter()
+            .flatten()
+            .all(|parent| group_source_ids.contains(parent.as_str())));
+
+        let resolved_ledger_parents = ledgers
+            .records
+            .iter()
+            .map(|ledger| {
+                crate::tally::canonical_window::resolve_optional_reference(
+                    ledger.record.parent.as_deref(),
+                    &group_ids_by_name,
+                    "ledger_parent_group_missing",
+                )
+                .expect("captured ledger parent resolves")
+            })
+            .collect::<Vec<_>>();
+        let (profit_and_loss, profit_and_loss_parent) = ledgers
+            .records
+            .iter()
+            .zip(&resolved_ledger_parents)
+            .find(|(ledger, _)| ledger.record.name == "Profit & Loss A/c")
+            .expect("captured root-parented ledger is present");
+        assert_eq!(profit_and_loss_parent, &None);
+        assert_eq!(
+            profit_and_loss
+                .record
+                .opening_balance
+                .as_ref()
+                .map(|balance| ExactDecimal::parse(balance.clone()).expect("exact opening balance"))
+                .as_ref()
+                .map(ExactDecimal::as_str),
+            Some("18255356.27")
+        );
+        assert_eq!(
+            resolved_ledger_parents
+                .iter()
+                .flatten()
+                .filter(|parent| group_source_ids.contains(parent.as_str()))
+                .count(),
+            87,
+            "every other captured ledger parent resolves to an exported group"
+        );
+        for (group_name, expected_count) in [("Sundry Debtors", 40), ("Sundry Creditors", 20)] {
+            let source_id = group_ids_by_name
+                .get(group_name)
+                .map(String::as_str)
+                .expect("captured parent group is present");
+            assert_eq!(
+                resolved_ledger_parents
+                    .iter()
+                    .filter(|parent| parent.as_deref() == Some(source_id))
+                    .count(),
+                expected_count,
+                "captured child ledgers retain their resolved parent"
+            );
+        }
     }
 
     async fn spawn_method_routed_server(
@@ -839,11 +1232,6 @@ mod tests {
         let _simulator_guard = simulator_test_lock().lock().await;
         let direct = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>direct-guid-must-not-escape</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
         let standard = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\"><SyntheticLedger NAME=\"synthetic-ledger\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">ledger-guid</GUID><PARENT TYPE=\"String\">Primary</PARENT><BRIDGECOMPANYGUID TYPE=\"String\">scoped-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE=\"String\">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>";
-        let empty_export = |schema: &str, object_type: &str| {
-            format!(
-                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{schema}" OBJECTTYPE="{object_type}" NAME="Synthetic Company" GUID="scoped-guid" RECORDCOUNT="0"/></BODY></ENVELOPE>"#
-            )
-        };
         let (address, server) = spawn_method_routed_server(vec![
             // `TallyClient::probe` requests the trusted `Company` collection
             // (`CompanyListV2`) first. This responder rejects it (the bare
@@ -854,16 +1242,20 @@ mod tests {
             direct.to_string(),
             direct.to_string(),
             standard.to_string(),
-            empty_export(bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA, "GROUP"),
-            empty_export(bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA, "LEDGER"),
-            empty_export(
-                bridge_tally_protocol::BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
-                "VOUCHERTYPE",
-            ),
-            empty_export(
-                bridge_tally_protocol::BRIDGE_VOUCHER_EXPORT_SCHEMA,
-                "VOUCHER",
-            ),
+            company_extent("Synthetic Company", "scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
+            native_groups(&[]),
+            native_groups(&[]),
+            company_extent("Synthetic Company", "scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
+            native_ledgers("scoped-guid"),
+            native_ledgers("scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
+            company_extent("Synthetic Company", "scoped-guid"),
+            native_voucher_types("scoped-guid"),
+            native_vouchers("scoped-guid"),
         ])
         .await;
         let config = TallyConfig {
@@ -906,7 +1298,10 @@ mod tests {
         let methods = server.await.expect("join routed Tally server");
         assert_eq!(
             methods,
-            ["GET", "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST"]
+            [
+                "GET", "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST",
+                "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST", "POST",
+            ]
         );
     }
 
@@ -928,25 +1323,24 @@ mod tests {
         let company_xml = format!(
             r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>"#
         );
-        let empty_export = |schema: &str, object_type: &str| {
-            format!(
-                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{schema}" OBJECTTYPE="{object_type}" NAME="Synthetic Company" GUID="{company_guid}" RECORDCOUNT="0"/></BODY></ENVELOPE>"#
-            )
-        };
         let mut post_responses = vec![company_collection_xml.clone()];
         for _ in 0..2 {
             post_responses.extend([
                 company_collection_xml.clone(),
-                empty_export(bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA, "GROUP"),
-                empty_export(bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA, "LEDGER"),
-                empty_export(
-                    bridge_tally_protocol::BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
-                    "VOUCHERTYPE",
-                ),
-                empty_export(
-                    bridge_tally_protocol::BRIDGE_VOUCHER_EXPORT_SCHEMA,
-                    "VOUCHER",
-                ),
+                company_extent("Synthetic Company", company_guid),
+                company_extent("Synthetic Company", company_guid),
+                native_groups(&[]),
+                native_groups(&[]),
+                company_extent("Synthetic Company", company_guid),
+                company_extent("Synthetic Company", company_guid),
+                company_extent("Synthetic Company", company_guid),
+                company_extent("Synthetic Company", company_guid),
+                native_ledgers(company_guid),
+                native_ledgers(company_guid),
+                company_extent("Synthetic Company", company_guid),
+                company_extent("Synthetic Company", company_guid),
+                native_voucher_types(company_guid),
+                native_vouchers(company_guid),
             ]);
         }
         post_responses.push(company_xml.clone());
@@ -1046,7 +1440,7 @@ mod tests {
                 .iter()
                 .filter(|method| method.as_str() == "POST")
                 .count(),
-            12
+            32
         );
     }
 
@@ -1054,36 +1448,37 @@ mod tests {
     async fn same_context_snapshot_read_does_not_reuse_pre_run_canary_rows() {
         let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "synthetic-company-guid";
-        let empty_export = |schema: &str, object_type: &str| {
-            format!(
-                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{schema}" OBJECTTYPE="{object_type}" NAME="Synthetic Company" GUID="{company_guid}" RECORDCOUNT="0"/></BODY></ENVELOPE>"#
-            )
-        };
-        let second_group = format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{}" OBJECTTYPE="GROUP" NAME="Synthetic Company" GUID="{company_guid}" RECORDCOUNT="1"/><GROUP NAME="Post-start Assets" GUID="post-start-group"><PARENT></PARENT></GROUP></BODY></ENVELOPE>"#,
-            bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA
-        );
+        let empty_native_groups = native_groups(&[]);
+        let second_group = native_groups(&[("Post-start Assets", "")]);
         let plans = [
-            empty_export(bridge_tally_protocol::BRIDGE_GROUP_EXPORT_SCHEMA, "GROUP"),
-            empty_export(bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA, "LEDGER"),
-            empty_export(
-                bridge_tally_protocol::BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
-                "VOUCHERTYPE",
-            ),
-            empty_export(
-                bridge_tally_protocol::BRIDGE_VOUCHER_EXPORT_SCHEMA,
-                "VOUCHER",
-            ),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            empty_native_groups.clone(),
+            empty_native_groups,
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            native_ledgers(company_guid),
+            native_ledgers(company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            native_voucher_types(company_guid),
+            native_vouchers(company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            second_group.clone(),
             second_group,
-            empty_export(bridge_tally_protocol::BRIDGE_LEDGER_EXPORT_SCHEMA, "LEDGER"),
-            empty_export(
-                bridge_tally_protocol::BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
-                "VOUCHERTYPE",
-            ),
-            empty_export(
-                bridge_tally_protocol::BRIDGE_VOUCHER_EXPORT_SCHEMA,
-                "VOUCHER",
-            ),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            native_ledgers(company_guid),
+            native_ledgers(company_guid),
+            company_extent("Synthetic Company", company_guid),
+            company_extent("Synthetic Company", company_guid),
+            native_voucher_types(company_guid),
+            native_vouchers(company_guid),
         ]
         .into_iter()
         .map(Fixture::SyntheticXml)
@@ -1131,10 +1526,12 @@ mod tests {
             panic!("expected core snapshot batch");
         };
         assert_eq!(snapshot_batch.groups.len(), 1);
-        assert_eq!(snapshot_batch.groups[0].source_id, "post-start-group");
+        assert!(snapshot_batch.groups[0]
+            .source_id
+            .starts_with("bridge-native-group-name:v1:"));
 
         let requests = simulator.finish().expect("finish sequence simulator");
-        assert_eq!(requests.len(), 8);
+        assert_eq!(requests.len(), 28);
         assert!(requests.iter().all(|request| request.method == "POST"));
     }
 
