@@ -918,6 +918,25 @@ impl TallyClient {
             .await?;
         let parsed =
             parse_native_voucher_source_records_with_evidence(&xml, expected_company_guid)?;
+        if parsed.records.is_empty() {
+            // A native Voucher collection carries no envelope company GUID,
+            // so a zero-row response has no per-row identity to bind to the
+            // pinned company either -- `parse_native_voucher_source_records_with_evidence`
+            // accepts it unauthenticated. Since the voucher request is now
+            // filtered by date, a refused period boundary yields the exact
+            // same zero-row, byte-identical response as a genuinely empty
+            // window. Confirm the pinned company out-of-band with the same
+            // GUID-verified, paired book-extent bracket the core window uses
+            // for exactly this situation (see `RuntimeTallyConnector::extract_core_window`
+            // in connector.rs), instead of accepting the empty result as-is.
+            // Paid only here: a non-empty response keeps its existing
+            // row-GUID binding and issues no extra request.
+            self.fetch_company_book_extent(company, expected_company_guid)
+                .await
+                .context(
+                    "empty voucher response could not confirm the pinned company book extent",
+                )?;
+        }
         Ok(parsed
             .records
             .into_iter()
@@ -1843,6 +1862,219 @@ mod tests {
                 .contains("native ledger collection did not report success"),
             "unexpected error: {error:#}"
         );
+    }
+
+    fn native_voucher_collection_xml(rows: &[&str]) -> String {
+        format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{}</COLLECTION></DATA></BODY></ENVELOPE>",
+            rows.join("")
+        )
+    }
+
+    fn synthetic_company_book_extent_xml(guid: &str) -> String {
+        format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+        )
+    }
+
+    const SYNTHETIC_VOUCHER_ROW: &str = r#"<VOUCHER REMOTEID="synthetic-company-guid-00000001"><DATE TYPE="Date">20260401</DATE><GUID TYPE="String">synthetic-company-guid-00000001</GUID><MASTERID TYPE="Number">1</MASTERID><ALTERID TYPE="Number">1</ALTERID><VOUCHERTYPENAME TYPE="String">Payment</VOUCHERTYPENAME><ISCANCELLED TYPE="String">No</ISCANCELLED><ISOPTIONAL TYPE="String">No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME TYPE="String">Cash</LEDGERNAME><AMOUNT TYPE="Amount">-100.00</AMOUNT><ISDEEMEDPOSITIVE TYPE="String">Yes</ISDEEMEDPOSITIVE></ALLLEDGERENTRIES.LIST></VOUCHER>"#;
+
+    /// A native Voucher collection carries no envelope company GUID, and a
+    /// zero-row response has no per-row GUID either -- there is nothing for
+    /// `parse_native_voucher_source_records_with_evidence` to bind. Before
+    /// the fix, `fetch_vouchers` accepted such a response unauthenticated,
+    /// so a silently substituted or dropped company looked identical to a
+    /// genuinely empty window. This reproduces that: the voucher read comes
+    /// back empty, and the out-of-band book-extent bracket that should
+    /// confirm the pinned company instead observes a different one.
+    #[tokio::test]
+    async fn empty_voucher_response_is_rejected_when_pinned_company_cannot_be_confirmed() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let empty_vouchers = native_voucher_collection_xml(&[]);
+        let substituted_extent = synthetic_company_book_extent_xml("substituted-company-guid");
+        let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        let steps: Vec<(&str, String, bool)> = vec![
+            ("POST / HTTP/1.1", empty_vouchers, false),
+            ("POST / HTTP/1.1", substituted_extent.clone(), false),
+            ("GET /status HTTP/1.1", status.to_string(), true),
+            ("POST / HTTP/1.1", substituted_extent, false),
+            ("GET /status HTTP/1.1", status.to_string(), true),
+        ];
+        let server = tokio::spawn(async move {
+            for (index, (expected_prefix, body, is_status)) in steps.into_iter().enumerate() {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .unwrap_or_else(|_| {
+                            panic!(
+                                "request {index} timed out -- the empty-voucher rejection path \
+                                 did not attempt to confirm the pinned company out of band"
+                            )
+                        })
+                        .expect("accept synthetic Tally request");
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
+                    "request {index} did not follow the voucher-then-extent-bracket sequence"
+                );
+                let response = if is_status {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write synthetic Tally response");
+            }
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let error = client
+            .fetch_vouchers(
+                "Synthetic Company",
+                "synthetic-company-guid",
+                "20260401",
+                "20260401",
+            )
+            .await
+            .expect_err(
+                "an empty voucher response must not be accepted when the pinned company book \
+                 extent cannot be confirmed",
+            );
+        server.await.expect("synthetic Tally server task");
+        assert!(
+            error.to_string().contains(
+                "empty voucher response could not confirm the pinned company book extent"
+            ),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    /// Same empty voucher response as above, but this time the out-of-band
+    /// book-extent bracket confirms the pinned company is still selected and
+    /// stable -- so the empty result is accepted.
+    #[tokio::test]
+    async fn empty_voucher_response_is_accepted_when_bracket_confirms_pinned_company() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let empty_vouchers = native_voucher_collection_xml(&[]);
+        let confirmed_extent = synthetic_company_book_extent_xml("synthetic-company-guid");
+        let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        let steps: Vec<(&str, String, bool)> = vec![
+            ("POST / HTTP/1.1", empty_vouchers, false),
+            ("POST / HTTP/1.1", confirmed_extent.clone(), false),
+            ("GET /status HTTP/1.1", status.to_string(), true),
+            ("POST / HTTP/1.1", confirmed_extent, false),
+            ("GET /status HTTP/1.1", status.to_string(), true),
+        ];
+        let request_count = steps.len();
+        let server = tokio::spawn(async move {
+            for (index, (expected_prefix, body, is_status)) in steps.into_iter().enumerate() {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .unwrap_or_else(|_| panic!("request {index} timed out"))
+                        .expect("accept synthetic Tally request");
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
+                    "request {index} did not follow the voucher-then-extent-bracket sequence"
+                );
+                let response = if is_status {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write synthetic Tally response");
+            }
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let vouchers = client
+            .fetch_vouchers(
+                "Synthetic Company",
+                "synthetic-company-guid",
+                "20260401",
+                "20260401",
+            )
+            .await
+            .expect("an empty voucher response confirmed by the extent bracket must be accepted");
+        server.await.expect("synthetic Tally server task");
+        assert!(vouchers.is_empty());
+        assert_eq!(
+            request_count, 5,
+            "the empty path must pay for exactly one voucher read plus the extent bracket"
+        );
+    }
+
+    /// A non-empty voucher response keeps its existing row-GUID binding and
+    /// must not pay for the extent bracket -- the common case stays a single
+    /// request.
+    #[tokio::test]
+    async fn non_empty_voucher_response_issues_no_extra_request() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let non_empty_vouchers = native_voucher_collection_xml(&[SYNTHETIC_VOUCHER_ROW]);
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                .await
+                .expect("voucher request timed out")
+                .expect("accept synthetic Tally request");
+            let request = read_complete_http_request(&mut socket).await;
+            assert!(
+                String::from_utf8_lossy(&request).starts_with("POST / HTTP/1.1"),
+                "unexpected request for the non-empty voucher read"
+            );
+            socket
+                .write_all(&utf16_xml_response(non_empty_vouchers))
+                .await
+                .expect("write synthetic Tally response");
+
+            // A non-empty response must not pay for the extent bracket: no
+            // further connection should ever arrive.
+            let extra = tokio::time::timeout(Duration::from_millis(300), listener.accept()).await;
+            assert!(
+                extra.is_err(),
+                "non-empty voucher fetch issued an unexpected extra request"
+            );
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let vouchers = client
+            .fetch_vouchers(
+                "Synthetic Company",
+                "synthetic-company-guid",
+                "20260401",
+                "20260401",
+            )
+            .await
+            .expect("non-empty voucher fetch must still succeed exactly as today");
+        server.await.expect("synthetic Tally server task");
+        assert_eq!(vouchers.len(), 1);
     }
 
     #[tokio::test]
