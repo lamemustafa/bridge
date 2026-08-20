@@ -209,7 +209,15 @@ pub struct CoreAccountingBatch {
     pub voucher_types: Vec<VoucherTypeRecord>,
     pub vouchers: Vec<VoucherRecord>,
     pub ledger_entries: Vec<LedgerEntryRecord>,
-    #[serde(default)]
+    /// Operator-facing diagnostics about master text that would render badly
+    /// in a document. Deliberately excluded from serialization: `PackBatch`
+    /// is the wire payload whose shape is pinned to `CORE_ACCOUNTING_SCHEMA_VERSION`
+    /// and covered by a destination's negotiated-version content hash (see
+    /// `AxalDestinationAdapter::deliver_batch`). A diagnostic is not
+    /// accounting data, so it must never silently change that hash or shape
+    /// under an unchanged schema version; it stays an in-process field that
+    /// travels alongside the batch rather than inside it.
+    #[serde(skip)]
     pub foreign_master_text_diagnostics: Vec<ForeignMasterTextDiagnostic>,
 }
 

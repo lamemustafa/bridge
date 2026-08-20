@@ -337,7 +337,7 @@ fn validate_core_reference_integrity(batch: &CoreAccountingBatch) -> Result<(), 
         .collect::<BTreeSet<_>>();
     for group in &batch.groups {
         SourceRecordId::parse(group.source_id.clone())?;
-        ForeignText::from_tally(group.name.clone());
+        require_nonempty_foreign_name(&group.name, "transport_qualification_group_name_empty")?;
         if group
             .parent_source_id
             .as_deref()
@@ -348,7 +348,7 @@ fn validate_core_reference_integrity(batch: &CoreAccountingBatch) -> Result<(), 
     }
     for ledger in &batch.ledgers {
         SourceRecordId::parse(ledger.source_id.clone())?;
-        ForeignText::from_tally(ledger.name.clone());
+        require_nonempty_foreign_name(&ledger.name, "transport_qualification_ledger_name_empty")?;
         if ledger
             .parent_source_id
             .as_deref()
@@ -361,7 +361,10 @@ fn validate_core_reference_integrity(batch: &CoreAccountingBatch) -> Result<(), 
     }
     for voucher_type in &batch.voucher_types {
         SourceRecordId::parse(voucher_type.source_id.clone())?;
-        ForeignText::from_tally(voucher_type.name.clone());
+        require_nonempty_foreign_name(
+            &voucher_type.name,
+            "transport_qualification_voucher_type_name_empty",
+        )?;
     }
     for voucher in &batch.vouchers {
         SourceRecordId::parse(voucher.source_id.clone())?;
@@ -378,6 +381,18 @@ fn validate_core_reference_integrity(batch: &CoreAccountingBatch) -> Result<(), 
         return Err(invalid_data(
             "transport_qualification_reference_integrity_failed",
         ));
+    }
+    Ok(())
+}
+
+/// Rejects a master name that is empty. `ForeignText` retains whatever Tally
+/// reports verbatim -- surrounding whitespace and control characters are
+/// deliberately preserved and must survive this check unchanged -- but an
+/// empty name is structurally invalid regardless of source, so the verbatim
+/// policy and this rejection are not in tension.
+fn require_nonempty_foreign_name(name: &str, code: &'static str) -> Result<(), TallyError> {
+    if ForeignText::from_tally(name).as_str().is_empty() {
+        return Err(invalid_data(code));
     }
     Ok(())
 }
@@ -697,9 +712,9 @@ fn invalid_data(code: &str) -> TallyError {
 mod tests {
     use super::*;
     use crate::{
-        source_count_scope_fingerprint, LedgerEntryRecord, LedgerRecord, ObservedSourceIdentities,
-        RawSourceSha256, SourceRecordEvidence, SourceReportedCountEvidence, VoucherRecord,
-        VoucherTypeRecord,
+        source_count_scope_fingerprint, GroupRecord, LedgerEntryRecord, LedgerRecord,
+        ObservedSourceIdentities, RawSourceSha256, SourceRecordEvidence,
+        SourceReportedCountEvidence, VoucherRecord, VoucherTypeRecord,
     };
 
     fn scope() -> TransportQualificationScope {
@@ -1052,5 +1067,115 @@ mod tests {
             metrics(26, 35),
         )
         .is_err());
+    }
+
+    fn group_record(source_id: &str, name: &str) -> GroupRecord {
+        GroupRecord {
+            source_id: source_id.to_string(),
+            name: name.to_string(),
+            parent_source_id: None,
+        }
+    }
+
+    fn ledger_record(source_id: &str, name: &str) -> LedgerRecord {
+        LedgerRecord {
+            source_id: source_id.to_string(),
+            name: name.to_string(),
+            parent_source_id: None,
+            opening_balance: None,
+        }
+    }
+
+    fn voucher_type_record(source_id: &str, name: &str) -> VoucherTypeRecord {
+        VoucherTypeRecord {
+            source_id: source_id.to_string(),
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn empty_group_name_is_rejected() {
+        let batch = CoreAccountingBatch {
+            groups: vec![group_record("group:1", "")],
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_core_reference_integrity(&batch),
+            Err(TallyError::InvalidData { code }) if code == "transport_qualification_group_name_empty"
+        ));
+    }
+
+    #[test]
+    fn empty_ledger_name_is_rejected() {
+        let batch = CoreAccountingBatch {
+            ledgers: vec![ledger_record("ledger:1", "")],
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_core_reference_integrity(&batch),
+            Err(TallyError::InvalidData { code }) if code == "transport_qualification_ledger_name_empty"
+        ));
+    }
+
+    #[test]
+    fn empty_voucher_type_name_is_rejected() {
+        let batch = CoreAccountingBatch {
+            voucher_types: vec![voucher_type_record("voucher-type:1", "")],
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_core_reference_integrity(&batch),
+            Err(TallyError::InvalidData { code }) if code == "transport_qualification_voucher_type_name_empty"
+        ));
+    }
+
+    #[test]
+    fn whitespace_only_and_control_character_names_survive_verbatim() {
+        let whitespace_name = "   \t  ";
+        let control_name = "Ledger\u{7}Name";
+        let batch = CoreAccountingBatch {
+            groups: vec![group_record("group:1", whitespace_name)],
+            ledgers: vec![ledger_record("ledger:1", control_name)],
+            voucher_types: vec![voucher_type_record("voucher-type:1", whitespace_name)],
+            ..Default::default()
+        };
+
+        validate_core_reference_integrity(&batch)
+            .expect("whitespace-only and control-character names must not be rejected");
+        // The verbatim policy is load-bearing: neither name may be trimmed,
+        // normalized, or otherwise rewritten by the boundary check.
+        assert_eq!(batch.groups[0].name, whitespace_name);
+        assert_eq!(batch.ledgers[0].name, control_name);
+        assert_eq!(batch.voucher_types[0].name, whitespace_name);
+    }
+
+    #[test]
+    fn empty_master_name_is_rejected_before_a_parity_observation_is_produced() {
+        // A structurally invalid sample -- both reference and candidate agreeing on
+        // an empty ledger name -- must never reach a successful (Matched) parity
+        // observation; it must be rejected at the reference-integrity boundary.
+        let scope = scope();
+        let mut reference = entry_window(&scope, "xml-entry", "-1.00", 'a');
+        let mut candidate = entry_window(&scope, "json-entry", "-1.00", 'b');
+        if let PackBatch::CoreAccounting(batch) = &mut reference.batch {
+            batch.ledgers[0].name = String::new();
+        }
+        if let PackBatch::CoreAccounting(batch) = &mut candidate.batch {
+            batch.ledgers[0].name = String::new();
+        }
+
+        let result = qualify_core_transport_shadow(
+            &scope,
+            &reference,
+            &candidate,
+            &reference,
+            metrics(10, 20),
+            metrics(21, 25),
+            metrics(26, 35),
+        );
+        assert!(matches!(
+            result,
+            Err(TallyError::InvalidData { code }) if code == "transport_qualification_ledger_name_empty"
+        ));
     }
 }
