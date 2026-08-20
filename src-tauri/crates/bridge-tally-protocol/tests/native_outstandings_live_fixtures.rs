@@ -21,8 +21,8 @@
 
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
-    age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_ledger_snapshot,
-    AgeingAnchor, NativeMasterSnapshot,
+    age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_group_snapshot,
+    parse_native_ledger_snapshot, AgeingAnchor, NativeGroupSnapshot, NativeMasterSnapshot,
 };
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/native");
@@ -68,7 +68,7 @@ fn billwise_lab_reproduces_the_unit_a_exit_criteria_exactly() {
         &payable,
         NativeMasterSnapshot {
             ledgers: &ledgers,
-            groups: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
         &as_of(),
@@ -130,7 +130,7 @@ fn billwise_lab_residual_equals_unit_a_payable_total_to_the_rupee() {
         &payable,
         NativeMasterSnapshot {
             ledgers: &ledgers,
-            groups: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
         &as_of(),
@@ -170,9 +170,11 @@ fn aarav_residual_dominates_and_every_bill_carrying_party_reconciles_exactly() {
     .expect("parse");
     let ledgers =
         parse_native_ledger_snapshot(&fixture("ledger_snapshot_aarav.xml")).expect("parse");
+    let groups = parse_native_group_snapshot(&fixture("group_snapshot_aarav.xml")).expect("parse");
 
     assert_eq!(receivable.len(), 22);
     assert_eq!(payable.len(), 21);
+    assert_eq!(groups.len(), 28, "captured native group collection rows");
 
     let result = compute_native_outstandings(
         "Aarav Trading Company Demo",
@@ -180,13 +182,26 @@ fn aarav_residual_dominates_and_every_bill_carrying_party_reconciles_exactly() {
         &payable,
         NativeMasterSnapshot {
             ledgers: &ledgers,
-            groups: &[],
+            groups: NativeGroupSnapshot::Complete(&groups),
         },
         AgeingAnchor::DueDate,
         &as_of(),
         51_003,
     )
     .expect("native computation succeeds");
+    let legacy_result = compute_native_outstandings(
+        "Aarav Trading Company Demo",
+        &receivable,
+        &payable,
+        NativeMasterSnapshot {
+            ledgers: &ledgers,
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of(),
+        51_003,
+    )
+    .expect("legacy fixture computation succeeds");
 
     // Named bills total ~Rs 10.36 lakh across 43 rows.
     let named = result
@@ -220,7 +235,14 @@ fn aarav_residual_dominates_and_every_bill_carrying_party_reconciles_exactly() {
     // different counterparties. Net would be Rs 2,78,57,843.69; gross is
     // Rs 20,74,00,748.79. Either way the named bills are a rounding error
     // beside it, which is the point.
+    assert_eq!(legacy_result.residual_total.as_str(), "207400748.79");
     assert_eq!(result.residual_total.as_str(), "207400748.79");
+    assert_eq!(legacy_result.residuals.len(), 60);
+    assert_eq!(
+        result.residuals.len(),
+        60,
+        "the complete group snapshot must never reduce the classified party set"
+    );
     assert!(
         result.report.has_unaged_receivable,
         "unallocated debtor exposure must be disclosed, never silently dropped"

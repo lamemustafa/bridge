@@ -20,10 +20,12 @@
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
 use quick_xml::Reader;
+use sha2::{Digest, Sha256};
 
 use bridge_tally_primitives::ExactDecimal;
 
 use crate::tolerant_xml::sanitize_invalid_numeric_references;
+use crate::TallyNamedMaster;
 
 use super::date::{parse_native_display_date, NativeDisplayDateRole};
 use super::model::{LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError};
@@ -447,6 +449,188 @@ pub fn parse_native_ledger_snapshot(
     Ok(entries)
 }
 
+/// Parses the `List of Groups` collection used to resolve nested party
+/// ledgers. As with the ledger collection, only rows under
+/// `ENVELOPE/BODY/DATA/COLLECTION` are accepted; `CMPINFO` counters are not
+/// group rows. The native family carries no legacy completeness counter: its
+/// completeness is established by the caller's paired byte-identical reads.
+pub fn parse_native_group_snapshot(
+    xml: &str,
+) -> Result<Vec<TallyNamedMaster>, NativeOutstandingsError> {
+    Ok(parse_native_group_snapshot_with_evidence(xml)?
+        .into_iter()
+        .map(|entry| entry.record)
+        .collect())
+}
+
+/// One native Group collection row plus the hash of the exact row bytes
+/// consumed by the parser. Native Group rows expose no durable record ID, so
+/// callers must keep this evidence distinct from an observed GUID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeGroupSnapshotEntry {
+    pub record: TallyNamedMaster,
+    pub raw_source_sha256: String,
+}
+
+/// Parses the native Group collection while retaining exact row evidence for
+/// callers that persist the collection in a canonical snapshot.
+pub fn parse_native_group_snapshot_with_evidence(
+    xml: &str,
+) -> Result<Vec<NativeGroupSnapshotEntry>, NativeOutstandingsError> {
+    let sanitized = sanitize_invalid_numeric_references(xml);
+    let mut reader = Reader::from_str(&sanitized);
+    reader.config_mut().trim_text(true);
+
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut status_seen = false;
+    let mut collection_seen = false;
+    let mut entries = Vec::new();
+    loop {
+        let event_start = reader.buffer_position() as usize;
+        let event = reader
+            .read_event()
+            .map_err(|_| NativeOutstandingsError::InvalidResponse("group_xml_malformed"))?;
+        match event {
+            Event::Start(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path.is_empty() && name != b"ENVELOPE" {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "group_root_not_envelope",
+                    ));
+                }
+                if path_is(&path, &[b"ENVELOPE", b"HEADER"]) && name == b"STATUS" {
+                    let text = read_element_text(&mut reader, element.name())?;
+                    if text != "1" {
+                        return Err(NativeOutstandingsError::TallyReportedFailure);
+                    }
+                    status_seen = true;
+                    continue;
+                }
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                }
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name == b"GROUP"
+                {
+                    let record = parse_group_row(&mut reader, &element)?;
+                    let record_end = reader.buffer_position() as usize;
+                    let bytes = sanitized.as_bytes().get(event_start..record_end).ok_or(
+                        NativeOutstandingsError::InvalidResponse("group_row_boundaries_invalid"),
+                    )?;
+                    if bytes.is_empty() {
+                        return Err(NativeOutstandingsError::InvalidResponse(
+                            "group_row_evidence_missing",
+                        ));
+                    }
+                    entries.push(NativeGroupSnapshotEntry {
+                        record,
+                        raw_source_sha256: sha256_hex(bytes),
+                    });
+                    continue;
+                }
+                path.push(name);
+            }
+            Event::Empty(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                } else if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name == b"GROUP"
+                {
+                    return Err(NativeOutstandingsError::InvalidResponse("group_row_empty"));
+                }
+            }
+            Event::End(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                let expected = path.pop().ok_or(NativeOutstandingsError::InvalidResponse(
+                    "group_unexpected_close",
+                ))?;
+                if expected != name {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "group_unexpected_close",
+                    ));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !path.is_empty() {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "group_envelope_unterminated",
+        ));
+    }
+    if !status_seen {
+        return Err(NativeOutstandingsError::TallyReportedFailure);
+    }
+    if !collection_seen {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "group_collection_missing",
+        ));
+    }
+    Ok(entries)
+}
+
+fn parse_group_row(
+    reader: &mut Reader<&[u8]>,
+    element: &BytesStart<'_>,
+) -> Result<TallyNamedMaster, NativeOutstandingsError> {
+    let name = attribute_value(element, b"NAME").ok_or(
+        NativeOutstandingsError::InvalidResponse("group_name_missing"),
+    )?;
+    let mut parent = None;
+    let mut parent_seen = false;
+    loop {
+        match reader
+            .read_event()
+            .map_err(|_| NativeOutstandingsError::InvalidResponse("group_xml_malformed"))?
+        {
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"PARENT") => {
+                let value = read_element_text(reader, child.name())?;
+                if std::mem::replace(&mut parent_seen, true) {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "group_duplicate_parent",
+                    ));
+                }
+                parent = (!value.is_empty()).then_some(value);
+            }
+            Event::Start(_) => skip_subtree(reader)?,
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"PARENT") => {
+                if std::mem::replace(&mut parent_seen, true) {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "group_duplicate_parent",
+                    ));
+                }
+            }
+            Event::Empty(_) => {}
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"GROUP") => break,
+            Event::Eof => {
+                return Err(NativeOutstandingsError::InvalidResponse(
+                    "group_row_unterminated",
+                ))
+            }
+            _ => {}
+        }
+    }
+    if !parent_seen {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "group_parent_missing",
+        ));
+    }
+    Ok(TallyNamedMaster { name, parent })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        output.push(HEX[usize::from(byte >> 4)] as char);
+        output.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    output
+}
+
 fn parse_ledger_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
@@ -803,5 +987,39 @@ mod currency_tests {
         let xml = LIVE.replace("Indian Rupees", "Pakistani Rupees");
         let currency = parse_company_currency(&xml).expect("shaped collection parses");
         assert!(!currency.is_inr);
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    const LIVE_SHAPE: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><GROUP>0</GROUP></CMPINFO></DESC><DATA><COLLECTION><GROUP NAME="North Region"><PARENT>Current Assets</PARENT></GROUP><GROUP NAME="Sundry Debtors"><PARENT>&#4; Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
+
+    #[test]
+    fn reads_group_rows_only_from_the_native_collection() {
+        let groups = parse_native_group_snapshot(LIVE_SHAPE).expect("native group snapshot parses");
+        assert_eq!(groups.len(), 2, "CMPINFO group counter is not a row");
+        assert_eq!(groups[0].name, "North Region");
+        assert_eq!(groups[0].parent.as_deref(), Some("Current Assets"));
+        assert_eq!(groups[1].parent.as_deref(), Some("\u{fffd}#4; Primary"));
+
+        let evidence = parse_native_group_snapshot_with_evidence(LIVE_SHAPE)
+            .expect("native group snapshot evidence parses");
+        assert_eq!(evidence.len(), 2);
+        assert_eq!(evidence[0].record, groups[0]);
+        assert_eq!(evidence[0].raw_source_sha256.len(), 64);
+        assert_ne!(evidence[0].raw_source_sha256, evidence[1].raw_source_sha256);
+    }
+
+    #[test]
+    fn missing_group_parent_fails_closed() {
+        let xml = LIVE_SHAPE.replace("<PARENT>Current Assets</PARENT>", "");
+        assert_eq!(
+            parse_native_group_snapshot(&xml),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_parent_missing"
+            ))
+        );
     }
 }

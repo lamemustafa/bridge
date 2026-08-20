@@ -7,7 +7,8 @@
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_ledger_snapshot,
-    AgeingAnchor, NativeBillRow, NativeMasterSnapshot, NativeOutstandingsError,
+    AgeingAnchor, NativeBillRow, NativeGroupSnapshot, NativeMasterSnapshot,
+    NativeOutstandingsError,
 };
 use bridge_tally_protocol::parse_group_source_records_with_evidence;
 
@@ -81,7 +82,7 @@ fn nested_debtor_ledger_from_raw_group_and_ledger_bytes_is_not_dropped() {
         &[],
         NativeMasterSnapshot {
             ledgers: &ledgers,
-            groups: &groups,
+            groups: NativeGroupSnapshot::Complete(&groups),
         },
         AgeingAnchor::DueDate,
         &as_of(NATIVE_CAPTURE_AS_OF),
@@ -91,6 +92,57 @@ fn nested_debtor_ledger_from_raw_group_and_ledger_bytes_is_not_dropped() {
 
     assert_exact(&result.residual_total, "100");
     assert_eq!(result.residuals[0].party, "Nested Customer");
+}
+
+#[test]
+fn complete_group_snapshot_refuses_empty_or_unresolved_ancestry() {
+    let ledger_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+        <LEDGER NAME="Nested Customer"><PARENT>North Region</PARENT>
+        <CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0.00</OPENINGBALANCE>
+        <ISBILLWISEON>No</ISBILLWISEON></LEDGER>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#;
+    let ledgers = parse_native_ledger_snapshot(ledger_bytes).expect("raw ledger snapshot parses");
+
+    for (group_bytes, expected_code) in [
+        (
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
+                <COMPANYCONTEXT SCHEMA="bridge.tally.groups/1" OBJECTTYPE="GROUP" NAME="Synthetic Company" GUID="synthetic-company-guid" RECORDCOUNT="0"/>
+                </BODY></ENVELOPE>"#,
+            "group_snapshot_empty",
+        ),
+        (
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
+                <COMPANYCONTEXT SCHEMA="bridge.tally.groups/1" OBJECTTYPE="GROUP" NAME="Synthetic Company" GUID="synthetic-company-guid" RECORDCOUNT="1"/>
+                <GROUP NAME="Unrelated Group" GUID="unrelated-group-guid" MASTERID="1" ALTERID="1"><PARENT>Primary</PARENT></GROUP>
+                </BODY></ENVELOPE>"#,
+            "ledger_group_parent_unresolved",
+        ),
+    ] {
+        let groups = parse_group_source_records_with_evidence(group_bytes)
+            .expect("raw group snapshot parses")
+            .records
+            .into_iter()
+            .map(|row| row.record)
+            .collect::<Vec<_>>();
+        let error = compute_native_outstandings(
+            "Synthetic Company",
+            &[],
+            &[],
+            NativeMasterSnapshot {
+                ledgers: &ledgers,
+                groups: NativeGroupSnapshot::Complete(&groups),
+            },
+            AgeingAnchor::DueDate,
+            &as_of(NATIVE_CAPTURE_AS_OF),
+            group_bytes.len() + ledger_bytes.len(),
+        )
+        .expect_err("an incomplete production group snapshot must fail closed");
+
+        assert_eq!(
+            error,
+            NativeOutstandingsError::InvalidResponse(expected_code)
+        );
+    }
 }
 
 #[test]
@@ -112,7 +164,7 @@ fn not_yet_due_bill_is_reported_without_becoming_overdue() {
         &[],
         NativeMasterSnapshot {
             ledgers: &[],
-            groups: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
         &as_of("20260731"),
@@ -196,7 +248,7 @@ fn report_direction_contradictions_in_raw_bill_bytes_fail_closed() {
             &[],
             NativeMasterSnapshot {
                 ledgers: &[],
-                groups: &[],
+                groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
             },
             AgeingAnchor::DueDate,
             &as_of(VALIDATION_CAPTURE_AS_OF),
@@ -215,7 +267,7 @@ fn report_direction_contradictions_in_raw_bill_bytes_fail_closed() {
             &negative_payable,
             NativeMasterSnapshot {
                 ledgers: &[],
-                groups: &[],
+                groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
             },
             AgeingAnchor::DueDate,
             &as_of(VALIDATION_CAPTURE_AS_OF),
@@ -261,7 +313,7 @@ fn unaged_receivable_classification_uses_the_residual_not_the_net_ledger_sign() 
         &[],
         NativeMasterSnapshot {
             ledgers: &ledgers[..1],
-            groups: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
         &as_of(VALIDATION_CAPTURE_AS_OF),
@@ -277,7 +329,7 @@ fn unaged_receivable_classification_uses_the_residual_not_the_net_ledger_sign() 
         &payable,
         NativeMasterSnapshot {
             ledgers: &ledgers[1..],
-            groups: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
         &as_of(VALIDATION_CAPTURE_AS_OF),
@@ -311,7 +363,7 @@ fn validation_lab_accounts_for_every_debtor_rupee_and_matches_tally_ageing() {
         &payable,
         NativeMasterSnapshot {
             ledgers: &ledgers,
-            groups: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
         &as_of(VALIDATION_CAPTURE_AS_OF),
@@ -419,7 +471,7 @@ fn ageing_buckets_billwise_lab_match_measured_values_at_as_of() {
         &payable_rows,
         NativeMasterSnapshot {
             ledgers: &ledgers,
-            groups: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
         &as_of("20260731"),
@@ -453,7 +505,7 @@ fn ageing_buckets_billwise_lab_match_measured_values_at_as_of() {
         &payable_rows,
         NativeMasterSnapshot {
             ledgers: &ledgers,
-            groups: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::BillDate,
         &as_of("20260731"),
@@ -499,7 +551,7 @@ fn on_account_residuals_billwise_lab_match_measured_totals() {
         &payable_rows,
         NativeMasterSnapshot {
             ledgers: &ledgers,
-            groups: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
         &as_of("20260731"),
@@ -736,7 +788,7 @@ fn empty_bill_party_from_raw_bytes_fails_closed_before_double_counting() {
             &[],
             NativeMasterSnapshot {
                 ledgers: &ledgers,
-                groups: &[],
+                groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
             },
             AgeingAnchor::DueDate,
             &as_of(NATIVE_CAPTURE_AS_OF),

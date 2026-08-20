@@ -23,7 +23,9 @@ mod model;
 mod request;
 mod wire;
 
-pub use compute::{age_in_days, compute_native_outstandings, NativeMasterSnapshot};
+pub use compute::{
+    age_in_days, compute_native_outstandings, NativeGroupSnapshot, NativeMasterSnapshot,
+};
 pub use date::{parse_native_display_date, NativeDisplayDateRole};
 pub use model::{
     AgeingAnchor, CompanyCurrency, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
@@ -31,6 +33,12 @@ pub use model::{
 };
 pub use request::{
     render_company_currency_request, render_native_bills_request,
-    render_native_ledger_snapshot_request, NativeBillsReportKind,
+    render_native_group_snapshot_request, render_native_ledger_export_request,
+    render_native_ledger_snapshot_request, render_native_voucher_export_request,
+    render_native_voucher_type_export_request, NativeBillsReportKind,
 };
-pub use wire::{parse_company_currency, parse_native_bill_rows, parse_native_ledger_snapshot};
+pub use wire::{
+    parse_company_currency, parse_native_bill_rows, parse_native_group_snapshot,
+    parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
+    NativeGroupSnapshotEntry,
+};

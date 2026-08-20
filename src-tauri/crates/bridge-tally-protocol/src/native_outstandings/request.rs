@@ -1,5 +1,5 @@
 //! XML request builders for Tally's native Bills Receivable/Payable reports
-//! and the `List of Ledgers` collection snapshot.
+//! plus `List of Ledgers` and `List of Groups` collection snapshots.
 //!
 //! These render exact request strings; nothing in this module dispatches
 //! them. The Bills Receivable/Payable shape is the WORKING shape verified
@@ -67,6 +67,56 @@ pub fn render_native_ledger_snapshot_request(
         company = xml_escape(company),
         from = from.as_str(),
         to = to.as_str(),
+    )
+}
+
+/// Renders a native `List of Ledgers` collection for ordinary ledger export.
+///
+/// This mirrors the retired report's fetch list exactly, but reads the master
+/// values directly rather than rendering them through a report `FIELD`. There
+/// are intentionally no period variables: the legacy request carried only
+/// `SVEXPORTFORMAT` and `SVCURRENTCOMPANY`; adding a date would change the
+/// previously established semantics of `OPENINGBALANCE`.
+pub fn render_native_ledger_export_request(company: &str) -> String {
+    format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        company = xml_escape(company),
+    )
+}
+
+/// Renders a native `List of VoucherTypes` collection. The identity fields are
+/// master data, so no period variables are applied.
+pub fn render_native_voucher_type_export_request(company: &str) -> String {
+    format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of VoucherTypes</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of VoucherTypes" ISMODIFY="Yes"><TYPE>VoucherType</TYPE><FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        company = xml_escape(company),
+    )
+}
+
+/// Renders a native Voucher collection with the dotted entry fields Tally
+/// requires to include accounting rows. `SVFROMDATE` and `SVTODATE` scope the
+/// export and must remain paired with the requested canonical window.
+pub fn render_native_voucher_export_request(company: &str, from: &str, to: &str) -> String {
+    format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>BridgeVoucherExport</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="BridgeVoucherExport" ISMODIFY="No"><TYPE>Voucher</TYPE><FETCH>DATE, GUID, MASTERID, ALTERID, VOUCHERTYPENAME, VOUCHERNUMBER, ISCANCELLED, ISOPTIONAL, ALLLEDGERENTRIES.LEDGERNAME, ALLLEDGERENTRIES.AMOUNT, ALLLEDGERENTRIES.ISDEEMEDPOSITIVE</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        company = xml_escape(company),
+        from = xml_escape(from),
+        to = xml_escape(to),
+    )
+}
+
+/// Renders a request for the `List of Groups` collection, overridden to fetch
+/// the complete group ancestry the party classifier needs: `NAME` and
+/// `PARENT` only.
+///
+/// Unlike the legacy export profile, this stays in Tally's native Collection
+/// family: it defines no report/form/part/line/field stack and invokes no TDL
+/// function. Paired byte-identical reads plus the enclosing book-extent
+/// bracket establish completeness for this snapshot.
+pub fn render_native_group_snapshot_request(company: &str) -> String {
+    format!(
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Groups" ISMODIFY="Yes"><FETCH>NAME, PARENT</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        company = xml_escape(company),
     )
 }
 
@@ -138,5 +188,47 @@ mod tests {
             .contains("<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH>"));
         assert!(ledger_xml.contains(r#"<SVFROMDATE TYPE="Date">20240401</SVFROMDATE>"#));
         assert!(ledger_xml.contains(r#"<SVTODATE TYPE="Date">20260731</SVTODATE>"#));
+
+        let group_xml = render_native_group_snapshot_request("A & B <Co>");
+        assert!(group_xml.contains("A &amp; B &lt;Co&gt;"));
+        assert!(group_xml.contains(r#"<ID>List of Groups</ID>"#));
+        assert!(group_xml.contains(r#"<FETCH>NAME, PARENT</FETCH>"#));
+        assert!(!group_xml.contains("<REPORT>"));
+        assert!(!group_xml.contains("<FORM>"));
+        assert!(!group_xml.contains("<PART>"));
+        assert!(!group_xml.contains("<LINE>"));
+        assert!(!group_xml.contains("<FIELD>"));
+        assert!(!group_xml.contains("$$NumItems"));
+
+        let export_xml = render_native_ledger_export_request("A & B <Co>");
+        assert!(export_xml.contains("A &amp; B &lt;Co&gt;"));
+        assert!(export_xml.contains(r#"<FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE</FETCH>"#));
+        assert!(!export_xml.contains("<REPORT>"));
+        assert!(!export_xml.contains("<FORM>"));
+        assert!(!export_xml.contains("<PART>"));
+        assert!(!export_xml.contains("<LINE>"));
+        assert!(!export_xml.contains("<FIELD>"));
+        assert!(!export_xml.contains("$$NumItems"));
+        assert!(!export_xml.contains("SVFROMDATE"));
+        assert!(!export_xml.contains("SVTODATE"));
+
+        let voucher_type_xml = render_native_voucher_type_export_request("A & B <Co>");
+        assert!(voucher_type_xml.contains("A &amp; B &lt;Co&gt;"));
+        assert!(voucher_type_xml.contains("<ID>List of VoucherTypes</ID>"));
+        assert!(voucher_type_xml.contains("<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH>"));
+        assert!(!voucher_type_xml.contains("<REPORT>"));
+        assert!(!voucher_type_xml.contains("$$NumItems"));
+
+        let voucher_xml =
+            render_native_voucher_export_request("A & B <Co>", "2026<0401", "2026&0930");
+        assert!(voucher_xml.contains("A &amp; B &lt;Co&gt;"));
+        assert!(voucher_xml.contains("2026&lt;0401"));
+        assert!(voucher_xml.contains("2026&amp;0930"));
+        assert!(voucher_xml.contains("<TYPE>Collection</TYPE>"));
+        assert!(voucher_xml.contains("ALLLEDGERENTRIES.LEDGERNAME, ALLLEDGERENTRIES.AMOUNT, ALLLEDGERENTRIES.ISDEEMEDPOSITIVE"));
+        assert!(!voucher_xml.contains("<REPORT>"));
+        assert!(!voucher_xml.contains("<FORM>"));
+        assert!(!voucher_xml.contains("<FIELD>"));
+        assert!(!voucher_xml.contains("$$NumItems"));
     }
 }

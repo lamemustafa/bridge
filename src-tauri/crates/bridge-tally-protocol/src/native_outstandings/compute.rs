@@ -19,11 +19,23 @@ struct PartyAccumulator {
     oldest_bill_age: Option<u32>,
 }
 
+/// Group ancestry evidence available to the native outstandings computation.
+///
+/// Production callers must use [`Self::Complete`]. An empty complete snapshot
+/// is an invalid read, not evidence that the book has no groups. The legacy
+/// variant exists only for offline fixtures captured before group ancestry was
+/// part of the evidence set, and callers must opt into that degraded behavior
+/// by name.
+pub enum NativeGroupSnapshot<'a> {
+    Complete(&'a [TallyNamedMaster]),
+    LegacyFixtureWithoutGroups,
+}
+
 /// Ledger and group masters captured for the same native outstandings read.
 /// Group ancestry is required to classify nested party ledgers correctly.
 pub struct NativeMasterSnapshot<'a> {
     pub ledgers: &'a [LedgerSnapshotEntry],
-    pub groups: &'a [TallyNamedMaster],
+    pub groups: NativeGroupSnapshot<'a>,
 }
 
 /// Computes a drop-in [`OutstandingsReport`] plus on-account residual
@@ -208,8 +220,17 @@ fn compute_residuals(
     receivable_rows: &[NativeBillRow],
     payable_rows: &[NativeBillRow],
     ledgers: &[LedgerSnapshotEntry],
-    groups: &[TallyNamedMaster],
+    group_snapshot: NativeGroupSnapshot<'_>,
 ) -> Result<(Vec<PartyResidual>, ExactDecimal, bool), NativeOutstandingsError> {
+    let (groups, allow_unresolved_legacy_parent) = match group_snapshot {
+        NativeGroupSnapshot::Complete([]) => {
+            return Err(NativeOutstandingsError::InvalidResponse(
+                "group_snapshot_empty",
+            ))
+        }
+        NativeGroupSnapshot::Complete(groups) => (groups, false),
+        NativeGroupSnapshot::LegacyFixtureWithoutGroups => (&[] as &[TallyNamedMaster], true),
+    };
     let mut receivable_sums = BTreeMap::<&str, ExactDecimal>::new();
     for row in receivable_rows {
         let entry = receivable_sums
@@ -234,7 +255,7 @@ fn compute_residuals(
     let mut has_unaged_receivable = false;
     let group_parents = group_parent_map(groups)?;
     for ledger in ledgers {
-        if !is_party_ledger(ledger, &group_parents, groups.is_empty())? {
+        if !is_party_ledger(ledger, &group_parents, allow_unresolved_legacy_parent)? {
             continue;
         }
         let zero = ExactDecimal::zero();
@@ -323,7 +344,17 @@ fn is_party_ledger(
 }
 
 fn normalized_group_name(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    // Tally's native group and ledger collections both encode the built-in
+    // root as `&#4; Primary`. The XML boundary preserves that illegal numeric
+    // reference injectively as `U+FFFD#4;`; it is a control prefix, not part
+    // of the master name, so discard this one measured prefix before ancestry
+    // matching. Literal U+FFFD is encoded with a distinct `#65533;` marker.
+    value
+        .trim()
+        .strip_prefix("\u{fffd}#4;")
+        .unwrap_or(value.trim())
+        .trim()
+        .to_ascii_lowercase()
 }
 
 fn bill_anchor_date(row: &NativeBillRow, anchor: AgeingAnchor) -> &TallyDate {
