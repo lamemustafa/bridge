@@ -317,8 +317,15 @@ pub struct ParsedSourceRecord<T> {
 pub enum TallyTextEncoding {
     Utf8,
     Utf8Bom,
+    Utf16Le,
     Utf16LeBom,
     Utf16BeBom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedTallyTextEncoding {
+    Utf8,
+    Utf16Le,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,6 +340,20 @@ pub enum TallyTextDecodeError {
     InvalidUtf8,
     InvalidUtf16Le,
     InvalidUtf16Be,
+    UnsupportedContentType,
+    DeclaredEncodingMismatch,
+    ObservedEncodingMismatch,
+}
+
+/// Encodes one Tally XML request as a BOM-prefixed UTF-16LE HTTP entity.
+/// The caller must pair these bytes with `text/xml; charset=utf-16`.
+pub fn encode_tally_xml_request_utf16le(xml: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(xml.len().saturating_mul(2).saturating_add(2));
+    bytes.extend_from_slice(&[0xFF, 0xFE]);
+    for unit in xml.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
 }
 
 /// Incremental, decoded-size-bounded Tally text decoder.
@@ -343,6 +364,7 @@ pub enum TallyTextDecodeError {
 /// or one incomplete UTF-16 code unit/surrogate pair.
 pub struct TallyTextStreamDecoder {
     max_decoded_bytes: usize,
+    expected_encoding: Option<ExpectedTallyTextEncoding>,
     prefix: Vec<u8>,
     mode: Option<TallyTextStreamMode>,
     text: String,
@@ -376,10 +398,21 @@ impl TallyTextStreamDecoder {
     pub fn new(max_decoded_bytes: usize) -> Self {
         Self {
             max_decoded_bytes,
+            expected_encoding: None,
             prefix: Vec::with_capacity(3),
             mode: None,
             text: String::new(),
             decoded_sha256: Sha256::new(),
+        }
+    }
+
+    pub fn new_with_expected_encoding(
+        max_decoded_bytes: usize,
+        expected_encoding: ExpectedTallyTextEncoding,
+    ) -> Self {
+        Self {
+            expected_encoding: Some(expected_encoding),
+            ..Self::new(max_decoded_bytes)
         }
     }
 
@@ -391,7 +424,11 @@ impl TallyTextStreamDecoder {
         while self.mode.is_none() && offset < chunk.len() {
             self.prefix.push(chunk[offset]);
             offset += 1;
-            match tally_text_prefix_decision(&self.prefix) {
+            let decision = match self.expected_encoding {
+                Some(expected) => expected_tally_text_prefix_decision(&self.prefix, expected),
+                None => tally_text_prefix_decision(&self.prefix),
+            };
+            match decision {
                 TallyTextPrefixDecision::NeedMore => {}
                 TallyTextPrefixDecision::Utf8Bom => {
                     self.prefix.clear();
@@ -404,6 +441,14 @@ impl TallyTextStreamDecoder {
                     self.prefix.clear();
                     self.mode = Some(TallyTextStreamMode::Utf16 {
                         encoding: TallyTextEncoding::Utf16LeBom,
+                        little_endian: true,
+                        pending_byte: None,
+                        pending_high_surrogate: None,
+                    });
+                }
+                TallyTextPrefixDecision::Utf16LeWithoutBom => {
+                    self.mode = Some(TallyTextStreamMode::Utf16 {
+                        encoding: TallyTextEncoding::Utf16Le,
                         little_endian: true,
                         pending_byte: None,
                         pending_high_surrogate: None,
@@ -424,6 +469,9 @@ impl TallyTextStreamDecoder {
                         pending: Vec::with_capacity(3),
                     });
                 }
+                TallyTextPrefixDecision::EncodingMismatch => {
+                    return Err(TallyTextDecodeError::ObservedEncodingMismatch);
+                }
             }
         }
 
@@ -439,9 +487,17 @@ impl TallyTextStreamDecoder {
 
     pub fn finish(mut self) -> Result<StreamDecodedTallyText, TallyTextDecodeError> {
         if self.mode.is_none() {
-            self.mode = Some(TallyTextStreamMode::Utf8 {
-                encoding: TallyTextEncoding::Utf8,
-                pending: Vec::with_capacity(3),
+            self.mode = Some(match self.expected_encoding {
+                Some(ExpectedTallyTextEncoding::Utf16Le) => TallyTextStreamMode::Utf16 {
+                    encoding: TallyTextEncoding::Utf16Le,
+                    little_endian: true,
+                    pending_byte: None,
+                    pending_high_surrogate: None,
+                },
+                Some(ExpectedTallyTextEncoding::Utf8) | None => TallyTextStreamMode::Utf8 {
+                    encoding: TallyTextEncoding::Utf8,
+                    pending: Vec::with_capacity(3),
+                },
             });
             let prefix = std::mem::take(&mut self.prefix);
             self.process_selected(&prefix)?;
@@ -465,6 +521,14 @@ impl TallyTextStreamDecoder {
                 *encoding
             }
         };
+        // A BOM-less UTF-16LE XML entity is byte-valid UTF-8 but decodes to
+        // interleaved NULs. Literal NUL is never legal XML data, so reject it
+        // under an explicit UTF-8 contract instead of guessing an encoding.
+        if self.expected_encoding == Some(ExpectedTallyTextEncoding::Utf8)
+            && self.text.contains('\0')
+        {
+            return Err(TallyTextDecodeError::ObservedEncodingMismatch);
+        }
         let decoded_bytes = self.text.len();
         let decoded_sha256 = encode_sha256(self.decoded_sha256.finalize());
         Ok(StreamDecodedTallyText {
@@ -506,9 +570,11 @@ impl TallyTextStreamDecoder {
 enum TallyTextPrefixDecision {
     NeedMore,
     Utf8Bom,
+    Utf16LeWithoutBom,
     Utf16LeBom,
     Utf16BeBom,
     Utf8WithoutBom,
+    EncodingMismatch,
 }
 
 fn tally_text_prefix_decision(prefix: &[u8]) -> TallyTextPrefixDecision {
@@ -528,6 +594,28 @@ fn tally_text_prefix_decision(prefix: &[u8]) -> TallyTextPrefixDecision {
         TallyTextPrefixDecision::NeedMore
     } else {
         TallyTextPrefixDecision::Utf8WithoutBom
+    }
+}
+
+fn expected_tally_text_prefix_decision(
+    prefix: &[u8],
+    expected: ExpectedTallyTextEncoding,
+) -> TallyTextPrefixDecision {
+    match (expected, tally_text_prefix_decision(prefix)) {
+        (_, TallyTextPrefixDecision::NeedMore) => TallyTextPrefixDecision::NeedMore,
+        (ExpectedTallyTextEncoding::Utf8, TallyTextPrefixDecision::Utf8Bom) => {
+            TallyTextPrefixDecision::Utf8Bom
+        }
+        (ExpectedTallyTextEncoding::Utf8, TallyTextPrefixDecision::Utf8WithoutBom) => {
+            TallyTextPrefixDecision::Utf8WithoutBom
+        }
+        (ExpectedTallyTextEncoding::Utf16Le, TallyTextPrefixDecision::Utf16LeBom) => {
+            TallyTextPrefixDecision::Utf16LeBom
+        }
+        (ExpectedTallyTextEncoding::Utf16Le, TallyTextPrefixDecision::Utf8WithoutBom) => {
+            TallyTextPrefixDecision::Utf16LeWithoutBom
+        }
+        _ => TallyTextPrefixDecision::EncodingMismatch,
     }
 }
 
@@ -678,9 +766,117 @@ fn append_decoded(
 
 fn invalid_utf16(encoding: TallyTextEncoding) -> TallyTextDecodeError {
     match encoding {
-        TallyTextEncoding::Utf16LeBom => TallyTextDecodeError::InvalidUtf16Le,
+        TallyTextEncoding::Utf16Le | TallyTextEncoding::Utf16LeBom => {
+            TallyTextDecodeError::InvalidUtf16Le
+        }
         TallyTextEncoding::Utf16BeBom => TallyTextDecodeError::InvalidUtf16Be,
         TallyTextEncoding::Utf8 | TallyTextEncoding::Utf8Bom => TallyTextDecodeError::InvalidUtf8,
+    }
+}
+
+pub fn validate_tally_xml_response_content_type(
+    content_type: &str,
+    expected: ExpectedTallyTextEncoding,
+) -> Result<(), TallyTextDecodeError> {
+    if content_type.chars().any(char::is_control) {
+        return Err(TallyTextDecodeError::UnsupportedContentType);
+    }
+    let mut parts = content_type.split(';');
+    let media_type = parts.next().unwrap_or_default().trim();
+    if !media_type.eq_ignore_ascii_case("text/xml") {
+        return Err(TallyTextDecodeError::UnsupportedContentType);
+    }
+    let mut declared = None;
+    for parameter in parts {
+        let Some((name, value)) = parameter.trim().split_once('=') else {
+            return Err(TallyTextDecodeError::UnsupportedContentType);
+        };
+        if !name.trim().eq_ignore_ascii_case("charset") || declared.is_some() {
+            return Err(TallyTextDecodeError::UnsupportedContentType);
+        }
+        declared = Some(value.trim());
+    }
+    let Some(declared) = declared else {
+        return Ok(());
+    };
+    let declared = match declared {
+        value if value.eq_ignore_ascii_case("utf-8") => ExpectedTallyTextEncoding::Utf8,
+        value if value.eq_ignore_ascii_case("utf-16") => ExpectedTallyTextEncoding::Utf16Le,
+        _ => return Err(TallyTextDecodeError::UnsupportedContentType),
+    };
+    if declared != expected {
+        return Err(TallyTextDecodeError::DeclaredEncodingMismatch);
+    }
+    Ok(())
+}
+
+pub fn decode_tally_xml_response_bytes_limited(
+    bytes: impl AsRef<[u8]>,
+    content_type: &str,
+    expected: ExpectedTallyTextEncoding,
+    max_bytes: usize,
+) -> Result<DecodedTallyText, TallyTextDecodeError> {
+    let bytes = bytes.as_ref();
+    if bytes.len() > max_bytes {
+        return Err(TallyTextDecodeError::TooLarge);
+    }
+    validate_tally_xml_response_content_type(content_type, expected)?;
+    let mut decoder = TallyTextStreamDecoder::new_with_expected_encoding(max_bytes, expected);
+    decoder.push_chunk(bytes)?;
+    let decoded = decoder.finish()?;
+    Ok(DecodedTallyText {
+        text: decoded.text,
+        encoding: decoded.encoding,
+    })
+}
+
+#[cfg(test)]
+mod tally_xml_response_contract_tests {
+    use super::*;
+
+    #[test]
+    fn missing_charset_defers_to_expected_encoding_without_weakening_byte_checks() {
+        const XML: &str = "<ENVELOPE />";
+
+        let utf8 = decode_tally_xml_response_bytes_limited(
+            XML.as_bytes(),
+            "text/xml",
+            ExpectedTallyTextEncoding::Utf8,
+            1024,
+        )
+        .expect("bare XML content type accepts expected UTF-8 bytes");
+        assert_eq!(utf8.text, XML);
+        assert_eq!(utf8.encoding, TallyTextEncoding::Utf8);
+
+        let utf16_bytes = encode_tally_xml_request_utf16le(XML);
+        let utf16 = decode_tally_xml_response_bytes_limited(
+            &utf16_bytes,
+            "text/xml",
+            ExpectedTallyTextEncoding::Utf16Le,
+            1024,
+        )
+        .expect("bare XML content type accepts expected UTF-16LE bytes");
+        assert_eq!(utf16.text, XML);
+        assert_eq!(utf16.encoding, TallyTextEncoding::Utf16LeBom);
+
+        assert_eq!(
+            decode_tally_xml_response_bytes_limited(
+                XML.as_bytes(),
+                "text/xml; charset=utf-16",
+                ExpectedTallyTextEncoding::Utf8,
+                1024,
+            ),
+            Err(TallyTextDecodeError::DeclaredEncodingMismatch),
+        );
+        assert_eq!(
+            decode_tally_xml_response_bytes_limited(
+                &utf16_bytes,
+                "text/xml",
+                ExpectedTallyTextEncoding::Utf8,
+                1024,
+            ),
+            Err(TallyTextDecodeError::ObservedEncodingMismatch),
+        );
     }
 }
 
@@ -768,6 +964,11 @@ pub fn decode_xml_bytes_limited(
         Err(TallyTextDecodeError::InvalidUtf16Be) => {
             anyhow::bail!("Tally returned an invalid UTF-16BE XML response")
         }
+        Err(
+            TallyTextDecodeError::UnsupportedContentType
+            | TallyTextDecodeError::DeclaredEncodingMismatch
+            | TallyTextDecodeError::ObservedEncodingMismatch,
+        ) => anyhow::bail!("Tally response encoding contract was invalid"),
     }
 }
 

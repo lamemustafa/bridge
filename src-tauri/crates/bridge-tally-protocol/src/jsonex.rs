@@ -358,6 +358,13 @@ fn decode_jsonex_bytes(
                 TallyTextDecodeError::InvalidUtf8
                 | TallyTextDecodeError::InvalidUtf16Le
                 | TallyTextDecodeError::InvalidUtf16Be => JsonExProtocolError::InvalidEncoding,
+                TallyTextDecodeError::UnsupportedContentType => {
+                    JsonExProtocolError::UnsupportedContentType
+                }
+                TallyTextDecodeError::DeclaredEncodingMismatch
+                | TallyTextDecodeError::ObservedEncodingMismatch => {
+                    JsonExProtocolError::EncodingMismatch
+                }
             }
         })?;
     if decoded.text.len() > limits.max_decoded_bytes {

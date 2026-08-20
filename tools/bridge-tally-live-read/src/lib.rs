@@ -987,7 +987,7 @@ fn encoding(value: TallyTextEncoding) -> TextEncoding {
     match value {
         TallyTextEncoding::Utf8 => TextEncoding::Utf8,
         TallyTextEncoding::Utf8Bom => TextEncoding::Utf8Bom,
-        TallyTextEncoding::Utf16LeBom => TextEncoding::Utf16Le,
+        TallyTextEncoding::Utf16Le | TallyTextEncoding::Utf16LeBom => TextEncoding::Utf16Le,
         TallyTextEncoding::Utf16BeBom => TextEncoding::Utf16Be,
     }
 }
@@ -1246,7 +1246,7 @@ fn current_architecture() -> Architecture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator};
+    use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
 
     const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -1412,7 +1412,10 @@ mod tests {
     async fn empty_company_response_stops_after_one_request_and_retains_no_marker() {
         let mut last_failure = "simulator_not_started";
         for _ in 0..5 {
-            let simulator = Simulator::spawn(ScenarioPlan::new(Fixture::EmptyExport)).unwrap();
+            let simulator = Simulator::spawn(
+                ScenarioPlan::new(Fixture::EmptyExport).with_encoding(WireEncoding::Utf16Le),
+            )
+            .unwrap();
             let config = config(simulator.address().port());
             let transport =
                 ReadOnlyTransport::new(ReadLoopback::Ipv4, simulator.address().port()).unwrap();

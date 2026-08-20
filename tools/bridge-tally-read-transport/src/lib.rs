@@ -9,6 +9,8 @@
 use bridge_tally_protocol::bills_native_outstandings_probe::{
     NativeOutstandingsProbeProfileId, SealedNativeLedgerOutstandingsProbe,
 };
+#[cfg(feature = "bills-native-outstandings-probe-transport")]
+use bridge_tally_protocol::encode_tally_xml_request_utf16le;
 use bridge_tally_protocol::{xml_read_profiles::ReadOnlyProfile, TallyTextEncoding};
 #[cfg(feature = "bills-native-outstandings-probe-transport")]
 use bridge_tally_transport::TransportPolicy;
@@ -29,7 +31,7 @@ pub const NATIVE_OUTSTANDINGS_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
 pub const NATIVE_OUTSTANDINGS_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(feature = "bills-native-outstandings-probe-transport")]
 const CANDIDATE_V0_TEMPLATE_SHA256: &str =
-    "bc3b87484adb9a10cc15f6c9042853bb1047278896bcf0f495b93e7e6b428526";
+    "7779fec88fdd10a623bd7f37c42fee2adf9d08c4a6b53a0d4d7afe763501dcd4";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadLoopback {
@@ -191,11 +193,11 @@ fn validate_candidate_v0(
     if candidate.template_sha256() != CANDIDATE_V0_TEMPLATE_SHA256 {
         return Err(error("native_outstandings_candidate_template_changed"));
     }
-    let request = candidate.rendered_xml().as_bytes();
+    let request = encode_tally_xml_request_utf16le(candidate.rendered_xml());
     if request.is_empty() || request.len() > NATIVE_OUTSTANDINGS_REQUEST_MAX_BYTES {
         return Err(error("native_outstandings_candidate_request_size_invalid"));
     }
-    if sha256_hex(request) != candidate.request_sha256() {
+    if sha256_hex(&request) != candidate.request_sha256() {
         return Err(error("native_outstandings_candidate_request_changed"));
     }
     Ok(())
@@ -245,14 +247,17 @@ impl ReadOnlyTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator};
+    use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
 
     #[tokio::test]
     async fn sends_only_the_rendered_sealed_read_profile() {
         let profile = ReadOnlyProfile::CompanyListV1;
         let expected = profile.render();
         for attempt in 1..=5 {
-            let simulator = Simulator::spawn(ScenarioPlan::new(Fixture::EmptyExport)).unwrap();
+            let simulator = Simulator::spawn(
+                ScenarioPlan::new(Fixture::EmptyExport).with_encoding(WireEncoding::Utf16Le),
+            )
+            .unwrap();
             let transport =
                 ReadOnlyTransport::new(ReadLoopback::Ipv4, simulator.address().port()).unwrap();
             match transport.send(profile).await {
@@ -343,7 +348,10 @@ mod native_outstandings_tests {
         let observed = simulator.finish().unwrap();
         assert_eq!(observed.method, "POST");
         assert_eq!(observed.path, "/");
-        assert_eq!(observed.request_body_bytes, candidate.rendered_xml().len());
+        assert_eq!(
+            observed.request_body_bytes,
+            encode_tally_xml_request_utf16le(candidate.rendered_xml()).len()
+        );
         assert_eq!(observed.request_body_sha256, candidate.request_sha256());
         assert!(observed.request_processed);
     }
@@ -383,6 +391,7 @@ mod native_outstandings_tests {
             ),
             (
                 ScenarioPlan::new(Fixture::SyntheticXml("<TRUNCATED/>".to_string()))
+                    .with_encoding(WireEncoding::Utf16Le)
                     .with_framing(ResponseFraming::DeclaredContentLength { bytes: 4096 }),
                 None,
             ),
@@ -399,7 +408,10 @@ mod native_outstandings_tests {
     #[test]
     fn qualification_policy_is_fixed_and_candidate_is_bounded() {
         let candidate = candidate();
-        assert!(candidate.rendered_xml().len() <= NATIVE_OUTSTANDINGS_REQUEST_MAX_BYTES);
+        assert!(
+            encode_tally_xml_request_utf16le(candidate.rendered_xml()).len()
+                <= NATIVE_OUTSTANDINGS_REQUEST_MAX_BYTES
+        );
         assert_eq!(NATIVE_OUTSTANDINGS_RESPONSE_MAX_BYTES, 1024 * 1024);
         assert_eq!(NATIVE_OUTSTANDINGS_REQUEST_TIMEOUT, Duration::from_secs(20));
         validate_candidate_v0(&candidate).unwrap();

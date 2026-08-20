@@ -46,6 +46,8 @@ const MIRROR_MIGRATION_V20: &str =
     include_str!("migrations/0020_tally_write_canary_final_verdict.sql");
 const MIRROR_MIGRATION_V21: &str =
     include_str!("migrations/0021_tally_write_canary_preflight_target_binding.sql");
+const MIRROR_MIGRATION_V22: &str =
+    include_str!("migrations/0022_tally_bomless_utf16_read_evidence.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -2237,9 +2239,28 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let bomless_utf16_read_evidence_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 22",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if bomless_utf16_read_evidence_installed == 0 {
+            let migration_result = sqlx::raw_sql(MIRROR_MIGRATION_V22)
+                .execute(&mut *transaction)
+                .await;
+            // The migration enables legacy ALTER TABLE only to avoid reparsing an
+            // unrelated historical trigger whose deferred column reference SQLite
+            // otherwise rejects. Restore the connection setting even when the
+            // transactional migration fails before its own reset statement.
+            let reset_result = sqlx::query("PRAGMA legacy_alter_table = OFF")
+                .execute(&mut *transaction)
+                .await;
+            migration_result?;
+            reset_result?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -4712,7 +4733,7 @@ fn validate_selected_read_scope(
         if let Some(encoding) = observation.response_encoding.as_deref() {
             if !matches!(
                 encoding,
-                "utf8" | "utf8_bom" | "utf16le_bom" | "utf16be_bom"
+                "utf8" | "utf8_bom" | "utf16le" | "utf16le_bom" | "utf16be_bom"
             ) {
                 return Err(MirrorError::InvalidInput("selected_read_response_encoding"));
             }
@@ -5340,6 +5361,52 @@ mod tests {
                 .expect("apply migration through v13");
         }
         transaction.commit().await.expect("commit v13 schema");
+        TallyMirrorRepository::new(pool)
+    }
+
+    async fn repository_through_v21() -> TallyMirrorRepository {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect to v21 in-memory SQLite");
+        let mut transaction = pool.begin().await.expect("begin v21 migration");
+        for migration in [
+            MIRROR_MIGRATION_V2,
+            MIRROR_MIGRATION_V3,
+            MIRROR_MIGRATION_V4,
+            MIRROR_MIGRATION_V5,
+            MIRROR_MIGRATION_V6,
+            MIRROR_MIGRATION_V7,
+            MIRROR_MIGRATION_V8,
+            MIRROR_MIGRATION_V9,
+            MIRROR_MIGRATION_V10,
+            MIRROR_MIGRATION_V11,
+            MIRROR_MIGRATION_V12,
+            MIRROR_MIGRATION_V13,
+            MIRROR_MIGRATION_V14,
+            MIRROR_MIGRATION_V15,
+            MIRROR_MIGRATION_V16,
+            MIRROR_MIGRATION_V17,
+            MIRROR_MIGRATION_V18,
+            MIRROR_MIGRATION_V19,
+            MIRROR_MIGRATION_V20,
+            MIRROR_MIGRATION_V21,
+        ] {
+            sqlx::raw_sql(migration)
+                .execute(&mut *transaction)
+                .await
+                .expect("apply migration through v21");
+        }
+        transaction.commit().await.expect("commit v21 schema");
         TallyMirrorRepository::new(pool)
     }
 
@@ -6270,7 +6337,7 @@ mod tests {
             result_bucket: "non_empty_observed".to_string(),
             request_sha256: Some(HASH_A.to_string()),
             decoded_response_sha256: Some(HASH_B.to_string()),
-            response_encoding: Some("utf8".to_string()),
+            response_encoding: Some("utf16le".to_string()),
             company_context_verified: true,
             schema_verified: true,
             record_count_verified: true,
@@ -7395,13 +7462,13 @@ mod tests {
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 20);
+        assert_eq!(migration_count, 21);
         let target_binding_columns = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM pragma_table_info('tally_write_canary_preflight_evidence') \
              WHERE name IN ('canonical_endpoint_sha256', 'company_identity_sha256')",
@@ -7492,6 +7559,71 @@ mod tests {
         .await
         .expect("read migration timestamp");
         assert!(applied_at > 0, "migration marker must contain real time");
+    }
+
+    #[tokio::test]
+    async fn bomless_utf16_migration_preserves_existing_selected_read_evidence() {
+        let repository = repository_through_v21().await;
+        sqlx::raw_sql(
+            "INSERT INTO tally_endpoints VALUES ('ep', 'http://127.0.0.1:9000', 1, 2);\
+             INSERT INTO tally_capability_snapshots VALUES ('snap', 'ep', 1, 3, 'Unknown', NULL, NULL, 'unknown');\
+             INSERT INTO tally_capability_items VALUES (\
+               'snap', 'feature', 'selected_ledger_read', 'supported', 'observed',\
+               'selected_ledger_read_non_empty_observed'\
+             );\
+             INSERT INTO tally_companies VALUES (\
+               'company', 'ep', 'Synthetic', 'company-guid', NULL, NULL, NULL, 'observed', 1, 2\
+             );\
+             INSERT INTO tally_selected_read_scopes VALUES (\
+               'scope', 'snap', 'company', 1,\
+               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',\
+               'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',\
+               'bridge.tally.ledgers/1', 'bridge.tally.vouchers/3',\
+               '20260701', '20260731', 2, 'not_claimed', 1, 0\
+             );\
+             INSERT INTO tally_selected_read_observations VALUES (\
+               'scope', 'snap', 'feature', 'selected_ledger_read',\
+               'supported', 'observed', 'selected_ledger_read_non_empty_observed',\
+               'non_empty_observed',\
+               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',\
+               'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',\
+               'utf8', 1, 1, 1, 'verified', 0\
+             );",
+        )
+        .execute(&repository.pool)
+        .await
+        .expect("seed v21 selected-read evidence");
+
+        repository
+            .migrate()
+            .await
+            .expect("upgrade v21 selected-read evidence to v22");
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT response_encoding FROM tally_selected_read_observations \
+                 WHERE scope_id = 'scope' AND capability_key = 'selected_ledger_read'",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read preserved selected-read evidence"),
+            "utf8"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 22",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read v22 migration marker"),
+            1
+        );
+        assert!(sqlx::query(
+            "UPDATE tally_selected_read_observations SET response_encoding = 'utf16le' \
+             WHERE scope_id = 'scope'",
+        )
+        .execute(&repository.pool)
+        .await
+        .is_err());
     }
 
     #[tokio::test]

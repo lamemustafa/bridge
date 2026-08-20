@@ -134,6 +134,9 @@ pub const SELECTED_VOUCHER_QUERY_PROFILE_ID: &str = BRIDGE_SELECTED_VOUCHER_EXPO
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedReadObservation {
+    /// SHA-256 of the exact HTTP entity bytes dispatched for the selected read.
+    /// Pre-U1 UTF-8 observations and current UTF-16LE observations therefore
+    /// retain one stable meaning even though their wire encodings differ.
     pub request_sha256: String,
     /// SHA-256 of the decoded XML re-encoded as UTF-8, not of the wire bytes.
     pub decoded_response_sha256: String,
@@ -153,8 +156,9 @@ const BODY_BYTES_UNAVAILABLE: u64 = u64::MAX;
 const ENCODING_UNAVAILABLE: u8 = 0;
 const ENCODING_UTF8: u8 = 1;
 const ENCODING_UTF8_BOM: u8 = 2;
-const ENCODING_UTF16_LE_BOM: u8 = 3;
-const ENCODING_UTF16_BE_BOM: u8 = 4;
+const ENCODING_UTF16_LE: u8 = 3;
+const ENCODING_UTF16_LE_BOM: u8 = 4;
+const ENCODING_UTF16_BE_BOM: u8 = 5;
 
 impl TallyClient {
     pub fn new(config: TallyConfig) -> anyhow::Result<Self> {
@@ -536,6 +540,20 @@ impl TallyClient {
         Ok((response.into_text(), encoded_bytes))
     }
 
+    async fn post_xml_with_request_wire_sha256(
+        &self,
+        xml: String,
+    ) -> anyhow::Result<(String, String)> {
+        let response = self.http.post_xml_decoded(xml).await?;
+        let request_sha256 = response
+            .request_body_sha256()
+            .ok_or_else(|| anyhow::anyhow!("Tally POST omitted request wire commitment"))?
+            .to_owned();
+        self.record_observed_body_bytes(response.encoded_bytes());
+        self.record_observed_encoding(response.encoding());
+        Ok((response.into_text(), request_sha256))
+    }
+
     #[cfg(feature = "voucher-scan")]
     async fn post_outstandings_xml_with_encoded_bytes(
         &self,
@@ -832,8 +850,7 @@ impl TallyClient {
         expected_company_guid: &str,
     ) -> anyhow::Result<SelectedReadObservation> {
         let request = tdl_engine::ledgers_request(company);
-        let request_sha256 = sha256_hex(request.as_bytes());
-        let xml = self.post_xml(request).await?;
+        let (xml, request_sha256) = self.post_xml_with_request_wire_sha256(request).await?;
         let decoded_response_sha256 = sha256_hex(xml.as_bytes());
         bridge_tally_protocol::validate_exact_selected_export_structure(&xml, "LEDGER")?;
         let parsed = parse_ledger_source_records_with_evidence(&xml)?;
@@ -880,8 +897,7 @@ impl TallyClient {
         to: &str,
     ) -> anyhow::Result<SelectedReadObservation> {
         let request = tdl_engine::selected_vouchers_request(company, from, to);
-        let request_sha256 = sha256_hex(request.as_bytes());
-        let xml = self.post_xml(request).await?;
+        let (xml, request_sha256) = self.post_xml_with_request_wire_sha256(request).await?;
         let decoded_response_sha256 = sha256_hex(xml.as_bytes());
         bridge_tally_protocol::validate_exact_selected_export_structure(&xml, "VOUCHER")?;
         let parsed = parse_selected_voucher_source_records_with_evidence(&xml)?;
@@ -938,6 +954,7 @@ impl TallyClient {
         let value = match encoding {
             TallyTextEncoding::Utf8 => ENCODING_UTF8,
             TallyTextEncoding::Utf8Bom => ENCODING_UTF8_BOM,
+            TallyTextEncoding::Utf16Le => ENCODING_UTF16_LE,
             TallyTextEncoding::Utf16LeBom => ENCODING_UTF16_LE_BOM,
             TallyTextEncoding::Utf16BeBom => ENCODING_UTF16_BE_BOM,
         };
@@ -948,6 +965,7 @@ impl TallyClient {
         let reason = match self.observed_encoding.load(Ordering::Acquire) {
             ENCODING_UTF8 => "utf8_observed",
             ENCODING_UTF8_BOM => "utf8_bom_observed",
+            ENCODING_UTF16_LE => "utf16_le_observed",
             ENCODING_UTF16_LE_BOM => "utf16_le_bom_observed",
             ENCODING_UTF16_BE_BOM => "utf16_be_bom_observed",
             _ => {
@@ -969,6 +987,7 @@ impl TallyClient {
         match self.observed_encoding.load(Ordering::Acquire) {
             ENCODING_UTF8 => Ok("utf8"),
             ENCODING_UTF8_BOM => Ok("utf8_bom"),
+            ENCODING_UTF16_LE => Ok("utf16le"),
             ENCODING_UTF16_LE_BOM => Ok("utf16le_bom"),
             ENCODING_UTF16_BE_BOM => Ok("utf16be_bom"),
             _ => anyhow::bail!("response_encoding_not_observed"),
@@ -1149,8 +1168,131 @@ mod tests {
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TransportId,
     };
     use std::time::Duration;
+    use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
+        let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-16\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        [headers.as_bytes(), &body].concat()
+    }
+
+    fn utf8_status_response(body: impl AsRef<str>) -> Vec<u8> {
+        let body = body.as_ref().as_bytes();
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        [headers.as_bytes(), body].concat()
+    }
+
+    async fn read_complete_http_request(
+        socket: &mut (impl tokio::io::AsyncRead + Unpin),
+    ) -> Vec<u8> {
+        const HEADER_TERMINATOR: &[u8] = b"\r\n\r\n";
+        const MAX_TEST_HEADER_BYTES: usize = 64 * 1024;
+
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let header_end = loop {
+            if let Some(offset) = request
+                .windows(HEADER_TERMINATOR.len())
+                .position(|window| window == HEADER_TERMINATOR)
+            {
+                break offset + HEADER_TERMINATOR.len();
+            }
+            let bytes_read = socket
+                .read(&mut chunk)
+                .await
+                .expect("read synthetic HTTP request headers");
+            assert!(
+                bytes_read > 0,
+                "synthetic HTTP request ended before its headers were complete"
+            );
+            request.extend_from_slice(&chunk[..bytes_read]);
+            assert!(
+                request.len() <= MAX_TEST_HEADER_BYTES,
+                "synthetic HTTP request headers exceeded {MAX_TEST_HEADER_BYTES} bytes"
+            );
+        };
+
+        let headers = std::str::from_utf8(&request[..header_end - HEADER_TERMINATOR.len()])
+            .expect("synthetic HTTP request headers must be UTF-8");
+        let mut lines = headers.split("\r\n");
+        let request_line = lines
+            .next()
+            .expect("synthetic HTTP request must contain a request line");
+        let mut request_line_parts = request_line.split_ascii_whitespace();
+        let method = request_line_parts
+            .next()
+            .expect("synthetic HTTP request method is missing");
+        request_line_parts
+            .next()
+            .expect("synthetic HTTP request target is missing");
+        let version = request_line_parts
+            .next()
+            .expect("synthetic HTTP request version is missing");
+        assert_eq!(version, "HTTP/1.1", "synthetic request must use HTTP/1.1");
+        assert!(
+            request_line_parts.next().is_none(),
+            "synthetic HTTP request line has unexpected fields"
+        );
+
+        let mut content_length = None;
+        for header in lines {
+            let (name, value) = header
+                .split_once(':')
+                .expect("synthetic HTTP request contains a malformed header");
+            assert!(
+                !name.eq_ignore_ascii_case("transfer-encoding"),
+                "synthetic HTTP request must use Content-Length framing"
+            );
+            if name.eq_ignore_ascii_case("content-length") {
+                assert!(
+                    content_length.is_none(),
+                    "synthetic HTTP request contains duplicate Content-Length headers"
+                );
+                content_length = Some(
+                    value
+                        .trim()
+                        .parse::<usize>()
+                        .expect("synthetic HTTP request has an invalid Content-Length"),
+                );
+            }
+        }
+        let content_length = match content_length {
+            Some(length) => length,
+            None if method == "GET" || method == "HEAD" => 0,
+            None => panic!("synthetic HTTP request body is missing Content-Length"),
+        };
+        let request_end = header_end
+            .checked_add(content_length)
+            .expect("synthetic HTTP request length overflowed usize");
+        assert!(
+            request.len() <= request_end,
+            "synthetic HTTP request contains bytes beyond Content-Length"
+        );
+
+        while request.len() < request_end {
+            let remaining = request_end - request.len();
+            let chunk_length = remaining.min(chunk.len());
+            let bytes_read = socket
+                .read(&mut chunk[..chunk_length])
+                .await
+                .expect("read synthetic HTTP request body");
+            assert!(
+                bytes_read > 0,
+                "synthetic HTTP request ended before its Content-Length body was complete"
+            );
+            request.extend_from_slice(&chunk[..bytes_read]);
+        }
+
+        request
+    }
 
     #[test]
     fn detects_tallyprime_status() {
@@ -1178,6 +1320,28 @@ mod tests {
             detect_product("prefix Tally ERP 9 Server is Running suffix"),
             TallyProduct::Unknown
         ));
+    }
+
+    #[tokio::test]
+    async fn selected_read_request_digest_matches_the_dispatched_wire_entity() {
+        let plan = ScenarioPlan::new(Fixture::NormalExport).with_encoding(WireEncoding::Utf16Le);
+        let simulator = Simulator::spawn(plan).expect("spawn synthetic Tally endpoint");
+        let client = TallyClient::new(TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        })
+        .expect("build synthetic Tally client");
+
+        let observation = client
+            .qualify_selected_ledgers(
+                "BRIDGE SYNTHETIC BOOK",
+                "00000000-0000-4000-8000-000000000001",
+            )
+            .await
+            .expect("qualify synthetic selected-ledger read");
+        let dispatched = simulator.finish().expect("finish synthetic Tally exchange");
+
+        assert_eq!(observation.request_sha256, dispatched.request_body_sha256);
     }
 
     #[test]
@@ -1309,19 +1473,14 @@ mod tests {
                 .expect("Tally request timed out")
                 .expect("accept Tally request");
             let (mut socket, _) = accepted;
-            let mut request = [0_u8; 2048];
-            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
+            let request = read_complete_http_request(&mut socket).await;
             assert!(
-                String::from_utf8_lossy(&request[..bytes_read]).starts_with("GET /status HTTP/1.1"),
+                String::from_utf8_lossy(&request).starts_with("GET /status HTTP/1.1"),
                 "request should go directly to the Tally endpoint"
             );
             let body = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
             socket
-                .write_all(response.as_bytes())
+                .write_all(&utf8_status_response(body))
                 .await
                 .expect("write Tally response");
         });
@@ -1412,13 +1571,9 @@ mod tests {
                         .await
                         .expect("paired request timed out")
                         .expect("accept paired request");
-                let mut request = [0_u8; 16 * 1024];
-                let bytes_read = socket
-                    .read(&mut request)
-                    .await
-                    .expect("read paired request");
+                let request = read_complete_http_request(&mut socket).await;
                 assert!(
-                    String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_prefix),
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let body = match index {
@@ -1426,12 +1581,13 @@ mod tests {
                     4 | 6 | 8 | 10 => OPTIONAL_VOUCHERS,
                     _ => STATUS,
                 };
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&response)
                     .await
                     .expect("write paired response");
             }
@@ -1501,7 +1657,13 @@ mod tests {
         assert_eq!(closing_extent, extent, "synthetic book did not change");
         assert_eq!(
             client.observed_body_bytes(),
-            Some(u64::try_from(OPTIONAL_VOUCHERS.len()).expect("fixture length fits u64")),
+            Some(
+                u64::try_from(
+                    bridge_tally_protocol::encode_tally_xml_request_utf16le(OPTIONAL_VOUCHERS)
+                        .len(),
+                )
+                .expect("encoded fixture length fits u64"),
+            ),
             "closing extent evidence must not overwrite the larger voucher payload"
         );
         server.await.expect("synthetic Tally server task");
@@ -1541,26 +1703,23 @@ mod tests {
                         .await
                         .expect("paired request timed out")
                         .expect("accept paired request");
-                let mut request = [0_u8; 16 * 1024];
-                let bytes_read = socket
-                    .read(&mut request)
-                    .await
-                    .expect("read paired request");
+                let request = read_complete_http_request(&mut socket).await;
                 let expected_prefix = if index % 2 == 0 {
                     "POST / HTTP/1.1"
                 } else {
                     "GET /status HTTP/1.1"
                 };
                 assert!(
-                    String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_prefix),
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
                     "request {index} did not follow the required read/health-check sequence"
                 );
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&response)
                     .await
                     .expect("write paired response");
             }
@@ -1596,19 +1755,14 @@ mod tests {
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-            let mut request = [0_u8; 8192];
-            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
+            let request = read_complete_http_request(&mut socket).await;
             assert!(
-                String::from_utf8_lossy(&request[..bytes_read]).starts_with("POST / HTTP/1.1"),
+                String::from_utf8_lossy(&request).starts_with("POST / HTTP/1.1"),
                 "ledger fetch should use Tally's XML POST endpoint"
             );
             let body = "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>";
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
             socket
-                .write_all(response.as_bytes())
+                .write_all(&utf16_xml_response(body))
                 .await
                 .expect("write Tally response");
         });
@@ -1633,20 +1787,23 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            for body in [
+            for (index, body) in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
                 "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-                assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(!request.is_empty(), "synthetic Tally request must not be empty");
+                let response = if index == 0 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&response)
                     .await
                     .expect("write Tally response");
             }
@@ -1702,7 +1859,7 @@ mod tests {
             probe.profile.features[&CapabilityFeatureId::EncodingBehaviour]
                 .safe_reason_code
                 .as_deref(),
-            Some("utf8_observed")
+            Some("utf16_le_bom_observed")
         );
         for feature in [
             CapabilityFeatureId::PracticalResponseLimit,
@@ -1726,15 +1883,13 @@ mod tests {
         let server = tokio::spawn(async move {
             let body = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-            let mut request = [0_u8; 8192];
-            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-            assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
+            let request = read_complete_http_request(&mut socket).await;
+            assert!(
+                !request.is_empty(),
+                "synthetic Tally request must not be empty"
             );
             socket
-                .write_all(response.as_bytes())
+                .write_all(&utf16_xml_response(body))
                 .await
                 .expect("write Tally response");
         });
@@ -1763,15 +1918,13 @@ mod tests {
         let server = tokio::spawn(async move {
             let body = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>";
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-            let mut request = [0_u8; 8192];
-            let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-            assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
+            let request = read_complete_http_request(&mut socket).await;
+            assert!(
+                !request.is_empty(),
+                "synthetic Tally request must not be empty"
             );
             socket
-                .write_all(response.as_bytes())
+                .write_all(&utf16_xml_response(body))
                 .await
                 .expect("write Tally response");
         });
@@ -1802,14 +1955,10 @@ mod tests {
         let server = tokio::spawn(async move {
             for body in [direct, standard] {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                assert!(socket.read(&mut request).await.expect("read Tally request") > 0);
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(!request.is_empty());
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write Tally response");
             }
@@ -1841,21 +1990,24 @@ mod tests {
             // collection attempt (which the collection parser rejects, since
             // it never satisfies `HEADER/STATUS`), and once more for the
             // `V1` fallback that follows.
-            for body in [
+            for (index, body) in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
                 "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
                 "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-                assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(!request.is_empty(), "synthetic Tally request must not be empty");
+                let response = if index == 0 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&response)
                     .await
                     .expect("write Tally response");
             }
@@ -1898,21 +2050,24 @@ mod tests {
         let server = tokio::spawn(async move {
             // Same shaped `STATUS=0` failure for both the `V2` collection
             // attempt and the `V1` fallback that follows it.
-            for body in [
+            for (index, body) in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
                 "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Could not find Company ''</LINEERROR></DATA></BODY></ENVELOPE>",
                 "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Could not find Company ''</LINEERROR></DATA></BODY></ENVELOPE>",
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-                assert!(bytes_read > 0, "synthetic Tally request must not be empty");
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(!request.is_empty(), "synthetic Tally request must not be empty");
+                let response = if index == 0 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&response)
                     .await
                     .expect("write Tally response");
             }
@@ -1957,20 +2112,23 @@ mod tests {
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
             let mut requests = Vec::new();
-            for body in [
+            for (index, body) in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
                 "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Aarav Trading Company Demo\"><GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Ageing Lab\"><GUID TYPE=\"String\">eebb9a9f-1679-4468-9e8f-814c729674cb</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Billwise Lab\"><GUID TYPE=\"String\">75f7566d-7a4f-431a-9642-e93a9d06d57d</GUID></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-                let mut request = [0_u8; 8192];
-                let bytes_read = socket.read(&mut request).await.expect("read Tally request");
-                requests.push(String::from_utf8_lossy(&request[..bytes_read]).into_owned());
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let request = read_complete_http_request(&mut socket).await;
+                requests.push(request);
+                let response = if index == 0 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&response)
                     .await
                     .expect("write Tally response");
             }
@@ -2006,10 +2164,20 @@ mod tests {
 
         let post_request = requests
             .iter()
-            .find(|request| request.starts_with("POST"))
+            .find(|request| request.starts_with(b"POST"))
             .expect("exactly one POST request was sent");
-        assert!(post_request.contains("<TYPE>Collection</TYPE>"));
-        assert!(post_request.contains("<ID>BridgeCompanyExtent</ID>"));
-        assert!(post_request.contains("<FETCH>NAME,GUID</FETCH>"));
+        let body_start = post_request
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|position| position + 4)
+            .expect("POST request has complete HTTP headers");
+        let post_xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+            &post_request[body_start..],
+            post_request.len(),
+        )
+        .expect("POST request uses decodable UTF-16 XML");
+        assert!(post_xml.text.contains("<TYPE>Collection</TYPE>"));
+        assert!(post_xml.text.contains("<ID>BridgeCompanyExtent</ID>"));
+        assert!(post_xml.text.contains("<FETCH>NAME,GUID</FETCH>"));
     }
 }

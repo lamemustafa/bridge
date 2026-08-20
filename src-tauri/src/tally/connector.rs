@@ -536,11 +536,29 @@ pub(crate) fn simulator_test_lock() -> &'static tokio::sync::Mutex<()> {
 mod tests {
     use super::*;
     use std::net::SocketAddr;
-    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator};
+    use tally_protocol_simulator::{Fixture, ScenarioPlan, SequenceSimulator, WireEncoding};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         task::JoinHandle,
     };
+
+    fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
+        let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-16\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        [headers.as_bytes(), &body].concat()
+    }
+
+    fn utf8_status_response(body: impl AsRef<str>) -> Vec<u8> {
+        let body = body.as_ref().as_bytes();
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        [headers.as_bytes(), body].concat()
+    }
 
     async fn spawn_method_routed_server(
         post_responses: Vec<String>,
@@ -593,19 +611,15 @@ mod tests {
                     .to_string();
                 let method = request_line.split_whitespace().next().unwrap_or_default();
                 methods.push(method.to_string());
-                let body = if method == "GET" {
-                    "<RESPONSE>TallyPrime Server is Running</RESPONSE>".to_string()
+                let response = if method == "GET" {
+                    utf8_status_response("<RESPONSE>TallyPrime Server is Running</RESPONSE>")
                 } else {
                     assert_eq!(request.len(), header_end + content_length);
                     posts_remaining -= 1;
-                    post_responses.next().expect("next routed POST response")
+                    utf16_xml_response(post_responses.next().expect("next routed POST response"))
                 };
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
                 socket
-                    .write_all(response.as_bytes())
+                    .write_all(&response)
                     .await
                     .expect("write routed response");
             }
@@ -1073,7 +1087,7 @@ mod tests {
         ]
         .into_iter()
         .map(Fixture::SyntheticXml)
-        .map(ScenarioPlan::new)
+        .map(|fixture| ScenarioPlan::new(fixture).with_encoding(WireEncoding::Utf16Le))
         .collect();
         let simulator = SequenceSimulator::spawn(plans).expect("spawn sequence simulator");
         let company = CompanyRef {
@@ -1145,6 +1159,20 @@ mod tests {
                 code: "voucher_export_invalid".to_string(),
             }),
             TallyError::InvalidData { code } if code == "voucher_export_invalid"
+        ));
+    }
+
+    #[test]
+    fn response_encoding_failure_remains_distinct_from_unreachable_for_connector_callers() {
+        assert!(matches!(
+            map_transport_error(anyhow::Error::new(TallyTransportError::InvalidEncoding {
+                code: "declared_encoding_mismatch",
+            })),
+            TallyError::Protocol { code } if code == "response_encoding_invalid"
+        ));
+        assert!(matches!(
+            map_transport_error(anyhow::Error::new(TallyTransportError::ConnectionFailed)),
+            TallyError::Unreachable
         ));
     }
 }

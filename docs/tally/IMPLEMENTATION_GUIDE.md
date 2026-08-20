@@ -34,6 +34,7 @@ These are not style preferences. Each one prevents a failure observed on a live 
 | I10 | Batch size exactly 1 for production writes | Counters are unattributable at N>1 |
 | I11 | Set `SVFROMDATE`/`SVTODATE` explicitly on **every** collection read | Omitting them silently collapses scope to the current display period |
 | I12 | Compare the returned date span against the requested span on every read | Catches both rejected-boundary failure modes without knowing the rule |
+| I13 | Send every XML POST read as BOM-prefixed UTF-16LE with `text/xml; charset=utf-16`; keep the bodyless ASCII-only `/status` probe on plain `text/xml`/UTF-8; require expected, declared, and observed encoding signals to agree | Silent `?` substitution in non-ASCII party names without making build-specific `/status` charset behavior a false outage |
 
 **I11 in detail.** A collection with no date variables returns **only the current display
 period**, not the whole book. This is not a filter — it is a silent scope collapse, and it

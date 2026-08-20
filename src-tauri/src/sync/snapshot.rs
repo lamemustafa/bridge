@@ -3645,7 +3645,9 @@ mod tests {
     };
     use bridge_tally_transport::{TransportPolicy, XML_REQUEST_MAX_BYTES};
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-    use tally_protocol_simulator::{Fixture, ResponseFraming, ScenarioPlan, SequenceSimulator};
+    use tally_protocol_simulator::{
+        Fixture, ResponseFraming, ScenarioPlan, SequenceSimulator, WireEncoding,
+    };
 
     use crate::db::tally_mirror::{
         CapabilityItemInput, CapabilityKind, CapabilitySnapshotInput, CompanyInput, Confidence,
@@ -4461,18 +4463,22 @@ mod tests {
             ScenarioPlan::new(Fixture::SyntheticXml(master_xml(
                 BRIDGE_GROUP_EXPORT_SCHEMA,
                 "GROUP",
-            ))),
+            )))
+            .with_encoding(WireEncoding::Utf16Le),
             ScenarioPlan::new(Fixture::SyntheticXml(master_xml(
                 BRIDGE_LEDGER_EXPORT_SCHEMA,
                 "LEDGER",
-            ))),
+            )))
+            .with_encoding(WireEncoding::Utf16Le),
             ScenarioPlan::new(Fixture::SyntheticXml(master_xml(
                 BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
                 "VOUCHERTYPE",
-            ))),
+            )))
+            .with_encoding(WireEncoding::Utf16Le),
             ScenarioPlan::new(Fixture::Oversized {
                 minimum_bytes: TEST_RESPONSE_LIMIT + 1,
             })
+            .with_encoding(WireEncoding::Utf16Le)
             .with_framing(ResponseFraming::ConnectionClose),
         ])
         .unwrap();
