@@ -2301,7 +2301,19 @@ mod tests {
         const CURRENCY: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><CURRENCY>0</CURRENCY></CMPINFO></DESC><DATA><COLLECTION><CURRENCY NAME="Rs." RESERVEDNAME=""><MAILINGNAME TYPE="String">Indian Rupees</MAILINGNAME></CURRENCY></COLLECTION></DATA></BODY></ENVELOPE>"#;
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
 
-        let closing_extent = EXTENT.replace(
+        // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
+        // (`fetch_company_book_extent`) now requires that witness, so inject it into this
+        // in-memory copy -- the committed fixture bytes are left untouched.
+        let opening_extent = EXTENT.replacen(
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
+            1,
+        );
+        assert_ne!(
+            opening_extent, EXTENT,
+            "the injection must actually change the fixture for this test to prove anything"
+        );
+        let closing_extent = opening_extent.replace(
             "<LASTVOUCHERDATE TYPE=\"Date\">20260401</LASTVOUCHERDATE>",
             "<LASTVOUCHERDATE TYPE=\"Date\">20260402</LASTVOUCHERDATE>",
         );
@@ -2311,9 +2323,9 @@ mod tests {
         let address = listener.local_addr().expect("synthetic server address");
         let server = tokio::spawn(async move {
             let responses = [
-                EXTENT,
+                opening_extent.as_str(),
                 STATUS,
-                EXTENT,
+                opening_extent.as_str(),
                 STATUS,
                 CURRENCY,
                 STATUS,

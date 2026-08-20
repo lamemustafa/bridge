@@ -40,6 +40,13 @@ pub enum OutstandingsError {
     InvalidResponse(&'static str),
     InvalidAmount,
     ArithmeticOverflow,
+    /// A production bracket formed a [`CompanyBookExtent`] whose `ALTMSTID`
+    /// (master-alteration high-water) witness is absent. The parser stays
+    /// tolerant of this -- see [`parse_company_book_extent`] -- but a
+    /// bracket that cannot detect a master edit between its two reads is not
+    /// a bracket: two witness-less extents compare equal regardless of what
+    /// moved between them. See [`require_master_witness`].
+    MasterWitnessAbsent,
 }
 
 impl fmt::Display for OutstandingsError {
@@ -52,6 +59,9 @@ impl fmt::Display for OutstandingsError {
             Self::InvalidResponse(code) => code,
             Self::InvalidAmount => "Tally returned an invalid amount",
             Self::ArithmeticOverflow => "outstandings arithmetic exceeded the exact-decimal bound",
+            Self::MasterWitnessAbsent => {
+                "Tally omitted ALTMSTID, the master-alteration witness a paired-extent bracket needs to detect a master edit between its two reads"
+            }
         })
     }
 }
@@ -354,6 +364,31 @@ pub fn parse_company_book_extent(
     ))
 }
 
+/// Requires a [`CompanyBookExtent`] to carry the `ALTMSTID` master-alteration
+/// witness before it is trusted as one side of a paired-extent bracket.
+///
+/// `parse_company_book_extent` deliberately stays tolerant of an absent
+/// `ALTMSTID` -- older captures, from before this field was fetched, still
+/// parse, with it `None` -- so old fixtures and their parser-level tests keep
+/// working. But a *production* bracket is different: it compares two extents
+/// and rejects the read when they differ, and two witness-less (`None`)
+/// extents compare equal no matter what master-level edit happened between
+/// them. That silently drops the one signal (`ALTMSTID`) able to detect a
+/// GROUP/LEDGER edit mid-window, since a master edit moves nothing else in
+/// the struct.
+///
+/// Call this where a bracket is actually formed/compared -- the sole
+/// producer of a production `CompanyBookExtent` on each path (the
+/// core-window bracket in `connector.rs::read_pinned_company_book_extent`,
+/// the outstandings bracket in `connection.rs::fetch_company_book_extent`)
+/// -- not inside the parser itself.
+pub fn require_master_witness(extent: &CompanyBookExtent) -> Result<(), OutstandingsError> {
+    if extent.master_alter_id_high_water().is_none() {
+        return Err(OutstandingsError::MasterWitnessAbsent);
+    }
+    Ok(())
+}
+
 fn require_complete_envelope(xml: &str) -> Result<(), OutstandingsError> {
     if !xml.trim_end().ends_with("</ENVELOPE>") {
         return Err(OutstandingsError::InvalidResponse("response_truncated"));
@@ -427,5 +462,44 @@ mod tests {
         assert!(xml.contains("Synthetic &amp; Company"));
         assert!(!xml.contains("<COMPUTE>"));
         assert!(!xml.contains("$$NumItems"));
+    }
+
+    fn synthetic_extent(
+        master_alter_id_high_water: Option<MasterAlterIdHighWater>,
+    ) -> CompanyBookExtent {
+        let company = PinnedCompany::verified(
+            ValidatedCompanyName::new("Synthetic Company".to_string())
+                .expect("synthetic name validates"),
+            "synthetic-guid".to_string(),
+        )
+        .expect("synthetic identity verifies");
+        CompanyBookExtent::new(
+            company,
+            TallyDate::parse("20240101".to_string()).expect("synthetic BooksFrom"),
+            TallyDate::parse("20260101".to_string()).expect("synthetic LastVoucherDate"),
+            Some(VoucherAlterIdHighWater::parse("1").expect("synthetic ALTVCHID")),
+            master_alter_id_high_water,
+        )
+    }
+
+    /// The production bracket's strict check, isolated from any particular
+    /// caller: an extent whose `ALTMSTID` witness is absent must be refused
+    /// with the typed `MasterWitnessAbsent` error, while a witness-bearing
+    /// extent passes through unchanged. `connector.rs` and `connection.rs`
+    /// each call this at the point where their own bracket forms/compares a
+    /// production extent -- see their `..._fails_closed_when_altmstid_is_absent`
+    /// tests for that end-to-end wiring.
+    #[test]
+    fn require_master_witness_fails_closed_only_when_the_witness_is_absent() {
+        assert_eq!(
+            require_master_witness(&synthetic_extent(None)),
+            Err(OutstandingsError::MasterWitnessAbsent)
+        );
+        assert_eq!(
+            require_master_witness(&synthetic_extent(Some(
+                MasterAlterIdHighWater::parse("1").expect("synthetic ALTMSTID")
+            ))),
+            Ok(())
+        );
     }
 }

@@ -12,7 +12,7 @@ use bridge_tally_protocol::{
         render_native_group_snapshot_request, render_native_ledger_export_request,
         render_native_voucher_export_request, render_native_voucher_type_export_request,
     },
-    outstandings_shared::{parse_company_book_extent, CompanyBookExtent},
+    outstandings_shared::{parse_company_book_extent, require_master_witness, CompanyBookExtent},
     parse_companies, parse_ledger_period_balance_report,
     parse_native_group_source_records_with_evidence,
     parse_native_ledger_source_records_with_evidence,
@@ -270,6 +270,10 @@ impl RuntimeTallyConnector {
         if first != second {
             return Err(invalid_data("company_book_extent_drifted"));
         }
+        // The parser stays tolerant of an absent ALTMSTID (older captures still parse), but this
+        // is the core-window bracket itself: fail closed here so a witness-less pair can never be
+        // mistaken for a stable one. See `require_master_witness` for why.
+        require_master_witness(&first).map_err(|_| invalid_data("company_altmstid_missing"))?;
         Ok(first)
     }
 
@@ -678,9 +682,15 @@ mod tests {
         .text
     }
 
+    /// Carries `ALTMSTID` -- unlike a plain company-list row -- because this
+    /// is the shape of `CompanyBookExtentV1`'s response, and every core-window
+    /// bracket test below routes an extent read through the production
+    /// bracket (`read_pinned_company_book_extent`), which now requires that
+    /// witness to be present. See `core_window_bracket_fails_closed_when_altmstid_is_absent`
+    /// for the case where it deliberately is not.
     fn company_extent(company_name: &str, company_guid: &str) -> String {
         format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="{company_name}"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">{company_name}</NAME><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="{company_name}"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">{company_name}</NAME><GUID TYPE="String">{company_guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         )
     }
 
@@ -706,7 +716,7 @@ mod tests {
 
     fn native_ledgers(company_guid: &str) -> String {
         format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><PARENT TYPE="String">Primary</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
         )
     }
 
@@ -1237,6 +1247,77 @@ mod tests {
         ));
         let methods = server.await.expect("join routed Tally server");
         assert_eq!(methods, ["GET", "POST"]);
+    }
+
+    /// The core-window bracket (`read_pinned_company_book_extent`, feeding
+    /// `extract_core_window`/`read_pack_window`) must fail closed with a
+    /// typed error when both paired reads agree but neither carries
+    /// `ALTMSTID` -- the exact case the review flagged: two witness-less
+    /// extents compare equal, so an ordinary `first != second` drift check
+    /// alone cannot tell a stable book from one where a GROUP/LEDGER master
+    /// moved mid-window without a signal to detect it. This uses the real,
+    /// unmodified `unit_a_company_extent_live.xml` capture -- from before
+    /// `ALTMSTID` was added to the fetch list -- rather than a synthetic
+    /// response, so the absence being tested is the one Tally has actually
+    /// produced.
+    #[tokio::test]
+    async fn core_window_bracket_fails_closed_when_altmstid_is_absent() {
+        let _simulator_guard = simulator_test_lock().lock().await;
+        const COMPANY_EXTENT_WITHOUT_ALTMSTID: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        const COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+        const COMPANY: &str = "Aarav Trading Company Demo";
+        assert!(
+            !COMPANY_EXTENT_WITHOUT_ALTMSTID.contains("ALTMSTID"),
+            "this fixture must predate the ALTMSTID fetch for this test to prove anything"
+        );
+
+        let (address, server) = spawn_method_routed_server(vec![
+            COMPANY_EXTENT_WITHOUT_ALTMSTID.to_string(),
+            COMPANY_EXTENT_WITHOUT_ALTMSTID.to_string(),
+        ])
+        .await;
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{address}"),
+                COMPANY_GUID,
+            ),
+            display_name: COMPANY.to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-core-window-missing-altmstid".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let connector =
+            RuntimeTallyConnector::new(TallyRuntime::default(), config, company, context.clone())
+                .unwrap();
+
+        let error = connector
+            .read_pack_window(&context)
+            .await
+            .expect_err("a core-window bracket formed without ALTMSTID must fail closed");
+        assert!(
+            matches!(
+                &error,
+                TallyError::InvalidData { code } if code == "company_altmstid_missing"
+            ),
+            "unexpected error: {error:?}"
+        );
+        let methods = server.await.expect("join routed Tally server");
+        assert_eq!(methods, ["POST", "POST"]);
     }
 
     #[tokio::test]

@@ -4454,7 +4454,7 @@ mod tests {
         let company_guid = &plan.company.identity.company_guid;
         let company_extent = || {
             format!(
-                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260731</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20260701</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260731</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20260701</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{company_guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
             )
         };
         let native_groups = || {
@@ -4464,7 +4464,7 @@ mod tests {
         };
         let native_ledgers = || {
             format!(
-                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><PARENT TYPE="String">Primary</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
             )
         };
         let native_voucher_types = || {

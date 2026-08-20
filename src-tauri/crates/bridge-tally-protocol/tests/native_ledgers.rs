@@ -84,6 +84,72 @@ fn native_ledgers_fail_closed_when_opening_balance_or_company_prefix_is_absent()
     .is_err());
 }
 
+/// `build_core_window` reads `TallyLedger::parent == None` as "this ledger
+/// sits at the tree root". Before the fix, a row that simply omitted PARENT
+/// got that same `None` -- a response quietly dropping the field looked
+/// identical to a genuinely root-parented ledger, silently corrupting the
+/// hierarchy instead of failing. The field must now be observed, not merely
+/// defaulted.
+#[test]
+fn native_ledger_row_omitting_parent_entirely_is_rejected() {
+    let row_start = WR2
+        .find(r#"<PARENT TYPE="String">Bridge Nested Debtors WR4</PARENT>"#)
+        .expect("captured row carries the discriminating PARENT element");
+    let row_end = row_start + r#"<PARENT TYPE="String">Bridge Nested Debtors WR4</PARENT>"#.len();
+    let omitted_parent = format!("{}{}", &WR2[..row_start], &WR2[row_end..]);
+    assert!(
+        !omitted_parent.contains("Bridge Nested Debtors WR4"),
+        "the removal must actually drop the PARENT element for this test to prove anything"
+    );
+
+    let error = parse_native_ledger_source_records_with_evidence(
+        &omitted_parent,
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect_err("a native ledger row that never sent PARENT must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("native ledger row omitted PARENT"),
+        "unexpected error: {error:#}"
+    );
+}
+
+/// An explicitly EMPTY `PARENT` element is Tally's real shape for a
+/// genuinely root-parented ledger (see `captured_aarav_native_master_parents_resolve_to_the_canonical_tree`
+/// in `connector.rs`, e.g. "Profit & Loss A/c"). It must keep parsing to
+/// `parent: None` and must not be confused with the omitted-field case
+/// above, which is now rejected instead.
+#[test]
+fn native_ledger_row_with_an_explicitly_empty_parent_is_accepted_and_stays_rooted() {
+    let empty_parent = WR2.replace(
+        r#"<PARENT TYPE="String">Bridge Nested Debtors WR4</PARENT>"#,
+        r#"<PARENT TYPE="String"></PARENT>"#,
+    );
+    assert_ne!(
+        empty_parent, WR2,
+        "the substitution must actually change the fixture for this test to prove anything"
+    );
+
+    let parsed = parse_native_ledger_source_records_with_evidence(
+        &empty_parent,
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect("a native ledger row with an explicitly empty PARENT must still parse");
+    let row = parsed
+        .records
+        .iter()
+        .find(|record| record.record.name == "Bridge Nested Debtor WR4")
+        .expect("the edited row is still present");
+    assert_eq!(
+        row.record.parent, None,
+        "an explicitly empty PARENT must resolve to the same root-marking None as before"
+    );
+    // The rest of the row must be untouched by the PARENT edit.
+    assert_eq!(row.record.opening_balance.as_deref(), Some("-50000.00"));
+    assert_eq!(row.identities.master_id.as_deref(), Some("213"));
+}
+
 #[test]
 fn foreign_ledger_prefix_is_counted_without_rejecting_an_otherwise_bound_collection() {
     let mixed_prefix = AARAV.replacen(

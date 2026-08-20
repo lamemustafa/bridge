@@ -31,7 +31,7 @@ use bridge_tally_protocol::{
     native_outstandings::{
         render_native_ledger_export_request, render_native_voucher_export_request,
     },
-    outstandings_shared::{parse_company_book_extent, CompanyBookExtent},
+    outstandings_shared::{parse_company_book_extent, require_master_witness, CompanyBookExtent},
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
     parse_native_ledger_source_records_with_evidence,
     parse_native_voucher_source_records_with_evidence,
@@ -738,6 +738,11 @@ impl TallyClient {
         if first != second {
             anyhow::bail!("Tally company book extent changed between paired reads");
         }
+        // The parser stays tolerant of an absent ALTMSTID (older captures still parse), but this
+        // is the outstandings bracket itself: fail closed here so a witness-less pair -- which
+        // would otherwise compare equal regardless of a mid-window master edit -- can never be
+        // mistaken for a stable one. See `require_master_witness` for why.
+        require_master_witness(&first)?;
         Ok(first)
     }
 
@@ -1594,6 +1599,18 @@ mod tests {
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
+        // (`fetch_company_book_extent`) now requires that witness, so inject it into this
+        // in-memory copy -- the committed fixture bytes are left untouched.
+        let company_extent = COMPANY_EXTENT.replacen(
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
+            1,
+        );
+        assert_ne!(
+            company_extent, COMPANY_EXTENT,
+            "the injection must actually change the fixture for this test to prove anything"
+        );
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -1632,7 +1649,7 @@ mod tests {
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let body = match index {
-                    0 | 2 | 12 | 14 => COMPANY_EXTENT,
+                    0 | 2 | 12 | 14 => company_extent.as_str(),
                     4 | 6 | 8 | 10 => OPTIONAL_VOUCHERS,
                     _ => STATUS,
                 };
@@ -1731,6 +1748,18 @@ mod tests {
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
+        // (`fetch_company_book_extent`) now requires that witness, so inject it into this
+        // in-memory copy -- the committed fixture bytes are left untouched.
+        let company_extent = COMPANY_EXTENT.replacen(
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
+            1,
+        );
+        assert_ne!(
+            company_extent, COMPANY_EXTENT,
+            "the injection must actually change the fixture for this test to prove anything"
+        );
 
         let coverage = |name: &str| {
             format!(
@@ -1742,9 +1771,9 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let responses = vec![
-            COMPANY_EXTENT.to_string(),
+            company_extent.clone(),
             STATUS.to_string(),
-            COMPANY_EXTENT.to_string(),
+            company_extent,
             STATUS.to_string(),
             coverage("Before Rename"),
             STATUS.to_string(),
@@ -1802,6 +1831,91 @@ mod tests {
         server.await.expect("synthetic Tally server task");
     }
 
+    /// The outstandings bracket (`fetch_company_book_extent`, feeding both
+    /// `fetch_outstandings_native` and `fetch_ledgers`) must fail closed with
+    /// a typed error when both paired reads agree but neither carries
+    /// `ALTMSTID`. This is the exact case the review flagged: two
+    /// witness-less extents compare equal, so the ordinary `first != second`
+    /// drift check alone cannot tell a stable book from one where a
+    /// GROUP/LEDGER master moved mid-window without a signal to detect it.
+    /// Uses the real, unmodified `unit_a_company_extent_live.xml` capture --
+    /// from before `ALTMSTID` was added to the fetch list -- rather than a
+    /// synthetic response, so the absence being tested is the one Tally has
+    /// actually produced.
+    #[tokio::test]
+    async fn outstandings_bracket_fails_closed_when_altmstid_is_absent() {
+        const COMPANY_EXTENT_WITHOUT_ALTMSTID: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        assert!(
+            !COMPANY_EXTENT_WITHOUT_ALTMSTID.contains("ALTMSTID"),
+            "this fixture must predate the ALTMSTID fetch for this test to prove anything"
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let responses = [
+            COMPANY_EXTENT_WITHOUT_ALTMSTID,
+            STATUS,
+            COMPANY_EXTENT_WITHOUT_ALTMSTID,
+            STATUS,
+        ];
+        let server = tokio::spawn(async move {
+            for (index, body) in responses.into_iter().enumerate() {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .expect("paired request timed out")
+                        .expect("accept paired request");
+                let request = read_complete_http_request(&mut socket).await;
+                let expected_prefix = if index % 2 == 0 {
+                    "POST / HTTP/1.1"
+                } else {
+                    "GET /status HTTP/1.1"
+                };
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
+                    "request {index} did not follow the required read/health-check sequence"
+                );
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write paired response");
+            }
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let error = client
+            .fetch_company_book_extent(
+                "Aarav Trading Company Demo",
+                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+            )
+            .await
+            .expect_err("a stable pair without ALTMSTID must still fail closed");
+        server.await.expect("synthetic Tally server task");
+        assert!(
+            error
+                .downcast_ref::<bridge_tally_protocol::outstandings_shared::OutstandingsError>()
+                .is_some_and(|error| {
+                    *error
+                        == bridge_tally_protocol::outstandings_shared::OutstandingsError::MasterWitnessAbsent
+                }),
+            "unexpected error: {error:#}"
+        );
+    }
+
     #[tokio::test]
     async fn http_success_with_tally_status_zero_is_not_an_empty_success() {
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -1809,7 +1923,7 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+            let extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
             for (index, body) in [
                 extent,
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
@@ -1871,9 +1985,12 @@ mod tests {
         )
     }
 
+    /// Carries `ALTMSTID` so callers that need the production bracket to
+    /// accept a stable pair (rather than exercise the master-witness guard
+    /// itself) can use it as-is.
     fn synthetic_company_book_extent_xml(guid: &str) -> String {
         format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         )
     }
 

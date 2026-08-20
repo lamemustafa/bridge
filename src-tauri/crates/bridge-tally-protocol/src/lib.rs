@@ -2259,6 +2259,17 @@ fn parse_native_ledger_collection_row(
     if !opening_balance_seen || ledger.opening_balance.is_none() {
         anyhow::bail!("native ledger row omitted OPENINGBALANCE");
     }
+    // Unlike GUID/MASTERID/ALTERID/OPENINGBALANCE, an absent PARENT is not simply invalid --
+    // downstream (`build_core_window`) reads `ledger.parent == None` as "this ledger is at the
+    // tree root", which is also the correct reading of an explicitly EMPTY PARENT (Tally does
+    // send those for genuinely root-parented ledgers). So the requirement here is narrower than
+    // "must be non-empty": only that the field was OBSERVED at all. `parent_seen` is set by both
+    // the `Event::Start` and `Event::Empty` arms above, but never by omission, so by the time we
+    // reach here `ledger.parent == None` can only mean "explicitly empty" -- never "never sent" --
+    // which is exactly the distinction the reserved-root handling depends on.
+    if !parent_seen {
+        anyhow::bail!("native ledger row omitted PARENT");
+    }
     Ok((ledger, identities, alter_id))
 }
 
