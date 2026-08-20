@@ -904,8 +904,17 @@ impl TallyClient {
         from: &str,
         to: &str,
     ) -> anyhow::Result<Vec<TallyVoucher>> {
+        // Fail closed: `from`/`to` feed a quoted `$$Date:"..."` TDL formula
+        // argument, where XML escaping alone cannot contain an embedded
+        // quote (Tally decodes `&quot;` back to `"` before evaluating the
+        // formula). Requiring a validated `TallyDate` -- exactly 8 ASCII
+        // digits -- closes that off at the source instead of sanitising.
+        let from = bridge_tally_core::TallyDate::parse(from)
+            .context("voucher export from-date must be a valid YYYYMMDD date")?;
+        let to = bridge_tally_core::TallyDate::parse(to)
+            .context("voucher export to-date must be a valid YYYYMMDD date")?;
         let xml = self
-            .post_xml(render_native_voucher_export_request(company, from, to))
+            .post_xml(render_native_voucher_export_request(company, &from, &to))
             .await?;
         let parsed =
             parse_native_voucher_source_records_with_evidence(&xml, expected_company_guid)?;

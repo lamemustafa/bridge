@@ -3,7 +3,8 @@ use bridge_tally_core::report_tie_out::{LedgerPeriodBalance, LedgerPeriodBalance
 use bridge_tally_core::{
     CanonicalPackWindow, CapabilityEvidence, CapabilityPackId, CapabilityState, CompanyRef,
     EvidenceConfidence, ExactDecimal, PackBatch, ProbeResult, ReadResponseScope, ReadWindow,
-    RequestContext, SourceIdentity, TallyConnector, TallyError, CORE_ACCOUNTING_SCHEMA_VERSION,
+    RequestContext, SourceIdentity, TallyConnector, TallyDate, TallyError,
+    CORE_ACCOUNTING_SCHEMA_VERSION,
 };
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
 use bridge_tally_protocol::{
@@ -208,13 +209,20 @@ impl RuntimeTallyConnector {
         let voucher_opening_extent = self
             .read_pinned_company_book_extent(&company_name, &expected_guid)
             .await?;
+        // Fail closed: `from`/`to` feed a quoted `$$Date:"..."` TDL formula
+        // argument, where XML escaping alone cannot contain an embedded
+        // quote (Tally decodes `&quot;` back to `"` before evaluating the
+        // formula). Requiring a validated `TallyDate` -- exactly 8 ASCII
+        // digits -- closes that off at the source instead of sanitising.
+        let voucher_window_from = TallyDate::parse(context.window.from_yyyymmdd.clone())?;
+        let voucher_window_to = TallyDate::parse(context.window.to_yyyymmdd.clone())?;
         let validation_guid = expected_guid.clone();
         let voucher_xml = self
             .post_xml_validated(
                 render_native_voucher_export_request(
                     &company_name,
-                    &context.window.from_yyyymmdd,
-                    &context.window.to_yyyymmdd,
+                    &voucher_window_from,
+                    &voucher_window_to,
                 ),
                 move |xml| {
                     parse_native_voucher_source_records_with_evidence(xml, &validation_guid).is_ok()
@@ -748,8 +756,12 @@ mod tests {
         assert!(render_native_group_snapshot_request(COMPANY)
             .contains("<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID</FETCH>"));
         assert!(!voucher_type_request.contains("<REPORT>"));
-        assert!(render_native_voucher_export_request(COMPANY, "20260401", "20260930")
-            .contains("ALLLEDGERENTRIES.LEDGERNAME, ALLLEDGERENTRIES.AMOUNT, ALLLEDGERENTRIES.ISDEEMEDPOSITIVE"));
+        let probe_from = TallyDate::parse("20260401").unwrap();
+        let probe_to = TallyDate::parse("20260930").unwrap();
+        assert!(
+            render_native_voucher_export_request(COMPANY, &probe_from, &probe_to)
+                .contains("ALLLEDGERENTRIES.LEDGERNAME, ALLLEDGERENTRIES.AMOUNT, ALLLEDGERENTRIES.ISDEEMEDPOSITIVE")
+        );
 
         let context = RequestContext {
             run_id: "wr2-native-core-window".to_string(),
