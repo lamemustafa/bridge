@@ -2177,7 +2177,7 @@ fn parse_native_ledger_collection_row(
                     if std::mem::replace(&mut parent_seen, true) {
                         anyhow::bail!("native ledger row repeated PARENT");
                     }
-                    ledger.parent = read_optional_text(reader, child.name())?;
+                    ledger.parent = read_identifier_text(reader, child.name())?;
                 }
                 b"PARTYGSTIN" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
@@ -2302,7 +2302,7 @@ fn parse_native_voucher_type_collection_row(
                     if std::mem::replace(&mut parent_seen, true) {
                         anyhow::bail!("native voucher type row repeated PARENT");
                     }
-                    record.parent = read_optional_text(reader, child.name())?;
+                    record.parent = read_identifier_text(reader, child.name())?;
                 }
                 _ => {
                     let child_name = child.name().as_ref().to_vec();
@@ -2390,7 +2390,7 @@ fn parse_native_group_collection_row(
                     if std::mem::replace(&mut parent_seen, true) {
                         anyhow::bail!("native group row repeated PARENT");
                     }
-                    record.parent = read_optional_text(reader, child.name())?;
+                    record.parent = read_identifier_text(reader, child.name())?;
                 }
                 _ => {
                     let child_name = child.name().as_ref().to_vec();
@@ -2487,7 +2487,8 @@ fn parse_native_voucher_collection_row(
                 b"VOUCHERTYPENAME" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
                     mark_unique_field(&mut seen, "VOUCHERTYPENAME", "native voucher")?;
-                    voucher.voucher_type = Some(read_required_text(reader, child.name())?);
+                    voucher.voucher_type =
+                        Some(read_required_identifier_text(reader, child.name())?);
                 }
                 b"VOUCHERNUMBER" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
@@ -2585,7 +2586,7 @@ fn parse_native_voucher_ledger_entry(
                 b"LEDGERNAME" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
                     mark_unique_field(&mut seen, "LEDGERNAME", "native voucher ledger entry")?;
-                    ledger_name = Some(read_required_text(reader, child.name())?);
+                    ledger_name = Some(read_required_identifier_text(reader, child.name())?);
                 }
                 b"AMOUNT" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
@@ -4505,7 +4506,7 @@ fn parse_named_master(
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally master row repeated PARENT");
                 }
-                record.parent = read_optional_text(reader, element.name())?;
+                record.parent = read_identifier_text(reader, element.name())?;
             }
             Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(element_name) => {
                 break;
@@ -4540,7 +4541,7 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally ledger row repeated PARENT");
                 }
-                ledger.parent = read_optional_text(reader, element.name())?
+                ledger.parent = read_identifier_text(reader, element.name())?
             }
             Event::Start(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"PARTYGSTIN") =>
@@ -4597,7 +4598,7 @@ fn parse_ledger_write_readback(
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally write readback repeated PARENT");
                 }
-                ledger.parent = read_optional_text(reader, element.name())?;
+                ledger.parent = read_identifier_text(reader, element.name())?;
             }
             Event::Start(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"PARTYGSTIN") =>
@@ -4763,7 +4764,7 @@ fn parse_voucher(
             {
                 validate_only_attributes(&element, &[])?;
                 mark_unique_field(&mut seen, "VOUCHERTYPENAME", "voucher")?;
-                voucher.voucher_type = read_optional_text(reader, element.name())?
+                voucher.voucher_type = read_identifier_text(reader, element.name())?
             }
             Event::Start(element)
                 if element
@@ -4783,7 +4784,7 @@ fn parse_voucher(
             {
                 validate_only_attributes(&element, &[])?;
                 mark_unique_field(&mut seen, "PARTYLEDGERNAME", "voucher")?;
-                voucher.party_ledger_name = read_optional_text(reader, element.name())?
+                voucher.party_ledger_name = read_identifier_text(reader, element.name())?
             }
             Event::Start(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"ISCANCELLED") =>
@@ -4923,7 +4924,7 @@ fn parse_ledger_entry(reader: &mut Reader<&[u8]>) -> anyhow::Result<TallyLedgerE
             {
                 validate_only_attributes(&element, &[])?;
                 mark_unique_field(&mut seen, "LEDGERNAME", "ledger entry")?;
-                ledger_name = read_optional_text(reader, element.name())?;
+                ledger_name = read_identifier_text(reader, element.name())?;
             }
             Event::Start(element) if element.name().as_ref().eq_ignore_ascii_case(b"AMOUNT") => {
                 validate_only_attributes(&element, &[])?;
@@ -5064,6 +5065,32 @@ fn read_optional_text(
 
 fn read_required_text(reader: &mut Reader<&[u8]>, name: QName<'_>) -> anyhow::Result<String> {
     read_optional_text(reader, name)?
+        .ok_or_else(|| anyhow::anyhow!("Tally response contained an empty required value"))
+}
+
+/// Reads element text WITHOUT trimming, for foreign identifier references — LEDGERNAME,
+/// PARENT, VOUCHERTYPENAME, PARTYLEDGERNAME — that must byte-for-byte match a master NAME
+/// attribute. `attr_value` stores that NAME verbatim (untrimmed) per `ForeignText::from_tally`'s
+/// no-normalisation contract, and the canonical-window lookup maps are keyed on that verbatim
+/// text. Trimming a reference here while the map key stays untrimmed would silently break the
+/// lookup for any master whose name carries incidental leading/trailing whitespace. Only the
+/// emptiness check trims, matching `attr_value`'s own "all-whitespace counts as absent" rule;
+/// the returned value itself is never trimmed.
+fn read_identifier_text(
+    reader: &mut Reader<&[u8]>,
+    name: QName<'_>,
+) -> anyhow::Result<Option<String>> {
+    let value = reader.read_text(name)?;
+    let decoded = value.decode()?;
+    let unescaped = quick_xml::escape::unescape(&decoded)?;
+    Ok((!unescaped.trim().is_empty()).then(|| unescaped.into_owned()))
+}
+
+fn read_required_identifier_text(
+    reader: &mut Reader<&[u8]>,
+    name: QName<'_>,
+) -> anyhow::Result<String> {
+    read_identifier_text(reader, name)?
         .ok_or_else(|| anyhow::anyhow!("Tally response contained an empty required value"))
 }
 

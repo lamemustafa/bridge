@@ -601,8 +601,10 @@ mod tests {
     };
     use bridge_tally_protocol::{
         decode_tally_xml_response_bytes_limited, parse_group_source_records_with_evidence,
-        parse_ledger_source_records_with_evidence,
+        parse_ledger_source_records_with_evidence, parse_native_group_source_records_with_evidence,
+        parse_native_ledger_source_records_with_evidence,
         parse_native_voucher_source_records_with_evidence,
+        parse_native_voucher_type_source_records_with_evidence,
         parse_voucher_source_records_with_evidence,
         parse_voucher_type_source_records_with_evidence, ExpectedTallyTextEncoding, ParsedExport,
         ParsedSourceRecord, TallyLedger, TallyNamedMaster, TallyVoucher,
@@ -909,6 +911,159 @@ mod tests {
                 .likely_intended_spelling
                 .as_deref(),
             Some("ZZ Curly “Quoted” Ledger")
+        );
+    }
+
+    // Regression coverage for the master-name/reference trim asymmetry: master NAME
+    // attributes are stored verbatim (`attr_value` in bridge-tally-protocol/src/lib.rs
+    // does not trim), so the canonical lookup maps below are keyed on the untrimmed
+    // name. A LEDGERNAME/PARENT/VOUCHERTYPENAME reference that trimmed its own text
+    // before the fix could never match a padded master name and would fail the whole
+    // company read with `..._reference_missing`. No real capture exhibits this padding
+    // (see the safety-check note in the PR description), so these three tests use
+    // synthetic XML shaped exactly like the real native captures in
+    // `bridge-tally-protocol/tests/fixtures/native/*` (ENVELOPE/HEADER/STATUS,
+    // BODY/DATA/COLLECTION, GUID/MASTERID/ALTERID identity, company-guid-prefixed
+    // GUIDs) rather than the ad hoc `LEDGERENTRIES`/`LEDGERENTRY` shape the other
+    // helpers in this module use for the pre-native legacy parsers.
+    const PADDED_COMPANY_GUID: &str = "synthetic-company-guid";
+
+    fn padded_native_group_export(
+        name: &str,
+        parent_ref: &str,
+    ) -> ParsedExport<ParsedSourceRecord<TallyNamedMaster>> {
+        let xml = format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><GROUP NAME="{name}"><GUID>{PADDED_COMPANY_GUID}-00000001</GUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID><PARENT>{parent_ref}</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        parse_native_group_source_records_with_evidence(&xml, PADDED_COMPANY_GUID)
+            .expect("synthetic native group row parses")
+    }
+
+    fn padded_native_two_group_export(
+        parent_name: &str,
+        parent_parent_ref: &str,
+        child_name: &str,
+        child_parent_ref: &str,
+    ) -> ParsedExport<ParsedSourceRecord<TallyNamedMaster>> {
+        let xml = format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><GROUP NAME="{parent_name}"><GUID>{PADDED_COMPANY_GUID}-00000001</GUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID><PARENT>{parent_parent_ref}</PARENT></GROUP><GROUP NAME="{child_name}"><GUID>{PADDED_COMPANY_GUID}-00000002</GUID><MASTERID>2</MASTERID><ALTERID>2</ALTERID><PARENT>{child_parent_ref}</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        parse_native_group_source_records_with_evidence(&xml, PADDED_COMPANY_GUID)
+            .expect("synthetic native two-group collection parses")
+    }
+
+    fn padded_native_ledger_export(
+        name: &str,
+        parent_ref: &str,
+    ) -> ParsedExport<ParsedSourceRecord<TallyLedger>> {
+        let xml = format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="{name}"><GUID>{PADDED_COMPANY_GUID}-00000002</GUID><MASTERID>2</MASTERID><ALTERID>2</ALTERID><PARENT>{parent_ref}</PARENT><OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        parse_native_ledger_source_records_with_evidence(&xml, PADDED_COMPANY_GUID)
+            .expect("synthetic native ledger row parses")
+    }
+
+    fn padded_native_voucher_type_export(
+        name: &str,
+    ) -> ParsedExport<ParsedSourceRecord<TallyNamedMaster>> {
+        let xml = format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHERTYPE NAME="{name}"><GUID>{PADDED_COMPANY_GUID}-00000003</GUID><MASTERID>3</MASTERID><ALTERID>3</ALTERID><PARENT>Primary</PARENT></VOUCHERTYPE></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        parse_native_voucher_type_source_records_with_evidence(&xml, PADDED_COMPANY_GUID)
+            .expect("synthetic native voucher type row parses")
+    }
+
+    fn padded_native_voucher_export(
+        voucher_type_ref: &str,
+        entry_ledger_name_ref: &str,
+    ) -> ParsedExport<ParsedSourceRecord<TallyVoucher>> {
+        let xml = format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER REMOTEID="{PADDED_COMPANY_GUID}-00000004"><DATE>20260714</DATE><GUID>{PADDED_COMPANY_GUID}-00000004</GUID><MASTERID>4</MASTERID><ALTERID>4</ALTERID><VOUCHERTYPENAME>{voucher_type_ref}</VOUCHERTYPENAME><VOUCHERNUMBER>SYN-1</VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>{entry_ledger_name_ref}</LEDGERNAME><AMOUNT>-100.00</AMOUNT><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        parse_native_voucher_source_records_with_evidence(&xml, PADDED_COMPANY_GUID)
+            .expect("synthetic native voucher row parses")
+    }
+
+    #[test]
+    fn padded_ledger_name_and_its_ledgername_reference_resolve_together() {
+        let padded_ledger_name = " Padded Cash Ledger ";
+        let groups = padded_native_group_export("Assets", "Primary");
+        let ledgers = padded_native_ledger_export(padded_ledger_name, "Assets");
+        let voucher_types = padded_native_voucher_type_export("Receipt");
+        let vouchers = padded_native_voucher_export("Receipt", padded_ledger_name);
+
+        let window = build_core_window(&context(), groups, ledgers, voucher_types, vouchers)
+            .expect(
+            "a ledger name and its LEDGERNAME reference carry identical padding and must resolve",
+        );
+        let PackBatch::CoreAccounting(batch) = window.batch else {
+            panic!("wrong pack");
+        };
+        // The resolved name must retain its exact original bytes, not a trimmed copy.
+        assert_eq!(batch.ledgers[0].name, padded_ledger_name);
+        assert_eq!(batch.ledger_entries.len(), 1);
+        assert_eq!(
+            batch.ledger_entries[0].ledger_source_id,
+            format!("{PADDED_COMPANY_GUID}-00000002")
+        );
+    }
+
+    #[test]
+    fn padded_group_name_and_a_sibling_groups_parent_reference_resolve_together() {
+        let padded_group_name = " Padded Parent Group ";
+        let groups = padded_native_two_group_export(
+            padded_group_name,
+            "Primary",
+            "Child Group",
+            padded_group_name,
+        );
+        let ledgers = padded_native_ledger_export("Cash", "Child Group");
+        let voucher_types = padded_native_voucher_type_export("Receipt");
+        let vouchers = padded_native_voucher_export("Receipt", "Cash");
+
+        let window = build_core_window(&context(), groups, ledgers, voucher_types, vouchers).expect(
+            "a group name and a sibling group's PARENT reference carry identical padding and must resolve",
+        );
+        let PackBatch::CoreAccounting(batch) = window.batch else {
+            panic!("wrong pack");
+        };
+        let parent_group = batch
+            .groups
+            .iter()
+            .find(|group| group.source_id == format!("{PADDED_COMPANY_GUID}-00000001"))
+            .expect("padded parent group is present");
+        // The resolved name must retain its exact original bytes, not a trimmed copy.
+        assert_eq!(parent_group.name, padded_group_name);
+        let child_group = batch
+            .groups
+            .iter()
+            .find(|group| group.source_id == format!("{PADDED_COMPANY_GUID}-00000002"))
+            .expect("child group is present");
+        assert_eq!(
+            child_group.parent_source_id.as_deref(),
+            Some(format!("{PADDED_COMPANY_GUID}-00000001").as_str())
+        );
+    }
+
+    #[test]
+    fn padded_voucher_type_name_and_its_vouchertypename_reference_resolve_together() {
+        let padded_voucher_type_name = " Padded Receipt Type ";
+        let groups = padded_native_group_export("Assets", "Primary");
+        let ledgers = padded_native_ledger_export("Cash", "Assets");
+        let voucher_types = padded_native_voucher_type_export(padded_voucher_type_name);
+        let vouchers = padded_native_voucher_export(padded_voucher_type_name, "Cash");
+
+        let window = build_core_window(&context(), groups, ledgers, voucher_types, vouchers).expect(
+            "a voucher type name and its VOUCHERTYPENAME reference carry identical padding and must resolve",
+        );
+        let PackBatch::CoreAccounting(batch) = window.batch else {
+            panic!("wrong pack");
+        };
+        // The resolved name must retain its exact original bytes, not a trimmed copy.
+        assert_eq!(batch.voucher_types[0].name, padded_voucher_type_name);
+        assert_eq!(
+            batch.vouchers[0].voucher_type_source_id,
+            format!("{PADDED_COMPANY_GUID}-00000003")
         );
     }
 
