@@ -3,7 +3,7 @@ use bridge_tally_protocol::{
 };
 
 const AARAV: &str = include_str!("fixtures/native/ledgers_native_aarav.xml");
-const WR2: &str = include_str!("fixtures/native/ledgers_native_wr2.xml");
+const WR2: &str = include_str!("fixtures/native/ledgers_native_wr2_core_window.xml");
 
 #[test]
 fn captured_native_ledgers_preserve_real_identity_signed_balances_and_invalid_parent_reference() {

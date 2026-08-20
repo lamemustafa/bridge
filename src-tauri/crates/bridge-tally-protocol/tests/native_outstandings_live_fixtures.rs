@@ -40,7 +40,13 @@ const AARAV_COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
 /// `group_snapshot_aarav.xml` predates the request being widened to fetch
 /// `GUID, MASTERID, ALTERID` (see `render_native_group_snapshot_request`)
 /// and so carries no row identity at all -- it can no longer bind to a
-/// company and is superseded here by the later capture that carries the
+/// company for outstandings acceptance purposes. That is exactly the
+/// company-binding rejection case
+/// (`NativeOutstandingsError::InvalidResponse("group_company_guid_unverified")`)
+/// tested against these real bytes in
+/// `bridge_tally_protocol::native_outstandings::wire::group_tests::a_real_pre_widening_capture_with_no_guid_anywhere_is_rejected`.
+/// Here it instead supplies the historical baseline for
+/// `GROUP_SNAPSHOT_AARAV_WITH_IDENTITY`, the later capture that carries the
 /// same 28 rows plus their GUIDs.
 const GROUP_SNAPSHOT_AARAV_WITH_IDENTITY: &[u8] =
     include_bytes!("fixtures/native/group_snapshot_aarav_with_identity.utf16le.xml");

@@ -1204,6 +1204,15 @@ mod group_tests {
     /// If every row omits GUID entirely, there is no evidence at all binding
     /// the response to the expected company, so it is rejected -- the same
     /// outcome as a response carrying only foreign prefixes.
+    ///
+    /// This mutation-based test is kept alongside
+    /// `a_real_pre_widening_capture_with_no_guid_anywhere_is_rejected` below:
+    /// it shares `LIVE_SHAPE`/`COMPANY_GUID` with the single-row omission
+    /// and mismatch tests in this module, forming a matched family that
+    /// isolates exactly one row-count/GUID variable at a time in a way a
+    /// fixed real capture cannot. The real capture below proves the same
+    /// rejection against actual TallyPrime bytes, not just a hand-mutated
+    /// shape.
     #[test]
     fn a_response_where_every_row_omits_guid_is_rejected() {
         let xml = LIVE_SHAPE
@@ -1217,6 +1226,27 @@ mod group_tests {
             );
         assert_eq!(
             parse_native_group_snapshot(&xml, COMPANY_GUID),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_company_guid_unverified"
+            ))
+        );
+    }
+
+    /// `group_snapshot_aarav.xml` is a real TallyPrime response, captured
+    /// live before the native Group request was widened to fetch
+    /// `GUID, MASTERID, ALTERID` (see `render_native_group_snapshot_request`).
+    /// All 28 of its rows genuinely omit `GUID` -- not by mutation, but
+    /// because the request never asked for it -- which makes this capture
+    /// the real-bytes instance of exactly the case
+    /// `a_response_where_every_row_omits_guid_is_rejected` constructs
+    /// synthetically above: a group snapshot with no row identity anywhere
+    /// cannot bind to any company and must be rejected outright. Real
+    /// captured bytes are worth more than constructed XML.
+    #[test]
+    fn a_real_pre_widening_capture_with_no_guid_anywhere_is_rejected() {
+        let xml = include_str!("../../tests/fixtures/native/group_snapshot_aarav.xml");
+        assert_eq!(
+            parse_native_group_snapshot(xml, "bb8ad19e-6aef-4239-a917-87fec0c6215e"),
             Err(NativeOutstandingsError::InvalidResponse(
                 "group_company_guid_unverified"
             ))
