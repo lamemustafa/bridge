@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "04c2796dc7b382a0582c82d0bc86f3b9b819b7bf46df6cf23a36b385f0f2e832"
+      "sha256": "0fffc70bdf0f533f3dd53bfe05017c182d1c42d6c7b6db174f65eb64733b718a"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
@@ -99,7 +99,7 @@
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "c9bd8222ce43a2c6eb09efd4c61c2ac8093c581806a8b8776f3f5c42e5130ea3"
+      "sha256": "93d0effb0814c9578662614636d99958e08add861c5ff184d885421fa0ad5736"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/Cargo.toml",
@@ -223,7 +223,7 @@
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
-      "sha256": "32a482e7126cfd8974fdde825526b9351f44bc2bcbd49e4b3193e311973c9cfe"
+      "sha256": "4b9e92b3afcc4b6694901387bd4fd040595c1c040e7713bb76817ddfdecdb791"
     },
     {
       "path": "src-tauri/src/db/migrations/0007_tally_selected_read_evidence.sql",
@@ -434,5 +434,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "d888c48b3149d37186a177e4dd7d44956452785890a407462c5b23f7be9150ec"
+  "manifest_sha256": "9ade970f61a558d70bb42f2640f10e62d085c10b21f9dda65dbc9bfb1a79ba46"
 }

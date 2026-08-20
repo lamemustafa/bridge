@@ -173,6 +173,11 @@ pub async fn connect_encrypted(
                 // These settings must be applied after sqlite3_key(). Executing them here also
                 // means replacement connections receive the same hardened configuration without
                 // putting key material in SqliteConnectOptions.
+                // Keep actionable SQLCipher errors while suppressing the per-allocation warning
+                // emitted when an operating-system page lock cannot be acquired.
+                connection
+                    .execute("PRAGMA cipher_log_level = ERROR;")
+                    .await?;
                 connection
                     .execute("PRAGMA cipher_memory_security = ON;")
                     .await?;
@@ -357,6 +362,17 @@ mod tests {
                 .contains("1111111111111111111111111111111111111111111111111111111111111111"),
             "pool connection options must not retain a hexadecimal copy of the key"
         );
+        let cipher_log_level = sqlx::query_scalar::<_, String>("PRAGMA cipher_log_level;")
+            .fetch_one(&pool)
+            .await
+            .expect("read SQLCipher log level");
+        assert_eq!(cipher_log_level, "ERROR");
+        let cipher_memory_security =
+            sqlx::query_scalar::<_, String>("PRAGMA cipher_memory_security;")
+                .fetch_one(&pool)
+                .await
+                .expect("read SQLCipher memory security state");
+        assert_eq!(cipher_memory_security, "1");
         sqlx::query("CREATE TABLE proof(value TEXT NOT NULL);")
             .execute(&pool)
             .await
