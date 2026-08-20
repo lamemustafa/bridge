@@ -34,6 +34,12 @@ members = [
 ]
 resolver = "2"
 
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
+
 [lib]
 name = "bridge_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
