@@ -2333,6 +2333,11 @@ where
                 }
             };
             if let PackBatch::CoreAccounting(core) = &source_window.batch {
+                if core.has_foreign_master_text_diagnostics() {
+                    state.warning_codes.insert(
+                        bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE.to_string(),
+                    );
+                }
                 let report_result = match self
                     .await_connector(
                         &state,
@@ -4102,6 +4107,21 @@ mod tests {
                 })
                 .collect(),
         );
+        window
+    }
+
+    fn core_groups_with_foreign_master_text_diagnostic() -> CanonicalPackWindow {
+        let mut window = core_groups(1);
+        let PackBatch::CoreAccounting(core) = &mut window.batch else {
+            panic!("core fixture");
+        };
+        core.foreign_master_text_diagnostics
+            .push(bridge_tally_core::ForeignMasterTextDiagnostic {
+                object_type: "group".to_string(),
+                source_id: "group-000000".to_string(),
+                stored_name: "Synthetic ill-rendering name".to_string(),
+                likely_intended_spelling: None,
+            });
         window
     }
 
@@ -6130,6 +6150,63 @@ mod tests {
             "record identities leaked into compact state: {max_state_json_bytes} bytes"
         );
         assert_eq!(connector.inner.requests.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn committed_window_with_foreign_master_text_diagnostic_persists_safe_warning_code() {
+        let (_, mirror, store, plan) = setup().await;
+        let source = core_groups_with_foreign_master_text_diagnostic();
+        let connector = ReportConnector {
+            inner: FakeConnector {
+                batch: Mutex::new(VecDeque::from([Ok(source.clone()), Ok(source)])),
+                company: plan.company.clone(),
+                requests: Mutex::new(Vec::new()),
+            },
+        };
+
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect("diagnosed window commits with a safe operator warning");
+
+        assert!(result
+            .state
+            .warning_codes
+            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+        let receipt = mirror
+            .historical_commit_receipt_for_batch(
+                result.state.batch_id.as_deref().expect("committed batch"),
+                &plan.run_id,
+            )
+            .await
+            .expect("committed receipt");
+        assert_eq!(
+            receipt.facts.warning_codes,
+            vec![bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE.to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn committed_clean_window_has_no_foreign_master_text_warning_code() {
+        let (_, mirror, store, plan) = setup().await;
+        let source = core_groups(1);
+        let connector = ReportConnector {
+            inner: FakeConnector {
+                batch: Mutex::new(VecDeque::from([Ok(source.clone()), Ok(source)])),
+                company: plan.company.clone(),
+                requests: Mutex::new(Vec::new()),
+            },
+        };
+
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect("clean window commits without the foreign-text warning");
+
+        assert!(!result
+            .state
+            .warning_codes
+            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
     }
 
     #[test]
