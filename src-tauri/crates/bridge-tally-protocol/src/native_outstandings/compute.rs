@@ -222,7 +222,7 @@ fn compute_residuals(
     ledgers: &[LedgerSnapshotEntry],
     group_snapshot: NativeGroupSnapshot<'_>,
 ) -> Result<(Vec<PartyResidual>, ExactDecimal, bool), NativeOutstandingsError> {
-    let (groups, allow_unresolved_legacy_parent) = match group_snapshot {
+    let (groups, legacy_tolerances) = match group_snapshot {
         NativeGroupSnapshot::Complete([]) => {
             return Err(NativeOutstandingsError::InvalidResponse(
                 "group_snapshot_empty",
@@ -253,9 +253,9 @@ fn compute_residuals(
     let mut residuals = Vec::new();
     let mut residual_total = ExactDecimal::zero();
     let mut has_unaged_receivable = false;
-    let group_parents = group_parent_map(groups)?;
+    let group_parents = group_parent_map(groups, legacy_tolerances)?;
     for ledger in ledgers {
-        if !is_party_ledger(ledger, &group_parents, allow_unresolved_legacy_parent)? {
+        if !is_party_ledger(ledger, &group_parents, legacy_tolerances)? {
             continue;
         }
         let zero = ExactDecimal::zero();
@@ -293,8 +293,9 @@ struct GroupAncestry {
 }
 
 /// The identity a group is classified by: Tally's own immutable
-/// `RESERVEDNAME` when a reader captured it, falling back to the group's
-/// (mutable) `NAME` only when no `RESERVEDNAME` evidence exists at all.
+/// `RESERVEDNAME` when a complete reader captured it. The explicit legacy
+/// fixture mode is the only mode allowed to fall back to the group's mutable
+/// `NAME` when no `RESERVEDNAME` evidence exists at all.
 ///
 /// `RESERVEDNAME` is Tally's field for exactly this purpose: a predefined
 /// group carries its original identity there for life, impervious to the
@@ -320,21 +321,28 @@ struct GroupAncestry {
 ///   of the very bug being fixed. A ledger under such a group can still
 ///   reach the report through `is_party_ledger`'s other trigger
 ///   (`bill_wise_on`); only a bill-wise-off ledger there is affected.
-/// - `None`: this row carries no `RESERVEDNAME` evidence at all -- an older
-///   capture, a Tally build that omits it, or (for
-///   [`NativeGroupSnapshot::LegacyFixtureWithoutGroups`]) no group data at
-///   all. There is nothing to trust or distrust, so this falls back to the
-///   pre-fix behavior of matching by `NAME`, so those callers are not
-///   suddenly broken by this change.
-fn group_identity_key(group: &TallyNamedMaster) -> String {
+/// - `None`: a complete snapshot promised group rows with this identity
+///   field, so its absence is a contradiction and fails closed. Only
+///   [`NativeGroupSnapshot::LegacyFixtureWithoutGroups`] can use the old
+///   NAME-only tolerance; that variant has no group rows, so this branch
+///   exists to make the evidence boundary explicit rather than to smooth a
+///   complete read.
+fn group_identity_key(
+    group: &TallyNamedMaster,
+    legacy_tolerances: bool,
+) -> Result<String, NativeOutstandingsError> {
     match group.reserved_name.as_deref() {
-        Some(reserved) => normalized_group_name(reserved),
-        None => normalized_group_name(&group.name),
+        Some(reserved) => Ok(normalized_group_name(reserved)),
+        None if legacy_tolerances => Ok(normalized_group_name(&group.name)),
+        None => Err(NativeOutstandingsError::InvalidResponse(
+            "group_reserved_name_missing",
+        )),
     }
 }
 
 fn group_parent_map(
     groups: &[TallyNamedMaster],
+    legacy_tolerances: bool,
 ) -> Result<BTreeMap<String, GroupAncestry>, NativeOutstandingsError> {
     let mut parents = BTreeMap::new();
     for group in groups {
@@ -352,7 +360,7 @@ fn group_parent_map(
                     .as_deref()
                     .map(normalized_group_name)
                     .filter(|parent| !parent.is_empty()),
-                identity: group_identity_key(group),
+                identity: group_identity_key(group, legacy_tolerances)?,
             },
         );
     }
@@ -362,7 +370,7 @@ fn group_parent_map(
 fn is_party_ledger(
     ledger: &LedgerSnapshotEntry,
     group_parents: &BTreeMap<String, GroupAncestry>,
-    allow_unresolved_legacy_parent: bool,
+    legacy_tolerances: bool,
 ) -> Result<bool, NativeOutstandingsError> {
     if ledger.bill_wise_on {
         return Ok(true);
@@ -372,33 +380,30 @@ fn is_party_ledger(
     };
     let mut current = normalized_group_name(parent);
     for _ in 0..=group_parents.len() {
-        // A group not present in the snapshot at all (including every group,
-        // for the legacy no-ancestry fixture path) carries no RESERVEDNAME
-        // evidence to look up, so the raw name is matched directly -- the
-        // same NAME-only behavior this classification always had for that
-        // case.
-        let identity = group_parents
-            .get(&current)
-            .map(|ancestry| ancestry.identity.as_str())
-            .unwrap_or(current.as_str());
-        if matches!(identity, "sundry debtors" | "sundry creditors") {
-            return Ok(true);
-        }
         if current == "primary" || current.is_empty() {
             return Ok(false);
         }
-        match group_parents.get(&current) {
-            Some(GroupAncestry {
-                parent: Some(parent),
-                ..
-            }) => current = parent.clone(),
-            Some(GroupAncestry { parent: None, .. }) => return Ok(false),
-            None if allow_unresolved_legacy_parent => return Ok(false),
-            None => {
+        let Some(ancestry) = group_parents.get(&current) else {
+            // A missing group is a contradiction for a read that claims
+            // complete ancestry. Only the deliberately labelled historical
+            // no-group fixture path may retain the direct NAME comparison.
+            if !legacy_tolerances {
                 return Err(NativeOutstandingsError::InvalidResponse(
                     "ledger_group_parent_unresolved",
-                ))
+                ));
             }
+            return Ok(matches!(
+                current.as_str(),
+                "sundry debtors" | "sundry creditors"
+            ));
+        };
+        let identity = ancestry.identity.as_str();
+        if matches!(identity, "sundry debtors" | "sundry creditors") {
+            return Ok(true);
+        }
+        match ancestry.parent.as_ref() {
+            Some(parent) => current = parent.clone(),
+            None => return Ok(false),
         }
     }
     Err(NativeOutstandingsError::InvalidResponse(

@@ -10,7 +10,6 @@ use bridge_tally_protocol::native_outstandings::{
     parse_native_ledger_snapshot, AgeingAnchor, NativeBillRow, NativeGroupSnapshot,
     NativeMasterSnapshot, NativeOutstandingsError,
 };
-use bridge_tally_protocol::parse_group_source_records_with_evidence;
 
 /// A synthetic company GUID used to bind the native group snapshot rows
 /// constructed in this file, matching the pattern of the real captured GUIDs
@@ -64,21 +63,17 @@ fn assert_exact(actual: &ExactDecimal, canonical: &str) {
 #[test]
 fn nested_debtor_ledger_from_raw_group_and_ledger_bytes_is_not_dropped() {
     let group_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
-        <COMPANYCONTEXT SCHEMA="bridge.tally.groups/1" OBJECTTYPE="GROUP" NAME="Synthetic Company" GUID="synthetic-company-guid" RECORDCOUNT="2"/>
-        <GROUP NAME="North Region" GUID="north-region-guid" MASTERID="1" ALTERID="1"><PARENT>Sundry Debtors</PARENT></GROUP>
-        <GROUP NAME="Sundry Debtors" GUID="debtors-guid" MASTERID="2" ALTERID="2"><PARENT>Primary</PARENT></GROUP>
-        </BODY></ENVELOPE>"#;
+        <DATA><COLLECTION>
+        <GROUP NAME="North Region" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Sundry Debtors</PARENT></GROUP>
+        <GROUP NAME="Sundry Debtors" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>Primary</PARENT></GROUP>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#;
     let ledger_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
         <LEDGER NAME="Nested Customer"><PARENT>North Region</PARENT>
         <CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0.00</OPENINGBALANCE>
         <ISBILLWISEON>No</ISBILLWISEON></LEDGER>
         </COLLECTION></DATA></BODY></ENVELOPE>"#;
-    let groups = parse_group_source_records_with_evidence(group_bytes)
-        .expect("raw group hierarchy parses")
-        .records
-        .into_iter()
-        .map(|row| row.record)
-        .collect::<Vec<_>>();
+    let groups = parse_native_group_snapshot(group_bytes, RESERVEDNAME_TESTS_COMPANY_GUID)
+        .expect("raw group hierarchy parses");
     let ledgers = parse_native_ledger_snapshot(ledger_bytes).expect("raw ledger snapshot parses");
 
     let result = compute_native_outstandings(
@@ -102,33 +97,29 @@ fn nested_debtor_ledger_from_raw_group_and_ledger_bytes_is_not_dropped() {
 #[test]
 fn complete_group_snapshot_refuses_empty_or_unresolved_ancestry() {
     let ledger_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
-        <LEDGER NAME="Nested Customer"><PARENT>North Region</PARENT>
+        <LEDGER NAME="Nested Customer"><PARENT>Sundry Debtors</PARENT>
         <CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0.00</OPENINGBALANCE>
         <ISBILLWISEON>No</ISBILLWISEON></LEDGER>
         </COLLECTION></DATA></BODY></ENVELOPE>"#;
     let ledgers = parse_native_ledger_snapshot(ledger_bytes).expect("raw ledger snapshot parses");
 
     for (group_bytes, expected_code) in [
+        (None, "group_snapshot_empty"),
         (
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
-                <COMPANYCONTEXT SCHEMA="bridge.tally.groups/1" OBJECTTYPE="GROUP" NAME="Synthetic Company" GUID="synthetic-company-guid" RECORDCOUNT="0"/>
-                </BODY></ENVELOPE>"#,
-            "group_snapshot_empty",
-        ),
-        (
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
-                <COMPANYCONTEXT SCHEMA="bridge.tally.groups/1" OBJECTTYPE="GROUP" NAME="Synthetic Company" GUID="synthetic-company-guid" RECORDCOUNT="1"/>
-                <GROUP NAME="Unrelated Group" GUID="unrelated-group-guid" MASTERID="1" ALTERID="1"><PARENT>Primary</PARENT></GROUP>
-                </BODY></ENVELOPE>"#,
+            Some(
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+                <GROUP NAME="Unrelated Group" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000003</GUID><PARENT>Primary</PARENT></GROUP>
+                </COLLECTION></DATA></BODY></ENVELOPE>"#,
+            ),
             "ledger_group_parent_unresolved",
         ),
     ] {
-        let groups = parse_group_source_records_with_evidence(group_bytes)
-            .expect("raw group snapshot parses")
-            .records
-            .into_iter()
-            .map(|row| row.record)
-            .collect::<Vec<_>>();
+        let groups = group_bytes
+            .map(|bytes| {
+                parse_native_group_snapshot(bytes, RESERVEDNAME_TESTS_COMPANY_GUID)
+                    .expect("raw group snapshot parses")
+            })
+            .unwrap_or_default();
         let error = compute_native_outstandings(
             "Synthetic Company",
             &[],
@@ -139,7 +130,7 @@ fn complete_group_snapshot_refuses_empty_or_unresolved_ancestry() {
             },
             AgeingAnchor::DueDate,
             &as_of(NATIVE_CAPTURE_AS_OF),
-            group_bytes.len() + ledger_bytes.len(),
+            group_bytes.map_or(0, str::len) + ledger_bytes.len(),
         )
         .expect_err("an incomplete production group snapshot must fail closed");
 
@@ -148,6 +139,46 @@ fn complete_group_snapshot_refuses_empty_or_unresolved_ancestry() {
             NativeOutstandingsError::InvalidResponse(expected_code)
         );
     }
+}
+
+#[test]
+fn complete_group_snapshot_requires_reservedname_evidence() {
+    let group_xml = format!(
+        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+        <GROUP NAME="Sundry Debtors"><GUID>{guid}-00000001</GUID><PARENT>Primary</PARENT></GROUP>
+        </COLLECTION></DATA></BODY></ENVELOPE>"#,
+        guid = RESERVEDNAME_TESTS_COMPANY_GUID,
+    );
+    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
+        .expect("group snapshot without RESERVEDNAME evidence parses at the XML boundary");
+    assert_eq!(groups[0].reserved_name, None);
+    let ledgers = parse_native_ledger_snapshot(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+         <LEDGER NAME=\"Fallback Customer\"><PARENT>Sundry Debtors</PARENT>\
+         <CLOSINGBALANCE>-500.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE>\
+         <ISBILLWISEON>No</ISBILLWISEON></LEDGER>\
+         </COLLECTION></DATA></BODY></ENVELOPE>",
+    )
+    .expect("raw ledger snapshot parses");
+
+    assert_eq!(
+        compute_native_outstandings(
+            "Synthetic Company",
+            &[],
+            &[],
+            NativeMasterSnapshot {
+                ledgers: &ledgers,
+                groups: NativeGroupSnapshot::Complete(&groups),
+            },
+            AgeingAnchor::DueDate,
+            &as_of(NATIVE_CAPTURE_AS_OF),
+            group_xml.len(),
+        ),
+        Err(NativeOutstandingsError::InvalidResponse(
+            "group_reserved_name_missing"
+        )),
+        "a Complete group snapshot cannot claim classification evidence while omitting RESERVEDNAME"
+    );
 }
 
 /// U2 -- the silent-empty-report defect: classifying a party group by
@@ -317,25 +348,10 @@ fn user_created_group_merely_named_sundry_debtors_is_not_treated_as_predefined()
     assert_exact(&result.residual_total, "0");
 }
 
-/// A group snapshot that carries no `RESERVEDNAME` evidence at all for a
-/// row (an older capture, or a Tally build that omits the attribute) must
-/// still classify that row by `NAME`, exactly as before this fix -- so
-/// callers on such a capture are not suddenly broken.
+/// Historical fixtures never carried group snapshots. Their labelled legacy
+/// mode keeps the pre-group-ancestry, NAME-only classification intact.
 #[test]
-fn group_snapshot_row_without_reservedname_evidence_falls_back_to_name() {
-    let group_xml = format!(
-        r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
-        <GROUP NAME="Sundry Debtors"><GUID>{guid}-00000001</GUID><PARENT>Primary</PARENT></GROUP>
-        </COLLECTION></DATA></BODY></ENVELOPE>"#,
-        guid = RESERVEDNAME_TESTS_COMPANY_GUID,
-    );
-    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
-        .expect("group snapshot without RESERVEDNAME evidence parses");
-    assert_eq!(
-        groups[0].reserved_name, None,
-        "sanity: this capture carries no RESERVEDNAME evidence at all"
-    );
-
+fn legacy_fixture_without_groups_keeps_name_only_party_classification() {
     let ledgers = parse_native_ledger_snapshot(
         "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
          <LEDGER NAME=\"Fallback Customer\"><PARENT>Sundry Debtors</PARENT>\
@@ -351,18 +367,18 @@ fn group_snapshot_row_without_reservedname_evidence_falls_back_to_name() {
         &[],
         NativeMasterSnapshot {
             ledgers: &ledgers,
-            groups: NativeGroupSnapshot::Complete(&groups),
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
         &as_of(NATIVE_CAPTURE_AS_OF),
-        group_xml.len(),
+        0,
     )
-    .expect("fallback-by-name ancestry resolves");
+    .expect("legacy no-group fixture keeps the historical NAME-only classification");
 
     assert_eq!(
         result.residuals.len(),
         1,
-        "with no RESERVEDNAME evidence at all, classification must still fall back to NAME"
+        "legacy no-group fixtures retain their historical direct-parent NAME match"
     );
     assert_exact(&result.residual_total, "500");
 }
