@@ -2433,11 +2433,15 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 mod tests {
     use super::{
         company_sweep_result, first_calendar_day_canary_window, portable_export_file_name,
-        reconcile_review_cleanup, require_utf8_destination, reviewed_probe_commitment_sha256,
-        selected_read_observation, tally_command_error, tally_runtime_command_error,
-        validate_dsc_pins, write_unique_download, OutstandingsRequest, PersistedTallyCompany,
-        SavedTallySetup,
+        reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
+        tally_command_error, tally_runtime_command_error, validate_dsc_pins, write_unique_download,
+        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
     };
+    // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
+    // path cannot be constructed portably. The import must carry the same gate as
+    // the test, or Windows fails on an unused import under `-D warnings`.
+    #[cfg(unix)]
+    use super::require_utf8_destination;
     use crate::tally::{
         ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
         SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
