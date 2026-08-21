@@ -135,7 +135,12 @@ impl SnapshotCoordinator {
                     proof_id: result.receipt.proof_id,
                     proof_sha256: result.receipt.proof_sha256,
                     gap_codes: result.state.gap_codes.into_iter().collect(),
-                    warning_codes: result.state.warning_codes.into_iter().collect(),
+                    warning_codes: result
+                        .state
+                        .warning_codes
+                        .into_iter()
+                        .map(|warning| warning.as_str().to_string())
+                        .collect(),
                     failure_code: None,
                     requires_resume: false,
                     resume_available: false,
@@ -336,7 +341,11 @@ fn status_from_state(state: DurableSnapshotState, requires_resume: bool) -> Snap
             .as_ref()
             .and_then(|receipt| receipt.proof_sha256.clone()),
         gap_codes: state.gap_codes.into_iter().collect(),
-        warning_codes: state.warning_codes.into_iter().collect(),
+        warning_codes: state
+            .warning_codes
+            .into_iter()
+            .map(|warning| warning.as_str().to_string())
+            .collect(),
         failure_code: None,
         requires_resume,
         resume_available,
