@@ -15,8 +15,8 @@ use bridge_tally_core::{
     TallyDate, TallyError, VoucherRecord, VoucherTypeRecord,
 };
 use bridge_tally_protocol::{
-    ParsedExport, ParsedSourceIdentityKind, ParsedSourceRecord, TallyLedger, TallyNamedMaster,
-    TallyVoucher,
+    is_tally_reserved_root, ParsedExport, ParsedSourceIdentityKind, ParsedSourceRecord,
+    TallyLedger, TallyNamedMaster, TallyVoucher,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -401,16 +401,6 @@ pub(super) fn resolve_group_parent(
     resolve_required_reference(value, ids_by_name, missing_code).map(Some)
 }
 
-fn is_tally_reserved_root(value: &str) -> bool {
-    const SANITIZED_ROOT_MARKER: &str = "\u{fffd}#4;";
-
-    let value = value.trim();
-    // Captures from two companies observed this marker only on Tally's reserved root (30 group
-    // parents and one ledger parent). Match the marker rather than its English display name.
-    // Keep the plain spelling because the legacy export path still emits it.
-    value.starts_with(SANITIZED_ROOT_MARKER) || value.eq_ignore_ascii_case("primary")
-}
-
 fn resolve_required_reference(
     value: &str,
     ids_by_name: &BTreeMap<String, String>,
@@ -609,7 +599,7 @@ mod tests {
         parse_voucher_type_source_records_with_evidence, ExpectedTallyTextEncoding, ParsedExport,
         ParsedSourceRecord, TallyLedger, TallyNamedMaster, TallyVoucher,
         BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_VOUCHER_EXPORT_SCHEMA,
-        BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
+        BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA, TALLY_SANITIZED_ROOT_MARKER,
     };
 
     fn context() -> RequestContext {
@@ -679,15 +669,18 @@ mod tests {
     fn tally_reserved_root_accepts_marker_and_legacy_plain_forms_for_both_parent_paths() {
         let group_ids_by_name = BTreeMap::from([("Assets".to_string(), "group-guid".to_string())]);
 
-        for value in ["\u{fffd}#4; Primary", "Primary"] {
+        for value in [
+            format!("{TALLY_SANITIZED_ROOT_MARKER} Primary"),
+            "Primary".to_string(),
+        ] {
             assert_eq!(
-                resolve_group_parent(Some(value), &group_ids_by_name, "group_parent_missing")
+                resolve_group_parent(Some(&value), &group_ids_by_name, "group_parent_missing")
                     .unwrap(),
                 None
             );
             assert_eq!(
                 resolve_optional_reference(
-                    Some(value),
+                    Some(&value),
                     &group_ids_by_name,
                     "ledger_parent_group_missing"
                 )
@@ -695,6 +688,54 @@ mod tests {
                 None
             );
         }
+
+        for value in [
+            format!("{TALLY_SANITIZED_ROOT_MARKER} Resave"),
+            format!("{TALLY_SANITIZED_ROOT_MARKER} Anything"),
+        ] {
+            assert!(matches!(
+                resolve_group_parent(Some(&value), &group_ids_by_name, "group_parent_missing"),
+                Err(TallyError::InvalidData { code }) if code == "group_parent_missing"
+            ));
+            assert!(matches!(
+                resolve_optional_reference(
+                    Some(&value),
+                    &group_ids_by_name,
+                    "ledger_parent_group_missing"
+                ),
+                Err(TallyError::InvalidData { code }) if code == "ledger_parent_group_missing"
+            ));
+        }
+    }
+
+    #[test]
+    fn marker_prefixed_real_master_name_resolves_by_its_raw_name() {
+        let marked_name = format!("{TALLY_SANITIZED_ROOT_MARKER} Resave");
+        let groups = padded_native_two_group_export(
+            &marked_name,
+            "Primary",
+            "Synthetic Child Group",
+            &marked_name,
+        );
+        let ledgers = padded_native_ledger_export("Synthetic Ledger", "Synthetic Child Group");
+        let voucher_types = padded_native_voucher_type_export("Synthetic Receipt");
+        let vouchers = padded_native_voucher_export("Synthetic Receipt", "Synthetic Ledger");
+
+        let window = build_core_window(&context(), groups, ledgers, voucher_types, vouchers)
+            .expect("a real marker-prefixed master name must resolve by its exact raw text");
+        let PackBatch::CoreAccounting(batch) = window.batch else {
+            panic!("wrong pack");
+        };
+        let child = batch
+            .groups
+            .iter()
+            .find(|group| group.name == "Synthetic Child Group")
+            .expect("child group is present");
+
+        assert_eq!(
+            child.parent_source_id.as_deref(),
+            Some(format!("{PADDED_COMPANY_GUID}-00000001").as_str())
+        );
     }
 
     #[test]

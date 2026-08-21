@@ -52,6 +52,25 @@ pub const BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA: &str = "bridge.tally.vouchers/3
 pub const BRIDGE_LEDGER_PERIOD_BALANCE_SCHEMA: &str = "bridge.tally.ledger-period-balances/1";
 pub const MAX_INTERACTIVE_DISCOVERY_COMPANIES: usize = 100;
 pub const MAX_STANDARD_LEDGER_IDENTITY_ROWS: usize = 1_000;
+/// The sanitized representation of Tally's U+0004 metadata prefix.
+///
+/// `tolerant_xml` produces this exact form for an illegal `&#4;` reference;
+/// literal U+FFFD source text remains distinguishable as `U+FFFD#65533;`.
+pub const TALLY_SANITIZED_ROOT_MARKER: &str = "\u{fffd}#4;";
+
+/// Whether Tally text names the reserved top-level root.
+///
+/// Tally may prefix its `Primary` root with the sanitized U+0004 metadata
+/// marker. The marker also occurs on non-root metadata, so it is removed only
+/// before comparing the complete remaining token to `Primary`.
+pub fn is_tally_reserved_root(value: &str) -> bool {
+    let value = value.trim();
+    let value = value
+        .strip_prefix(TALLY_SANITIZED_ROOT_MARKER)
+        .unwrap_or(value)
+        .trim();
+    value.eq_ignore_ascii_case("primary")
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TallyEnvelope<T> {

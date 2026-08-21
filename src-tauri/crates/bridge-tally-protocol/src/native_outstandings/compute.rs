@@ -5,7 +5,7 @@ use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use crate::outstandings_shared::{
     AgeingBillCounts, AgeingBuckets, OutstandingsReport, PartyOutstanding,
 };
-use crate::TallyNamedMaster;
+use crate::{is_tally_reserved_root, TallyNamedMaster, TALLY_SANITIZED_ROOT_MARKER};
 
 use super::model::{
     AgeingAnchor, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
@@ -380,7 +380,7 @@ fn is_party_ledger(
     };
     let mut current = normalized_group_name(parent);
     for _ in 0..=group_parents.len() {
-        if current == "primary" || current.is_empty() {
+        if is_tally_reserved_root(&current) || current.is_empty() {
             return Ok(false);
         }
         let Some(ancestry) = group_parents.get(&current) else {
@@ -419,7 +419,7 @@ fn normalized_group_name(value: &str) -> String {
     // matching. Literal U+FFFD is encoded with a distinct `#65533;` marker.
     value
         .trim()
-        .strip_prefix("\u{fffd}#4;")
+        .strip_prefix(TALLY_SANITIZED_ROOT_MARKER)
         .unwrap_or(value.trim())
         .trim()
         .to_ascii_lowercase()
@@ -482,4 +482,32 @@ fn civil_day(date: &TallyDate) -> Result<i64, NativeOutstandingsError> {
     let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     Ok(era * 146_097 + day_of_era)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marker_prefixed_non_root_parent_fails_closed_for_complete_group_snapshot() {
+        let groups = [TallyNamedMaster {
+            name: "Sundry Debtors".to_string(),
+            parent: Some("Primary".to_string()),
+            reserved_name: Some("Sundry Debtors".to_string()),
+        }];
+        let ledgers = [LedgerSnapshotEntry {
+            name: "Synthetic Ledger".to_string(),
+            parent: Some(format!("{TALLY_SANITIZED_ROOT_MARKER} Resave")),
+            closing_balance: ExactDecimal::zero(),
+            opening_balance: ExactDecimal::zero(),
+            bill_wise_on: false,
+        }];
+
+        assert!(matches!(
+            compute_residuals(&[], &[], &ledgers, NativeGroupSnapshot::Complete(&groups)),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "ledger_group_parent_unresolved"
+            ))
+        ));
+    }
 }
