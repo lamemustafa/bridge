@@ -26,6 +26,36 @@ export function rollbackFailedClientGroupLabel(
   return applyClientGroupLabel(current, companyGuid, persisted[companyGuid] ?? "");
 }
 
+/// Per-company counter of the most recently ISSUED group-label save. There is
+/// no lock here -- callers keep firing saves as fast as the user types -- but
+/// every in-flight request can be stamped with the counter's value at the
+/// moment it was issued, so a later settle can tell whether it is still the
+/// save that matters.
+export type ClientGroupLabelSaveSequence = Record<string, number>;
+
+/// Call when a save is about to be fired. Returns the updated sequence table
+/// (store it back) and the stamp to carry on that one request.
+export function issueClientGroupLabelSave(
+  sequence: ClientGroupLabelSaveSequence,
+  companyGuid: string,
+): { sequence: ClientGroupLabelSaveSequence; stamp: number } {
+  const stamp = (sequence[companyGuid] ?? 0) + 1;
+  return { sequence: { ...sequence, [companyGuid]: stamp }, stamp };
+}
+
+/// True only for the response belonging to the most recently issued save for
+/// this company. A save superseded by a later one (whether it goes on to
+/// succeed or fail) must be treated as inert by the caller: it must not
+/// touch `persisted`, roll back the UI, or surface an error -- doing so
+/// would report on a request the user has already moved past.
+export function isLatestClientGroupLabelSave(
+  sequence: ClientGroupLabelSaveSequence,
+  companyGuid: string,
+  stamp: number,
+): boolean {
+  return (sequence[companyGuid] ?? 0) === stamp;
+}
+
 export function reconcileLoadedSortPreference<Sort>(
   current: Sort,
   persisted: Sort,
