@@ -666,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn tally_reserved_root_accepts_marker_and_legacy_plain_forms_for_both_parent_paths() {
+    fn marker_carrying_parent_policy_fails_closed_for_unobserved_non_root_references() {
         let group_ids_by_name = BTreeMap::from([("Assets".to_string(), "group-guid".to_string())]);
 
         for value in [
@@ -689,9 +689,17 @@ mod tests {
             );
         }
 
+        // This pins Bridge's policy for an input Tally has not been observed to emit; it is not
+        // evidence about Tally behaviour. Measured: the marker occurs on 30 group parents and
+        // one ledger parent across two companies, always followed by `Primary`; Bridge's
+        // `TALLY_PROTOCOL_REFERENCE.md:66-76` records it on `OBJECTUPDATEACTION` as
+        // `&#4; Resave`. The policy fails closed: the old starts-with rule silently turned an
+        // unrecognised marker-prefixed value into a `None` parent, whereas this rule surfaces it
+        // as a missing reference.
         for value in [
             format!("{TALLY_SANITIZED_ROOT_MARKER} Resave"),
             format!("{TALLY_SANITIZED_ROOT_MARKER} Anything"),
+            format!("{TALLY_SANITIZED_ROOT_MARKER}{TALLY_SANITIZED_ROOT_MARKER} Primary"),
         ] {
             assert!(matches!(
                 resolve_group_parent(Some(&value), &group_ids_by_name, "group_parent_missing"),

@@ -5,7 +5,7 @@ use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use crate::outstandings_shared::{
     AgeingBillCounts, AgeingBuckets, OutstandingsReport, PartyOutstanding,
 };
-use crate::{is_tally_reserved_root, TallyNamedMaster, TALLY_SANITIZED_ROOT_MARKER};
+use crate::{is_tally_reserved_root, TallyNamedMaster};
 
 use super::model::{
     AgeingAnchor, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
@@ -412,17 +412,7 @@ fn is_party_ledger(
 }
 
 fn normalized_group_name(value: &str) -> String {
-    // Tally's native group and ledger collections both encode the built-in
-    // root as `&#4; Primary`. The XML boundary preserves that illegal numeric
-    // reference injectively as `U+FFFD#4;`; it is a control prefix, not part
-    // of the master name, so discard this one measured prefix before ancestry
-    // matching. Literal U+FFFD is encoded with a distinct `#65533;` marker.
-    value
-        .trim()
-        .strip_prefix(TALLY_SANITIZED_ROOT_MARKER)
-        .unwrap_or(value.trim())
-        .trim()
-        .to_ascii_lowercase()
+    value.trim().to_ascii_lowercase()
 }
 
 fn bill_anchor_date(row: &NativeBillRow, anchor: AgeingAnchor) -> &TallyDate {
@@ -486,28 +476,55 @@ fn civil_day(date: &TallyDate) -> Result<i64, NativeOutstandingsError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::TALLY_SANITIZED_ROOT_MARKER;
+
     use super::*;
 
     #[test]
-    fn marker_prefixed_non_root_parent_fails_closed_for_complete_group_snapshot() {
+    fn reserved_root_policy_matches_canonical_window_for_marker_carrying_parents() {
+        for root in [
+            format!("{TALLY_SANITIZED_ROOT_MARKER} Primary"),
+            "Primary".to_string(),
+        ] {
+            let groups = [TallyNamedMaster {
+                name: "Sundry Debtors".to_string(),
+                parent: Some(root),
+                reserved_name: Some("Sundry Debtors".to_string()),
+            }];
+            let ledgers = [LedgerSnapshotEntry {
+                name: "Synthetic Ledger".to_string(),
+                parent: Some("Sundry Debtors".to_string()),
+                closing_balance: ExactDecimal::zero(),
+                opening_balance: ExactDecimal::zero(),
+                bill_wise_on: false,
+            }];
+            compute_residuals(&[], &[], &ledgers, NativeGroupSnapshot::Complete(&groups))
+                .expect("shared reserved-root forms must terminate group ancestry");
+        }
+
         let groups = [TallyNamedMaster {
             name: "Sundry Debtors".to_string(),
             parent: Some("Primary".to_string()),
             reserved_name: Some("Sundry Debtors".to_string()),
         }];
-        let ledgers = [LedgerSnapshotEntry {
-            name: "Synthetic Ledger".to_string(),
-            parent: Some(format!("{TALLY_SANITIZED_ROOT_MARKER} Resave")),
-            closing_balance: ExactDecimal::zero(),
-            opening_balance: ExactDecimal::zero(),
-            bill_wise_on: false,
-        }];
+        for parent in [
+            format!("{TALLY_SANITIZED_ROOT_MARKER} Resave"),
+            format!("{TALLY_SANITIZED_ROOT_MARKER}{TALLY_SANITIZED_ROOT_MARKER} Primary"),
+        ] {
+            let ledgers = [LedgerSnapshotEntry {
+                name: "Synthetic Ledger".to_string(),
+                parent: Some(parent),
+                closing_balance: ExactDecimal::zero(),
+                opening_balance: ExactDecimal::zero(),
+                bill_wise_on: false,
+            }];
 
-        assert!(matches!(
-            compute_residuals(&[], &[], &ledgers, NativeGroupSnapshot::Complete(&groups)),
-            Err(NativeOutstandingsError::InvalidResponse(
-                "ledger_group_parent_unresolved"
-            ))
-        ));
+            assert!(matches!(
+                compute_residuals(&[], &[], &ledgers, NativeGroupSnapshot::Complete(&groups)),
+                Err(NativeOutstandingsError::InvalidResponse(
+                    "ledger_group_parent_unresolved"
+                ))
+            ));
+        }
     }
 }

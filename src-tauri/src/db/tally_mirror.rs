@@ -4394,6 +4394,7 @@ fn validate_export_code(value: &str) -> Result<(), MirrorError> {
                 | "complete_source_count_disagreement"
                 | "duplicate_record_across_windows"
                 | "duplicate_source_identity"
+                | "foreign_master_text_rendering_degraded"
                 | "missing_snapshot_window"
                 | "missing_source_identity"
                 | "parse_accept_count_mismatch"
