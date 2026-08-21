@@ -387,7 +387,7 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "4393a0bf72c2e67995aea2d3579dc844de4de1f21ac82d6e1b9b33104ea92bcb"
+      "sha256": "9a1d38f972a0a4eda61fc8e84618fc846de6270e250704087b28aea1e0a6b259"
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
@@ -407,7 +407,7 @@
     },
     {
       "path": "src/styles.css",
-      "sha256": "e567fc5c8afebc047a8f8d59c7c7399dfefcb5e018aa337004fabf1ad8f03e4f"
+      "sha256": "453f99b11fb47a47e4b1ca4ab5c077603d3a13f74e51c667a5795f1e222f8a7d"
     },
     {
       "path": "src/tally-company-selection.ts",

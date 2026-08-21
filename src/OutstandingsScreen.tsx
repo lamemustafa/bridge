@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialState, type OutstandingsAgeingAnchor } from "./outstandings-copy";
 import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstandings-csv";
 import { canStartOutstandingsRead } from "./outstandings-currency";
+import { groupOpenBillsByParty, type OpenBill, type PartyBillsState } from "./outstandings-bills";
 
 type Props = {
   config: { host: string; port: number };
@@ -49,19 +50,11 @@ type TopParty = Report["top_parties"][number];
 type PartySortKey = "party" | "outstanding" | "age";
 type PartySort = { key: PartySortKey; direction: "asc" | "desc" };
 
-type OpenBill = {
-  party: string;
-  reference: string;
-  bill_date: string;
-  due_date: string;
-  amount: string;
-  age_days: number | null;
-  kind: "receivable" | "payable";
-};
-
 // These limits bound only what the dashboard renders. The Tauri result keeps
 // complete statement-source rows so an export is never silently narrowed by a
-// presentation cap.
+// presentation cap. DISPLAY_OPEN_BILL_ROW_LIMIT applies per party (see
+// outstandings-bills.ts) -- never to the flattened cross-party list -- so one
+// party's bill count can never push another party's rows out of view.
 const DISPLAY_OPEN_BILL_ROW_LIMIT = 2_000;
 const DISPLAY_UNALLOCATED_PARTY_LIMIT = 10;
 
@@ -189,16 +182,23 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
   // some renders and not others, which React rejects outright with "Rendered
   // more hooks than during the previous render" -- and the whole screen blanks.
   const inrCompleteResult = isInrCompleteResult(result) ? result : null;
-  const displayOpenBills = React.useMemo(
-    () => inrCompleteResult?.statement_open_bills?.slice(0, DISPLAY_OPEN_BILL_ROW_LIMIT),
+  // Grouped from the COMPLETE source Bridge received -- the display cap is
+  // applied per party inside groupOpenBillsByParty, never to the flattened
+  // cross-party list, so one party's bill count can never push another
+  // party's real bills out of the map entirely. null when statement rows are
+  // absent altogether (voucher-scan path) -- distinct from a present map that
+  // simply has no entry for a given party (that party has zero bill rows).
+  const openBillsByParty = React.useMemo(
+    () => groupOpenBillsByParty(inrCompleteResult?.statement_open_bills, DISPLAY_OPEN_BILL_ROW_LIMIT),
     [inrCompleteResult],
   );
-  // null when statement rows are absent entirely (voucher-scan path) --
-  // distinct from a party simply having no rows in the display projection.
-  const openBillsByParty = React.useMemo(
-    () => billsByParty(displayOpenBills),
-    [displayOpenBills],
-  );
+  // Parties for which the operator has asked to see every bill row beyond the
+  // default per-party cap. The complete rows are already in memory -- no
+  // further Tally read is needed to satisfy this.
+  const [fullyLoadedParties, setFullyLoadedParties] = React.useState<Set<string>>(new Set());
+  React.useEffect(() => {
+    setFullyLoadedParties(new Set());
+  }, [inrCompleteResult]);
 
   // On a book where most balances carry no bill reference, the ageing panel
   // can describe a rounding error against total exposure. Default to
@@ -611,7 +611,12 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
                               PDF statement
                             </button>
                           </div>
-                          {renderPartyBills(openBillsByParty?.get(party.party), completeResult.currency_assertion)}
+                          {renderPartyBills(
+                            openBillsByParty?.get(party.party),
+                            completeResult.currency_assertion,
+                            fullyLoadedParties.has(party.party),
+                            () => setFullyLoadedParties((current) => new Set(current).add(party.party)),
+                          )}
                         </div>
                       )}
                     </div>
@@ -825,61 +830,74 @@ function ageingRows(report: Report) {
   }));
 }
 
-/// Groups open bills by exact party name for the drill-down. Returns null
-/// when statement rows are absent entirely (the voucher-scan path never sends
-/// it) -- that null is what tells a row it must not be expandable at all,
-/// distinct from a present array that simply has no rows for this party.
-function billsByParty(openBills: Array<OpenBill> | undefined): Map<string, Array<OpenBill>> | null {
-  if (openBills === undefined) return null;
-  const map = new Map<string, Array<OpenBill>>();
-  for (const bill of openBills) {
-    const list = map.get(bill.party);
-    if (list) list.push(bill);
-    else map.set(bill.party, [bill]);
-  }
-  return map;
-}
-
 function slugify(value: string) {
   return value.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
 }
 
-/// Bill rows for one party's drill-down. A party can have exposure entirely
-/// from unallocated entries -- common, and on some books most parties -- so
-/// an empty (but present) list gets a one-line explanation rather than a
-/// blank area.
-function renderPartyBills(bills: Array<OpenBill> | undefined, currencyAssertion: "INR") {
-  if (!bills || bills.length === 0) {
+/// Bill rows for one party's drill-down.
+///
+/// `state` is undefined only when this party genuinely has zero bill rows in
+/// the complete source Bridge received -- a real fact, rendered as one: "no
+/// bill references" (common, and on some books most parties, since exposure
+/// can sit entirely in unallocated entries). A `"not_loaded"` state must
+/// never reach this same rendering: it means Bridge already holds this
+/// party's remaining bills, just did not render all of them by default, and
+/// that is said plainly rather than shown as an empty, unallocated party.
+function renderPartyBills(
+  state: PartyBillsState | undefined,
+  currencyAssertion: "INR",
+  fullyLoaded: boolean,
+  onLoadAll: () => void,
+) {
+  if (!state) {
     return <p className="party-bills-empty">No bill references — this party's balance is unallocated.</p>;
   }
+  const bills = state.status === "not_loaded" && !fullyLoaded ? state.shown : state.bills;
   return (
-    <div className="party-bills-table" role="table" aria-label="Open bills">
-      <div className="party-bills-heading" role="row">
-        <span role="columnheader">Reference</span>
-        <span role="columnheader">Bill date</span>
-        <span role="columnheader">Amount</span>
-        <span role="columnheader">Age</span>
+    <>
+      {state.status === "not_loaded" && (
+        <p className="party-bills-not-loaded" role="status">
+          {fullyLoaded
+            ? `All ${state.bills.length.toLocaleString("en-IN")} bills loaded.`
+            : (
+              <>
+                Showing {state.shown.length.toLocaleString("en-IN")} of {state.bills.length.toLocaleString("en-IN")} bills for this party — the rest are not loaded below.
+                {" "}
+                <button type="button" className="party-statement-action" onClick={onLoadAll}>
+                  Load all {state.bills.length.toLocaleString("en-IN")} bills
+                </button>
+              </>
+            )}
+        </p>
+      )}
+      <div className="party-bills-table" role="table" aria-label="Open bills">
+        <div className="party-bills-heading" role="row">
+          <span role="columnheader">Reference</span>
+          <span role="columnheader">Bill date</span>
+          <span role="columnheader">Amount</span>
+          <span role="columnheader">Age</span>
+        </div>
+        {bills.map((bill, index) => {
+          // A bill and due date that differ mean this party has a credit
+          // period -- the reason Tally's ageing can outrun a naive
+          // bill-date calculation, and worth surfacing rather than hiding.
+          const hasCreditPeriod = bill.due_date !== bill.bill_date;
+          return (
+            <div className="party-bill-row" role="row" key={`${bill.reference}-${bill.bill_date}-${index}`}>
+              <span role="cell" className="party-bill-reference">{bill.reference || "—"}</span>
+              <span role="cell" className="party-bill-dates">
+                {formatDate(bill.bill_date)}
+                {hasCreditPeriod && <em className="party-bill-due">due {formatDate(bill.due_date)}</em>}
+              </span>
+              <strong role="cell">{formatMoney(bill.amount, currencyAssertion)}</strong>
+              {bill.age_days === null
+                ? <em role="cell" className="age-chip is-none">not due</em>
+                : <em role="cell" className={`age-chip tier-${ageTier(bill.age_days)}`}>{bill.age_days}d</em>}
+            </div>
+          );
+        })}
       </div>
-      {bills.map((bill, index) => {
-        // A bill and due date that differ mean this party has a credit
-        // period -- the reason Tally's ageing can outrun a naive
-        // bill-date calculation, and worth surfacing rather than hiding.
-        const hasCreditPeriod = bill.due_date !== bill.bill_date;
-        return (
-          <div className="party-bill-row" role="row" key={`${bill.reference}-${bill.bill_date}-${index}`}>
-            <span role="cell" className="party-bill-reference">{bill.reference || "—"}</span>
-            <span role="cell" className="party-bill-dates">
-              {formatDate(bill.bill_date)}
-              {hasCreditPeriod && <em className="party-bill-due">due {formatDate(bill.due_date)}</em>}
-            </span>
-            <strong role="cell">{formatMoney(bill.amount, currencyAssertion)}</strong>
-            {bill.age_days === null
-              ? <em role="cell" className="age-chip is-none">not due</em>
-              : <em role="cell" className={`age-chip tier-${ageTier(bill.age_days)}`}>{bill.age_days}d</em>}
-          </div>
-        );
-      })}
-    </div>
+    </>
   );
 }
 
