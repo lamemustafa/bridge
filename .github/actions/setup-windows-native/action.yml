@@ -24,10 +24,27 @@ runs:
         path: 'C:\Strawberry'
         key: bridge-windows-strawberryperl-5.42.2.1-v1
 
+    # The version stays pinned -- reproducibility is the point. What is retried
+    # is only the FETCH: a single attempt makes every cold-cache Windows job
+    # hostage to one upstream feed being reachable at that moment, which has
+    # already produced a full round of false-red CI unrelated to Bridge.
     - name: Provision pinned Perl for vendored SQLCipher/OpenSSL
       if: steps.strawberry-perl.outputs.cache-hit != 'true'
       shell: pwsh
-      run: choco install strawberryperl --version=5.42.2.1 --yes --no-progress
+      run: |
+        $attempt = 0
+        $maxAttempts = 3
+        while ($true) {
+          $attempt++
+          choco install strawberryperl --version=5.42.2.1 --yes --no-progress
+          if ($LASTEXITCODE -eq 0) { break }
+          if ($attempt -ge $maxAttempts) {
+            throw "choco install strawberryperl 5.42.2.1 failed after $attempt attempts (last exit code $LASTEXITCODE)"
+          }
+          $delay = 15 * $attempt
+          Write-Host "choco install failed with exit code $LASTEXITCODE; retrying in $delay s (attempt $attempt of $maxAttempts)"
+          Start-Sleep -Seconds $delay
+        }
 
     - name: Configure native build prerequisites
       shell: pwsh
