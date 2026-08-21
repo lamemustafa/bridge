@@ -18,12 +18,45 @@ const MARGIN: f32 = 42.0;
 const BODY_FONT_SIZE: f32 = 9.0;
 const HEADING_FONT_SIZE: f32 = 12.0;
 const LINE_HEIGHT: f32 = 14.0;
-const MAX_LINE_BYTES: usize = 82;
 const LINES_PER_PAGE: usize = 52;
-// Helvetica-Bold's widest glyph is at most one em. At 9pt, 56 bytes therefore
-// occupy no more than 504pt of the 511pt printable width (595 - 2 * 42).
-const HEADER_MAX_LINE_BYTES: usize = 56;
 const HEADER_IDENTITY_LINE_LIMIT: usize = 8;
+const PRINTABLE_WIDTH_THOUSANDTHS_OF_POINT: u32 = ((PAGE_WIDTH - (2.0 * MARGIN)) as u32) * 1_000;
+
+// Adobe's standard Helvetica advance widths in 1/1000 em, indexed by the
+// WinAnsi byte written to each PDF text operand. Keeping each complete font
+// table adjacent to the encoder makes the layout contract auditable: these
+// are the exact Type 1 fonts declared below, not an average-character guess.
+const HELVETICA_REGULAR_WIDTHS: [u16; 256] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556,
+    556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667,
+    611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667,
+    667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500,
+    222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
+    350, 556, 350, 222, 556, 333, 1000, 556, 556, 333, 1000, 667, 333, 1000, 350, 611, 350, 350,
+    222, 222, 333, 333, 350, 556, 1000, 333, 1000, 500, 333, 944, 350, 500, 667, 278, 333, 556,
+    556, 556, 556, 260, 556, 333, 737, 370, 556, 584, 333, 737, 333, 400, 584, 333, 333, 333, 556,
+    537, 278, 333, 333, 365, 556, 834, 834, 834, 611, 667, 667, 667, 667, 667, 667, 1000, 722, 667,
+    667, 667, 667, 278, 278, 278, 278, 722, 722, 778, 778, 778, 778, 778, 584, 778, 722, 722, 722,
+    722, 667, 667, 611, 556, 556, 556, 556, 556, 556, 889, 500, 556, 556, 556, 556, 278, 278, 278,
+    278, 556, 556, 556, 556, 556, 556, 556, 584, 611, 556, 556, 556, 556, 500, 556, 500,
+];
+
+const HELVETICA_BOLD_WIDTHS: [u16; 256] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556,
+    556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667,
+    611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667,
+    667, 611, 333, 278, 333, 584, 556, 333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556,
+    278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584,
+    350, 556, 350, 278, 556, 500, 1000, 556, 556, 333, 1000, 667, 333, 1000, 350, 611, 350, 350,
+    278, 278, 500, 500, 350, 556, 1000, 333, 1000, 556, 333, 944, 350, 500, 667, 278, 333, 556,
+    556, 556, 556, 280, 556, 333, 737, 370, 556, 584, 333, 737, 333, 400, 584, 333, 333, 333, 611,
+    556, 278, 333, 333, 365, 556, 834, 834, 834, 611, 722, 722, 722, 722, 722, 722, 1000, 722, 667,
+    667, 667, 667, 278, 278, 278, 278, 722, 722, 778, 778, 778, 778, 778, 584, 778, 722, 722, 722,
+    722, 667, 667, 611, 556, 556, 556, 556, 556, 556, 889, 556, 556, 556, 556, 556, 278, 278, 278,
+    278, 611, 611, 611, 611, 611, 611, 611, 584, 611, 611, 611, 611, 611, 556, 611, 556,
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartyStatementPdfError {
@@ -81,6 +114,56 @@ impl PdfLine {
             bold: true,
         }
     }
+}
+
+fn text_width_thousandths_of_point(text: &[u8], bold: bool, font_size: u16) -> u32 {
+    let widths = if bold {
+        &HELVETICA_BOLD_WIDTHS
+    } else {
+        &HELVETICA_REGULAR_WIDTHS
+    };
+    text.iter()
+        .map(|byte| u32::from(widths[usize::from(*byte)]) * u32::from(font_size))
+        .sum()
+}
+
+fn text_fits_printable_width(text: &[u8], bold: bool, font_size: u16) -> bool {
+    text_width_thousandths_of_point(text, bold, font_size) <= PRINTABLE_WIDTH_THOUSANDTHS_OF_POINT
+}
+
+fn wrap_to_printable_width(text: Vec<u8>, bold: bool, font_size: u16) -> Vec<Vec<u8>> {
+    let widths = if bold {
+        &HELVETICA_BOLD_WIDTHS
+    } else {
+        &HELVETICA_REGULAR_WIDTHS
+    };
+    let mut lines = Vec::new();
+    let mut line = Vec::new();
+    let mut line_width = 0_u32;
+
+    for byte in text {
+        let byte_width = u32::from(widths[usize::from(byte)]) * u32::from(font_size);
+        if !line.is_empty()
+            && line_width
+                .checked_add(byte_width)
+                .is_none_or(|width| width > PRINTABLE_WIDTH_THOUSANDTHS_OF_POINT)
+        {
+            lines.push(line);
+            line = Vec::new();
+            line_width = 0;
+        }
+        line_width = line_width
+            .checked_add(byte_width)
+            .expect("Helvetica line width fits in u32");
+        line.push(byte);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    debug_assert!(lines
+        .iter()
+        .all(|line| text_fits_printable_width(line, bold, font_size)));
+    lines
 }
 
 /// Renders `statement` as in-memory PDF bytes.
@@ -143,6 +226,11 @@ pub fn render_party_statement_pdf(
         let mut content = Content::new();
         content.begin_text();
         let page_counter = format!("Page {} of {page_count}", page_index + 1);
+        debug_assert!(text_fits_printable_width(
+            page_counter.as_bytes(),
+            true,
+            BODY_FONT_SIZE as u16
+        ));
         content
             .set_font(bold_font, BODY_FONT_SIZE)
             .set_text_matrix([1.0, 0.0, 0.0, 1.0, MARGIN, PAGE_HEIGHT - MARGIN])
@@ -178,11 +266,12 @@ fn page_header_identity_lines(statement: &PartyStatement) -> Vec<Vec<u8>> {
     let company = display_pdf_text("company name", &statement.company);
     let party = display_pdf_text("party name", &statement.party);
     let identity = format!("Party statement | Company: {company} | Party: {party}");
-    let mut lines = encode_win_ansi(&identity)
-        .expect("header identity values were rendered for WinAnsi before layout")
-        .chunks(HEADER_MAX_LINE_BYTES)
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
+    let mut lines = wrap_to_printable_width(
+        encode_win_ansi(&identity)
+            .expect("header identity values were rendered for WinAnsi before layout"),
+        true,
+        BODY_FONT_SIZE as u16,
+    );
     if lines.len() > HEADER_IDENTITY_LINE_LIMIT {
         lines.truncate(HEADER_IDENTITY_LINE_LIMIT - 1);
         lines.push(b"[Identity continued on first page]".to_vec());
@@ -316,11 +405,16 @@ fn push_wrapped(
         return Ok(());
     }
     let text = encode_win_ansi(text).unwrap_or_else(|| degraded_text("statement text", text));
-    for chunk in text.chunks(MAX_LINE_BYTES) {
+    let font_size = if bold {
+        HEADING_FONT_SIZE as u16
+    } else {
+        BODY_FONT_SIZE as u16
+    };
+    for chunk in wrap_to_printable_width(text, bold, font_size) {
         lines.push(if bold {
-            PdfLine::bold(chunk.to_vec())
+            PdfLine::bold(chunk)
         } else {
-            PdfLine::body(chunk.to_vec())
+            PdfLine::body(chunk)
         });
     }
     Ok(())
@@ -357,7 +451,9 @@ fn encode_win_ansi(text: &str) -> Option<Vec<u8>> {
 fn win_ansi_byte(character: char) -> Option<u8> {
     match character {
         '\u{20}'..='\u{7e}' => Some(character as u8),
-        '\u{a0}'..='\u{ff}' => Some(character as u8),
+        // WinAnsi maps U+00A0 to a visible space glyph and U+00AD to a visible
+        // hyphen. Do not silently replace either source scalar with that glyph.
+        '\u{a1}'..='\u{ac}' | '\u{ae}'..='\u{ff}' => Some(character as u8),
         '\u{20ac}' => Some(0x80),
         '\u{201a}' => Some(0x82),
         '\u{192}' => Some(0x83),
@@ -542,6 +638,37 @@ mod tests {
             .any(|bytes| bytes == text.as_bytes())
     }
 
+    fn assert_all_planned_document_lines_fit(statement: &PartyStatement) {
+        for header_line in page_header_identity_lines(statement) {
+            assert!(text_fits_printable_width(
+                &header_line,
+                true,
+                BODY_FONT_SIZE as u16
+            ));
+        }
+        let lines = statement_lines(statement).unwrap();
+        for line in lines {
+            let font_size = if line.bold {
+                HEADING_FONT_SIZE
+            } else {
+                BODY_FONT_SIZE
+            };
+            assert!(text_fits_printable_width(
+                &line.text,
+                line.bold,
+                font_size as u16
+            ));
+        }
+        let page_count = expected_page_count(statement);
+        for page_number in 1..=page_count {
+            assert!(text_fits_printable_width(
+                format!("Page {page_number} of {page_count}").as_bytes(),
+                true,
+                BODY_FONT_SIZE as u16
+            ));
+        }
+    }
+
     fn xlsx_sheet_xml(xlsx: &[u8]) -> String {
         let mut archive = ZipArchive::new(Cursor::new(xlsx)).expect("well-formed XLSX archive");
         let mut xml = String::new();
@@ -611,6 +738,61 @@ mod tests {
         let joined = text.replace('\n', "");
         assert!(joined.contains(long_party));
         assert!(joined.contains(long_reference));
+    }
+
+    #[test]
+    fn wide_win_ansi_bill_reference_never_exceeds_the_printable_width() {
+        let reference = string_from_codepoints(&[0x00c6; 40]);
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "Synthetic Party",
+            &[bill(&reference, "1.00", 1)],
+            &[],
+        )
+        .unwrap();
+
+        assert!(render_party_statement_pdf(&statement).is_ok());
+        assert_all_planned_document_lines_fit(&statement);
+    }
+
+    #[test]
+    fn non_identity_win_ansi_scalars_degrade_visibly() {
+        for codepoint in [0x00a0, 0x00ad] {
+            let party = string_from_codepoints(&[
+                0x0050, 0x0061, 0x0072, 0x0074, 0x0079, 0x0020, codepoint,
+            ]);
+            let mut source_bill = bill("INV-1", "1.00", 1);
+            source_bill.party = party.clone();
+            let statement = build_party_statement(
+                "Synthetic Books Pvt Ltd",
+                "20260808",
+                &party,
+                &[source_bill],
+                &[],
+            )
+            .unwrap();
+
+            let pdf = render_party_statement_pdf(&statement).unwrap();
+            assert!(contains_pdf_text(
+                &pdf,
+                &format!("party name rendering degraded: U+0050 U+0061 U+0072 U+0074 U+0079 U+0020 U+{codepoint:04X}")
+            ));
+        }
+    }
+
+    #[test]
+    fn latin_1_win_ansi_audit_excludes_every_non_identity_scalar() {
+        for scalar in 0x00a0..=0x00ff {
+            let character = char::from_u32(scalar).expect("Latin-1 scalar");
+            let expected = match scalar {
+                // WinAnsi's byte values draw a space and a hyphen, not the
+                // source NO-BREAK SPACE or SOFT HYPHEN scalar.
+                0x00a0 | 0x00ad => None,
+                _ => Some(scalar as u8),
+            };
+            assert_eq!(win_ansi_byte(character), expected, "U+{scalar:04X}");
+        }
     }
 
     #[test]
@@ -840,9 +1022,11 @@ mod tests {
         let header_lines = page_header_identity_lines(&statement);
         assert!(header_lines.len() > 1);
         assert!(header_lines.len() <= HEADER_IDENTITY_LINE_LIMIT);
-        assert!(header_lines
-            .iter()
-            .all(|line| line.len() <= HEADER_MAX_LINE_BYTES));
+        assert!(header_lines.iter().all(|line| text_fits_printable_width(
+            line,
+            true,
+            BODY_FONT_SIZE as u16
+        )));
         assert!(!header_lines
             .iter()
             .any(|line| line == b"[Identity continued on first page]"));
@@ -852,7 +1036,11 @@ mod tests {
         assert!(page_count > 1, "fixture must span continuation pages");
         for page_number in 1..=page_count {
             let page_counter = format!("Page {page_number} of {page_count}");
-            assert!(page_counter.len() <= HEADER_MAX_LINE_BYTES);
+            assert!(text_fits_printable_width(
+                page_counter.as_bytes(),
+                true,
+                BODY_FONT_SIZE as u16
+            ));
             assert!(contains_pdf_text(&pdf, &page_counter));
         }
     }
