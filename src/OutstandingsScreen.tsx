@@ -94,7 +94,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
     message: string;
     path?: string;
     location?: string;
-    failures?: Array<{ party: string; error: string }>;
+    failures?: Array<{ party: string; code: string; reason: string }>;
   } | null>(null);
   const [expandedParty, setExpandedParty] = React.useState<string | null>(null);
   const [bulkStatementExporting, setBulkStatementExporting] = React.useState(false);
@@ -400,7 +400,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
           {exportNotice.failures && exportNotice.failures.length > 0 && (
             <ul className="outstandings-export-failures">
               {exportNotice.failures.map((failure) => (
-                <li key={failure.party}><strong>{failure.party}</strong>: {failure.error}</li>
+                <li key={failure.party}><strong>{failure.party}</strong>: {failure.reason}</li>
               ))}
             </ul>
           )}
@@ -656,7 +656,7 @@ type BulkPartyStatementResult = {
   destination: string;
   manifest_path: string;
   written: Array<{ party: string; file_name: string; amount: string }>;
-  failures: Array<{ party: string; error: string }>;
+  failures: Array<{ party: string; code: string; reason: string }>;
 };
 
 type BulkPartyStatementsPreview = { party_count: number };
