@@ -57,15 +57,33 @@ pub struct StatementBill {
     pub bucket: Option<AgeingBucket>,
 }
 
-/// Per-bucket subtotals across a party's bill table. Sums to exactly the
-/// bill total -- every bill lands in exactly one bucket -- which
-/// `party_statement_bucket_subtotals_sum_to_bill_total` below holds Bridge to.
+/// Exact ageing subtotals across a party's bill table. Every bill lands in one
+/// of the four aged buckets or the explicit `not_yet_due` subtotal, so
+/// [`AgeingSubtotals::total`] equals [`PartyStatement::bill_total`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgeingSubtotals {
+    /// Bills without a meaningful age because they are not yet due. This is
+    /// deliberately separate from 0-30 days: folding it into an aged bucket
+    /// would misstate the party's ageing position.
+    pub not_yet_due: ExactDecimal,
     pub days_0_30: ExactDecimal,
     pub days_31_60: ExactDecimal,
     pub days_61_90: ExactDecimal,
     pub days_90_plus: ExactDecimal,
+}
+
+impl AgeingSubtotals {
+    /// Sums every rendered ageing category through checked exact-decimal
+    /// addition so a statement cannot appear reconciled through a lossy
+    /// display-only conversion.
+    pub fn total(&self) -> Result<ExactDecimal, PartyStatementError> {
+        self.not_yet_due
+            .checked_add(&self.days_0_30)
+            .and_then(|value| value.checked_add(&self.days_31_60))
+            .and_then(|value| value.checked_add(&self.days_61_90))
+            .and_then(|value| value.checked_add(&self.days_90_plus))
+            .map_err(|_| PartyStatementError::ArithmeticOverflow)
+    }
 }
 
 /// One party's statement: its bills, their ageing subtotals, its
@@ -154,6 +172,7 @@ pub fn build_party_statement(
     }
 
     let mut subtotals = AgeingSubtotals {
+        not_yet_due: ExactDecimal::zero(),
         days_0_30: ExactDecimal::zero(),
         days_31_60: ExactDecimal::zero(),
         days_61_90: ExactDecimal::zero(),
@@ -164,17 +183,16 @@ pub fn build_party_statement(
         bill_total = bill_total
             .checked_add(&bill.amount)
             .map_err(|_| PartyStatementError::ArithmeticOverflow)?;
-        if let Some(bucket) = bill.bucket {
-            let bucket_subtotal = match bucket {
-                AgeingBucket::Days0To30 => &mut subtotals.days_0_30,
-                AgeingBucket::Days31To60 => &mut subtotals.days_31_60,
-                AgeingBucket::Days61To90 => &mut subtotals.days_61_90,
-                AgeingBucket::Days90Plus => &mut subtotals.days_90_plus,
-            };
-            *bucket_subtotal = bucket_subtotal
-                .checked_add(&bill.amount)
-                .map_err(|_| PartyStatementError::ArithmeticOverflow)?;
-        }
+        let bucket_subtotal = match bill.bucket {
+            Some(AgeingBucket::Days0To30) => &mut subtotals.days_0_30,
+            Some(AgeingBucket::Days31To60) => &mut subtotals.days_31_60,
+            Some(AgeingBucket::Days61To90) => &mut subtotals.days_61_90,
+            Some(AgeingBucket::Days90Plus) => &mut subtotals.days_90_plus,
+            None => &mut subtotals.not_yet_due,
+        };
+        *bucket_subtotal = bucket_subtotal
+            .checked_add(&bill.amount)
+            .map_err(|_| PartyStatementError::ArithmeticOverflow)?;
     }
 
     let grand_total = bill_total
@@ -202,7 +220,7 @@ mod tests {
         party: &str,
         reference: &str,
         amount: &str,
-        age_days: u32,
+        age_days: Option<u32>,
         kind: &'static str,
     ) -> OpenBillRow {
         OpenBillRow {
@@ -211,7 +229,7 @@ mod tests {
             bill_date: "20260101".to_string(),
             due_date: "20260201".to_string(),
             amount: ExactDecimal::parse(amount).unwrap(),
-            age_days: Some(age_days),
+            age_days,
             kind,
         }
     }
@@ -240,10 +258,10 @@ mod tests {
     #[test]
     fn builds_a_statement_sorted_oldest_first_and_filtered_to_the_party() {
         let bills = vec![
-            bill("Aarav Textiles", "INV-3", "1000.00", 10, "receivable"),
-            bill("Aarav Textiles", "INV-1", "2500.50", 95, "receivable"),
-            bill("Aarav Textiles", "INV-2", "300.00", 45, "receivable"),
-            bill("Other Party", "INV-9", "999.00", 200, "receivable"),
+            bill("Aarav Textiles", "INV-3", "1000.00", Some(10), "receivable"),
+            bill("Aarav Textiles", "INV-1", "2500.50", Some(95), "receivable"),
+            bill("Aarav Textiles", "INV-2", "300.00", Some(45), "receivable"),
+            bill("Other Party", "INV-9", "999.00", Some(200), "receivable"),
         ];
         let unallocated_rows = vec![unallocated("Aarav Textiles", "150.25")];
 
@@ -282,16 +300,16 @@ mod tests {
     }
 
     #[test]
-    fn bucket_subtotals_sum_to_exactly_the_bill_total() {
+    fn aged_bucket_subtotals_sum_to_exactly_the_bill_total() {
         let bills = vec![
-            bill("Party", "A", "10.10", 5, "receivable"),
-            bill("Party", "B", "20.20", 30, "receivable"),
-            bill("Party", "C", "30.30", 31, "receivable"),
-            bill("Party", "D", "40.40", 60, "receivable"),
-            bill("Party", "E", "50.50", 61, "receivable"),
-            bill("Party", "F", "60.60", 90, "receivable"),
-            bill("Party", "G", "70.70", 91, "receivable"),
-            bill("Party", "H", "80.80", 500, "receivable"),
+            bill("Party", "A", "10.10", Some(5), "receivable"),
+            bill("Party", "B", "20.20", Some(30), "receivable"),
+            bill("Party", "C", "30.30", Some(31), "receivable"),
+            bill("Party", "D", "40.40", Some(60), "receivable"),
+            bill("Party", "E", "50.50", Some(61), "receivable"),
+            bill("Party", "F", "60.60", Some(90), "receivable"),
+            bill("Party", "G", "70.70", Some(91), "receivable"),
+            bill("Party", "H", "80.80", Some(500), "receivable"),
         ];
         let statement = build_party_statement("Lab Co", "20260808", "Party", &bills, &[])
             .expect("party has exposure");
@@ -312,21 +330,27 @@ mod tests {
             statement.subtotals.days_90_plus,
             exact_sum(&["70.70", "80.80"])
         );
-
-        let summed_buckets = statement
-            .subtotals
-            .days_0_30
-            .checked_add(&statement.subtotals.days_31_60)
-            .and_then(|value| value.checked_add(&statement.subtotals.days_61_90))
-            .and_then(|value| value.checked_add(&statement.subtotals.days_90_plus))
-            .unwrap();
-        assert_eq!(summed_buckets, statement.bill_total);
+        assert!(statement.subtotals.not_yet_due.is_zero());
+        assert_eq!(statement.subtotals.total().unwrap(), statement.bill_total);
         assert_eq!(
             statement.bill_total,
             exact_sum(&["10.10", "20.20", "30.30", "40.40", "50.50", "60.60", "70.70", "80.80",]),
         );
         assert_eq!(statement.grand_total, statement.bill_total);
         assert!(statement.unallocated.is_zero());
+    }
+
+    #[test]
+    fn aged_and_unaged_subtotals_reconcile_to_the_exact_bill_total() {
+        let bills = vec![
+            bill("Party", "AGED", "10.10", Some(5), "receivable"),
+            bill("Party", "UNAGED", "20.20", None, "receivable"),
+        ];
+        let statement = build_party_statement("Lab Co", "20260808", "Party", &bills, &[])
+            .expect("party has exposure");
+
+        assert_eq!(statement.subtotals.not_yet_due, exact_sum(&["20.20"]));
+        assert_eq!(statement.subtotals.total().unwrap(), statement.bill_total);
     }
 
     #[test]
@@ -348,7 +372,7 @@ mod tests {
 
     #[test]
     fn an_unknown_party_is_rejected_rather_than_producing_an_empty_statement() {
-        let bills = vec![bill("Known Party", "INV-1", "10.00", 5, "receivable")];
+        let bills = vec![bill("Known Party", "INV-1", "10.00", Some(5), "receivable")];
         let error =
             build_party_statement("Lab Co", "20260808", "Unknown Party", &bills, &[]).unwrap_err();
         assert_eq!(error, PartyStatementError::PartyNotFound);
@@ -359,7 +383,7 @@ mod tests {
         // `unallocated_by_party` already drops zero residuals upstream (see
         // `top_unallocated_parties`), but this guards the statement builder
         // itself against ever surfacing a zero as if it were real exposure.
-        let bills = vec![bill("Party", "INV-1", "10.00", 5, "receivable")];
+        let bills = vec![bill("Party", "INV-1", "10.00", Some(5), "receivable")];
         let unallocated_rows = vec![unallocated("Party", "0")];
         let statement =
             build_party_statement("Lab Co", "20260808", "Party", &bills, &unallocated_rows)

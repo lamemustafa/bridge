@@ -20,7 +20,10 @@ const HEADING_FONT_SIZE: f32 = 12.0;
 const LINE_HEIGHT: f32 = 14.0;
 const MAX_LINE_BYTES: usize = 82;
 const LINES_PER_PAGE: usize = 52;
-const BODY_LINES_PER_PAGE: usize = LINES_PER_PAGE - 1;
+// Helvetica-Bold's widest glyph is at most one em. At 9pt, 56 bytes therefore
+// occupy no more than 504pt of the 511pt printable width (595 - 2 * 42).
+const HEADER_MAX_LINE_BYTES: usize = 56;
+const HEADER_IDENTITY_LINE_LIMIT: usize = 8;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PartyStatementPdfError {
@@ -90,7 +93,13 @@ pub fn render_party_statement_pdf(
     statement: &PartyStatement,
 ) -> Result<Vec<u8>, PartyStatementPdfError> {
     let lines = statement_lines(statement)?;
-    let page_count = lines.len().div_ceil(BODY_LINES_PER_PAGE).max(1);
+    let header_identity_lines = page_header_identity_lines(statement);
+    let header_line_count = 1 + header_identity_lines.len(); // Counter plus identity.
+    let body_lines_per_page = LINES_PER_PAGE
+        .checked_sub(header_line_count)
+        .filter(|line_count| *line_count > 0)
+        .ok_or(PartyStatementPdfError::TooManyPages)?;
+    let page_count = lines.len().div_ceil(body_lines_per_page).max(1);
     let page_count_i32 =
         i32::try_from(page_count).map_err(|_| PartyStatementPdfError::TooManyPages)?;
 
@@ -117,10 +126,7 @@ pub fn render_party_statement_pdf(
         .base_font(Name(b"Helvetica-Bold"))
         .encoding_predefined(Name(b"WinAnsiEncoding"));
 
-    let company = display_pdf_text("company name", &statement.company);
-    let party = display_pdf_text("party name", &statement.party);
-
-    for (page_index, page_lines) in lines.chunks(BODY_LINES_PER_PAGE).enumerate() {
+    for (page_index, page_lines) in lines.chunks(body_lines_per_page).enumerate() {
         let page_id = page_ids[page_index];
         let content_id = object_ids.allocate()?;
         {
@@ -136,17 +142,18 @@ pub fn render_party_statement_pdf(
 
         let mut content = Content::new();
         content.begin_text();
-        let page_header = encode_win_ansi(&format!(
-            "Party statement | Company: {} | Party: {} | Page {} of {page_count}",
-            company,
-            party,
-            page_index + 1,
-        ))
-        .expect("page header values were rendered for WinAnsi before layout");
+        let page_counter = format!("Page {} of {page_count}", page_index + 1);
         content
             .set_font(bold_font, BODY_FONT_SIZE)
             .set_text_matrix([1.0, 0.0, 0.0, 1.0, MARGIN, PAGE_HEIGHT - MARGIN])
-            .show(Str(&page_header));
+            .show(Str(page_counter.as_bytes()));
+        for (header_line_index, header_line) in header_identity_lines.iter().enumerate() {
+            let y = PAGE_HEIGHT - MARGIN - ((header_line_index + 1) as f32 * LINE_HEIGHT);
+            content
+                .set_font(bold_font, BODY_FONT_SIZE)
+                .set_text_matrix([1.0, 0.0, 0.0, 1.0, MARGIN, y])
+                .show(Str(header_line));
+        }
         for (line_index, line) in page_lines.iter().enumerate() {
             let font = if line.bold { bold_font } else { regular_font };
             let font_size = if line.bold {
@@ -154,7 +161,7 @@ pub fn render_party_statement_pdf(
             } else {
                 BODY_FONT_SIZE
             };
-            let y = PAGE_HEIGHT - MARGIN - ((line_index + 1) as f32 * LINE_HEIGHT);
+            let y = PAGE_HEIGHT - MARGIN - ((header_line_count + line_index) as f32 * LINE_HEIGHT);
             content
                 .set_font(font, font_size)
                 .set_text_matrix([1.0, 0.0, 0.0, 1.0, MARGIN, y])
@@ -165,6 +172,22 @@ pub fn render_party_statement_pdf(
     }
 
     Ok(pdf.finish())
+}
+
+fn page_header_identity_lines(statement: &PartyStatement) -> Vec<Vec<u8>> {
+    let company = display_pdf_text("company name", &statement.company);
+    let party = display_pdf_text("party name", &statement.party);
+    let identity = format!("Party statement | Company: {company} | Party: {party}");
+    let mut lines = encode_win_ansi(&identity)
+        .expect("header identity values were rendered for WinAnsi before layout")
+        .chunks(HEADER_MAX_LINE_BYTES)
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if lines.len() > HEADER_IDENTITY_LINE_LIMIT {
+        lines.truncate(HEADER_IDENTITY_LINE_LIMIT - 1);
+        lines.push(b"[Identity continued on first page]".to_vec());
+    }
+    lines
 }
 
 fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStatementPdfError> {
@@ -228,6 +251,7 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
     )?;
     push_wrapped(&mut lines, "Ageing subtotals", true)?;
     for (bucket, subtotal) in [
+        ("Not yet due", &statement.subtotals.not_yet_due),
         ("0-30 days", &statement.subtotals.days_0_30),
         ("31-60 days", &statement.subtotals.days_31_60),
         ("61-90 days", &statement.subtotals.days_61_90),
@@ -503,6 +527,21 @@ mod tests {
             .position(|window| window == needle)
     }
 
+    fn expected_page_count(statement: &PartyStatement) -> usize {
+        let body_lines_per_page =
+            LINES_PER_PAGE - (1 + page_header_identity_lines(statement).len());
+        statement_lines(statement)
+            .unwrap()
+            .len()
+            .div_ceil(body_lines_per_page)
+            .max(1)
+    }
+
+    fn contains_pdf_text(pdf: &[u8], text: &str) -> bool {
+        pdf.windows(text.len())
+            .any(|bytes| bytes == text.as_bytes())
+    }
+
     fn xlsx_sheet_xml(xlsx: &[u8]) -> String {
         let mut archive = ZipArchive::new(Cursor::new(xlsx)).expect("well-formed XLSX archive");
         let mut xml = String::new();
@@ -588,13 +627,18 @@ mod tests {
         )
         .unwrap();
 
-        let text = extracted_text(&render_party_statement_pdf(&statement).unwrap());
-        let identity =
-            "Party statement | Company: Synthetic Books Pvt Ltd | Party: Synthetic Party";
-        assert_eq!(text.matches(identity).count(), 3);
-        assert!(text.contains("Page 1 of 3"));
-        assert!(text.contains("Page 2 of 3"));
-        assert!(text.contains("Page 3 of 3"));
+        let pdf = render_party_statement_pdf(&statement).unwrap();
+        let page_count = expected_page_count(&statement);
+        for identity_line in page_header_identity_lines(&statement) {
+            let identity_line = std::str::from_utf8(&identity_line).unwrap();
+            assert!(contains_pdf_text(&pdf, identity_line));
+        }
+        for page_number in 1..=page_count {
+            assert!(contains_pdf_text(
+                &pdf,
+                &format!("Page {page_number} of {page_count}")
+            ));
+        }
     }
 
     #[test]
@@ -731,11 +775,14 @@ mod tests {
 
     #[test]
     fn ageing_subtotals_are_rendered_exactly_in_both_formats() {
+        let mut not_yet_due = bill("NOT-DUE", "50.875", 0);
+        not_yet_due.age_days = None;
         let bills = [
             bill("D0", "10.25", 1),
             bill("D31", "20.50", 31),
             bill("D61", "30.75", 61),
             bill("D90", "40.125", 91),
+            not_yet_due,
         ];
         let statement = build_party_statement(
             "Synthetic Books Pvt Ltd",
@@ -749,6 +796,7 @@ mod tests {
         let pdf_text = extracted_text(&render_party_statement_pdf(&statement).unwrap());
         assert!(pdf_text.contains("Ageing subtotals"));
         for (bucket, subtotal) in [
+            ("Not yet due", &statement.subtotals.not_yet_due),
             ("0-30 days", &statement.subtotals.days_0_30),
             ("31-60 days", &statement.subtotals.days_31_60),
             ("61-90 days", &statement.subtotals.days_61_90),
@@ -764,12 +812,48 @@ mod tests {
         let xlsx_xml = xlsx_sheet_xml(&xlsx);
         assert!(xlsx_xml.contains("Ageing subtotals"));
         for subtotal in [
+            &statement.subtotals.not_yet_due,
             &statement.subtotals.days_0_30,
             &statement.subtotals.days_31_60,
             &statement.subtotals.days_61_90,
             &statement.subtotals.days_90_plus,
         ] {
             assert!(xlsx_xml.contains(&format!("<v>{}</v>", subtotal.as_str())));
+        }
+        assert_eq!(statement.subtotals.total().unwrap(), statement.bill_total);
+    }
+
+    #[test]
+    fn degraded_multi_page_headers_wrap_identity_and_keep_every_page_counter() {
+        let party = string_from_codepoints(&[0x0936; 18]);
+        let bills = (0..150)
+            .map(|index| {
+                let mut source_bill = bill(&format!("INV-{index:03}"), "1.00", 1);
+                source_bill.party = party.clone();
+                source_bill
+            })
+            .collect::<Vec<_>>();
+        let statement =
+            build_party_statement("Synthetic Books Pvt Ltd", "20260808", &party, &bills, &[])
+                .unwrap();
+
+        let header_lines = page_header_identity_lines(&statement);
+        assert!(header_lines.len() > 1);
+        assert!(header_lines.len() <= HEADER_IDENTITY_LINE_LIMIT);
+        assert!(header_lines
+            .iter()
+            .all(|line| line.len() <= HEADER_MAX_LINE_BYTES));
+        assert!(!header_lines
+            .iter()
+            .any(|line| line == b"[Identity continued on first page]"));
+
+        let pdf = render_party_statement_pdf(&statement).unwrap();
+        let page_count = expected_page_count(&statement);
+        assert!(page_count > 1, "fixture must span continuation pages");
+        for page_number in 1..=page_count {
+            let page_counter = format!("Page {page_number} of {page_count}");
+            assert!(page_counter.len() <= HEADER_MAX_LINE_BYTES);
+            assert!(contains_pdf_text(&pdf, &page_counter));
         }
     }
 
