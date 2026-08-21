@@ -89,18 +89,6 @@ impl ReadOperation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Constructed only by tests today. Production never assigns this class, so
-/// the failures it names are currently classified as something else and the
-/// circuit breaker cannot treat them distinctly. That is a real gap, recorded
-/// in the hub -- kept rather than deleted because removing a failure-
-/// classification bucket cements the misclassification instead of fixing it.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "classification designed but not yet produced in production"
-    )
-)]
 pub(super) enum ReadFailureClass {
     Connection,
     RequestTimeout,
@@ -112,7 +100,6 @@ pub(super) enum ReadFailureClass {
     Decode,
     Application,
     Validation,
-    CompanyMismatch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,7 +138,7 @@ impl ReadFailureClass {
             Self::SizeLimit => ResponseOutcome::SizeLimit,
             Self::Decode => ResponseOutcome::Decode,
             Self::Application => ResponseOutcome::Application,
-            Self::Validation | Self::CompanyMismatch => ResponseOutcome::Validation,
+            Self::Validation => ResponseOutcome::Validation,
         }
     }
 
@@ -166,8 +153,7 @@ impl ReadFailureClass {
             | Self::SizeLimit
             | Self::Decode
             | Self::Application
-            | Self::Validation
-            | Self::CompanyMismatch => CircuitOutcome::ApplicationRejected,
+            | Self::Validation => CircuitOutcome::ApplicationRejected,
         }
     }
 }
@@ -940,8 +926,8 @@ mod tests {
                     async move {
                         observed.fetch_add(1, Ordering::SeqCst);
                         ReadAttempt::<(), _>::Failure {
-                            error: "company_mismatch",
-                            class: ReadFailureClass::CompanyMismatch,
+                            error: "validation_failed",
+                            class: ReadFailureClass::Validation,
                             observed_body_bytes: BodyBytesObservation::Observed(100),
                         }
                     }
@@ -951,7 +937,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             error,
-            ReadExecutionError::Attempt("company_mismatch")
+            ReadExecutionError::Attempt("validation_failed")
         ));
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }

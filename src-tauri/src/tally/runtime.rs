@@ -2100,8 +2100,7 @@ fn classify_error(error: &anyhow::Error) -> HealthOutcome {
         | ReadFailureClass::SizeLimit
         | ReadFailureClass::Decode
         | ReadFailureClass::Application
-        | ReadFailureClass::Validation
-        | ReadFailureClass::CompanyMismatch => HealthOutcome::ApplicationRejected,
+        | ReadFailureClass::Validation => HealthOutcome::ApplicationRejected,
     }
 }
 
