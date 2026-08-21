@@ -656,7 +656,11 @@ impl TallyClient {
             .fetch_company_book_extent(company, expected_company_guid)
             .await?;
         let paired = self
-            .fetch_native_report_paired(render_native_ledger_export_request(company))
+            .fetch_native_report_paired(render_native_ledger_export_request(
+                company,
+                opening_extent.books_from(),
+                opening_extent.last_voucher_date(),
+            ))
             .await?;
         let NativePairedRead::Stable { body, .. } = paired else {
             anyhow::bail!("Tally native ledger collection changed between paired reads");
@@ -1960,6 +1964,23 @@ mod tests {
                     String::from_utf8_lossy(&request).starts_with(expected),
                     "ledger fetch did not preserve its extent/read sequence"
                 );
+                if index == 4 || index == 6 {
+                    let body_start = request
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|offset| offset + 4)
+                        .expect("native ledger POST has complete HTTP headers");
+                    let request_xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+                        &request[body_start..],
+                        request.len(),
+                    )
+                    .expect("native ledger POST uses decodable UTF-16 XML")
+                    .text;
+                    assert!(
+                        request_xml.contains(r#"<SVFROMDATE TYPE="Date">20240101</SVFROMDATE>"#)
+                    );
+                    assert!(request_xml.contains(r#"<SVTODATE TYPE="Date">20260701</SVTODATE>"#));
+                }
                 let response = if index == 1 || index == 3 || index == 5 || index == 7 {
                     utf8_status_response(body)
                 } else {
@@ -1988,6 +2009,64 @@ mod tests {
                 .contains("native ledger collection did not report success"),
             "unexpected error: {error:#}"
         );
+    }
+
+    #[tokio::test]
+    async fn invalid_book_extent_stops_ledger_export_without_a_date_fallback() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            let invalid_extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+            for (index, body) in [
+                invalid_extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                invalid_extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let (mut socket, _) = listener.accept().await.expect("accept extent request");
+                let request = read_complete_http_request(&mut socket).await;
+                let expected = if index % 2 == 0 {
+                    "POST / HTTP/1.1"
+                } else {
+                    "GET /status HTTP/1.1"
+                };
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected),
+                    "request {index} did not follow the paired extent sequence"
+                );
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write extent response");
+            }
+            assert!(
+                tokio::time::timeout(Duration::from_millis(200), listener.accept())
+                    .await
+                    .is_err(),
+                "an invalid extent must stop before any native ledger request"
+            );
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        client
+            .fetch_ledgers("Synthetic Company", "synthetic-company-guid")
+            .await
+            .expect_err("missing BOOKSFROM must fail closed");
+        server.await.expect("synthetic Tally server task");
     }
 
     fn native_voucher_collection_xml(rows: &[&str]) -> String {
