@@ -73,14 +73,23 @@ pub fn render_native_ledger_snapshot_request(
 /// Renders a native `List of Ledgers` collection for ordinary ledger export.
 ///
 /// This mirrors the retired report's fetch list exactly, but reads the master
-/// values directly rather than rendering them through a report `FIELD`. There
-/// are intentionally no period variables: the legacy request carried only
-/// `SVEXPORTFORMAT` and `SVCURRENTCOMPANY`; adding a date would change the
-/// previously established semantics of `OPENINGBALANCE`.
-pub fn render_native_ledger_export_request(company: &str) -> String {
+/// values directly rather than rendering them through a report `FIELD`.
+/// `OPENINGBALANCE` is load-bearingly pinned to the company's own book range:
+/// measured on 2026-08-21, omitting the period returned the opening at the
+/// current loaded display period, while `SVFROMDATE=BOOKSFROM` returns the
+/// ledger master's own opening. Callers must supply the validated book extent
+/// rather than inventing a date (the closed `TallyDate` alphabet is the same
+/// request-boundary guarantee used by `render_native_voucher_export_request`).
+pub fn render_native_ledger_export_request(
+    company: &str,
+    from: &TallyDate,
+    to: &TallyDate,
+) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
+        from = from.as_str(),
+        to = to.as_str(),
     )
 }
 
@@ -261,7 +270,7 @@ mod tests {
         assert!(!group_xml.contains("<FIELD>"));
         assert!(!group_xml.contains("$$NumItems"));
 
-        let export_xml = render_native_ledger_export_request("A & B <Co>");
+        let export_xml = render_native_ledger_export_request("A & B <Co>", &from, &to);
         assert!(export_xml.contains("A &amp; B &lt;Co&gt;"));
         assert!(export_xml.contains(r#"<FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE</FETCH>"#));
         assert!(!export_xml.contains("<REPORT>"));
@@ -270,8 +279,8 @@ mod tests {
         assert!(!export_xml.contains("<LINE>"));
         assert!(!export_xml.contains("<FIELD>"));
         assert!(!export_xml.contains("$$NumItems"));
-        assert!(!export_xml.contains("SVFROMDATE"));
-        assert!(!export_xml.contains("SVTODATE"));
+        assert!(export_xml.contains(r#"<SVFROMDATE TYPE="Date">20240401</SVFROMDATE>"#));
+        assert!(export_xml.contains(r#"<SVTODATE TYPE="Date">20260731</SVTODATE>"#));
 
         let voucher_type_xml = render_native_voucher_type_export_request("A & B <Co>");
         assert!(voucher_type_xml.contains("A &amp; B &lt;Co&gt;"));

@@ -160,7 +160,11 @@ impl RuntimeTallyConnector {
         let ledger_opening_extent = self
             .read_pinned_company_book_extent(&company_name, &expected_guid)
             .await?;
-        let native_ledger_request = render_native_ledger_export_request(&company_name);
+        let native_ledger_request = render_native_ledger_export_request(
+            &company_name,
+            ledger_opening_extent.books_from(),
+            ledger_opening_extent.last_voucher_date(),
+        );
         let validation_guid = expected_guid.clone();
         let first_ledger_xml = self
             .post_xml_validated(native_ledger_request.clone(), move |xml| {
@@ -753,8 +757,8 @@ mod tests {
         const GROUPS: &[u8] = include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_wr2_with_identity.utf16le.xml"
         );
-        const LEDGERS: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_wr2_core_window.xml"
+        const LEDGERS: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_wr2_core_window.utf16le.xml"
         );
         const VOUCHER_TYPES: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/native/voucher_types_native_wr2.xml"
@@ -811,10 +815,11 @@ mod tests {
             "नमस्ते ट्रेडर्स"
         );
         let groups = decode_bomless_utf16le_capture(GROUPS);
+        let ledgers = decode_bomless_utf16le_capture(LEDGERS);
         let window = build_core_window(
             &context,
             native_groups_for_core_window(&groups, COMPANY_GUID).expect("captured groups parse"),
-            parse_native_ledger_source_records_with_evidence(LEDGERS, COMPANY_GUID)
+            parse_native_ledger_source_records_with_evidence(&ledgers, COMPANY_GUID)
                 .expect("captured ledgers parse"),
             parse_native_voucher_type_source_records_with_evidence(VOUCHER_TYPES, COMPANY_GUID)
                 .expect("captured voucher types parse"),
@@ -868,8 +873,8 @@ mod tests {
         const GROUPS: &[u8] = include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_aarav_with_identity.utf16le.xml"
         );
-        const LEDGERS: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_aarav.xml"
+        const LEDGERS: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_aarav.utf16le.xml"
         );
 
         // There is no captured voucher or voucher-type export for this company. The complete
@@ -879,7 +884,8 @@ mod tests {
         let group_xml = decode_bomless_utf16le_capture(GROUPS);
         let groups =
             native_groups_for_core_window(&group_xml, COMPANY_GUID).expect("captured groups parse");
-        let ledgers = parse_native_ledger_source_records_with_evidence(LEDGERS, COMPANY_GUID)
+        let ledger_xml = decode_bomless_utf16le_capture(LEDGERS);
+        let ledgers = parse_native_ledger_source_records_with_evidence(&ledger_xml, COMPANY_GUID)
             .expect("captured ledgers parse");
         assert_eq!((groups.records.len(), ledgers.records.len()), (28, 88));
         let group_ids_by_name = groups
@@ -953,7 +959,7 @@ mod tests {
                 .map(|balance| ExactDecimal::parse(balance.clone()).expect("exact opening balance"))
                 .as_ref()
                 .map(ExactDecimal::as_str),
-            Some("18255356.27")
+            Some("0.00")
         );
         assert_eq!(
             resolved_ledger_parents
