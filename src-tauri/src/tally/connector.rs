@@ -13,7 +13,7 @@ use bridge_tally_protocol::{
         render_native_voucher_export_request, render_native_voucher_type_export_request,
     },
     outstandings_shared::{parse_company_book_extent, require_master_witness, CompanyBookExtent},
-    parse_companies, parse_ledger_period_balance_report,
+    parse_companies_from_collection, parse_ledger_period_balance_report,
     parse_native_group_source_records_with_evidence,
     parse_native_ledger_source_records_with_evidence,
     parse_native_voucher_source_records_with_evidence,
@@ -333,11 +333,17 @@ impl TallyConnector for RuntimeTallyConnector {
         // A reviewed setup consumes its interactive probe cache before the snapshot starts.
         // Runtime discovery is a fresh, validated company-list read and must not depend on or
         // recreate that single-use UI authority.
+        //
+        // Uses Tally's documented `Company` collection (`ReadOnlyProfile::CompanyListV2`)
+        // rather than the legacy `CompanyListV1` custom TDL report: the collection always
+        // answers with the ordinary shaped `HEADER/STATUS=1` envelope, so `parse_companies_from_collection`
+        // can require that shape outright instead of depending on a report-rendering path that
+        // one Tally instance is known to hang on and another to answer inconsistently.
         let lineage = source_lineage(&self.config)?;
-        let companies = parse_companies(
+        let companies = parse_companies_from_collection(
             &self
-                .post_xml_validated(tdl_engine::company_list_request(), |xml| {
-                    parse_companies(xml).is_ok()
+                .post_xml_validated(ReadOnlyProfile::CompanyListV2.render(), |xml| {
+                    parse_companies_from_collection(xml).is_ok()
                 })
                 .await?,
         )
@@ -1249,6 +1255,60 @@ mod tests {
         assert_eq!(methods, ["GET", "POST"]);
     }
 
+    /// `discover_companies` requests the native `Company` collection
+    /// (`ReadOnlyProfile::CompanyListV2`) and must fail closed -- rejecting the
+    /// whole discovery read -- when a company row in that collection omits its
+    /// `GUID`, rather than silently returning an identity-less company.
+    #[tokio::test]
+    async fn discover_companies_fails_closed_without_a_guid() {
+        let _simulator_guard = simulator_test_lock().lock().await;
+        let company_guid = "synthetic-company-guid";
+        let missing_guid_xml =
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+                .to_string();
+        let (address, server) = spawn_method_routed_server(vec![missing_guid_xml]).await;
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{address}"),
+                company_guid,
+            ),
+            display_name: "Synthetic Company".to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-discover-companies-missing-guid".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let connector =
+            RuntimeTallyConnector::new(TallyRuntime::default(), config, company, context).unwrap();
+
+        let error = connector
+            .discover_companies()
+            .await
+            .expect_err("a company row without a GUID must fail closed");
+        // The wire-integrity validation closure re-parses with the same
+        // strict collection parser, so it rejects the response before the
+        // outer `parse_companies_from_collection` call (and its
+        // `company_export_invalid` mapping) is ever reached.
+        assert!(matches!(
+            error,
+            TallyError::Protocol { code } if code == "application_response_rejected"
+        ));
+        let methods = server.await.expect("join routed Tally server");
+        assert_eq!(methods, ["POST"]);
+    }
+
     /// The core-window bracket (`read_pinned_company_book_extent`, feeding
     /// `extract_core_window`/`read_pack_window`) must fail closed with a
     /// typed error when both paired reads agree but neither carries
@@ -1332,6 +1392,13 @@ mod tests {
             "synthetic native groups satisfy the production identity parser"
         );
         let direct = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>direct-guid-must-not-escape</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
+        // `fetch_companies` (called from `bootstrap_direct_company`, the third
+        // POST below) now requests the native `Company` collection
+        // (`ReadOnlyProfile::CompanyListV2`) rather than the legacy
+        // `CompanyListV1` direct report, so its response carries that shape.
+        // Its GUID must still not escape into the returned identity -- only
+        // the fourth, scoped `standard` read may do that.
+        let discovered = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">discovered-guid-must-not-escape</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
         let standard = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\"><SyntheticLedger NAME=\"synthetic-ledger\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">ledger-guid</GUID><PARENT TYPE=\"String\">Primary</PARENT><BRIDGECOMPANYGUID TYPE=\"String\">scoped-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE=\"String\">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>";
         let (address, server) = spawn_method_routed_server(vec![
             // `TallyClient::probe` requests the trusted `Company` collection
@@ -1341,7 +1408,7 @@ mod tests {
             // response ahead of the pre-existing legacy sequence below.
             direct.to_string(),
             direct.to_string(),
-            direct.to_string(),
+            discovered.to_string(),
             standard.to_string(),
             company_extent("Synthetic Company", "scoped-guid"),
             company_extent("Synthetic Company", "scoped-guid"),
@@ -1420,12 +1487,11 @@ mod tests {
         let company_collection_xml = format!(
             r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         );
-        // `discover_companies` posts the legacy `CompanyListV1` report directly
-        // and parses it with the trusted `parse_companies` (unscoped
-        // `COMPANYINFO` scan), so its one response below keeps that shape.
-        let company_xml = format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>{company_guid}</COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>"#
-        );
+        // `discover_companies` now posts the native `Company` collection
+        // (`ReadOnlyProfile::CompanyListV2`) directly and parses it with
+        // `parse_companies_from_collection`, so its one response below is the
+        // same shape as `company_collection_xml`.
+        let company_xml = company_collection_xml.clone();
         let mut post_responses = vec![company_collection_xml.clone()];
         for _ in 0..2 {
             post_responses.extend([

@@ -595,18 +595,30 @@ impl TallyClient {
         })
     }
 
+    /// Discovers companies through Tally's documented `Company` collection
+    /// (`ReadOnlyProfile::CompanyListV2`) rather than the legacy `CompanyListV1`
+    /// custom TDL report. Unlike the legacy report -- which one Tally instance
+    /// answers with a bare, unwrapped `<COMPANYINFO>` document and another is
+    /// known to simply hang on -- the collection always answers with the
+    /// ordinary shaped `HEADER/STATUS=1` envelope, so `parse_companies_from_collection`
+    /// can require that shape outright.
     pub async fn fetch_companies(&self) -> anyhow::Result<Vec<TallyCompany>> {
-        let xml = self.post_xml(tdl_engine::company_list_request()).await?;
-        let companies = xml_parser::parse_companies_for_interactive_discovery(&xml)?;
+        let xml = self
+            .post_xml(ReadOnlyProfile::CompanyListV2.render())
+            .await?;
+        let companies = xml_parser::parse_companies_from_collection(&xml)?;
         normalize_discovered_companies(companies).map_err(|_| {
             anyhow::anyhow!("Tally returned an invalid company identity for interactive discovery")
         })
     }
 
-    /// Re-enumerates an untrusted direct report, then proves one user-chosen
-    /// name with a separate shaped standard collection response. The direct
-    /// report's GUID is deliberately discarded; only the collection's computed
-    /// context may construct the returned company identity.
+    /// Re-enumerates the trusted `Company` collection, then proves one
+    /// user-chosen name with a separate shaped standard collection response.
+    /// The collection's GUID is deliberately discarded; only the standard
+    /// ledger identity collection's computed context may construct the
+    /// returned company identity -- that binding proves Tally will actually
+    /// scope subsequent reads to this exact company, which matching a name
+    /// in a list can never prove by itself.
     pub async fn bootstrap_direct_company(
         &self,
         candidate_name: &str,
@@ -2288,20 +2300,38 @@ mod tests {
         }
     }
 
+    /// `fetch_companies` now requests the native `Company` collection
+    /// (`ReadOnlyProfile::CompanyListV2`) instead of the legacy `CompanyListV1`
+    /// custom TDL report. This asserts the request itself carries that shape --
+    /// `TYPE=Collection`, no `REPORT`/`FORM`/`PART`/`LINE`/`FIELD` stack, and no
+    /// `SVCURRENTCOMPANY` scoping a discovery read to one company -- and that a
+    /// company row's `NAME` attribute and nested `GUID` are trimmed and returned.
     #[tokio::test]
-    async fn interactive_company_fetch_accepts_the_strict_direct_report_variant() {
+    async fn interactive_company_fetch_sends_the_native_collection_request() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let body = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
+            let body = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="  Synthetic Company  "><GUID TYPE="String">  guid-1  </GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
             let request = read_complete_http_request(&mut socket).await;
-            assert!(
-                !request.is_empty(),
-                "synthetic Tally request must not be empty"
-            );
+            let body_start = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|position| position + 4)
+                .expect("POST request has complete HTTP headers");
+            let post_xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+                &request[body_start..],
+                request.len(),
+            )
+            .expect("POST request uses decodable UTF-16 XML")
+            .text;
+            assert!(post_xml.contains("<TYPE>Collection</TYPE>"));
+            assert!(post_xml.contains("<FETCH>NAME,GUID</FETCH>"));
+            assert!(!post_xml.contains("<SVCURRENTCOMPANY"));
+            assert!(!post_xml.contains("<REPORT"));
+            assert!(!post_xml.contains("<FORM "));
             socket
                 .write_all(&utf16_xml_response(body))
                 .await
@@ -2315,7 +2345,7 @@ mod tests {
         .expect("build synthetic Tally client")
         .fetch_companies()
         .await
-        .expect("interactive company discovery accepts the exact direct form");
+        .expect("interactive company discovery accepts the native collection response");
         server.await.expect("synthetic Tally server task");
 
         assert_eq!(companies.len(), 1);
@@ -2323,14 +2353,18 @@ mod tests {
         assert_eq!(companies[0].guid.as_deref(), Some("guid-1"));
     }
 
+    /// A collection response omitting a company's `GUID` must fail closed --
+    /// the whole discovery read is rejected rather than silently returning an
+    /// identity-less company, since identity is what every other read binds
+    /// against.
     #[tokio::test]
-    async fn interactive_company_fetch_normalizes_a_shaped_success_response() {
+    async fn interactive_company_fetch_fails_closed_without_a_guid() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let body = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>";
+            let body = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
             let request = read_complete_http_request(&mut socket).await;
             assert!(
@@ -2343,19 +2377,16 @@ mod tests {
                 .expect("write Tally response");
         });
 
-        let companies = TallyClient::new(TallyConfig {
+        let error = TallyClient::new(TallyConfig {
             host: address.ip().to_string(),
             port: address.port(),
         })
         .expect("build synthetic Tally client")
         .fetch_companies()
         .await
-        .expect("standard company discovery normalizes identities");
+        .expect_err("a company row without a GUID must fail closed");
         server.await.expect("synthetic Tally server task");
-
-        assert_eq!(companies.len(), 1);
-        assert_eq!(companies[0].name, "Synthetic Company");
-        assert_eq!(companies[0].guid.as_deref(), Some("guid-1"));
+        assert!(error.to_string().contains("GUID"));
     }
 
     #[tokio::test]
@@ -2364,10 +2395,15 @@ mod tests {
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
-        let direct = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>direct-guid-must-not-escape</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
+        // `fetch_companies` (the first of the two reads below) now requests the
+        // native `Company` collection (`ReadOnlyProfile::CompanyListV2`), so its
+        // response carries that shape rather than the legacy `CompanyListV1`
+        // direct report. Its GUID must still not escape into the returned
+        // identity -- only the second, scoped `standard` read may do that.
+        let discovered = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">discovered-guid-must-not-escape</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
         let standard = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\"><SyntheticLedger NAME=\"synthetic-ledger\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">ledger-guid</GUID><PARENT TYPE=\"String\">Primary</PARENT><BRIDGECOMPANYGUID TYPE=\"String\">scoped-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE=\"String\">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>";
         let server = tokio::spawn(async move {
-            for body in [direct, standard] {
+            for body in [discovered, standard] {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let request = read_complete_http_request(&mut socket).await;
                 assert!(!request.is_empty());

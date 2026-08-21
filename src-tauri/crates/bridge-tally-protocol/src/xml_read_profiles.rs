@@ -1075,6 +1075,28 @@ mod tests {
         }
     }
 
+    /// `CompanyListV2` is a native Tally `Company` collection, not the
+    /// embedded-TDL custom report `CompanyListV1` builds: no `REPORT`/`FORM`/
+    /// `PART`/`LINE`/`FIELD` stack and no computed TDL function call (a
+    /// `<COMPUTE>` element or a `$Field:Argument` invocation). It also carries
+    /// no `SVCURRENTCOMPANY`, so discovery is never scoped to one company --
+    /// the request must be able to return every company Tally has loaded.
+    #[test]
+    fn company_list_v2_is_a_native_collection_scoped_to_no_single_company() {
+        let request = ReadOnlyProfile::CompanyListV2.render();
+        assert!(request.contains("<TYPE>Collection</TYPE>"));
+        assert!(request.contains("<TYPE>Company</TYPE>"));
+        assert!(request.contains("<FETCH>NAME,GUID</FETCH>"));
+        for report_stack_tag in ["<REPORT", "<FORM ", "<PART ", "<LINE ", "<FIELD "] {
+            assert!(
+                !request.contains(report_stack_tag),
+                "unexpected report stack tag {report_stack_tag}"
+            );
+        }
+        assert!(!request.contains("<COMPUTE>"));
+        assert!(!request.contains("<SVCURRENTCOMPANY"));
+    }
+
     #[test]
     fn profile_ids_and_template_hashes_are_stable() {
         #[cfg_attr(not(feature = "voucher-scan"), allow(unused_mut))]
