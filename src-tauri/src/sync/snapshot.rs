@@ -416,6 +416,10 @@ pub struct WindowStageAttempt {
     pub batch_id: String,
     pub window_id: String,
     pub attempt_ordinal: u32,
+    /// Safe warnings observed while reading this particular attempt. They become
+    /// run-level warnings only after the attempt has completed immutably.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub warning_codes: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -433,6 +437,7 @@ impl From<&SnapshotWindowAttemptRef> for WindowStageAttempt {
             batch_id: value.batch_id.clone(),
             window_id: value.window_id.clone(),
             attempt_ordinal: value.attempt_ordinal,
+            warning_codes: BTreeSet::new(),
         }
     }
 }
@@ -456,6 +461,7 @@ impl From<&SnapshotWindowReceipt> for WindowStageReceipt {
                 batch_id: value.batch_id.clone(),
                 window_id: value.window_id.clone(),
                 attempt_ordinal: value.attempt_ordinal,
+                warning_codes: BTreeSet::new(),
             },
             member_count: value.member_count,
             membership_sha256: value.membership_sha256.clone(),
@@ -1803,6 +1809,7 @@ where
                 completion.receipt.attempt_id == repository_attempt.attempt_id
                     && completion.receipt.attempt_ordinal == repository_attempt.attempt_ordinal
             }) {
+                let attempt_warning_codes = durable_attempt.warning_codes.clone();
                 Self::record_local_clock_rollback(state, completion.local_clock_moved_backwards);
                 let receipt = completion.receipt;
                 let mut evidence = receipt_window_evidence(&planned, &receipt)?;
@@ -1820,6 +1827,7 @@ where
                 progress.stage_receipt = Some(WindowStageReceipt::from(&receipt));
                 progress.evidence = Some(evidence);
                 progress.phase = WindowPhase::Complete;
+                state.warning_codes.extend(attempt_warning_codes);
             } else {
                 match self
                     .mirror
@@ -2332,7 +2340,13 @@ where
                         .await;
                 }
             };
+            let mut attempt_warning_codes = BTreeSet::new();
             if let PackBatch::CoreAccounting(core) = &source_window.batch {
+                if core.has_foreign_master_text_diagnostics() {
+                    attempt_warning_codes.insert(
+                        bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE.to_string(),
+                    );
+                }
                 let report_result = match self
                     .await_connector(
                         &state,
@@ -2464,7 +2478,10 @@ where
                 .windows
                 .get_mut(&planned.id)
                 .ok_or(SnapshotError::StateInvariant("window"))?
-                .stage_attempt = Some(WindowStageAttempt::from(&attempt));
+                .stage_attempt = Some(WindowStageAttempt {
+                warning_codes: attempt_warning_codes,
+                ..WindowStageAttempt::from(&attempt)
+            });
             self.state_store.save(&mut state).await?;
 
             let observed_at_unix_ms = Utc::now().timestamp_millis();
@@ -2592,10 +2609,19 @@ where
                 .windows
                 .get_mut(&planned.id)
                 .ok_or(SnapshotError::StateInvariant("window"))?;
-            progress.stage_attempt = None;
+            let attempt_warning_codes = progress
+                .stage_attempt
+                .take()
+                .filter(|staged| {
+                    staged.attempt_id == attempt.attempt_id
+                        && staged.attempt_ordinal == attempt.attempt_ordinal
+                })
+                .ok_or(SnapshotError::StateInvariant("window_attempt"))?
+                .warning_codes;
             progress.stage_receipt = Some(WindowStageReceipt::from(&receipt));
             progress.evidence = Some(canonical.evidence);
             progress.phase = WindowPhase::Complete;
+            state.warning_codes.extend(attempt_warning_codes);
             state.set_phase(SnapshotPhase::Stage, Some(planned.id.clone()));
             self.state_store.save(&mut state).await?;
             if reconciliation_record_budget_exceeded(&state)? {
@@ -3727,6 +3753,11 @@ mod tests {
         failed: AtomicBool,
     }
 
+    struct FailAfterFirstStagingSaveStore {
+        inner: SqliteSnapshotStateStore,
+        failed: AtomicBool,
+    }
+
     struct FailBeforeSecondStagingHeartbeatStore {
         inner: SqliteSnapshotStateStore,
         staging_heartbeats: Mutex<usize>,
@@ -3849,6 +3880,33 @@ mod tests {
                 ));
             }
             self.inner.save(state).await
+        }
+
+        async fn heartbeat(&self, state: &DurableSnapshotState) -> Result<(), SnapshotError> {
+            self.inner.heartbeat(state).await
+        }
+    }
+
+    #[async_trait]
+    impl SnapshotStateStore for FailAfterFirstStagingSaveStore {
+        async fn load(
+            &self,
+            resume_key: &str,
+        ) -> Result<Option<DurableSnapshotState>, SnapshotError> {
+            self.inner.load(resume_key).await
+        }
+
+        async fn save(&self, state: &mut DurableSnapshotState) -> Result<(), SnapshotError> {
+            self.inner.save(state).await?;
+            if state.windows.values().any(|window| {
+                window.phase == WindowPhase::Staging && window.stage_attempt.is_some()
+            }) && !self.failed.swap(true, Ordering::AcqRel)
+            {
+                return Err(SnapshotError::StateInvariant(
+                    "injected_crash_after_window_attempt_staging",
+                ));
+            }
+            Ok(())
         }
 
         async fn heartbeat(&self, state: &DurableSnapshotState) -> Result<(), SnapshotError> {
@@ -4102,6 +4160,21 @@ mod tests {
                 })
                 .collect(),
         );
+        window
+    }
+
+    fn core_groups_with_foreign_master_text_diagnostic() -> CanonicalPackWindow {
+        let mut window = core_groups(1);
+        let PackBatch::CoreAccounting(core) = &mut window.batch else {
+            panic!("core fixture");
+        };
+        core.foreign_master_text_diagnostics
+            .push(bridge_tally_core::ForeignMasterTextDiagnostic {
+                object_type: "group".to_string(),
+                source_id: "group-000000".to_string(),
+                stored_name: "Synthetic ill-rendering name".to_string(),
+                likely_intended_spelling: None,
+            });
         window
     }
 
@@ -6132,6 +6205,143 @@ mod tests {
         assert_eq!(connector.inner.requests.lock().unwrap().len(), 2);
     }
 
+    #[tokio::test]
+    async fn committed_window_with_foreign_master_text_diagnostic_persists_safe_warning_code() {
+        let (_, mirror, store, plan) = setup().await;
+        let source = core_groups_with_foreign_master_text_diagnostic();
+        let connector = ReportConnector {
+            inner: FakeConnector {
+                batch: Mutex::new(VecDeque::from([Ok(source.clone()), Ok(source)])),
+                company: plan.company.clone(),
+                requests: Mutex::new(Vec::new()),
+            },
+        };
+
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect("diagnosed window commits with a safe operator warning");
+
+        assert!(result
+            .state
+            .warning_codes
+            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+        let receipt = mirror
+            .historical_commit_receipt_for_batch(
+                result.state.batch_id.as_deref().expect("committed batch"),
+                &plan.run_id,
+            )
+            .await
+            .expect("committed receipt");
+        assert_eq!(
+            receipt.facts.warning_codes,
+            vec![bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE.to_string()]
+        );
+        let export = mirror
+            .redacted_proof_export(
+                &plan.mirror_company_id,
+                result
+                    .receipt
+                    .proof_id
+                    .as_deref()
+                    .expect("committed proof id"),
+                10_000,
+            )
+            .await
+            .expect("diagnosed window remains exportable as a redacted proof");
+        assert!(export
+            .json
+            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+    }
+
+    #[tokio::test]
+    async fn abandoned_diagnosed_attempt_does_not_emit_warning_after_clean_reread() {
+        let (_, mirror, store, mut plan) = setup().await;
+        plan.resume_key = "resume-abandoned-diagnosed-attempt".to_string();
+        plan.run_id = "run-abandoned-diagnosed-attempt".to_string();
+        let diagnosed = core_groups_with_foreign_master_text_diagnostic();
+        let clean = core_groups(1);
+        let connector = ReportConnector {
+            inner: FakeConnector {
+                batch: Mutex::new(VecDeque::from([
+                    Ok(diagnosed),
+                    Ok(clean.clone()),
+                    Ok(clean),
+                ])),
+                company: plan.company.clone(),
+                requests: Mutex::new(Vec::new()),
+            },
+        };
+        let crash_store = FailAfterFirstStagingSaveStore {
+            inner: store.clone(),
+            failed: AtomicBool::new(false),
+        };
+
+        let error = FullSnapshotEngine::new(&mirror, &crash_store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect_err("crash after the diagnosed attempt is durably staged");
+        assert!(matches!(
+            error,
+            SnapshotError::StateInvariant("injected_crash_after_window_attempt_staging")
+        ));
+        let persisted = store.load(&plan.resume_key).await.unwrap().unwrap();
+        let staged = persisted.windows[&plan.windows[0].id]
+            .stage_attempt
+            .as_ref()
+            .expect("the diagnosed warning is bound to the open attempt");
+        assert!(staged
+            .warning_codes
+            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+        assert!(!persisted
+            .warning_codes
+            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect("abandon the diagnosed attempt and complete the clean reread");
+        assert!(!result
+            .state
+            .warning_codes
+            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+        let receipt = mirror
+            .historical_commit_receipt_for_batch(
+                result.state.batch_id.as_deref().expect("committed batch"),
+                &plan.run_id,
+            )
+            .await
+            .expect("committed receipt");
+        assert!(!receipt
+            .facts
+            .warning_codes
+            .contains(&bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE.to_string()));
+        assert_eq!(connector.inner.requests.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn committed_clean_window_has_no_foreign_master_text_warning_code() {
+        let (_, mirror, store, plan) = setup().await;
+        let source = core_groups(1);
+        let connector = ReportConnector {
+            inner: FakeConnector {
+                batch: Mutex::new(VecDeque::from([Ok(source.clone()), Ok(source)])),
+                company: plan.company.clone(),
+                requests: Mutex::new(Vec::new()),
+            },
+        };
+
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect("clean window commits without the foreign-text warning");
+
+        assert!(!result
+            .state
+            .warning_codes
+            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+    }
+
     #[test]
     fn aggregate_reconciliation_record_budget_accepts_the_exact_boundary() {
         assert!(!aggregate_record_budget_exceeded([Ok(50_000), Ok(50_000),])
@@ -6191,6 +6401,7 @@ mod tests {
                 batch_id: batch_id.clone(),
                 window_id: planned.id.clone(),
                 attempt_ordinal: 1,
+                warning_codes: BTreeSet::new(),
             },
             member_count: over_budget,
             membership_sha256: "a".repeat(64),
@@ -6352,6 +6563,7 @@ mod tests {
                     batch_id: batch_id.clone(),
                     window_id: planned.id.clone(),
                     attempt_ordinal: 1,
+                    warning_codes: BTreeSet::new(),
                 },
                 member_count: 98,
                 membership_sha256: membership_sha256.clone(),
