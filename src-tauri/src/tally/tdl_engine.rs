@@ -119,100 +119,6 @@ pub fn ledgers_request(company: &str) -> String {
     bridge_tally_protocol::xml_read_profiles::compatibility::ledgers_request(company)
 }
 
-#[cfg(test)]
-fn legacy_ledgers_request(company: &str) -> String {
-    format!(
-        r#"
-<ENVELOPE>
-    <HEADER>
-        <VERSION>1</VERSION>
-        <TALLYREQUEST>EXPORT</TALLYREQUEST>
-        <TYPE>DATA</TYPE>
-        <ID>BRIDGE Ledger Export V1</ID>
-    </HEADER>
-    <BODY>
-        <DESC>
-            <STATICVARIABLES>
-                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-                <SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY>
-            </STATICVARIABLES>
-            <TDL>
-                <TDLMESSAGE>
-                    <REPORT NAME="BRIDGE Ledger Export V1">
-                        <FORMS>BRIDGE Ledger Export Form V1</FORMS>
-                        <PLAINXML>Yes</PLAINXML>
-                    </REPORT>
-                    <FORM NAME="BRIDGE Ledger Export Form V1">
-                        <TOPPARTS>BRIDGE Ledger Context Part V1, BRIDGE Ledger Rows Part V1</TOPPARTS>
-                    </FORM>
-                    <PART NAME="BRIDGE Ledger Context Part V1">
-                        <TOPLINES>BRIDGE Ledger Context Line V1</TOPLINES>
-                    </PART>
-                    <PART NAME="BRIDGE Ledger Rows Part V1">
-                        <TOPLINES>BRIDGE Ledger Row Line V1</TOPLINES>
-                        <REPEAT>BRIDGE Ledger Row Line V1 : BRIDGE Ledger Collection V1</REPEAT>
-                    </PART>
-                    <LINE NAME="BRIDGE Ledger Context Line V1">
-                        <LEFTFIELDS>BRIDGE Ledger Schema V1, BRIDGE Ledger Object Type V1, BRIDGE Ledger Company Name V1, BRIDGE Ledger Company GUID V1, BRIDGE Ledger Record Count V1</LEFTFIELDS>
-                        <XMLTAG>"COMPANYCONTEXT"</XMLTAG>
-                    </LINE>
-                    <FIELD NAME="BRIDGE Ledger Schema V1">
-                        <SET>"bridge.tally.ledgers/1"</SET>
-                        <XMLTAG>"SCHEMA"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Ledger Object Type V1">
-                        <SET>"LEDGER"</SET>
-                        <XMLTAG>"OBJECTTYPE"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Ledger Company Name V1">
-                        <SET>##SVCurrentCompany</SET>
-                        <XMLTAG>"NAME"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Ledger Company GUID V1">
-                        <SET>$GUID:Company:##SVCurrentCompany</SET>
-                        <XMLTAG>"GUID"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Ledger Record Count V1">
-                        <SET>$$NumItems:BRIDGE Ledger Collection V1</SET>
-                        <XMLTAG>"RECORDCOUNT"</XMLTAG>
-                    </FIELD>
-                    <LINE NAME="BRIDGE Ledger Row Line V1">
-                        <LEFTFIELDS>BRIDGE Ledger Parent V1, BRIDGE Ledger GSTIN V1, BRIDGE Ledger Opening Balance V1</LEFTFIELDS>
-                        <XMLTAG>"LEDGER"</XMLTAG>
-                        <XMLATTR>"NAME" : $Name</XMLATTR>
-                        <XMLATTR>"GUID" : $GUID</XMLATTR>
-                        <XMLATTR>"REMOTEID" : $RemoteID</XMLATTR>
-                        <XMLATTR>"MASTERID" : $MasterID</XMLATTR>
-                        <XMLATTR>"ALTERID" : $AlterID</XMLATTR>
-                    </LINE>
-                    <FIELD NAME="BRIDGE Ledger Parent V1">
-                        <SET>$Parent</SET>
-                        <XMLTAG>"PARENT"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Ledger GSTIN V1">
-                        <SET>$PartyGSTIN</SET>
-                        <XMLTAG>"PARTYGSTIN"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Ledger Opening Balance V1">
-                        <SET>$OpeningBalance</SET>
-                        <XMLTAG>"OPENINGBALANCE"</XMLTAG>
-                    </FIELD>
-                    <COLLECTION ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No" NAME="BRIDGE Ledger Collection V1">
-                        <TYPE>Ledger</TYPE>
-                        <FETCH>Name, GUID, RemoteID, MasterID, AlterID, Parent, PartyGSTIN, OpeningBalance</FETCH>
-                    </COLLECTION>
-                </TDLMESSAGE>
-            </TDL>
-        </DESC>
-    </BODY>
-</ENVELOPE>
-"#,
-        xml_escape(company)
-    )
-    .trim()
-    .to_string()
-}
-
 pub fn groups_request(company: &str) -> String {
     format!(
         r#"
@@ -298,238 +204,10 @@ pub fn groups_request(company: &str) -> String {
     .to_string()
 }
 
-pub fn voucher_types_request(company: &str) -> String {
-    format!(
-        r#"
-<ENVELOPE>
-    <HEADER>
-        <VERSION>1</VERSION>
-        <TALLYREQUEST>EXPORT</TALLYREQUEST>
-        <TYPE>DATA</TYPE>
-        <ID>BRIDGE Voucher Type Export V1</ID>
-    </HEADER>
-    <BODY>
-        <DESC>
-            <STATICVARIABLES>
-                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-                <SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY>
-            </STATICVARIABLES>
-            <TDL>
-                <TDLMESSAGE>
-                    <REPORT NAME="BRIDGE Voucher Type Export V1">
-                        <FORMS>BRIDGE Voucher Type Export Form V1</FORMS>
-                        <PLAINXML>Yes</PLAINXML>
-                    </REPORT>
-                    <FORM NAME="BRIDGE Voucher Type Export Form V1">
-                        <TOPPARTS>BRIDGE Voucher Type Context Part V1, BRIDGE Voucher Type Rows Part V1</TOPPARTS>
-                    </FORM>
-                    <PART NAME="BRIDGE Voucher Type Context Part V1">
-                        <TOPLINES>BRIDGE Voucher Type Context Line V1</TOPLINES>
-                    </PART>
-                    <PART NAME="BRIDGE Voucher Type Rows Part V1">
-                        <TOPLINES>BRIDGE Voucher Type Row Line V1</TOPLINES>
-                        <REPEAT>BRIDGE Voucher Type Row Line V1 : BRIDGE Voucher Type Collection V1</REPEAT>
-                    </PART>
-                    <LINE NAME="BRIDGE Voucher Type Context Line V1">
-                        <LEFTFIELDS>BRIDGE Voucher Type Schema V1, BRIDGE Voucher Type Object Type V1, BRIDGE Voucher Type Company Name V1, BRIDGE Voucher Type Company GUID V1, BRIDGE Voucher Type Record Count V1</LEFTFIELDS>
-                        <XMLTAG>"COMPANYCONTEXT"</XMLTAG>
-                    </LINE>
-                    <FIELD NAME="BRIDGE Voucher Type Schema V1">
-                        <SET>"bridge.tally.voucher-types/1"</SET>
-                        <XMLTAG>"SCHEMA"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Type Object Type V1">
-                        <SET>"VOUCHERTYPE"</SET>
-                        <XMLTAG>"OBJECTTYPE"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Type Company Name V1">
-                        <SET>##SVCurrentCompany</SET>
-                        <XMLTAG>"NAME"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Type Company GUID V1">
-                        <SET>$GUID:Company:##SVCurrentCompany</SET>
-                        <XMLTAG>"GUID"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Type Record Count V1">
-                        <SET>$$NumItems:BRIDGE Voucher Type Collection V1</SET>
-                        <XMLTAG>"RECORDCOUNT"</XMLTAG>
-                    </FIELD>
-                    <LINE NAME="BRIDGE Voucher Type Row Line V1">
-                        <LEFTFIELDS>BRIDGE Voucher Type Parent V1</LEFTFIELDS>
-                        <XMLTAG>"VOUCHERTYPE"</XMLTAG>
-                        <XMLATTR>"NAME" : $Name</XMLATTR>
-                        <XMLATTR>"GUID" : $GUID</XMLATTR>
-                        <XMLATTR>"REMOTEID" : $RemoteID</XMLATTR>
-                        <XMLATTR>"MASTERID" : $MasterID</XMLATTR>
-                        <XMLATTR>"ALTERID" : $AlterID</XMLATTR>
-                    </LINE>
-                    <FIELD NAME="BRIDGE Voucher Type Parent V1">
-                        <SET>$Parent</SET>
-                        <XMLTAG>"PARENT"</XMLTAG>
-                    </FIELD>
-                    <COLLECTION NAME="BRIDGE Voucher Type Collection V1" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
-                        <TYPE>VoucherType</TYPE>
-                        <FETCH>Name, GUID, RemoteID, MasterID, AlterID, Parent</FETCH>
-                    </COLLECTION>
-                </TDLMESSAGE>
-            </TDL>
-        </DESC>
-    </BODY>
-</ENVELOPE>
-"#,
-        xml_escape(company)
-    )
-    .trim()
-    .to_string()
-}
-
-pub fn vouchers_request(company: &str, from: &str, to: &str) -> String {
-    bridge_tally_protocol::xml_read_profiles::compatibility::vouchers_request(company, from, to)
-}
-
 pub fn selected_vouchers_request(company: &str, from: &str, to: &str) -> String {
     bridge_tally_protocol::xml_read_profiles::compatibility::selected_vouchers_request(
         company, from, to,
     )
-}
-
-#[cfg(test)]
-fn legacy_vouchers_request(company: &str, from: &str, to: &str) -> String {
-    format!(
-        r#"
-<ENVELOPE>
-    <HEADER>
-        <VERSION>1</VERSION>
-        <TALLYREQUEST>EXPORT</TALLYREQUEST>
-        <TYPE>DATA</TYPE>
-        <ID>BRIDGE Voucher Export V2</ID>
-    </HEADER>
-    <BODY>
-        <DESC>
-            <STATICVARIABLES>
-                <SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY>
-                <SVFROMDATE TYPE="Date">{}</SVFROMDATE>
-                <SVTODATE TYPE="Date">{}</SVTODATE>
-                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-            </STATICVARIABLES>
-            <TDL>
-                <TDLMESSAGE>
-                    <REPORT NAME="BRIDGE Voucher Export V2">
-                        <FORMS>BRIDGE Voucher Export Form V2</FORMS>
-                        <PLAINXML>Yes</PLAINXML>
-                    </REPORT>
-                    <FORM NAME="BRIDGE Voucher Export Form V2">
-                        <TOPPARTS>BRIDGE Voucher Context Part V1, BRIDGE Voucher Rows Part V1</TOPPARTS>
-                    </FORM>
-                    <PART NAME="BRIDGE Voucher Context Part V1">
-                        <TOPLINES>BRIDGE Voucher Context Line V1</TOPLINES>
-                    </PART>
-                    <PART NAME="BRIDGE Voucher Rows Part V1">
-                        <TOPLINES>BRIDGE Voucher Row Line V1</TOPLINES>
-                        <REPEAT>BRIDGE Voucher Row Line V1 : BRIDGE Voucher Collection V1</REPEAT>
-                    </PART>
-                    <LINE NAME="BRIDGE Voucher Context Line V1">
-                        <LEFTFIELDS>BRIDGE Voucher Schema V1, BRIDGE Voucher Object Type V1, BRIDGE Voucher Company Name V1, BRIDGE Voucher Company GUID V1, BRIDGE Voucher Record Count V1</LEFTFIELDS>
-                        <XMLTAG>"COMPANYCONTEXT"</XMLTAG>
-                    </LINE>
-                    <FIELD NAME="BRIDGE Voucher Schema V1">
-                        <SET>"bridge.tally.vouchers/2"</SET>
-                        <XMLTAG>"SCHEMA"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Object Type V1">
-                        <SET>"VOUCHER"</SET>
-                        <XMLTAG>"OBJECTTYPE"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Company Name V1">
-                        <SET>##SVCurrentCompany</SET>
-                        <XMLTAG>"NAME"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Company GUID V1">
-                        <SET>$GUID:Company:##SVCurrentCompany</SET>
-                        <XMLTAG>"GUID"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Record Count V1">
-                        <SET>$$NumItems:BRIDGE Voucher Collection V1</SET>
-                        <XMLTAG>"RECORDCOUNT"</XMLTAG>
-                    </FIELD>
-                    <LINE NAME="BRIDGE Voucher Row Line V1">
-                        <LEFTFIELDS>BRIDGE Voucher Date V1, BRIDGE Voucher Type V1, BRIDGE Voucher Number V1, BRIDGE Voucher Cancelled V1, BRIDGE Voucher Optional V2, BRIDGE Voucher Ledger Entry Count V1</LEFTFIELDS>
-                        <XMLTAG>"VOUCHER"</XMLTAG>
-                        <XMLATTR>"REMOTEID" : $RemoteID</XMLATTR>
-                        <XMLATTR>"GUID" : $GUID</XMLATTR>
-                        <XMLATTR>"MASTERID" : $MasterID</XMLATTR>
-                        <XMLATTR>"ALTERID" : $AlterID</XMLATTR>
-                        <EXPLODE>BRIDGE Voucher Ledger Entries Part V1 : Yes</EXPLODE>
-                    </LINE>
-                    <FIELD NAME="BRIDGE Voucher Date V1">
-                        <SET>$Date</SET>
-                        <XMLTAG>"DATE"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Type V1">
-                        <SET>$VoucherTypeName</SET>
-                        <XMLTAG>"VOUCHERTYPENAME"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Number V1">
-                        <SET>$VoucherNumber</SET>
-                        <XMLTAG>"VOUCHERNUMBER"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Cancelled V1">
-                        <SET>$IsCancelled</SET>
-                        <XMLTAG>"ISCANCELLED"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Optional V2">
-                        <SET>$IsOptional</SET>
-                        <TYPE>Logical</TYPE>
-                        <XMLTAG>"ISOPTIONAL"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Ledger Entry Count V1">
-                        <SET>$$NumItems:AllLedgerEntries</SET>
-                        <XMLTAG>"LEDGERENTRYCOUNT"</XMLTAG>
-                    </FIELD>
-                    <PART NAME="BRIDGE Voucher Ledger Entries Part V1">
-                        <TOPLINES>BRIDGE Voucher Ledger Entry Row V1</TOPLINES>
-                        <REPEAT>BRIDGE Voucher Ledger Entry Row V1 : AllLedgerEntries</REPEAT>
-                        <XMLTAG>"LEDGERENTRIES"</XMLTAG>
-                    </PART>
-                    <LINE NAME="BRIDGE Voucher Ledger Entry Row V1">
-                        <LEFTFIELDS>BRIDGE Voucher Ledger Entry Index V1, BRIDGE Voucher Ledger Entry Name V1, BRIDGE Voucher Ledger Entry Amount V1, BRIDGE Voucher Ledger Entry Deemed Positive V1</LEFTFIELDS>
-                        <XMLTAG>"LEDGERENTRY"</XMLTAG>
-                    </LINE>
-                    <FIELD NAME="BRIDGE Voucher Ledger Entry Index V1">
-                        <SET>$$Line</SET>
-                        <XMLTAG>"ENTRYINDEX"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Ledger Entry Name V1">
-                        <SET>$LedgerName</SET>
-                        <XMLTAG>"LEDGERNAME"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Ledger Entry Amount V1">
-                        <SET>$Amount</SET>
-                        <TYPE>Amount</TYPE>
-                        <FORMAT>"No Symbol, No Comma"</FORMAT>
-                        <XMLTAG>"AMOUNT"</XMLTAG>
-                    </FIELD>
-                    <FIELD NAME="BRIDGE Voucher Ledger Entry Deemed Positive V1">
-                        <SET>$IsDeemedPositive</SET>
-                        <TYPE>Logical</TYPE>
-                        <XMLTAG>"ISDEEMEDPOSITIVE"</XMLTAG>
-                    </FIELD>
-                    <COLLECTION NAME="BRIDGE Voucher Collection V1" ISMODIFY="No" ISFIXED="No" ISINITIALIZE="No" ISOPTION="No" ISINTERNAL="No">
-                        <TYPE>Voucher</TYPE>
-                        <FETCH>RemoteID, GUID, MasterID, AlterID, Date, VoucherTypeName, VoucherNumber, IsCancelled, AllLedgerEntries.*</FETCH>
-                    </COLLECTION>
-                </TDLMESSAGE>
-            </TDL>
-        </DESC>
-    </BODY>
-</ENVELOPE>
-"#,
-        xml_escape(company),
-        xml_escape(from),
-        xml_escape(to)
-    )
-    .trim()
-    .to_string()
 }
 
 /// Experimental Bridge-defined ledger-balance cross-view. The request emits no
@@ -623,32 +301,21 @@ fn xml_escape(value: &str) -> String {
 mod tests {
     use super::{
         company_list_request, groups_request, ledger_period_balances_request, ledgers_request,
-        legacy_company_list_request, legacy_ledgers_request, legacy_vouchers_request,
-        voucher_types_request, vouchers_request,
+        legacy_company_list_request,
     };
 
     #[test]
     fn portable_read_profiles_preserve_the_existing_production_bytes() {
         assert_eq!(company_list_request(), legacy_company_list_request());
-        assert_eq!(
-            ledgers_request("BRIDGE & <SYNTHETIC> \"BOOK\""),
-            legacy_ledgers_request("BRIDGE & <SYNTHETIC> \"BOOK\"")
-        );
-        assert_eq!(
-            vouchers_request("BRIDGE 'SYNTHETIC'", "2026<0401", "2026&0430"),
-            legacy_vouchers_request("BRIDGE 'SYNTHETIC'", "2026<0401", "2026&0430")
-        );
     }
 
     #[test]
     fn requests_only_fields_used_by_the_renderer() {
         let combined = format!(
-            "{}{}{}{}{}",
+            "{}{}{}",
             company_list_request(),
             groups_request("Synthetic Company"),
-            ledgers_request("Synthetic Company"),
-            voucher_types_request("Synthetic Company"),
-            vouchers_request("Synthetic Company", "20260401", "20260430")
+            ledgers_request("Synthetic Company")
         );
         for prohibited in [
             "NATIVEMETHOD>*",
@@ -695,39 +362,6 @@ mod tests {
         assert!(groups
             .contains("<REPEAT>BRIDGE Group Row Line V1 : BRIDGE Group Collection V1</REPEAT>"));
         assert!(groups.contains("<TYPE>Group</TYPE>"));
-
-        let voucher_types = voucher_types_request("BRIDGE SYNTHETIC BOOK");
-        assert!(voucher_types.contains("<TYPE>DATA</TYPE>"));
-        assert!(voucher_types.contains("<ID>BRIDGE Voucher Type Export V1</ID>"));
-        assert!(voucher_types.contains("$$NumItems:BRIDGE Voucher Type Collection V1"));
-        assert!(voucher_types.contains(
-            "<REPEAT>BRIDGE Voucher Type Row Line V1 : BRIDGE Voucher Type Collection V1</REPEAT>"
-        ));
-        assert!(voucher_types.contains("<TYPE>VoucherType</TYPE>"));
-
-        let vouchers = vouchers_request("BRIDGE SYNTHETIC BOOK", "20260401", "20260430");
-        assert!(vouchers.contains("<TYPE>DATA</TYPE>"));
-        assert!(vouchers.contains("<ID>BRIDGE Voucher Export V2</ID>"));
-        assert!(vouchers.contains("<SET>$IsOptional</SET>"));
-        assert!(vouchers.contains("<XMLTAG>\"ISOPTIONAL\"</XMLTAG>"));
-        assert!(vouchers.contains("$$NumItems:BRIDGE Voucher Collection V1"));
-        assert!(vouchers.contains(
-            "<REPEAT>BRIDGE Voucher Row Line V1 : BRIDGE Voucher Collection V1</REPEAT>"
-        ));
-        assert!(vouchers.contains("<XMLATTR>\"REMOTEID\" : $RemoteID</XMLATTR>"));
-        assert!(vouchers.contains("<XMLATTR>\"MASTERID\" : $MasterID</XMLATTR>"));
-        assert!(vouchers.contains("<XMLATTR>\"ALTERID\" : $AlterID</XMLATTR>"));
-        assert!(vouchers.contains("<EXPLODE>BRIDGE Voucher Ledger Entries Part V1 : Yes</EXPLODE>"));
-        assert!(vouchers
-            .contains("<REPEAT>BRIDGE Voucher Ledger Entry Row V1 : AllLedgerEntries</REPEAT>"));
-        assert!(vouchers.contains("$$NumItems:AllLedgerEntries"));
-        assert!(vouchers.contains("<XMLTAG>\"LEDGERENTRYCOUNT\"</XMLTAG>"));
-        assert!(vouchers.contains("<XMLTAG>\"LEDGERNAME\"</XMLTAG>"));
-        assert!(vouchers.contains("<XMLTAG>\"AMOUNT\"</XMLTAG>"));
-        assert!(vouchers.contains("<XMLTAG>\"ISDEEMEDPOSITIVE\"</XMLTAG>"));
-        assert!(vouchers.contains("AllLedgerEntries.*"));
-        assert!(!vouchers.contains("PartyLedgerName"));
-        assert!(!vouchers.contains("Narration"));
     }
 
     #[test]
@@ -736,16 +370,8 @@ mod tests {
         assert!(ledgers.contains("BRIDGE &amp; &lt;SYNTHETIC&gt; &quot;BOOK&quot;"));
         assert!(!ledgers.contains("BRIDGE & <SYNTHETIC>"));
 
-        let vouchers = vouchers_request("BRIDGE 'SYNTHETIC'", "2026<0401", "2026&0430");
-        assert!(vouchers.contains("BRIDGE &apos;SYNTHETIC&apos;"));
-        assert!(vouchers.contains("2026&lt;0401"));
-        assert!(vouchers.contains("2026&amp;0430"));
-
         let groups = groups_request("BRIDGE & <GROUPS>");
         assert!(groups.contains("BRIDGE &amp; &lt;GROUPS&gt;"));
-
-        let voucher_types = voucher_types_request("BRIDGE 'VOUCHER TYPES'");
-        assert!(voucher_types.contains("BRIDGE &apos;VOUCHER TYPES&apos;"));
 
         let period = ledger_period_balances_request("BRIDGE & PERIOD", "2026<0401", "2026&0430");
         assert!(period.contains("BRIDGE &amp; PERIOD"));

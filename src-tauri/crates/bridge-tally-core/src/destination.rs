@@ -369,7 +369,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CoreAccountingBatch, Freshness, SourceIdentity, PROOF_CONTRACT_VERSION};
+    use crate::{
+        CoreAccountingBatch, ForeignMasterTextDiagnostic, Freshness, SourceIdentity,
+        PROOF_CONTRACT_VERSION,
+    };
     use std::sync::Mutex;
 
     struct FakeGateway {
@@ -493,6 +496,56 @@ mod tests {
                 .as_slice(),
             ["run-1:core:0"]
         );
+    }
+
+    #[tokio::test]
+    async fn batch_wire_shape_and_hash_are_unaffected_by_diagnostics_under_an_unchanged_schema() {
+        // A destination that negotiated CoreAccounting under a fixed schema version pins
+        // its expected JSON shape to that version. Bridge collecting a new, purely
+        // operator-facing diagnostic must not change the wire bytes (and therefore the
+        // content hash) it sends for that same negotiated version, or a destination
+        // built against the version can reject the payload / see an unexplained hash
+        // drift for an unchanged contract.
+        let gateway = Arc::new(FakeGateway {
+            capabilities: capabilities(),
+            corrupt_receipt_hash: false,
+            delivered_keys: Mutex::new(Vec::new()),
+        });
+        let adapter = AxalDestinationAdapter::new(gateway.clone());
+        let session = adapter
+            .begin_delivery(&proof())
+            .await
+            .expect("begin delivery");
+
+        let empty_batch = PackBatch::CoreAccounting(CoreAccountingBatch::default());
+        let mut with_diagnostics = CoreAccountingBatch::default();
+        with_diagnostics
+            .foreign_master_text_diagnostics
+            .push(ForeignMasterTextDiagnostic {
+                object_type: "ledger".to_string(),
+                source_id: "src-1".to_string(),
+                stored_name: "bad\u{7}name".to_string(),
+                likely_intended_spelling: None,
+            });
+        let diagnosed_batch = PackBatch::CoreAccounting(with_diagnostics);
+
+        let wire_without_diagnostics =
+            serde_json::to_vec(&empty_batch).expect("serialize empty batch");
+        let wire_with_diagnostics =
+            serde_json::to_vec(&diagnosed_batch).expect("serialize diagnosed batch");
+        assert_eq!(
+            wire_with_diagnostics, wire_without_diagnostics,
+            "a diagnostic must never change the versioned wire payload"
+        );
+
+        // The destination expects exactly the schema-3.0 shape it negotiated; sending
+        // that unchanged shape (even though Bridge internally holds a diagnostic) must
+        // be accepted.
+        let content_hash = sha256_hex(&wire_with_diagnostics);
+        adapter
+            .deliver_batch(&session, &diagnosed_batch, &content_hash, "run-1:core:0")
+            .await
+            .expect("a destination pinned to the negotiated schema must accept this payload");
     }
 
     #[tokio::test]

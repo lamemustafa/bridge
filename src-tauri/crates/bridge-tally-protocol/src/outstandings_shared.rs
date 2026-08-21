@@ -40,6 +40,13 @@ pub enum OutstandingsError {
     InvalidResponse(&'static str),
     InvalidAmount,
     ArithmeticOverflow,
+    /// A production bracket formed a [`CompanyBookExtent`] whose `ALTMSTID`
+    /// (master-alteration high-water) witness is absent. The parser stays
+    /// tolerant of this -- see [`parse_company_book_extent`] -- but a
+    /// bracket that cannot detect a master edit between its two reads is not
+    /// a bracket: two witness-less extents compare equal regardless of what
+    /// moved between them. See [`require_master_witness`].
+    MasterWitnessAbsent,
 }
 
 impl fmt::Display for OutstandingsError {
@@ -52,6 +59,9 @@ impl fmt::Display for OutstandingsError {
             Self::InvalidResponse(code) => code,
             Self::InvalidAmount => "Tally returned an invalid amount",
             Self::ArithmeticOverflow => "outstandings arithmetic exceeded the exact-decimal bound",
+            Self::MasterWitnessAbsent => {
+                "Tally omitted ALTMSTID, the master-alteration witness a paired-extent bracket needs to detect a master edit between its two reads"
+            }
         })
     }
 }
@@ -114,12 +124,40 @@ impl VoucherAlterIdHighWater {
     }
 }
 
+/// Tally's MASTER alteration high-water mark (`ALTMSTID`) -- the analogue of
+/// [`VoucherAlterIdHighWater`] on the master axis (GROUP, LEDGER, and every
+/// other master, as opposed to VOUCHER). A GROUP or LEDGER edit between the
+/// group-phase and ledger-phase reads of an outstandings core window moves
+/// this value but leaves `ALTVCHID`, `BooksFrom`, `LastVoucherDate`, `GUID`
+/// untouched, so this field is what lets the paired-extent bracket in
+/// `connector.rs` (`closing_extent != opening_extent`) detect that a master
+/// was edited mid-window. See `docs/tally/TEST_CORPUS.md` for a captured
+/// instance of two extents that agreed on every other field while differing
+/// only here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MasterAlterIdHighWater(u64);
+
+impl MasterAlterIdHighWater {
+    pub fn parse(value: &str) -> Result<Self, OutstandingsError> {
+        let value = value
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| OutstandingsError::InvalidResponse("company_altmstid_invalid"))?;
+        Ok(Self(value))
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanyBookExtent {
     company: PinnedCompany,
     books_from: TallyDate,
     last_voucher_date: TallyDate,
     voucher_alter_id_high_water: Option<VoucherAlterIdHighWater>,
+    master_alter_id_high_water: Option<MasterAlterIdHighWater>,
 }
 
 impl CompanyBookExtent {
@@ -128,12 +166,14 @@ impl CompanyBookExtent {
         books_from: TallyDate,
         last_voucher_date: TallyDate,
         voucher_alter_id_high_water: Option<VoucherAlterIdHighWater>,
+        master_alter_id_high_water: Option<MasterAlterIdHighWater>,
     ) -> Self {
         Self {
             company,
             books_from,
             last_voucher_date,
             voucher_alter_id_high_water,
+            master_alter_id_high_water,
         }
     }
 
@@ -148,6 +188,9 @@ impl CompanyBookExtent {
     }
     pub fn voucher_alter_id_high_water(&self) -> Option<VoucherAlterIdHighWater> {
         self.voucher_alter_id_high_water
+    }
+    pub fn master_alter_id_high_water(&self) -> Option<MasterAlterIdHighWater> {
+        self.master_alter_id_high_water
     }
 }
 
@@ -257,6 +300,8 @@ struct RawCompany {
     last_voucher_date: Value,
     #[serde(rename = "ALTVCHID", default)]
     alter_voucher_id: Option<Value>,
+    #[serde(rename = "ALTMSTID", default)]
+    alter_master_id: Option<Value>,
 }
 
 pub fn parse_company_book_extent(
@@ -301,6 +346,10 @@ pub fn parse_company_book_extent(
         .alter_voucher_id
         .map(|value| VoucherAlterIdHighWater::parse(&value.text))
         .transpose()?;
+    let master_alter_id_high_water = raw
+        .alter_master_id
+        .map(|value| MasterAlterIdHighWater::parse(&value.text))
+        .transpose()?;
     if books_from > last_voucher_date {
         return Err(OutstandingsError::InvalidResponse(
             "company_extent_reversed",
@@ -311,7 +360,33 @@ pub fn parse_company_book_extent(
         books_from,
         last_voucher_date,
         voucher_alter_id_high_water,
+        master_alter_id_high_water,
     ))
+}
+
+/// Requires a [`CompanyBookExtent`] to carry the `ALTMSTID` master-alteration
+/// witness before it is trusted as one side of a paired-extent bracket.
+///
+/// `parse_company_book_extent` deliberately stays tolerant of an absent
+/// `ALTMSTID` -- older captures, from before this field was fetched, still
+/// parse, with it `None` -- so old fixtures and their parser-level tests keep
+/// working. But a *production* bracket is different: it compares two extents
+/// and rejects the read when they differ, and two witness-less (`None`)
+/// extents compare equal no matter what master-level edit happened between
+/// them. That silently drops the one signal (`ALTMSTID`) able to detect a
+/// GROUP/LEDGER edit mid-window, since a master edit moves nothing else in
+/// the struct.
+///
+/// Call this where a bracket is actually formed/compared -- the sole
+/// producer of a production `CompanyBookExtent` on each path (the
+/// core-window bracket in `connector.rs::read_pinned_company_book_extent`,
+/// the outstandings bracket in `connection.rs::fetch_company_book_extent`)
+/// -- not inside the parser itself.
+pub fn require_master_witness(extent: &CompanyBookExtent) -> Result<(), OutstandingsError> {
+    if extent.master_alter_id_high_water().is_none() {
+        return Err(OutstandingsError::MasterWitnessAbsent);
+    }
+    Ok(())
 }
 
 fn require_complete_envelope(xml: &str) -> Result<(), OutstandingsError> {
@@ -348,7 +423,7 @@ fn parse_date(value: String) -> Result<TallyDate, OutstandingsError> {
 // --- Request rendering for the paired `CompanyBookExtentV1` read. ---
 
 const COMPANY_EXTENT_COLLECTION_NAME: &str = "BridgeCompanyBookExtentV1";
-const COMPANY_EXTENT_FETCH: &str = "Name, GUID, BooksFrom, LastVoucherDate, ALTVCHID";
+const COMPANY_EXTENT_FETCH: &str = "Name, GUID, BooksFrom, LastVoucherDate, ALTVCHID, ALTMSTID";
 
 pub(crate) fn render_company_book_extent(company: &str) -> String {
     format!(
@@ -383,8 +458,48 @@ mod tests {
         let xml = render_company_book_extent("Synthetic & Company");
         assert!(xml.contains("<ID>BridgeCompanyBookExtentV1</ID>"));
         assert!(xml.contains("ALTVCHID"));
+        assert!(xml.contains("ALTMSTID"));
         assert!(xml.contains("Synthetic &amp; Company"));
         assert!(!xml.contains("<COMPUTE>"));
         assert!(!xml.contains("$$NumItems"));
+    }
+
+    fn synthetic_extent(
+        master_alter_id_high_water: Option<MasterAlterIdHighWater>,
+    ) -> CompanyBookExtent {
+        let company = PinnedCompany::verified(
+            ValidatedCompanyName::new("Synthetic Company".to_string())
+                .expect("synthetic name validates"),
+            "synthetic-guid".to_string(),
+        )
+        .expect("synthetic identity verifies");
+        CompanyBookExtent::new(
+            company,
+            TallyDate::parse("20240101".to_string()).expect("synthetic BooksFrom"),
+            TallyDate::parse("20260101".to_string()).expect("synthetic LastVoucherDate"),
+            Some(VoucherAlterIdHighWater::parse("1").expect("synthetic ALTVCHID")),
+            master_alter_id_high_water,
+        )
+    }
+
+    /// The production bracket's strict check, isolated from any particular
+    /// caller: an extent whose `ALTMSTID` witness is absent must be refused
+    /// with the typed `MasterWitnessAbsent` error, while a witness-bearing
+    /// extent passes through unchanged. `connector.rs` and `connection.rs`
+    /// each call this at the point where their own bracket forms/compares a
+    /// production extent -- see their `..._fails_closed_when_altmstid_is_absent`
+    /// tests for that end-to-end wiring.
+    #[test]
+    fn require_master_witness_fails_closed_only_when_the_witness_is_absent() {
+        assert_eq!(
+            require_master_witness(&synthetic_extent(None)),
+            Err(OutstandingsError::MasterWitnessAbsent)
+        );
+        assert_eq!(
+            require_master_witness(&synthetic_extent(Some(
+                MasterAlterIdHighWater::parse("1").expect("synthetic ALTMSTID")
+            ))),
+            Ok(())
+        );
     }
 }

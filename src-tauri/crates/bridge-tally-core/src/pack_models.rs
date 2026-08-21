@@ -30,6 +30,71 @@ impl CanonicalText {
     }
 }
 
+/// Text copied verbatim from a client's Tally book.
+///
+/// Bridge has no authority to normalise or reject this text: Tally resolves
+/// master names by exact code point.  In particular, a name that contains a
+/// C1 control character may be ugly to render, but it remains the only valid
+/// token with which to refer to that master in Tally.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct ForeignText(String);
+
+impl ForeignText {
+    pub fn from_tally(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
+    /// A presentation warning, never an instruction to rewrite the source.
+    pub fn document_rendering_diagnostic(&self) -> Option<ForeignTextDiagnostic> {
+        if !self.0.chars().any(char::is_control) {
+            return None;
+        }
+        Some(ForeignTextDiagnostic {
+            contains_control_characters: true,
+            likely_intended_spelling: latin1_as_utf8_suggestion(&self.0),
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for ForeignText {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Self::from_tally(String::deserialize(deserializer)?))
+    }
+}
+
+/// Presentation-only metadata for foreign text. `likely_intended_spelling`
+/// is an operator suggestion; `ForeignText` always retains the exact Tally
+/// value and callers must never substitute this suggestion into a request.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignTextDiagnostic {
+    pub contains_control_characters: bool,
+    pub likely_intended_spelling: Option<String>,
+}
+
+fn latin1_as_utf8_suggestion(value: &str) -> Option<String> {
+    let bytes = value
+        .chars()
+        .map(u32::from)
+        .map(u8::try_from)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    let repaired = String::from_utf8(bytes).ok()?;
+    (repaired != value).then_some(repaired)
+}
+
 impl<'de> Deserialize<'de> for CanonicalText {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

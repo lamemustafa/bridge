@@ -3640,9 +3640,7 @@ mod tests {
         RawSourceSha256, SourceIdentity, SourceIdentityKind, SourceRecordEvidence, SourceRecordId,
         TransportId,
     };
-    use bridge_tally_protocol::{
-        BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
-    };
+    use bridge_tally_protocol::parse_native_ledger_source_records_with_evidence;
     use bridge_tally_transport::{TransportPolicy, XML_REQUEST_MAX_BYTES};
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use tally_protocol_simulator::{
@@ -4454,27 +4452,66 @@ mod tests {
         plan.run_id = "run-transport-adaptive-split".to_string();
         plan.pack_schema_version = bridge_tally_core::CORE_ACCOUNTING_SCHEMA_VERSION;
         let company_guid = &plan.company.identity.company_guid;
-        let master_xml = |schema: &str, object_type: &str| {
+        let company_extent = || {
             format!(
-                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYCONTEXT SCHEMA="{schema}" OBJECTTYPE="{object_type}" NAME="Synthetic Company" GUID="{company_guid}" RECORDCOUNT="0"/></BODY></ENVELOPE>"#
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260731</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20260701</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{company_guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
             )
         };
+        let native_groups = || {
+            format!(
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><GROUP NAME="Primary"><GUID TYPE="String">{company_guid}-00000000</GUID><PARENT TYPE="String">Primary</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">0</MASTERID></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#
+            )
+        };
+        let native_ledgers = || {
+            format!(
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="Synthetic Ledger"><GUID TYPE="String">{company_guid}-00000001</GUID><PARENT TYPE="String">Primary</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">1</MASTERID><OPENINGBALANCE TYPE="Amount">0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#
+            )
+        };
+        let native_voucher_types = || {
+            format!(
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHERTYPE NAME="Synthetic Voucher Type"><GUID TYPE="String">{company_guid}-00000002</GUID><PARENT TYPE="String">Synthetic Voucher Type</PARENT><ALTERID TYPE="Number">1</ALTERID><MASTERID TYPE="Number">2</MASTERID></VOUCHERTYPE></COLLECTION></DATA></BODY></ENVELOPE>"#
+            )
+        };
+        assert!(
+            parse_native_ledger_source_records_with_evidence(&native_ledgers(), company_guid)
+                .is_ok(),
+            "the synthetic native-ledger response must satisfy the dispatched parser"
+        );
         let simulator = SequenceSimulator::spawn(vec![
-            ScenarioPlan::new(Fixture::SyntheticXml(master_xml(
-                BRIDGE_GROUP_EXPORT_SCHEMA,
-                "GROUP",
-            )))
-            .with_encoding(WireEncoding::Utf16Le),
-            ScenarioPlan::new(Fixture::SyntheticXml(master_xml(
-                BRIDGE_LEDGER_EXPORT_SCHEMA,
-                "LEDGER",
-            )))
-            .with_encoding(WireEncoding::Utf16Le),
-            ScenarioPlan::new(Fixture::SyntheticXml(master_xml(
-                BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
-                "VOUCHERTYPE",
-            )))
-            .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(native_groups()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(native_groups()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(native_ledgers()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(native_ledgers()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(native_voucher_types()))
+                .with_encoding(WireEncoding::Utf16Le),
+            // The voucher export is bracketed by paired, GUID-verified book
+            // extent reads. Keep these distinct from the intentionally
+            // oversized voucher response below so the test exercises the
+            // voucher-only adaptive split contract.
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
+                .with_encoding(WireEncoding::Utf16Le),
             ScenarioPlan::new(Fixture::Oversized {
                 minimum_bytes: TEST_RESPONSE_LIMIT + 1,
             })
@@ -4537,7 +4574,7 @@ mod tests {
                 .count(),
             2
         );
-        assert_eq!(requests.len(), 4);
+        assert_eq!(requests.len(), 16);
         assert!(requests.iter().all(|request| request.request_processed));
     }
 

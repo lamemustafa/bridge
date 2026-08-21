@@ -15,13 +15,13 @@ use crate::tally::runtime_control::{
     ReadAttempt, ReadExecutionError, ReadFailureClass, ReadOperation, ReadRetryPolicy,
     TELEMETRY_PREVIEW_SCHEMA,
 };
-use crate::tally::tdl_engine;
 use bridge_tally_core::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     compute_native_outstandings, parse_company_currency, parse_native_bill_rows,
-    parse_native_ledger_snapshot, render_company_currency_request, render_native_bills_request,
+    parse_native_group_snapshot, parse_native_ledger_snapshot, render_company_currency_request,
+    render_native_bills_request, render_native_group_snapshot_request,
     render_native_ledger_snapshot_request, AgeingAnchor, CompanyCurrency, NativeBillsReportKind,
-    NativeMasterSnapshot,
+    NativeGroupSnapshot, NativeMasterSnapshot,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -32,7 +32,6 @@ use bridge_tally_protocol::outstandings::{
     WitnessPairVerification,
 };
 use bridge_tally_protocol::outstandings_shared::OutstandingsReport;
-use bridge_tally_protocol::{parse_group_source_records_with_evidence, verify_company_context};
 use bridge_tally_transport::TallyTransportError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1321,11 +1320,11 @@ impl TallyRuntime {
                     total_bytes += encoded_bytes;
 
                     // A ledger's immediate parent can be an arbitrary custom
-                    // subgroup. Reuse the existing GUID-bound group profile so
-                    // bill-wise-off party ledgers can be resolved all the way
-                    // to Sundry Debtors/Creditors rather than disappearing.
+                    // subgroup. The native group snapshot resolves it all the
+                    // way to Sundry Debtors/Creditors without importing the
+                    // legacy custom-TDL profile.
                     let groups = client
-                        .fetch_native_report_paired(tdl_engine::groups_request(&company))
+                        .fetch_native_report_paired(render_native_group_snapshot_request(&company))
                         .await?;
                     let NativePairedRead::Stable {
                         body: group_body,
@@ -1379,13 +1378,8 @@ impl TallyRuntime {
                         parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;
                     let payable_rows = parse_native_bill_rows(&payable_body, &books_from, &as_of)?;
                     let ledger_rows = parse_native_ledger_snapshot(&ledger_body)?;
-                    let parsed_groups = parse_group_source_records_with_evidence(&group_body)?;
-                    verify_company_context(&parsed_groups.evidence, &expected_company_guid)?;
-                    let group_rows = parsed_groups
-                        .records
-                        .into_iter()
-                        .map(|row| row.record)
-                        .collect::<Vec<_>>();
+                    let group_rows =
+                        parse_native_group_snapshot(&group_body, &expected_company_guid)?;
 
                     // Ageing anchors on the DUE date. Measured 2026-08-07: on a
                     // bill carrying a 30-day credit period Tally's own
@@ -1399,7 +1393,7 @@ impl TallyRuntime {
                         &payable_rows,
                         NativeMasterSnapshot {
                             ledgers: &ledger_rows,
-                            groups: &group_rows,
+                            groups: NativeGroupSnapshot::Complete(&group_rows),
                         },
                         AgeingAnchor::DueDate,
                         &as_of,
@@ -2106,8 +2100,7 @@ fn classify_error(error: &anyhow::Error) -> HealthOutcome {
         | ReadFailureClass::SizeLimit
         | ReadFailureClass::Decode
         | ReadFailureClass::Application
-        | ReadFailureClass::Validation
-        | ReadFailureClass::CompanyMismatch => HealthOutcome::ApplicationRejected,
+        | ReadFailureClass::Validation => HealthOutcome::ApplicationRejected,
     }
 }
 
@@ -2251,7 +2244,7 @@ mod tests {
             &[],
             NativeMasterSnapshot {
                 ledgers: &[],
-                groups: &[],
+                groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
             },
             AgeingAnchor::DueDate,
             &TallyDate::parse("20260817").expect("synthetic as-of"),
@@ -2307,7 +2300,19 @@ mod tests {
         const CURRENCY: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><CURRENCY>0</CURRENCY></CMPINFO></DESC><DATA><COLLECTION><CURRENCY NAME="Rs." RESERVEDNAME=""><MAILINGNAME TYPE="String">Indian Rupees</MAILINGNAME></CURRENCY></COLLECTION></DATA></BODY></ENVELOPE>"#;
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
 
-        let closing_extent = EXTENT.replace(
+        // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
+        // (`fetch_company_book_extent`) now requires that witness, so inject it into this
+        // in-memory copy -- the committed fixture bytes are left untouched.
+        let opening_extent = EXTENT.replacen(
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
+            1,
+        );
+        assert_ne!(
+            opening_extent, EXTENT,
+            "the injection must actually change the fixture for this test to prove anything"
+        );
+        let closing_extent = opening_extent.replace(
             "<LASTVOUCHERDATE TYPE=\"Date\">20260401</LASTVOUCHERDATE>",
             "<LASTVOUCHERDATE TYPE=\"Date\">20260402</LASTVOUCHERDATE>",
         );
@@ -2317,9 +2322,9 @@ mod tests {
         let address = listener.local_addr().expect("synthetic server address");
         let server = tokio::spawn(async move {
             let responses = [
-                EXTENT,
+                opening_extent.as_str(),
                 STATUS,
-                EXTENT,
+                opening_extent.as_str(),
                 STATUS,
                 CURRENCY,
                 STATUS,
@@ -2424,7 +2429,7 @@ mod tests {
             &[],
             NativeMasterSnapshot {
                 ledgers: &ledgers,
-                groups: &[],
+                groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
             },
             AgeingAnchor::DueDate,
             &as_of,

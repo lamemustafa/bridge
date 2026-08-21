@@ -28,8 +28,13 @@ use bridge_tally_protocol::outstandings::{
     WitnessPairVerification,
 };
 use bridge_tally_protocol::{
-    outstandings_shared::{parse_company_book_extent, CompanyBookExtent},
+    native_outstandings::{
+        render_native_ledger_export_request, render_native_voucher_export_request,
+    },
+    outstandings_shared::{parse_company_book_extent, require_master_witness, CompanyBookExtent},
     parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
+    parse_native_ledger_source_records_with_evidence,
+    parse_native_voucher_source_records_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
     xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName},
@@ -590,18 +595,30 @@ impl TallyClient {
         })
     }
 
+    /// Discovers companies through Tally's documented `Company` collection
+    /// (`ReadOnlyProfile::CompanyListV2`) rather than the legacy `CompanyListV1`
+    /// custom TDL report. Unlike the legacy report -- which one Tally instance
+    /// answers with a bare, unwrapped `<COMPANYINFO>` document and another is
+    /// known to simply hang on -- the collection always answers with the
+    /// ordinary shaped `HEADER/STATUS=1` envelope, so `parse_companies_from_collection`
+    /// can require that shape outright.
     pub async fn fetch_companies(&self) -> anyhow::Result<Vec<TallyCompany>> {
-        let xml = self.post_xml(tdl_engine::company_list_request()).await?;
-        let companies = xml_parser::parse_companies_for_interactive_discovery(&xml)?;
+        let xml = self
+            .post_xml(ReadOnlyProfile::CompanyListV2.render())
+            .await?;
+        let companies = xml_parser::parse_companies_from_collection(&xml)?;
         normalize_discovered_companies(companies).map_err(|_| {
             anyhow::anyhow!("Tally returned an invalid company identity for interactive discovery")
         })
     }
 
-    /// Re-enumerates an untrusted direct report, then proves one user-chosen
-    /// name with a separate shaped standard collection response. The direct
-    /// report's GUID is deliberately discarded; only the collection's computed
-    /// context may construct the returned company identity.
+    /// Re-enumerates the trusted `Company` collection, then proves one
+    /// user-chosen name with a separate shaped standard collection response.
+    /// The collection's GUID is deliberately discarded; only the standard
+    /// ledger identity collection's computed context may construct the
+    /// returned company identity -- that binding proves Tally will actually
+    /// scope subsequent reads to this exact company, which matching a name
+    /// in a list can never prove by itself.
     pub async fn bootstrap_direct_company(
         &self,
         candidate_name: &str,
@@ -635,10 +652,28 @@ impl TallyClient {
         company: &str,
         expected_company_guid: &str,
     ) -> anyhow::Result<Vec<TallyLedger>> {
-        let xml = self.post_xml(tdl_engine::ledgers_request(company)).await?;
-        let parsed = xml_parser::parse_ledgers_with_evidence(&xml)?;
-        xml_parser::verify_company_context(&parsed.evidence, expected_company_guid)?;
-        Ok(parsed.records)
+        let opening_extent = self
+            .fetch_company_book_extent(company, expected_company_guid)
+            .await?;
+        let paired = self
+            .fetch_native_report_paired(render_native_ledger_export_request(company))
+            .await?;
+        let NativePairedRead::Stable { body, .. } = paired else {
+            anyhow::bail!("Tally native ledger collection changed between paired reads");
+        };
+        let parsed =
+            parse_native_ledger_source_records_with_evidence(&body, expected_company_guid)?;
+        let closing_extent = self
+            .fetch_company_book_extent(company, expected_company_guid)
+            .await?;
+        if closing_extent != opening_extent {
+            anyhow::bail!("Tally company book changed during native ledger read");
+        }
+        Ok(parsed
+            .records
+            .into_iter()
+            .map(|record| record.record)
+            .collect())
     }
 
     /// Reads the documented standard ledger collection as an explicitly limited
@@ -715,6 +750,11 @@ impl TallyClient {
         if first != second {
             anyhow::bail!("Tally company book extent changed between paired reads");
         }
+        // The parser stays tolerant of an absent ALTMSTID (older captures still parse), but this
+        // is the outstandings bracket itself: fail closed here so a witness-less pair -- which
+        // would otherwise compare equal regardless of a mid-window master edit -- can never be
+        // mistaken for a stable one. See `require_master_witness` for why.
+        require_master_witness(&first)?;
         Ok(first)
     }
 
@@ -881,12 +921,44 @@ impl TallyClient {
         from: &str,
         to: &str,
     ) -> anyhow::Result<Vec<TallyVoucher>> {
+        // Fail closed: `from`/`to` feed a quoted `$$Date:"..."` TDL formula
+        // argument, where XML escaping alone cannot contain an embedded
+        // quote (Tally decodes `&quot;` back to `"` before evaluating the
+        // formula). Requiring a validated `TallyDate` -- exactly 8 ASCII
+        // digits -- closes that off at the source instead of sanitising.
+        let from = bridge_tally_core::TallyDate::parse(from)
+            .context("voucher export from-date must be a valid YYYYMMDD date")?;
+        let to = bridge_tally_core::TallyDate::parse(to)
+            .context("voucher export to-date must be a valid YYYYMMDD date")?;
         let xml = self
-            .post_xml(tdl_engine::vouchers_request(company, from, to))
+            .post_xml(render_native_voucher_export_request(company, &from, &to))
             .await?;
-        let parsed = xml_parser::parse_vouchers_with_evidence(&xml)?;
-        xml_parser::verify_company_context(&parsed.evidence, expected_company_guid)?;
-        Ok(parsed.records)
+        let parsed =
+            parse_native_voucher_source_records_with_evidence(&xml, expected_company_guid)?;
+        if parsed.records.is_empty() {
+            // A native Voucher collection carries no envelope company GUID,
+            // so a zero-row response has no per-row identity to bind to the
+            // pinned company either -- `parse_native_voucher_source_records_with_evidence`
+            // accepts it unauthenticated. Since the voucher request is now
+            // filtered by date, a refused period boundary yields the exact
+            // same zero-row, byte-identical response as a genuinely empty
+            // window. Confirm the pinned company out-of-band with the same
+            // GUID-verified, paired book-extent bracket the core window uses
+            // for exactly this situation (see `RuntimeTallyConnector::extract_core_window`
+            // in connector.rs), instead of accepting the empty result as-is.
+            // Paid only here: a non-empty response keeps its existing
+            // row-GUID binding and issues no extra request.
+            self.fetch_company_book_extent(company, expected_company_guid)
+                .await
+                .context(
+                    "empty voucher response could not confirm the pinned company book extent",
+                )?;
+        }
+        Ok(parsed
+            .records
+            .into_iter()
+            .map(|record| record.record)
+            .collect())
     }
 
     pub async fn qualify_selected_vouchers(
@@ -1054,7 +1126,7 @@ fn validate_selected_ledgers(
         if let Some(alter_id) = &source.alter_id {
             bridge_tally_core::SourceAlterId::parse(alter_id.clone())?;
         }
-        let name = bridge_tally_core::CanonicalText::parse(source.record.name.clone())?;
+        let name = bridge_tally_core::ForeignText::from_tally(source.record.name.clone());
         if !names.insert(name.as_str().to_string()) {
             anyhow::bail!("Selected ledger response repeated a normalized name");
         }
@@ -1066,7 +1138,7 @@ fn validate_selected_ledgers(
         .flatten()
         .filter(|value| !value.trim().is_empty())
         {
-            bridge_tally_core::CanonicalText::parse(value.clone())?;
+            bridge_tally_core::ForeignText::from_tally(value.clone());
         }
         if let Some(opening_balance) = source
             .record
@@ -1539,6 +1611,18 @@ mod tests {
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
+        // (`fetch_company_book_extent`) now requires that witness, so inject it into this
+        // in-memory copy -- the committed fixture bytes are left untouched.
+        let company_extent = COMPANY_EXTENT.replacen(
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
+            1,
+        );
+        assert_ne!(
+            company_extent, COMPANY_EXTENT,
+            "the injection must actually change the fixture for this test to prove anything"
+        );
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -1577,7 +1661,7 @@ mod tests {
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let body = match index {
-                    0 | 2 | 12 | 14 => COMPANY_EXTENT,
+                    0 | 2 | 12 | 14 => company_extent.as_str(),
                     4 | 6 | 8 | 10 => OPTIONAL_VOUCHERS,
                     _ => STATUS,
                 };
@@ -1676,6 +1760,18 @@ mod tests {
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
+        // (`fetch_company_book_extent`) now requires that witness, so inject it into this
+        // in-memory copy -- the committed fixture bytes are left untouched.
+        let company_extent = COMPANY_EXTENT.replacen(
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
+            1,
+        );
+        assert_ne!(
+            company_extent, COMPANY_EXTENT,
+            "the injection must actually change the fixture for this test to prove anything"
+        );
 
         let coverage = |name: &str| {
             format!(
@@ -1687,9 +1783,9 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let responses = vec![
-            COMPANY_EXTENT.to_string(),
+            company_extent.clone(),
             STATUS.to_string(),
-            COMPANY_EXTENT.to_string(),
+            company_extent,
             STATUS.to_string(),
             coverage("Before Rename"),
             STATUS.to_string(),
@@ -1747,6 +1843,91 @@ mod tests {
         server.await.expect("synthetic Tally server task");
     }
 
+    /// The outstandings bracket (`fetch_company_book_extent`, feeding both
+    /// `fetch_outstandings_native` and `fetch_ledgers`) must fail closed with
+    /// a typed error when both paired reads agree but neither carries
+    /// `ALTMSTID`. This is the exact case the review flagged: two
+    /// witness-less extents compare equal, so the ordinary `first != second`
+    /// drift check alone cannot tell a stable book from one where a
+    /// GROUP/LEDGER master moved mid-window without a signal to detect it.
+    /// Uses the real, unmodified `unit_a_company_extent_live.xml` capture --
+    /// from before `ALTMSTID` was added to the fetch list -- rather than a
+    /// synthetic response, so the absence being tested is the one Tally has
+    /// actually produced.
+    #[tokio::test]
+    async fn outstandings_bracket_fails_closed_when_altmstid_is_absent() {
+        const COMPANY_EXTENT_WITHOUT_ALTMSTID: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        assert!(
+            !COMPANY_EXTENT_WITHOUT_ALTMSTID.contains("ALTMSTID"),
+            "this fixture must predate the ALTMSTID fetch for this test to prove anything"
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let responses = [
+            COMPANY_EXTENT_WITHOUT_ALTMSTID,
+            STATUS,
+            COMPANY_EXTENT_WITHOUT_ALTMSTID,
+            STATUS,
+        ];
+        let server = tokio::spawn(async move {
+            for (index, body) in responses.into_iter().enumerate() {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .expect("paired request timed out")
+                        .expect("accept paired request");
+                let request = read_complete_http_request(&mut socket).await;
+                let expected_prefix = if index % 2 == 0 {
+                    "POST / HTTP/1.1"
+                } else {
+                    "GET /status HTTP/1.1"
+                };
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
+                    "request {index} did not follow the required read/health-check sequence"
+                );
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write paired response");
+            }
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let error = client
+            .fetch_company_book_extent(
+                "Aarav Trading Company Demo",
+                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+            )
+            .await
+            .expect_err("a stable pair without ALTMSTID must still fail closed");
+        server.await.expect("synthetic Tally server task");
+        assert!(
+            error
+                .downcast_ref::<bridge_tally_protocol::outstandings_shared::OutstandingsError>()
+                .is_some_and(|error| {
+                    *error
+                        == bridge_tally_protocol::outstandings_shared::OutstandingsError::MasterWitnessAbsent
+                }),
+            "unexpected error: {error:#}"
+        );
+    }
+
     #[tokio::test]
     async fn http_success_with_tally_status_zero_is_not_an_empty_success() {
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -1754,17 +1935,41 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.expect("accept Tally request");
-            let request = read_complete_http_request(&mut socket).await;
-            assert!(
-                String::from_utf8_lossy(&request).starts_with("POST / HTTP/1.1"),
-                "ledger fetch should use Tally's XML POST endpoint"
-            );
-            let body = "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>";
-            socket
-                .write_all(&utf16_xml_response(body))
-                .await
-                .expect("write Tally response");
+            let extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+            for (index, body) in [
+                extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>",
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>",
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let (mut socket, _) = listener.accept().await.expect("accept Tally request");
+                let request = read_complete_http_request(&mut socket).await;
+                let expected = if index == 1 || index == 3 || index == 5 || index == 7 {
+                    "GET /status HTTP/1.1"
+                } else {
+                    "POST / HTTP/1.1"
+                };
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected),
+                    "ledger fetch did not preserve its extent/read sequence"
+                );
+                let response = if index == 1 || index == 3 || index == 5 || index == 7 {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write Tally response");
+            }
         });
 
         let client = TallyClient::new(TallyConfig {
@@ -1777,7 +1982,228 @@ mod tests {
             .await
             .expect_err("STATUS 0 must not become an empty ledger result");
         server.await.expect("synthetic Tally server task");
-        assert!(error.to_string().contains("export request failed"));
+        assert!(
+            error
+                .to_string()
+                .contains("native ledger collection did not report success"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    fn native_voucher_collection_xml(rows: &[&str]) -> String {
+        format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{}</COLLECTION></DATA></BODY></ENVELOPE>",
+            rows.join("")
+        )
+    }
+
+    /// Carries `ALTMSTID` so callers that need the production bracket to
+    /// accept a stable pair (rather than exercise the master-witness guard
+    /// itself) can use it as-is.
+    fn synthetic_company_book_extent_xml(guid: &str) -> String {
+        format!(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+        )
+    }
+
+    const SYNTHETIC_VOUCHER_ROW: &str = r#"<VOUCHER REMOTEID="synthetic-company-guid-00000001"><DATE TYPE="Date">20260401</DATE><GUID TYPE="String">synthetic-company-guid-00000001</GUID><MASTERID TYPE="Number">1</MASTERID><ALTERID TYPE="Number">1</ALTERID><VOUCHERTYPENAME TYPE="String">Payment</VOUCHERTYPENAME><ISCANCELLED TYPE="String">No</ISCANCELLED><ISOPTIONAL TYPE="String">No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME TYPE="String">Cash</LEDGERNAME><AMOUNT TYPE="Amount">-100.00</AMOUNT><ISDEEMEDPOSITIVE TYPE="String">Yes</ISDEEMEDPOSITIVE></ALLLEDGERENTRIES.LIST></VOUCHER>"#;
+
+    /// A native Voucher collection carries no envelope company GUID, and a
+    /// zero-row response has no per-row GUID either -- there is nothing for
+    /// `parse_native_voucher_source_records_with_evidence` to bind. Before
+    /// the fix, `fetch_vouchers` accepted such a response unauthenticated,
+    /// so a silently substituted or dropped company looked identical to a
+    /// genuinely empty window. This reproduces that: the voucher read comes
+    /// back empty, and the out-of-band book-extent bracket that should
+    /// confirm the pinned company instead observes a different one.
+    #[tokio::test]
+    async fn empty_voucher_response_is_rejected_when_pinned_company_cannot_be_confirmed() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let empty_vouchers = native_voucher_collection_xml(&[]);
+        let substituted_extent = synthetic_company_book_extent_xml("substituted-company-guid");
+        let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        let steps: Vec<(&str, String, bool)> = vec![
+            ("POST / HTTP/1.1", empty_vouchers, false),
+            ("POST / HTTP/1.1", substituted_extent.clone(), false),
+            ("GET /status HTTP/1.1", status.to_string(), true),
+            ("POST / HTTP/1.1", substituted_extent, false),
+            ("GET /status HTTP/1.1", status.to_string(), true),
+        ];
+        let server = tokio::spawn(async move {
+            for (index, (expected_prefix, body, is_status)) in steps.into_iter().enumerate() {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .unwrap_or_else(|_| {
+                            panic!(
+                                "request {index} timed out -- the empty-voucher rejection path \
+                                 did not attempt to confirm the pinned company out of band"
+                            )
+                        })
+                        .expect("accept synthetic Tally request");
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
+                    "request {index} did not follow the voucher-then-extent-bracket sequence"
+                );
+                let response = if is_status {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write synthetic Tally response");
+            }
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let error = client
+            .fetch_vouchers(
+                "Synthetic Company",
+                "synthetic-company-guid",
+                "20260401",
+                "20260401",
+            )
+            .await
+            .expect_err(
+                "an empty voucher response must not be accepted when the pinned company book \
+                 extent cannot be confirmed",
+            );
+        server.await.expect("synthetic Tally server task");
+        assert!(
+            error.to_string().contains(
+                "empty voucher response could not confirm the pinned company book extent"
+            ),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    /// Same empty voucher response as above, but this time the out-of-band
+    /// book-extent bracket confirms the pinned company is still selected and
+    /// stable -- so the empty result is accepted.
+    #[tokio::test]
+    async fn empty_voucher_response_is_accepted_when_bracket_confirms_pinned_company() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let empty_vouchers = native_voucher_collection_xml(&[]);
+        let confirmed_extent = synthetic_company_book_extent_xml("synthetic-company-guid");
+        let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        let steps: Vec<(&str, String, bool)> = vec![
+            ("POST / HTTP/1.1", empty_vouchers, false),
+            ("POST / HTTP/1.1", confirmed_extent.clone(), false),
+            ("GET /status HTTP/1.1", status.to_string(), true),
+            ("POST / HTTP/1.1", confirmed_extent, false),
+            ("GET /status HTTP/1.1", status.to_string(), true),
+        ];
+        let request_count = steps.len();
+        let server = tokio::spawn(async move {
+            for (index, (expected_prefix, body, is_status)) in steps.into_iter().enumerate() {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .unwrap_or_else(|_| panic!("request {index} timed out"))
+                        .expect("accept synthetic Tally request");
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected_prefix),
+                    "request {index} did not follow the voucher-then-extent-bracket sequence"
+                );
+                let response = if is_status {
+                    utf8_status_response(body)
+                } else {
+                    utf16_xml_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write synthetic Tally response");
+            }
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let vouchers = client
+            .fetch_vouchers(
+                "Synthetic Company",
+                "synthetic-company-guid",
+                "20260401",
+                "20260401",
+            )
+            .await
+            .expect("an empty voucher response confirmed by the extent bracket must be accepted");
+        server.await.expect("synthetic Tally server task");
+        assert!(vouchers.is_empty());
+        assert_eq!(
+            request_count, 5,
+            "the empty path must pay for exactly one voucher read plus the extent bracket"
+        );
+    }
+
+    /// A non-empty voucher response keeps its existing row-GUID binding and
+    /// must not pay for the extent bracket -- the common case stays a single
+    /// request.
+    #[tokio::test]
+    async fn non_empty_voucher_response_issues_no_extra_request() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let non_empty_vouchers = native_voucher_collection_xml(&[SYNTHETIC_VOUCHER_ROW]);
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                .await
+                .expect("voucher request timed out")
+                .expect("accept synthetic Tally request");
+            let request = read_complete_http_request(&mut socket).await;
+            assert!(
+                String::from_utf8_lossy(&request).starts_with("POST / HTTP/1.1"),
+                "unexpected request for the non-empty voucher read"
+            );
+            socket
+                .write_all(&utf16_xml_response(non_empty_vouchers))
+                .await
+                .expect("write synthetic Tally response");
+
+            // A non-empty response must not pay for the extent bracket: no
+            // further connection should ever arrive.
+            let extra = tokio::time::timeout(Duration::from_millis(300), listener.accept()).await;
+            assert!(
+                extra.is_err(),
+                "non-empty voucher fetch issued an unexpected extra request"
+            );
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let vouchers = client
+            .fetch_vouchers(
+                "Synthetic Company",
+                "synthetic-company-guid",
+                "20260401",
+                "20260401",
+            )
+            .await
+            .expect("non-empty voucher fetch must still succeed exactly as today");
+        server.await.expect("synthetic Tally server task");
+        assert_eq!(vouchers.len(), 1);
     }
 
     #[tokio::test]
@@ -1874,20 +2300,38 @@ mod tests {
         }
     }
 
+    /// `fetch_companies` now requests the native `Company` collection
+    /// (`ReadOnlyProfile::CompanyListV2`) instead of the legacy `CompanyListV1`
+    /// custom TDL report. This asserts the request itself carries that shape --
+    /// `TYPE=Collection`, no `REPORT`/`FORM`/`PART`/`LINE`/`FIELD` stack, and no
+    /// `SVCURRENTCOMPANY` scoping a discovery read to one company -- and that a
+    /// company row's `NAME` attribute and nested `GUID` are trimmed and returned.
     #[tokio::test]
-    async fn interactive_company_fetch_accepts_the_strict_direct_report_variant() {
+    async fn interactive_company_fetch_sends_the_native_collection_request() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let body = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
+            let body = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="  Synthetic Company  "><GUID TYPE="String">  guid-1  </GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
             let request = read_complete_http_request(&mut socket).await;
-            assert!(
-                !request.is_empty(),
-                "synthetic Tally request must not be empty"
-            );
+            let body_start = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|position| position + 4)
+                .expect("POST request has complete HTTP headers");
+            let post_xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+                &request[body_start..],
+                request.len(),
+            )
+            .expect("POST request uses decodable UTF-16 XML")
+            .text;
+            assert!(post_xml.contains("<TYPE>Collection</TYPE>"));
+            assert!(post_xml.contains("<FETCH>NAME,GUID</FETCH>"));
+            assert!(!post_xml.contains("<SVCURRENTCOMPANY"));
+            assert!(!post_xml.contains("<REPORT"));
+            assert!(!post_xml.contains("<FORM "));
             socket
                 .write_all(&utf16_xml_response(body))
                 .await
@@ -1901,7 +2345,7 @@ mod tests {
         .expect("build synthetic Tally client")
         .fetch_companies()
         .await
-        .expect("interactive company discovery accepts the exact direct form");
+        .expect("interactive company discovery accepts the native collection response");
         server.await.expect("synthetic Tally server task");
 
         assert_eq!(companies.len(), 1);
@@ -1909,14 +2353,18 @@ mod tests {
         assert_eq!(companies[0].guid.as_deref(), Some("guid-1"));
     }
 
+    /// A collection response omitting a company's `GUID` must fail closed --
+    /// the whole discovery read is rejected rather than silently returning an
+    /// identity-less company, since identity is what every other read binds
+    /// against.
     #[tokio::test]
-    async fn interactive_company_fetch_normalizes_a_shaped_success_response() {
+    async fn interactive_company_fetch_fails_closed_without_a_guid() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let body = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><COMPANYINFO><COMPANYNAMEFIELD>  Synthetic Company  </COMPANYNAMEFIELD><COMPANYGUIDFIELD>  guid-1  </COMPANYGUIDFIELD></COMPANYINFO></BODY></ENVELOPE>";
+            let body = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
             let (mut socket, _) = listener.accept().await.expect("accept Tally request");
             let request = read_complete_http_request(&mut socket).await;
             assert!(
@@ -1929,19 +2377,16 @@ mod tests {
                 .expect("write Tally response");
         });
 
-        let companies = TallyClient::new(TallyConfig {
+        let error = TallyClient::new(TallyConfig {
             host: address.ip().to_string(),
             port: address.port(),
         })
         .expect("build synthetic Tally client")
         .fetch_companies()
         .await
-        .expect("standard company discovery normalizes identities");
+        .expect_err("a company row without a GUID must fail closed");
         server.await.expect("synthetic Tally server task");
-
-        assert_eq!(companies.len(), 1);
-        assert_eq!(companies[0].name, "Synthetic Company");
-        assert_eq!(companies[0].guid.as_deref(), Some("guid-1"));
+        assert!(error.to_string().contains("GUID"));
     }
 
     #[tokio::test]
@@ -1950,10 +2395,15 @@ mod tests {
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
-        let direct = "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>direct-guid-must-not-escape</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>";
+        // `fetch_companies` (the first of the two reads below) now requests the
+        // native `Company` collection (`ReadOnlyProfile::CompanyListV2`), so its
+        // response carries that shape rather than the legacy `CompanyListV1`
+        // direct report. Its GUID must still not escape into the returned
+        // identity -- only the second, scoped `standard` read may do that.
+        let discovered = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">discovered-guid-must-not-escape</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
         let standard = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\"><SyntheticLedger NAME=\"synthetic-ledger\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">ledger-guid</GUID><PARENT TYPE=\"String\">Primary</PARENT><BRIDGECOMPANYGUID TYPE=\"String\">scoped-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE=\"String\">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>";
         let server = tokio::spawn(async move {
-            for body in [direct, standard] {
+            for body in [discovered, standard] {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");
                 let request = read_complete_http_request(&mut socket).await;
                 assert!(!request.is_empty());

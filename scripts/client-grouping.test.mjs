@@ -4,7 +4,46 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { applyClientGroupLabel, groupClientRows, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
+import { applyClientGroupLabel, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
+
+// Mirrors AllClientsScreen's saveGroupLabel wiring exactly (issue a stamp,
+// apply the optimistic edit, then on settle check the stamp against the
+// per-company sequence before touching `persisted`, `labels`, or `error`)
+// so these tests exercise the same ordering guard the component runs,
+// without needing to render React.
+function createGroupLabelSaveHarness(initialPersisted) {
+  const state = {
+    persisted: { ...initialPersisted },
+    labels: { ...initialPersisted },
+    error: null,
+    sequence: {},
+  };
+
+  function issue(companyGuid, attemptedLabel) {
+    state.error = null;
+    const issued = issueClientGroupLabelSave(state.sequence, companyGuid);
+    state.sequence = issued.sequence;
+    const stamp = issued.stamp;
+    state.labels = applyClientGroupLabel(state.labels, companyGuid, attemptedLabel);
+    return {
+      succeed() {
+        if (!isLatestClientGroupLabelSave(state.sequence, companyGuid, stamp)) return;
+        state.persisted = applyClientGroupLabel(state.persisted, companyGuid, attemptedLabel);
+      },
+      fail() {
+        if (!isLatestClientGroupLabelSave(state.sequence, companyGuid, stamp)) return;
+        state.labels = rollbackFailedClientGroupLabel(state.labels, companyGuid, attemptedLabel, state.persisted);
+        state.error = "Bridge could not save this group label. The previous label was restored; your figures are unchanged.";
+      },
+    };
+  }
+
+  function type(companyGuid, label) {
+    state.labels = applyClientGroupLabel(state.labels, companyGuid, label);
+  }
+
+  return { issue, type, state };
+}
 
 test("a failed optimistic label save restores only the value that actually failed", () => {
   const persisted = { "synthetic-company-guid": "Original" };
@@ -24,6 +63,76 @@ test("a failed optimistic label save restores only the value that actually faile
     rollbackFailedClientGroupLabel({ "synthetic-company-guid": "North" }, "synthetic-company-guid", "North", {}),
     {},
     "a failed first save returns the company to ungrouped",
+  );
+});
+
+test("an older save settling after a newer save has already failed does not disturb the rolled-back UI", () => {
+  const harness = createGroupLabelSaveHarness({ "synthetic-company-guid": "Original" });
+  const older = harness.issue("synthetic-company-guid", "Older label");
+  const newer = harness.issue("synthetic-company-guid", "Newer label");
+
+  // The newer save is still the latest issued when it settles, so its
+  // failure is genuine: it rolls back and surfaces the error.
+  newer.fail();
+  assert.equal(harness.state.labels["synthetic-company-guid"], "Original");
+  assert.ok(harness.state.error, "the newest failing save must surface the error");
+
+  // The older save now settles too, after the newer one already failed.
+  // It has been superseded, so its success must be inert: no second,
+  // stale rollback/update, and `persisted` must stay in lockstep with
+  // what the UI already shows.
+  older.succeed();
+  assert.equal(
+    harness.state.labels["synthetic-company-guid"],
+    "Original",
+    "a stale success settling after a legitimate rollback must not disturb it",
+  );
+  assert.equal(
+    harness.state.persisted["synthetic-company-guid"],
+    "Original",
+    "persisted must not silently diverge from what the UI displays",
+  );
+});
+
+test("a stale success does not overwrite the record of a newer success", () => {
+  const harness = createGroupLabelSaveHarness({});
+  const older = harness.issue("synthetic-company-guid", "First");
+  const newer = harness.issue("synthetic-company-guid", "Second");
+
+  newer.succeed();
+  assert.equal(harness.state.persisted["synthetic-company-guid"], "Second");
+
+  older.succeed();
+  assert.equal(
+    harness.state.persisted["synthetic-company-guid"],
+    "Second",
+    "a slower, superseded success must not overwrite a newer save's outcome",
+  );
+});
+
+test("the latest issued save failing still rolls back the UI and surfaces the error", () => {
+  const harness = createGroupLabelSaveHarness({ "synthetic-company-guid": "Original" });
+  const save = harness.issue("synthetic-company-guid", "Attempted");
+
+  save.fail();
+
+  assert.equal(harness.state.labels["synthetic-company-guid"], "Original");
+  assert.match(harness.state.error ?? "", /could not save/);
+});
+
+test("the existing 'user typed something else' guard still blocks rollback for the latest issued save", () => {
+  const harness = createGroupLabelSaveHarness({ "synthetic-company-guid": "Original" });
+  const save = harness.issue("synthetic-company-guid", "Attempted");
+
+  // The user keeps typing after this save was fired, before it settles.
+  harness.type("synthetic-company-guid", "Freshly typed");
+
+  save.fail();
+
+  assert.equal(
+    harness.state.labels["synthetic-company-guid"],
+    "Freshly typed",
+    "typing after the failed attempt must not be clobbered by its rollback, even though it was the latest issued save",
   );
 });
 

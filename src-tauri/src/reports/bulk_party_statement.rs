@@ -29,10 +29,34 @@ pub struct WrittenStatement {
     pub payable_amount: String,
 }
 
+/// A stable, path-free category for why one party's statement did not make
+/// it into the batch. Kept alongside `reason` so an operator (or anything
+/// scripted against the manifest) can act on the failure without having to
+/// parse free text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatementFailureCode {
+    /// The statement's own figures could not be built or totalled for this
+    /// party.
+    Calculation,
+    /// The statement could not be rendered into the requested file format.
+    Rendering,
+    /// The rendered statement could not be written to the destination
+    /// folder.
+    Write,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StatementFailure {
     pub party: String,
-    pub error: String,
+    pub code: StatementFailureCode,
+    /// A short, operator-facing reason. This is never the raw `Display` of
+    /// an underlying IO error -- an IO error names the local file it failed
+    /// on, and an absolute path (which can embed the operator's OS
+    /// username) must never land in a manifest that may be handed to a
+    /// client. Write failures log their full diagnostic, path included,
+    /// through `tracing` for local troubleshooting only.
+    pub reason: String,
 }
 
 #[derive(Serialize)]
@@ -77,7 +101,8 @@ pub fn write_bulk_party_statements(
             Err(error) => {
                 failures.push(StatementFailure {
                     party,
-                    error: error.to_string(),
+                    code: StatementFailureCode::Calculation,
+                    reason: error.to_string(),
                 });
                 continue;
             }
@@ -85,14 +110,22 @@ pub fn write_bulk_party_statements(
         let (receivable_amount, payable_amount) = match statement_directional_totals(&statement) {
             Ok(totals) => totals,
             Err(error) => {
-                failures.push(StatementFailure { party, error });
+                failures.push(StatementFailure {
+                    party,
+                    code: StatementFailureCode::Calculation,
+                    reason: error,
+                });
                 continue;
             }
         };
         let bytes = match render(&statement) {
             Ok(bytes) => bytes,
             Err(error) => {
-                failures.push(StatementFailure { party, error });
+                failures.push(StatementFailure {
+                    party,
+                    code: StatementFailureCode::Rendering,
+                    reason: error,
+                });
                 continue;
             }
         };
@@ -107,7 +140,11 @@ pub fn write_bulk_party_statements(
                 receivable_amount,
                 payable_amount,
             }),
-            Err(error) => failures.push(StatementFailure { party, error }),
+            Err(error) => failures.push(StatementFailure {
+                party,
+                code: StatementFailureCode::Write,
+                reason: error,
+            }),
         }
     }
 
@@ -238,24 +275,34 @@ fn write_unique_file(
         let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!(
-                    "Bridge could not create {}: {error}",
-                    path.display()
-                ))
-            }
+            Err(error) => return Err(unwritable_destination_reason(&path, &error)),
         };
         if let Err(error) = file.write_all(bytes) {
             drop(file);
             let _ = fs::remove_file(&path);
-            return Err(format!(
-                "Bridge could not finish writing {}: {error}",
-                path.display()
-            ));
+            return Err(unwritable_destination_reason(&path, &error));
         }
         return Ok(path);
     }
     Err("Bridge could not find an unused statement filename after 10,000 attempts.".to_string())
+}
+
+/// Logs the full write diagnostic -- including the local filesystem path,
+/// which can embed the operator's OS username -- to Bridge's own log, then
+/// returns a short reason known not to contain a path. This is the only
+/// place a per-file write failure is described, so nothing upstream needs to
+/// remember to scrub it before it can reach an exported manifest.
+fn unwritable_destination_reason(path: &Path, error: &std::io::Error) -> String {
+    tracing::warn!(path = %path.display(), %error, "statement file write failed");
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => {
+            "Bridge does not have permission to write to the selected folder.".to_string()
+        }
+        std::io::ErrorKind::NotFound => {
+            "Bridge could not find the selected folder any more.".to_string()
+        }
+        _ => "Bridge could not write the statement file to the selected folder.".to_string(),
+    }
 }
 
 fn file_name(path: &Path) -> Result<String, String> {
@@ -337,6 +384,7 @@ mod tests {
         assert_eq!(result.written[0].payable_amount, "0");
         assert_eq!(result.failures.len(), 1);
         assert_eq!(result.failures[0].party, "Broken Party");
+        assert_eq!(result.failures[0].code, StatementFailureCode::Rendering);
         let manifest = fs::read_to_string(&result.manifest_path).expect("manifest is written");
         assert!(manifest.contains("20260808"));
         assert!(manifest.contains("Synthetic Books Pvt Ltd"));
@@ -344,6 +392,7 @@ mod tests {
         assert!(manifest.contains("\"payable_amount\": \"0\""));
         assert!(!manifest.contains("\"amount\":"));
         assert!(manifest.contains("Broken Party"));
+        assert!(manifest.contains("\"code\": \"rendering\""));
         assert!(manifest.contains("synthetic renderer failure"));
     }
 
@@ -390,10 +439,57 @@ mod tests {
         assert!(result.written.is_empty());
         assert_eq!(result.failures.len(), 1);
         assert_eq!(result.failures[0].party, "Write Failure");
-        assert!(result.failures[0].error.contains("could not create"));
+        assert_eq!(result.failures[0].code, StatementFailureCode::Write);
         let manifest = fs::read_to_string(&result.manifest_path).expect("manifest is written");
         assert!(manifest.contains("Write Failure"));
-        assert!(manifest.contains("could not create"));
+        assert!(manifest.contains("\"code\": \"write\""));
+    }
+
+    /// Regression for the write-failure manifest leak: the underlying `Err`
+    /// from `write_unique_file` used to embed `path.display()` -- the full
+    /// destination directory joined with the statement's file name -- so a
+    /// CA's own directory layout (and, on many machines, their OS username)
+    /// landed in `StatementManifest.failures`, which is serialized and
+    /// written out beside the exported statements. A CA could then hand a
+    /// client an artifact naming their own local folders.
+    ///
+    /// This failed before the fix: `result.failures[0].error` (now `reason`)
+    /// was `"Bridge could not create {destination}/statement-...: ..."`, and
+    /// the manifest file on disk contained the tempdir's absolute path.
+    #[test]
+    fn write_failure_reason_never_carries_the_local_destination_path_into_the_manifest() {
+        let destination = tempfile::tempdir().expect("temporary destination");
+        let destination_text = destination
+            .path()
+            .to_str()
+            .expect("temp destination path is valid UTF-8")
+            .to_string();
+
+        let result = write_bulk_party_statements(
+            destination.path(),
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "pdf/invalid",
+            &[bill("Write Failure", "10.00")],
+            &[],
+            |_| Ok(b"synthetic PDF".to_vec()),
+        )
+        .expect("a partial batch result is returned");
+
+        assert_eq!(result.failures.len(), 1);
+        // The operator still learns which party failed, and in what
+        // actionable category, without any raw path making the trip.
+        assert_eq!(result.failures[0].party, "Write Failure");
+        assert_eq!(result.failures[0].code, StatementFailureCode::Write);
+        assert!(!result.failures[0].reason.contains(&destination_text));
+        assert!(!result.failures[0].reason.contains('/'));
+        assert!(!result.failures[0].reason.contains('\\'));
+
+        let manifest = fs::read_to_string(&result.manifest_path).expect("manifest is written");
+        assert!(manifest.contains("Write Failure"));
+        assert!(!manifest.contains(&destination_text));
+        assert!(!manifest.contains("/Users/"));
+        assert!(!manifest.contains("C:\\"));
     }
 
     #[test]

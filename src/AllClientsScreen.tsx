@@ -3,7 +3,7 @@
 import React from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { applyClientGroupLabel, ClientGroupLabels, groupClientRows, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
+import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
 import { outstandingsPartialState } from "./outstandings-copy";
 
 type CompanyRef = { name: string; guid: string };
@@ -94,6 +94,13 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   const [groupLabels, setGroupLabels] = React.useState<ClientGroupLabels>({});
   const [groupLabelError, setGroupLabelError] = React.useState<string | null>(null);
   const persistedGroupLabels = React.useRef<ClientGroupLabels>({});
+  // Tracks, per company, the sequence number of the most recently ISSUED
+  // group-label save. Saves are never serialized -- the user keeps typing
+  // and each blur fires its own request -- so a response can arrive for a
+  // save that a later one has already superseded. Comparing against this
+  // table at settle time is what makes a superseded response inert instead
+  // of clobbering a newer save's outcome.
+  const groupLabelSaveSequence = React.useRef<ClientGroupLabelSaveSequence>({});
   const requestVersion = React.useRef(0);
   const sortChangedDuringLoad = React.useRef(false);
 
@@ -250,10 +257,17 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   const saveGroupLabel = React.useCallback((companyGuid: string, label: string) => {
     const attemptedLabel = label.trim();
     setGroupLabelError(null);
+    const { sequence, stamp } = issueClientGroupLabelSave(groupLabelSaveSequence.current, companyGuid);
+    groupLabelSaveSequence.current = sequence;
     void invoke("save_client_group_label", {
       request: { company_guid: companyGuid, label: attemptedLabel },
     })
       .then(() => {
+        // A later save for this company has already been issued: this
+        // response is stale. Applying it would let a slow, superseded
+        // success overwrite the record of whatever that newer save settles
+        // to, so it is dropped instead.
+        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyGuid, stamp)) return;
         persistedGroupLabels.current = applyClientGroupLabel(
           persistedGroupLabels.current,
           companyGuid,
@@ -261,6 +275,10 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
         );
       })
       .catch(() => {
+        // Same reasoning as above: a superseded failure must not roll back
+        // the UI to this attempt's baseline, or claim (falsely) that the
+        // previous label was restored.
+        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyGuid, stamp)) return;
         setGroupLabels((current) => rollbackFailedClientGroupLabel(
           current,
           companyGuid,

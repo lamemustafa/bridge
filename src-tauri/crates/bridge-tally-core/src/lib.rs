@@ -159,6 +159,17 @@ pub struct VoucherTypeRecord {
     pub name: String,
 }
 
+/// A named master whose Tally-owned display text needs careful rendering.
+/// The retained value is exact source text; the optional spelling is advice
+/// for an operator fixing the master in Tally, not a replacement token.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ForeignMasterTextDiagnostic {
+    pub object_type: String,
+    pub source_id: String,
+    pub stored_name: String,
+    pub likely_intended_spelling: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VoucherRecord {
     pub source_id: String,
@@ -198,6 +209,16 @@ pub struct CoreAccountingBatch {
     pub voucher_types: Vec<VoucherTypeRecord>,
     pub vouchers: Vec<VoucherRecord>,
     pub ledger_entries: Vec<LedgerEntryRecord>,
+    /// Operator-facing diagnostics about master text that would render badly
+    /// in a document. Deliberately excluded from serialization: `PackBatch`
+    /// is the wire payload whose shape is pinned to `CORE_ACCOUNTING_SCHEMA_VERSION`
+    /// and covered by a destination's negotiated-version content hash (see
+    /// `AxalDestinationAdapter::deliver_batch`). A diagnostic is not
+    /// accounting data, so it must never silently change that hash or shape
+    /// under an unchanged schema version; it stays an in-process field that
+    /// travels alongside the batch rather than inside it.
+    #[serde(skip)]
+    pub foreign_master_text_diagnostics: Vec<ForeignMasterTextDiagnostic>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

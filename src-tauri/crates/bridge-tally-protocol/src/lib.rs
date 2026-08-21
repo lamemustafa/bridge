@@ -106,6 +106,17 @@ pub struct ParsedLedgerPeriodBalanceReport {
 pub struct TallyNamedMaster {
     pub name: String,
     pub parent: Option<String>,
+    /// Tally's `RESERVEDNAME` attribute: the immutable identity of a
+    /// predefined group (e.g. `"Sundry Debtors"`), untouched by renaming the
+    /// group's `name`. Distinguished three ways by readers that populate it:
+    /// `Some(non-empty)` is a trustworthy predefined identity; `Some("")` is
+    /// Tally's own explicit signal that the row is a user-created master,
+    /// definitively not predefined; `None` means this reader never captured
+    /// the attribute at all (either an older capture, or a master kind this
+    /// crate does not read `RESERVEDNAME` for), carrying no signal either
+    /// way. Readers that do not parse `RESERVEDNAME` leave this `None`.
+    #[serde(default)]
+    pub reserved_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -275,9 +286,18 @@ pub struct ExportEvidence {
     pub company_context: Option<CompanyContextEvidence>,
     pub schema: Option<String>,
     pub object_type: Option<String>,
+    /// A count Bridge obtained by parsing rows. It is not a Tally-reported
+    /// count and must never be promoted to source-count evidence.
+    pub observed_record_count: Option<u64>,
     pub source_record_count: Option<u64>,
     pub identified_record_count: u64,
     pub duplicate_identities: Vec<DuplicateIdentityEvidence>,
+    /// Native ledger collections carry a master GUID on each row rather than
+    /// a report-envelope company GUID. These counters retain the observed
+    /// binding evidence without assuming every imported master has the local
+    /// company prefix.
+    pub company_guid_prefix_match_count: u64,
+    pub company_guid_prefix_mismatch_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -292,6 +312,10 @@ pub enum ParsedSourceIdentityKind {
     Guid,
     RemoteId,
     MasterId,
+    /// The source response carries no durable master identifier. Callers may
+    /// use a documented deterministic fallback only where the domain makes
+    /// that identity safe.
+    Fallback,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
@@ -1605,6 +1629,7 @@ fn parse_named_master_source_records(
                     record: TallyNamedMaster {
                         name: attr_value(&reader, &element, b"NAME").unwrap_or_default(),
                         parent: None,
+                        reserved_name: None,
                     },
                     source_id,
                     identity_kind,
@@ -1647,6 +1672,1045 @@ pub fn parse_ledger_source_records_with_evidence(
     xml: &str,
 ) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyLedger>>> {
     parse_ledger_source_records_for_schema(xml, BRIDGE_LEDGER_EXPORT_SCHEMA)
+}
+
+/// Parses the native `List of Ledgers` collection used by ordinary ledger
+/// reads. It deliberately has no period variables: the retired report profile
+/// set only `SVEXPORTFORMAT` and `SVCURRENTCOMPANY`, so adding dates here would
+/// silently change the as-of meaning of `OPENINGBALANCE`.
+///
+/// The collection has no report-envelope company identity. Its row GUIDs bind
+/// the response instead: at least one row must carry the requested company
+/// GUID prefix. Other prefixes remain counted evidence rather than failures,
+/// because the observed books created masters in place but imported masters
+/// may legitimately retain foreign GUID prefixes.
+pub fn parse_native_ledger_source_records_with_evidence(
+    xml: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyLedger>>> {
+    let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
+    let mut reader = configured_reader(sanitized.as_str());
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut status_seen = false;
+    let mut collection_seen = false;
+    let mut records = Vec::new();
+    let mut identities = HashMap::<String, u64>::new();
+    let mut company_guid_prefix_match_count = 0_u64;
+    let mut company_guid_prefix_mismatch_count = 0_u64;
+
+    loop {
+        let record_start = reader.buffer_position() as usize;
+        match reader.read_event()? {
+            Event::Start(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path.is_empty() && name != b"ENVELOPE" {
+                    anyhow::bail!("native ledger collection root was not ENVELOPE");
+                }
+                if path_eq(&path, &[b"ENVELOPE", b"HEADER"]) && name == b"STATUS" {
+                    if status_seen || read_required_text(&mut reader, element.name())? != "1" {
+                        anyhow::bail!("native ledger collection did not report success");
+                    }
+                    status_seen = true;
+                    continue;
+                }
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                }
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name == b"LEDGER"
+                {
+                    let (record, identities_for_row, alter_id) =
+                        parse_native_ledger_collection_row(&mut reader, &element)?;
+                    let guid = identities_for_row
+                        .guid
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("native ledger row omitted GUID"))?;
+                    if native_ledger_guid_has_company_prefix(guid, expected_company_guid) {
+                        company_guid_prefix_match_count = company_guid_prefix_match_count
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("native ledger prefix count overflow")
+                            })?;
+                    } else {
+                        company_guid_prefix_mismatch_count = company_guid_prefix_mismatch_count
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("native ledger prefix count overflow")
+                            })?;
+                    }
+                    record_identities_from_values("LEDGER", &identities_for_row, &mut identities)?;
+                    let record_end = reader.buffer_position() as usize;
+                    records.push(ParsedSourceRecord {
+                        record,
+                        source_id: Some(guid.to_owned()),
+                        identity_kind: Some(ParsedSourceIdentityKind::Guid),
+                        identities: identities_for_row,
+                        alter_id,
+                        raw_source_sha256: source_fragment_sha256_from_sanitized(
+                            &sanitized,
+                            record_start,
+                            record_end,
+                        )?,
+                    });
+                    continue;
+                }
+                path.push(name);
+            }
+            Event::Empty(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                } else if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name == b"LEDGER"
+                {
+                    anyhow::bail!("native ledger collection contained an empty ledger row");
+                }
+            }
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !path.is_empty() {
+        anyhow::bail!("native ledger collection ended before its root closed");
+    }
+    if !status_seen {
+        anyhow::bail!("native ledger collection did not report success");
+    }
+    if !collection_seen {
+        anyhow::bail!("native ledger collection omitted BODY/DATA/COLLECTION");
+    }
+    if company_guid_prefix_match_count == 0 {
+        anyhow::bail!("native ledger collection did not bind to the requested company");
+    }
+    let mut duplicate_identities = identities
+        .into_iter()
+        .filter(|(_, occurrences)| *occurrences > 1)
+        .map(|(identity, occurrences)| DuplicateIdentityEvidence {
+            identity_sha256: sha256_hex(identity.as_bytes()),
+            occurrences,
+        })
+        .collect::<Vec<_>>();
+    duplicate_identities.sort_by(|left, right| left.identity_sha256.cmp(&right.identity_sha256));
+    let source_record_count = u64::try_from(records.len())
+        .map_err(|_| anyhow::anyhow!("native ledger collection exceeded supported record count"))?;
+    Ok(ParsedExport {
+        records,
+        evidence: ExportEvidence {
+            observed_record_count: Some(source_record_count),
+            identified_record_count: source_record_count,
+            duplicate_identities,
+            company_guid_prefix_match_count,
+            company_guid_prefix_mismatch_count,
+            ..ExportEvidence::default()
+        },
+    })
+}
+
+/// Parses a native `List of VoucherTypes` collection. Like native ledgers,
+/// the collection has no envelope company context, so at least one row must
+/// bind through its observed master GUID prefix. Foreign rows are retained as
+/// mismatch evidence because imported masters may carry another prefix.
+pub fn parse_native_voucher_type_source_records_with_evidence(
+    xml: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>> {
+    parse_native_collection_with_identity_evidence(
+        xml,
+        expected_company_guid,
+        b"VOUCHERTYPE",
+        "VOUCHERTYPE",
+        parse_native_voucher_type_collection_row,
+        false,
+    )
+}
+
+/// Parses the native `List of Groups` collection used by the core window.
+/// Group names are mutable display text; a selected read therefore requires
+/// the observed GUID rather than deriving an identity from the name.
+pub fn parse_native_group_source_records_with_evidence(
+    xml: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyNamedMaster>>> {
+    parse_native_collection_with_identity_evidence(
+        xml,
+        expected_company_guid,
+        b"GROUP",
+        "group",
+        parse_native_group_collection_row,
+        false,
+    )
+}
+
+/// Parses a native Voucher collection, retaining direct accounting-entry
+/// amounts only. Nested allocations are deliberately skipped by the entry
+/// parser, so a bill allocation's `AMOUNT` can never be miscounted as a
+/// second ledger entry amount.
+pub fn parse_native_voucher_source_records_with_evidence(
+    xml: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyVoucher>>> {
+    let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
+    let mut reader = configured_reader(sanitized.as_str());
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut status_seen = false;
+    let mut collection_seen = false;
+    let mut records = Vec::new();
+    let mut identities = HashMap::<String, u64>::new();
+    let mut company_guid_prefix_match_count = 0_u64;
+    let mut company_guid_prefix_mismatch_count = 0_u64;
+
+    loop {
+        let record_start = reader.buffer_position() as usize;
+        match reader.read_event()? {
+            Event::Start(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path.is_empty() && name != b"ENVELOPE" {
+                    anyhow::bail!("native voucher collection root was not ENVELOPE");
+                }
+                if path_eq(&path, &[b"ENVELOPE", b"HEADER"]) && name == b"STATUS" {
+                    if status_seen || read_required_text(&mut reader, element.name())? != "1" {
+                        anyhow::bail!("native voucher collection did not report success");
+                    }
+                    status_seen = true;
+                    continue;
+                }
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                }
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name == b"VOUCHER"
+                {
+                    let (record, identities_for_row, alter_id) =
+                        parse_native_voucher_collection_row(&mut reader, &element, &sanitized)?;
+                    let guid = identities_for_row
+                        .guid
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("native voucher row omitted GUID"))?;
+                    let remote_id = identities_for_row
+                        .remote_id
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("native voucher row omitted REMOTEID"))?;
+                    if native_ledger_guid_has_company_prefix(guid, expected_company_guid)
+                        && native_ledger_guid_has_company_prefix(remote_id, expected_company_guid)
+                    {
+                        company_guid_prefix_match_count = company_guid_prefix_match_count
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("native voucher prefix count overflow")
+                            })?;
+                    } else {
+                        company_guid_prefix_mismatch_count = company_guid_prefix_mismatch_count
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("native voucher prefix count overflow")
+                            })?;
+                    }
+                    record_identities_from_values("VOUCHER", &identities_for_row, &mut identities)?;
+                    let record_end = reader.buffer_position() as usize;
+                    records.push(ParsedSourceRecord {
+                        record,
+                        source_id: Some(guid.to_owned()),
+                        identity_kind: Some(ParsedSourceIdentityKind::Guid),
+                        identities: identities_for_row,
+                        alter_id,
+                        raw_source_sha256: source_fragment_sha256_from_sanitized(
+                            &sanitized,
+                            record_start,
+                            record_end,
+                        )?,
+                    });
+                    continue;
+                }
+                path.push(name);
+            }
+            Event::Empty(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                } else if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name == b"VOUCHER"
+                {
+                    anyhow::bail!("native voucher collection contained an empty voucher row");
+                }
+            }
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    native_collection_export(
+        "voucher",
+        NativeCollectionState {
+            path,
+            status_seen,
+            collection_seen,
+            records,
+            identities,
+            company_guid_prefix_match_count,
+            company_guid_prefix_mismatch_count,
+        },
+        true,
+    )
+}
+
+fn parse_native_collection_with_identity_evidence<T>(
+    xml: &str,
+    expected_company_guid: &str,
+    element_name: &[u8],
+    object_type: &str,
+    parse_row: impl Fn(
+        &mut Reader<&[u8]>,
+        &quick_xml::events::BytesStart<'_>,
+    ) -> anyhow::Result<(T, ParsedSourceIdentities, Option<String>)>,
+    allow_empty_without_row_identity: bool,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<T>>> {
+    let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
+    let mut reader = configured_reader(sanitized.as_str());
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut status_seen = false;
+    let mut collection_seen = false;
+    let mut records = Vec::new();
+    let mut identities = HashMap::<String, u64>::new();
+    let mut company_guid_prefix_match_count = 0_u64;
+    let mut company_guid_prefix_mismatch_count = 0_u64;
+
+    loop {
+        let record_start = reader.buffer_position() as usize;
+        match reader.read_event()? {
+            Event::Start(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path.is_empty() && name != b"ENVELOPE" {
+                    anyhow::bail!("native {object_type} collection root was not ENVELOPE");
+                }
+                if path_eq(&path, &[b"ENVELOPE", b"HEADER"]) && name == b"STATUS" {
+                    if status_seen || read_required_text(&mut reader, element.name())? != "1" {
+                        anyhow::bail!("native {object_type} collection did not report success");
+                    }
+                    status_seen = true;
+                    continue;
+                }
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                }
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name.as_slice().eq_ignore_ascii_case(element_name)
+                {
+                    let (record, identities_for_row, alter_id) = parse_row(&mut reader, &element)?;
+                    let guid = identities_for_row
+                        .guid
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("native {object_type} row omitted GUID"))?;
+                    if native_ledger_guid_has_company_prefix(guid, expected_company_guid) {
+                        company_guid_prefix_match_count = company_guid_prefix_match_count
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("native {object_type} prefix count overflow")
+                            })?;
+                    } else {
+                        company_guid_prefix_mismatch_count = company_guid_prefix_mismatch_count
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("native {object_type} prefix count overflow")
+                            })?;
+                    }
+                    record_identities_from_values(
+                        object_type,
+                        &identities_for_row,
+                        &mut identities,
+                    )?;
+                    let record_end = reader.buffer_position() as usize;
+                    records.push(ParsedSourceRecord {
+                        record,
+                        source_id: Some(guid.to_owned()),
+                        identity_kind: Some(ParsedSourceIdentityKind::Guid),
+                        identities: identities_for_row,
+                        alter_id,
+                        raw_source_sha256: source_fragment_sha256_from_sanitized(
+                            &sanitized,
+                            record_start,
+                            record_end,
+                        )?,
+                    });
+                    continue;
+                }
+                path.push(name);
+            }
+            Event::Empty(element) => {
+                let name = element.name().as_ref().to_ascii_uppercase();
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    collection_seen = true;
+                } else if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && name.as_slice().eq_ignore_ascii_case(element_name)
+                {
+                    anyhow::bail!("native {object_type} collection contained an empty row");
+                }
+            }
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    native_collection_export(
+        object_type,
+        NativeCollectionState {
+            path,
+            status_seen,
+            collection_seen,
+            records,
+            identities,
+            company_guid_prefix_match_count,
+            company_guid_prefix_mismatch_count,
+        },
+        allow_empty_without_row_identity,
+    )
+}
+
+struct NativeCollectionState<T> {
+    path: Vec<Vec<u8>>,
+    status_seen: bool,
+    collection_seen: bool,
+    records: Vec<ParsedSourceRecord<T>>,
+    identities: HashMap<String, u64>,
+    company_guid_prefix_match_count: u64,
+    company_guid_prefix_mismatch_count: u64,
+}
+
+fn native_collection_export<T>(
+    object_type: &str,
+    state: NativeCollectionState<T>,
+    allow_empty_without_row_identity: bool,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<T>>> {
+    if !state.path.is_empty() {
+        anyhow::bail!("native {object_type} collection ended before its root closed");
+    }
+    if !state.status_seen {
+        anyhow::bail!("native {object_type} collection did not report success");
+    }
+    if !state.collection_seen {
+        anyhow::bail!("native {object_type} collection omitted BODY/DATA/COLLECTION");
+    }
+    if state.company_guid_prefix_match_count == 0
+        && (!allow_empty_without_row_identity || !state.records.is_empty())
+    {
+        anyhow::bail!("native {object_type} collection did not bind to the requested company");
+    }
+    let mut duplicate_identities = state
+        .identities
+        .into_iter()
+        .filter(|(_, occurrences)| *occurrences > 1)
+        .map(|(identity, occurrences)| DuplicateIdentityEvidence {
+            identity_sha256: sha256_hex(identity.as_bytes()),
+            occurrences,
+        })
+        .collect::<Vec<_>>();
+    duplicate_identities.sort_by(|left, right| left.identity_sha256.cmp(&right.identity_sha256));
+    let source_record_count = u64::try_from(state.records.len()).map_err(|_| {
+        anyhow::anyhow!("native {object_type} collection exceeded supported record count")
+    })?;
+    Ok(ParsedExport {
+        records: state.records,
+        evidence: ExportEvidence {
+            observed_record_count: Some(source_record_count),
+            identified_record_count: source_record_count,
+            duplicate_identities,
+            company_guid_prefix_match_count: state.company_guid_prefix_match_count,
+            company_guid_prefix_mismatch_count: state.company_guid_prefix_mismatch_count,
+            ..ExportEvidence::default()
+        },
+    })
+}
+
+fn parse_native_ledger_collection_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> anyhow::Result<(TallyLedger, ParsedSourceIdentities, Option<String>)> {
+    validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
+    let name = attr_value(reader, element, b"NAME")
+        .ok_or_else(|| anyhow::anyhow!("native ledger row omitted NAME"))?;
+    let mut ledger = TallyLedger {
+        name,
+        parent: None,
+        party_gstin: None,
+        opening_balance: None,
+    };
+    let mut identities = ParsedSourceIdentities::default();
+    let mut alter_id = None;
+    let mut parent_seen = false;
+    let mut gstin_seen = false;
+    let mut guid_seen = false;
+    let mut remote_id_seen = false;
+    let mut master_id_seen = false;
+    let mut alter_id_seen = false;
+    let mut opening_balance_seen = false;
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"GUID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut guid_seen, true) {
+                        anyhow::bail!("native ledger row repeated GUID");
+                    }
+                    identities.guid = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?
+                    .map(|guid| guid.to_ascii_lowercase());
+                }
+                b"REMOTEID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut remote_id_seen, true) {
+                        anyhow::bail!("native ledger row repeated REMOTEID");
+                    }
+                    identities.remote_id =
+                        validated_optional_identifier(read_optional_text(reader, child.name())?)?;
+                }
+                b"MASTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut master_id_seen, true) {
+                        anyhow::bail!("native ledger row repeated MASTERID");
+                    }
+                    identities.master_id = validated_optional_identifier(Some(
+                        read_required_text(reader, child.name())?,
+                    ))?;
+                }
+                b"ALTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut alter_id_seen, true) {
+                        anyhow::bail!("native ledger row repeated ALTERID");
+                    }
+                    alter_id = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?;
+                }
+                b"PARENT" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut parent_seen, true) {
+                        anyhow::bail!("native ledger row repeated PARENT");
+                    }
+                    ledger.parent = read_identifier_text(reader, child.name())?;
+                }
+                b"PARTYGSTIN" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut gstin_seen, true) {
+                        anyhow::bail!("native ledger row repeated PARTYGSTIN");
+                    }
+                    ledger.party_gstin = read_optional_text(reader, child.name())?;
+                }
+                b"OPENINGBALANCE" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut opening_balance_seen, true) {
+                        anyhow::bail!("native ledger row repeated OPENINGBALANCE");
+                    }
+                    let opening_balance = read_required_text(reader, child.name())?;
+                    // Every captured row carries this field. Its absence is
+                    // unmeasured, so fail closed rather than silently turning
+                    // a missing debtor/creditor balance into zero.
+                    bridge_tally_primitives::ExactDecimal::parse(opening_balance.clone())?;
+                    ledger.opening_balance = Some(opening_balance);
+                }
+                _ => {
+                    let child_name = child.name().as_ref().to_vec();
+                    reader.read_to_end(QName(&child_name).to_owned())?;
+                }
+            },
+            Event::Empty(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"PARENT" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut parent_seen, true) {
+                        anyhow::bail!("native ledger row repeated PARENT");
+                    }
+                }
+                b"PARTYGSTIN" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut gstin_seen, true) {
+                        anyhow::bail!("native ledger row repeated PARTYGSTIN");
+                    }
+                }
+                b"GUID" | b"MASTERID" | b"ALTERID" | b"OPENINGBALANCE" => {
+                    anyhow::bail!("native ledger row omitted a required field");
+                }
+                b"REMOTEID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut remote_id_seen, true) {
+                        anyhow::bail!("native ledger row repeated REMOTEID");
+                    }
+                }
+                _ => {}
+            },
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"LEDGER") => break,
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("native ledger row contained unexpected text");
+            }
+            Event::Eof => anyhow::bail!("native ledger row ended before LEDGER closed"),
+            _ => {}
+        }
+    }
+    if !guid_seen || identities.guid.is_none() {
+        anyhow::bail!("native ledger row omitted GUID");
+    }
+    if !master_id_seen || identities.master_id.is_none() {
+        anyhow::bail!("native ledger row omitted MASTERID");
+    }
+    if !alter_id_seen || alter_id.is_none() {
+        anyhow::bail!("native ledger row omitted ALTERID");
+    }
+    if !opening_balance_seen || ledger.opening_balance.is_none() {
+        anyhow::bail!("native ledger row omitted OPENINGBALANCE");
+    }
+    // Unlike GUID/MASTERID/ALTERID/OPENINGBALANCE, an absent PARENT is not simply invalid --
+    // downstream (`build_core_window`) reads `ledger.parent == None` as "this ledger is at the
+    // tree root", which is also the correct reading of an explicitly EMPTY PARENT (Tally does
+    // send those for genuinely root-parented ledgers). So the requirement here is narrower than
+    // "must be non-empty": only that the field was OBSERVED at all. `parent_seen` is set by both
+    // the `Event::Start` and `Event::Empty` arms above, but never by omission, so by the time we
+    // reach here `ledger.parent == None` can only mean "explicitly empty" -- never "never sent" --
+    // which is exactly the distinction the reserved-root handling depends on.
+    if !parent_seen {
+        anyhow::bail!("native ledger row omitted PARENT");
+    }
+    Ok((ledger, identities, alter_id))
+}
+
+fn parse_native_voucher_type_collection_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> anyhow::Result<(TallyNamedMaster, ParsedSourceIdentities, Option<String>)> {
+    validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
+    let name = attr_value(reader, element, b"NAME")
+        .ok_or_else(|| anyhow::anyhow!("native voucher type row omitted NAME"))?;
+    let mut record = TallyNamedMaster {
+        name,
+        parent: None,
+        reserved_name: None,
+    };
+    let mut identities = ParsedSourceIdentities::default();
+    let mut alter_id = None;
+    let mut parent_seen = false;
+    let mut guid_seen = false;
+    let mut master_id_seen = false;
+    let mut alter_id_seen = false;
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"GUID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut guid_seen, true) {
+                        anyhow::bail!("native voucher type row repeated GUID");
+                    }
+                    identities.guid = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?
+                    .map(|guid| guid.to_ascii_lowercase());
+                }
+                b"MASTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut master_id_seen, true) {
+                        anyhow::bail!("native voucher type row repeated MASTERID");
+                    }
+                    identities.master_id = validated_optional_identifier(Some(
+                        read_required_text(reader, child.name())?,
+                    ))?;
+                }
+                b"ALTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut alter_id_seen, true) {
+                        anyhow::bail!("native voucher type row repeated ALTERID");
+                    }
+                    alter_id = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?;
+                }
+                b"PARENT" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut parent_seen, true) {
+                        anyhow::bail!("native voucher type row repeated PARENT");
+                    }
+                    record.parent = read_identifier_text(reader, child.name())?;
+                }
+                _ => {
+                    let child_name = child.name().as_ref().to_vec();
+                    reader.read_to_end(QName(&child_name).to_owned())?;
+                }
+            },
+            Event::Empty(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"GUID" | b"MASTERID" | b"ALTERID" | b"PARENT" => {
+                    anyhow::bail!("native voucher type row omitted a required field");
+                }
+                _ => {}
+            },
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"VOUCHERTYPE") => break,
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("native voucher type row contained unexpected text");
+            }
+            Event::Eof => anyhow::bail!("native voucher type row ended before VOUCHERTYPE closed"),
+            _ => {}
+        }
+    }
+    if !guid_seen || identities.guid.is_none() {
+        anyhow::bail!("native voucher type row omitted GUID");
+    }
+    if !master_id_seen || identities.master_id.is_none() {
+        anyhow::bail!("native voucher type row omitted MASTERID");
+    }
+    if !alter_id_seen || alter_id.is_none() {
+        anyhow::bail!("native voucher type row omitted ALTERID");
+    }
+    if !parent_seen || record.parent.is_none() {
+        anyhow::bail!("native voucher type row omitted PARENT");
+    }
+    Ok((record, identities, alter_id))
+}
+
+fn parse_native_group_collection_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> anyhow::Result<(TallyNamedMaster, ParsedSourceIdentities, Option<String>)> {
+    validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
+    let name = attr_value(reader, element, b"NAME")
+        .ok_or_else(|| anyhow::anyhow!("native group row omitted NAME"))?;
+    let mut record = TallyNamedMaster {
+        name,
+        parent: None,
+        reserved_name: None,
+    };
+    let mut identities = ParsedSourceIdentities::default();
+    let mut alter_id = None;
+    let mut parent_seen = false;
+    let mut guid_seen = false;
+    let mut master_id_seen = false;
+    let mut alter_id_seen = false;
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"GUID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut guid_seen, true) {
+                        anyhow::bail!("native group row repeated GUID");
+                    }
+                    identities.guid = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?
+                    .map(|guid| guid.to_ascii_lowercase());
+                }
+                b"MASTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut master_id_seen, true) {
+                        anyhow::bail!("native group row repeated MASTERID");
+                    }
+                    identities.master_id = validated_optional_identifier(Some(
+                        read_required_text(reader, child.name())?,
+                    ))?;
+                }
+                b"ALTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut alter_id_seen, true) {
+                        anyhow::bail!("native group row repeated ALTERID");
+                    }
+                    alter_id = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?;
+                }
+                b"PARENT" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut parent_seen, true) {
+                        anyhow::bail!("native group row repeated PARENT");
+                    }
+                    record.parent = read_identifier_text(reader, child.name())?;
+                }
+                _ => {
+                    let child_name = child.name().as_ref().to_vec();
+                    reader.read_to_end(QName(&child_name).to_owned())?;
+                }
+            },
+            Event::Empty(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"GUID" | b"MASTERID" | b"ALTERID" | b"PARENT" => {
+                    anyhow::bail!("native group row omitted a required field");
+                }
+                _ => {}
+            },
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"GROUP") => break,
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("native group row contained unexpected text");
+            }
+            Event::Eof => anyhow::bail!("native group row ended before GROUP closed"),
+            _ => {}
+        }
+    }
+    if !guid_seen || identities.guid.is_none() {
+        anyhow::bail!("native group row omitted GUID");
+    }
+    if !master_id_seen || identities.master_id.is_none() {
+        anyhow::bail!("native group row omitted MASTERID");
+    }
+    if !alter_id_seen || alter_id.is_none() {
+        anyhow::bail!("native group row omitted ALTERID");
+    }
+    if !parent_seen || record.parent.is_none() {
+        anyhow::bail!("native group row omitted PARENT");
+    }
+    Ok((record, identities, alter_id))
+}
+
+fn parse_native_voucher_collection_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+    sanitized: &tolerant_xml::SanitizedXml<'_>,
+) -> anyhow::Result<(TallyVoucher, ParsedSourceIdentities, Option<String>)> {
+    validate_only_attributes(element, &[b"REMOTEID", b"VCHKEY", b"VCHTYPE", b"OBJVIEW"])?;
+    let remote_id = attr_value(reader, element, b"REMOTEID")
+        .ok_or_else(|| anyhow::anyhow!("native voucher row omitted REMOTEID"))?;
+    let mut voucher = TallyVoucher {
+        id: None,
+        date: None,
+        voucher_type: None,
+        voucher_number: None,
+        party_ledger_name: None,
+        cancelled: None,
+        optional: None,
+        ledger_entry_count: None,
+        ledger_entries: Vec::new(),
+    };
+    let mut identities = ParsedSourceIdentities {
+        remote_id: validated_optional_identifier(Some(remote_id))?,
+        ..ParsedSourceIdentities::default()
+    };
+    let mut alter_id = None;
+    let mut seen = HashSet::new();
+    loop {
+        let entry_start = reader.buffer_position() as usize;
+        match reader.read_event()? {
+            Event::Start(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"DATE" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "DATE", "native voucher")?;
+                    voucher.date = Some(read_required_text(reader, child.name())?);
+                }
+                b"GUID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "GUID", "native voucher")?;
+                    identities.guid = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?
+                    .map(|guid| guid.to_ascii_lowercase());
+                }
+                b"MASTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "MASTERID", "native voucher")?;
+                    identities.master_id = validated_optional_identifier(Some(
+                        read_required_text(reader, child.name())?,
+                    ))?;
+                }
+                b"ALTERID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "ALTERID", "native voucher")?;
+                    alter_id = validated_optional_identifier(Some(read_required_text(
+                        reader,
+                        child.name(),
+                    )?))?;
+                }
+                b"VOUCHERTYPENAME" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "VOUCHERTYPENAME", "native voucher")?;
+                    voucher.voucher_type =
+                        Some(read_required_identifier_text(reader, child.name())?);
+                }
+                b"VOUCHERNUMBER" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "VOUCHERNUMBER", "native voucher")?;
+                    voucher.voucher_number = read_optional_text(reader, child.name())?;
+                }
+                b"ISCANCELLED" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "ISCANCELLED", "native voucher")?;
+                    voucher.cancelled = Some(parse_tally_boolean(&read_required_text(
+                        reader,
+                        child.name(),
+                    )?)?);
+                }
+                b"ISOPTIONAL" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "ISOPTIONAL", "native voucher")?;
+                    voucher.optional = Some(parse_tally_boolean(&read_required_text(
+                        reader,
+                        child.name(),
+                    )?)?);
+                }
+                b"ALLLEDGERENTRIES.LIST" => {
+                    validate_only_attributes(&child, &[])?;
+                    let mut entry = parse_native_voucher_ledger_entry(reader)?;
+                    entry.raw_source_sha256 = source_fragment_sha256_from_sanitized(
+                        sanitized,
+                        entry_start,
+                        reader.buffer_position() as usize,
+                    )?;
+                    let entry_index = u64::try_from(voucher.ledger_entries.len())
+                        .map_err(|_| anyhow::anyhow!("native voucher entry count overflow"))?
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow::anyhow!("native voucher entry count overflow"))?;
+                    entry.entry_index = entry_index;
+                    voucher.ledger_entries.push(entry);
+                }
+                _ => {
+                    let child_name = child.name().as_ref().to_vec();
+                    reader.read_to_end(QName(&child_name).to_owned())?;
+                }
+            },
+            Event::Empty(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"DATE"
+                | b"GUID"
+                | b"MASTERID"
+                | b"ALTERID"
+                | b"VOUCHERTYPENAME"
+                | b"ISCANCELLED"
+                | b"ISOPTIONAL"
+                | b"ALLLEDGERENTRIES.LIST" => {
+                    anyhow::bail!("native voucher row omitted a required field");
+                }
+                b"VOUCHERNUMBER" => {
+                    mark_unique_field(&mut seen, "VOUCHERNUMBER", "native voucher")?;
+                }
+                _ => {}
+            },
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"VOUCHER") => break,
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("native voucher row contained unexpected text");
+            }
+            Event::Eof => anyhow::bail!("native voucher row ended before VOUCHER closed"),
+            _ => {}
+        }
+    }
+    if identities.guid.is_none() || identities.master_id.is_none() || alter_id.is_none() {
+        anyhow::bail!("native voucher row omitted durable identity");
+    }
+    if voucher.date.is_none()
+        || voucher.voucher_type.is_none()
+        || voucher.cancelled.is_none()
+        || voucher.optional.is_none()
+    {
+        anyhow::bail!("native voucher row omitted a required accounting field");
+    }
+    voucher.ledger_entry_count = Some(
+        u64::try_from(voucher.ledger_entries.len())
+            .map_err(|_| anyhow::anyhow!("native voucher entry count overflow"))?,
+    );
+    voucher.id = identities.guid.clone();
+    Ok((voucher, identities, alter_id))
+}
+
+fn parse_native_voucher_ledger_entry(
+    reader: &mut Reader<&[u8]>,
+) -> anyhow::Result<TallyLedgerEntry> {
+    let mut ledger_name = None;
+    let mut amount = None;
+    let mut is_deemed_positive = None;
+    let mut seen = HashSet::new();
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"LEDGERNAME" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "LEDGERNAME", "native voucher ledger entry")?;
+                    ledger_name = Some(read_required_identifier_text(reader, child.name())?);
+                }
+                b"AMOUNT" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(&mut seen, "AMOUNT", "native voucher ledger entry")?;
+                    let value = read_required_text(reader, child.name())?;
+                    bridge_tally_primitives::ExactDecimal::parse(value.clone())?;
+                    amount = Some(value);
+                }
+                b"ISDEEMEDPOSITIVE" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    mark_unique_field(
+                        &mut seen,
+                        "ISDEEMEDPOSITIVE",
+                        "native voucher ledger entry",
+                    )?;
+                    is_deemed_positive = Some(parse_tally_boolean(&read_required_text(
+                        reader,
+                        child.name(),
+                    )?)?);
+                }
+                _ => {
+                    // This consumes nested allocations as a subtree. In
+                    // particular, `BILLALLOCATIONS.LIST/AMOUNT` can never
+                    // reach the direct-entry `AMOUNT` branch above.
+                    let child_name = child.name().as_ref().to_vec();
+                    reader.read_to_end(QName(&child_name).to_owned())?;
+                }
+            },
+            Event::Empty(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
+                b"LEDGERNAME" | b"AMOUNT" | b"ISDEEMEDPOSITIVE" => {
+                    anyhow::bail!("native voucher ledger entry omitted a required field");
+                }
+                _ => {}
+            },
+            Event::End(end)
+                if end
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"ALLLEDGERENTRIES.LIST") =>
+            {
+                break;
+            }
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("native voucher ledger entry contained unexpected text");
+            }
+            Event::Eof => anyhow::bail!("native voucher entry ended before closing"),
+            _ => {}
+        }
+    }
+    Ok(TallyLedgerEntry {
+        entry_index: 0,
+        ledger_name: ledger_name
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("native voucher ledger entry omitted ledger name"))?,
+        amount: amount
+            .ok_or_else(|| anyhow::anyhow!("native voucher ledger entry omitted amount"))?,
+        is_deemed_positive: is_deemed_positive
+            .ok_or_else(|| anyhow::anyhow!("native voucher ledger entry omitted sign evidence"))?,
+        raw_source_sha256: String::new(),
+    })
+}
+
+fn native_ledger_guid_has_company_prefix(guid: &str, expected_company_guid: &str) -> bool {
+    let Some(remainder) = guid.get(..expected_company_guid.len()) else {
+        return false;
+    };
+    remainder.eq_ignore_ascii_case(expected_company_guid)
+        && guid
+            .as_bytes()
+            .get(expected_company_guid.len())
+            .is_some_and(|separator| *separator == b'-')
+}
+
+fn record_identities_from_values(
+    object_type: &str,
+    identities_for_row: &ParsedSourceIdentities,
+    identities: &mut HashMap<String, u64>,
+) -> anyhow::Result<()> {
+    for (identity_kind, identity) in [
+        ("guid", identities_for_row.guid.as_ref()),
+        ("remote_id", identities_for_row.remote_id.as_ref()),
+        ("master_id", identities_for_row.master_id.as_ref()),
+    ] {
+        let Some(identity) = identity else {
+            continue;
+        };
+        let scoped_identity = format!("{object_type}\0{identity_kind}\0{identity}");
+        let occurrences = identities.entry(scoped_identity).or_insert(0);
+        *occurrences = occurrences
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("native ledger identity count overflow"))?;
+    }
+    Ok(())
 }
 
 pub fn parse_ledger_write_readback_with_evidence(
@@ -1799,6 +2863,7 @@ pub fn parse_ledger_write_readback_with_evidence(
         source_record_count: context.source_record_count,
         identified_record_count,
         duplicate_identities,
+        ..ExportEvidence::default()
     };
     validate_scoped_export(
         &evidence,
@@ -3098,6 +4163,7 @@ fn scan_export_evidence(xml: &str) -> anyhow::Result<ExportEvidence> {
         source_record_count,
         identified_record_count,
         duplicate_identities,
+        ..ExportEvidence::default()
     })
 }
 
@@ -3415,6 +4481,14 @@ fn source_fragment_sha256(xml: &str, start: usize, end: usize) -> anyhow::Result
     Ok(sha256_hex(fragment))
 }
 
+fn source_fragment_sha256_from_sanitized(
+    sanitized: &tolerant_xml::SanitizedXml<'_>,
+    start: usize,
+    end: usize,
+) -> anyhow::Result<String> {
+    Ok(sha256_hex(sanitized.original_fragment(start, end)?))
+}
+
 fn parse_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<TallyCompany> {
     let mut company = TallyCompany {
         name: String::new(),
@@ -3454,7 +4528,11 @@ fn parse_named_master(
     element_name: &[u8],
     name: String,
 ) -> anyhow::Result<TallyNamedMaster> {
-    let mut record = TallyNamedMaster { name, parent: None };
+    let mut record = TallyNamedMaster {
+        name,
+        parent: None,
+        reserved_name: None,
+    };
     let mut parent_seen = false;
     loop {
         match reader.read_event()? {
@@ -3463,7 +4541,7 @@ fn parse_named_master(
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally master row repeated PARENT");
                 }
-                record.parent = read_optional_text(reader, element.name())?;
+                record.parent = read_identifier_text(reader, element.name())?;
             }
             Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(element_name) => {
                 break;
@@ -3498,7 +4576,7 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally ledger row repeated PARENT");
                 }
-                ledger.parent = read_optional_text(reader, element.name())?
+                ledger.parent = read_identifier_text(reader, element.name())?
             }
             Event::Start(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"PARTYGSTIN") =>
@@ -3555,7 +4633,7 @@ fn parse_ledger_write_readback(
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally write readback repeated PARENT");
                 }
-                ledger.parent = read_optional_text(reader, element.name())?;
+                ledger.parent = read_identifier_text(reader, element.name())?;
             }
             Event::Start(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"PARTYGSTIN") =>
@@ -3721,7 +4799,7 @@ fn parse_voucher(
             {
                 validate_only_attributes(&element, &[])?;
                 mark_unique_field(&mut seen, "VOUCHERTYPENAME", "voucher")?;
-                voucher.voucher_type = read_optional_text(reader, element.name())?
+                voucher.voucher_type = read_identifier_text(reader, element.name())?
             }
             Event::Start(element)
                 if element
@@ -3741,7 +4819,7 @@ fn parse_voucher(
             {
                 validate_only_attributes(&element, &[])?;
                 mark_unique_field(&mut seen, "PARTYLEDGERNAME", "voucher")?;
-                voucher.party_ledger_name = read_optional_text(reader, element.name())?
+                voucher.party_ledger_name = read_identifier_text(reader, element.name())?
             }
             Event::Start(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"ISCANCELLED") =>
@@ -3881,7 +4959,7 @@ fn parse_ledger_entry(reader: &mut Reader<&[u8]>) -> anyhow::Result<TallyLedgerE
             {
                 validate_only_attributes(&element, &[])?;
                 mark_unique_field(&mut seen, "LEDGERNAME", "ledger entry")?;
-                ledger_name = read_optional_text(reader, element.name())?;
+                ledger_name = read_identifier_text(reader, element.name())?;
             }
             Event::Start(element) if element.name().as_ref().eq_ignore_ascii_case(b"AMOUNT") => {
                 validate_only_attributes(&element, &[])?;
@@ -4022,6 +5100,32 @@ fn read_optional_text(
 
 fn read_required_text(reader: &mut Reader<&[u8]>, name: QName<'_>) -> anyhow::Result<String> {
     read_optional_text(reader, name)?
+        .ok_or_else(|| anyhow::anyhow!("Tally response contained an empty required value"))
+}
+
+/// Reads element text WITHOUT trimming, for foreign identifier references — LEDGERNAME,
+/// PARENT, VOUCHERTYPENAME, PARTYLEDGERNAME — that must byte-for-byte match a master NAME
+/// attribute. `attr_value` stores that NAME verbatim (untrimmed) per `ForeignText::from_tally`'s
+/// no-normalisation contract, and the canonical-window lookup maps are keyed on that verbatim
+/// text. Trimming a reference here while the map key stays untrimmed would silently break the
+/// lookup for any master whose name carries incidental leading/trailing whitespace. Only the
+/// emptiness check trims, matching `attr_value`'s own "all-whitespace counts as absent" rule;
+/// the returned value itself is never trimmed.
+fn read_identifier_text(
+    reader: &mut Reader<&[u8]>,
+    name: QName<'_>,
+) -> anyhow::Result<Option<String>> {
+    let value = reader.read_text(name)?;
+    let decoded = value.decode()?;
+    let unescaped = quick_xml::escape::unescape(&decoded)?;
+    Ok((!unescaped.trim().is_empty()).then(|| unescaped.into_owned()))
+}
+
+fn read_required_identifier_text(
+    reader: &mut Reader<&[u8]>,
+    name: QName<'_>,
+) -> anyhow::Result<String> {
+    read_identifier_text(reader, name)?
         .ok_or_else(|| anyhow::anyhow!("Tally response contained an empty required value"))
 }
 

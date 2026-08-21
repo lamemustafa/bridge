@@ -2134,6 +2134,24 @@ button.outstandings-party {
   padding-top: 6px;
 }
 
+/* A party whose own bill count exceeds the display cap -- distinct from
+   .party-bills-empty, which means genuinely zero bills. This must never read
+   as calm/neutral the way an empty state does: bills exist and are not all
+   shown yet. */
+.party-bills-not-loaded {
+  margin: 0 0 6px;
+  padding: 10px 12px;
+  border: 1px solid #e7c978;
+  background: #fff8e8;
+  color: #6c4700;
+  font-size: 13px;
+}
+
+.party-bills-not-loaded .party-statement-action {
+  color: #6c4700;
+  text-decoration: underline;
+}
+
 .party-bills-actions {
   display: flex;
   justify-content: flex-end;

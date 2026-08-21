@@ -369,6 +369,7 @@ fn update_semantic_digest(
             Some(ParsedSourceIdentityKind::Guid) => b"guid",
             Some(ParsedSourceIdentityKind::RemoteId) => b"remote_id",
             Some(ParsedSourceIdentityKind::MasterId) => b"master_id",
+            Some(ParsedSourceIdentityKind::Fallback) => b"fallback",
             None => b"",
         },
     );

@@ -2437,12 +2437,46 @@ mod tests {
         tally_command_error, tally_runtime_command_error, validate_dsc_pins, write_unique_download,
         OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
     };
+    // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
+    // path cannot be constructed portably. The import must carry the same gate as
+    // the test, or Windows fails on an unused import under `-D warnings`.
+    #[cfg(unix)]
+    use super::require_utf8_destination;
     use crate::tally::{
         ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
         SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
+
+    /// Regression for the destination-picker leak: `select_party_statement_
+    /// destination` used to build the folder's IPC string with
+    /// `to_string_lossy()`, which replaces invalid UTF-8 byte sequences with
+    /// U+FFFD -- silently turning the folder the operator picked into a
+    /// *different* path that likely doesn't exist. This failed before the
+    /// fix because the old conversion never returned an `Err` at all: it
+    /// always produced a (possibly wrong) string.
+    #[cfg(unix)]
+    #[test]
+    fn require_utf8_destination_rejects_non_utf8_paths_instead_of_rewriting_them() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        // 0xFF is never valid UTF-8 on its own, so this cannot be constructed
+        // as a Rust string literal -- it has to come in through the raw byte
+        // API a real OS path could actually hand back.
+        let invalid_bytes = [b'p', b'i', b'c', b'k', 0xFF, b'e', b'd'];
+        let path = std::path::PathBuf::from(OsStr::from_bytes(&invalid_bytes));
+
+        let error =
+            require_utf8_destination(path).expect_err("non-UTF-8 folder names must be rejected");
+
+        assert!(
+            !error.contains('\u{FFFD}'),
+            "must not silently substitute a replacement character: {error}"
+        );
+        assert!(error.to_lowercase().contains("unicode"));
+    }
 
     #[test]
     fn dsc_pin_input_is_strictly_bounded() {
@@ -3017,13 +3051,31 @@ pub struct BulkPartyStatementsPreview {
 #[tauri::command]
 pub async fn select_party_statement_destination() -> Result<Option<String>, String> {
     tokio::task::spawn_blocking(|| {
-        Ok(rfd::FileDialog::new()
+        rfd::FileDialog::new()
             .set_title("Choose a folder for party statements")
             .pick_folder()
-            .map(|path| path.to_string_lossy().into_owned()))
+            .map(require_utf8_destination)
+            .transpose()
     })
     .await
     .map_err(|_| "Bridge could not open the statement destination picker.".to_string())?
+}
+
+/// Converts a user-picked folder into the UTF-8 text Bridge's own IPC
+/// boundary and file APIs require.
+///
+/// `to_string_lossy` is deliberately not used here: it silently replaces any
+/// byte sequence that isn't valid UTF-8 with U+FFFD, which turns the picked
+/// path into a *different* path -- one that likely does not exist. The
+/// statement batch would then either fail with a confusing "destination does
+/// not exist" error, or land somewhere other than the folder the operator
+/// actually chose. Failing closed with a clear message beats guessing.
+fn require_utf8_destination(path: std::path::PathBuf) -> Result<String, String> {
+    path.into_os_string().into_string().map_err(|_| {
+        "Bridge could not use that folder because its name is not valid Unicode text. \
+         Choose a different folder, or rename it using standard characters."
+            .to_string()
+    })
 }
 
 /// Counts the unique, non-zero parties that the bulk writer will process.
