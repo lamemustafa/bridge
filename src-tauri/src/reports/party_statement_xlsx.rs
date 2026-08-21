@@ -113,6 +113,24 @@ pub fn render_party_statement_xlsx(
         row += 1;
     }
 
+    worksheet.write_string_with_format(row, 0, "Ageing subtotals", &bold)?;
+    row += 1;
+    for (bucket, subtotal) in [
+        ("0-30 days", &statement.subtotals.days_0_30),
+        ("31-60 days", &statement.subtotals.days_31_60),
+        ("61-90 days", &statement.subtotals.days_61_90),
+        ("90+ days", &statement.subtotals.days_90_plus),
+    ] {
+        worksheet.write_string(row, 0, bucket)?;
+        worksheet.write_number_with_format(
+            row,
+            4,
+            amount_to_f64(subtotal.as_str())?,
+            &amount_format,
+        )?;
+        row += 1;
+    }
+
     worksheet.write_string_with_format(row, 0, "Total bill magnitudes (not net)", &bold)?;
     worksheet.write_number_with_format(
         row,

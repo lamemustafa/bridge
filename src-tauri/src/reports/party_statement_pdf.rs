@@ -1,9 +1,11 @@
 //! Renders a [`PartyStatement`] as a printable, text-extractable PDF.
 //!
-//! The PDF uses the PDF-standard Helvetica fonts so it needs no bundled font
-//! asset. Those fonts do not contain the rupee glyph, therefore amounts are
-//! intentionally written as `INR 1,234.50`: no accounting value can disappear
-//! behind an unsupported glyph.
+//! The PDF uses the PDF-standard Helvetica fonts with WinAnsiEncoding, so it
+//! needs no bundled font asset. Text outside that encoding is shown as a
+//! visible codepoint marker rather than aborting or silently changing the
+//! statement. Those fonts do not contain the rupee glyph, therefore amounts
+//! are intentionally written as `INR 1,234.50`: no accounting value can
+//! disappear behind an unsupported glyph.
 
 use pdf_writer::{Content, Name, Pdf, Rect, Ref, Str};
 
@@ -30,15 +32,13 @@ pub enum PartyStatementPdfError {
     InvalidDirection(String),
     #[error("Bridge found an inconsistent statement age state")]
     InvalidAgeState,
-    #[error("Bridge could not represent statement text in the PDF's built-in font")]
-    UnsupportedText,
     #[error("Bridge could not allocate PDF pages for this statement")]
     TooManyPages,
 }
 
 #[derive(Debug)]
 struct PdfLine {
-    text: String,
+    text: Vec<u8>,
     bold: bool,
 }
 
@@ -65,14 +65,14 @@ impl PdfObjectAllocator {
 }
 
 impl PdfLine {
-    fn body(text: impl Into<String>) -> Self {
+    fn body(text: impl Into<Vec<u8>>) -> Self {
         Self {
             text: text.into(),
             bold: false,
         }
     }
 
-    fn bold(text: impl Into<String>) -> Self {
+    fn bold(text: impl Into<Vec<u8>>) -> Self {
         Self {
             text: text.into(),
             bold: true,
@@ -111,9 +111,14 @@ pub fn render_party_statement_pdf(
         .kids(page_ids.iter().copied())
         .count(page_count_i32);
     pdf.type1_font(regular_font_id)
-        .base_font(Name(b"Helvetica"));
+        .base_font(Name(b"Helvetica"))
+        .encoding_predefined(Name(b"WinAnsiEncoding"));
     pdf.type1_font(bold_font_id)
-        .base_font(Name(b"Helvetica-Bold"));
+        .base_font(Name(b"Helvetica-Bold"))
+        .encoding_predefined(Name(b"WinAnsiEncoding"));
+
+    let company = display_pdf_text("company name", &statement.company);
+    let party = display_pdf_text("party name", &statement.party);
 
     for (page_index, page_lines) in lines.chunks(BODY_LINES_PER_PAGE).enumerate() {
         let page_id = page_ids[page_index];
@@ -131,16 +136,17 @@ pub fn render_party_statement_pdf(
 
         let mut content = Content::new();
         content.begin_text();
-        let page_header = format!(
+        let page_header = encode_win_ansi(&format!(
             "Party statement | Company: {} | Party: {} | Page {} of {page_count}",
-            statement.company,
-            statement.party,
+            company,
+            party,
             page_index + 1,
-        );
+        ))
+        .expect("page header values were rendered for WinAnsi before layout");
         content
             .set_font(bold_font, BODY_FONT_SIZE)
             .set_text_matrix([1.0, 0.0, 0.0, 1.0, MARGIN, PAGE_HEIGHT - MARGIN])
-            .show(Str(page_header.as_bytes()));
+            .show(Str(&page_header));
         for (line_index, line) in page_lines.iter().enumerate() {
             let font = if line.bold { bold_font } else { regular_font };
             let font_size = if line.bold {
@@ -152,7 +158,7 @@ pub fn render_party_statement_pdf(
             content
                 .set_font(font, font_size)
                 .set_text_matrix([1.0, 0.0, 0.0, 1.0, MARGIN, y])
-                .show(Str(line.text.as_bytes()));
+                .show(Str(&line.text));
         }
         content.end_text();
         pdf.stream(content_id, &content.finish());
@@ -164,8 +170,16 @@ pub fn render_party_statement_pdf(
 fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStatementPdfError> {
     let mut lines = Vec::new();
     push_wrapped(&mut lines, "Party statement", true)?;
-    push_label_value(&mut lines, "Company", &statement.company)?;
-    push_label_value(&mut lines, "Party", &statement.party)?;
+    push_label_value(
+        &mut lines,
+        "Company",
+        &display_pdf_text("company name", &statement.company),
+    )?;
+    push_label_value(
+        &mut lines,
+        "Party",
+        &display_pdf_text("party name", &statement.party),
+    )?;
     push_label_value(
         &mut lines,
         "As of",
@@ -196,7 +210,7 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
         };
         let row = format!(
             "{} | {} | {} | {} | {} | {} | {}",
-            bill.reference,
+            display_pdf_text("bill reference", &bill.reference),
             display_date(&bill.bill_date)?,
             display_date(&bill.due_date)?,
             bill_direction_label(bill.kind)?,
@@ -212,6 +226,15 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
         "Total bill magnitudes (not net)",
         &display_amount(&statement.bill_total)?,
     )?;
+    push_wrapped(&mut lines, "Ageing subtotals", true)?;
+    for (bucket, subtotal) in [
+        ("0-30 days", &statement.subtotals.days_0_30),
+        ("31-60 days", &statement.subtotals.days_31_60),
+        ("61-90 days", &statement.subtotals.days_61_90),
+        ("90+ days", &statement.subtotals.days_90_plus),
+    ] {
+        push_label_value(&mut lines, bucket, &display_amount(subtotal)?)?;
+    }
     if !statement.unallocated.is_zero() {
         let direction =
             statement
@@ -264,22 +287,82 @@ fn push_wrapped(
     text: &str,
     bold: bool,
 ) -> Result<(), PartyStatementPdfError> {
-    if !text.bytes().all(|byte| matches!(byte, b' '..=b'~')) {
-        return Err(PartyStatementPdfError::UnsupportedText);
-    }
     if text.is_empty() {
-        lines.push(PdfLine::body(""));
+        lines.push(PdfLine::body(Vec::new()));
         return Ok(());
     }
-    for chunk in text.as_bytes().chunks(MAX_LINE_BYTES) {
-        let text = std::str::from_utf8(chunk).expect("ASCII was checked above");
+    let text = encode_win_ansi(text).unwrap_or_else(|| degraded_text("statement text", text));
+    for chunk in text.chunks(MAX_LINE_BYTES) {
         lines.push(if bold {
-            PdfLine::bold(text)
+            PdfLine::bold(chunk.to_vec())
         } else {
-            PdfLine::body(text)
+            PdfLine::body(chunk.to_vec())
         });
     }
     Ok(())
+}
+
+/// Makes an unrepresentable source value conspicuous without inventing a
+/// replacement name. The marker preserves each source scalar as a codepoint,
+/// so operators can distinguish it from a real ledger name and reconcile it
+/// against the source system.
+fn display_pdf_text(field: &str, text: &str) -> String {
+    if encode_win_ansi(text).is_some() {
+        text.to_string()
+    } else {
+        String::from_utf8(degraded_text(field, text)).expect("marker is ASCII")
+    }
+}
+
+fn degraded_text(field: &str, text: &str) -> Vec<u8> {
+    let codepoints = text
+        .chars()
+        .map(|character| format!("U+{:04X}", character as u32))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("[{field} rendering degraded: {codepoints}]").into_bytes()
+}
+
+/// Encodes the complete PDF WinAnsi repertoire. PDF strings are bytes, not
+/// UTF-8: writing raw UTF-8 under a Type 1 font gives each byte a different
+/// glyph. C1 control characters intentionally have no mapping.
+fn encode_win_ansi(text: &str) -> Option<Vec<u8>> {
+    text.chars().map(win_ansi_byte).collect()
+}
+
+fn win_ansi_byte(character: char) -> Option<u8> {
+    match character {
+        '\u{20}'..='\u{7e}' => Some(character as u8),
+        '\u{a0}'..='\u{ff}' => Some(character as u8),
+        '\u{20ac}' => Some(0x80),
+        '\u{201a}' => Some(0x82),
+        '\u{192}' => Some(0x83),
+        '\u{201e}' => Some(0x84),
+        '\u{2026}' => Some(0x85),
+        '\u{2020}' => Some(0x86),
+        '\u{2021}' => Some(0x87),
+        '\u{2c6}' => Some(0x88),
+        '\u{2030}' => Some(0x89),
+        '\u{160}' => Some(0x8a),
+        '\u{2039}' => Some(0x8b),
+        '\u{152}' => Some(0x8c),
+        '\u{17d}' => Some(0x8e),
+        '\u{2018}' => Some(0x91),
+        '\u{2019}' => Some(0x92),
+        '\u{201c}' => Some(0x93),
+        '\u{201d}' => Some(0x94),
+        '\u{2022}' => Some(0x95),
+        '\u{2013}' => Some(0x96),
+        '\u{2014}' => Some(0x97),
+        '\u{2dc}' => Some(0x98),
+        '\u{2122}' => Some(0x99),
+        '\u{161}' => Some(0x9a),
+        '\u{203a}' => Some(0x9b),
+        '\u{153}' => Some(0x9c),
+        '\u{17e}' => Some(0x9e),
+        '\u{178}' => Some(0x9f),
+        _ => None,
+    }
 }
 
 fn display_date(yyyymmdd: &str) -> Result<String, PartyStatementPdfError> {
@@ -355,6 +438,7 @@ mod tests {
     use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
     use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
     use bridge_tally_core::ExactDecimal;
+    use bridge_tally_protocol::native_outstandings::parse_native_ledger_snapshot;
     use std::io::{Cursor, Read};
     use zip::ZipArchive;
 
@@ -421,13 +505,13 @@ mod tests {
 
     fn xlsx_sheet_xml(xlsx: &[u8]) -> String {
         let mut archive = ZipArchive::new(Cursor::new(xlsx)).expect("well-formed XLSX archive");
-        let mut sheet = archive
-            .by_name("xl/worksheets/sheet1.xml")
-            .expect("statement worksheet exists");
         let mut xml = String::new();
-        sheet
-            .read_to_string(&mut xml)
-            .expect("statement worksheet is UTF-8 XML");
+        for name in ["xl/worksheets/sheet1.xml", "xl/sharedStrings.xml"] {
+            let mut entry = archive.by_name(name).expect("statement XML entry exists");
+            entry
+                .read_to_string(&mut xml)
+                .expect("statement XML is UTF-8");
+        }
         xml
     }
 
@@ -568,23 +652,180 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_statement_text_fails_instead_of_becoming_blank() {
-        let party = "Party with a non-core glyph: \u{20b9}";
+    fn unrepresentable_party_name_keeps_the_document_bills_and_totals() {
+        let party = string_from_codepoints(&[
+            0x0050, 0x0061, 0x0072, 0x0074, 0x0079, 0x0085, 0x0020, 0x20b9,
+        ]);
         let mut source_bill = bill("INV-1", "10.00", 5);
         source_bill.party = party.to_string();
+        let unrepresentable = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            &party,
+            &[source_bill],
+            &[],
+        )
+        .unwrap();
+        let mut ascii_bill = bill("INV-1", "10.00", 5);
+        ascii_bill.party = "ASCII Party".to_string();
+        let ascii = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "ASCII Party",
+            &[ascii_bill],
+            &[],
+        )
+        .unwrap();
+
+        let pdf = render_party_statement_pdf(&unrepresentable).expect("PDF still renders");
+        assert!(pdf
+            .windows(b"party name rendering degraded: U+0050".len())
+            .any(|bytes| bytes == b"party name rendering degraded: U+0050"));
+        assert!(pdf.windows(b"U+0085".len()).any(|bytes| bytes == b"U+0085"));
+        assert!(pdf.windows(b"U+20B9".len()).any(|bytes| bytes == b"U+20B9"));
+        assert!(extracted_text(&pdf).contains("INV-1"));
+        let xlsx = render_party_statement_xlsx(&unrepresentable).expect("XLSX still renders");
+        let xlsx_xml = xlsx_sheet_xml(&xlsx);
+        assert!(xlsx_xml.contains(&party));
+        assert!(xlsx_xml.contains("INV-1"));
+        assert_eq!(unrepresentable.bill_total, ascii.bill_total);
+        assert_eq!(unrepresentable.grand_total, ascii.grand_total);
+    }
+
+    #[test]
+    fn every_aarav_ledger_name_renders_in_both_statement_formats() {
+        let ledgers = parse_native_ledger_snapshot(include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledger_snapshot_aarav.xml"
+        ))
+        .expect("captured ledger snapshot parses");
+        assert_eq!(
+            ledgers.len(),
+            88,
+            "fixture coverage must not silently shrink"
+        );
+
+        for ledger in ledgers {
+            let mut source_bill = bill("INV-1", "10.00", 5);
+            source_bill.party = ledger.name.clone();
+            let statement = build_party_statement(
+                "Synthetic Books Pvt Ltd",
+                "20260808",
+                &ledger.name,
+                &[source_bill],
+                &[],
+            )
+            .expect("a billed fixture ledger produces a statement");
+
+            assert!(
+                render_party_statement_pdf(&statement).is_ok(),
+                "PDF must render ledger {:?}",
+                ledger.name
+            );
+            assert!(
+                render_party_statement_xlsx(&statement).is_ok(),
+                "XLSX must render ledger {:?}",
+                ledger.name
+            );
+        }
+    }
+
+    #[test]
+    fn ageing_subtotals_are_rendered_exactly_in_both_formats() {
+        let bills = [
+            bill("D0", "10.25", 1),
+            bill("D31", "20.50", 31),
+            bill("D61", "30.75", 61),
+            bill("D90", "40.125", 91),
+        ];
         let statement = build_party_statement(
             "Synthetic Books Pvt Ltd",
             "20260808",
-            party,
+            "Synthetic Party",
+            &bills,
+            &[],
+        )
+        .unwrap();
+
+        let pdf_text = extracted_text(&render_party_statement_pdf(&statement).unwrap());
+        assert!(pdf_text.contains("Ageing subtotals"));
+        for (bucket, subtotal) in [
+            ("0-30 days", &statement.subtotals.days_0_30),
+            ("31-60 days", &statement.subtotals.days_31_60),
+            ("61-90 days", &statement.subtotals.days_61_90),
+            ("90+ days", &statement.subtotals.days_90_plus),
+        ] {
+            assert!(pdf_text.contains(&format!(
+                "{bucket}: INR {}",
+                indian_grouped_decimal(subtotal.as_str())
+            )));
+        }
+
+        let xlsx = render_party_statement_xlsx(&statement).unwrap();
+        let xlsx_xml = xlsx_sheet_xml(&xlsx);
+        assert!(xlsx_xml.contains("Ageing subtotals"));
+        for subtotal in [
+            &statement.subtotals.days_0_30,
+            &statement.subtotals.days_31_60,
+            &statement.subtotals.days_61_90,
+            &statement.subtotals.days_90_plus,
+        ] {
+            assert!(xlsx_xml.contains(&format!("<v>{}</v>", subtotal.as_str())));
+        }
+    }
+
+    #[test]
+    fn win_ansi_covers_the_aarav_latin_and_typographic_names() {
+        let name = string_from_codepoints(&[
+            0x005a, 0x005a, 0x0020, 0x0043, 0x0061, 0x0066, 0x00e9, 0x0020, 0x004e, 0x0061, 0x00ef,
+            0x0076, 0x0065, 0x0020, 0x201c, 0x0051, 0x0075, 0x006f, 0x0074, 0x0065, 0x0064, 0x201d,
+            0x0020, 0x2014, 0x0020, 0x2026,
+        ]);
+
+        assert_eq!(
+            encode_win_ansi(&name),
+            Some(vec![
+                b'Z', b'Z', b' ', b'C', b'a', b'f', 0xe9, b' ', b'N', b'a', 0xef, b'v', b'e', b' ',
+                0x93, b'Q', b'u', b'o', b't', b'e', b'd', 0x94, b' ', 0x97, b' ', 0x85,
+            ])
+        );
+    }
+
+    #[test]
+    fn rendered_pdf_declares_win_ansi_and_emits_its_extended_bytes() {
+        let party = string_from_codepoints(&[
+            0x0043, 0x0061, 0x0066, 0x00e9, 0x0020, 0x201c, 0x0051, 0x201d, 0x0020, 0x2014, 0x0020,
+            0x2026,
+        ]);
+        let mut source_bill = bill("INV-1", "10.00", 5);
+        source_bill.party = party.clone();
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            &party,
             &[source_bill],
             &[],
         )
         .unwrap();
 
-        assert!(matches!(
-            render_party_statement_pdf(&statement),
-            Err(PartyStatementPdfError::UnsupportedText)
-        ));
+        let pdf = render_party_statement_pdf(&statement).unwrap();
+        let encoded_party = encode_win_ansi(&party).expect("party is WinAnsi-representable");
+        let encoded_party_hex = encoded_party
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        assert!(pdf
+            .windows(b"/Encoding /WinAnsiEncoding".len())
+            .any(|bytes| { bytes == b"/Encoding /WinAnsiEncoding" }));
+        assert!(pdf
+            .windows(encoded_party_hex.len())
+            .any(|bytes| bytes == encoded_party_hex.as_bytes()));
+    }
+
+    fn string_from_codepoints(codepoints: &[u32]) -> String {
+        codepoints
+            .iter()
+            .map(|codepoint| char::from_u32(*codepoint).expect("valid test codepoint"))
+            .collect()
     }
 
     #[test]
