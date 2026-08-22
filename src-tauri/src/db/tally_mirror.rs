@@ -4182,13 +4182,11 @@ impl TallyMirrorRepository {
         let freshness = self
             .freshness(company_id, &receipt.facts.pack_id, exported_at_unix_ms)
             .await?;
-        for code in receipt
-            .facts
-            .gap_codes
-            .iter()
-            .chain(&receipt.facts.warning_codes)
-        {
+        for code in &receipt.facts.gap_codes {
             validate_export_code(code)?;
+        }
+        for code in &receipt.facts.warning_codes {
+            validate_export_warning_code(code)?;
         }
         let freshness_state = match freshness.state {
             FreshnessState::Fresh => "fresh",
@@ -4434,6 +4432,15 @@ fn validate_export_code(value: &str) -> Result<(), MirrorError> {
         Ok(())
     } else {
         Err(MirrorError::VerificationInvariant)
+    }
+}
+
+fn validate_export_warning_code(value: &str) -> Result<(), MirrorError> {
+    let warning = crate::sync::reconciliation::WarningCode::parse(value)
+        .ok_or(MirrorError::VerificationInvariant)?;
+    match warning {
+        crate::sync::reconciliation::WarningCode::AdaptiveWindowSplit
+        | crate::sync::reconciliation::WarningCode::ForeignMasterTextRenderingDegraded => Ok(()),
     }
 }
 
@@ -8553,6 +8560,14 @@ mod tests {
         let export = finish_redacted_export(payload).expect("export every reviewed terminal code");
         for code in REVIEWED_TALLY_TERMINAL_CODES {
             assert!(export.json.contains(code), "export omitted {code}");
+        }
+    }
+
+    #[test]
+    fn redacted_proof_export_accepts_every_declared_warning_code() {
+        for warning in crate::sync::reconciliation::WarningCode::ALL {
+            validate_export_warning_code(warning.as_str())
+                .expect("declared warning code must be exportable");
         }
     }
 }

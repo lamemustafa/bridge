@@ -30,7 +30,7 @@ use crate::sync::reconciliation::{
     build_reconciliation, build_terminal_proof, canonicalize_window, proof_record_counts_sha256,
     CanonicalWindowContext, CommitBatchInput, CommitBatchParts, ComparisonScope, EndProfileCheck,
     ExternalReferenceCatalog, ReconciliationDecision, ReconciliationError, ReconciliationInput,
-    ReconciliationMismatch, ReportTieOutEvidence, SourceStabilityCheck, TerminalKind,
+    ReconciliationMismatch, ReportTieOutEvidence, SourceStabilityCheck, TerminalKind, WarningCode,
     WindowEvidence,
 };
 use crate::tally::core_snapshot_start_authorized;
@@ -419,7 +419,7 @@ pub struct WindowStageAttempt {
     /// Safe warnings observed while reading this particular attempt. They become
     /// run-level warnings only after the attempt has completed immutably.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub warning_codes: BTreeSet<String>,
+    pub warning_codes: BTreeSet<WarningCode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -546,7 +546,7 @@ pub struct DurableSnapshotState {
     pub progress: PhaseProgress,
     pub windows: BTreeMap<String, WindowProgress>,
     pub gap_codes: BTreeSet<String>,
-    pub warning_codes: BTreeSet<String>,
+    pub warning_codes: BTreeSet<WarningCode>,
     #[serde(default)]
     pub end_profile_check: EndProfileCheck,
     #[serde(default)]
@@ -891,9 +891,7 @@ fn split_leaf(
             },
         );
     }
-    state
-        .warning_codes
-        .insert("adaptive_window_split".to_string());
+    state.warning_codes.insert(WarningCode::AdaptiveWindowSplit);
     state.set_phase(SnapshotPhase::PlanWindows, None);
     Ok(SplitLeafResult::Created)
 }
@@ -2343,9 +2341,7 @@ where
             let mut attempt_warning_codes = BTreeSet::new();
             if let PackBatch::CoreAccounting(core) = &source_window.batch {
                 if core.has_foreign_master_text_diagnostics() {
-                    attempt_warning_codes.insert(
-                        bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE.to_string(),
-                    );
+                    attempt_warning_codes.insert(WarningCode::ForeignMasterTextRenderingDegraded);
                 }
                 let report_result = match self
                     .await_connector(
@@ -2937,7 +2933,12 @@ where
             return Err(SnapshotError::StateInvariant("pending_commit_changed"));
         }
         state.gap_codes = commit.gap_codes.iter().cloned().collect();
-        state.warning_codes = commit.warning_codes.iter().cloned().collect();
+        state.warning_codes = commit
+            .warning_codes
+            .iter()
+            .map(|code| WarningCode::parse(code))
+            .collect::<Option<BTreeSet<_>>>()
+            .ok_or(SnapshotError::StateInvariant("warning_code"))?;
         state.set_phase(SnapshotPhase::CommitPending, None);
         state.pending_commit = Some(PendingCommit {
             kind,
@@ -3368,7 +3369,11 @@ fn persisted_reconciled_decision(
         checkpoint_after: pending.intended_checkpoint.clone(),
         freshness_target_seconds: plan.freshness_target_seconds,
         gap_codes: proof_gap_codes,
-        warning_codes: state.warning_codes.iter().cloned().collect(),
+        warning_codes: state
+            .warning_codes
+            .iter()
+            .map(|warning| warning.as_str().to_string())
+            .collect(),
     });
     Ok(Some(ReconciliationDecision {
         proof,
@@ -4505,7 +4510,10 @@ mod tests {
         assert_eq!(leaves[1].range.from_yyyymmdd, "20260717");
         assert_eq!(leaves[1].range.to_yyyymmdd, "20260731");
         assert_eq!(result.state.progress.total_windows, 2);
-        assert!(result.state.warning_codes.contains("adaptive_window_split"));
+        assert!(result
+            .state
+            .warning_codes
+            .contains(&WarningCode::AdaptiveWindowSplit));
         let requests = connector.requests.lock().unwrap();
         assert_eq!(
             requests
@@ -4514,6 +4522,51 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn redacted_proof_export_accepts_adaptive_window_split_warning() {
+        let (_, mirror, store, plan) = setup().await;
+        let root_id = plan.windows[0].id.clone();
+        let connector = FakeConnector {
+            batch: Mutex::new(VecDeque::from([Err(TallyError::ReadResponseTooLarge {
+                scope: ReadResponseScope::VoucherWindow,
+            })])),
+            company: plan.company.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        let result = FullSnapshotEngine::new(&mirror, &store, &connector)
+            .run(&plan, &AtomicCancellation::default())
+            .await
+            .expect("complete adaptive split snapshot");
+
+        assert_eq!(result.state.windows[&root_id].phase, WindowPhase::Split);
+        assert!(result
+            .state
+            .warning_codes
+            .contains(&WarningCode::AdaptiveWindowSplit));
+        let proof_id = result
+            .receipt
+            .proof_id
+            .as_deref()
+            .expect("completed snapshot has proof id");
+        mirror
+            .redacted_proof_export(
+                &plan.mirror_company_id,
+                proof_id,
+                result.proof.completed_at_unix_ms.unwrap(),
+            )
+            .await
+            .expect("adaptive split warning must export");
+        assert!(mirror
+            .local_reconciliation_mismatches(
+                &plan.mirror_company_id,
+                proof_id,
+                result.proof.completed_at_unix_ms.unwrap(),
+            )
+            .await
+            .expect("adaptive split warning must permit mismatch drill-down")
+            .is_empty());
     }
 
     #[tokio::test]
@@ -4807,9 +4860,7 @@ mod tests {
             DurableSnapshotState::new(&plan, core_freshness(freshness_before.state)).unwrap();
         state.checkpoint_before = freshness_before.checkpoint_token.clone();
         state.gap_codes.insert("earlier_safe_gap".to_string());
-        state
-            .warning_codes
-            .insert("earlier_safe_warning".to_string());
+        state.warning_codes.insert(WarningCode::AdaptiveWindowSplit);
         store.save(&mut state).await.unwrap();
         let connector = FakeConnector {
             batch: Mutex::new(VecDeque::from([Err(TallyError::ReadResponseTooLarge {
@@ -4859,7 +4910,7 @@ mod tests {
         );
         assert_eq!(
             ledger_receipt.facts.warning_codes,
-            vec!["earlier_safe_warning"]
+            vec!["adaptive_window_split"]
         );
         assert_eq!(connector.requests.lock().unwrap().len(), 1);
         let freshness_after = mirror
@@ -4897,9 +4948,7 @@ mod tests {
         ));
         let mut state = DurableSnapshotState::new(&plan, Freshness::NeverVerified).unwrap();
         state.gap_codes.insert("earlier_safe_gap".to_string());
-        state
-            .warning_codes
-            .insert("earlier_safe_warning".to_string());
+        state.warning_codes.insert(WarningCode::AdaptiveWindowSplit);
         store.save(&mut state).await.unwrap();
 
         let connector = FakeConnector {
@@ -4927,7 +4976,9 @@ mod tests {
         assert!(pending
             .gap_codes
             .contains("minimum_window_response_too_large"));
-        assert!(pending.warning_codes.contains("earlier_safe_warning"));
+        assert!(pending
+            .warning_codes
+            .contains(&WarningCode::AdaptiveWindowSplit));
 
         let resumed = FullSnapshotEngine::new(&mirror, &store, &connector)
             .run(&plan, &AtomicCancellation::default())
@@ -4955,7 +5006,7 @@ mod tests {
             receipt.facts.gap_codes,
             vec!["earlier_safe_gap", "minimum_window_response_too_large"]
         );
-        assert_eq!(receipt.facts.warning_codes, vec!["earlier_safe_warning"]);
+        assert_eq!(receipt.facts.warning_codes, vec!["adaptive_window_split"]);
     }
 
     #[tokio::test]
@@ -6225,7 +6276,7 @@ mod tests {
         assert!(result
             .state
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
         let receipt = mirror
             .historical_commit_receipt_for_batch(
                 result.state.batch_id.as_deref().expect("committed batch"),
@@ -6292,10 +6343,10 @@ mod tests {
             .expect("the diagnosed warning is bound to the open attempt");
         assert!(staged
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
         assert!(!persisted
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
 
         let result = FullSnapshotEngine::new(&mirror, &store, &connector)
             .run(&plan, &AtomicCancellation::default())
@@ -6304,7 +6355,7 @@ mod tests {
         assert!(!result
             .state
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
         let receipt = mirror
             .historical_commit_receipt_for_batch(
                 result.state.batch_id.as_deref().expect("committed batch"),
@@ -6339,7 +6390,7 @@ mod tests {
         assert!(!result
             .state
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
     }
 
     #[test]
@@ -7146,7 +7197,7 @@ mod tests {
             store.heartbeat(&state).await,
             Err(SnapshotError::LeaseUnavailable)
         ));
-        state.warning_codes.insert("must_not_persist".to_string());
+        state.warning_codes.insert(WarningCode::AdaptiveWindowSplit);
         assert!(matches!(
             store.save(&mut state).await,
             Err(SnapshotError::StateConflict)
@@ -7193,7 +7244,7 @@ mod tests {
         restarted_worker.heartbeat(&recovered).await.unwrap();
         recovered
             .warning_codes
-            .insert("restart_reclaimed".to_string());
+            .insert(WarningCode::AdaptiveWindowSplit);
         restarted_worker.save(&mut recovered).await.unwrap();
     }
 
@@ -7222,9 +7273,7 @@ mod tests {
         ));
         // Wall-clock jumps also cannot make the actual owner lose save authority.
         live_worker.heartbeat(&state).await.unwrap();
-        state
-            .warning_codes
-            .insert("live_owner_retained".to_string());
+        state.warning_codes.insert(WarningCode::AdaptiveWindowSplit);
         live_worker.save(&mut state).await.unwrap();
     }
 
@@ -7268,16 +7317,24 @@ mod tests {
         ));
         let mut advanced = loaded.clone();
         let mut stale = loaded.clone();
-        advanced.warning_codes.insert("cas_advanced".to_string());
+        advanced
+            .warning_codes
+            .insert(WarningCode::AdaptiveWindowSplit);
         store.save(&mut advanced).await.unwrap();
-        stale.warning_codes.insert("cas_stale".to_string());
+        stale
+            .warning_codes
+            .insert(WarningCode::ForeignMasterTextRenderingDegraded);
         assert!(matches!(
             store.save(&mut stale).await,
             Err(SnapshotError::StateConflict)
         ));
         let loaded = store.load(&plan.resume_key).await.unwrap().unwrap();
-        assert!(loaded.warning_codes.contains("cas_advanced"));
-        assert!(!loaded.warning_codes.contains("cas_stale"));
+        assert!(loaded
+            .warning_codes
+            .contains(&WarningCode::AdaptiveWindowSplit));
+        assert!(!loaded
+            .warning_codes
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
         assert!(matches!(
             loaded.assert_resumable_with(&plan),
             Err(SnapshotError::ResumePlanMismatch)
