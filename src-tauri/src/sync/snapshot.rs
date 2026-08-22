@@ -419,7 +419,7 @@ pub struct WindowStageAttempt {
     /// Safe warnings observed while reading this particular attempt. They become
     /// run-level warnings only after the attempt has completed immutably.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub warning_codes: BTreeSet<String>,
+    pub warning_codes: BTreeSet<WarningCode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -2341,9 +2341,7 @@ where
             let mut attempt_warning_codes = BTreeSet::new();
             if let PackBatch::CoreAccounting(core) = &source_window.batch {
                 if core.has_foreign_master_text_diagnostics() {
-                    attempt_warning_codes.insert(
-                        bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE.to_string(),
-                    );
+                    attempt_warning_codes.insert(WarningCode::ForeignMasterTextRenderingDegraded);
                 }
                 let report_result = match self
                     .await_connector(
@@ -6278,7 +6276,7 @@ mod tests {
         assert!(result
             .state
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
         let receipt = mirror
             .historical_commit_receipt_for_batch(
                 result.state.batch_id.as_deref().expect("committed batch"),
@@ -6345,10 +6343,10 @@ mod tests {
             .expect("the diagnosed warning is bound to the open attempt");
         assert!(staged
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
         assert!(!persisted
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
 
         let result = FullSnapshotEngine::new(&mirror, &store, &connector)
             .run(&plan, &AtomicCancellation::default())
@@ -6357,7 +6355,7 @@ mod tests {
         assert!(!result
             .state
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
         let receipt = mirror
             .historical_commit_receipt_for_batch(
                 result.state.batch_id.as_deref().expect("committed batch"),
@@ -6392,7 +6390,7 @@ mod tests {
         assert!(!result
             .state
             .warning_codes
-            .contains(bridge_tally_core::FOREIGN_MASTER_TEXT_RENDERING_WARNING_CODE));
+            .contains(&WarningCode::ForeignMasterTextRenderingDegraded));
     }
 
     #[test]
