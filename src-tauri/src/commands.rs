@@ -2581,7 +2581,7 @@ mod tests {
         let canary = first_calendar_day_canary_window("20260228").unwrap();
         assert_eq!(canary.range.from_yyyymmdd, "20260228");
         assert_eq!(canary.range.to_yyyymmdd, "20260228");
-        assert_eq!(canary.query_profile.as_str(), "core_accounting_v2");
+        assert_eq!(canary.query_profile.as_str(), "core_accounting_v3");
 
         let same = first_calendar_day_canary_window("20260228").unwrap();
         assert_eq!(same, canary);

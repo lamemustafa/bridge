@@ -27,11 +27,10 @@ use bridge_tally_protocol::native_outstandings::{
 use bridge_tally_protocol::outstandings::{
     assemble_partitioned_scan, assemble_scan, compute_outstandings,
     corroborate_empty_date_partition, nearest_non_empty_primary_partition, CompleteWitnessPair,
-    CorroboratedDatePartition, DateBoundaryProfile, DateWindow, NarrowDateWindow, PartialScan,
-    ScanResult, SegmentVerification, StrictlyWiderDateCover, VoucherAlterIdHighWater,
-    WitnessPairVerification,
+    CorroboratedDatePartition, DateWindow, NarrowDateWindow, PartialScan, ScanResult,
+    SegmentVerification, StrictlyWiderDateCover, VoucherAlterIdHighWater, WitnessPairVerification,
 };
-use bridge_tally_protocol::outstandings_shared::OutstandingsReport;
+use bridge_tally_protocol::outstandings_shared::{DateBoundaryProfile, OutstandingsReport};
 use bridge_tally_transport::TallyTransportError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -305,8 +304,7 @@ fn paired_coverage_partial_reason(coverage: &LedgerOpeningCoverageRead) -> Optio
     }
 }
 
-#[cfg(feature = "voucher-scan")]
-fn select_outstandings_date_boundary_profile(
+fn select_date_boundary_profile(
     profile: Option<&bridge_tally_core::CapabilityProfile>,
 ) -> DateBoundaryProfile {
     let Some(profile) = profile else {
@@ -672,6 +670,8 @@ pub struct TallyRuntime {
     outstandings_boundary_profile_override: Option<DateBoundaryProfile>,
     #[cfg(test)]
     transport_policy: Option<bridge_tally_transport::TransportPolicy>,
+    #[cfg(test)]
+    snapshot_probe_profile_override: Option<(String, Option<String>)>,
 }
 
 /// Opaque, owner-bound authority over one fresh reviewed probe.
@@ -813,6 +813,8 @@ impl Default for TallyRuntime {
             outstandings_boundary_profile_override: None,
             #[cfg(test)]
             transport_policy: None,
+            #[cfg(test)]
+            snapshot_probe_profile_override: None,
         }
     }
 }
@@ -847,6 +849,17 @@ impl TallyRuntime {
     pub(crate) fn with_transport_policy(policy: bridge_tally_transport::TransportPolicy) -> Self {
         Self {
             transport_policy: Some(policy),
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_snapshot_probe_profile_for_test(
+        product: impl Into<String>,
+        mode: Option<String>,
+    ) -> Self {
+        Self {
+            snapshot_probe_profile_override: Some((product.into(), mode)),
             ..Self::default()
         }
     }
@@ -1138,6 +1151,11 @@ impl TallyRuntime {
                 .await?;
             apply_scoped_standard_identity(&mut result, company);
         }
+        #[cfg(test)]
+        if let Some((product, mode)) = &self.snapshot_probe_profile_override {
+            result.profile.product = product.clone();
+            result.profile.mode = mode.clone();
+        }
         Ok((chrono::Utc::now().timestamp_millis(), result))
     }
 
@@ -1164,6 +1182,7 @@ impl TallyRuntime {
         company: String,
         expected_company_guid: String,
     ) -> anyhow::Result<Vec<TallyLedger>> {
+        let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
         self.execute(
             config,
@@ -1172,7 +1191,11 @@ impl TallyRuntime {
             move |client| {
                 let company = company.clone();
                 let expected_company_guid = expected_company_guid.clone();
-                async move { client.fetch_ledgers(&company, &expected_company_guid).await }
+                async move {
+                    client
+                        .fetch_ledgers(&company, &expected_company_guid, boundary_profile)
+                        .await
+                }
             },
         )
         .await
@@ -1536,9 +1559,7 @@ impl TallyRuntime {
         let boundary_profile = self
             .outstandings_boundary_profile_override
             .unwrap_or_else(|| {
-                select_outstandings_date_boundary_profile(
-                    cached_probe.as_ref().map(|probe| &probe.profile),
-                )
+                select_date_boundary_profile(cached_probe.as_ref().map(|probe| &probe.profile))
             });
         let _lease = self.begin_ordinary_read(&config)?;
         let result = self
@@ -1987,6 +2008,24 @@ impl TallyRuntime {
             .as_ref()
             .map(|probe| probe.result.clone());
         Ok(cached)
+    }
+
+    pub(crate) fn master_ledger_export_boundary_profile(
+        &self,
+        config: &TallyConfig,
+    ) -> anyhow::Result<DateBoundaryProfile> {
+        Ok(self.master_ledger_export_boundary_profile_from_profile(
+            self.cached_probe(config)?
+                .as_ref()
+                .map(|probe| &probe.profile),
+        ))
+    }
+
+    pub(crate) fn master_ledger_export_boundary_profile_from_profile(
+        &self,
+        profile: Option<&bridge_tally_core::CapabilityProfile>,
+    ) -> DateBoundaryProfile {
+        select_date_boundary_profile(profile)
     }
 
     pub fn reserve_cached_probe_fresh(
@@ -2681,24 +2720,24 @@ mod tests {
         profile.product = "TallyPrime Edit Log".to_string();
         profile.mode = Some("Education".to_string());
         assert_eq!(
-            select_outstandings_date_boundary_profile(Some(&profile)),
+            select_date_boundary_profile(Some(&profile)),
             DateBoundaryProfile::EducationRestricted
         );
 
         profile.mode = Some("Licensed".to_string());
         assert_eq!(
-            select_outstandings_date_boundary_profile(Some(&profile)),
+            select_date_boundary_profile(Some(&profile)),
             DateBoundaryProfile::ModeAgnostic
         );
         assert_eq!(
-            select_outstandings_date_boundary_profile(None),
+            select_date_boundary_profile(None),
             DateBoundaryProfile::ModeAgnostic
         );
 
         profile.product = "Unknown".to_string();
         profile.mode = Some("Education".to_string());
         assert_eq!(
-            select_outstandings_date_boundary_profile(Some(&profile)),
+            select_date_boundary_profile(Some(&profile)),
             DateBoundaryProfile::ModeAgnostic,
             "inconsistent or incomplete detection must rely on I12 rather than inventing compatibility evidence"
         );
