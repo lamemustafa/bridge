@@ -33,5 +33,6 @@ macro_rules! declared_warning_codes {
 declared_warning_codes! {
     AdaptiveWindowSplit => "adaptive_window_split",
     ForeignMasterTextRenderingDegraded => "foreign_master_text_rendering_degraded",
+    NativeOutstandingsAsOfUnconfirmedWithoutEffectiveDateEvidence => "native_outstandings_as_of_unconfirmed_without_effective_date_evidence",
     NativeOutstandingsAsOfUnconfirmedWithoutBillReferences => "native_outstandings_as_of_unconfirmed_without_bill_references",
 }

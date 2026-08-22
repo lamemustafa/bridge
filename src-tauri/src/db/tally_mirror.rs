@@ -4441,6 +4441,7 @@ fn validate_export_warning_code(value: &str) -> Result<(), MirrorError> {
     match warning {
         crate::warning_codes::WarningCode::AdaptiveWindowSplit
         | crate::warning_codes::WarningCode::ForeignMasterTextRenderingDegraded
+        | crate::warning_codes::WarningCode::NativeOutstandingsAsOfUnconfirmedWithoutEffectiveDateEvidence
         | crate::warning_codes::WarningCode::NativeOutstandingsAsOfUnconfirmedWithoutBillReferences => Ok(()),
     }
 }

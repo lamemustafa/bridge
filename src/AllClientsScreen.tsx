@@ -5,7 +5,13 @@ import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
 import { outstandingsPartialState } from "./outstandings-copy";
-import { allCompaniesOutstandingsInvokeArgument, asOfYyyymmdd } from "./outstandings-as-of";
+import {
+  allClientsEntriesForAsOf,
+  allCompaniesOutstandingsInvokeArgument,
+  AllClientsEntriesAtAsOf,
+  asOfYyyymmdd,
+  settleAllClientsEntries,
+} from "./outstandings-as-of";
 
 type CompanyRef = { name: string; guid: string };
 
@@ -95,7 +101,7 @@ function ageTier(days: number | null) {
 
 export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asOf }: Props) {
   const [sort, setSort] = React.useState<SortPreference>(defaultSort);
-  const [entries, setEntries] = React.useState<Entry[] | null>(null);
+  const [loadedEntries, setLoadedEntries] = React.useState<AllClientsEntriesAtAsOf<Entry[]> | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [groupLabels, setGroupLabels] = React.useState<ClientGroupLabels>({});
@@ -111,6 +117,19 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   const requestVersion = React.useRef(0);
   const sortChangedDuringLoad = React.useRef(false);
   const requestedAsOf = asOfYyyymmdd(asOf);
+  const currentRequestedAsOf = React.useRef(requestedAsOf);
+  currentRequestedAsOf.current = requestedAsOf;
+  const entries = allClientsEntriesForAsOf(loadedEntries, requestedAsOf);
+
+  React.useEffect(() => {
+    // A new effective date makes any previous financial rows ineligible for
+    // display. Invalidate issued sweeps too, so a late old-date response is
+    // inert rather than being relabelled under the new date.
+    requestVersion.current += 1;
+    setLoadedEntries(null);
+    setLoading(false);
+    setError(null);
+  }, [requestedAsOf]);
 
   React.useEffect(() => {
     let active = true;
@@ -157,6 +176,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   const load = React.useCallback(async () => {
     const argument = allCompaniesOutstandingsInvokeArgument(config, companies, asOf);
     if (companies.length === 0 || !argument) return;
+    const requestedAsOfYyyymmdd = argument.request.as_of_yyyymmdd;
     const version = requestVersion.current + 1;
     requestVersion.current = version;
     setLoading(true);
@@ -164,10 +184,16 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     try {
       const next = await invoke<Entry[]>("fetch_tally_outstandings_all_companies", argument);
       if (requestVersion.current !== version) return;
-      setEntries(next);
+      const settled = settleAllClientsEntries(
+        currentRequestedAsOf.current,
+        requestedAsOfYyyymmdd,
+        next,
+      );
+      if (!settled) return;
+      setLoadedEntries(settled);
     } catch (cause) {
       if (requestVersion.current !== version) return;
-      setEntries(null);
+      setLoadedEntries(null);
       setError(
         cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string"
           ? cause.message

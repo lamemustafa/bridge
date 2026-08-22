@@ -408,7 +408,7 @@ fn legacy_fixture_without_groups_keeps_name_only_party_classification() {
 }
 
 #[test]
-fn not_yet_due_bill_is_reported_without_becoming_overdue() {
+fn zero_only_future_overdue_counters_leave_the_as_of_date_unconfirmed() {
     let receivable = [NativeBillRow {
         party: "Synthetic customer".to_string(),
         reference: "SYNTHETIC-FUTURE-DUE".to_string(),
@@ -444,7 +444,10 @@ fn not_yet_due_bill_is_reported_without_becoming_overdue() {
         result.report.top_parties[0].oldest_bill_age_days, None,
         "a future-due bill must not be presented as the oldest overdue bill"
     );
-    assert_eq!(result.overdue_crosscheck, NativeOverdueCrosscheck::Honored);
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence
+    );
 }
 
 #[test]

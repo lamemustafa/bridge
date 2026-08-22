@@ -333,6 +333,11 @@ fn native_crosscheck_partial_reason(
                 WarningCode::NativeOutstandingsAsOfUnconfirmedWithoutBillReferences.as_str(),
             ))
         }
+        NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence => {
+            Some(OutstandingsPartialReason::code(
+                WarningCode::NativeOutstandingsAsOfUnconfirmedWithoutEffectiveDateEvidence.as_str(),
+            ))
+        }
     }
 }
 

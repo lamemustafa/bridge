@@ -5,12 +5,14 @@ import test from "node:test";
 
 import {
   allCompaniesOutstandingsInvokeArgument,
+  allClientsEntriesForAsOf,
   automaticOutstandingsAsOf,
   asOfYyyymmdd,
   bulkPartyStatementsInvokeArgument,
   operatorSelectedOutstandingsAsOf,
   partyStatementInvokeArgument,
   refreshAutomaticOutstandingsAsOf,
+  settleAllClientsEntries,
   singleCompanyOutstandingsInvokeArgument,
   todayAsDateInput,
 } from "../src/outstandings-as-of.ts";
@@ -32,6 +34,37 @@ test("an automatic as-of date rolls over locally without replacing an operator s
   assert.deepEqual(
     refreshAutomaticOutstandingsAsOf(operatorSelectedOutstandingsAsOf("2026-08-01"), afterMidnight),
     { value: "2026-08-01", operatorSelected: true },
+  );
+});
+
+test("all-client rows are invalidated at rollover and a late old-date sweep is discarded", () => {
+  const beforeMidnight = automaticOutstandingsAsOf(new Date(2026, 7, 22, 23, 59, 59));
+  const afterMidnight = refreshAutomaticOutstandingsAsOf(
+    beforeMidnight,
+    new Date(2026, 7, 23, 0, 0, 1),
+  );
+  const entries = [{ company: "Synthetic Company", company_guid: "synthetic-guid" }];
+  const completedBeforeRollover = settleAllClientsEntries(
+    asOfYyyymmdd(beforeMidnight.value),
+    asOfYyyymmdd(beforeMidnight.value),
+    entries,
+  );
+
+  assert.deepEqual(
+    allClientsEntriesForAsOf(completedBeforeRollover, asOfYyyymmdd(beforeMidnight.value)),
+    entries,
+  );
+  assert.equal(
+    allClientsEntriesForAsOf(completedBeforeRollover, asOfYyyymmdd(afterMidnight.value)),
+    null,
+  );
+  assert.equal(
+    settleAllClientsEntries(
+      asOfYyyymmdd(afterMidnight.value),
+      asOfYyyymmdd(beforeMidnight.value),
+      entries,
+    ),
+    null,
   );
 });
 

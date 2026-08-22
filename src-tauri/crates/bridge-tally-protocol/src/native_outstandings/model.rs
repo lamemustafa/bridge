@@ -122,6 +122,10 @@ pub enum NativeOverdueCrosscheck {
     /// have moved. The report must remain partial rather than claiming the
     /// requested as-of date was honored.
     UnconfirmedAsOfWithoutBillReferences,
+    /// Every returned bill was future-due with a zero overdue counter. Those
+    /// counters are compatible with more than one effective date, so they
+    /// cannot establish that Tally honored the requested as-of date.
+    UnconfirmedAsOfWithoutEffectiveDateEvidence,
 }
 
 /// What Tally reports about a company's currencies.

@@ -83,7 +83,7 @@
     },
     {
       "path": "scripts/outstandings-copy.test.mjs",
-      "sha256": "716c0a2c2d52cfb415afa020b54514310b150f99726907ca760e2dbf6605376c"
+      "sha256": "bc5a06b34ea44caf6b9e0c919f038c2130a1cb01617a0cd9be627450f79df778"
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
@@ -155,7 +155,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/compute.rs",
-      "sha256": "c8a5aed12ea6a95183b525dfeef8b6593f919c894da6da42d4bdc2bd8fcb1438"
+      "sha256": "f68f82cf973191bab51283ded52aef72287392210d3d751147f9d4813605a5f6"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/request.rs",
@@ -323,7 +323,7 @@
     },
     {
       "path": "src-tauri/src/db/tally_mirror.rs",
-      "sha256": "2a13e7ac3beb0a88738e17c59572f82ae3b419284bced2707b255a60007fb2f2"
+      "sha256": "1095e60bd7901c5c3c162eb115cee5f98736fdf976ad5f071b59da09e943809d"
     },
     {
       "path": "src-tauri/src/db/tally_write_store.rs",
@@ -371,7 +371,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "ced0638dbc3d536ff75d38424469ead247d57613c7ecc89cf61a4c86af40352c"
+      "sha256": "0c9de123b3dbbffc0f5c898e48bb294f3dac0b615b7e1e54dbeadf9fb03078b1"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -391,11 +391,11 @@
     },
     {
       "path": "src-tauri/src/warning_codes.rs",
-      "sha256": "711e59091f040fa61d73445a6b1a23a62a0308faefc1ea4a132f520c7db229bb"
+      "sha256": "040c09b92b163bc0c051057cf75aa8735aa871826a2439d9a5716504fd3eafba"
     },
     {
       "path": "src/AllClientsScreen.tsx",
-      "sha256": "4c24a27d24b968ef92e29182af9b1661836859827b9adb48e5ba4c67db002977"
+      "sha256": "d666d3995b5153c2a6d4b53c1c5c3fd22dfa9d1990e041099afd0fe72fade84d"
     },
     {
       "path": "src/OutstandingsScreen.tsx",
@@ -411,11 +411,11 @@
     },
     {
       "path": "src/outstandings-as-of.ts",
-      "sha256": "c0cd7e65d6328b4274e52b77b3107f2690ec923f9441e428d3ec095cce687291"
+      "sha256": "966ec67901e64ba518468258c76502ccf008875ae62f2f5f68fda5b96ec1fcc7"
     },
     {
       "path": "src/outstandings-copy.ts",
-      "sha256": "f544a4ec13e49380023b828ecc745075797f55754267a6baaa3103de5e3a087c"
+      "sha256": "13c24598632a55d93fa51e12c1bfdbc7d66932001fd8f332e6f088f0791826dd"
     },
     {
       "path": "src/outstandings-csv.ts",
@@ -478,5 +478,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "dc9f6fdbaa77345a5449fd22c30fc0afc94db2b07292921de210491c25e67cf6"
+  "manifest_sha256": "4b7e7df353d1e06e82033c06950c85efa6b86b65859ffefec7dbcc6a4419add6"
 }

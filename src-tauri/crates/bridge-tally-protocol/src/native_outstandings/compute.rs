@@ -267,11 +267,18 @@ fn classify_overdue_crosscheck(
         });
     }
     let Some(tally_as_of) = informative_dates.first() else {
-        return Ok(if has_explicit_counter && counterless_rows.is_empty() {
-            NativeOverdueCrosscheck::Honored
-        } else {
-            NativeOverdueCrosscheck::Inconsistent
-        });
+        return Ok(
+            if has_explicit_counter && counterless_rows.is_empty() && !zero_future_rows.is_empty() {
+                // Zero overdue counters on bills that are future-due at the
+                // requested date identify no effective date. A silently
+                // substituted earlier date produces the same evidence, so this
+                // must remain partial rather than claiming the request was
+                // honored.
+                NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence
+            } else {
+                NativeOverdueCrosscheck::Inconsistent
+            },
+        );
     };
     if informative_dates
         .iter()

@@ -39,6 +39,30 @@ export function millisecondsUntilNextLocalMidnight(now = new Date()) {
   return Math.max(1, nextMidnight.getTime() - now.getTime());
 }
 
+/** Completed all-client results are usable only for the date they requested. */
+export type AllClientsEntriesAtAsOf<T> = {
+  asOfYyyymmdd: string;
+  entries: T;
+};
+
+/** Discards a sweep that settled after the effective date changed. */
+export function settleAllClientsEntries<T>(
+  currentAsOfYyyymmdd: string | null,
+  requestedAsOfYyyymmdd: string,
+  entries: T,
+): AllClientsEntriesAtAsOf<T> | null {
+  if (currentAsOfYyyymmdd !== requestedAsOfYyyymmdd) return null;
+  return { asOfYyyymmdd: requestedAsOfYyyymmdd, entries };
+}
+
+/** Hides loaded rows immediately when their requested date is no longer current. */
+export function allClientsEntriesForAsOf<T>(
+  loaded: AllClientsEntriesAtAsOf<T> | null,
+  currentAsOfYyyymmdd: string | null,
+): T | null {
+  return loaded?.asOfYyyymmdd === currentAsOfYyyymmdd ? loaded.entries : null;
+}
+
 /** The Tauri contract accepts only canonical YYYYMMDD values. */
 export function asOfYyyymmdd(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.replace(/-/g, "") : null;
