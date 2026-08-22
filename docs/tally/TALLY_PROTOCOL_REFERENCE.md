@@ -294,6 +294,13 @@ machine, Tally build, licence tier, company, or configuration.
 Both return `STATUS=1`. Neither reports an error. A zero-row response is indistinguishable
 from a genuinely empty period without corroboration.
 
+**Bridge native-outstandings policy.** The paired ledger snapshot is the only exact money
+discriminator available after a zero-row Bills response: a book with no named bills and no
+party-ledger residual has no balance whose as-of can be misattributed, but any non-zero
+`CLOSINGBALANCE - sum(BILLCL)` residual means the requested date is unconfirmed. Bridge must
+withhold that report with `native_outstandings_as_of_unconfirmed_without_bill_references`; it
+must not call the period honoured merely because no named bill supplied a counter.
+
 **Required discipline, regardless of licence mode:**
 
 1. Compare the returned date span against the requested span on every read. If the span

@@ -1,6 +1,7 @@
 use super::{ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger};
 use super::{TallyProbeResult, TallyVoucher};
 use crate::observability::BodyBytesObservation;
+use crate::sync::reconciliation::WarningCode;
 use crate::tally::connection::NativePairedRead;
 use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
 #[cfg(feature = "voucher-scan")]
@@ -327,6 +328,11 @@ fn native_crosscheck_partial_reason(
         NativeOverdueCrosscheck::RefusedAsOf { tally_as_of } => Some(
             OutstandingsPartialReason::refused_as_of(requested_as_of, tally_as_of),
         ),
+        NativeOverdueCrosscheck::UnconfirmedAsOfWithoutBillReferences => {
+            Some(OutstandingsPartialReason::code(
+                WarningCode::NativeOutstandingsAsOfUnconfirmedWithoutBillReferences.as_str(),
+            ))
+        }
     }
 }
 
@@ -1724,7 +1730,7 @@ impl TallyRuntime {
                                         cursor = end;
                                     }
                                     SegmentVerification::Partial(partial) => {
-                                        return Ok(partial_result(&partial.reason_code))
+                                        return Ok(partial_result(partial.reason_code.as_str()))
                                     }
                                 }
                             }
@@ -1736,7 +1742,7 @@ impl TallyRuntime {
                             ) {
                                 ScanResult::Complete(scan) => completed_date_partitions.push(scan),
                                 ScanResult::Partial(partial) => {
-                                    return Ok(partial_result(&partial.reason_code))
+                                    return Ok(partial_result(partial.reason_code.as_str()))
                                 }
                             }
                         }
@@ -1801,7 +1807,7 @@ impl TallyRuntime {
                                     {
                                         Ok(Ok(pair)) => pair,
                                         Ok(Err(partial)) => {
-                                            return Ok(partial_result(&partial.reason_code))
+                                            return Ok(partial_result(partial.reason_code.as_str()))
                                         }
                                         Err(error) => {
                                             return Err(outstandings_read_transport_failure(error))
@@ -1827,7 +1833,7 @@ impl TallyRuntime {
                                         {
                                             Ok(Ok(pair)) => pair,
                                             Ok(Err(partial)) => {
-                                                return Ok(partial_result(&partial.reason_code))
+                                                return Ok(partial_result(partial.reason_code.as_str()))
                                             }
                                             Err(error) => {
                                                 return Err(outstandings_read_transport_failure(error))
@@ -1848,7 +1854,9 @@ impl TallyRuntime {
                             };
                             match corroborated {
                                 Ok(partition) => corroborated_date_partitions.push(partition),
-                                Err(partial) => return Ok(partial_result(&partial.reason_code)),
+                                Err(partial) => {
+                                    return Ok(partial_result(partial.reason_code.as_str()))
+                                }
                             }
                         }
                         // A scan is not instantaneous: primary segments and empty
@@ -1903,7 +1911,7 @@ impl TallyRuntime {
                                 statement_open_bills: Vec::new(),
                             }),
                             ScanResult::Partial(partial) => {
-                                Ok(partial_result(&partial.reason_code))
+                                Ok(partial_result(partial.reason_code.as_str()))
                             }
                         }
                     }
@@ -2306,6 +2314,48 @@ mod tests {
             native_crosscheck_partial_reason(&computed, &TallyDate::parse("20260817").unwrap()),
             Some(OutstandingsPartialReason::code(
                 "native_overdue_crosscheck_mismatch"
+            ))
+        );
+    }
+
+    #[test]
+    fn zero_bill_rows_with_a_ledger_residual_withhold_native_complete() {
+        let groups = parse_native_group_snapshot(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+            <GROUP NAME="Sundry Debtors" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Primary</PARENT></GROUP>
+            </COLLECTION></DATA></BODY></ENVELOPE>"#,
+            "11111111-1111-1111-1111-111111111111",
+        )
+        .expect("synthetic group snapshot parses");
+        let ledgers = parse_native_ledger_snapshot(
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
+            <LEDGER NAME="Synthetic Customer"><PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE><ISBILLWISEON>No</ISBILLWISEON></LEDGER>
+            </COLLECTION></DATA></BODY></ENVELOPE>"#,
+        )
+        .expect("synthetic ledger snapshot parses");
+        let requested_as_of = TallyDate::parse("20260817").expect("synthetic as-of");
+        let computed = compute_native_outstandings(
+            "Synthetic Company",
+            &[],
+            &[],
+            NativeMasterSnapshot {
+                ledgers: &ledgers,
+                groups: NativeGroupSnapshot::Complete(&groups),
+            },
+            AgeingAnchor::DueDate,
+            &requested_as_of,
+            0,
+        )
+        .expect("the residual is a partial-result diagnostic, not a parser failure");
+
+        assert_eq!(
+            computed.overdue_crosscheck,
+            NativeOverdueCrosscheck::UnconfirmedAsOfWithoutBillReferences
+        );
+        assert_eq!(
+            native_crosscheck_partial_reason(&computed, &requested_as_of),
+            Some(OutstandingsPartialReason::code(
+                WarningCode::NativeOutstandingsAsOfUnconfirmedWithoutBillReferences.as_str(),
             ))
         );
     }

@@ -114,7 +114,14 @@ pub struct NativeOutstandingsResult {
 pub enum NativeOverdueCrosscheck {
     Honored,
     Inconsistent,
-    RefusedAsOf { tally_as_of: TallyDate },
+    RefusedAsOf {
+        tally_as_of: TallyDate,
+    },
+    /// No bill row can corroborate the requested date, while the separately
+    /// read ledger snapshot carries an unallocated balance whose period could
+    /// have moved. The report must remain partial rather than claiming the
+    /// requested as-of date was honored.
+    UnconfirmedAsOfWithoutBillReferences,
 }
 
 /// What Tally reports about a company's currencies.

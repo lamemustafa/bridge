@@ -67,13 +67,14 @@ async fn unit_a_outstandings_live_exit_check_withholds_without_residual_coverage
     // regression uses an invalid endpoint to prove this partial is returned
     // before endpoint admission or a voucher request starts.
     match result {
-        OutstandingsLoadResult::Partial { reason_code, .. } => {
+        OutstandingsLoadResult::Partial { reason, .. } => {
             assert_eq!(
-                reason_code, "unallocated_direct_postings_not_covered",
+                reason.reason_code, "unallocated_direct_postings_not_covered",
                 "a voucher-only scan cannot prove direct bill-wise postings on either port"
             );
             println!(
-                "UNIT_A_LIVE_WITHHELD port={port} reason={reason_code} mode=preflight_no_voucher_scan"
+                "UNIT_A_LIVE_WITHHELD port={port} reason={} mode=preflight_no_voucher_scan",
+                reason.reason_code,
             );
         }
         OutstandingsLoadResult::Complete { .. } => panic!(

@@ -4440,7 +4440,8 @@ fn validate_export_warning_code(value: &str) -> Result<(), MirrorError> {
         .ok_or(MirrorError::VerificationInvariant)?;
     match warning {
         crate::sync::reconciliation::WarningCode::AdaptiveWindowSplit
-        | crate::sync::reconciliation::WarningCode::ForeignMasterTextRenderingDegraded => Ok(()),
+        | crate::sync::reconciliation::WarningCode::ForeignMasterTextRenderingDegraded
+        | crate::sync::reconciliation::WarningCode::NativeOutstandingsAsOfUnconfirmedWithoutBillReferences => Ok(()),
     }
 }
 

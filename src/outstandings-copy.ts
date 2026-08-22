@@ -20,6 +20,9 @@ export function outstandingsPartialReason(
   if (value === "native_overdue_crosscheck_mismatch") {
     return "Tally's overdue-day cross-check disagreed with the bill due dates, so Bridge withheld the totals";
   }
+  if (value === "native_outstandings_as_of_unconfirmed_without_bill_references") {
+    return "Tally returned no bill references while the ledger still carried a balance, so Bridge could not confirm the requested as-of date and withheld the totals";
+  }
   if (value === "company_currency_probe_failed") {
     return "Bridge could not verify this company's base currency";
   }
@@ -80,6 +83,14 @@ export function outstandingsPartialState(
   if (reasonCode === "native_outstandings_as_of_refused") {
     return {
       title: "Tally did not accept this as-of date",
+      message: outstandingsPartialReason(reasonCode, requestedAsOf, tallyAsOf),
+      retryable: true,
+      tallyReadAttempted: true,
+    };
+  }
+  if (reasonCode === "native_outstandings_as_of_unconfirmed_without_bill_references") {
+    return {
+      title: "Tally did not confirm this as-of date",
       message: outstandingsPartialReason(reasonCode, requestedAsOf, tallyAsOf),
       retryable: true,
       tallyReadAttempted: true,

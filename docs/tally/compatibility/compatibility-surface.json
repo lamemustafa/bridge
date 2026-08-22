@@ -83,7 +83,7 @@
     },
     {
       "path": "scripts/outstandings-copy.test.mjs",
-      "sha256": "3faa02b779fe095bef61ed79e028b557bd3144ec678b56bf1438f0d20ee60f9a"
+      "sha256": "716c0a2c2d52cfb415afa020b54514310b150f99726907ca760e2dbf6605376c"
     },
     {
       "path": "scripts/tally-company-selection.test.mjs",
@@ -155,7 +155,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/compute.rs",
-      "sha256": "410a6388815516f73484a2e8fe0e7446695b1199dc9a4a01ec8bfbba9bda25e1"
+      "sha256": "c8a5aed12ea6a95183b525dfeef8b6593f919c894da6da42d4bdc2bd8fcb1438"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/request.rs",
@@ -323,7 +323,7 @@
     },
     {
       "path": "src-tauri/src/db/tally_mirror.rs",
-      "sha256": "ea27ef41e284d5d6a1c3ffe38921d60d45ca1e07abb21742eaad0ec1a54f272f"
+      "sha256": "67e399aefe92a555c3f4bb755a0425f584ee0adee35648ef0b5187d99b6b9b1d"
     },
     {
       "path": "src-tauri/src/db/tally_write_store.rs",
@@ -339,7 +339,7 @@
     },
     {
       "path": "src-tauri/src/sync/reconciliation.rs",
-      "sha256": "4ea02518910862bc59f3336f533e0d68e722c53ee9a7b1efff67c3f993767da2"
+      "sha256": "29563f6c46e5af7e2bcc49eeed2eff17e6d993f65485eb1aec029280951379f3"
     },
     {
       "path": "src-tauri/src/sync/snapshot.rs",
@@ -371,7 +371,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "1efd400f8dd3eb1246ff43bfd31b4e5ba02553d913a7f55e40307f4638b2f62e"
+      "sha256": "7e6b255bb3a727aa282ff98730e79699fcb67b0f43f97d9e844e73f8f0fa6fb4"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -407,7 +407,7 @@
     },
     {
       "path": "src/outstandings-copy.ts",
-      "sha256": "712bf84bcf97dba1587b106ab0de607901481db14b595d1f45d55dc9acc03216"
+      "sha256": "f544a4ec13e49380023b828ecc745075797f55754267a6baaa3103de5e3a087c"
     },
     {
       "path": "src/outstandings-csv.ts",
@@ -470,5 +470,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "36716e4224b9736f9144072a79a2e3801b97b0babb858e8a36bbd70006d1b734"
+  "manifest_sha256": "dd36495721ddd3668b7b5b2c5c5823ff879f6363ec94b32de513b4df93db7cf1"
 }

@@ -61,7 +61,7 @@ fn assert_exact(actual: &ExactDecimal, canonical: &str) {
 }
 
 #[test]
-fn nested_debtor_ledger_from_raw_group_and_ledger_bytes_is_not_dropped() {
+fn zero_bill_rows_with_nonzero_ledger_residual_are_unconfirmed() {
     let group_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
         <DATA><COLLECTION>
         <GROUP NAME="North Region" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Sundry Debtors</PARENT></GROUP>
@@ -92,6 +92,30 @@ fn nested_debtor_ledger_from_raw_group_and_ledger_bytes_is_not_dropped() {
 
     assert_exact(&result.residual_total, "100");
     assert_eq!(result.residuals[0].party, "Nested Customer");
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::UnconfirmedAsOfWithoutBillReferences
+    );
+}
+
+#[test]
+fn zero_bill_rows_without_ledger_residual_remain_honored() {
+    let result = compute_native_outstandings(
+        "Synthetic Empty Company",
+        &[],
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of(NATIVE_CAPTURE_AS_OF),
+        0,
+    )
+    .expect("an empty book has no money whose date could be misattributed");
+
+    assert_eq!(result.residual_total, ExactDecimal::zero());
+    assert_eq!(result.overdue_crosscheck, NativeOverdueCrosscheck::Honored);
 }
 
 #[test]

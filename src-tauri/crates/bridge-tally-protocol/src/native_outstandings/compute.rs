@@ -68,7 +68,6 @@ pub fn compute_native_outstandings(
         days_61_90: 0,
         days_90_plus: 0,
     };
-    let overdue_crosscheck = classify_overdue_crosscheck(receivable_rows, payable_rows, as_of)?;
     let mut parties = BTreeMap::<String, PartyAccumulator>::new();
 
     for row in receivable_rows
@@ -179,6 +178,8 @@ pub fn compute_native_outstandings(
         masters.ledgers,
         masters.groups,
     )?;
+    let overdue_crosscheck =
+        classify_overdue_crosscheck(receivable_rows, payable_rows, &residual_total, as_of)?;
 
     let report = OutstandingsReport {
         company_name: company_name.to_string(),
@@ -217,12 +218,20 @@ pub fn compute_native_outstandings(
 /// counterless row is compatible only when it is future-due at that derived
 /// date; a counterless past/current-due bill and every scattered or malformed
 /// counter stay the generic inconsistency. This preserves fail-closed totals
-/// while avoiding a false date-refusal claim from one bad row. See
+/// while avoiding a false date-refusal claim from one bad row.
+///
+/// The zero-row branch deliberately receives `residual_total` after the
+/// ledger reconciliation rather than guessing from bill rows: only the exact
+/// ledger residual tells us whether a substituted period could have moved
+/// money into the requested document. This keeps the classifier total over
+/// its already-validated inputs: no rows and no residual is harmless, while
+/// no rows with residual money is explicitly unconfirmed. See
 /// `TALLY_PROTOCOL_REFERENCE.md` §5.3 for the measured licence-mode boundary
 /// behaviour that motivates this diagnostic.
 fn classify_overdue_crosscheck(
     receivable_rows: &[NativeBillRow],
     payable_rows: &[NativeBillRow],
+    residual_total: &ExactDecimal,
     requested_as_of: &TallyDate,
 ) -> Result<NativeOverdueCrosscheck, NativeOutstandingsError> {
     let rows = receivable_rows.iter().chain(payable_rows.iter());
@@ -251,7 +260,11 @@ fn classify_overdue_crosscheck(
     }
 
     if !any_row {
-        return Ok(NativeOverdueCrosscheck::Honored);
+        return Ok(if residual_total.is_zero() {
+            NativeOverdueCrosscheck::Honored
+        } else {
+            NativeOverdueCrosscheck::UnconfirmedAsOfWithoutBillReferences
+        });
     }
     let Some(tally_as_of) = informative_dates.first() else {
         return Ok(if has_explicit_counter && counterless_rows.is_empty() {

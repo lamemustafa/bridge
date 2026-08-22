@@ -21,9 +21,22 @@ test("new native and sweep boundaries have operator-readable reasons", () => {
     "Tally refused the requested as-of date (20260822) and returned overdue days as of 20260731, so Bridge withheld the totals",
   );
   assert.match(outstandingsPartialReason("native_overdue_crosscheck_mismatch"), /overdue-day cross-check/i);
+  assert.match(
+    outstandingsPartialReason("native_outstandings_as_of_unconfirmed_without_bill_references"),
+    /no bill references/i,
+  );
   assert.match(outstandingsPartialReason("company_currency_probe_failed"), /base currency/i);
   assert.match(outstandingsPartialReason("company_base_currency_not_inr"), /not INR/i);
   assert.match(outstandingsPartialReason("company_outstandings_read_failed"), /company read failed/i);
+});
+
+test("an empty bill report with ledger money names the unconfirmed as-of boundary", () => {
+  const state = outstandingsPartialState("native_outstandings_as_of_unconfirmed_without_bill_references");
+
+  assert.equal(state.title, "Tally did not confirm this as-of date");
+  assert.match(state.message, /ledger still carried a balance/i);
+  assert.match(state.message, /could not confirm the requested as-of date/i);
+  assert.equal(state.tallyReadAttempted, true);
 });
 
 test("a refused period is distinct from a row-level disagreement", () => {
