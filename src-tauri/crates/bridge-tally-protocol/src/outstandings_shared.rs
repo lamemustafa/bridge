@@ -68,6 +68,45 @@ impl fmt::Display for OutstandingsError {
 
 impl std::error::Error for OutstandingsError {}
 
+/// Compatibility rule for Tally period boundaries. The day 1/2/31 rule is
+/// measured only in Educational mode; a licensed or unknown mode must retain
+/// ordinary calendar boundaries until endpoint-bound evidence says otherwise.
+///
+/// This lives in the ungated shared module because master reads also send
+/// `SVFROMDATE`/`SVTODATE`; a master opening balance is no safer than a
+/// voucher window when Tally silently refuses a boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateBoundaryProfile {
+    EducationRestricted,
+    ModeAgnostic,
+}
+
+impl DateBoundaryProfile {
+    pub fn accepts_boundary(self, date: &TallyDate) -> bool {
+        match self {
+            Self::EducationRestricted => matches!(&date.as_str()[6..8], "01" | "02" | "31"),
+            Self::ModeAgnostic => true,
+        }
+    }
+
+    #[cfg(feature = "voucher-scan")]
+    pub(crate) fn accepts_partition_end(self, date: &TallyDate) -> bool {
+        match self {
+            Self::EducationRestricted => matches!(&date.as_str()[6..8], "01" | "31"),
+            Self::ModeAgnostic => true,
+        }
+    }
+
+    /// The greatest date at or before `limit` that this profile accepts as a
+    /// window boundary.
+    pub fn latest_boundary_at_or_before(self, limit: &TallyDate) -> Option<TallyDate> {
+        match self {
+            Self::ModeAgnostic => Some(limit.clone()),
+            Self::EducationRestricted => self.accepts_boundary(limit).then(|| limit.clone()),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct PinnedCompany {
     name: ValidatedCompanyName,
