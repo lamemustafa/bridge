@@ -728,8 +728,6 @@ pub struct TallyRuntime {
     outstandings_boundary_profile_override: Option<DateBoundaryProfile>,
     #[cfg(test)]
     transport_policy: Option<bridge_tally_transport::TransportPolicy>,
-    #[cfg(test)]
-    snapshot_probe_profile_override: Option<(String, Option<String>)>,
 }
 
 /// Opaque, owner-bound authority over one fresh reviewed probe.
@@ -871,8 +869,6 @@ impl Default for TallyRuntime {
             outstandings_boundary_profile_override: None,
             #[cfg(test)]
             transport_policy: None,
-            #[cfg(test)]
-            snapshot_probe_profile_override: None,
         }
     }
 }
@@ -907,17 +903,6 @@ impl TallyRuntime {
     pub(crate) fn with_transport_policy(policy: bridge_tally_transport::TransportPolicy) -> Self {
         Self {
             transport_policy: Some(policy),
-            ..Self::default()
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_snapshot_probe_profile_for_test(
-        product: impl Into<String>,
-        mode: Option<String>,
-    ) -> Self {
-        Self {
-            snapshot_probe_profile_override: Some((product.into(), mode)),
             ..Self::default()
         }
     }
@@ -1208,11 +1193,6 @@ impl TallyRuntime {
                 )
                 .await?;
             apply_scoped_standard_identity(&mut result, company);
-        }
-        #[cfg(test)]
-        if let Some((product, mode)) = &self.snapshot_probe_profile_override {
-            result.profile.product = product.clone();
-            result.profile.mode = mode.clone();
         }
         Ok((chrono::Utc::now().timestamp_millis(), result))
     }

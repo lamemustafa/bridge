@@ -1555,7 +1555,7 @@ mod tests {
         let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "education-mid-month-guid";
         let company_collection = format!(
-            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Education Mid-month"><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Education Mid-month"><GUID TYPE="String">{company_guid}</GUID><PRODUCTNAME TYPE="String">TallyPrime</PRODUCTNAME><EDUMODE>Yes</EDUMODE><SILVER>No</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         );
         let extent =
             company_extent_with_books_from("Education Mid-month", company_guid, "20240115");
@@ -1598,10 +1598,7 @@ mod tests {
             query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
             filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
         };
-        let runtime = TallyRuntime::with_snapshot_probe_profile_for_test(
-            "TallyPrime",
-            Some("Education".to_string()),
-        );
+        let runtime = TallyRuntime::default();
         let connector =
             RuntimeTallyConnector::new(runtime.clone(), config.clone(), company, context)
                 .expect("snapshot context is valid");
@@ -1619,6 +1616,8 @@ mod tests {
             core_evidence.safe_reason_code.as_deref(),
             Some("master_ledger_export_period_not_supported")
         );
+        assert_eq!(probe.profile.product, "TallyPrime");
+        assert_eq!(probe.profile.mode.as_deref(), Some("Education"));
         assert!(
             !core_snapshot_start_authorized(core_evidence),
             "a refused ledger period cannot authorize a snapshot"

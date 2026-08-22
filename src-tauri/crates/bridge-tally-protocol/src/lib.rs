@@ -1057,6 +1057,57 @@ pub fn parse_companies_from_collection(xml: &str) -> anyhow::Result<Vec<TallyCom
     parse_company_collection_rows(xml)
 }
 
+/// Product and licence-mode facts returned by the fixed `CompanyListV2`
+/// collection. The collection repeats endpoint-wide facts for every loaded
+/// company, so this parser requires all rows to agree before exposing them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompanyGatewayCapabilityObservation {
+    pub product: String,
+    pub educational_mode: bool,
+    pub silver: bool,
+    pub gold: bool,
+}
+
+/// Parses the gateway capability fields from `CompanyListV2`. A successful
+/// company listing remains usable if this stricter parser fails: callers must
+/// retain mode-agnostic behaviour and report the unavailable evidence rather
+/// than treating an unproven licence mode as licensed.
+pub fn parse_company_gateway_capability_observation(
+    xml: &str,
+) -> anyhow::Result<CompanyGatewayCapabilityObservation> {
+    validate_export_response(xml)?;
+    let mut reader = configured_reader(xml);
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut observation = None;
+    loop {
+        match reader.read_event()? {
+            Event::Start(element)
+                if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
+                    && element.name().as_ref().eq_ignore_ascii_case(b"COMPANY") =>
+            {
+                let parsed = parse_company_gateway_capability_row(&mut reader, &element)?;
+                if let Some(previous) = &observation {
+                    if previous != &parsed {
+                        anyhow::bail!(
+                            "company collection reported inconsistent gateway capabilities"
+                        );
+                    }
+                } else {
+                    observation = Some(parsed);
+                }
+            }
+            Event::Start(element) => path.push(element.name().as_ref().to_ascii_uppercase()),
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !path.is_empty() {
+        anyhow::bail!("company capability response ended before its root closed");
+    }
+    observation.ok_or_else(|| anyhow::anyhow!("company capability response omitted company rows"))
+}
+
 /// Validates the fixed, documented `List of Ledgers` collection used only to
 /// bootstrap a scoped company identity on responders that reject Bridge's
 /// custom report profile. Ledger names, balances, and identities are inspected
@@ -1575,6 +1626,85 @@ fn parse_company_collection_row(
         name,
         guid: Some(guid),
     })
+}
+
+fn parse_company_gateway_capability_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> anyhow::Result<CompanyGatewayCapabilityObservation> {
+    validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
+    let row_name = element.name().as_ref().to_ascii_uppercase();
+    let mut product = None;
+    let mut educational_mode = None;
+    let mut silver = None;
+    let mut gold = None;
+    loop {
+        match reader.read_event()? {
+            Event::Start(child) => {
+                validate_only_attributes(&child, &[b"TYPE"])?;
+                let child_name = child.name().as_ref().to_ascii_uppercase();
+                let value = read_required_text(reader, child.name())?;
+                match child_name.as_slice() {
+                    b"PRODUCTNAME" => set_once(
+                        &mut product,
+                        normalized_standard_value(&value, "product name")?,
+                    )?,
+                    b"EDUMODE" => set_once(
+                        &mut educational_mode,
+                        parse_gateway_yes_no(&value, "educational mode")?,
+                    )?,
+                    b"SILVER" => {
+                        set_once(&mut silver, parse_gateway_yes_no(&value, "Silver licence")?)?
+                    }
+                    b"GOLD" => set_once(&mut gold, parse_gateway_yes_no(&value, "Gold licence")?)?,
+                    _ => {}
+                }
+            }
+            Event::Empty(child) => {
+                let child_name = child.name().as_ref().to_ascii_uppercase();
+                if matches!(
+                    child_name.as_slice(),
+                    b"PRODUCTNAME" | b"EDUMODE" | b"SILVER" | b"GOLD"
+                ) {
+                    anyhow::bail!(
+                        "company capability collection contained an empty required field"
+                    );
+                }
+            }
+            Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(&row_name) => break,
+            Event::Text(text) if !text.decode()?.trim().is_empty() => {
+                anyhow::bail!("company capability collection row contained unexpected text")
+            }
+            Event::CData(_) | Event::DocType(_) | Event::PI(_) => {
+                anyhow::bail!(
+                    "company capability collection row contained a forbidden XML construct"
+                )
+            }
+            Event::Eof => {
+                anyhow::bail!("company capability collection row ended before COMPANY closed")
+            }
+            _ => {}
+        }
+    }
+    Ok(CompanyGatewayCapabilityObservation {
+        product: product
+            .ok_or_else(|| anyhow::anyhow!("company capability collection omitted PRODUCTNAME"))?,
+        educational_mode: educational_mode
+            .ok_or_else(|| anyhow::anyhow!("company capability collection omitted EDUMODE"))?,
+        silver: silver
+            .ok_or_else(|| anyhow::anyhow!("company capability collection omitted SILVER"))?,
+        gold: gold.ok_or_else(|| anyhow::anyhow!("company capability collection omitted GOLD"))?,
+    })
+}
+
+fn parse_gateway_yes_no(value: &str, label: &str) -> anyhow::Result<bool> {
+    if value.eq_ignore_ascii_case("yes") {
+        Ok(true)
+    } else if value.eq_ignore_ascii_case("no") {
+        Ok(false)
+    } else {
+        anyhow::bail!("company capability collection returned an invalid {label} flag")
+    }
 }
 
 pub fn parse_group_source_records_with_evidence(

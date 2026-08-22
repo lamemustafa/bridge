@@ -35,8 +35,8 @@ use bridge_tally_protocol::{
     outstandings_shared::{
         parse_company_book_extent, require_master_witness, CompanyBookExtent, DateBoundaryProfile,
     },
-    parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
-    parse_native_ledger_source_records_with_evidence,
+    parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
+    parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
     parse_native_voucher_source_records_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
@@ -102,6 +102,59 @@ pub struct TallyProbeResult {
     pub profile: CapabilityProfile,
     pub selected_read_scope: Option<SelectedReadScopeEvidence>,
     pub passport_snapshot_id: Option<String>,
+}
+
+struct GatewayProductModeEvidence {
+    product: String,
+    mode: Option<String>,
+    capability: CapabilityEvidence,
+}
+
+impl GatewayProductModeEvidence {
+    fn unavailable() -> Self {
+        Self {
+            product: "Unknown".to_string(),
+            mode: None,
+            capability: CapabilityEvidence {
+                state: CapabilityState::Unknown,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: Some("product_mode_evidence_unavailable".to_string()),
+            },
+        }
+    }
+
+    fn from_observation(
+        observation: bridge_tally_protocol::CompanyGatewayCapabilityObservation,
+    ) -> Self {
+        // `IsEducationalMode=Yes` has not been captured from a live Education
+        // instance: that inference is the complement of the observed licensed
+        // response (`No`, `IsSilver=Yes`), not a second live observation.
+        let mode = if observation.educational_mode {
+            Some("Education".to_string())
+        } else if observation.silver || observation.gold {
+            Some("Licensed".to_string())
+        } else {
+            None
+        };
+        let capability = if mode.is_some() {
+            CapabilityEvidence {
+                state: CapabilityState::Supported,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: None,
+            }
+        } else {
+            CapabilityEvidence {
+                state: CapabilityState::Unknown,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: Some("license_mode_not_established".to_string()),
+            }
+        };
+        Self {
+            product: observation.product,
+            mode,
+            capability,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -258,8 +311,9 @@ impl TallyClient {
         let mut packs = BTreeMap::new();
         let mut companies = Vec::new();
 
+        let mut gateway_product_mode = GatewayProductModeEvidence::unavailable();
         let xml_evidence = self
-            .company_discovery_evidence(&mut connection, &mut companies)
+            .company_discovery_evidence(&mut connection, &mut companies, &mut gateway_product_mode)
             .await?;
         transports.insert(TransportId::XmlHttp, xml_evidence.clone());
         transports.insert(
@@ -288,6 +342,10 @@ impl TallyClient {
                 confidence: EvidenceConfidence::Observed,
                 safe_reason_code: Some("xml_endpoint_responded".to_string()),
             },
+        );
+        features.insert(
+            CapabilityFeatureId::ProductAndMode,
+            gateway_product_mode.capability.clone(),
         );
         let empty_company_reason = || {
             if xml_evidence.state == CapabilityState::Supported {
@@ -407,12 +465,13 @@ impl TallyClient {
             connection,
             companies,
             profile: CapabilityProfile {
-                profile_version: 2,
-                // Product/release/mode require separate evidence authority;
-                // `/status` text cannot promote them.
-                product: "Unknown".to_string(),
+                // Version 3 adds observed gateway product/mode evidence. It
+                // intentionally invalidates persisted version-2 snapshots,
+                // whose literal Unknown/None values had a weaker meaning.
+                profile_version: 3,
+                product: gateway_product_mode.product,
                 release: None,
-                mode: None,
+                mode: gateway_product_mode.mode,
                 transports,
                 features,
                 packs,
@@ -437,12 +496,16 @@ impl TallyClient {
         &self,
         connection: &mut ConnectionStatus,
         companies: &mut Vec<TallyCompany>,
+        gateway_product_mode: &mut GatewayProductModeEvidence,
     ) -> anyhow::Result<CapabilityEvidence> {
         let xml = self
             .post_xml(ReadOnlyProfile::CompanyListV2.render())
             .await?;
         match xml_parser::parse_companies_from_collection(&xml) {
             Ok(discovered) => {
+                *gateway_product_mode = parse_company_gateway_capability_observation(&xml)
+                    .map(GatewayProductModeEvidence::from_observation)
+                    .unwrap_or_else(|_| GatewayProductModeEvidence::unavailable());
                 connection.reachable = true;
                 if connection.error.is_some() {
                     connection.error = Some("status_heuristic_unavailable".to_string());
@@ -1251,8 +1314,10 @@ mod tests {
         TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
-        CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TransportId,
+        CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TallyDate,
+        TransportId,
     };
+    use bridge_tally_protocol::native_outstandings::NativeLedgerExportPeriod;
     use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
     use std::time::Duration;
     use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
@@ -2381,7 +2446,7 @@ mod tests {
         let server = tokio::spawn(async move {
             for (index, body) in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
-                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
+                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE>No</EDUMODE><SILVER>Yes</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
             ]
             .into_iter()
             .enumerate()
@@ -2422,10 +2487,23 @@ mod tests {
             probe.profile.packs[&CapabilityPackId::CoreAccounting].state,
             CapabilityState::Unknown
         );
-        assert_eq!(probe.profile.product, "Unknown");
+        assert_eq!(probe.profile.product, "TallyPrime");
         assert!(probe.profile.release.is_none());
-        assert!(probe.profile.mode.is_none());
-        assert_eq!(probe.profile.profile_version, 2);
+        assert_eq!(probe.profile.mode.as_deref(), Some("Licensed"));
+        assert_eq!(probe.profile.profile_version, 3);
+        assert_eq!(
+            probe.profile.features[&CapabilityFeatureId::ProductAndMode].state,
+            CapabilityState::Supported
+        );
+        let boundary = crate::tally::TallyRuntime::default()
+            .master_ledger_export_boundary_profile_from_profile(Some(&probe.profile));
+        assert_eq!(boundary, DateBoundaryProfile::ModeAgnostic);
+        assert!(NativeLedgerExportPeriod::new(
+            boundary,
+            TallyDate::parse("20240115").expect("valid mid-month date"),
+            TallyDate::parse("20240115").expect("valid mid-month date"),
+        )
+        .is_ok());
         for transport in [TransportId::TdlCompanion, TransportId::Odbc] {
             let evidence = &probe.profile.transports[&transport];
             assert_eq!(evidence.state, CapabilityState::Unknown);
@@ -2464,6 +2542,58 @@ mod tests {
                 CapabilityState::Unknown
             );
         }
+    }
+
+    #[tokio::test]
+    async fn capability_probe_records_unavailable_product_mode_evidence_without_refusing() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            let responses = [
+                utf8_status_response("<RESPONSE>TallyPrime Server is Running</RESPONSE>"),
+                utf16_xml_response("<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Capability collection unavailable</LINEERROR></DATA></BODY></ENVELOPE>"),
+                utf16_xml_response("<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>"),
+            ];
+            for response in responses {
+                let (mut socket, _) = listener.accept().await.expect("accept Tally request");
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(
+                    !request.is_empty(),
+                    "synthetic Tally request must not be empty"
+                );
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write Tally response");
+            }
+        });
+
+        let probe = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client")
+        .probe()
+        .await
+        .expect("unavailable product/mode evidence must not refuse the probe");
+        server.await.expect("synthetic Tally server task");
+
+        assert_eq!(probe.profile.product, "Unknown");
+        assert!(probe.profile.mode.is_none());
+        assert_eq!(
+            crate::tally::TallyRuntime::default()
+                .master_ledger_export_boundary_profile_from_profile(Some(&probe.profile)),
+            DateBoundaryProfile::ModeAgnostic
+        );
+        let evidence = &probe.profile.features[&CapabilityFeatureId::ProductAndMode];
+        assert_eq!(evidence.state, CapabilityState::Unknown);
+        assert_eq!(evidence.confidence, EvidenceConfidence::Observed);
+        assert_eq!(
+            evidence.safe_reason_code.as_deref(),
+            Some("product_mode_evidence_unavailable")
+        );
     }
 
     /// `fetch_companies` now requests the native `Company` collection

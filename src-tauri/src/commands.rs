@@ -1890,6 +1890,7 @@ fn pack_key(pack: bridge_tally_core::CapabilityPackId) -> &'static str {
 fn feature_key(feature: bridge_tally_core::CapabilityFeatureId) -> &'static str {
     match feature {
         bridge_tally_core::CapabilityFeatureId::EndpointReachability => "endpoint_reachability",
+        bridge_tally_core::CapabilityFeatureId::ProductAndMode => "product_and_mode",
         bridge_tally_core::CapabilityFeatureId::LoadedCompanies => "loaded_companies",
         bridge_tally_core::CapabilityFeatureId::StableCompanyIdentity => "stable_company_identity",
         bridge_tally_core::CapabilityFeatureId::EncodingBehaviour => "encoding_behaviour",
