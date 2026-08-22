@@ -8,7 +8,7 @@ use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_group_snapshot,
     parse_native_ledger_snapshot, AgeingAnchor, NativeBillRow, NativeGroupSnapshot,
-    NativeMasterSnapshot, NativeOutstandingsError,
+    NativeMasterSnapshot, NativeOutstandingsError, NativeOverdueCrosscheck,
 };
 
 /// A synthetic company GUID used to bind the native group snapshot rows
@@ -420,10 +420,7 @@ fn not_yet_due_bill_is_reported_without_becoming_overdue() {
         result.report.top_parties[0].oldest_bill_age_days, None,
         "a future-due bill must not be presented as the oldest overdue bill"
     );
-    assert_eq!(
-        result.overdue_crosscheck_mismatches, 0,
-        "zero overdue days must agree with Tally's own BILLOVERDUE"
-    );
+    assert_eq!(result.overdue_crosscheck, NativeOverdueCrosscheck::Honored);
 }
 
 #[test]
@@ -442,6 +439,106 @@ fn validation_lab_empty_billoverdue_parses_as_not_applicable() {
         .expect("the captured future-due bill is present");
     assert_eq!(future.due_date.as_str(), "20261001");
     assert_eq!(future.tally_overdue_days, None);
+}
+
+#[test]
+fn a_single_implied_non_requested_as_of_is_a_refused_period() {
+    // Measured Bridge Ageing Lab shape: Tally answered a request for
+    // 2026-08-22 as though it were 2026-07-31. The five rows deliberately
+    // use different due dates so this proves the shared *derived date*, not a
+    // repeated raw overdue counter.
+    let rows = parse_native_bill_rows(
+        "<ENVELOPE>\
+         <BILLFIXED><BILLDATE>1-Jun-26</BILLDATE><BILLREF>JUN</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jun-26</BILLDUE><BILLOVERDUE>60</BILLOVERDUE>\
+         <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>JUL</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>30</BILLOVERDUE>\
+         <BILLFIXED><BILLDATE>1-May-26</BILLDATE><BILLREF>MAY</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-May-26</BILLDUE><BILLOVERDUE>91</BILLOVERDUE>\
+         <BILLFIXED><BILLDATE>1-Apr-26</BILLDATE><BILLREF>APR</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Apr-26</BILLDUE><BILLOVERDUE>121</BILLOVERDUE>\
+         <BILLFIXED><BILLDATE>1-Feb-26</BILLDATE><BILLREF>FEB</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Feb-26</BILLDUE><BILLOVERDUE>180</BILLOVERDUE>\
+         </ENVELOPE>",
+        &as_of("20260101"),
+        &as_of("20260822"),
+    )
+    .expect("measured refusal shape parses");
+    let result = compute_native_outstandings(
+        "Bridge Ageing Lab",
+        &rows,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of("20260822"),
+        0,
+    )
+    .expect("refusal remains a computable diagnostic result");
+
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::RefusedAsOf {
+            tally_as_of: as_of("20260731"),
+        }
+    );
+}
+
+#[test]
+fn scattered_implied_dates_remain_a_genuine_crosscheck_inconsistency() {
+    let rows = parse_native_bill_rows(
+        "<ENVELOPE>\
+         <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>ONE</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>30</BILLOVERDUE>\
+         <BILLFIXED><BILLDATE>2-Jul-26</BILLDATE><BILLREF>TWO</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>2-Jul-26</BILLDUE><BILLOVERDUE>31</BILLOVERDUE>\
+         </ENVELOPE>",
+        &as_of("20260101"),
+        &as_of("20260822"),
+    )
+    .unwrap();
+    let result = compute_native_outstandings(
+        "Bridge Ageing Lab",
+        &rows,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of("20260822"),
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::Inconsistent
+    );
+}
+
+#[test]
+fn honoured_as_of_keeps_native_outstandings_complete() {
+    let rows = parse_native_bill_rows(
+        "<ENVELOPE>\
+         <BILLFIXED><BILLDATE>1-Jun-26</BILLDATE><BILLREF>JUN</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jun-26</BILLDUE><BILLOVERDUE>82</BILLOVERDUE>\
+         <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>JUL</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>52</BILLOVERDUE>\
+         </ENVELOPE>",
+        &as_of("20260101"),
+        &as_of("20260822"),
+    )
+    .unwrap();
+    let result = compute_native_outstandings(
+        "Bridge Ageing Lab",
+        &rows,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of("20260822"),
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(result.overdue_crosscheck, NativeOverdueCrosscheck::Honored);
+    assert_eq!(result.report.as_of_yyyymmdd, "20260822");
 }
 
 #[test]
@@ -731,7 +828,7 @@ fn ageing_buckets_billwise_lab_match_measured_values_at_as_of() {
 
     // In this book BILLDUE == BILLDATE for all 48 rows, so both anchors
     // agree; the DueDate default reproduces Tally's own BILLOVERDUE exactly.
-    assert_eq!(result.overdue_crosscheck_mismatches, 0);
+    assert_eq!(result.overdue_crosscheck, NativeOverdueCrosscheck::Honored);
     assert_exact(&report.receivable_total, "4514597");
     assert_eq!(report.payable_total, ExactDecimal::zero());
     assert_eq!(report.source_voucher_count, 0);

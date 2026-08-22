@@ -27,7 +27,12 @@ type Report = {
 
 type LoadResult =
   | { state: "complete"; report: Report; unallocated_total?: string }
-  | { state: "partial"; reason_code: string };
+  | {
+      state: "partial";
+      reason_code: string;
+      requested_as_of_yyyymmdd?: string;
+      tally_as_of_yyyymmdd?: string;
+    };
 
 type Entry = { company: string; company_guid: string; result: LoadResult };
 
@@ -197,6 +202,8 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
           companyGuid: entry.company_guid,
           complete,
           reasonCode: entry.result.state === "partial" ? entry.result.reason_code : null,
+          requestedAsOf: entry.result.state === "partial" ? entry.result.requested_as_of_yyyymmdd : undefined,
+          tallyAsOf: entry.result.state === "partial" ? entry.result.tally_as_of_yyyymmdd : undefined,
           receivable: complete ? amountOf(complete.report.receivable_total) : null,
           overdue: complete ? amountOf(complete.report.ageing.days_90_plus) : null,
           unallocated: complete ? amountOf(complete.unallocated_total) : null,
@@ -297,7 +304,9 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   }, [sort]);
 
   const renderRow = (row: (typeof rows)[number]) => {
-    const partial = row.reasonCode ? outstandingsPartialState(row.reasonCode) : null;
+    const partial = row.reasonCode
+      ? outstandingsPartialState(row.reasonCode, row.requestedAsOf, row.tallyAsOf)
+      : null;
     return (
       <button
         className="clients-row"

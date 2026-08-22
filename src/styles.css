@@ -1434,6 +1434,31 @@ summary:focus-visible,
   gap: 10px;
 }
 
+.outstandings-as-of {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 2px 8px;
+  color: #27352e;
+  font-size: 13px;
+}
+
+.outstandings-as-of input {
+  min-height: 36px;
+  border: 1px solid #c9d5ce;
+  border-radius: 6px;
+  background: #fff;
+  color: #27352e;
+  font: inherit;
+  padding: 4px 8px;
+}
+
+.outstandings-as-of small {
+  grid-column: 1 / -1;
+  color: #52645a;
+  font-size: 11px;
+}
+
 .outstandings-heading .secondary-action {
   border: 1px solid #c9d5ce;
   background: #f8faf8;
@@ -1777,6 +1802,14 @@ summary:focus-visible,
   }
 
   .outstandings-heading-actions button {
+    width: 100%;
+  }
+
+  .outstandings-as-of {
+    grid-template-columns: 1fr;
+  }
+
+  .outstandings-as-of input {
     width: 100%;
   }
 

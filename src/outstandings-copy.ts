@@ -6,7 +6,17 @@ export function outstandingsAgeingAnchorLabel(anchor: OutstandingsAgeingAnchor) 
   return anchor === "due_date" ? "aged from due date" : "aged from bill date";
 }
 
-export function outstandingsPartialReason(value: string) {
+export function outstandingsPartialReason(
+  value: string,
+  requestedAsOf?: string,
+  tallyAsOf?: string,
+) {
+  if (value === "native_outstandings_as_of_refused") {
+    if (requestedAsOf && tallyAsOf) {
+      return `Tally refused the requested as-of date (${requestedAsOf}) and returned overdue days as of ${tallyAsOf}, so Bridge withheld the totals`;
+    }
+    return "Tally did not use the requested as-of date, so Bridge withheld the totals";
+  }
   if (value === "native_overdue_crosscheck_mismatch") {
     return "Tally's overdue-day cross-check disagreed with the bill due dates, so Bridge withheld the totals";
   }
@@ -62,7 +72,19 @@ export type OutstandingsPartialState = {
   tallyReadAttempted: boolean;
 };
 
-export function outstandingsPartialState(reasonCode: string): OutstandingsPartialState {
+export function outstandingsPartialState(
+  reasonCode: string,
+  requestedAsOf?: string,
+  tallyAsOf?: string,
+): OutstandingsPartialState {
+  if (reasonCode === "native_outstandings_as_of_refused") {
+    return {
+      title: "Tally did not accept this as-of date",
+      message: outstandingsPartialReason(reasonCode, requestedAsOf, tallyAsOf),
+      retryable: true,
+      tallyReadAttempted: true,
+    };
+  }
   if (reasonCode === "outstandings_segment_sizing_uncalibrated") {
     return {
       title: "Outstandings aren’t available yet",
