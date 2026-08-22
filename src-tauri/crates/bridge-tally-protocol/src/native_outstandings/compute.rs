@@ -202,14 +202,24 @@ pub fn compute_native_outstandings(
     })
 }
 
-/// Classifies a refusal only when the response itself makes that conclusion
-/// unavoidable: at least two returned bills have `BILLOVERDUE`, every
-/// returned bill has that counter, and every `BILLDUE + BILLOVERDUE` lands on
-/// the same non-requested date. One row cannot distinguish a global refusal
-/// from a bad row, while a missing counter or two different implied dates
-/// leaves the result as the existing generic inconsistency. This path cannot
-/// turn a real row-level data disagreement into a licensing/date-refusal
-/// claim.
+/// Classifies the returned bill counters without mistaking their absence for
+/// proof. `BILLOVERDUE` is empty for a bill that is future-due at Tally's
+/// effective date, so those rows are non-evidence: they neither disprove nor
+/// establish a common substituted date. Conversely, a response with bills but
+/// no informative counters is indeterminate and must stay partial -- a silent
+/// date refusal can make every returned bill future-due.
+///
+/// A zero counter on a bill future-due at the request is explicit evidence of
+/// no overdue amount, but cannot identify an as-of date; it can preserve an
+/// otherwise ordinary future-only report without contributing to refusal
+/// unanimity. A refusal therefore needs at least two informative rows whose
+/// `BILLDUE + BILLOVERDUE` values agree on the same non-requested date. A
+/// counterless row is compatible only when it is future-due at that derived
+/// date; a counterless past/current-due bill and every scattered or malformed
+/// counter stay the generic inconsistency. This preserves fail-closed totals
+/// while avoiding a false date-refusal claim from one bad row. See
+/// `TALLY_PROTOCOL_REFERENCE.md` §5.3 for the measured licence-mode boundary
+/// behaviour that motivates this diagnostic.
 fn classify_overdue_crosscheck(
     receivable_rows: &[NativeBillRow],
     payable_rows: &[NativeBillRow],
@@ -217,43 +227,61 @@ fn classify_overdue_crosscheck(
 ) -> Result<NativeOverdueCrosscheck, NativeOutstandingsError> {
     let rows = receivable_rows.iter().chain(payable_rows.iter());
     let mut any_row = false;
-    let mut every_row_has_overdue = true;
-    let mut derived_row_count = 0_usize;
-    let mut mismatched = false;
-    let mut implied_as_of = None;
+    let mut informative_dates = Vec::new();
+    let mut counterless_rows = Vec::new();
+    let mut zero_future_rows = Vec::new();
+    let mut has_explicit_counter = false;
 
     for row in rows {
         any_row = true;
         let Some(tally_overdue) = row.tally_overdue_days else {
-            every_row_has_overdue = false;
+            counterless_rows.push(row);
             continue;
         };
-        let expected_overdue =
-            i64::from(overdue_days(&row.due_date, requested_as_of)?.unwrap_or(0));
-        mismatched |= expected_overdue != tally_overdue;
+        has_explicit_counter = true;
+        if tally_overdue == 0 && row.due_date > *requested_as_of {
+            zero_future_rows.push(row);
+            continue;
+        }
 
         let Some(implied) = implied_as_of_date(&row.due_date, tally_overdue)? else {
-            every_row_has_overdue = false;
-            continue;
+            return Ok(NativeOverdueCrosscheck::Inconsistent);
         };
-        derived_row_count += 1;
-        if let Some(existing) = implied_as_of.as_ref() {
-            if existing != &implied {
-                every_row_has_overdue = false;
-            }
-        } else {
-            implied_as_of = Some(implied);
-        }
+        informative_dates.push(implied);
     }
 
-    if !any_row || !mismatched {
+    if !any_row {
         return Ok(NativeOverdueCrosscheck::Honored);
     }
-    match (every_row_has_overdue, derived_row_count, implied_as_of) {
-        (true, 2.., Some(tally_as_of)) if tally_as_of != *requested_as_of => {
-            Ok(NativeOverdueCrosscheck::RefusedAsOf { tally_as_of })
-        }
-        _ => Ok(NativeOverdueCrosscheck::Inconsistent),
+    let Some(tally_as_of) = informative_dates.first() else {
+        return Ok(if has_explicit_counter && counterless_rows.is_empty() {
+            NativeOverdueCrosscheck::Honored
+        } else {
+            NativeOverdueCrosscheck::Inconsistent
+        });
+    };
+    if informative_dates
+        .iter()
+        .any(|implied_as_of| implied_as_of != tally_as_of)
+    {
+        return Ok(NativeOverdueCrosscheck::Inconsistent);
+    }
+    if counterless_rows
+        .iter()
+        .chain(zero_future_rows.iter())
+        .any(|row| row.due_date <= *tally_as_of)
+    {
+        return Ok(NativeOverdueCrosscheck::Inconsistent);
+    }
+    if *tally_as_of == *requested_as_of {
+        return Ok(NativeOverdueCrosscheck::Honored);
+    }
+    if informative_dates.len() >= 2 {
+        Ok(NativeOverdueCrosscheck::RefusedAsOf {
+            tally_as_of: tally_as_of.clone(),
+        })
+    } else {
+        Ok(NativeOverdueCrosscheck::Inconsistent)
     }
 }
 

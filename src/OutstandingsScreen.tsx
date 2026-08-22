@@ -5,7 +5,12 @@ import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outs
 import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstandings-csv";
 import { canStartOutstandingsRead } from "./outstandings-currency";
 import { groupOpenBillsByParty, type OpenBill, type PartyBillsState } from "./outstandings-bills";
-import { asOfYyyymmdd, todayAsDateInput } from "./outstandings-as-of";
+import {
+  asOfYyyymmdd,
+  bulkPartyStatementsInvokeArgument,
+  partyStatementInvokeArgument,
+  singleCompanyOutstandingsInvokeArgument,
+} from "./outstandings-as-of";
 
 type Props = {
   config: { host: string; port: number };
@@ -15,6 +20,8 @@ type Props = {
   /// is open, because a scope switch with one option is noise.
   onViewAllClients?: () => void;
   openBookCount?: number;
+  asOf: string;
+  onAsOfChange: (value: string) => void;
 };
 
 type Report = {
@@ -84,7 +91,15 @@ type LoadResult =
 
 type InrCompleteResult = Extract<LoadResult, { state: "complete" }> & { currency_assertion: "INR" };
 
-export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllClients, openBookCount = 1 }: Props) {
+export function OutstandingsScreen({
+  config,
+  company,
+  onChangeSetup,
+  onViewAllClients,
+  openBookCount = 1,
+  asOf,
+  onAsOfChange,
+}: Props) {
   const [result, setResult] = React.useState<LoadResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -100,7 +115,6 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
   const [bulkStatementExporting, setBulkStatementExporting] = React.useState(false);
   const [partySort, setPartySort] = React.useState<PartySort | null>(null);
   const [currencyCheck, setCurrencyCheck] = React.useState<"idle" | "checking" | "inr" | "undetermined">("idle");
-  const [asOf, setAsOf] = React.useState(todayAsDateInput);
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
   const requestVersion = React.useRef(0);
   const initialReadKey = React.useRef<string | null>(null);
@@ -144,15 +158,9 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
     setLoading(true);
     setError(null);
     try {
-      const next = await invoke<LoadResult>("fetch_tally_outstandings", {
-        request: {
-          config,
-          company: company.name,
-          expected_company_guid: company.guid,
-          currency_assertion: "INR",
-          as_of_yyyymmdd: requestedAsOf,
-        },
-      });
+      const argument = singleCompanyOutstandingsInvokeArgument(config, company, asOf);
+      if (!argument) return;
+      const next = await invoke<LoadResult>("fetch_tally_outstandings", argument);
       if (requestVersion.current !== version) return;
       setResult(next);
     } catch (cause) {
@@ -162,7 +170,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
     } finally {
       if (requestVersion.current === version) setLoading(false);
     }
-  }, [config.host, config.port, company?.guid, company?.name, readPermitted, requestedAsOf]);
+  }, [asOf, config.host, config.port, company?.guid, company?.name, readPermitted, requestedAsOf]);
 
   React.useEffect(() => {
     const key = company ? `${config.host}:${config.port}:${company.guid}` : null;
@@ -355,7 +363,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
               type="date"
               value={asOf}
               onChange={(event) => {
-                setAsOf(event.target.value);
+                onAsOfChange(event.target.value);
                 setResult(null);
                 setError(null);
               }}
@@ -682,16 +690,7 @@ async function exportPartyStatement(
   party: string,
   format: "xlsx" | "pdf",
 ) {
-  return invoke<string>("export_party_statement", {
-    request: {
-      company: result.report.company_name,
-      as_of_yyyymmdd: result.report.as_of_yyyymmdd,
-      party,
-      format,
-      open_bills: result.statement_open_bills ?? [],
-      unallocated_by_party: result.statement_unallocated_by_party ?? [],
-    },
-  });
+  return invoke<string>("export_party_statement", partyStatementInvokeArgument(result, party, format));
 }
 
 type BulkPartyStatementResult = {
@@ -711,16 +710,10 @@ async function exportBulkPartyStatements(
   destination: string,
   format: "xlsx" | "pdf",
 ) {
-  return invoke<BulkPartyStatementResult>("export_bulk_party_statements", {
-    request: {
-      company: result.report.company_name,
-      as_of_yyyymmdd: result.report.as_of_yyyymmdd,
-      destination,
-      format,
-      open_bills: result.statement_open_bills ?? [],
-      unallocated_by_party: result.statement_unallocated_by_party ?? [],
-    },
-  });
+  return invoke<BulkPartyStatementResult>(
+    "export_bulk_party_statements",
+    bulkPartyStatementsInvokeArgument(result, destination, format),
+  );
 }
 
 /// Uses the same complete source rows and backend counting rule as the writer,

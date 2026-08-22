@@ -5,6 +5,7 @@ import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
 import { outstandingsPartialState } from "./outstandings-copy";
+import { allCompaniesOutstandingsInvokeArgument, asOfYyyymmdd } from "./outstandings-as-of";
 
 type CompanyRef = { name: string; guid: string };
 
@@ -15,6 +16,7 @@ type Props = {
   /// Returns to the single-company view. The two screens are the same
   /// question at two altitudes, so the switch has to work both ways.
   onBack?: () => void;
+  asOf: string;
 };
 
 type Report = {
@@ -91,7 +93,7 @@ function ageTier(days: number | null) {
   return 4;
 }
 
-export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: Props) {
+export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asOf }: Props) {
   const [sort, setSort] = React.useState<SortPreference>(defaultSort);
   const [entries, setEntries] = React.useState<Entry[] | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -108,6 +110,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   const groupLabelSaveSequence = React.useRef<ClientGroupLabelSaveSequence>({});
   const requestVersion = React.useRef(0);
   const sortChangedDuringLoad = React.useRef(false);
+  const requestedAsOf = asOfYyyymmdd(asOf);
 
   React.useEffect(() => {
     let active = true;
@@ -152,22 +155,14 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   }, []);
 
   const load = React.useCallback(async () => {
-    if (companies.length === 0) return;
+    const argument = allCompaniesOutstandingsInvokeArgument(config, companies, asOf);
+    if (companies.length === 0 || !argument) return;
     const version = requestVersion.current + 1;
     requestVersion.current = version;
     setLoading(true);
     setError(null);
     try {
-      const next = await invoke<Entry[]>("fetch_tally_outstandings_all_companies", {
-        request: {
-          config,
-          companies: companies.map((company) => ({
-            company: company.name,
-            expected_company_guid: company.guid,
-          })),
-          currency_assertion: "INR",
-        },
-      });
+      const next = await invoke<Entry[]>("fetch_tally_outstandings_all_companies", argument);
       if (requestVersion.current !== version) return;
       setEntries(next);
     } catch (cause) {
@@ -181,7 +176,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
     } finally {
       if (requestVersion.current === version) setLoading(false);
     }
-  }, [config.host, config.port, companies.map((company) => company.guid).join("|")]);
+  }, [asOf, config.host, config.port, companies.map((company) => company.guid).join("|")]);
 
   const rows = React.useMemo(() => {
     if (!entries) return [];
@@ -328,7 +323,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
         <span role="cell" className="clients-name">
           <strong>{row.company}</strong>
           {partial
-            ? <em>{partial.title}</em>
+            ? <><em>{partial.title}</em><em>{partial.message}</em></>
             : row.unallocatedShare !== null && (
               <em>{row.unallocatedShare}% carries no bill reference</em>
             )}
@@ -358,6 +353,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
               ? `${readable} of ${rows.length} ${rows.length === 1 ? "book" : "books"} read`
               : `${companies.length} ${companies.length === 1 ? "book" : "books"} open in Tally`}
           </p>
+          <p>As of {asOf}</p>
         </div>
         <div className="outstandings-heading-actions">
           {onBack && (
@@ -365,7 +361,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
               Back to one client
             </button>
           )}
-          <button type="button" onClick={() => void load()} disabled={loading || companies.length === 0}>
+          <button type="button" onClick={() => void load()} disabled={loading || companies.length === 0 || !requestedAsOf}>
             <RefreshCw size={18} className={loading ? "spin" : undefined} />
             {loading ? "Reading each book…" : entries ? "Refresh" : "Read all clients"}
           </button>

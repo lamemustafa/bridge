@@ -259,17 +259,31 @@ a two-day filter returned exactly 6.
 ### 5.3 Rejected period boundaries widen silently — **THE KEY TRAP**
 
 **VERIFIED, Education mode.** `SVTODATE` is honoured only when its day-of-month is **1, 2 or
-31**. Any other day is **silently ignored** and the period expands to the entire book.
+31**. Any other day is silently ignored and the period expands to the entire book. The rule is
+literally the set `{1, 2, 31}`, not “month end”: both `20260630` and `20260228` were refused.
+Under Education, observed requests for days 15 and 22 were silently aged to the book end.
 
-Twenty-three data points, no exceptions:
+Twenty-three Education-mode data points, no exceptions:
 
 | Day-of-month | Behaviour |
 | --- | --- |
 | 1, 2, 31 | honoured — data bounded to request |
 | 15, 28, 29, 30 | rejected — period widens to whole book |
 
-This mirrors the Education-mode restriction on voucher entry dates. `20250430` fails while
-`20250531` succeeds because April has no 31st.
+**VERIFIED, limited licensed observation (2026-08-22).** On one machine, one TallyPrime
+Silver licence tier, one Tally build, and one Bridge Ageing Lab book, arbitrary `SVTODATE`
+days were honoured:
+
+| Requested day | Returned span as-of | Result |
+| --- | --- | --- |
+| 07 | 2026-08-07 | honoured |
+| 15 | 2026-06-15 | honoured |
+| 22 | 2026-07-22 | honoured |
+| 23 | 2026-08-23 | honoured |
+
+This settles #115 item 1: licensed arbitrary-boundary support is no longer unresolved for
+that observed TallyPrime Silver profile. It does **not** establish the same result for another
+machine, Tally build, licence tier, company, or configuration.
 
 **The failure is invisible from the response.** When the period is silently widened:
 
@@ -286,9 +300,6 @@ from a genuinely empty period without corroboration.
    exceeds the request, the period was not honoured.
 2. Never treat a zero-row window as empty without re-querying a strictly wider window.
 3. Never emit a deletion tombstone from an uncorroborated empty result.
-
-**UNVERIFIED:** whether licensed Tally accepts arbitrary boundary dates. Probably, but nobody
-has tested it. Do not build on the assumption.
 
 **PARTIAL:** one observation does not fit the model — a request with `SVFROMDATE` =
 `SVTODATE` = a valid day-1 date returned 75 rows spanning a different year. The `SVTODATE`
@@ -1403,7 +1414,6 @@ rename behaviour, other releases, and other configurations remain unverified.
 
 | Question | Why it matters |
 | --- | --- |
-| Does licensed Tally accept arbitrary period boundaries? | Decides whether §5.3 is a lab quirk or a product constraint. **Blocks intermediate window sizing** — Education permits only days 01/02/31, so 5–20 day windows cannot be tested at all |
 | Does editing a voucher populate `AUDITENTRIES.LIST`? | Could replace AlterID diffing entirely on the Edit Log SKU |
 | Is there a syntax for two-level `FETCH`? | Decides the 6.3× GST payload penalty |
 | Why does `ClosingBalance` render empty at some dates? | Blocks trusting any balance field |
@@ -1423,3 +1433,4 @@ rename behaviour, other releases, and other configurations remain unverified.
 | 2026-07-29 | Created. All VERIFIED entries established this day against TallyPrime Edit Log 7.0 EDU. |
 | 2026-07-30 | Recorded the outstandings-only wildcard exception, curated bill-type corruption, and the contextual polarity finding. |
 | 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
+| 2026-08-22 | Updated §5.3 with the observed Education `{1,2,31}` boundary rule and the limited TallyPrime Silver arbitrary-day observations; this settles #115 item 1 for the recorded profile. |

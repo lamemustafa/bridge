@@ -1,8 +1,8 @@
-//! Integration tests for `native_outstandings`, driven entirely by the real
+//! Integration tests for `native_outstandings`, primarily driven by real
 //! fixtures captured live from TallyPrime
-//! (`tests/fixtures/native/*.xml`, captured 2026-08-07). No network, no live
-//! Tally: every assertion here is against bytes already checked into the
-//! repository.
+//! (`tests/fixtures/native/*.xml`, captured 2026-08-07). The few synthetic
+//! policy boundaries identify themselves in their test comments; no synthetic
+//! XML is presented as a capture. No test makes a network or live-Tally call.
 
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
@@ -442,25 +442,20 @@ fn validation_lab_empty_billoverdue_parses_as_not_applicable() {
 }
 
 #[test]
-fn a_single_implied_non_requested_as_of_is_a_refused_period() {
-    // Measured Bridge Ageing Lab shape: Tally answered a request for
-    // 2026-08-22 as though it were 2026-07-31. The five rows deliberately
-    // use different due dates so this proves the shared *derived date*, not a
-    // repeated raw overdue counter.
+fn captured_validation_lab_rows_prove_refusal_despite_a_future_counterless_bill() {
+    // Real bytes captured from Bridge Validation Lab for requested 2026-08-17.
+    // Four counters independently imply 2026-08-01; the remaining
+    // ALPHA-FUTURE bill is due 2026-10-01 and has an intentionally empty
+    // BILLOVERDUE. This is the regression for treating future counterless rows
+    // as non-evidence rather than rejecting unanimity.
     let rows = parse_native_bill_rows(
-        "<ENVELOPE>\
-         <BILLFIXED><BILLDATE>1-Jun-26</BILLDATE><BILLREF>JUN</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jun-26</BILLDUE><BILLOVERDUE>60</BILLOVERDUE>\
-         <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>JUL</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>30</BILLOVERDUE>\
-         <BILLFIXED><BILLDATE>1-May-26</BILLDATE><BILLREF>MAY</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-May-26</BILLDUE><BILLOVERDUE>91</BILLOVERDUE>\
-         <BILLFIXED><BILLDATE>1-Apr-26</BILLDATE><BILLREF>APR</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Apr-26</BILLDUE><BILLOVERDUE>121</BILLOVERDUE>\
-         <BILLFIXED><BILLDATE>1-Feb-26</BILLDATE><BILLREF>FEB</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Feb-26</BILLDUE><BILLOVERDUE>180</BILLOVERDUE>\
-         </ENVELOPE>",
-        &as_of("20260101"),
-        &as_of("20260822"),
+        BILLS_RECEIVABLE_VALIDATION_LAB,
+        &as_of(VALIDATION_LAB_BOOKS_FROM),
+        &as_of(VALIDATION_CAPTURE_AS_OF),
     )
-    .expect("measured refusal shape parses");
+    .expect("captured validation bytes parse");
     let result = compute_native_outstandings(
-        "Bridge Ageing Lab",
+        "Bridge Validation Lab",
         &rows,
         &[],
         NativeMasterSnapshot {
@@ -468,16 +463,50 @@ fn a_single_implied_non_requested_as_of_is_a_refused_period() {
             groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
         },
         AgeingAnchor::DueDate,
-        &as_of("20260822"),
-        0,
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+        BILLS_RECEIVABLE_VALIDATION_LAB.len(),
     )
     .expect("refusal remains a computable diagnostic result");
 
     assert_eq!(
         result.overdue_crosscheck,
         NativeOverdueCrosscheck::RefusedAsOf {
-            tally_as_of: as_of("20260731"),
+            tally_as_of: as_of("20260801"),
         }
+    );
+}
+
+#[test]
+fn counterless_rows_without_any_informative_counter_stay_partial() {
+    // Synthetic policy boundary, not a captured refusal response: the current
+    // capture contains one empty counter alongside four informative ones, but
+    // no captured response has every counter empty. This construction proves
+    // only Bridge's fail-closed rule that absence cannot establish acceptance.
+    let rows = [NativeBillRow {
+        party: "Synthetic".to_string(),
+        reference: "NO-COUNTER".to_string(),
+        bill_date: as_of("20260801"),
+        due_date: as_of("20260901"),
+        closing_balance: ExactDecimal::parse("-1").unwrap(),
+        tally_overdue_days: None,
+    }];
+    let result = compute_native_outstandings(
+        "Synthetic Company",
+        &rows,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of("20260817"),
+        0,
+    )
+    .expect("the synthetic policy boundary computes");
+
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::Inconsistent
     );
 }
 
