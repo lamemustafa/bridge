@@ -113,23 +113,30 @@ pub fn render_party_statement_xlsx(
         row += 1;
     }
 
-    worksheet.write_string_with_format(row, 0, "Ageing subtotals", &bold)?;
+    worksheet.write_string_with_format(
+        row,
+        0,
+        "Ageing subtotals by direction (magnitudes; not net)",
+        &bold,
+    )?;
     row += 1;
-    for (bucket, subtotal) in [
-        ("Not yet due", &statement.subtotals.not_yet_due),
-        ("0-30 days", &statement.subtotals.days_0_30),
-        ("31-60 days", &statement.subtotals.days_31_60),
-        ("61-90 days", &statement.subtotals.days_61_90),
-        ("90+ days", &statement.subtotals.days_90_plus),
-    ] {
-        worksheet.write_string(row, 0, bucket)?;
-        worksheet.write_number_with_format(
-            row,
-            4,
-            amount_to_f64(subtotal.as_str())?,
-            &amount_format,
-        )?;
-        row += 1;
+    for (direction, subtotals) in statement.subtotals.by_direction() {
+        for (bucket, subtotal) in [
+            ("Not yet due", &subtotals.not_yet_due),
+            ("0-30 days", &subtotals.days_0_30),
+            ("31-60 days", &subtotals.days_31_60),
+            ("61-90 days", &subtotals.days_61_90),
+            ("90+ days", &subtotals.days_90_plus),
+        ] {
+            worksheet.write_string(row, 0, format!("{direction} | {bucket}"))?;
+            worksheet.write_number_with_format(
+                row,
+                4,
+                amount_to_f64(subtotal.as_str())?,
+                &amount_format,
+            )?;
+            row += 1;
+        }
     }
 
     worksheet.write_string_with_format(row, 0, "Total bill magnitudes (not net)", &bold)?;
@@ -152,7 +159,7 @@ pub fn render_party_statement_xlsx(
             row,
             0,
             format!(
-                "Unallocated {} (no bill reference)",
+                "Unallocated {} magnitude (no bill reference)",
                 exposure_direction_label(direction)
             ),
         )?;
@@ -164,7 +171,7 @@ pub fn render_party_statement_xlsx(
         )?;
         row += 1;
 
-        worksheet.write_string_with_format(row, 0, "Grand total", &bold)?;
+        worksheet.write_string_with_format(row, 0, "Grand total magnitudes (not net)", &bold)?;
         worksheet.write_number_with_format(
             row,
             4,
@@ -391,7 +398,7 @@ mod tests {
             let mut entry = archive.by_name(name).unwrap();
             std::io::Read::read_to_string(&mut entry, &mut text).unwrap();
         }
-        assert!(text.contains("Unallocated Payable (no bill reference)"));
+        assert!(text.contains("Unallocated Payable magnitude (no bill reference)"));
     }
 
     #[test]

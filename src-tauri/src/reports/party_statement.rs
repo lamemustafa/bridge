@@ -57,14 +57,13 @@ pub struct StatementBill {
     pub bucket: Option<AgeingBucket>,
 }
 
-/// Exact ageing subtotals across a party's bill table. Every bill lands in one
-/// of the four aged buckets or the explicit `not_yet_due` subtotal, so
-/// [`AgeingSubtotals::total`] equals [`PartyStatement::bill_total`].
+/// Exact ageing subtotals for one direction in a party's bill table.
+///
+/// Bills without a meaningful age because they are not yet due remain
+/// separate from 0-30 days: folding them into an aged bucket would misstate
+/// the party's ageing position.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgeingSubtotals {
-    /// Bills without a meaningful age because they are not yet due. This is
-    /// deliberately separate from 0-30 days: folding it into an aged bucket
-    /// would misstate the party's ageing position.
+pub struct DirectionalAgeingSubtotals {
     pub not_yet_due: ExactDecimal,
     pub days_0_30: ExactDecimal,
     pub days_31_60: ExactDecimal,
@@ -72,7 +71,17 @@ pub struct AgeingSubtotals {
     pub days_90_plus: ExactDecimal,
 }
 
-impl AgeingSubtotals {
+impl DirectionalAgeingSubtotals {
+    fn zero() -> Self {
+        Self {
+            not_yet_due: ExactDecimal::zero(),
+            days_0_30: ExactDecimal::zero(),
+            days_31_60: ExactDecimal::zero(),
+            days_61_90: ExactDecimal::zero(),
+            days_90_plus: ExactDecimal::zero(),
+        }
+    }
+
     /// Sums every rendered ageing category through checked exact-decimal
     /// addition so a statement cannot appear reconciled through a lossy
     /// display-only conversion.
@@ -83,6 +92,33 @@ impl AgeingSubtotals {
             .and_then(|value| value.checked_add(&self.days_61_90))
             .and_then(|value| value.checked_add(&self.days_90_plus))
             .map_err(|_| PartyStatementError::ArithmeticOverflow)
+    }
+}
+
+/// Exact ageing subtotals split by the direction shown on each bill row.
+/// Positive Tally magnitudes are not netted: [`AgeingSubtotals::total`]
+/// remains exactly equal to [`PartyStatement::bill_total`], while every
+/// rendered bucket makes its receivable/payable direction explicit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgeingSubtotals {
+    pub receivable: DirectionalAgeingSubtotals,
+    pub payable: DirectionalAgeingSubtotals,
+}
+
+impl AgeingSubtotals {
+    /// Sums every rendered directional ageing category through checked exact-
+    /// decimal addition so a statement cannot appear reconciled through a
+    /// lossy display-only conversion.
+    pub fn total(&self) -> Result<ExactDecimal, PartyStatementError> {
+        let receivable = self.receivable.total()?;
+        let payable = self.payable.total()?;
+        receivable
+            .checked_add(&payable)
+            .map_err(|_| PartyStatementError::ArithmeticOverflow)
+    }
+
+    pub fn by_direction(&self) -> [(&'static str, &DirectionalAgeingSubtotals); 2] {
+        [("Receivable", &self.receivable), ("Payable", &self.payable)]
     }
 }
 
@@ -172,23 +208,29 @@ pub fn build_party_statement(
     }
 
     let mut subtotals = AgeingSubtotals {
-        not_yet_due: ExactDecimal::zero(),
-        days_0_30: ExactDecimal::zero(),
-        days_31_60: ExactDecimal::zero(),
-        days_61_90: ExactDecimal::zero(),
-        days_90_plus: ExactDecimal::zero(),
+        receivable: DirectionalAgeingSubtotals::zero(),
+        payable: DirectionalAgeingSubtotals::zero(),
     };
     let mut bill_total = ExactDecimal::zero();
     for bill in &bills {
         bill_total = bill_total
             .checked_add(&bill.amount)
             .map_err(|_| PartyStatementError::ArithmeticOverflow)?;
+        let directional_subtotals = match bill.kind {
+            "receivable" => &mut subtotals.receivable,
+            "payable" => &mut subtotals.payable,
+            // The PDF/XLSX writers retain the existing explicit invalid-kind
+            // rejection before emitting a document. Keep this builder's
+            // public error surface stable rather than misreporting an
+            // unsupported direction as arithmetic overflow.
+            _ => &mut subtotals.receivable,
+        };
         let bucket_subtotal = match bill.bucket {
-            Some(AgeingBucket::Days0To30) => &mut subtotals.days_0_30,
-            Some(AgeingBucket::Days31To60) => &mut subtotals.days_31_60,
-            Some(AgeingBucket::Days61To90) => &mut subtotals.days_61_90,
-            Some(AgeingBucket::Days90Plus) => &mut subtotals.days_90_plus,
-            None => &mut subtotals.not_yet_due,
+            Some(AgeingBucket::Days0To30) => &mut directional_subtotals.days_0_30,
+            Some(AgeingBucket::Days31To60) => &mut directional_subtotals.days_31_60,
+            Some(AgeingBucket::Days61To90) => &mut directional_subtotals.days_61_90,
+            Some(AgeingBucket::Days90Plus) => &mut directional_subtotals.days_90_plus,
+            None => &mut directional_subtotals.not_yet_due,
         };
         *bucket_subtotal = bucket_subtotal
             .checked_add(&bill.amount)
@@ -315,22 +357,23 @@ mod tests {
             .expect("party has exposure");
 
         assert_eq!(
-            statement.subtotals.days_0_30,
+            statement.subtotals.receivable.days_0_30,
             exact_sum(&["10.10", "20.20"])
         );
         assert_eq!(
-            statement.subtotals.days_31_60,
+            statement.subtotals.receivable.days_31_60,
             exact_sum(&["30.30", "40.40"])
         );
         assert_eq!(
-            statement.subtotals.days_61_90,
+            statement.subtotals.receivable.days_61_90,
             exact_sum(&["50.50", "60.60"])
         );
         assert_eq!(
-            statement.subtotals.days_90_plus,
+            statement.subtotals.receivable.days_90_plus,
             exact_sum(&["70.70", "80.80"])
         );
-        assert!(statement.subtotals.not_yet_due.is_zero());
+        assert!(statement.subtotals.receivable.not_yet_due.is_zero());
+        assert!(statement.subtotals.payable.total().unwrap().is_zero());
         assert_eq!(statement.subtotals.total().unwrap(), statement.bill_total);
         assert_eq!(
             statement.bill_total,
@@ -349,7 +392,10 @@ mod tests {
         let statement = build_party_statement("Lab Co", "20260808", "Party", &bills, &[])
             .expect("party has exposure");
 
-        assert_eq!(statement.subtotals.not_yet_due, exact_sum(&["20.20"]));
+        assert_eq!(
+            statement.subtotals.receivable.not_yet_due,
+            exact_sum(&["20.20"])
+        );
         assert_eq!(statement.subtotals.total().unwrap(), statement.bill_total);
     }
 

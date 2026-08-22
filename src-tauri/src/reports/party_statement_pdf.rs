@@ -19,7 +19,7 @@ const BODY_FONT_SIZE: f32 = 9.0;
 const HEADING_FONT_SIZE: f32 = 12.0;
 const LINE_HEIGHT: f32 = 14.0;
 const LINES_PER_PAGE: usize = 52;
-const HEADER_IDENTITY_LINE_LIMIT: usize = 8;
+const HEADER_IDENTITY_FIELD_LINE_LIMIT: usize = 4;
 const PRINTABLE_WIDTH_THOUSANDTHS_OF_POINT: u32 = ((PAGE_WIDTH - (2.0 * MARGIN)) as u32) * 1_000;
 
 // Adobe's standard Helvetica advance widths in 1/1000 em, indexed by the
@@ -265,17 +265,36 @@ pub fn render_party_statement_pdf(
 fn page_header_identity_lines(statement: &PartyStatement) -> Vec<Vec<u8>> {
     let company = display_pdf_text("company name", &statement.company);
     let party = display_pdf_text("party name", &statement.party);
-    let identity = format!("Party statement | Company: {company} | Party: {party}");
+    let mut lines = bounded_header_identity_lines("Company", &company);
+    lines.extend(bounded_header_identity_lines("Party", &party));
+    lines
+}
+
+/// Preserves a bounded share of the repeating-header budget for each identity
+/// field. The full values remain in the first-page body; a bounded header
+/// never silently discards the rest of either field or lets a long company
+/// suppress the party on detached continuation pages.
+fn bounded_header_identity_lines(label: &str, value: &str) -> Vec<Vec<u8>> {
+    let identity = format!("{label}: {value}");
     let mut lines = wrap_to_printable_width(
         encode_win_ansi(&identity)
             .expect("header identity values were rendered for WinAnsi before layout"),
         true,
         BODY_FONT_SIZE as u16,
     );
-    if lines.len() > HEADER_IDENTITY_LINE_LIMIT {
-        lines.truncate(HEADER_IDENTITY_LINE_LIMIT - 1);
-        lines.push(b"[Identity continued on first page]".to_vec());
+    if lines.len() > HEADER_IDENTITY_FIELD_LINE_LIMIT {
+        lines.truncate(HEADER_IDENTITY_FIELD_LINE_LIMIT - 1);
+        lines.push(
+            encode_win_ansi(&format!("[{label} identity continues in statement body]"))
+                .expect("header continuation marker is WinAnsi"),
+        );
     }
+    debug_assert!(lines.len() <= HEADER_IDENTITY_FIELD_LINE_LIMIT);
+    debug_assert!(lines.iter().all(|line| text_fits_printable_width(
+        line,
+        true,
+        BODY_FONT_SIZE as u16
+    )));
     lines
 }
 
@@ -338,15 +357,25 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
         "Total bill magnitudes (not net)",
         &display_amount(&statement.bill_total)?,
     )?;
-    push_wrapped(&mut lines, "Ageing subtotals", true)?;
-    for (bucket, subtotal) in [
-        ("Not yet due", &statement.subtotals.not_yet_due),
-        ("0-30 days", &statement.subtotals.days_0_30),
-        ("31-60 days", &statement.subtotals.days_31_60),
-        ("61-90 days", &statement.subtotals.days_61_90),
-        ("90+ days", &statement.subtotals.days_90_plus),
-    ] {
-        push_label_value(&mut lines, bucket, &display_amount(subtotal)?)?;
+    push_wrapped(
+        &mut lines,
+        "Ageing subtotals by direction (magnitudes; not net)",
+        true,
+    )?;
+    for (direction, subtotals) in statement.subtotals.by_direction() {
+        for (bucket, subtotal) in [
+            ("Not yet due", &subtotals.not_yet_due),
+            ("0-30 days", &subtotals.days_0_30),
+            ("31-60 days", &subtotals.days_31_60),
+            ("61-90 days", &subtotals.days_61_90),
+            ("90+ days", &subtotals.days_90_plus),
+        ] {
+            push_label_value(
+                &mut lines,
+                &format!("{direction} | {bucket}"),
+                &display_amount(subtotal)?,
+            )?;
+        }
     }
     if !statement.unallocated.is_zero() {
         let direction =
@@ -358,14 +387,14 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
         push_label_value(
             &mut lines,
             &format!(
-                "Unallocated {} (no bill reference)",
+                "Unallocated {} magnitude (no bill reference)",
                 exposure_direction_label(direction)
             ),
             &display_amount(&statement.unallocated)?,
         )?;
         push_label_value(
             &mut lines,
-            "Grand total",
+            "Grand total magnitudes (not net)",
             &display_amount(&statement.grand_total)?,
         )?;
     }
@@ -605,16 +634,42 @@ mod tests {
             let mut content_remainder = content;
             while let Some(open) = content_remainder.find('(') {
                 content_remainder = &content_remainder[open + 1..];
-                let Some(close) = content_remainder.find(')') else {
+                let Some((text, remainder_after_text)) = pdf_string_text(content_remainder) else {
                     break;
                 };
-                extracted.push_str(&content_remainder[..close]);
+                extracted.push_str(&text);
                 extracted.push('\n');
-                content_remainder = &content_remainder[close + 1..];
+                content_remainder = remainder_after_text;
             }
             remainder = &remainder[end + b"\nendstream".len()..];
         }
         extracted
+    }
+
+    fn pdf_string_text(input: &str) -> Option<(String, &str)> {
+        let mut text = String::with_capacity(input.len());
+        let mut escaped = false;
+        let mut nested_parentheses = 0usize;
+        for (offset, character) in input.char_indices() {
+            if escaped {
+                text.push(character);
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '(' {
+                nested_parentheses += 1;
+                text.push(character);
+            } else if character == ')' {
+                if nested_parentheses == 0 {
+                    return Some((text, &input[offset + character.len_utf8()..]));
+                }
+                nested_parentheses -= 1;
+                text.push(character);
+            } else {
+                text.push(character);
+            }
+        }
+        None
     }
 
     fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -715,6 +770,84 @@ mod tests {
         assert!(text.contains("Reference | Bill date | Due date | Direction | Amount"));
         assert!(text.contains("INV-1 | 01-Jan-2026 | 01-Feb-2026 | Receivable"));
         assert!(text.contains("BILL-1 | 01-Jan-2026 | 01-Feb-2026 | Payable"));
+    }
+
+    #[test]
+    fn mixed_direction_bucket_subtotals_are_explicit_in_both_formats() {
+        let mut payable = bill("BILL-80", "80.00", 20);
+        payable.kind = "payable";
+        let statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "Synthetic Party",
+            &[bill("INV-100", "100.00", 20), payable],
+            &[],
+        )
+        .unwrap();
+
+        let pdf = render_party_statement_pdf(&statement).unwrap();
+        let pdf_text = extracted_text(&pdf);
+        let joined_pdf_text = pdf_text.replace('\n', "");
+        let xlsx_text = xlsx_sheet_xml(&render_party_statement_xlsx(&statement).unwrap());
+        assert!(joined_pdf_text.contains("Ageing subtotals by direction (magnitudes; not net)"));
+        assert!(joined_pdf_text.contains("Receivable | 0-30 days"));
+        assert!(joined_pdf_text.contains("Payable | 0-30 days"));
+        assert!(xlsx_text.contains("Ageing subtotals by direction (magnitudes; not net)"));
+        assert!(xlsx_text.contains("Receivable | 0-30 days"));
+        assert!(xlsx_text.contains("Payable | 0-30 days"));
+        assert_eq!(statement.subtotals.total().unwrap(), statement.bill_total);
+    }
+
+    #[test]
+    fn long_company_identity_cannot_evict_party_from_continuation_headers() {
+        let company = "C".repeat(700);
+        let bills = (0..150)
+            .map(|index| {
+                let mut source_bill = bill(&format!("INV-{index:03}"), "1.00", 1);
+                source_bill.party = "Bounded Party".to_string();
+                source_bill
+            })
+            .collect::<Vec<_>>();
+        let statement =
+            build_party_statement(&company, "20260808", "Bounded Party", &bills, &[]).unwrap();
+
+        let header = page_header_identity_lines(&statement)
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(contains_pdf_text(
+            &render_party_statement_pdf(&statement).unwrap(),
+            "Page 2 of"
+        ));
+        let header = std::str::from_utf8(&header).unwrap();
+        assert!(header.contains("Company identity continues in statement body"));
+        assert!(header.contains("Party: Bounded Party"));
+    }
+
+    #[test]
+    fn pathological_identities_keep_party_counter_and_width_bounds() {
+        let company = string_from_codepoints(&[0x0936; 200]);
+        let party = string_from_codepoints(&[0x0905; 200]);
+        let bills = (0..150)
+            .map(|index| {
+                let mut source_bill = bill(&format!("INV-{index:03}"), "1.00", 1);
+                source_bill.party = party.clone();
+                source_bill
+            })
+            .collect::<Vec<_>>();
+        let statement = build_party_statement(&company, "20260808", &party, &bills, &[]).unwrap();
+
+        let pdf = render_party_statement_pdf(&statement).unwrap();
+        let header = page_header_identity_lines(&statement)
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        let header = std::str::from_utf8(&header).unwrap();
+        assert!(header.contains("Company identity continues in statement body"));
+        assert!(header.contains("Party: [party name rendering degraded:"));
+        assert!(header.contains("Party identity continues in statement body"));
+        assert!(contains_pdf_text(&pdf, "Page 2 of"));
+        assert_all_planned_document_lines_fit(&statement);
     }
 
     #[test]
@@ -845,7 +978,7 @@ mod tests {
         assert_eq!(statement.grand_total.as_str(), "1600");
         // `1600` appears only in the XLSX grand-total cell for this fixture.
         assert!(xlsx_sheet_xml(&xlsx).contains("<v>1600</v>"));
-        assert!(pdf_text.contains("Grand total: INR 1,600"));
+        assert!(pdf_text.contains("Grand total magnitudes (not net): INR 1,600"));
     }
 
     #[test]
@@ -975,32 +1108,38 @@ mod tests {
         )
         .unwrap();
 
-        let pdf_text = extracted_text(&render_party_statement_pdf(&statement).unwrap());
-        assert!(pdf_text.contains("Ageing subtotals"));
-        for (bucket, subtotal) in [
-            ("Not yet due", &statement.subtotals.not_yet_due),
-            ("0-30 days", &statement.subtotals.days_0_30),
-            ("31-60 days", &statement.subtotals.days_31_60),
-            ("61-90 days", &statement.subtotals.days_61_90),
-            ("90+ days", &statement.subtotals.days_90_plus),
-        ] {
-            assert!(pdf_text.contains(&format!(
-                "{bucket}: INR {}",
-                indian_grouped_decimal(subtotal.as_str())
-            )));
+        let pdf = render_party_statement_pdf(&statement).unwrap();
+        let pdf_text = extracted_text(&pdf);
+        assert!(pdf_text.contains("Ageing subtotals by direction (magnitudes; not net)"));
+        for (direction, subtotals) in statement.subtotals.by_direction() {
+            for (bucket, subtotal) in [
+                ("Not yet due", &subtotals.not_yet_due),
+                ("0-30 days", &subtotals.days_0_30),
+                ("31-60 days", &subtotals.days_31_60),
+                ("61-90 days", &subtotals.days_61_90),
+                ("90+ days", &subtotals.days_90_plus),
+            ] {
+                assert!(pdf_text.contains(&format!(
+                    "{direction} | {bucket}: INR {}",
+                    indian_grouped_decimal(subtotal.as_str())
+                )));
+            }
         }
 
         let xlsx = render_party_statement_xlsx(&statement).unwrap();
         let xlsx_xml = xlsx_sheet_xml(&xlsx);
-        assert!(xlsx_xml.contains("Ageing subtotals"));
-        for subtotal in [
-            &statement.subtotals.not_yet_due,
-            &statement.subtotals.days_0_30,
-            &statement.subtotals.days_31_60,
-            &statement.subtotals.days_61_90,
-            &statement.subtotals.days_90_plus,
-        ] {
-            assert!(xlsx_xml.contains(&format!("<v>{}</v>", subtotal.as_str())));
+        assert!(xlsx_xml.contains("Ageing subtotals by direction (magnitudes; not net)"));
+        for (direction, subtotals) in statement.subtotals.by_direction() {
+            for (bucket, subtotal) in [
+                ("Not yet due", &subtotals.not_yet_due),
+                ("0-30 days", &subtotals.days_0_30),
+                ("31-60 days", &subtotals.days_31_60),
+                ("61-90 days", &subtotals.days_61_90),
+                ("90+ days", &subtotals.days_90_plus),
+            ] {
+                assert!(xlsx_xml.contains(&format!("{direction} | {bucket}")));
+                assert!(xlsx_xml.contains(&format!("<v>{}</v>", subtotal.as_str())));
+            }
         }
         assert_eq!(statement.subtotals.total().unwrap(), statement.bill_total);
     }
@@ -1021,7 +1160,7 @@ mod tests {
 
         let header_lines = page_header_identity_lines(&statement);
         assert!(header_lines.len() > 1);
-        assert!(header_lines.len() <= HEADER_IDENTITY_LINE_LIMIT);
+        assert!(header_lines.len() <= 2 * HEADER_IDENTITY_FIELD_LINE_LIMIT);
         assert!(header_lines.iter().all(|line| text_fits_printable_width(
             line,
             true,
