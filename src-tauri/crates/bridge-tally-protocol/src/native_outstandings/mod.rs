@@ -29,7 +29,7 @@ pub use compute::{
 pub use date::{parse_native_display_date, NativeDisplayDateRole};
 pub use model::{
     AgeingAnchor, CompanyCurrency, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
-    NativeOutstandingsResult, PartyResidual,
+    NativeOutstandingsResult, NativeOverdueCrosscheck, PartyResidual,
 };
 pub use request::{
     render_company_currency_request, render_native_bills_request,

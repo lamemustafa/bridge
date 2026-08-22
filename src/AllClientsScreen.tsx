@@ -5,6 +5,13 @@ import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
 import { outstandingsPartialState } from "./outstandings-copy";
+import {
+  allClientsEntriesForAsOf,
+  allCompaniesOutstandingsInvokeArgument,
+  AllClientsEntriesAtAsOf,
+  asOfYyyymmdd,
+  settleAllClientsEntries,
+} from "./outstandings-as-of";
 
 type CompanyRef = { name: string; guid: string };
 
@@ -15,6 +22,7 @@ type Props = {
   /// Returns to the single-company view. The two screens are the same
   /// question at two altitudes, so the switch has to work both ways.
   onBack?: () => void;
+  asOf: string;
 };
 
 type Report = {
@@ -27,7 +35,12 @@ type Report = {
 
 type LoadResult =
   | { state: "complete"; report: Report; unallocated_total?: string }
-  | { state: "partial"; reason_code: string };
+  | {
+      state: "partial";
+      reason_code: string;
+      requested_as_of_yyyymmdd?: string;
+      tally_as_of_yyyymmdd?: string;
+    };
 
 type Entry = { company: string; company_guid: string; result: LoadResult };
 
@@ -86,9 +99,9 @@ function ageTier(days: number | null) {
   return 4;
 }
 
-export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: Props) {
+export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asOf }: Props) {
   const [sort, setSort] = React.useState<SortPreference>(defaultSort);
-  const [entries, setEntries] = React.useState<Entry[] | null>(null);
+  const [loadedEntries, setLoadedEntries] = React.useState<AllClientsEntriesAtAsOf<Entry[]> | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [groupLabels, setGroupLabels] = React.useState<ClientGroupLabels>({});
@@ -103,6 +116,20 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   const groupLabelSaveSequence = React.useRef<ClientGroupLabelSaveSequence>({});
   const requestVersion = React.useRef(0);
   const sortChangedDuringLoad = React.useRef(false);
+  const requestedAsOf = asOfYyyymmdd(asOf);
+  const currentRequestedAsOf = React.useRef(requestedAsOf);
+  currentRequestedAsOf.current = requestedAsOf;
+  const entries = allClientsEntriesForAsOf(loadedEntries, requestedAsOf);
+
+  React.useEffect(() => {
+    // A new effective date makes any previous financial rows ineligible for
+    // display. Invalidate issued sweeps too, so a late old-date response is
+    // inert rather than being relabelled under the new date.
+    requestVersion.current += 1;
+    setLoadedEntries(null);
+    setLoading(false);
+    setError(null);
+  }, [requestedAsOf]);
 
   React.useEffect(() => {
     let active = true;
@@ -147,27 +174,26 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   }, []);
 
   const load = React.useCallback(async () => {
-    if (companies.length === 0) return;
+    const argument = allCompaniesOutstandingsInvokeArgument(config, companies, asOf);
+    if (companies.length === 0 || !argument) return;
+    const requestedAsOfYyyymmdd = argument.request.as_of_yyyymmdd;
     const version = requestVersion.current + 1;
     requestVersion.current = version;
     setLoading(true);
     setError(null);
     try {
-      const next = await invoke<Entry[]>("fetch_tally_outstandings_all_companies", {
-        request: {
-          config,
-          companies: companies.map((company) => ({
-            company: company.name,
-            expected_company_guid: company.guid,
-          })),
-          currency_assertion: "INR",
-        },
-      });
+      const next = await invoke<Entry[]>("fetch_tally_outstandings_all_companies", argument);
       if (requestVersion.current !== version) return;
-      setEntries(next);
+      const settled = settleAllClientsEntries(
+        currentRequestedAsOf.current,
+        requestedAsOfYyyymmdd,
+        next,
+      );
+      if (!settled) return;
+      setLoadedEntries(settled);
     } catch (cause) {
       if (requestVersion.current !== version) return;
-      setEntries(null);
+      setLoadedEntries(null);
       setError(
         cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string"
           ? cause.message
@@ -176,7 +202,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
     } finally {
       if (requestVersion.current === version) setLoading(false);
     }
-  }, [config.host, config.port, companies.map((company) => company.guid).join("|")]);
+  }, [asOf, config.host, config.port, companies.map((company) => company.guid).join("|")]);
 
   const rows = React.useMemo(() => {
     if (!entries) return [];
@@ -197,6 +223,8 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
           companyGuid: entry.company_guid,
           complete,
           reasonCode: entry.result.state === "partial" ? entry.result.reason_code : null,
+          requestedAsOf: entry.result.state === "partial" ? entry.result.requested_as_of_yyyymmdd : undefined,
+          tallyAsOf: entry.result.state === "partial" ? entry.result.tally_as_of_yyyymmdd : undefined,
           receivable: complete ? amountOf(complete.report.receivable_total) : null,
           overdue: complete ? amountOf(complete.report.ageing.days_90_plus) : null,
           unallocated: complete ? amountOf(complete.unallocated_total) : null,
@@ -297,7 +325,9 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
   }, [sort]);
 
   const renderRow = (row: (typeof rows)[number]) => {
-    const partial = row.reasonCode ? outstandingsPartialState(row.reasonCode) : null;
+    const partial = row.reasonCode
+      ? outstandingsPartialState(row.reasonCode, row.requestedAsOf, row.tallyAsOf)
+      : null;
     return (
       <button
         className="clients-row"
@@ -319,7 +349,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
         <span role="cell" className="clients-name">
           <strong>{row.company}</strong>
           {partial
-            ? <em>{partial.title}</em>
+            ? <><em>{partial.title}</em><em>{partial.message}</em></>
             : row.unallocatedShare !== null && (
               <em>{row.unallocatedShare}% carries no bill reference</em>
             )}
@@ -349,6 +379,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
               ? `${readable} of ${rows.length} ${rows.length === 1 ? "book" : "books"} read`
               : `${companies.length} ${companies.length === 1 ? "book" : "books"} open in Tally`}
           </p>
+          <p>As of {asOf}</p>
         </div>
         <div className="outstandings-heading-actions">
           {onBack && (
@@ -356,7 +387,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack }: P
               Back to one client
             </button>
           )}
-          <button type="button" onClick={() => void load()} disabled={loading || companies.length === 0}>
+          <button type="button" onClick={() => void load()} disabled={loading || companies.length === 0 || !requestedAsOf}>
             <RefreshCw size={18} className={loading ? "spin" : undefined} />
             {loading ? "Reading each book…" : entries ? "Refresh" : "Read all clients"}
           </button>

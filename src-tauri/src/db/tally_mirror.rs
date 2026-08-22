@@ -4436,11 +4436,13 @@ fn validate_export_code(value: &str) -> Result<(), MirrorError> {
 }
 
 fn validate_export_warning_code(value: &str) -> Result<(), MirrorError> {
-    let warning = crate::sync::reconciliation::WarningCode::parse(value)
+    let warning = crate::warning_codes::WarningCode::parse(value)
         .ok_or(MirrorError::VerificationInvariant)?;
     match warning {
-        crate::sync::reconciliation::WarningCode::AdaptiveWindowSplit
-        | crate::sync::reconciliation::WarningCode::ForeignMasterTextRenderingDegraded => Ok(()),
+        crate::warning_codes::WarningCode::AdaptiveWindowSplit
+        | crate::warning_codes::WarningCode::ForeignMasterTextRenderingDegraded
+        | crate::warning_codes::WarningCode::NativeOutstandingsAsOfUnconfirmedWithoutEffectiveDateEvidence
+        | crate::warning_codes::WarningCode::NativeOutstandingsAsOfUnconfirmedWithoutBillReferences => Ok(()),
     }
 }
 
@@ -8565,7 +8567,7 @@ mod tests {
 
     #[test]
     fn redacted_proof_export_accepts_every_declared_warning_code() {
-        for warning in crate::sync::reconciliation::WarningCode::ALL {
+        for warning in crate::warning_codes::WarningCode::ALL {
             validate_export_warning_code(warning.as_str())
                 .expect("declared warning code must be exportable");
         }

@@ -1,14 +1,14 @@
-//! Integration tests for `native_outstandings`, driven entirely by the real
+//! Integration tests for `native_outstandings`, primarily driven by real
 //! fixtures captured live from TallyPrime
-//! (`tests/fixtures/native/*.xml`, captured 2026-08-07). No network, no live
-//! Tally: every assertion here is against bytes already checked into the
-//! repository.
+//! (`tests/fixtures/native/*.xml`, captured 2026-08-07). The few synthetic
+//! policy boundaries identify themselves in their test comments; no synthetic
+//! XML is presented as a capture. No test makes a network or live-Tally call.
 
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     age_in_days, compute_native_outstandings, parse_native_bill_rows, parse_native_group_snapshot,
     parse_native_ledger_snapshot, AgeingAnchor, NativeBillRow, NativeGroupSnapshot,
-    NativeMasterSnapshot, NativeOutstandingsError,
+    NativeMasterSnapshot, NativeOutstandingsError, NativeOverdueCrosscheck,
 };
 
 /// A synthetic company GUID used to bind the native group snapshot rows
@@ -61,7 +61,7 @@ fn assert_exact(actual: &ExactDecimal, canonical: &str) {
 }
 
 #[test]
-fn nested_debtor_ledger_from_raw_group_and_ledger_bytes_is_not_dropped() {
+fn zero_bill_rows_with_nonzero_ledger_residual_are_unconfirmed() {
     let group_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
         <DATA><COLLECTION>
         <GROUP NAME="North Region" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Sundry Debtors</PARENT></GROUP>
@@ -92,6 +92,30 @@ fn nested_debtor_ledger_from_raw_group_and_ledger_bytes_is_not_dropped() {
 
     assert_exact(&result.residual_total, "100");
     assert_eq!(result.residuals[0].party, "Nested Customer");
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::UnconfirmedAsOfWithoutBillReferences
+    );
+}
+
+#[test]
+fn zero_bill_rows_without_ledger_residual_remain_honored() {
+    let result = compute_native_outstandings(
+        "Synthetic Empty Company",
+        &[],
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of(NATIVE_CAPTURE_AS_OF),
+        0,
+    )
+    .expect("an empty book has no money whose date could be misattributed");
+
+    assert_eq!(result.residual_total, ExactDecimal::zero());
+    assert_eq!(result.overdue_crosscheck, NativeOverdueCrosscheck::Honored);
 }
 
 #[test]
@@ -384,7 +408,7 @@ fn legacy_fixture_without_groups_keeps_name_only_party_classification() {
 }
 
 #[test]
-fn not_yet_due_bill_is_reported_without_becoming_overdue() {
+fn zero_only_future_overdue_counters_leave_the_as_of_date_unconfirmed() {
     let receivable = [NativeBillRow {
         party: "Synthetic customer".to_string(),
         reference: "SYNTHETIC-FUTURE-DUE".to_string(),
@@ -421,8 +445,8 @@ fn not_yet_due_bill_is_reported_without_becoming_overdue() {
         "a future-due bill must not be presented as the oldest overdue bill"
     );
     assert_eq!(
-        result.overdue_crosscheck_mismatches, 0,
-        "zero overdue days must agree with Tally's own BILLOVERDUE"
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence
     );
 }
 
@@ -442,6 +466,135 @@ fn validation_lab_empty_billoverdue_parses_as_not_applicable() {
         .expect("the captured future-due bill is present");
     assert_eq!(future.due_date.as_str(), "20261001");
     assert_eq!(future.tally_overdue_days, None);
+}
+
+#[test]
+fn captured_validation_lab_rows_prove_refusal_despite_a_future_counterless_bill() {
+    // Real bytes captured from Bridge Validation Lab for requested 2026-08-17.
+    // Four counters independently imply 2026-08-01; the remaining
+    // ALPHA-FUTURE bill is due 2026-10-01 and has an intentionally empty
+    // BILLOVERDUE. This is the regression for treating future counterless rows
+    // as non-evidence rather than rejecting unanimity.
+    let rows = parse_native_bill_rows(
+        BILLS_RECEIVABLE_VALIDATION_LAB,
+        &as_of(VALIDATION_LAB_BOOKS_FROM),
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+    )
+    .expect("captured validation bytes parse");
+    let result = compute_native_outstandings(
+        "Bridge Validation Lab",
+        &rows,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of(VALIDATION_CAPTURE_AS_OF),
+        BILLS_RECEIVABLE_VALIDATION_LAB.len(),
+    )
+    .expect("refusal remains a computable diagnostic result");
+
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::RefusedAsOf {
+            tally_as_of: as_of("20260801"),
+        }
+    );
+}
+
+#[test]
+fn counterless_rows_without_any_informative_counter_stay_partial() {
+    // Synthetic policy boundary, not a captured refusal response: the current
+    // capture contains one empty counter alongside four informative ones, but
+    // no captured response has every counter empty. This construction proves
+    // only Bridge's fail-closed rule that absence cannot establish acceptance.
+    let rows = [NativeBillRow {
+        party: "Synthetic".to_string(),
+        reference: "NO-COUNTER".to_string(),
+        bill_date: as_of("20260801"),
+        due_date: as_of("20260901"),
+        closing_balance: ExactDecimal::parse("-1").unwrap(),
+        tally_overdue_days: None,
+    }];
+    let result = compute_native_outstandings(
+        "Synthetic Company",
+        &rows,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of("20260817"),
+        0,
+    )
+    .expect("the synthetic policy boundary computes");
+
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::Inconsistent
+    );
+}
+
+#[test]
+fn scattered_implied_dates_remain_a_genuine_crosscheck_inconsistency() {
+    let rows = parse_native_bill_rows(
+        "<ENVELOPE>\
+         <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>ONE</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>30</BILLOVERDUE>\
+         <BILLFIXED><BILLDATE>2-Jul-26</BILLDATE><BILLREF>TWO</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>2-Jul-26</BILLDUE><BILLOVERDUE>31</BILLOVERDUE>\
+         </ENVELOPE>",
+        &as_of("20260101"),
+        &as_of("20260822"),
+    )
+    .unwrap();
+    let result = compute_native_outstandings(
+        "Bridge Ageing Lab",
+        &rows,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of("20260822"),
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::Inconsistent
+    );
+}
+
+#[test]
+fn honoured_as_of_keeps_native_outstandings_complete() {
+    let rows = parse_native_bill_rows(
+        "<ENVELOPE>\
+         <BILLFIXED><BILLDATE>1-Jun-26</BILLDATE><BILLREF>JUN</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jun-26</BILLDUE><BILLOVERDUE>82</BILLOVERDUE>\
+         <BILLFIXED><BILLDATE>1-Jul-26</BILLDATE><BILLREF>JUL</BILLREF><BILLPARTY>Lab</BILLPARTY></BILLFIXED><BILLCL>-1</BILLCL><BILLDUE>1-Jul-26</BILLDUE><BILLOVERDUE>52</BILLOVERDUE>\
+         </ENVELOPE>",
+        &as_of("20260101"),
+        &as_of("20260822"),
+    )
+    .unwrap();
+    let result = compute_native_outstandings(
+        "Bridge Ageing Lab",
+        &rows,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of("20260822"),
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(result.overdue_crosscheck, NativeOverdueCrosscheck::Honored);
+    assert_eq!(result.report.as_of_yyyymmdd, "20260822");
 }
 
 #[test]
@@ -731,7 +884,7 @@ fn ageing_buckets_billwise_lab_match_measured_values_at_as_of() {
 
     // In this book BILLDUE == BILLDATE for all 48 rows, so both anchors
     // agree; the DueDate default reproduces Tally's own BILLOVERDUE exactly.
-    assert_eq!(result.overdue_crosscheck_mismatches, 0);
+    assert_eq!(result.overdue_crosscheck, NativeOverdueCrosscheck::Honored);
     assert_exact(&report.receivable_total, "4514597");
     assert_eq!(report.payable_total, ExactDecimal::zero());
     assert_eq!(report.source_voucher_count, 0);

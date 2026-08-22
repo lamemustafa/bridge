@@ -5,6 +5,12 @@ import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outs
 import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstandings-csv";
 import { canStartOutstandingsRead } from "./outstandings-currency";
 import { groupOpenBillsByParty, type OpenBill, type PartyBillsState } from "./outstandings-bills";
+import {
+  asOfYyyymmdd,
+  bulkPartyStatementsInvokeArgument,
+  partyStatementInvokeArgument,
+  singleCompanyOutstandingsInvokeArgument,
+} from "./outstandings-as-of";
 
 type Props = {
   config: { host: string; port: number };
@@ -14,6 +20,8 @@ type Props = {
   /// is open, because a scope switch with one option is noise.
   onViewAllClients?: () => void;
   openBookCount?: number;
+  asOf: string;
+  onAsOfChange: (value: string) => void;
 };
 
 type Report = {
@@ -73,11 +81,25 @@ type LoadResult =
       statement_open_bills?: Array<OpenBill>;
       statement_unallocated_by_party?: Array<{ party: string; amount: string }>;
     }
-  | { state: "partial"; reason_code: string; synced_at_unix_ms: number };
+  | {
+      state: "partial";
+      reason_code: string;
+      requested_as_of_yyyymmdd?: string;
+      tally_as_of_yyyymmdd?: string;
+      synced_at_unix_ms: number;
+    };
 
 type InrCompleteResult = Extract<LoadResult, { state: "complete" }> & { currency_assertion: "INR" };
 
-export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllClients, openBookCount = 1 }: Props) {
+export function OutstandingsScreen({
+  config,
+  company,
+  onChangeSetup,
+  onViewAllClients,
+  openBookCount = 1,
+  asOf,
+  onAsOfChange,
+}: Props) {
   const [result, setResult] = React.useState<LoadResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -95,6 +117,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
   const [currencyCheck, setCurrencyCheck] = React.useState<"idle" | "checking" | "inr" | "undetermined">("idle");
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
   const requestVersion = React.useRef(0);
+  const initialReadKey = React.useRef<string | null>(null);
   // Settles the initial tab once per loaded report, keyed on the report's own
   // sync timestamp -- not on every render, and never after the operator has
   // clicked a tab, since this effect only fires again when a NEW report
@@ -115,26 +138,29 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
     setExpandedParty(null);
   }, [config.host, config.port, company?.guid, company?.name]);
 
-  const readPermitted = canStartOutstandingsRead(company, inrAssertedCompanyGuid);
-  const partialState = result?.state === "partial" ? outstandingsPartialState(result.reason_code) : null;
+  const currencyReadPermitted = canStartOutstandingsRead(company, inrAssertedCompanyGuid);
+  const requestedAsOf = asOfYyyymmdd(asOf);
+  const readPermitted = currencyReadPermitted && requestedAsOf !== null;
+  const partialState = result?.state === "partial"
+    ? outstandingsPartialState(
+      result.reason_code,
+      result.requested_as_of_yyyymmdd,
+      result.tally_as_of_yyyymmdd,
+    )
+    : null;
   const outstandingsUnavailable = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);
   const tallyReadAttempted = result?.state === "partial" && partialState?.tallyReadAttempted;
 
   const load = React.useCallback(async () => {
-    if (!readPermitted || !company) return;
+    if (!readPermitted || !company || !requestedAsOf) return;
     const version = requestVersion.current + 1;
     requestVersion.current = version;
     setLoading(true);
     setError(null);
     try {
-      const next = await invoke<LoadResult>("fetch_tally_outstandings", {
-        request: {
-          config,
-          company: company.name,
-          expected_company_guid: company.guid,
-          currency_assertion: "INR",
-        },
-      });
+      const argument = singleCompanyOutstandingsInvokeArgument(config, company, asOf);
+      if (!argument) return;
+      const next = await invoke<LoadResult>("fetch_tally_outstandings", argument);
       if (requestVersion.current !== version) return;
       setResult(next);
     } catch (cause) {
@@ -144,12 +170,16 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
     } finally {
       if (requestVersion.current === version) setLoading(false);
     }
-  }, [config.host, config.port, company?.guid, company?.name, readPermitted]);
+  }, [asOf, config.host, config.port, company?.guid, company?.name, readPermitted, requestedAsOf]);
 
   React.useEffect(() => {
-    if (readPermitted) void load();
-    // The screen is mounted only when the operator opens Outstandings.
-  }, [load, readPermitted]);
+    const key = company ? `${config.host}:${config.port}:${company.guid}` : null;
+    if (!readPermitted || !key || initialReadKey.current === key) return;
+    initialReadKey.current = key;
+    void load();
+    // A newly opened company keeps the existing default-today behaviour. A
+    // later date choice is deliberate and waits for the operator to refresh.
+  }, [company?.guid, config.host, config.port, load, readPermitted]);
 
   // Establish the base currency from Tally rather than making the operator
   // assert it. The INR requirement stays -- putting a rupee symbol in front of
@@ -225,7 +255,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
     );
   }
 
-  if (!readPermitted) {
+  if (!currencyReadPermitted) {
     if (currencyCheck === "checking" || currencyCheck === "idle") {
       return (
         <section className="panel wide outstandings-empty">
@@ -327,6 +357,21 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
           </p>
         </div>
         <div className="outstandings-heading-actions">
+          <label className="outstandings-as-of">
+            <span>As of</span>
+            <input
+              type="date"
+              value={asOf}
+              onChange={(event) => {
+                onAsOfChange(event.target.value);
+                setResult(null);
+                setError(null);
+              }}
+              disabled={loading}
+              aria-describedby="outstandings-as-of-help"
+            />
+            <small id="outstandings-as-of-help">Choose the exact date, then refresh.</small>
+          </label>
           {onViewAllClients && openBookCount > 1 && (
             <button className="secondary-action" type="button" onClick={onViewAllClients}>
               <Building2 size={16} />
@@ -374,7 +419,7 @@ export function OutstandingsScreen({ config, company, onChangeSetup, onViewAllCl
           )}
           <button className="secondary-action" type="button" onClick={onChangeSetup}>Manage Tally</button>
           {!outstandingsUnavailable && (
-            <button type="button" onClick={load} disabled={loading}>
+            <button type="button" onClick={load} disabled={loading || !requestedAsOf}>
               <RefreshCw size={18} className={loading ? "spin" : undefined} />
               {loading ? "Reading…" : result ? "Refresh" : "Load outstandings"}
             </button>
@@ -645,16 +690,7 @@ async function exportPartyStatement(
   party: string,
   format: "xlsx" | "pdf",
 ) {
-  return invoke<string>("export_party_statement", {
-    request: {
-      company: result.report.company_name,
-      as_of_yyyymmdd: result.report.as_of_yyyymmdd,
-      party,
-      format,
-      open_bills: result.statement_open_bills ?? [],
-      unallocated_by_party: result.statement_unallocated_by_party ?? [],
-    },
-  });
+  return invoke<string>("export_party_statement", partyStatementInvokeArgument(result, party, format));
 }
 
 type BulkPartyStatementResult = {
@@ -674,16 +710,10 @@ async function exportBulkPartyStatements(
   destination: string,
   format: "xlsx" | "pdf",
 ) {
-  return invoke<BulkPartyStatementResult>("export_bulk_party_statements", {
-    request: {
-      company: result.report.company_name,
-      as_of_yyyymmdd: result.report.as_of_yyyymmdd,
-      destination,
-      format,
-      open_bills: result.statement_open_bills ?? [],
-      unallocated_by_party: result.statement_unallocated_by_party ?? [],
-    },
-  });
+  return invoke<BulkPartyStatementResult>(
+    "export_bulk_party_statements",
+    bulkPartyStatementsInvokeArgument(result, destination, format),
+  );
 }
 
 /// Uses the same complete source rows and backend counting rule as the writer,

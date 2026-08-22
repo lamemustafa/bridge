@@ -30,10 +30,11 @@ use crate::sync::reconciliation::{
     build_reconciliation, build_terminal_proof, canonicalize_window, proof_record_counts_sha256,
     CanonicalWindowContext, CommitBatchInput, CommitBatchParts, ComparisonScope, EndProfileCheck,
     ExternalReferenceCatalog, ReconciliationDecision, ReconciliationError, ReconciliationInput,
-    ReconciliationMismatch, ReportTieOutEvidence, SourceStabilityCheck, TerminalKind, WarningCode,
+    ReconciliationMismatch, ReportTieOutEvidence, SourceStabilityCheck, TerminalKind,
     WindowEvidence,
 };
 use crate::tally::core_snapshot_start_authorized;
+use crate::warning_codes::WarningCode;
 
 const SNAPSHOT_STATE_VERSION: u16 = 5;
 const LEGACY_SNAPSHOT_STATE_VERSION_V3: u16 = 3;
