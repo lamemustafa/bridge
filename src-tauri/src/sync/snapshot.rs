@@ -4267,9 +4267,11 @@ mod tests {
     #[async_trait]
     impl TallyConnector for RuntimeReadOnlyConnector {
         async fn probe(&self) -> Result<ProbeResult, TallyError> {
+            let profile = fake_profile();
+            self.inner.observe_snapshot_profile(&profile)?;
             Ok(ProbeResult {
                 reachable: true,
-                profile: fake_profile(),
+                profile,
             })
         }
 
