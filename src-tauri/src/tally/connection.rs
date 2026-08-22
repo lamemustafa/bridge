@@ -1446,6 +1446,20 @@ mod tests {
         request
     }
 
+    fn assert_company_collection_request_shape(request: &str) {
+        assert!(request.contains("<TYPE>Collection</TYPE>"));
+        for method in ["NAME", "GUID", "PRODUCTNAME"] {
+            assert!(request.contains(&format!("<NATIVEMETHOD>{method}</NATIVEMETHOD>")));
+        }
+        for expression in [
+            "<COMPUTE>EduMode : $$LicenseInfo:IsEducationalMode</COMPUTE>",
+            "<COMPUTE>Silver : $$LicenseInfo:IsSilver</COMPUTE>",
+            "<COMPUTE>Gold : $$LicenseInfo:IsGold</COMPUTE>",
+        ] {
+            assert!(request.contains(expression));
+        }
+    }
+
     #[test]
     fn detects_tallyprime_status() {
         assert!(matches!(
@@ -2623,8 +2637,7 @@ mod tests {
             )
             .expect("POST request uses decodable UTF-16 XML")
             .text;
-            assert!(post_xml.contains("<TYPE>Collection</TYPE>"));
-            assert!(post_xml.contains("<FETCH>NAME,GUID</FETCH>"));
+            assert_company_collection_request_shape(&post_xml);
             assert!(!post_xml.contains("<SVCURRENTCOMPANY"));
             assert!(!post_xml.contains("<REPORT"));
             assert!(!post_xml.contains("<FORM "));
@@ -2844,9 +2857,9 @@ mod tests {
         );
     }
 
-    /// Measured live 2026-08-07: the exact `Company` collection response for
-    /// a Tally instance with three loaded companies, `CMPINFO` counter trap
-    /// included. Proves `probe` requests `CompanyListV2` on the happy path
+    /// A gateway-shaped `Company` collection response with two loaded
+    /// synthetic companies and the `CMPINFO` counter trap included. Proves
+    /// `probe` requests `CompanyListV2` on the happy path
     /// and trusts its success without ever falling back to the legacy
     /// `CompanyListV1` report: the mock server has exactly one POST response
     /// queued, so a fallback request would hang and fail this test.
@@ -2860,7 +2873,7 @@ mod tests {
             let mut requests = Vec::new();
             for (index, body) in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
-                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Aarav Trading Company Demo\"><GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Ageing Lab\"><GUID TYPE=\"String\">eebb9a9f-1679-4468-9e8f-814c729674cb</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Billwise Lab\"><GUID TYPE=\"String\">75f7566d-7a4f-431a-9642-e93a9d06d57d</GUID></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
+                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Synthetic Company A\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company A</NAME><GUID TYPE=\"String\">synthetic-guid-a</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n   <COMPANY NAME=\"Synthetic Company B\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company B</NAME><GUID TYPE=\"String\">synthetic-guid-b</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
             ]
             .into_iter()
             .enumerate()
@@ -2891,14 +2904,13 @@ mod tests {
         .expect("probe synthetic Tally endpoint");
         let requests = server.await.expect("synthetic Tally server task");
 
-        assert_eq!(probe.companies.len(), 3);
-        assert_eq!(probe.companies[0].name, "Aarav Trading Company Demo");
-        assert_eq!(
-            probe.companies[0].guid.as_deref(),
-            Some("bb8ad19e-6aef-4239-a917-87fec0c6215e")
-        );
-        assert_eq!(probe.companies[1].name, "Bridge Ageing Lab");
-        assert_eq!(probe.companies[2].name, "Bridge Billwise Lab");
+        assert_eq!(probe.companies.len(), 2);
+        assert_eq!(probe.companies[0].name, "Synthetic Company A");
+        assert_eq!(probe.companies[0].guid.as_deref(), Some("synthetic-guid-a"));
+        assert_eq!(probe.companies[1].name, "Synthetic Company B");
+        assert_eq!(probe.companies[1].guid.as_deref(), Some("synthetic-guid-b"));
+        assert_eq!(probe.profile.product, "TallyPrime");
+        assert_eq!(probe.profile.mode.as_deref(), Some("Licensed"));
         assert_eq!(
             probe.profile.transports[&TransportId::XmlHttp].state,
             CapabilityState::Supported
@@ -2922,8 +2934,7 @@ mod tests {
             post_request.len(),
         )
         .expect("POST request uses decodable UTF-16 XML");
-        assert!(post_xml.text.contains("<TYPE>Collection</TYPE>"));
+        assert_company_collection_request_shape(&post_xml.text);
         assert!(post_xml.text.contains("<ID>BridgeCompanyExtent</ID>"));
-        assert!(post_xml.text.contains("<FETCH>NAME,GUID</FETCH>"));
     }
 }
