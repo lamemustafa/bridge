@@ -9,6 +9,36 @@ export function todayAsDateInput(now = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+export type OutstandingsAsOfSelection = {
+  value: string;
+  operatorSelected: boolean;
+};
+
+/** Starts an as-of field in automatic local-calendar mode. */
+export function automaticOutstandingsAsOf(now = new Date()): OutstandingsAsOfSelection {
+  return { value: todayAsDateInput(now), operatorSelected: false };
+}
+
+/** Records a deliberate operator date, which automatic refreshes must not replace. */
+export function operatorSelectedOutstandingsAsOf(value: string): OutstandingsAsOfSelection {
+  return { value, operatorSelected: true };
+}
+
+/** Refreshes only the automatic local-date default; an operator choice is durable. */
+export function refreshAutomaticOutstandingsAsOf(
+  selection: OutstandingsAsOfSelection,
+  now = new Date(),
+): OutstandingsAsOfSelection {
+  return selection.operatorSelected ? selection : automaticOutstandingsAsOf(now);
+}
+
+/** Wait until the next local midnight, including daylight-saving calendar shifts. */
+export function millisecondsUntilNextLocalMidnight(now = new Date()) {
+  const nextMidnight = new Date(now);
+  nextMidnight.setHours(24, 0, 0, 0);
+  return Math.max(1, nextMidnight.getTime() - now.getTime());
+}
+
 /** The Tauri contract accepts only canonical YYYYMMDD values. */
 export function asOfYyyymmdd(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.replace(/-/g, "") : null;

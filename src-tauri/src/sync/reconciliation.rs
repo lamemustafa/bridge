@@ -16,41 +16,9 @@ use crate::db::tally_mirror::{
     Confidence, ObservationStatus, ObservedRecordInput, RunOutcome, SourceIdentityInput,
     VerificationState,
 };
+use crate::warning_codes::WarningCode;
 
 const MAX_SAFE_DRILL_DOWN_IDS: usize = 20;
-
-macro_rules! declared_warning_codes {
-    ($($variant:ident => $code:literal),+ $(,)?) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
-        #[serde(rename_all = "snake_case")]
-        pub enum WarningCode {
-            $($variant),+
-        }
-
-        impl WarningCode {
-            pub const ALL: &[Self] = &[$(Self::$variant),+];
-
-            pub const fn as_str(self) -> &'static str {
-                match self {
-                    $(Self::$variant => $code),+
-                }
-            }
-
-            pub fn parse(value: &str) -> Option<Self> {
-                Self::ALL
-                    .iter()
-                    .copied()
-                    .find(|warning| warning.as_str() == value)
-            }
-        }
-    };
-}
-
-declared_warning_codes! {
-    AdaptiveWindowSplit => "adaptive_window_split",
-    ForeignMasterTextRenderingDegraded => "foreign_master_text_rendering_degraded",
-    NativeOutstandingsAsOfUnconfirmedWithoutBillReferences => "native_outstandings_as_of_unconfirmed_without_bill_references",
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]

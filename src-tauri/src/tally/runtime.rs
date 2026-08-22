@@ -1,7 +1,6 @@
 use super::{ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger};
 use super::{TallyProbeResult, TallyVoucher};
 use crate::observability::BodyBytesObservation;
-use crate::sync::reconciliation::WarningCode;
 use crate::tally::connection::NativePairedRead;
 use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
 #[cfg(feature = "voucher-scan")]
@@ -16,6 +15,7 @@ use crate::tally::runtime_control::{
     ReadAttempt, ReadExecutionError, ReadFailureClass, ReadOperation, ReadRetryPolicy,
     TELEMETRY_PREVIEW_SCHEMA,
 };
+use crate::warning_codes::WarningCode;
 use bridge_tally_core::{ExactDecimal, TallyDate};
 use bridge_tally_protocol::native_outstandings::{
     compute_native_outstandings, parse_company_currency, parse_native_bill_rows,

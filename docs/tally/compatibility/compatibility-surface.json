@@ -323,7 +323,7 @@
     },
     {
       "path": "src-tauri/src/db/tally_mirror.rs",
-      "sha256": "67e399aefe92a555c3f4bb755a0425f584ee0adee35648ef0b5187d99b6b9b1d"
+      "sha256": "2a13e7ac3beb0a88738e17c59572f82ae3b419284bced2707b255a60007fb2f2"
     },
     {
       "path": "src-tauri/src/db/tally_write_store.rs",
@@ -331,7 +331,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "5a2e2c35da52a7c3b01c5810882a1eb3a9ea45fac82556b1eee1a715989585b9"
+      "sha256": "f80bb2c7d8c2b99a080aa85df894e13ac4454ae919094db35d9904a898753b17"
     },
     {
       "path": "src-tauri/src/sync/coordinator.rs",
@@ -339,11 +339,11 @@
     },
     {
       "path": "src-tauri/src/sync/reconciliation.rs",
-      "sha256": "29563f6c46e5af7e2bcc49eeed2eff17e6d993f65485eb1aec029280951379f3"
+      "sha256": "910157ea0d5f2bbaa2432326edf8291c4c0742c9f1976205f025adb0a6c89b61"
     },
     {
       "path": "src-tauri/src/sync/snapshot.rs",
-      "sha256": "bdfe9268b00453c9b842a3d25af5bcb5840753d3d07d4bb63262222eb8297c9f"
+      "sha256": "5208e216efc33025da534c78920e136e14f295af177e3bf0f8a18aa9e0ae4aef"
     },
     {
       "path": "src-tauri/src/tally/canonical_window.rs",
@@ -371,7 +371,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "7e6b255bb3a727aa282ff98730e79699fcb67b0f43f97d9e844e73f8f0fa6fb4"
+      "sha256": "ced0638dbc3d536ff75d38424469ead247d57613c7ecc89cf61a4c86af40352c"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -390,6 +390,14 @@
       "sha256": "654938f3207822cd9889b8d81cd53684ca43c856b727fbabc09aadde6f9e82eb"
     },
     {
+      "path": "src-tauri/src/warning_codes.rs",
+      "sha256": "711e59091f040fa61d73445a6b1a23a62a0308faefc1ea4a132f520c7db229bb"
+    },
+    {
+      "path": "src/AllClientsScreen.tsx",
+      "sha256": "4c24a27d24b968ef92e29182af9b1661836859827b9adb48e5ba4c67db002977"
+    },
+    {
       "path": "src/OutstandingsScreen.tsx",
       "sha256": "faa8eaf510deed1c310d0754fe66b1662f5275c7b247562f2d438011410f87ff"
     },
@@ -399,11 +407,11 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "d8cd31a468c71614b1b785c6d5f8c6b0d8f425870130dc8a6cb04e158af89051"
+      "sha256": "3dcfb4b9e37baef1397cb8a5fd3f9d3e7356ffa9628eb072d371a76a1423248f"
     },
     {
       "path": "src/outstandings-as-of.ts",
-      "sha256": "1640bf680407c4bb86f8c2d177c5e07f38c0e5c1f2d928b363d8edd5fa773dc2"
+      "sha256": "c0cd7e65d6328b4274e52b77b3107f2690ec923f9441e428d3ec095cce687291"
     },
     {
       "path": "src/outstandings-copy.ts",
@@ -470,5 +478,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "dd36495721ddd3668b7b5b2c5c5823ff879f6363ec94b32de513b4df93db7cf1"
+  "manifest_sha256": "dc9f6fdbaa77345a5449fd22c30fc0afc94db2b07292921de210491c25e67cf6"
 }
