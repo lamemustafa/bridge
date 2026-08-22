@@ -4,59 +4,11 @@ use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use serde::Serialize;
 
 pub use crate::outstandings_shared::{
-    CompanyBookExtent, OutstandingsError, PinnedCompany, VoucherAlterIdHighWater,
+    CompanyBookExtent, DateBoundaryProfile, OutstandingsError, PinnedCompany,
+    VoucherAlterIdHighWater,
 };
 
 const MAX_NARROW_DATE_WINDOW_DAYS: usize = 31;
-
-/// Compatibility rule for Tally period boundaries (guide §2.7 / I12). The
-/// day 1/2/31 rule is observed only in Educational mode; unknown and licensed
-/// modes rely on returned-span verification at the completeness boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DateBoundaryProfile {
-    EducationRestricted,
-    ModeAgnostic,
-}
-
-impl DateBoundaryProfile {
-    fn accepts_boundary(self, date: &TallyDate) -> bool {
-        match self {
-            Self::EducationRestricted => matches!(&date.as_str()[6..8], "01" | "02" | "31"),
-            Self::ModeAgnostic => true,
-        }
-    }
-
-    fn accepts_partition_end(self, date: &TallyDate) -> bool {
-        match self {
-            Self::EducationRestricted => matches!(&date.as_str()[6..8], "01" | "31"),
-            Self::ModeAgnostic => true,
-        }
-    }
-
-    /// The greatest date at or before `limit` that this profile accepts as a
-    /// window boundary.
-    ///
-    /// A reporting window must not run past the as-of date. `LastVoucherDate`
-    /// can be later than today when the book contains a future-dated voucher,
-    /// and a window ending there makes `compute_outstandings` reject the whole
-    /// read (as-of may not precede the window end) instead of simply excluding
-    /// future activity. Clamping needs the profile because an Education
-    /// boundary is only legal on day 01, 02 or 31.
-    pub fn latest_boundary_at_or_before(self, limit: &TallyDate) -> Option<TallyDate> {
-        match self {
-            Self::ModeAgnostic => Some(limit.clone()),
-            // An INEXACT clamp would silently shrink the scanned period while
-            // the report still carries the caller's as-of date: on Education
-            // with as-of on day 15, the cutoff would fall back to day 02 and
-            // every posting from the 3rd onward would vanish from a report
-            // labelled "as of the 15th". A wrong number under a confident label
-            // is worse than no number, so accept the boundary only when it lands
-            // exactly on the requested date and let the caller fail closed
-            // otherwise.
-            Self::EducationRestricted => self.accepts_boundary(limit).then(|| limit.clone()),
-        }
-    }
-}
 
 /// The complete report period. It cannot be rendered directly as a segment
 /// request; callers must first partition it into `NarrowDateWindow` values.

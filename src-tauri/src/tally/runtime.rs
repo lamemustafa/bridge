@@ -28,11 +28,10 @@ use bridge_tally_protocol::native_outstandings::{
 use bridge_tally_protocol::outstandings::{
     assemble_partitioned_scan, assemble_scan, compute_outstandings,
     corroborate_empty_date_partition, nearest_non_empty_primary_partition, CompleteWitnessPair,
-    CorroboratedDatePartition, DateBoundaryProfile, DateWindow, NarrowDateWindow, PartialScan,
-    ScanResult, SegmentVerification, StrictlyWiderDateCover, VoucherAlterIdHighWater,
-    WitnessPairVerification,
+    CorroboratedDatePartition, DateWindow, NarrowDateWindow, PartialScan, ScanResult,
+    SegmentVerification, StrictlyWiderDateCover, VoucherAlterIdHighWater, WitnessPairVerification,
 };
-use bridge_tally_protocol::outstandings_shared::OutstandingsReport;
+use bridge_tally_protocol::outstandings_shared::{DateBoundaryProfile, OutstandingsReport};
 use bridge_tally_transport::TallyTransportError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -363,8 +362,7 @@ fn paired_coverage_partial_reason(coverage: &LedgerOpeningCoverageRead) -> Optio
     }
 }
 
-#[cfg(feature = "voucher-scan")]
-fn select_outstandings_date_boundary_profile(
+fn select_date_boundary_profile(
     profile: Option<&bridge_tally_core::CapabilityProfile>,
 ) -> DateBoundaryProfile {
     let Some(profile) = profile else {
@@ -1222,6 +1220,7 @@ impl TallyRuntime {
         company: String,
         expected_company_guid: String,
     ) -> anyhow::Result<Vec<TallyLedger>> {
+        let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
         self.execute(
             config,
@@ -1230,7 +1229,11 @@ impl TallyRuntime {
             move |client| {
                 let company = company.clone();
                 let expected_company_guid = expected_company_guid.clone();
-                async move { client.fetch_ledgers(&company, &expected_company_guid).await }
+                async move {
+                    client
+                        .fetch_ledgers(&company, &expected_company_guid, boundary_profile)
+                        .await
+                }
             },
         )
         .await
@@ -1594,9 +1597,7 @@ impl TallyRuntime {
         let boundary_profile = self
             .outstandings_boundary_profile_override
             .unwrap_or_else(|| {
-                select_outstandings_date_boundary_profile(
-                    cached_probe.as_ref().map(|probe| &probe.profile),
-                )
+                select_date_boundary_profile(cached_probe.as_ref().map(|probe| &probe.profile))
             });
         let _lease = self.begin_ordinary_read(&config)?;
         let result = self
@@ -2047,6 +2048,17 @@ impl TallyRuntime {
             .as_ref()
             .map(|probe| probe.result.clone());
         Ok(cached)
+    }
+
+    pub(crate) fn master_ledger_export_boundary_profile(
+        &self,
+        config: &TallyConfig,
+    ) -> anyhow::Result<DateBoundaryProfile> {
+        Ok(select_date_boundary_profile(
+            self.cached_probe(config)?
+                .as_ref()
+                .map(|probe| &probe.profile),
+        ))
     }
 
     pub fn reserve_cached_probe_fresh(
@@ -2788,24 +2800,24 @@ mod tests {
         profile.product = "TallyPrime Edit Log".to_string();
         profile.mode = Some("Education".to_string());
         assert_eq!(
-            select_outstandings_date_boundary_profile(Some(&profile)),
+            select_date_boundary_profile(Some(&profile)),
             DateBoundaryProfile::EducationRestricted
         );
 
         profile.mode = Some("Licensed".to_string());
         assert_eq!(
-            select_outstandings_date_boundary_profile(Some(&profile)),
+            select_date_boundary_profile(Some(&profile)),
             DateBoundaryProfile::ModeAgnostic
         );
         assert_eq!(
-            select_outstandings_date_boundary_profile(None),
+            select_date_boundary_profile(None),
             DateBoundaryProfile::ModeAgnostic
         );
 
         profile.product = "Unknown".to_string();
         profile.mode = Some("Education".to_string());
         assert_eq!(
-            select_outstandings_date_boundary_profile(Some(&profile)),
+            select_date_boundary_profile(Some(&profile)),
             DateBoundaryProfile::ModeAgnostic,
             "inconsistent or incomplete detection must rely on I12 rather than inventing compatibility evidence"
         );

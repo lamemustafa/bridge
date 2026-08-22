@@ -323,6 +323,33 @@ rule is well-supported but is not a complete model of period resolution.
 shown on Tally's About screen is a **display** period and does not bound what a filtered
 collection can reach.
 
+### 5.5 `OPENINGBALANCE` follows `SVFROMDATE`, not just the ledger master
+
+**VERIFIED — live 2026-08-21, Aarav.** In a native `List of Ledgers` export,
+`OPENINGBALANCE` is the opening of the loaded `SVFROMDATE` period, inclusive of the ledger
+master's own opening balance. It is not permanently the master opening, and it is not a
+date-less/current-display value.
+
+Two ledgers discriminate the candidate meanings:
+
+| Ledger | Master opening | FY24 movement | `SVFROMDATE=20250401` opening | Check |
+| --- | ---: | ---: | ---: | --- |
+| HDFC Current | 350000.00 | -598044.20 | -248044.20 | `350000.00 + -598044.20 = -248044.20` |
+| Petty | 25000.00 | -33960.00 | -8960.00 | `25000.00 + -33960.00 = -8960.00` |
+
+At `FROM=BOOKSFROM`, only 3 of 88 Aarav ledgers were non-zero; the same date-less request had
+59 of 88 non-zero. That separates the book-start/master-opening result from the currently loaded
+display period. Bridge therefore pins the native master export to `BOOKSFROM..LASTVOUCHERDATE`
+and treats its period as an accounting input, not a cosmetic request variable.
+
+**Compatibility boundary.** Education mode can silently refuse a non-01/02/31 `BOOKSFROM` and
+load its display period instead. The master response does not carry a returned date span, so this
+path cannot apply the voucher reader's I12 span comparison. Before dispatch, Bridge instead uses
+the endpoint's `DateBoundaryProfile`: verified Education evidence rejects unsupported boundaries;
+licensed or unknown evidence remains mode-agnostic and permits ordinary calendar dates. Do not
+replace this with a global day-of-month rule: licensed Tally remains unverified but must not be
+silently narrowed by an Education-only observation.
+
 ---
 
 ## 6. Crashes and rendering traps

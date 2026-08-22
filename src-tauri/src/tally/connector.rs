@@ -11,6 +11,7 @@ use bridge_tally_protocol::{
     native_outstandings::{
         render_native_group_snapshot_request, render_native_ledger_export_request,
         render_native_voucher_export_request, render_native_voucher_type_export_request,
+        NativeLedgerExportPeriod,
     },
     outstandings_shared::{parse_company_book_extent, require_master_witness, CompanyBookExtent},
     parse_companies_from_collection, parse_ledger_period_balance_report,
@@ -27,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 use super::runtime::{TallyRuntimeControlError, TallyRuntimeReadError};
 use super::{tdl_engine, TallyConfig, TallyRuntime};
 
-const CORE_QUERY_PROFILE: &str = "core_accounting_v2";
+const CORE_QUERY_PROFILE: &str = "core_accounting_v3";
 
 pub(super) struct SealedReadRequest(String);
 
@@ -160,11 +161,18 @@ impl RuntimeTallyConnector {
         let ledger_opening_extent = self
             .read_pinned_company_book_extent(&company_name, &expected_guid)
             .await?;
-        let native_ledger_request = render_native_ledger_export_request(
-            &company_name,
-            ledger_opening_extent.books_from(),
-            ledger_opening_extent.last_voucher_date(),
-        );
+        let boundary_profile = self
+            .runtime
+            .master_ledger_export_boundary_profile(&self.config)
+            .map_err(|_| invalid_data("master_ledger_export_boundary_profile_unavailable"))?;
+        let ledger_period = NativeLedgerExportPeriod::new(
+            boundary_profile,
+            ledger_opening_extent.books_from().clone(),
+            ledger_opening_extent.last_voucher_date().clone(),
+        )
+        .map_err(|_| invalid_data("master_ledger_export_period_not_supported"))?;
+        let native_ledger_request =
+            render_native_ledger_export_request(&company_name, &ledger_period);
         let validation_guid = expected_guid.clone();
         let first_ledger_xml = self
             .post_xml_validated(native_ledger_request.clone(), move |xml| {

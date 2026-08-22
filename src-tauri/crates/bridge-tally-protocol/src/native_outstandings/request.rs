@@ -9,10 +9,52 @@
 
 use bridge_tally_primitives::TallyDate;
 
+use crate::outstandings_shared::DateBoundaryProfile;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeBillsReportKind {
     Receivable,
     Payable,
+}
+
+/// A master export period whose boundaries have been admitted by the
+/// endpoint's compatibility profile. `OPENINGBALANCE` is period-sensitive,
+/// so rendering a `List of Ledgers` request without this proof would permit
+/// Education mode to silently substitute its display period for `BOOKSFROM`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeLedgerExportPeriod {
+    from: TallyDate,
+    to: TallyDate,
+}
+
+impl NativeLedgerExportPeriod {
+    pub fn new(
+        boundary_profile: DateBoundaryProfile,
+        from: TallyDate,
+        to: TallyDate,
+    ) -> Result<Self, NativeLedgerExportPeriodError> {
+        if from > to {
+            return Err(NativeLedgerExportPeriodError::InvalidRange);
+        }
+        if !boundary_profile.accepts_boundary(&from) || !boundary_profile.accepts_boundary(&to) {
+            return Err(NativeLedgerExportPeriodError::UnsupportedBoundary);
+        }
+        Ok(Self { from, to })
+    }
+
+    pub fn from(&self) -> &TallyDate {
+        &self.from
+    }
+
+    pub fn to(&self) -> &TallyDate {
+        &self.to
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeLedgerExportPeriodError {
+    InvalidRange,
+    UnsupportedBoundary,
 }
 
 impl NativeBillsReportKind {
@@ -77,19 +119,19 @@ pub fn render_native_ledger_snapshot_request(
 /// `OPENINGBALANCE` is load-bearingly pinned to the company's own book range:
 /// measured on 2026-08-21, omitting the period returned the opening at the
 /// current loaded display period, while `SVFROMDATE=BOOKSFROM` returns the
-/// ledger master's own opening. Callers must supply the validated book extent
-/// rather than inventing a date (the closed `TallyDate` alphabet is the same
-/// request-boundary guarantee used by `render_native_voucher_export_request`).
+/// ledger master's own opening. See TALLY_PROTOCOL_REFERENCE §5.5 for the
+/// discriminating live observations and confidence boundary. Callers must
+/// supply a `NativeLedgerExportPeriod`, which binds the validated book extent
+/// to the endpoint compatibility profile before any ledger request is sent.
 pub fn render_native_ledger_export_request(
     company: &str,
-    from: &TallyDate,
-    to: &TallyDate,
+    period: &NativeLedgerExportPeriod,
 ) -> String {
     format!(
         r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
-        from = from.as_str(),
-        to = to.as_str(),
+        from = period.from().as_str(),
+        to = period.to().as_str(),
     )
 }
 
@@ -239,6 +281,30 @@ mod tests {
     }
 
     #[test]
+    fn master_export_period_uses_profile_evidence_not_a_global_day_rule() {
+        let arbitrary_boundary = TallyDate::parse("20240115").unwrap();
+        let book_end = TallyDate::parse("20260701").unwrap();
+        assert_eq!(
+            NativeLedgerExportPeriod::new(
+                DateBoundaryProfile::EducationRestricted,
+                arbitrary_boundary.clone(),
+                book_end.clone(),
+            ),
+            Err(NativeLedgerExportPeriodError::UnsupportedBoundary),
+            "the observed Education profile must reject before a silently ignored read"
+        );
+        assert!(
+            NativeLedgerExportPeriod::new(
+                DateBoundaryProfile::ModeAgnostic,
+                arbitrary_boundary,
+                book_end,
+            )
+            .is_ok(),
+            "licensed and unknown modes retain arbitrary calendar boundaries"
+        );
+    }
+
+    #[test]
     fn escapes_company_names_in_both_requests() {
         let from = TallyDate::parse("20240401").unwrap();
         let to = TallyDate::parse("20260731").unwrap();
@@ -270,7 +336,13 @@ mod tests {
         assert!(!group_xml.contains("<FIELD>"));
         assert!(!group_xml.contains("$$NumItems"));
 
-        let export_xml = render_native_ledger_export_request("A & B <Co>", &from, &to);
+        let export_period = NativeLedgerExportPeriod::new(
+            DateBoundaryProfile::ModeAgnostic,
+            from.clone(),
+            to.clone(),
+        )
+        .expect("mode-agnostic profile accepts valid calendar dates");
+        let export_xml = render_native_ledger_export_request("A & B <Co>", &export_period);
         assert!(export_xml.contains("A &amp; B &lt;Co&gt;"));
         assert!(export_xml.contains(r#"<FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE</FETCH>"#));
         assert!(!export_xml.contains("<REPORT>"));
