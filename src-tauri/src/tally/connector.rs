@@ -1,9 +1,9 @@
 use crate::tally::canonical_window::build_core_window;
 use bridge_tally_core::report_tie_out::{LedgerPeriodBalance, LedgerPeriodBalanceReport};
 use bridge_tally_core::{
-    CanonicalPackWindow, CapabilityEvidence, CapabilityPackId, CapabilityState, CompanyRef,
-    EvidenceConfidence, ExactDecimal, PackBatch, ProbeResult, ReadResponseScope, ReadWindow,
-    RequestContext, SourceIdentity, TallyConnector, TallyDate, TallyError,
+    CanonicalPackWindow, CapabilityEvidence, CapabilityPackId, CapabilityProfile, CapabilityState,
+    CompanyRef, EvidenceConfidence, ExactDecimal, PackBatch, ProbeResult, ReadResponseScope,
+    ReadWindow, RequestContext, SourceIdentity, TallyConnector, TallyDate, TallyError,
     CORE_ACCOUNTING_SCHEMA_VERSION,
 };
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
@@ -11,8 +11,11 @@ use bridge_tally_protocol::{
     native_outstandings::{
         render_native_group_snapshot_request, render_native_ledger_export_request,
         render_native_voucher_export_request, render_native_voucher_type_export_request,
+        NativeLedgerExportPeriod,
     },
-    outstandings_shared::{parse_company_book_extent, require_master_witness, CompanyBookExtent},
+    outstandings_shared::{
+        parse_company_book_extent, require_master_witness, CompanyBookExtent, DateBoundaryProfile,
+    },
     parse_companies_from_collection, parse_ledger_period_balance_report,
     parse_native_group_source_records_with_evidence,
     parse_native_ledger_source_records_with_evidence,
@@ -22,12 +25,13 @@ use bridge_tally_protocol::{
 };
 use bridge_tally_transport::TallyTransportError;
 use sha2::{Digest, Sha256};
+use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use super::runtime::{TallyRuntimeControlError, TallyRuntimeReadError};
 use super::{tdl_engine, TallyConfig, TallyRuntime};
 
-const CORE_QUERY_PROFILE: &str = "core_accounting_v2";
+const CORE_QUERY_PROFILE: &str = "core_accounting_v3";
 
 pub(super) struct SealedReadRequest(String);
 
@@ -48,6 +52,10 @@ pub struct RuntimeTallyConnector {
     company: CompanyRef,
     canary_context: RequestContext,
     cancellation: CancellationToken,
+    // Snapshot lifecycle evidence is intentionally separate from the runtime's
+    // single-use interactive-review cache. It is replaced only by the latest
+    // fresh snapshot probe and is consumed solely by this connector's reads.
+    snapshot_boundary_profile: Arc<RwLock<Option<DateBoundaryProfile>>>,
 }
 
 impl RuntimeTallyConnector {
@@ -70,11 +78,30 @@ impl RuntimeTallyConnector {
             company,
             canary_context,
             cancellation: CancellationToken::new(),
+            snapshot_boundary_profile: Arc::new(RwLock::new(None)),
         })
     }
 
     pub fn cancel(&self) {
         self.cancellation.cancel();
+    }
+
+    /// Records the exact profile a snapshot lifecycle probe just observed. This
+    /// is connector-local run evidence, not the runtime's interactive-review
+    /// cache, and supplies every core extraction until the next fresh probe.
+    pub(crate) fn observe_snapshot_profile(
+        &self,
+        profile: &CapabilityProfile,
+    ) -> Result<DateBoundaryProfile, TallyError> {
+        let boundary_profile = self
+            .runtime
+            .master_ledger_export_boundary_profile_from_profile(Some(profile));
+        *self
+            .snapshot_boundary_profile
+            .write()
+            .map_err(|_| invalid_data("snapshot_boundary_profile_unavailable"))? =
+            Some(boundary_profile);
+        Ok(boundary_profile)
     }
 
     async fn post_xml_validated<P>(
@@ -99,6 +126,7 @@ impl RuntimeTallyConnector {
     async fn extract_core_window(
         &self,
         context: &RequestContext,
+        boundary_profile: DateBoundaryProfile,
     ) -> Result<CanonicalPackWindow, TallyError> {
         if context.company.identity != self.company.identity {
             return Err(invalid_data("company_identity_mismatch"));
@@ -160,7 +188,14 @@ impl RuntimeTallyConnector {
         let ledger_opening_extent = self
             .read_pinned_company_book_extent(&company_name, &expected_guid)
             .await?;
-        let native_ledger_request = render_native_ledger_export_request(&company_name);
+        let ledger_period = NativeLedgerExportPeriod::new(
+            boundary_profile,
+            ledger_opening_extent.books_from().clone(),
+            ledger_opening_extent.last_voucher_date().clone(),
+        )
+        .map_err(|_| invalid_data("master_ledger_export_period_not_supported"))?;
+        let native_ledger_request =
+            render_native_ledger_export_request(&company_name, &ledger_period);
         let validation_guid = expected_guid.clone();
         let first_ledger_xml = self
             .post_xml_validated(native_ledger_request.clone(), move |xml| {
@@ -300,7 +335,11 @@ impl RuntimeTallyConnector {
                 "company_identity_ambiguous"
             }));
         }
-        let core_evidence = match self.extract_core_window(&self.canary_context).await {
+        let boundary_profile = self.observe_snapshot_profile(&result.profile)?;
+        let core_evidence = match self
+            .extract_core_window(&self.canary_context, boundary_profile)
+            .await
+        {
             Ok(window) => core_canary_capability(&window),
             Err(error) => CapabilityEvidence {
                 state: CapabilityState::Unknown,
@@ -370,7 +409,12 @@ impl TallyConnector for RuntimeTallyConnector {
         // Capability probes happen before a durable run receives its started_at timestamp.
         // Always perform a new source read here, including for the same canary context, so
         // pre-run observations can never enter the snapshot as if they were run data.
-        self.extract_core_window(context).await
+        let boundary_profile = self
+            .snapshot_boundary_profile
+            .read()
+            .map_err(|_| invalid_data("snapshot_boundary_profile_unavailable"))?
+            .ok_or_else(|| invalid_data("snapshot_boundary_profile_unavailable"))?;
+        self.extract_core_window(context, boundary_profile).await
     }
 
     async fn read_core_period_balance_report(
@@ -695,8 +739,16 @@ mod tests {
     /// witness to be present. See `core_window_bracket_fails_closed_when_altmstid_is_absent`
     /// for the case where it deliberately is not.
     fn company_extent(company_name: &str, company_guid: &str) -> String {
+        company_extent_with_books_from(company_name, company_guid, "20240101")
+    }
+
+    fn company_extent_with_books_from(
+        company_name: &str,
+        company_guid: &str,
+        books_from: &str,
+    ) -> String {
         format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="{company_name}"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">{company_name}</NAME><GUID TYPE="String">{company_guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="{company_name}"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">{books_from}</BOOKSFROM><NAME TYPE="String">{company_name}</NAME><GUID TYPE="String">{company_guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         )
     }
 
@@ -753,8 +805,8 @@ mod tests {
         const GROUPS: &[u8] = include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_wr2_with_identity.utf16le.xml"
         );
-        const LEDGERS: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_wr2_core_window.xml"
+        const LEDGERS: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_wr2_core_window.utf16le.xml"
         );
         const VOUCHER_TYPES: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/native/voucher_types_native_wr2.xml"
@@ -811,10 +863,11 @@ mod tests {
             "नमस्ते ट्रेडर्स"
         );
         let groups = decode_bomless_utf16le_capture(GROUPS);
+        let ledgers = decode_bomless_utf16le_capture(LEDGERS);
         let window = build_core_window(
             &context,
             native_groups_for_core_window(&groups, COMPANY_GUID).expect("captured groups parse"),
-            parse_native_ledger_source_records_with_evidence(LEDGERS, COMPANY_GUID)
+            parse_native_ledger_source_records_with_evidence(&ledgers, COMPANY_GUID)
                 .expect("captured ledgers parse"),
             parse_native_voucher_type_source_records_with_evidence(VOUCHER_TYPES, COMPANY_GUID)
                 .expect("captured voucher types parse"),
@@ -868,8 +921,8 @@ mod tests {
         const GROUPS: &[u8] = include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_aarav_with_identity.utf16le.xml"
         );
-        const LEDGERS: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_aarav.xml"
+        const LEDGERS: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_aarav.utf16le.xml"
         );
 
         // There is no captured voucher or voucher-type export for this company. The complete
@@ -879,7 +932,8 @@ mod tests {
         let group_xml = decode_bomless_utf16le_capture(GROUPS);
         let groups =
             native_groups_for_core_window(&group_xml, COMPANY_GUID).expect("captured groups parse");
-        let ledgers = parse_native_ledger_source_records_with_evidence(LEDGERS, COMPANY_GUID)
+        let ledger_xml = decode_bomless_utf16le_capture(LEDGERS);
+        let ledgers = parse_native_ledger_source_records_with_evidence(&ledger_xml, COMPANY_GUID)
             .expect("captured ledgers parse");
         assert_eq!((groups.records.len(), ledgers.records.len()), (28, 88));
         let group_ids_by_name = groups
@@ -953,7 +1007,7 @@ mod tests {
                 .map(|balance| ExactDecimal::parse(balance.clone()).expect("exact opening balance"))
                 .as_ref()
                 .map(ExactDecimal::as_str),
-            Some("18255356.27")
+            Some("0.00")
         );
         assert_eq!(
             resolved_ledger_parents
@@ -982,6 +1036,19 @@ mod tests {
 
     async fn spawn_method_routed_server(
         post_responses: Vec<String>,
+    ) -> (SocketAddr, JoinHandle<Vec<String>>) {
+        spawn_method_routed_server_with_extra_request_check(post_responses, false).await
+    }
+
+    async fn spawn_method_routed_server_refusing_extra_requests(
+        post_responses: Vec<String>,
+    ) -> (SocketAddr, JoinHandle<Vec<String>>) {
+        spawn_method_routed_server_with_extra_request_check(post_responses, true).await
+    }
+
+    async fn spawn_method_routed_server_with_extra_request_check(
+        post_responses: Vec<String>,
+        refuse_extra_requests: bool,
     ) -> (SocketAddr, JoinHandle<Vec<String>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -1042,6 +1109,14 @@ mod tests {
                     .write_all(&response)
                     .await
                     .expect("write routed response");
+            }
+            if refuse_extra_requests {
+                assert!(
+                    tokio::time::timeout(std::time::Duration::from_millis(200), listener.accept())
+                        .await
+                        .is_err(),
+                    "snapshot start sent a ledger export after its Education profile rejected BOOKSFROM"
+                );
             }
             methods
         });
@@ -1366,7 +1441,7 @@ mod tests {
                 .unwrap();
 
         let error = connector
-            .read_pack_window(&context)
+            .extract_core_window(&context, DateBoundaryProfile::ModeAgnostic)
             .await
             .expect_err("a core-window bracket formed without ALTMSTID must fail closed");
         assert!(
@@ -1471,6 +1546,91 @@ mod tests {
             "core evidence was {core_evidence:?}; methods were {methods:?}"
         );
         assert_eq!(methods.len(), 23);
+        assert_eq!(methods[0], "GET");
+        assert!(methods[1..].iter().all(|method| method == "POST"));
+    }
+
+    #[tokio::test]
+    async fn snapshot_start_uses_its_fresh_education_profile_before_ledger_export() {
+        let _simulator_guard = simulator_test_lock().lock().await;
+        let company_guid = "education-mid-month-guid";
+        let company_collection = format!(
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Education Mid-month"><GUID TYPE="String">{company_guid}</GUID><PRODUCTNAME TYPE="String">TallyPrime</PRODUCTNAME><EDUMODE>Yes</EDUMODE><SILVER>No</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        let extent =
+            company_extent_with_books_from("Education Mid-month", company_guid, "20240115");
+        // The nine POST responses below cover the actual snapshot probe and
+        // the full group/extent bracket that precedes the ledger export. The
+        // routed server then fails if anything reaches it: an Education
+        // profile must reject the mid-month BOOKSFROM before List of Ledgers.
+        let (address, server) = spawn_method_routed_server_refusing_extra_requests(vec![
+            company_collection,
+            extent.clone(),
+            extent.clone(),
+            native_groups(company_guid, &[]),
+            native_groups(company_guid, &[]),
+            extent.clone(),
+            extent.clone(),
+            extent.clone(),
+            extent,
+        ])
+        .await;
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{address}"),
+                company_guid,
+            ),
+            display_name: "Education Mid-month".to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-education-mid-month-snapshot-start".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let runtime = TallyRuntime::default();
+        let connector =
+            RuntimeTallyConnector::new(runtime.clone(), config.clone(), company, context)
+                .expect("snapshot context is valid");
+
+        let probe = connector
+            .probe()
+            .await
+            .expect("the snapshot probe reports a refused core canary in-band");
+        let core_evidence = probe
+            .profile
+            .packs
+            .get(&CapabilityPackId::CoreAccounting)
+            .expect("core evidence is reported");
+        assert_eq!(
+            core_evidence.safe_reason_code.as_deref(),
+            Some("master_ledger_export_period_not_supported")
+        );
+        assert_eq!(probe.profile.product, "TallyPrime");
+        assert_eq!(probe.profile.mode.as_deref(), Some("Education"));
+        assert!(
+            !core_snapshot_start_authorized(core_evidence),
+            "a refused ledger period cannot authorize a snapshot"
+        );
+        assert!(
+            runtime
+                .cached_probe(&config)
+                .expect("cache query")
+                .is_none(),
+            "snapshot lifecycle evidence must not replace interactive setup review"
+        );
+        let methods = server.await.expect("join snapshot-start guard server");
+        assert_eq!(methods.len(), 10, "one GET and nine pre-ledger POSTs only");
         assert_eq!(methods[0], "GET");
         assert!(methods[1..].iter().all(|method| method == "POST"));
     }
@@ -1696,14 +1856,20 @@ mod tests {
         )
         .unwrap();
 
-        let pre_run_canary = connector.extract_core_window(&context).await.unwrap();
+        let pre_run_canary = connector
+            .extract_core_window(&context, DateBoundaryProfile::ModeAgnostic)
+            .await
+            .unwrap();
         let PackBatch::CoreAccounting(pre_run_batch) = pre_run_canary.batch else {
             panic!("expected core canary batch");
         };
         assert_eq!(pre_run_batch.groups.len(), 1);
         assert_eq!(pre_run_batch.groups[0].name, "Primary");
 
-        let snapshot_window = connector.read_pack_window(&context).await.unwrap();
+        let snapshot_window = connector
+            .extract_core_window(&context, DateBoundaryProfile::ModeAgnostic)
+            .await
+            .unwrap();
         let PackBatch::CoreAccounting(snapshot_batch) = snapshot_window.batch else {
             panic!("expected core snapshot batch");
         };

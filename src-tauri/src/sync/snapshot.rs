@@ -78,7 +78,7 @@ impl PlannedWindow {
             id: format!("window:{}", &hash[..24]),
             range,
             query_profile: CanonicalText::parse(match pack {
-                CapabilityPackId::CoreAccounting => "core_accounting_v2".to_string(),
+                CapabilityPackId::CoreAccounting => "core_accounting_v3".to_string(),
                 _ => format!("{}_v1", pack_code(pack)),
             })
             .expect("built-in query profile is canonical"),
@@ -4267,9 +4267,11 @@ mod tests {
     #[async_trait]
     impl TallyConnector for RuntimeReadOnlyConnector {
         async fn probe(&self) -> Result<ProbeResult, TallyError> {
+            let profile = fake_profile();
+            self.inner.observe_snapshot_profile(&profile)?;
             Ok(ProbeResult {
                 reachable: true,
-                profile: fake_profile(),
+                profile,
             })
         }
 
@@ -4523,6 +4525,96 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn durable_v2_core_query_plan_cannot_resume_under_the_v3_profile() {
+        let mut current = SnapshotPlan {
+            resume_key: "resume-profile-upgrade".to_string(),
+            run_id: "run-profile-upgrade".to_string(),
+            capability_snapshot_id: "capability-profile-upgrade".to_string(),
+            mirror_company_id: "company-profile-upgrade".to_string(),
+            company: CompanyRef {
+                identity: SourceIdentity {
+                    bridge_source_lineage: "lineage".to_string(),
+                    company_guid: "company-guid".to_string(),
+                    observed_fingerprint: "fingerprint".to_string(),
+                },
+                display_name: "Synthetic Company".to_string(),
+            },
+            pack: CapabilityPackId::CoreAccounting,
+            pack_schema_version: PackSchemaVersion { major: 1, minor: 0 },
+            capability_profile_version: 1,
+            capability_profile_sha256: "0".repeat(64),
+            source_product: "TallyPrime".to_string(),
+            source_transport: "xml_http".to_string(),
+            source_release: None,
+            source_mode: Some("Education".to_string()),
+            external_references: ExternalReferenceCatalog::Unavailable,
+            windows: vec![PlannedWindow::deterministic(
+                CapabilityPackId::CoreAccounting,
+                ReadWindow {
+                    from_yyyymmdd: "20260701".to_string(),
+                    to_yyyymmdd: "20260701".to_string(),
+                },
+            )],
+            adaptive_window_policy: Some(AdaptiveWindowPolicy::bounded_default()),
+            capability_canary_window: Some(PlannedWindow::deterministic(
+                CapabilityPackId::CoreAccounting,
+                ReadWindow {
+                    from_yyyymmdd: "20260701".to_string(),
+                    to_yyyymmdd: "20260701".to_string(),
+                },
+            )),
+            started_at_unix_ms: 2_000,
+            freshness_target_seconds: 60,
+        };
+        let mut durable = DurableSnapshotState::new(&current, Freshness::NeverVerified)
+            .expect("the current v3 plan is constructible");
+
+        // This emulates the immutable plan embedded in a durable state saved
+        // before the opening-balance query change. Constructing it through
+        // today's API would (correctly) reject it before persistence, so the
+        // test installs the historical bytes' semantic content directly.
+        let legacy_profile = CanonicalText::parse("core_accounting_v2").unwrap();
+        current.windows[0].query_profile = legacy_profile.clone();
+        current
+            .capability_canary_window
+            .as_mut()
+            .expect("canary")
+            .query_profile = legacy_profile;
+        durable.plan_sha256 = current.fingerprint().unwrap();
+        durable.plan = Some(current.clone());
+        durable
+            .windows
+            .get_mut(&current.windows[0].id)
+            .unwrap()
+            .planned = current.windows[0].clone();
+
+        let expected_current = durable
+            .plan
+            .as_ref()
+            .expect("historic plan installed")
+            .clone();
+        let mut upgraded = expected_current.clone();
+        upgraded.windows[0] = PlannedWindow::deterministic(
+            CapabilityPackId::CoreAccounting,
+            upgraded.windows[0].range.clone(),
+        );
+        upgraded.capability_canary_window = Some(PlannedWindow::deterministic(
+            CapabilityPackId::CoreAccounting,
+            upgraded
+                .capability_canary_window
+                .as_ref()
+                .expect("historic canary")
+                .range
+                .clone(),
+        ));
+
+        assert!(matches!(
+            durable.assert_resumable_with(&upgraded),
+            Err(SnapshotError::ResumePlanMismatch)
+        ));
     }
 
     #[tokio::test]

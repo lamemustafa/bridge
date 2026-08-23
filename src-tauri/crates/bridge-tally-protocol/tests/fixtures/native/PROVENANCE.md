@@ -39,3 +39,24 @@ above ASCII, email addresses, 10-digit phone patterns, GSTINs, or PANs. The
 fixture names are limited to the `BVL` test namespace and Tally built-ins.
 The source copies and fixture copies compared byte-for-byte before staging;
 the repository fixture-integrity gate supplies the committed-object check.
+
+## Period-pinned native ledger exports — 2026-08-21
+
+These are verbatim BOM-less UTF-16LE response bytes from the production
+`List of Ledgers` request. Each request sent `SVFROMDATE=BOOKSFROM` and
+`SVTODATE=LASTVOUCHERDATE` for the GUID-verified company extent, so
+`OPENINGBALANCE` is the ledger master opening rather than the opening for
+Tally's currently loaded display period. The three synthetic companies were
+healthy before and after capture; each row carried `ALTERID`.
+
+| Fixture | Company | Book range | Rows | Bytes | SHA-256 |
+| --- | --- | --- | ---: | ---: | --- |
+| `ledgers_native_aarav.utf16le.xml` | Aarav Trading Company Demo | 20240401–20260401 | 88 | 101,984 | `36d3fa3236cd40826ac9d54077276d7a9c75fdb47653c077a14f43c3b36aa351` |
+| `ledgers_native_wr2_core_window.utf16le.xml` | WR2 Unicode Lab | 20260401–20260801 | 9 | 12,648 | `64708e189f2ed6e71bf6311cee810cd15281793f77d7687f20a2910945cf3e05` |
+| `ledgers_native_bvl.utf16le.xml` | Bridge Validation Lab | 20250401–20260801 | 13 | 16,806 | `ac32b3d4c8b36f342a1062e4a2b7443e85653f82cd0a6fcb978aad3edf1b8113` |
+
+The Aarav fixture intentionally carries Tally's stored double-encoded names,
+including `ZZ CafÃ© NaÃ¯ve Ledger`. This is an observed source-byte property,
+not a capture defect: do not normalize, repair, or hand-edit it. The WR2
+fixture carries clean non-ASCII names and is the suitable fixture for tests
+requiring a clean Unicode ledger name.

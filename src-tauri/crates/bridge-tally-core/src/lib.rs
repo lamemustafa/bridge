@@ -45,6 +45,7 @@ pub enum TransportId {
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityFeatureId {
     EndpointReachability,
+    ProductAndMode,
     LoadedCompanies,
     StableCompanyIdentity,
     EncodingBehaviour,

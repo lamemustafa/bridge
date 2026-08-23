@@ -256,7 +256,8 @@ impl ReadOnlyProfileId {
 pub enum ReadOnlyProfile<'a> {
     CompanyListV1,
     /// Tally's documented `Company` collection (`TYPE=Collection`), fetching
-    /// only `NAME` and `GUID`. Unlike `CompanyListV1`'s custom TDL report,
+    /// identity plus fixed gateway product/mode evidence. Unlike
+    /// `CompanyListV1`'s custom TDL report,
     /// this returns the ordinary shaped `HEADER/STATUS=1` success envelope,
     /// so it can satisfy the trust check instead of being parsed as an
     /// unverified direct report.
@@ -478,7 +479,10 @@ fn render_company_list() -> String {
     .to_string()
 }
 
-/// Tally's documented `Company` collection, fetching only `NAME` and `GUID`.
+/// Tally's documented `Company` collection. It returns company identity plus
+/// endpoint-wide product/mode facts from fixed, no-space `$$LicenseInfo`
+/// functions. Those facts are parsed separately so a missing capability field
+/// cannot make ordinary company discovery unavailable.
 /// Unlike `render_company_list`'s custom TDL report — which Tally answers
 /// with a bare `<ENVELOPE><COMPANYINFO>...` document carrying no
 /// `HEADER`/`STATUS` at all — a `TYPE=Collection` export returns the
@@ -500,9 +504,14 @@ fn render_company_list_v2() -> String {
             </STATICVARIABLES>
             <TDL>
                 <TDLMESSAGE>
-                    <COLLECTION NAME="BridgeCompanyExtent" ISMODIFY="No">
+                    <COLLECTION NAME="BridgeCompanyExtent" ISMODIFY="No" ISINITIALIZE="Yes">
                         <TYPE>Company</TYPE>
-                        <FETCH>NAME,GUID</FETCH>
+                        <NATIVEMETHOD>NAME</NATIVEMETHOD>
+                        <NATIVEMETHOD>GUID</NATIVEMETHOD>
+                        <NATIVEMETHOD>PRODUCTNAME</NATIVEMETHOD>
+                        <COMPUTE>EduMode : $$LicenseInfo:IsEducationalMode</COMPUTE>
+                        <COMPUTE>Silver : $$LicenseInfo:IsSilver</COMPUTE>
+                        <COMPUTE>Gold : $$LicenseInfo:IsGold</COMPUTE>
                     </COLLECTION>
                 </TDLMESSAGE>
             </TDL>
@@ -1078,22 +1087,27 @@ mod tests {
     /// `CompanyListV2` is a native Tally `Company` collection, not the
     /// embedded-TDL custom report `CompanyListV1` builds: no `REPORT`/`FORM`/
     /// `PART`/`LINE`/`FIELD` stack and no computed TDL function call (a
-    /// `<COMPUTE>` element or a `$Field:Argument` invocation). It also carries
-    /// no `SVCURRENTCOMPANY`, so discovery is never scoped to one company --
-    /// the request must be able to return every company Tally has loaded.
+    /// report stack, and no dynamic `$Field:Argument` invocation). Its three
+    /// fixed `$$LicenseInfo` arguments contain no spaces. It also carries no
+    /// `SVCURRENTCOMPANY`, so discovery is never scoped to one company -- the
+    /// request must be able to return every company Tally has loaded.
     #[test]
     fn company_list_v2_is_a_native_collection_scoped_to_no_single_company() {
         let request = ReadOnlyProfile::CompanyListV2.render();
         assert!(request.contains("<TYPE>Collection</TYPE>"));
         assert!(request.contains("<TYPE>Company</TYPE>"));
-        assert!(request.contains("<FETCH>NAME,GUID</FETCH>"));
+        for field in ["NAME", "GUID", "PRODUCTNAME"] {
+            assert!(request.contains(&format!("<NATIVEMETHOD>{field}</NATIVEMETHOD>")));
+        }
+        for function in ["IsEducationalMode", "IsSilver", "IsGold"] {
+            assert!(request.contains(&format!("$$LicenseInfo:{function}")));
+        }
         for report_stack_tag in ["<REPORT", "<FORM ", "<PART ", "<LINE ", "<FIELD "] {
             assert!(
                 !request.contains(report_stack_tag),
                 "unexpected report stack tag {report_stack_tag}"
             );
         }
-        assert!(!request.contains("<COMPUTE>"));
         assert!(!request.contains("<SVCURRENTCOMPANY"));
     }
 
@@ -1107,7 +1121,7 @@ mod tests {
             ),
             (
                 ReadOnlyProfileId::CompanyListV2,
-                "09396e22eb8a4f51214c417730599a381ddd5752e42e3dd44103409b4daaccae",
+                "bcd28a4609082d6e7f33c9de735f914bdaf5422f88e4f3ec02a2e11ae6e9980f",
             ),
             (
                 ReadOnlyProfileId::CompanyBookExtentV1,

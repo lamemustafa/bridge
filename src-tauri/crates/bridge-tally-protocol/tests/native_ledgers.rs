@@ -1,14 +1,28 @@
 use bridge_tally_protocol::{
-    parse_native_ledger_source_records_with_evidence, ParsedSourceIdentityKind,
+    decode_tally_xml_response_bytes_limited, parse_native_ledger_source_records_with_evidence,
+    ExpectedTallyTextEncoding, ParsedSourceIdentityKind,
 };
 
-const AARAV: &str = include_str!("fixtures/native/ledgers_native_aarav.xml");
-const WR2: &str = include_str!("fixtures/native/ledgers_native_wr2_core_window.xml");
+const AARAV: &[u8] = include_bytes!("fixtures/native/ledgers_native_aarav.utf16le.xml");
+const WR2: &[u8] = include_bytes!("fixtures/native/ledgers_native_wr2_core_window.utf16le.xml");
+const BVL: &[u8] = include_bytes!("fixtures/native/ledgers_native_bvl.utf16le.xml");
+
+fn decode_utf16le(bytes: &[u8]) -> String {
+    decode_tally_xml_response_bytes_limited(
+        bytes,
+        "text/xml; charset=utf-16",
+        ExpectedTallyTextEncoding::Utf16Le,
+        bytes.len(),
+    )
+    .expect("captured BOM-less UTF-16LE response decodes")
+    .text
+}
 
 #[test]
-fn captured_native_ledgers_preserve_real_identity_signed_balances_and_invalid_parent_reference() {
+fn captured_native_ledgers_preserve_real_identity_book_openings_and_invalid_parent_reference() {
+    let aarav = decode_utf16le(AARAV);
     let parsed = parse_native_ledger_source_records_with_evidence(
-        AARAV,
+        &aarav,
         "bb8ad19e-6aef-4239-a917-87fec0c6215e",
     )
     .expect("captured native ledger collection parses");
@@ -29,7 +43,7 @@ fn captured_native_ledgers_preserve_real_identity_signed_balances_and_invalid_pa
             && record.record.parent.as_deref() == Some("\u{fffd}#4; Primary")
     }));
 
-    let negatives = parsed
+    let non_zero_openings = parsed
         .records
         .iter()
         .filter(|record| {
@@ -37,16 +51,30 @@ fn captured_native_ledgers_preserve_real_identity_signed_balances_and_invalid_pa
                 .record
                 .opening_balance
                 .as_deref()
-                .is_some_and(|balance| balance.starts_with('-'))
+                .is_some_and(|balance| balance != "0.00")
         })
-        .count();
-    assert_eq!(negatives, 30);
+        .map(|record| {
+            (
+                record.record.name.as_str(),
+                record.record.opening_balance.as_deref(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        non_zero_openings,
+        [
+            ("Capital Account - Arjun Mehta", Some("-800000.00")),
+            ("HDFC Bank Current Account", Some("350000.00")),
+            ("Petty Cash", Some("25000.00")),
+        ]
+    );
 }
 
 #[test]
 fn captured_wr2_native_ledger_preserves_the_discriminating_signed_decimal() {
+    let wr2 = decode_utf16le(WR2);
     let parsed = parse_native_ledger_source_records_with_evidence(
-        WR2,
+        &wr2,
         "61c6de69-1748-461c-ad3f-162cb949df9f",
     )
     .expect("captured native ledger collection parses");
@@ -68,7 +96,8 @@ fn captured_wr2_native_ledger_preserves_the_discriminating_signed_decimal() {
 
 #[test]
 fn native_ledgers_fail_closed_when_opening_balance_or_company_prefix_is_absent() {
-    let missing_balance = WR2.replace(
+    let wr2 = decode_utf16le(WR2);
+    let missing_balance = wr2.replace(
         "<OPENINGBALANCE TYPE=\"Amount\">-50000.00</OPENINGBALANCE>",
         "",
     );
@@ -78,7 +107,7 @@ fn native_ledgers_fail_closed_when_opening_balance_or_company_prefix_is_absent()
     )
     .is_err());
     assert!(parse_native_ledger_source_records_with_evidence(
-        WR2,
+        &wr2,
         "00000000-0000-0000-0000-000000000000",
     )
     .is_err());
@@ -92,11 +121,12 @@ fn native_ledgers_fail_closed_when_opening_balance_or_company_prefix_is_absent()
 /// defaulted.
 #[test]
 fn native_ledger_row_omitting_parent_entirely_is_rejected() {
-    let row_start = WR2
+    let wr2 = decode_utf16le(WR2);
+    let row_start = wr2
         .find(r#"<PARENT TYPE="String">Bridge Nested Debtors WR4</PARENT>"#)
         .expect("captured row carries the discriminating PARENT element");
     let row_end = row_start + r#"<PARENT TYPE="String">Bridge Nested Debtors WR4</PARENT>"#.len();
-    let omitted_parent = format!("{}{}", &WR2[..row_start], &WR2[row_end..]);
+    let omitted_parent = format!("{}{}", &wr2[..row_start], &wr2[row_end..]);
     assert!(
         !omitted_parent.contains("Bridge Nested Debtors WR4"),
         "the removal must actually drop the PARENT element for this test to prove anything"
@@ -122,12 +152,13 @@ fn native_ledger_row_omitting_parent_entirely_is_rejected() {
 /// above, which is now rejected instead.
 #[test]
 fn native_ledger_row_with_an_explicitly_empty_parent_is_accepted_and_stays_rooted() {
-    let empty_parent = WR2.replace(
+    let wr2 = decode_utf16le(WR2);
+    let empty_parent = wr2.replace(
         r#"<PARENT TYPE="String">Bridge Nested Debtors WR4</PARENT>"#,
         r#"<PARENT TYPE="String"></PARENT>"#,
     );
     assert_ne!(
-        empty_parent, WR2,
+        empty_parent, wr2,
         "the substitution must actually change the fixture for this test to prove anything"
     );
 
@@ -152,7 +183,8 @@ fn native_ledger_row_with_an_explicitly_empty_parent_is_accepted_and_stays_roote
 
 #[test]
 fn foreign_ledger_prefix_is_counted_without_rejecting_an_otherwise_bound_collection() {
-    let mixed_prefix = AARAV.replacen(
+    let aarav = decode_utf16le(AARAV);
+    let mixed_prefix = aarav.replacen(
         "bb8ad19e-6aef-4239-a917-87fec0c6215e-00000107",
         "01234567-89ab-cdef-0123-456789abcdef-00000107",
         1,
@@ -164,4 +196,30 @@ fn foreign_ledger_prefix_is_counted_without_rejecting_an_otherwise_bound_collect
     .expect("one foreign master does not erase the response's company binding");
     assert_eq!(parsed.evidence.company_guid_prefix_match_count, 87);
     assert_eq!(parsed.evidence.company_guid_prefix_mismatch_count, 1);
+}
+
+#[test]
+fn captured_bvl_native_ledgers_preserve_the_book_openings() {
+    let bvl = decode_utf16le(BVL);
+    let parsed = parse_native_ledger_source_records_with_evidence(
+        &bvl,
+        "c6afd306-00e1-4f51-802a-babe44daddd3",
+    )
+    .expect("captured native ledger collection parses");
+
+    assert_eq!(parsed.records.len(), 13);
+    assert_eq!(
+        parsed
+            .records
+            .iter()
+            .filter(|record| {
+                record
+                    .record
+                    .opening_balance
+                    .as_deref()
+                    .is_some_and(|balance| balance != "0.00")
+            })
+            .count(),
+        2
+    );
 }

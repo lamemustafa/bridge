@@ -115,7 +115,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/src/lib.rs",
-      "sha256": "b8714ec541b4521c8ec98fe66619f56b7d4f119ee19833a8a701632e0fab06f4"
+      "sha256": "a375d2dac79d93062907ece8f3e6c02dd330a3d1c7345679421930487de4f492"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/src/pack_models.rs",
@@ -151,7 +151,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "ea75dcf184e9bc4507aa4d164c4449382c5d33854a021973e9f77d8c44758119"
+      "sha256": "cfbaeffd219f7faff34b68fc5e89ae67affcafdb7f78709dc645e6269325ffbf"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/compute.rs",
@@ -159,7 +159,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/request.rs",
-      "sha256": "fb4a7e2f4abf99aea857b4c62c5010adff8e362c8959fa926de64a3d41e0d773"
+      "sha256": "92d77ef47933a52510eb186768f550546b36de385eb15b1d019d065346d72bb6"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire.rs",
@@ -171,7 +171,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/model.rs",
-      "sha256": "6164b99d9765009353f5e7807ea483ba80909bf981e79a9f73a50f10601c9a59"
+      "sha256": "a62437fb389b3c2908bdbbc70bbd1bc50dadca232257484bda0fcf7dc9bed6d7"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/parser.rs",
@@ -187,7 +187,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings_shared.rs",
-      "sha256": "01ad61d73ccfef0fe01c3a203786018d87c3697f3ea61cfc00cb39a93d74dadc"
+      "sha256": "76c8e1ae3e1cc0e6264ac8267860f8549a77a3b6c60004444e50d2bc65d64ba5"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/tolerant_xml.rs",
@@ -195,7 +195,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/xml_read_profiles.rs",
-      "sha256": "d89b8e5a62f574df8ac17311ee56e981081f58ed41852306c1f09a2daed97581"
+      "sha256": "fefddf45e898eeee1dc5bc16723a9d81ba1857f92f59e08be0ca29505a5e345c"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml",
@@ -247,7 +247,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "c529b99c8172056ef01162ee239a910966adf9c6fb4803bfdffb2dbd6c8999a8"
+      "sha256": "90c7ba9036384bfb8bffb82e7f87b59c2cbf7f44a92f9216a720a0ab2fd8f44d"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -343,7 +343,7 @@
     },
     {
       "path": "src-tauri/src/sync/snapshot.rs",
-      "sha256": "5208e216efc33025da534c78920e136e14f295af177e3bf0f8a18aa9e0ae4aef"
+      "sha256": "a8b05800a388a5456ce83e0de691cba73d9b25332dfa95e9a7fa98fda3a2858d"
     },
     {
       "path": "src-tauri/src/tally/canonical_window.rs",
@@ -355,11 +355,11 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "9ec7cf5614ebaa56ec3bff88655c324b16e31f19f80060b53807027386273a0e"
+      "sha256": "06d0eb836313510b675c99680cfbfbda9329f2ca337150d7e9a8f822d3bdef83"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
-      "sha256": "8972bf3f8b57b38b38a74773124c54d5062a1b9eb772de9c9cdbab789364f5d9"
+      "sha256": "5fac0629a5aed5e997069a2076aab478ba56ca1208a4832934aab911e2b3fd44"
     },
     {
       "path": "src-tauri/src/tally/mod.rs",
@@ -371,7 +371,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "0c9de123b3dbbffc0f5c898e48bb294f3dac0b615b7e1e54dbeadf9fb03078b1"
+      "sha256": "1cfbbbe99f301736f74f02f5c154c879f35437b45f1b870993562a5154909880"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -478,5 +478,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "5d8ac1774bf79a2d3a70ed04398c0b4d250f3025d68f5364b5ff6b5074e53484"
+  "manifest_sha256": "f1f4a2dcdb27b87a332c61d540a88cd973a9b9d50099fca56a81b81d1cccdf6e"
 }

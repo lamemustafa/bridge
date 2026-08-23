@@ -30,10 +30,13 @@ use bridge_tally_protocol::outstandings::{
 use bridge_tally_protocol::{
     native_outstandings::{
         render_native_ledger_export_request, render_native_voucher_export_request,
+        NativeLedgerExportPeriod,
     },
-    outstandings_shared::{parse_company_book_extent, require_master_witness, CompanyBookExtent},
-    parse_companies_for_interactive_discovery, parse_ledger_source_records_with_evidence,
-    parse_native_ledger_source_records_with_evidence,
+    outstandings_shared::{
+        parse_company_book_extent, require_master_witness, CompanyBookExtent, DateBoundaryProfile,
+    },
+    parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
+    parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
     parse_native_voucher_source_records_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
@@ -99,6 +102,59 @@ pub struct TallyProbeResult {
     pub profile: CapabilityProfile,
     pub selected_read_scope: Option<SelectedReadScopeEvidence>,
     pub passport_snapshot_id: Option<String>,
+}
+
+struct GatewayProductModeEvidence {
+    product: String,
+    mode: Option<String>,
+    capability: CapabilityEvidence,
+}
+
+impl GatewayProductModeEvidence {
+    fn unavailable() -> Self {
+        Self {
+            product: "Unknown".to_string(),
+            mode: None,
+            capability: CapabilityEvidence {
+                state: CapabilityState::Unknown,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: Some("product_mode_evidence_unavailable".to_string()),
+            },
+        }
+    }
+
+    fn from_observation(
+        observation: bridge_tally_protocol::CompanyGatewayCapabilityObservation,
+    ) -> Self {
+        // `IsEducationalMode=Yes` has not been captured from a live Education
+        // instance: that inference is the complement of the observed licensed
+        // response (`No`, `IsSilver=Yes`), not a second live observation.
+        let mode = if observation.educational_mode {
+            Some("Education".to_string())
+        } else if observation.silver || observation.gold {
+            Some("Licensed".to_string())
+        } else {
+            None
+        };
+        let capability = if mode.is_some() {
+            CapabilityEvidence {
+                state: CapabilityState::Supported,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: None,
+            }
+        } else {
+            CapabilityEvidence {
+                state: CapabilityState::Unknown,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: Some("license_mode_not_established".to_string()),
+            }
+        };
+        Self {
+            product: observation.product,
+            mode,
+            capability,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -255,8 +311,9 @@ impl TallyClient {
         let mut packs = BTreeMap::new();
         let mut companies = Vec::new();
 
+        let mut gateway_product_mode = GatewayProductModeEvidence::unavailable();
         let xml_evidence = self
-            .company_discovery_evidence(&mut connection, &mut companies)
+            .company_discovery_evidence(&mut connection, &mut companies, &mut gateway_product_mode)
             .await?;
         transports.insert(TransportId::XmlHttp, xml_evidence.clone());
         transports.insert(
@@ -285,6 +342,10 @@ impl TallyClient {
                 confidence: EvidenceConfidence::Observed,
                 safe_reason_code: Some("xml_endpoint_responded".to_string()),
             },
+        );
+        features.insert(
+            CapabilityFeatureId::ProductAndMode,
+            gateway_product_mode.capability.clone(),
         );
         let empty_company_reason = || {
             if xml_evidence.state == CapabilityState::Supported {
@@ -404,12 +465,13 @@ impl TallyClient {
             connection,
             companies,
             profile: CapabilityProfile {
-                profile_version: 2,
-                // Product/release/mode require separate evidence authority;
-                // `/status` text cannot promote them.
-                product: "Unknown".to_string(),
+                // Version 3 adds observed gateway product/mode evidence. It
+                // intentionally invalidates persisted version-2 snapshots,
+                // whose literal Unknown/None values had a weaker meaning.
+                profile_version: 3,
+                product: gateway_product_mode.product,
                 release: None,
-                mode: None,
+                mode: gateway_product_mode.mode,
                 transports,
                 features,
                 packs,
@@ -434,12 +496,16 @@ impl TallyClient {
         &self,
         connection: &mut ConnectionStatus,
         companies: &mut Vec<TallyCompany>,
+        gateway_product_mode: &mut GatewayProductModeEvidence,
     ) -> anyhow::Result<CapabilityEvidence> {
         let xml = self
             .post_xml(ReadOnlyProfile::CompanyListV2.render())
             .await?;
         match xml_parser::parse_companies_from_collection(&xml) {
             Ok(discovered) => {
+                *gateway_product_mode = parse_company_gateway_capability_observation(&xml)
+                    .map(GatewayProductModeEvidence::from_observation)
+                    .unwrap_or_else(|_| GatewayProductModeEvidence::unavailable());
                 connection.reachable = true;
                 if connection.error.is_some() {
                     connection.error = Some("status_heuristic_unavailable".to_string());
@@ -651,12 +717,23 @@ impl TallyClient {
         &self,
         company: &str,
         expected_company_guid: &str,
+        boundary_profile: DateBoundaryProfile,
     ) -> anyhow::Result<Vec<TallyLedger>> {
         let opening_extent = self
             .fetch_company_book_extent(company, expected_company_guid)
             .await?;
+        let period = NativeLedgerExportPeriod::new(
+            boundary_profile,
+            opening_extent.books_from().clone(),
+            opening_extent.last_voucher_date().clone(),
+        )
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Tally master ledger export period is not supported by the endpoint compatibility profile"
+            )
+        })?;
         let paired = self
-            .fetch_native_report_paired(render_native_ledger_export_request(company))
+            .fetch_native_report_paired(render_native_ledger_export_request(company, &period))
             .await?;
         let NativePairedRead::Stable { body, .. } = paired else {
             anyhow::bail!("Tally native ledger collection changed between paired reads");
@@ -1237,8 +1314,11 @@ mod tests {
         TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
-        CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TransportId,
+        CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TallyDate,
+        TransportId,
     };
+    use bridge_tally_protocol::native_outstandings::NativeLedgerExportPeriod;
+    use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
     use std::time::Duration;
     use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1364,6 +1444,20 @@ mod tests {
         }
 
         request
+    }
+
+    fn assert_company_collection_request_shape(request: &str) {
+        assert!(request.contains("<TYPE>Collection</TYPE>"));
+        for method in ["NAME", "GUID", "PRODUCTNAME"] {
+            assert!(request.contains(&format!("<NATIVEMETHOD>{method}</NATIVEMETHOD>")));
+        }
+        for expression in [
+            "<COMPUTE>EduMode : $$LicenseInfo:IsEducationalMode</COMPUTE>",
+            "<COMPUTE>Silver : $$LicenseInfo:IsSilver</COMPUTE>",
+            "<COMPUTE>Gold : $$LicenseInfo:IsGold</COMPUTE>",
+        ] {
+            assert!(request.contains(expression));
+        }
     }
 
     #[test]
@@ -1960,6 +2054,23 @@ mod tests {
                     String::from_utf8_lossy(&request).starts_with(expected),
                     "ledger fetch did not preserve its extent/read sequence"
                 );
+                if index == 4 || index == 6 {
+                    let body_start = request
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|offset| offset + 4)
+                        .expect("native ledger POST has complete HTTP headers");
+                    let request_xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+                        &request[body_start..],
+                        request.len(),
+                    )
+                    .expect("native ledger POST uses decodable UTF-16 XML")
+                    .text;
+                    assert!(
+                        request_xml.contains(r#"<SVFROMDATE TYPE="Date">20240101</SVFROMDATE>"#)
+                    );
+                    assert!(request_xml.contains(r#"<SVTODATE TYPE="Date">20260701</SVTODATE>"#));
+                }
                 let response = if index == 1 || index == 3 || index == 5 || index == 7 {
                     utf8_status_response(body)
                 } else {
@@ -1978,7 +2089,11 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         let error = client
-            .fetch_ledgers("Synthetic Company", "synthetic-company-guid")
+            .fetch_ledgers(
+                "Synthetic Company",
+                "synthetic-company-guid",
+                DateBoundaryProfile::ModeAgnostic,
+            )
             .await
             .expect_err("STATUS 0 must not become an empty ledger result");
         server.await.expect("synthetic Tally server task");
@@ -1986,6 +2101,136 @@ mod tests {
             error
                 .to_string()
                 .contains("native ledger collection did not report success"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_book_extent_stops_ledger_export_without_a_date_fallback() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            let invalid_extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+            for (index, body) in [
+                invalid_extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                invalid_extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let (mut socket, _) = listener.accept().await.expect("accept extent request");
+                let request = read_complete_http_request(&mut socket).await;
+                let expected = if index % 2 == 0 {
+                    "POST / HTTP/1.1"
+                } else {
+                    "GET /status HTTP/1.1"
+                };
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected),
+                    "request {index} did not follow the paired extent sequence"
+                );
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write extent response");
+            }
+            assert!(
+                tokio::time::timeout(Duration::from_millis(200), listener.accept())
+                    .await
+                    .is_err(),
+                "an invalid extent must stop before any native ledger request"
+            );
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        client
+            .fetch_ledgers(
+                "Synthetic Company",
+                "synthetic-company-guid",
+                DateBoundaryProfile::ModeAgnostic,
+            )
+            .await
+            .expect_err("missing BOOKSFROM must fail closed");
+        server.await.expect("synthetic Tally server task");
+    }
+
+    #[tokio::test]
+    async fn education_profile_rejects_an_unsupported_books_from_before_ledger_export() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            let extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240115</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+            for (index, body) in [
+                extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+                extent,
+                "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let (mut socket, _) = listener.accept().await.expect("accept extent request");
+                let request = read_complete_http_request(&mut socket).await;
+                let expected = if index % 2 == 0 {
+                    "POST / HTTP/1.1"
+                } else {
+                    "GET /status HTTP/1.1"
+                };
+                assert!(
+                    String::from_utf8_lossy(&request).starts_with(expected),
+                    "request {index} did not follow the paired extent sequence"
+                );
+                let response = if index % 2 == 0 {
+                    utf16_xml_response(body)
+                } else {
+                    utf8_status_response(body)
+                };
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write extent response");
+            }
+            assert!(
+                tokio::time::timeout(Duration::from_millis(200), listener.accept())
+                    .await
+                    .is_err(),
+                "an Education-invalid BOOKSFROM must stop before the native ledger request"
+            );
+        });
+
+        let client = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client");
+        let error = client
+            .fetch_ledgers(
+                "Synthetic Company",
+                "synthetic-company-guid",
+                DateBoundaryProfile::EducationRestricted,
+            )
+            .await
+            .expect_err("unsupported boundary must not reach the ledger export");
+        server.await.expect("synthetic Tally server task");
+        assert!(
+            error
+                .to_string()
+                .contains("not supported by the endpoint compatibility profile"),
             "unexpected error: {error:#}"
         );
     }
@@ -2215,7 +2460,7 @@ mod tests {
         let server = tokio::spawn(async move {
             for (index, body) in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
-                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
+                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE>No</EDUMODE><SILVER>Yes</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
             ]
             .into_iter()
             .enumerate()
@@ -2256,10 +2501,23 @@ mod tests {
             probe.profile.packs[&CapabilityPackId::CoreAccounting].state,
             CapabilityState::Unknown
         );
-        assert_eq!(probe.profile.product, "Unknown");
+        assert_eq!(probe.profile.product, "TallyPrime");
         assert!(probe.profile.release.is_none());
-        assert!(probe.profile.mode.is_none());
-        assert_eq!(probe.profile.profile_version, 2);
+        assert_eq!(probe.profile.mode.as_deref(), Some("Licensed"));
+        assert_eq!(probe.profile.profile_version, 3);
+        assert_eq!(
+            probe.profile.features[&CapabilityFeatureId::ProductAndMode].state,
+            CapabilityState::Supported
+        );
+        let boundary = crate::tally::TallyRuntime::default()
+            .master_ledger_export_boundary_profile_from_profile(Some(&probe.profile));
+        assert_eq!(boundary, DateBoundaryProfile::ModeAgnostic);
+        assert!(NativeLedgerExportPeriod::new(
+            boundary,
+            TallyDate::parse("20240115").expect("valid mid-month date"),
+            TallyDate::parse("20240115").expect("valid mid-month date"),
+        )
+        .is_ok());
         for transport in [TransportId::TdlCompanion, TransportId::Odbc] {
             let evidence = &probe.profile.transports[&transport];
             assert_eq!(evidence.state, CapabilityState::Unknown);
@@ -2300,6 +2558,58 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn capability_probe_records_unavailable_product_mode_evidence_without_refusing() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Tally server");
+        let address = listener.local_addr().expect("synthetic Tally address");
+        let server = tokio::spawn(async move {
+            let responses = [
+                utf8_status_response("<RESPONSE>TallyPrime Server is Running</RESPONSE>"),
+                utf16_xml_response("<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Capability collection unavailable</LINEERROR></DATA></BODY></ENVELOPE>"),
+                utf16_xml_response("<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>"),
+            ];
+            for response in responses {
+                let (mut socket, _) = listener.accept().await.expect("accept Tally request");
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(
+                    !request.is_empty(),
+                    "synthetic Tally request must not be empty"
+                );
+                socket
+                    .write_all(&response)
+                    .await
+                    .expect("write Tally response");
+            }
+        });
+
+        let probe = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .expect("build synthetic Tally client")
+        .probe()
+        .await
+        .expect("unavailable product/mode evidence must not refuse the probe");
+        server.await.expect("synthetic Tally server task");
+
+        assert_eq!(probe.profile.product, "Unknown");
+        assert!(probe.profile.mode.is_none());
+        assert_eq!(
+            crate::tally::TallyRuntime::default()
+                .master_ledger_export_boundary_profile_from_profile(Some(&probe.profile)),
+            DateBoundaryProfile::ModeAgnostic
+        );
+        let evidence = &probe.profile.features[&CapabilityFeatureId::ProductAndMode];
+        assert_eq!(evidence.state, CapabilityState::Unknown);
+        assert_eq!(evidence.confidence, EvidenceConfidence::Observed);
+        assert_eq!(
+            evidence.safe_reason_code.as_deref(),
+            Some("product_mode_evidence_unavailable")
+        );
+    }
+
     /// `fetch_companies` now requests the native `Company` collection
     /// (`ReadOnlyProfile::CompanyListV2`) instead of the legacy `CompanyListV1`
     /// custom TDL report. This asserts the request itself carries that shape --
@@ -2327,8 +2637,7 @@ mod tests {
             )
             .expect("POST request uses decodable UTF-16 XML")
             .text;
-            assert!(post_xml.contains("<TYPE>Collection</TYPE>"));
-            assert!(post_xml.contains("<FETCH>NAME,GUID</FETCH>"));
+            assert_company_collection_request_shape(&post_xml);
             assert!(!post_xml.contains("<SVCURRENTCOMPANY"));
             assert!(!post_xml.contains("<REPORT"));
             assert!(!post_xml.contains("<FORM "));
@@ -2548,9 +2857,9 @@ mod tests {
         );
     }
 
-    /// Measured live 2026-08-07: the exact `Company` collection response for
-    /// a Tally instance with three loaded companies, `CMPINFO` counter trap
-    /// included. Proves `probe` requests `CompanyListV2` on the happy path
+    /// A gateway-shaped `Company` collection response with two loaded
+    /// synthetic companies and the `CMPINFO` counter trap included. Proves
+    /// `probe` requests `CompanyListV2` on the happy path
     /// and trusts its success without ever falling back to the legacy
     /// `CompanyListV1` report: the mock server has exactly one POST response
     /// queued, so a fallback request would hang and fail this test.
@@ -2564,7 +2873,7 @@ mod tests {
             let mut requests = Vec::new();
             for (index, body) in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
-                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Aarav Trading Company Demo\"><GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Ageing Lab\"><GUID TYPE=\"String\">eebb9a9f-1679-4468-9e8f-814c729674cb</GUID></COMPANY>\n   <COMPANY NAME=\"Bridge Billwise Lab\"><GUID TYPE=\"String\">75f7566d-7a4f-431a-9642-e93a9d06d57d</GUID></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
+                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Synthetic Company A\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company A</NAME><GUID TYPE=\"String\">synthetic-guid-a</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n   <COMPANY NAME=\"Synthetic Company B\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company B</NAME><GUID TYPE=\"String\">synthetic-guid-b</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
             ]
             .into_iter()
             .enumerate()
@@ -2595,14 +2904,13 @@ mod tests {
         .expect("probe synthetic Tally endpoint");
         let requests = server.await.expect("synthetic Tally server task");
 
-        assert_eq!(probe.companies.len(), 3);
-        assert_eq!(probe.companies[0].name, "Aarav Trading Company Demo");
-        assert_eq!(
-            probe.companies[0].guid.as_deref(),
-            Some("bb8ad19e-6aef-4239-a917-87fec0c6215e")
-        );
-        assert_eq!(probe.companies[1].name, "Bridge Ageing Lab");
-        assert_eq!(probe.companies[2].name, "Bridge Billwise Lab");
+        assert_eq!(probe.companies.len(), 2);
+        assert_eq!(probe.companies[0].name, "Synthetic Company A");
+        assert_eq!(probe.companies[0].guid.as_deref(), Some("synthetic-guid-a"));
+        assert_eq!(probe.companies[1].name, "Synthetic Company B");
+        assert_eq!(probe.companies[1].guid.as_deref(), Some("synthetic-guid-b"));
+        assert_eq!(probe.profile.product, "TallyPrime");
+        assert_eq!(probe.profile.mode.as_deref(), Some("Licensed"));
         assert_eq!(
             probe.profile.transports[&TransportId::XmlHttp].state,
             CapabilityState::Supported
@@ -2626,8 +2934,7 @@ mod tests {
             post_request.len(),
         )
         .expect("POST request uses decodable UTF-16 XML");
-        assert!(post_xml.text.contains("<TYPE>Collection</TYPE>"));
+        assert_company_collection_request_shape(&post_xml.text);
         assert!(post_xml.text.contains("<ID>BridgeCompanyExtent</ID>"));
-        assert!(post_xml.text.contains("<FETCH>NAME,GUID</FETCH>"));
     }
 }

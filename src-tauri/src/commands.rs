@@ -1890,6 +1890,7 @@ fn pack_key(pack: bridge_tally_core::CapabilityPackId) -> &'static str {
 fn feature_key(feature: bridge_tally_core::CapabilityFeatureId) -> &'static str {
     match feature {
         bridge_tally_core::CapabilityFeatureId::EndpointReachability => "endpoint_reachability",
+        bridge_tally_core::CapabilityFeatureId::ProductAndMode => "product_and_mode",
         bridge_tally_core::CapabilityFeatureId::LoadedCompanies => "loaded_companies",
         bridge_tally_core::CapabilityFeatureId::StableCompanyIdentity => "stable_company_identity",
         bridge_tally_core::CapabilityFeatureId::EncodingBehaviour => "encoding_behaviour",
@@ -2585,7 +2586,7 @@ mod tests {
         let canary = first_calendar_day_canary_window("20260228").unwrap();
         assert_eq!(canary.range.from_yyyymmdd, "20260228");
         assert_eq!(canary.range.to_yyyymmdd, "20260228");
-        assert_eq!(canary.query_profile.as_str(), "core_accounting_v2");
+        assert_eq!(canary.query_profile.as_str(), "core_accounting_v3");
 
         let same = first_calendar_day_canary_window("20260228").unwrap();
         assert_eq!(same, canary);
