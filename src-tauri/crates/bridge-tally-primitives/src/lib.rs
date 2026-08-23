@@ -191,19 +191,25 @@ impl TallyDate {
         ))
     }
 
+    /// Adds calendar days in constant time. This deliberately does not step
+    /// one day at a time: callers can be parsing an untrusted wire magnitude.
+    pub fn add_days(&self, days: u32) -> Result<Self, TallyError> {
+        let (year, month, day) = self.parts()?;
+        let target = civil_day(year, month, day)
+            .checked_add(i64::from(days))
+            .ok_or_else(|| invalid_data("tally_date_overflow"))?;
+        let (year, month, day) = civil_date(target);
+        if !(1..=9999).contains(&year) {
+            return Err(invalid_data("tally_date_overflow"));
+        }
+        Self::parse(format!("{year:04}{month:02}{day:02}"))
+    }
+
     /// Adds calendar months, clamping a month-end source date to the last
     /// valid day of the target month. Thus 31-Jan + 1 month is 28-Feb (or
     /// 29-Feb in a leap year), rather than an implicit fixed-day conversion.
     pub fn add_months_clamped(&self, months: u32) -> Result<Self, TallyError> {
-        let year = self.0[0..4]
-            .parse::<u32>()
-            .map_err(|_| invalid_data("invalid_tally_date"))?;
-        let month = self.0[4..6]
-            .parse::<u32>()
-            .map_err(|_| invalid_data("invalid_tally_date"))?;
-        let day = self.0[6..8]
-            .parse::<u32>()
-            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let (year, month, day) = self.parts()?;
         let month_index = month
             .checked_sub(1)
             .and_then(|value| value.checked_add(months))
@@ -218,6 +224,19 @@ impl TallyDate {
                 .ok_or_else(|| invalid_data("invalid_tally_date"))?,
         );
         Self::parse(format!("{target_year:04}{target_month:02}{target_day:02}"))
+    }
+
+    fn parts(&self) -> Result<(u32, u32, u32), TallyError> {
+        let year = self.0[0..4]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let month = self.0[4..6]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let day = self.0[6..8]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        Ok((year, month, day))
     }
 }
 
@@ -259,6 +278,31 @@ fn invalid_data(code: &'static str) -> TallyError {
     }
 }
 
+fn civil_day(year: u32, month: u32, day: u32) -> i64 {
+    let year = i64::from(year) - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let shifted_month = i64::from(month) + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * shifted_month + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era
+}
+
+fn civil_date(days: i64) -> (i64, i64, i64) {
+    let era = days.div_euclid(146_097);
+    let day_of_era = days - era * 146_097;
+    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524
+        - day_of_era / 146_096)
+        / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    (year, month, day)
+}
+
 #[cfg(test)]
 mod tests {
     use super::TallyDate;
@@ -281,5 +325,18 @@ mod tests {
                 .as_str(),
             "20240229"
         );
+    }
+
+    #[test]
+    fn adding_days_is_constant_time_calendar_arithmetic() {
+        assert_eq!(
+            TallyDate::parse("20260228")
+                .unwrap()
+                .add_days(1)
+                .unwrap()
+                .as_str(),
+            "20260301"
+        );
+        assert!(TallyDate::parse("20260101").unwrap().add_days(u32::MAX).is_err());
     }
 }

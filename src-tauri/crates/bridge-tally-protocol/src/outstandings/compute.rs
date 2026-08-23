@@ -304,13 +304,8 @@ fn add_credit_period(
 }
 
 fn add_days(date: &TallyDate, days: u32) -> Result<TallyDate, OutstandingsError> {
-    let mut due_date = date.clone();
-    for _ in 0..days {
-        due_date = due_date
-            .next_day()
-            .map_err(|_| OutstandingsError::InvalidDateWindow)?;
-    }
-    Ok(due_date)
+    date.add_days(days)
+        .map_err(|_| OutstandingsError::InvalidDateWindow)
 }
 
 fn exact(value: &MoneyValue) -> Result<&ExactDecimal, OutstandingsError> {

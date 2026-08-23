@@ -2981,6 +2981,7 @@ pub struct ExportPartyStatementRequest {
     /// XLSX remains the default for callers that predate the PDF option.
     #[serde(default)]
     pub format: PartyStatementFormat,
+    #[serde(default)]
     pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
     /// The `open_bills`/`unallocated_by_party` rows the frontend already
     /// holds from `fetch_tally_outstandings`. This command reads no Tally
@@ -3003,6 +3004,7 @@ pub struct ExportBulkPartyStatementsRequest {
     pub company: String,
     pub as_of_yyyymmdd: String,
     pub format: PartyStatementFormat,
+    #[serde(default)]
     pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
     /// Chosen by the native folder picker. The command still checks that it
     /// exists and is a directory before any statement name is joined to it.
@@ -3288,17 +3290,38 @@ mod party_statement_export_tests {
             "company": "Synthetic Books Pvt Ltd",
             "as_of_yyyymmdd": "20260808",
             "party": "Synthetic Party",
-            "ageing_anchor": "due_date",
             "open_bills": [],
             "unallocated_by_party": [],
         });
         let defaulted: ExportPartyStatementRequest = serde_json::from_value(base.clone()).unwrap();
         assert!(matches!(defaulted.format, PartyStatementFormat::Xlsx));
+        assert!(matches!(
+            defaulted.ageing_anchor,
+            crate::tally::OutstandingsAgeingAnchor::DueDate
+        ));
 
         let mut pdf = base;
         pdf["format"] = serde_json::Value::String("pdf".to_string());
         let pdf: ExportPartyStatementRequest = serde_json::from_value(pdf).unwrap();
         assert!(matches!(pdf.format, PartyStatementFormat::Pdf));
+    }
+
+    #[test]
+    fn bulk_statement_export_defaults_the_ageing_anchor_for_legacy_callers() {
+        let request: ExportBulkPartyStatementsRequest = serde_json::from_value(serde_json::json!({
+            "company": "Synthetic Books Pvt Ltd",
+            "as_of_yyyymmdd": "20260808",
+            "format": "xlsx",
+            "destination": "/tmp/statements",
+            "open_bills": [],
+            "unallocated_by_party": [],
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            request.ageing_anchor,
+            crate::tally::OutstandingsAgeingAnchor::DueDate
+        ));
     }
 
     #[test]

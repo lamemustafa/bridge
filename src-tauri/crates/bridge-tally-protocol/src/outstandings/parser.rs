@@ -415,24 +415,56 @@ fn convert_bill_allocation(
     }))
 }
 
+// A credit term can span at most one calendar year. The 366-day allowance
+// admits an annual term in a leap year; 52 weeks and 12 months express the
+// equivalent wire units. Longer magnitudes are neither ordinary terms nor
+// safe untrusted work for a report reader.
+const MAX_CREDIT_PERIOD_DAYS: u32 = 366;
+const MAX_CREDIT_PERIOD_WEEKS: u32 = 52;
+const MAX_CREDIT_PERIOD_MONTHS: u32 = 12;
+
 fn parse_credit_period(value: &str) -> Result<CreditPeriod, OutstandingsError> {
     let value = value.trim();
     if value.is_empty() {
         return Ok(CreditPeriod::Days(0));
     }
-    let Some((magnitude, period)) = [
-        (" Months", CreditPeriod::Months as fn(u32) -> CreditPeriod),
-        (" Month", CreditPeriod::Months as fn(u32) -> CreditPeriod),
-        (" Weeks", CreditPeriod::Weeks as fn(u32) -> CreditPeriod),
-        (" Week", CreditPeriod::Weeks as fn(u32) -> CreditPeriod),
-        (" Days", CreditPeriod::Days as fn(u32) -> CreditPeriod),
-        (" Day", CreditPeriod::Days as fn(u32) -> CreditPeriod),
+    let Some((magnitude, period, maximum)) = [
+        (
+            " Months",
+            CreditPeriod::Months as fn(u32) -> CreditPeriod,
+            MAX_CREDIT_PERIOD_MONTHS,
+        ),
+        (
+            " Month",
+            CreditPeriod::Months as fn(u32) -> CreditPeriod,
+            MAX_CREDIT_PERIOD_MONTHS,
+        ),
+        (
+            " Weeks",
+            CreditPeriod::Weeks as fn(u32) -> CreditPeriod,
+            MAX_CREDIT_PERIOD_WEEKS,
+        ),
+        (
+            " Week",
+            CreditPeriod::Weeks as fn(u32) -> CreditPeriod,
+            MAX_CREDIT_PERIOD_WEEKS,
+        ),
+        (
+            " Days",
+            CreditPeriod::Days as fn(u32) -> CreditPeriod,
+            MAX_CREDIT_PERIOD_DAYS,
+        ),
+        (
+            " Day",
+            CreditPeriod::Days as fn(u32) -> CreditPeriod,
+            MAX_CREDIT_PERIOD_DAYS,
+        ),
     ]
     .into_iter()
-    .find_map(|(suffix, period)| {
+    .find_map(|(suffix, period, maximum)| {
         value
             .strip_suffix(suffix)
-            .map(|magnitude| (magnitude, period))
+            .map(|magnitude| (magnitude, period, maximum))
     }) else {
         return Err(OutstandingsError::InvalidResponse(
             "bill_credit_period_invalid",
@@ -443,10 +475,15 @@ fn parse_credit_period(value: &str) -> Result<CreditPeriod, OutstandingsError> {
             "bill_credit_period_invalid",
         ));
     }
-    magnitude
+    let magnitude = magnitude
         .parse::<u32>()
-        .map(period)
-        .map_err(|_| OutstandingsError::InvalidResponse("bill_credit_period_invalid"))
+        .map_err(|_| OutstandingsError::InvalidResponse("bill_credit_period_invalid"))?;
+    if magnitude > maximum {
+        return Err(OutstandingsError::InvalidResponse(
+            "bill_credit_period_invalid",
+        ));
+    }
+    Ok(period(magnitude))
 }
 
 fn parse_money(value: String) -> Result<MoneyValue, OutstandingsError> {
@@ -578,8 +615,15 @@ mod tests {
             CreditPeriod::Months(2)
         );
         assert_eq!(parse_credit_period(" ").unwrap(), CreditPeriod::Days(0));
+        assert_eq!(parse_credit_period("366 Days").unwrap(), CreditPeriod::Days(366));
         assert_eq!(
             parse_credit_period("2 Fortnights"),
+            Err(OutstandingsError::InvalidResponse(
+                "bill_credit_period_invalid"
+            ))
+        );
+        assert_eq!(
+            parse_credit_period("1000000 Days"),
             Err(OutstandingsError::InvalidResponse(
                 "bill_credit_period_invalid"
             ))
