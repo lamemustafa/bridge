@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 
 use super::{
-    AgeingBillCounts, AgeingBuckets, BillReferenceKind, CompleteScan, MoneyValue,
+    AgeingAnchor, AgeingBillCounts, AgeingBuckets, BillReferenceKind, CompleteScan, MoneyValue,
     OutstandingsError, OutstandingsReport, PartyOutstanding,
 };
 
@@ -43,6 +43,17 @@ pub fn compute_outstandings(
     scan: &CompleteScan,
     as_of: TallyDate,
 ) -> Result<OutstandingsReport, OutstandingsError> {
+    compute_outstandings_with_ageing_anchor(scan, as_of, AgeingAnchor::DueDate)
+}
+
+/// Computes aged outstandings using the caller-selected bill or due-date
+/// basis. The default entry point uses `DueDate`, which matches Tally's
+/// native overdue report where credit periods exist.
+pub fn compute_outstandings_with_ageing_anchor(
+    scan: &CompleteScan,
+    as_of: TallyDate,
+    ageing_anchor: AgeingAnchor,
+) -> Result<OutstandingsReport, OutstandingsError> {
     if &as_of < scan.window().to() {
         return Err(OutstandingsError::InvalidDateWindow);
     }
@@ -79,7 +90,7 @@ pub fn compute_outstandings(
                     Some(name) => (
                         BillKey::Named(name.to_string()),
                         OpenBillKind::Named {
-                            oldest_date: bill_age_date(allocation, voucher)?,
+                            oldest_date: bill_age_date(allocation, voucher, ageing_anchor)?,
                         },
                     ),
                     None if matches!(allocation.bill_type, BillReferenceKind::OnAccount) => {
@@ -110,7 +121,7 @@ pub fn compute_outstandings(
                     .map_err(|_| OutstandingsError::ArithmeticOverflow)?;
                 if previous_balance.is_zero() {
                     if let OpenBillKind::Named { oldest_date } = &mut bill.kind {
-                        *oldest_date = bill_age_date(allocation, voucher)?;
+                        *oldest_date = bill_age_date(allocation, voucher, ageing_anchor)?;
                     }
                 } else if !next_balance.is_zero()
                     && previous_balance.is_negative() != next_balance.is_negative()
@@ -242,8 +253,9 @@ pub fn compute_outstandings(
 fn bill_age_date(
     allocation: &super::BillAllocation,
     voucher: &super::Voucher,
+    ageing_anchor: AgeingAnchor,
 ) -> Result<TallyDate, OutstandingsError> {
-    match allocation.bill_type {
+    let bill_date = match allocation.bill_type {
         // TALLY_PROTOCOL_REFERENCE §12a.2 (PR #117): Tally reported a 1-Jun
         // bill settled to zero and re-opened by a 1-Jul Agst Ref as due on
         // 1-Jun, 60 days overdue; zero re-opens age from the original
@@ -256,7 +268,21 @@ fn bill_age_date(
         BillReferenceKind::OnAccount => Err(OutstandingsError::InvalidResponse(
             "bill_reference_forbidden",
         )),
+    }?;
+    match ageing_anchor {
+        AgeingAnchor::BillDate => Ok(bill_date),
+        AgeingAnchor::DueDate => add_days(&bill_date, allocation.credit_period_days),
     }
+}
+
+fn add_days(date: &TallyDate, days: u32) -> Result<TallyDate, OutstandingsError> {
+    let mut due_date = date.clone();
+    for _ in 0..days {
+        due_date = due_date
+            .next_day()
+            .map_err(|_| OutstandingsError::InvalidDateWindow)?;
+    }
+    Ok(due_date)
 }
 
 fn exact(value: &MoneyValue) -> Result<&ExactDecimal, OutstandingsError> {
@@ -545,6 +571,7 @@ mod tests {
                         _ => panic!("synthetic test must use a known kind"),
                     },
                     amount: MoneyValue::Exact(amount),
+                    credit_period_days: 0,
                 }],
             }],
         }

@@ -316,6 +316,7 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
         "As of",
         &display_date(&statement.as_of_yyyymmdd)?,
     )?;
+    push_label_value(&mut lines, "Ageing basis", "Due date")?;
     lines.push(PdfLine::body(""));
 
     if !statement.unallocated.is_zero() {

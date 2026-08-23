@@ -14,9 +14,9 @@ pub use completeness::{
     verify_segment_pair_with_encoded_bytes, verify_segment_pair_with_wire_evidence,
     SegmentWireEvidence,
 };
-pub use compute::compute_outstandings;
+pub use compute::{compute_outstandings, compute_outstandings_with_ageing_anchor};
 pub use model::{
-    AlterIdRange, BillAllocation, BillReferenceKind, CompanyBookExtent, CompleteScan,
+    AgeingAnchor, AlterIdRange, BillAllocation, BillReferenceKind, CompanyBookExtent, CompleteScan,
     CompleteSegment, CompleteWitnessPair, CorroboratedDatePartition, DateBoundaryProfile,
     DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness,
     EmptyPartitionControlProvenance, EmptyPartitionWitness, LedgerEntry, LedgerOpeningCoverage,

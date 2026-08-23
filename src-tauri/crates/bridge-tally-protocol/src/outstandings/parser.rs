@@ -393,6 +393,15 @@ fn convert_bill_allocation(
         }
         _ => None,
     };
+    let credit_period_days = match raw.bill_credit_period {
+        Some(value) => parse_credit_period_days(&value.text)?,
+        None if bill_type.requires_named_reference() => {
+            return Err(OutstandingsError::InvalidResponse(
+                "bill_credit_period_missing",
+            ))
+        }
+        None => 0,
+    };
     Ok(Some(BillAllocation {
         name,
         bill_type,
@@ -402,7 +411,27 @@ fn convert_bill_allocation(
                 .text,
         )?,
         bill_date,
+        credit_period_days,
     }))
+}
+
+fn parse_credit_period_days(value: &str) -> Result<u32, OutstandingsError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(0);
+    }
+    let Some(days) = value.strip_suffix(" Days") else {
+        return Err(OutstandingsError::InvalidResponse(
+            "bill_credit_period_invalid",
+        ));
+    };
+    if days.is_empty() || !days.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(OutstandingsError::InvalidResponse(
+            "bill_credit_period_invalid",
+        ));
+    }
+    days.parse::<u32>()
+        .map_err(|_| OutstandingsError::InvalidResponse("bill_credit_period_invalid"))
 }
 
 fn parse_money(value: String) -> Result<MoneyValue, OutstandingsError> {

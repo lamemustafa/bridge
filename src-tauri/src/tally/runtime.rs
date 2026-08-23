@@ -1909,7 +1909,7 @@ impl TallyRuntime {
                             ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
                                 report: Box::new(compute_outstandings(&scan, as_of)?),
                                 currency_assertion,
-                                ageing_anchor: OutstandingsAgeingAnchor::BillDate,
+                                ageing_anchor: OutstandingsAgeingAnchor::DueDate,
                                 synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                                 // The voucher scan derives bills from vouchers
                                 // and cannot establish the unallocated

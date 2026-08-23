@@ -761,6 +761,7 @@ async function previewBulkPartyStatements(result: InrCompleteResult) {
 async function exportCsv(result: InrCompleteResult) {
   const csv = reportToCsv(
     result.report,
+    result.ageing_anchor,
     result.unallocated_total,
     result.statement_unallocated_by_party,
   );
@@ -775,6 +776,7 @@ async function exportCsv(result: InrCompleteResult) {
 
 function reportToCsv(
   report: Report,
+  ageingAnchor: OutstandingsAgeingAnchor,
   unallocatedTotal: string | undefined,
   unallocatedByParty: Array<{ party: string; amount: string }> | undefined,
 ) {
@@ -787,6 +789,7 @@ function reportToCsv(
     row(text("Company"), text(report.company_name)),
     row(text("As of"), text(formatDate(report.as_of_yyyymmdd))),
     row(text("Currency"), text("INR")),
+    row(text("Ageing basis"), text(outstandingsAgeingAnchorLabel(ageingAnchor))),
     "",
     row(text("Measure"), text("Amount")),
     row(text("Receivable"), number(report.receivable_total)),
