@@ -17,10 +17,15 @@ pub enum NativeBillsReportKind {
     Payable,
 }
 
-/// A master export period whose boundaries have been admitted by the
-/// endpoint's compatibility profile. `OPENINGBALANCE` is period-sensitive,
-/// so rendering a `List of Ledgers` request without this proof would permit
-/// Education mode to silently substitute its display period for `BOOKSFROM`.
+/// A master export period whose opening boundary has been admitted by the
+/// endpoint's compatibility profile.
+///
+/// `OPENINGBALANCE` is scoped by `SVFROMDATE`, so `from` must be the
+/// profile-supported `BOOKSFROM`; otherwise Education mode can silently
+/// substitute its display period. The export does not fetch
+/// `CLOSINGBALANCE`, whose as-of semantics would require proving `SVTODATE`.
+/// `to` is therefore retained only as the observed `LASTVOUCHERDATE` needed
+/// to form a non-inverted request range, and may be an ordinary calendar day.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeLedgerExportPeriod {
     from: TallyDate,
@@ -36,7 +41,7 @@ impl NativeLedgerExportPeriod {
         if from > to {
             return Err(NativeLedgerExportPeriodError::InvalidRange);
         }
-        if !boundary_profile.accepts_boundary(&from) || !boundary_profile.accepts_boundary(&to) {
+        if !boundary_profile.accepts_boundary(&from) {
             return Err(NativeLedgerExportPeriodError::UnsupportedBoundary);
         }
         Ok(Self { from, to })
@@ -281,23 +286,47 @@ mod tests {
     }
 
     #[test]
-    fn master_export_period_uses_profile_evidence_not_a_global_day_rule() {
-        let arbitrary_boundary = TallyDate::parse("20240115").unwrap();
-        let book_end = TallyDate::parse("20260701").unwrap();
+    fn master_export_period_validates_only_the_opening_balance_boundary() {
+        let legal_books_from = TallyDate::parse("20240101").unwrap();
+        let ordinary_last_voucher_date = TallyDate::parse("20240115").unwrap();
         assert_eq!(
             NativeLedgerExportPeriod::new(
                 DateBoundaryProfile::EducationRestricted,
-                arbitrary_boundary.clone(),
-                book_end.clone(),
+                legal_books_from,
+                ordinary_last_voucher_date,
+            ),
+            Ok(NativeLedgerExportPeriod {
+                from: TallyDate::parse("20240101").unwrap(),
+                to: TallyDate::parse("20240115").unwrap(),
+            }),
+            "Education mode accepts an ordinary LASTVOUCHERDATE because this export fetches OPENINGBALANCE, not CLOSINGBALANCE"
+        );
+
+        let illegal_books_from = TallyDate::parse("20240115").unwrap();
+        let legal_book_end = TallyDate::parse("20240131").unwrap();
+        assert_eq!(
+            NativeLedgerExportPeriod::new(
+                DateBoundaryProfile::EducationRestricted,
+                illegal_books_from.clone(),
+                legal_book_end,
             ),
             Err(NativeLedgerExportPeriodError::UnsupportedBoundary),
-            "the observed Education profile must reject before a silently ignored read"
+            "the observed Education profile must reject an unsupported BOOKSFROM before a silently ignored opening-balance read"
+        );
+        assert_eq!(
+            NativeLedgerExportPeriod::new(
+                DateBoundaryProfile::EducationRestricted,
+                TallyDate::parse("20240201").unwrap(),
+                TallyDate::parse("20240115").unwrap(),
+            ),
+            Err(NativeLedgerExportPeriodError::InvalidRange),
+            "the range remains invalid even when its opening boundary is profile-supported"
         );
         assert!(
             NativeLedgerExportPeriod::new(
                 DateBoundaryProfile::ModeAgnostic,
-                arbitrary_boundary,
-                book_end,
+                illegal_books_from,
+                TallyDate::parse("20260701").unwrap(),
             )
             .is_ok(),
             "licensed and unknown modes retain arbitrary calendar boundaries"
