@@ -300,11 +300,11 @@ party-ledger residual has no balance whose as-of can be misattributed, but any n
 `CLOSINGBALANCE - sum(BILLCL)` residual means the requested date is unconfirmed. Bridge must
 withhold that report with `native_outstandings_as_of_unconfirmed_without_bill_references`; it
 must not call the period honoured merely because no named bill supplied a counter.
-Likewise, zero-only `BILLOVERDUE` counters on future-due bill rows identify no effective date:
-a substituted earlier period can produce the same zeros. Bridge withholds those rows under
-`native_outstandings_as_of_unconfirmed_without_effective_date_evidence`; this is a
-fail-closed policy boundary, not a claim that a particular Tally release always serializes
-future-due counters as zero or empty.
+Likewise, no bill rows, empty `BILLOVERDUE` counters, and zero-only counters identify no
+effective date: a substituted period can produce the same absence or zeros. Bridge withholds
+those reports under `native_outstandings_as_of_unconfirmed_without_effective_date_evidence`;
+this is a fail-closed policy boundary, not a claim that a particular Tally release always
+serializes future-due counters as zero or empty.
 
 **Required discipline, regardless of licence mode:**
 

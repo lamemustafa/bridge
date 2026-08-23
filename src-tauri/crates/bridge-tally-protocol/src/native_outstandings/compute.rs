@@ -203,31 +203,39 @@ pub fn compute_native_outstandings(
     })
 }
 
-/// Classifies the returned bill counters without mistaking their absence for
-/// proof. `BILLOVERDUE` is empty for a bill that is future-due at Tally's
-/// effective date, so those rows are non-evidence: they neither disprove nor
-/// establish a common substituted date. Conversely, a response with bills but
-/// no informative counters is indeterminate and must stay partial -- a silent
-/// date refusal can make every returned bill future-due.
+/// Classifies the returned bill counters with the following exhaustive
+/// decision table. **Honored requires positive evidence that the requested
+/// date was used**: empty and zero counters can constrain a proven candidate,
+/// but never create one. `positive` means `BILLOVERDUE > 0`, whose implied date
+/// is `BILLDUE + BILLOVERDUE`. The substituted-date rows are policy cases; a
+/// refusal is not currently reproducible on the licensed local instance.
 ///
-/// A zero counter on a bill future-due at the request is explicit evidence of
-/// no overdue amount, but cannot identify an as-of date; it can preserve an
-/// otherwise ordinary future-only report without contributing to refusal
-/// unanimity. A refusal therefore needs at least two informative rows whose
-/// `BILLDUE + BILLOVERDUE` values agree on the same non-requested date. A
-/// counterless row is compatible only when it is future-due at that derived
-/// date; a counterless past/current-due bill and every scattered or malformed
-/// counter stay the generic inconsistency. This preserves fail-closed totals
-/// while avoiding a false date-refusal claim from one bad row.
+/// | rows | residual | counters and due date | implied dates | verdict | why |
+/// | --- | --- | --- | --- | --- | --- |
+/// | none | zero | none; due n/a | absent | unconfirmed effective date | settled historical rows can be absent under a substituted date |
+/// | none | non-zero | none; due n/a | absent | unconfirmed without bill references | ledger money has no bill evidence at all |
+/// | some | either | only empty; due earlier/equal/later | absent | unconfirmed effective date | empty counters identify no date |
+/// | some | either | only zero; due earlier/equal/later | absent | unconfirmed effective date | zero counters identify no date, including equality |
+/// | some | either | empty and zero only; due earlier/equal/later | absent | unconfirmed effective date | combining non-evidence does not create evidence |
+/// | some | either | any negative or unrepresentable counter | absent | inconsistent | the counter cannot imply a valid civil date |
+/// | some | either | positive counters disagree | disagree | inconsistent | one response cannot have two effective dates |
+/// | some | either | positives agree on requested; no companions | all agree | honored | positive counters independently identify the request |
+/// | some | either | positives agree on requested; empty companions later | all agree | honored | an empty counter is compatible only for a future-due bill |
+/// | some | either | positives agree on requested; empty companion earlier/equal | all agree | inconsistent | an empty counter contradicts the proven candidate |
+/// | some | either | positives agree on requested; zero companions equal/later | all agree | honored | zero is compatible but not relied on as proof |
+/// | some | either | positives agree on requested; zero companion earlier | all agree | inconsistent | zero contradicts the proven candidate |
+/// | some | either | one positive agrees on another date | all agree | inconsistent | one row cannot establish a refused period |
+/// | some | either | at least two positives agree on another date; every empty is later and every zero is equal/later at that date | all agree | refused | independent counters identify one substituted date |
+/// | some | either | at least two positives agree on another date; any incompatible companion | all agree | inconsistent | the claimed common date is contradicted |
 ///
-/// The zero-row branch deliberately receives `residual_total` after the
-/// ledger reconciliation rather than guessing from bill rows: only the exact
-/// ledger residual tells us whether a substituted period could have moved
-/// money into the requested document. This keeps the classifier total over
-/// its already-validated inputs: no rows and no residual is harmless, while
-/// no rows with residual money is explicitly unconfirmed. See
-/// `TALLY_PROTOCOL_REFERENCE.md` §5.3 for the measured licence-mode boundary
-/// behaviour that motivates this diagnostic.
+/// `residual_total` distinguishes only the no-row cases; once bill rows exist,
+/// date evidence comes exclusively from their counters. Unreachable combinations
+/// are: rows=`none` with any counter, due relation, or non-absent implied date;
+/// implied=`all agree`/`disagree` without a positive counter; and a missing
+/// `BILLOVERDUE` field, which the wire parser rejects before this function.
+/// See `TALLY_PROTOCOL_REFERENCE.md` §5.3 for the observed product-specific
+/// boundary facts; this table deliberately makes no claim that future-due
+/// counters are always empty or always zero.
 fn classify_overdue_crosscheck(
     receivable_rows: &[NativeBillRow],
     payable_rows: &[NativeBillRow],
@@ -238,8 +246,7 @@ fn classify_overdue_crosscheck(
     let mut any_row = false;
     let mut informative_dates = Vec::new();
     let mut counterless_rows = Vec::new();
-    let mut zero_future_rows = Vec::new();
-    let mut has_explicit_counter = false;
+    let mut zero_rows = Vec::new();
 
     for row in rows {
         any_row = true;
@@ -247,9 +254,8 @@ fn classify_overdue_crosscheck(
             counterless_rows.push(row);
             continue;
         };
-        has_explicit_counter = true;
-        if tally_overdue == 0 && row.due_date > *requested_as_of {
-            zero_future_rows.push(row);
+        if tally_overdue == 0 {
+            zero_rows.push(row);
             continue;
         }
 
@@ -261,24 +267,13 @@ fn classify_overdue_crosscheck(
 
     if !any_row {
         return Ok(if residual_total.is_zero() {
-            NativeOverdueCrosscheck::Honored
+            NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence
         } else {
             NativeOverdueCrosscheck::UnconfirmedAsOfWithoutBillReferences
         });
     }
     let Some(tally_as_of) = informative_dates.first() else {
-        return Ok(
-            if has_explicit_counter && counterless_rows.is_empty() && !zero_future_rows.is_empty() {
-                // Zero overdue counters on bills that are future-due at the
-                // requested date identify no effective date. A silently
-                // substituted earlier date produces the same evidence, so this
-                // must remain partial rather than claiming the request was
-                // honored.
-                NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence
-            } else {
-                NativeOverdueCrosscheck::Inconsistent
-            },
-        );
+        return Ok(NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence);
     };
     if informative_dates
         .iter()
@@ -288,8 +283,8 @@ fn classify_overdue_crosscheck(
     }
     if counterless_rows
         .iter()
-        .chain(zero_future_rows.iter())
         .any(|row| row.due_date <= *tally_as_of)
+        || zero_rows.iter().any(|row| row.due_date < *tally_as_of)
     {
         return Ok(NativeOverdueCrosscheck::Inconsistent);
     }

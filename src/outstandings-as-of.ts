@@ -39,28 +39,28 @@ export function millisecondsUntilNextLocalMidnight(now = new Date()) {
   return Math.max(1, nextMidnight.getTime() - now.getTime());
 }
 
-/** Completed all-client results are usable only for the date they requested. */
-export type AllClientsEntriesAtAsOf<T> = {
+/** A completed result is usable only for the date it requested. */
+export type AsOfBoundValue<T> = {
   asOfYyyymmdd: string;
-  entries: T;
+  value: T;
 };
 
-/** Discards a sweep that settled after the effective date changed. */
-export function settleAllClientsEntries<T>(
+/** Discards a read that settled after the effective date changed. */
+export function settleAsOfBoundValue<T>(
   currentAsOfYyyymmdd: string | null,
   requestedAsOfYyyymmdd: string,
-  entries: T,
-): AllClientsEntriesAtAsOf<T> | null {
+  value: T,
+): AsOfBoundValue<T> | null {
   if (currentAsOfYyyymmdd !== requestedAsOfYyyymmdd) return null;
-  return { asOfYyyymmdd: requestedAsOfYyyymmdd, entries };
+  return { asOfYyyymmdd: requestedAsOfYyyymmdd, value };
 }
 
-/** Hides loaded rows immediately when their requested date is no longer current. */
-export function allClientsEntriesForAsOf<T>(
-  loaded: AllClientsEntriesAtAsOf<T> | null,
+/** Hides a completed result immediately when its request date is no longer current. */
+export function asOfBoundValueForAsOf<T>(
+  loaded: AsOfBoundValue<T> | null,
   currentAsOfYyyymmdd: string | null,
 ): T | null {
-  return loaded?.asOfYyyymmdd === currentAsOfYyyymmdd ? loaded.entries : null;
+  return loaded?.asOfYyyymmdd === currentAsOfYyyymmdd ? loaded.value : null;
 }
 
 /** The Tauri contract accepts only canonical YYYYMMDD values. */

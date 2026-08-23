@@ -24,7 +24,7 @@ export function outstandingsPartialReason(
     return "Tally returned no bill references while the ledger still carried a balance, so Bridge could not confirm the requested as-of date and withheld the totals";
   }
   if (value === "native_outstandings_as_of_unconfirmed_without_effective_date_evidence") {
-    return "Tally returned only zero overdue-day counters for future-due bills, which do not identify the report's effective date, so Bridge withheld the totals";
+    return "Tally returned no overdue-day evidence that identifies the report's effective date, so Bridge withheld the totals";
   }
   if (value === "company_currency_probe_failed") {
     return "Bridge could not verify this company's base currency";

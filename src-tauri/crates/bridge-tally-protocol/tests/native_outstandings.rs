@@ -60,6 +60,37 @@ fn assert_exact(actual: &ExactDecimal, canonical: &str) {
     assert_eq!(actual.as_str(), canonical);
 }
 
+/// Synthetic policy rows for the crosscheck decision table. They never make a
+/// network call and intentionally model only counter/date evidence, not a
+/// captured Tally response.
+fn crosscheck_bill(reference: &str, due: &str, tally_overdue_days: Option<i64>) -> NativeBillRow {
+    NativeBillRow {
+        party: "Synthetic policy party".to_string(),
+        reference: reference.to_string(),
+        bill_date: as_of("20260101"),
+        due_date: as_of(due),
+        closing_balance: ExactDecimal::parse("-1").expect("synthetic exact amount"),
+        tally_overdue_days,
+    }
+}
+
+fn crosscheck_for(rows: &[NativeBillRow], requested_as_of: &str) -> NativeOverdueCrosscheck {
+    compute_native_outstandings(
+        "Synthetic policy company",
+        rows,
+        &[],
+        NativeMasterSnapshot {
+            ledgers: &[],
+            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
+        },
+        AgeingAnchor::DueDate,
+        &as_of(requested_as_of),
+        0,
+    )
+    .expect("policy rows produce a classifier result")
+    .overdue_crosscheck
+}
+
 #[test]
 fn zero_bill_rows_with_nonzero_ledger_residual_are_unconfirmed() {
     let group_bytes = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY>
@@ -99,7 +130,7 @@ fn zero_bill_rows_with_nonzero_ledger_residual_are_unconfirmed() {
 }
 
 #[test]
-fn zero_bill_rows_without_ledger_residual_remain_honored() {
+fn crosscheck_table_no_rows_with_zero_residual_is_unconfirmed() {
     let result = compute_native_outstandings(
         "Synthetic Empty Company",
         &[],
@@ -112,10 +143,13 @@ fn zero_bill_rows_without_ledger_residual_remain_honored() {
         &as_of(NATIVE_CAPTURE_AS_OF),
         0,
     )
-    .expect("an empty book has no money whose date could be misattributed");
+    .expect("an empty response remains a classifiable policy boundary");
 
     assert_eq!(result.residual_total, ExactDecimal::zero());
-    assert_eq!(result.overdue_crosscheck, NativeOverdueCrosscheck::Honored);
+    assert_eq!(
+        result.overdue_crosscheck,
+        NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence
+    );
 }
 
 #[test]
@@ -408,7 +442,7 @@ fn legacy_fixture_without_groups_keeps_name_only_party_classification() {
 }
 
 #[test]
-fn zero_only_future_overdue_counters_leave_the_as_of_date_unconfirmed() {
+fn crosscheck_table_zero_only_future_counters_leave_the_as_of_date_unconfirmed() {
     let receivable = [NativeBillRow {
         party: "Synthetic customer".to_string(),
         reference: "SYNTHETIC-FUTURE-DUE".to_string(),
@@ -469,12 +503,11 @@ fn validation_lab_empty_billoverdue_parses_as_not_applicable() {
 }
 
 #[test]
-fn captured_validation_lab_rows_prove_refusal_despite_a_future_counterless_bill() {
-    // Real bytes captured from Bridge Validation Lab for requested 2026-08-17.
-    // Four counters independently imply 2026-08-01; the remaining
-    // ALPHA-FUTURE bill is due 2026-10-01 and has an intentionally empty
-    // BILLOVERDUE. This is the regression for treating future counterless rows
-    // as non-evidence rather than rejecting unanimity.
+fn captured_validation_lab_one_positive_counter_remains_a_withheld_inconsistency() {
+    // The fixture has one positive counter implying 2026-08-01, three zero
+    // counters due on that date, and one future empty counter. The zero/empty
+    // rows are compatible but non-identifying, so they cannot promote this to
+    // a refused-period claim. The totals stay withheld either way.
     let rows = parse_native_bill_rows(
         BILLS_RECEIVABLE_VALIDATION_LAB,
         &as_of(VALIDATION_LAB_BOOKS_FROM),
@@ -493,46 +526,159 @@ fn captured_validation_lab_rows_prove_refusal_despite_a_future_counterless_bill(
         &as_of(VALIDATION_CAPTURE_AS_OF),
         BILLS_RECEIVABLE_VALIDATION_LAB.len(),
     )
-    .expect("refusal remains a computable diagnostic result");
+    .expect("the policy boundary remains computable");
 
     assert_eq!(
         result.overdue_crosscheck,
-        NativeOverdueCrosscheck::RefusedAsOf {
-            tally_as_of: as_of("20260801"),
-        }
+        NativeOverdueCrosscheck::Inconsistent
     );
 }
 
 #[test]
-fn counterless_rows_without_any_informative_counter_stay_partial() {
+fn crosscheck_table_empty_only_counters_leave_the_as_of_date_unconfirmed() {
     // Synthetic policy boundary, not a captured refusal response: the current
     // capture contains one empty counter alongside four informative ones, but
     // no captured response has every counter empty. This construction proves
     // only Bridge's fail-closed rule that absence cannot establish acceptance.
-    let rows = [NativeBillRow {
-        party: "Synthetic".to_string(),
-        reference: "NO-COUNTER".to_string(),
-        bill_date: as_of("20260801"),
-        due_date: as_of("20260901"),
-        closing_balance: ExactDecimal::parse("-1").unwrap(),
-        tally_overdue_days: None,
-    }];
-    let result = compute_native_outstandings(
-        "Synthetic Company",
-        &rows,
-        &[],
-        NativeMasterSnapshot {
-            ledgers: &[],
-            groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
-        },
-        AgeingAnchor::DueDate,
-        &as_of("20260817"),
-        0,
-    )
-    .expect("the synthetic policy boundary computes");
+    assert_eq!(
+        crosscheck_for(
+            &[
+                crosscheck_bill("EMPTY-EARLIER", "20260801", None),
+                crosscheck_bill("EMPTY-EQUAL", "20260817", None),
+                crosscheck_bill("EMPTY-LATER", "20260901", None),
+            ],
+            "20260817",
+        ),
+        NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence
+    );
+}
+
+#[test]
+fn crosscheck_table_nonpositive_counters_cover_earlier_equal_and_later_due_dates() {
+    let requested = "20260822";
+    let zero_only = [
+        crosscheck_bill("ZERO-EARLIER", "20260801", Some(0)),
+        crosscheck_bill("ZERO-EQUAL", requested, Some(0)),
+        crosscheck_bill("ZERO-LATER", "20260901", Some(0)),
+    ];
+    let empty_and_zero = [
+        crosscheck_bill("EMPTY-EARLIER", "20260801", None),
+        crosscheck_bill("ZERO-EQUAL", requested, Some(0)),
+        crosscheck_bill("EMPTY-LATER", "20260901", None),
+    ];
+
+    for rows in [&zero_only[..], &empty_and_zero[..]] {
+        assert_eq!(
+            crosscheck_for(rows, requested),
+            NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence
+        );
+    }
+}
+
+#[test]
+fn crosscheck_table_negative_counter_is_inconsistent() {
+    assert_eq!(
+        crosscheck_for(
+            &[crosscheck_bill("NEGATIVE", "20260801", Some(-1))],
+            "20260822"
+        ),
+        NativeOverdueCrosscheck::Inconsistent
+    );
+}
+
+#[test]
+fn crosscheck_table_requested_positive_evidence_accepts_only_compatible_companions() {
+    let requested = "20260822";
+    let positives = [
+        crosscheck_bill("POSITIVE-ONE", "20260701", Some(52)),
+        crosscheck_bill("POSITIVE-TWO", "20260601", Some(82)),
+    ];
+    let empty_later = crosscheck_bill("EMPTY-LATER", "20260901", None);
+    let zero_equal = crosscheck_bill("ZERO-EQUAL", requested, Some(0));
+    let zero_later = crosscheck_bill("ZERO-LATER", "20260901", Some(0));
+    let empty_earlier = crosscheck_bill("EMPTY-EARLIER", "20260801", None);
+    let empty_equal = crosscheck_bill("EMPTY-EQUAL", requested, None);
+    let zero_earlier = crosscheck_bill("ZERO-EARLIER", "20260801", Some(0));
 
     assert_eq!(
-        result.overdue_crosscheck,
+        crosscheck_for(&positives, requested),
+        NativeOverdueCrosscheck::Honored
+    );
+    assert_eq!(
+        crosscheck_for(
+            &[positives[0].clone(), positives[1].clone(), empty_later],
+            requested
+        ),
+        NativeOverdueCrosscheck::Honored
+    );
+    assert_eq!(
+        crosscheck_for(
+            &[
+                positives[0].clone(),
+                positives[1].clone(),
+                zero_equal,
+                zero_later,
+            ],
+            requested,
+        ),
+        NativeOverdueCrosscheck::Honored
+    );
+    assert_eq!(
+        crosscheck_for(
+            &[positives[0].clone(), positives[1].clone(), empty_equal],
+            requested
+        ),
+        NativeOverdueCrosscheck::Inconsistent
+    );
+    assert_eq!(
+        crosscheck_for(
+            &[positives[0].clone(), positives[1].clone(), empty_earlier],
+            requested
+        ),
+        NativeOverdueCrosscheck::Inconsistent
+    );
+    assert_eq!(
+        crosscheck_for(
+            &[positives[0].clone(), positives[1].clone(), zero_earlier],
+            requested
+        ),
+        NativeOverdueCrosscheck::Inconsistent
+    );
+}
+
+#[test]
+fn crosscheck_table_substituted_date_requires_two_compatible_positive_counters() {
+    let requested = "20260822";
+    let alternative_one = crosscheck_bill("ALTERNATIVE-ONE", "20260701", Some(31));
+    let alternative_two = crosscheck_bill("ALTERNATIVE-TWO", "20260601", Some(61));
+
+    assert_eq!(
+        crosscheck_for(std::slice::from_ref(&alternative_one), requested),
+        NativeOverdueCrosscheck::Inconsistent
+    );
+    assert_eq!(
+        crosscheck_for(
+            &[
+                alternative_one.clone(),
+                alternative_two.clone(),
+                crosscheck_bill("EMPTY-FUTURE", "20260901", None),
+                crosscheck_bill("ZERO-AT-ALTERNATIVE", "20260801", Some(0)),
+            ],
+            requested,
+        ),
+        NativeOverdueCrosscheck::RefusedAsOf {
+            tally_as_of: as_of("20260801"),
+        }
+    );
+    assert_eq!(
+        crosscheck_for(
+            &[
+                alternative_one,
+                alternative_two,
+                crosscheck_bill("ZERO-BEFORE-ALTERNATIVE", "20260731", Some(0)),
+            ],
+            requested,
+        ),
         NativeOverdueCrosscheck::Inconsistent
     );
 }

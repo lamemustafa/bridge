@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
   allCompaniesOutstandingsInvokeArgument,
-  allClientsEntriesForAsOf,
   automaticOutstandingsAsOf,
+  asOfBoundValueForAsOf,
   asOfYyyymmdd,
   bulkPartyStatementsInvokeArgument,
   operatorSelectedOutstandingsAsOf,
   partyStatementInvokeArgument,
   refreshAutomaticOutstandingsAsOf,
-  settleAllClientsEntries,
+  settleAsOfBoundValue,
   singleCompanyOutstandingsInvokeArgument,
   todayAsDateInput,
 } from "../src/outstandings-as-of.ts";
@@ -44,28 +45,72 @@ test("all-client rows are invalidated at rollover and a late old-date sweep is d
     new Date(2026, 7, 23, 0, 0, 1),
   );
   const entries = [{ company: "Synthetic Company", company_guid: "synthetic-guid" }];
-  const completedBeforeRollover = settleAllClientsEntries(
+  const completedBeforeRollover = settleAsOfBoundValue(
     asOfYyyymmdd(beforeMidnight.value),
     asOfYyyymmdd(beforeMidnight.value),
     entries,
   );
 
   assert.deepEqual(
-    allClientsEntriesForAsOf(completedBeforeRollover, asOfYyyymmdd(beforeMidnight.value)),
+    asOfBoundValueForAsOf(completedBeforeRollover, asOfYyyymmdd(beforeMidnight.value)),
     entries,
   );
   assert.equal(
-    allClientsEntriesForAsOf(completedBeforeRollover, asOfYyyymmdd(afterMidnight.value)),
+    asOfBoundValueForAsOf(completedBeforeRollover, asOfYyyymmdd(afterMidnight.value)),
     null,
   );
   assert.equal(
-    settleAllClientsEntries(
+    settleAsOfBoundValue(
       asOfYyyymmdd(afterMidnight.value),
       asOfYyyymmdd(beforeMidnight.value),
       entries,
     ),
     null,
   );
+});
+
+test("single-client totals are invalidated at rollover and a late old-date read is discarded", () => {
+  const beforeMidnight = automaticOutstandingsAsOf(new Date(2026, 7, 22, 23, 59, 59));
+  const afterMidnight = refreshAutomaticOutstandingsAsOf(
+    beforeMidnight,
+    new Date(2026, 7, 23, 0, 0, 1),
+  );
+  const completeResult = { state: "complete", report: { as_of_yyyymmdd: "20260822" } };
+  const completedBeforeRollover = settleAsOfBoundValue(
+    asOfYyyymmdd(beforeMidnight.value),
+    asOfYyyymmdd(beforeMidnight.value),
+    completeResult,
+  );
+
+  assert.deepEqual(
+    asOfBoundValueForAsOf(completedBeforeRollover, asOfYyyymmdd(beforeMidnight.value)),
+    completeResult,
+  );
+  assert.equal(
+    asOfBoundValueForAsOf(completedBeforeRollover, asOfYyyymmdd(afterMidnight.value)),
+    null,
+  );
+  assert.equal(
+    settleAsOfBoundValue(
+      asOfYyyymmdd(afterMidnight.value),
+      asOfYyyymmdd(beforeMidnight.value),
+      completeResult,
+    ),
+    null,
+  );
+});
+
+test("both outstandings screens wire date-bound rendering and stale-settlement rejection", async () => {
+  const [singleClient, allClients] = await Promise.all([
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
+  ]);
+
+  for (const source of [singleClient, allClients]) {
+    assert.match(source, /asOfBoundValueForAsOf/);
+    assert.match(source, /settleAsOfBoundValue/);
+    assert.match(source, /requestVersion\.current \+= 1/);
+  }
 });
 
 test("the single-company request emits the selected canonical as-of date", () => {

@@ -27,20 +27,20 @@ test("new native and sweep boundaries have operator-readable reasons", () => {
   );
   assert.match(
     outstandingsPartialReason("native_outstandings_as_of_unconfirmed_without_effective_date_evidence"),
-    /do not identify the report's effective date/i,
+    /no overdue-day evidence.*effective date/i,
   );
   assert.match(outstandingsPartialReason("company_currency_probe_failed"), /base currency/i);
   assert.match(outstandingsPartialReason("company_base_currency_not_inr"), /not INR/i);
   assert.match(outstandingsPartialReason("company_outstandings_read_failed"), /company read failed/i);
 });
 
-test("zero-only future counters name the unconfirmed effective-date boundary", () => {
+test("missing, empty, or zero-only counters name the unconfirmed effective-date boundary", () => {
   const state = outstandingsPartialState(
     "native_outstandings_as_of_unconfirmed_without_effective_date_evidence",
   );
 
   assert.equal(state.title, "Tally did not confirm this as-of date");
-  assert.match(state.message, /zero overdue-day counters/i);
+  assert.match(state.message, /no overdue-day evidence/i);
   assert.match(state.message, /effective date/i);
   assert.equal(state.tallyReadAttempted, true);
 });

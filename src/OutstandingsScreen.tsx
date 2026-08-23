@@ -6,10 +6,13 @@ import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstanding
 import { canStartOutstandingsRead } from "./outstandings-currency";
 import { groupOpenBillsByParty, type OpenBill, type PartyBillsState } from "./outstandings-bills";
 import {
+  asOfBoundValueForAsOf,
   asOfYyyymmdd,
   bulkPartyStatementsInvokeArgument,
   partyStatementInvokeArgument,
+  settleAsOfBoundValue,
   singleCompanyOutstandingsInvokeArgument,
+  type AsOfBoundValue,
 } from "./outstandings-as-of";
 
 type Props = {
@@ -100,7 +103,7 @@ export function OutstandingsScreen({
   asOf,
   onAsOfChange,
 }: Props) {
-  const [result, setResult] = React.useState<LoadResult | null>(null);
+  const [loadedResult, setLoadedResult] = React.useState<AsOfBoundValue<LoadResult> | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [inrAssertedCompanyGuid, setInrAssertedCompanyGuid] = React.useState<string | null>(null);
@@ -118,6 +121,10 @@ export function OutstandingsScreen({
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
   const requestVersion = React.useRef(0);
   const initialReadKey = React.useRef<string | null>(null);
+  const requestedAsOf = asOfYyyymmdd(asOf);
+  const currentRequestedAsOf = React.useRef(requestedAsOf);
+  currentRequestedAsOf.current = requestedAsOf;
+  const result = asOfBoundValueForAsOf(loadedResult, requestedAsOf);
   // Settles the initial tab once per loaded report, keyed on the report's own
   // sync timestamp -- not on every render, and never after the operator has
   // clicked a tab, since this effect only fires again when a NEW report
@@ -131,15 +138,25 @@ export function OutstandingsScreen({
 
   React.useEffect(() => {
     requestVersion.current += 1;
-    setResult(null);
+    setLoadedResult(null);
     setError(null);
     setLoading(false);
     setInrAssertedCompanyGuid(null);
     setExpandedParty(null);
   }, [config.host, config.port, company?.guid, company?.name]);
 
+  React.useEffect(() => {
+    // The heading/control can change at local midnight while a read is still
+    // pending. Date-bind results and invalidate the issued request so neither
+    // completed nor late-settling money can be displayed under a new date.
+    requestVersion.current += 1;
+    setLoadedResult(null);
+    setError(null);
+    setLoading(false);
+    setExpandedParty(null);
+  }, [requestedAsOf]);
+
   const currencyReadPermitted = canStartOutstandingsRead(company, inrAssertedCompanyGuid);
-  const requestedAsOf = asOfYyyymmdd(asOf);
   const readPermitted = currencyReadPermitted && requestedAsOf !== null;
   const partialState = result?.state === "partial"
     ? outstandingsPartialState(
@@ -153,19 +170,26 @@ export function OutstandingsScreen({
 
   const load = React.useCallback(async () => {
     if (!readPermitted || !company || !requestedAsOf) return;
+    const argument = singleCompanyOutstandingsInvokeArgument(config, company, asOf);
+    if (!argument) return;
+    const requestedAsOfYyyymmdd = argument.request.as_of_yyyymmdd;
     const version = requestVersion.current + 1;
     requestVersion.current = version;
     setLoading(true);
     setError(null);
     try {
-      const argument = singleCompanyOutstandingsInvokeArgument(config, company, asOf);
-      if (!argument) return;
       const next = await invoke<LoadResult>("fetch_tally_outstandings", argument);
       if (requestVersion.current !== version) return;
-      setResult(next);
+      const settled = settleAsOfBoundValue(
+        currentRequestedAsOf.current,
+        requestedAsOfYyyymmdd,
+        next,
+      );
+      if (!settled) return;
+      setLoadedResult(settled);
     } catch (cause) {
       if (requestVersion.current !== version) return;
-      setResult(null);
+      setLoadedResult(null);
       setError(operatorMessage(cause));
     } finally {
       if (requestVersion.current === version) setLoading(false);
@@ -364,7 +388,7 @@ export function OutstandingsScreen({
               value={asOf}
               onChange={(event) => {
                 onAsOfChange(event.target.value);
-                setResult(null);
+                setLoadedResult(null);
                 setError(null);
               }}
               disabled={loading}

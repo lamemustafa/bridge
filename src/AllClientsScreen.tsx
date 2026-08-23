@@ -6,11 +6,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
 import { outstandingsPartialState } from "./outstandings-copy";
 import {
-  allClientsEntriesForAsOf,
   allCompaniesOutstandingsInvokeArgument,
-  AllClientsEntriesAtAsOf,
+  asOfBoundValueForAsOf,
   asOfYyyymmdd,
-  settleAllClientsEntries,
+  settleAsOfBoundValue,
+  type AsOfBoundValue,
 } from "./outstandings-as-of";
 
 type CompanyRef = { name: string; guid: string };
@@ -101,7 +101,7 @@ function ageTier(days: number | null) {
 
 export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asOf }: Props) {
   const [sort, setSort] = React.useState<SortPreference>(defaultSort);
-  const [loadedEntries, setLoadedEntries] = React.useState<AllClientsEntriesAtAsOf<Entry[]> | null>(null);
+  const [loadedEntries, setLoadedEntries] = React.useState<AsOfBoundValue<Entry[]> | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [groupLabels, setGroupLabels] = React.useState<ClientGroupLabels>({});
@@ -119,7 +119,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   const requestedAsOf = asOfYyyymmdd(asOf);
   const currentRequestedAsOf = React.useRef(requestedAsOf);
   currentRequestedAsOf.current = requestedAsOf;
-  const entries = allClientsEntriesForAsOf(loadedEntries, requestedAsOf);
+  const entries = asOfBoundValueForAsOf(loadedEntries, requestedAsOf);
 
   React.useEffect(() => {
     // A new effective date makes any previous financial rows ineligible for
@@ -184,7 +184,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     try {
       const next = await invoke<Entry[]>("fetch_tally_outstandings_all_companies", argument);
       if (requestVersion.current !== version) return;
-      const settled = settleAllClientsEntries(
+      const settled = settleAsOfBoundValue(
         currentRequestedAsOf.current,
         requestedAsOfYyyymmdd,
         next,
