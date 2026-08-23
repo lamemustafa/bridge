@@ -92,7 +92,7 @@ pub fn render_party_statement_xlsx(
         worksheet.write_string(row, 0, bill.reference.as_str())?;
         worksheet.write_datetime_with_format(row, 1, excel_date(&bill.bill_date)?, &date_format)?;
         worksheet.write_datetime_with_format(row, 2, excel_date(&bill.due_date)?, &date_format)?;
-        worksheet.write_string(row, 3, bill_direction_label(bill.kind)?)?;
+        worksheet.write_string(row, 3, bill_direction_label(bill.kind))?;
         worksheet.write_number_with_format(
             row,
             4,
@@ -223,12 +223,8 @@ fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> {
     Ok(value)
 }
 
-fn bill_direction_label(kind: &str) -> Result<&'static str, PartyStatementXlsxError> {
-    match kind {
-        "receivable" => Ok("Receivable"),
-        "payable" => Ok("Payable"),
-        _ => Err(PartyStatementXlsxError::InvalidDirection(kind.to_string())),
-    }
+fn bill_direction_label(direction: ExposureDirection) -> &'static str {
+    exposure_direction_label(direction)
 }
 
 fn exposure_direction_label(direction: ExposureDirection) -> &'static str {
@@ -324,12 +320,11 @@ mod tests {
 
     #[test]
     fn bill_direction_labels_make_mixed_party_amounts_unambiguous() {
-        assert_eq!(bill_direction_label("receivable").unwrap(), "Receivable");
-        assert_eq!(bill_direction_label("payable").unwrap(), "Payable");
-        assert!(matches!(
-            bill_direction_label("unknown"),
-            Err(PartyStatementXlsxError::InvalidDirection(_))
-        ));
+        assert_eq!(
+            bill_direction_label(ExposureDirection::Receivable),
+            "Receivable"
+        );
+        assert_eq!(bill_direction_label(ExposureDirection::Payable), "Payable");
     }
     use super::*;
     use crate::reports::party_statement::build_party_statement;
@@ -344,7 +339,7 @@ mod tests {
             due_date: "20260201".to_string(),
             amount: ExactDecimal::parse(amount).unwrap(),
             age_days: Some(age_days),
-            kind: "receivable",
+            kind: ExposureDirection::Receivable,
         }
     }
 

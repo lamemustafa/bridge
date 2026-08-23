@@ -193,8 +193,8 @@ fn all_open_bill_rows(
 ) -> Vec<OpenBillRow> {
     let mut rows = receivable
         .iter()
-        .map(|row| (row, "receivable"))
-        .chain(payable.iter().map(|row| (row, "payable")))
+        .map(|row| (row, ExposureDirection::Receivable))
+        .chain(payable.iter().map(|row| (row, ExposureDirection::Payable)))
         .filter_map(|(row, kind)| {
             let amount = row.closing_balance.abs().ok()?;
             let age_days = if &row.due_date > as_of {
@@ -262,7 +262,7 @@ fn all_unallocated_parties(
     ranked
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenBillRow {
     pub party: String,
     pub reference: String,
@@ -270,16 +270,10 @@ pub struct OpenBillRow {
     pub due_date: String,
     pub amount: ExactDecimal,
     pub age_days: Option<u32>,
-    /// `receivable` for a debit-balance bill, `payable` for a credit one.
-    /// Named by balance direction because that is what Tally's two reports
-    /// actually scope by -- a supplier advance is a receivable bill.
-    ///
-    /// Not `Deserialize`: a `&'static str` field forces any struct that
-    /// embeds this one into a `'de: 'static` bound on its own derive, which
-    /// a Tauri command argument (deserialized from a short-lived JSON
-    /// buffer) cannot satisfy. `commands::OpenBillRowInput` is the
-    /// deserializable counterpart used at that boundary instead.
-    pub kind: &'static str,
+    /// Direction of the native report that returned this bill. A supplier
+    /// advance can still be receivable, so this is balance direction rather
+    /// than party role.
+    pub kind: ExposureDirection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -287,6 +281,15 @@ pub struct OpenBillRow {
 pub enum ExposureDirection {
     Receivable,
     Payable,
+}
+
+impl ExposureDirection {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Receivable => "Receivable",
+            Self::Payable => "Payable",
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

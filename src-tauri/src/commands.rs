@@ -2961,46 +2961,6 @@ pub async fn reveal_exported_file(path: String) -> Result<(), String> {
         .map_err(|error| format!("Bridge could not open the folder: {error}"))
 }
 
-/// Wire counterpart of [`OpenBillRow`] for this command's argument only.
-///
-/// `OpenBillRow::kind` is `&'static str`, which makes `OpenBillRow` itself
-/// unable to derive `Deserialize` -- embedding it in another struct's derive
-/// would need a `'de: 'static` bound the Tauri IPC deserializer (borrowing
-/// from a short-lived request buffer) cannot satisfy. This struct carries
-/// `kind` as a plain `String` instead and is validated into an `OpenBillRow`
-/// by `into_open_bill_row` below.
-#[derive(Debug, Deserialize)]
-pub struct OpenBillRowInput {
-    pub party: String,
-    pub reference: String,
-    pub bill_date: String,
-    pub due_date: String,
-    pub amount: bridge_tally_core::ExactDecimal,
-    pub age_days: Option<u32>,
-    pub kind: String,
-}
-
-fn into_open_bill_row(input: OpenBillRowInput) -> Result<OpenBillRow, String> {
-    let kind: &'static str = match input.kind.as_str() {
-        "receivable" => "receivable",
-        "payable" => "payable",
-        other => {
-            return Err(format!(
-                "Bridge received an unrecognised bill kind ({other}) and could not build the statement."
-            ))
-        }
-    };
-    Ok(OpenBillRow {
-        party: input.party,
-        reference: input.reference,
-        bill_date: input.bill_date,
-        due_date: input.due_date,
-        amount: input.amount,
-        age_days: input.age_days,
-        kind,
-    })
-}
-
 #[derive(Debug, Deserialize)]
 pub struct ExportPartyStatementRequest {
     pub company: String,
@@ -3013,7 +2973,7 @@ pub struct ExportPartyStatementRequest {
     /// holds from `fetch_tally_outstandings`. This command reads no Tally
     /// endpoint of its own -- `OutstandingsLoadResult::Complete` already
     /// carries every fact a statement needs.
-    pub open_bills: Vec<OpenBillRowInput>,
+    pub open_bills: Vec<OpenBillRow>,
     pub unallocated_by_party: Vec<UnallocatedParty>,
 }
 
@@ -3035,7 +2995,7 @@ pub struct ExportBulkPartyStatementsRequest {
     pub destination: String,
     /// These are complete statement-source rows from the finished local read,
     /// not the dashboard's display projections.
-    pub open_bills: Vec<OpenBillRowInput>,
+    pub open_bills: Vec<OpenBillRow>,
     pub unallocated_by_party: Vec<UnallocatedParty>,
 }
 
@@ -3043,7 +3003,7 @@ pub struct ExportBulkPartyStatementsRequest {
 pub struct PreviewBulkPartyStatementsRequest {
     /// The same complete rows the export command will consume. This command
     /// performs no I/O or Tally read; it only makes the pending scope explicit.
-    pub open_bills: Vec<OpenBillRowInput>,
+    pub open_bills: Vec<OpenBillRow>,
     pub unallocated_by_party: Vec<UnallocatedParty>,
 }
 
@@ -3090,13 +3050,11 @@ fn require_utf8_destination(path: std::path::PathBuf) -> Result<String, String> 
 pub async fn preview_bulk_party_statements(
     request: PreviewBulkPartyStatementsRequest,
 ) -> Result<BulkPartyStatementsPreview, String> {
-    let open_bills = request
-        .open_bills
-        .into_iter()
-        .map(into_open_bill_row)
-        .collect::<Result<Vec<_>, _>>()?;
     Ok(BulkPartyStatementsPreview {
-        party_count: bulk_party_statement_party_count(&open_bills, &request.unallocated_by_party),
+        party_count: bulk_party_statement_party_count(
+            &request.open_bills,
+            &request.unallocated_by_party,
+        ),
     })
 }
 
@@ -3108,11 +3066,6 @@ pub async fn preview_bulk_party_statements(
 pub async fn export_bulk_party_statements(
     request: ExportBulkPartyStatementsRequest,
 ) -> Result<crate::reports::bulk_party_statement::BulkPartyStatementResult, String> {
-    let open_bills = request
-        .open_bills
-        .into_iter()
-        .map(into_open_bill_row)
-        .collect::<Result<Vec<_>, _>>()?;
     let destination = std::path::PathBuf::from(request.destination);
 
     match request.format {
@@ -3121,7 +3074,7 @@ pub async fn export_bulk_party_statements(
             &request.company,
             &request.as_of_yyyymmdd,
             "xlsx",
-            &open_bills,
+            &request.open_bills,
             &request.unallocated_by_party,
             |statement| render_party_statement_xlsx(statement).map_err(|error| error.to_string()),
         ),
@@ -3130,7 +3083,7 @@ pub async fn export_bulk_party_statements(
             &request.company,
             &request.as_of_yyyymmdd,
             "pdf",
-            &open_bills,
+            &request.open_bills,
             &request.unallocated_by_party,
             |statement| render_party_statement_pdf(statement).map_err(|error| error.to_string()),
         ),
@@ -3150,17 +3103,11 @@ pub async fn export_party_statement(
 ) -> Result<String, String> {
     use tauri::Manager as _;
 
-    let open_bills = request
-        .open_bills
-        .into_iter()
-        .map(into_open_bill_row)
-        .collect::<Result<Vec<_>, _>>()?;
-
     let statement = build_party_statement(
         &request.company,
         &request.as_of_yyyymmdd,
         &request.party,
-        &open_bills,
+        &request.open_bills,
         &request.unallocated_by_party,
     )
     .map_err(|error| match error {
@@ -3326,6 +3273,27 @@ mod party_statement_export_tests {
         pdf["format"] = serde_json::Value::String("pdf".to_string());
         let pdf: ExportPartyStatementRequest = serde_json::from_value(pdf).unwrap();
         assert!(matches!(pdf.format, PartyStatementFormat::Pdf));
+    }
+
+    #[test]
+    fn statement_export_rejects_unknown_bill_direction_at_the_ipc_boundary() {
+        let request = serde_json::json!({
+            "company": "Synthetic Books Pvt Ltd",
+            "as_of_yyyymmdd": "20260808",
+            "party": "Synthetic Party",
+            "open_bills": [{
+                "party": "Synthetic Party",
+                "reference": "INV-1",
+                "bill_date": "20260801",
+                "due_date": "20260831",
+                "amount": "100.00",
+                "age_days": 7,
+                "kind": "unknown"
+            }],
+            "unallocated_by_party": []
+        });
+
+        assert!(serde_json::from_value::<ExportPartyStatementRequest>(request).is_err());
     }
 
     #[test]

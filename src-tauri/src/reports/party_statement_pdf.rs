@@ -344,7 +344,7 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
             display_pdf_text("bill reference", &bill.reference),
             display_date(&bill.bill_date)?,
             display_date(&bill.due_date)?,
-            bill_direction_label(bill.kind)?,
+            bill_direction_label(bill.kind),
             amount,
             age,
             bucket,
@@ -401,12 +401,8 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
     Ok(lines)
 }
 
-fn bill_direction_label(kind: &str) -> Result<&'static str, PartyStatementPdfError> {
-    match kind {
-        "receivable" => Ok(exposure_direction_label(ExposureDirection::Receivable)),
-        "payable" => Ok(exposure_direction_label(ExposureDirection::Payable)),
-        _ => Err(PartyStatementPdfError::InvalidDirection(kind.to_string())),
-    }
+fn bill_direction_label(direction: ExposureDirection) -> &'static str {
+    exposure_direction_label(direction)
 }
 
 fn exposure_direction_label(direction: ExposureDirection) -> &'static str {
@@ -614,7 +610,7 @@ mod tests {
             due_date: "20260201".to_string(),
             amount: ExactDecimal::parse(amount).unwrap(),
             age_days: Some(age_days),
-            kind: "receivable",
+            kind: ExposureDirection::Receivable,
         }
     }
 
@@ -756,7 +752,7 @@ mod tests {
     #[test]
     fn renders_bill_direction_for_mixed_party_documents() {
         let mut payable = bill("BILL-1", "1250.75", 40);
-        payable.kind = "payable";
+        payable.kind = ExposureDirection::Payable;
         let statement = build_party_statement(
             "Synthetic Books Pvt Ltd",
             "20260808",
@@ -775,7 +771,7 @@ mod tests {
     #[test]
     fn mixed_direction_bucket_subtotals_are_explicit_in_both_formats() {
         let mut payable = bill("BILL-80", "80.00", 20);
-        payable.kind = "payable";
+        payable.kind = ExposureDirection::Payable;
         let statement = build_party_statement(
             "Synthetic Books Pvt Ltd",
             "20260808",

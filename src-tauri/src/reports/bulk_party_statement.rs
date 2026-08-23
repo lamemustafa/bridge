@@ -177,9 +177,8 @@ fn statement_directional_totals(statement: &PartyStatement) -> Result<(String, S
     let mut payable = bridge_tally_core::ExactDecimal::zero();
     for bill in &statement.bills {
         let total = match bill.kind {
-            "receivable" => &mut receivable,
-            "payable" => &mut payable,
-            _ => return Err("Bridge found an unknown statement direction.".to_string()),
+            ExposureDirection::Receivable => &mut receivable,
+            ExposureDirection::Payable => &mut payable,
         };
         *total = total
             .checked_add(&bill.amount)
@@ -326,7 +325,7 @@ mod tests {
             due_date: "20260201".to_string(),
             amount: ExactDecimal::parse(amount).expect("synthetic decimal"),
             age_days: Some(40),
-            kind: "receivable",
+            kind: ExposureDirection::Receivable,
         }
     }
 
@@ -400,7 +399,7 @@ mod tests {
     fn manifest_totals_keep_receivable_and_payable_directions_separate() {
         let destination = tempfile::tempdir().expect("temporary destination");
         let mut payable_bill = bill("Mixed Party", "4.00");
-        payable_bill.kind = "payable";
+        payable_bill.kind = ExposureDirection::Payable;
         let unallocated = [UnallocatedParty {
             party: "Mixed Party".to_string(),
             amount: ExactDecimal::parse("3.00").expect("synthetic decimal"),
