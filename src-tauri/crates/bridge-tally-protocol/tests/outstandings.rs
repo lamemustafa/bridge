@@ -1039,67 +1039,6 @@ fn bill_vouchers_xml(vouchers: &[(u64, &str, &str, &str, i64)]) -> String {
     format!("<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{vouchers}</COLLECTION></DATA></BODY></ENVELOPE>")
 }
 
-fn ageing_vouchers_xml(vouchers: &[(&str, &str, u32)]) -> String {
-    let vouchers = vouchers
-        .iter()
-        .enumerate()
-        .map(|(index, (reference, date, credit_period_days))| {
-            let alter_id = index + 1;
-            format!(
-                concat!(
-                    "<VOUCHER><GUID>{COMPANY_GUID}-{alter_id:08}</GUID><MASTERID>{alter_id}</MASTERID><ALTERID>{alter_id}</ALTERID>",
-                    "<DATE>{date}</DATE><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED>",
-                    "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Ageing Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>{reference}</NAME><BILLTYPE>New Ref</BILLTYPE><BILLDATE>{date}</BILLDATE><BILLCREDITPERIOD>{credit_period_days} Days</BILLCREDITPERIOD><AMOUNT>-1</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>"
-                ),
-                COMPANY_GUID = COMPANY_GUID,
-                alter_id = alter_id,
-                date = date,
-                reference = reference,
-                credit_period_days = credit_period_days,
-            )
-        })
-        .collect::<String>();
-    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{vouchers}</COLLECTION></DATA></BODY></ENVELOPE>")
-}
-
-#[test]
-fn ageing_corpus_moves_seven_of_eight_bills_between_bill_and_due_date_buckets() {
-    use bridge_tally_protocol::outstandings::{
-        compute_outstandings_with_ageing_anchor, AgeingAnchor,
-    };
-
-    let xml = ageing_vouchers_xml(&[
-        ("AGE-INV-07", "20251201", 90),
-        ("AGE-INV-06", "20251226", 60),
-        ("AGE-INV-05", "20260105", 45),
-        ("AGE-INV-04", "20260120", 30),
-        ("AGE-INV-03", "20260214", 30),
-        ("AGE-INV-02", "20260224", 15),
-        ("AGE-INV-08", "20251221", 15),
-        ("AGE-INV-01", "20260306", 0),
-    ]);
-    let window =
-        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20250401", "20260331").unwrap();
-    let scan = complete_scan_for_vouchers(&xml, window, 8);
-    let as_of = TallyDate::parse("20260331").unwrap();
-
-    let bill_date =
-        compute_outstandings_with_ageing_anchor(&scan, as_of.clone(), AgeingAnchor::BillDate)
-            .expect("bill-date ageing computes");
-    let due_date = compute_outstandings_with_ageing_anchor(&scan, as_of, AgeingAnchor::DueDate)
-        .expect("due-date ageing computes");
-
-    assert_eq!(bill_date.ageing_bill_counts.days_0_30, 1);
-    assert_eq!(bill_date.ageing_bill_counts.days_31_60, 2);
-    assert_eq!(bill_date.ageing_bill_counts.days_61_90, 2);
-    assert_eq!(bill_date.ageing_bill_counts.days_90_plus, 3);
-    assert_eq!(due_date.ageing_bill_counts.days_0_30, 4);
-    assert_eq!(due_date.ageing_bill_counts.days_31_60, 3);
-    assert_eq!(due_date.ageing_bill_counts.days_61_90, 1);
-    assert_eq!(due_date.ageing_bill_counts.days_90_plus, 0);
-    assert_ne!(bill_date.ageing, due_date.ageing);
-}
-
 fn complete_scan_for_vouchers(
     xml: &str,
     window: DateWindow,

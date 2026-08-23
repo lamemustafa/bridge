@@ -80,6 +80,7 @@ struct StatementManifest<'a> {
     company: &'a str,
     as_of_yyyymmdd: &'a str,
     format: &'a str,
+    ageing_anchor: OutstandingsAgeingAnchor,
     written: &'a [WrittenStatement],
     failures: &'a [StatementFailure],
 }
@@ -198,6 +199,7 @@ where
         company,
         as_of_yyyymmdd,
         format,
+        ageing_anchor,
         written: &written,
         failures: &failures,
     };
@@ -435,6 +437,7 @@ mod tests {
         assert!(manifest.contains("Synthetic Books Pvt Ltd"));
         assert!(manifest.contains("\"receivable_amount\": \"10\""));
         assert!(manifest.contains("\"payable_amount\": \"0\""));
+        assert!(manifest.contains("\"ageing_anchor\": \"due_date\""));
         assert!(!manifest.contains("\"amount\":"));
         assert!(manifest.contains("Broken Party"));
         assert!(manifest.contains("\"code\": \"rendering\""));
@@ -465,6 +468,25 @@ mod tests {
 
         assert_eq!(result.written[0].receivable_amount, "10");
         assert_eq!(result.written[0].payable_amount, "7");
+    }
+
+    #[test]
+    fn manifest_discloses_the_selected_ageing_anchor() {
+        let destination = tempfile::tempdir().expect("temporary destination");
+        let result = write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
+            destination: destination.path(),
+            company: "Synthetic Books Pvt Ltd",
+            as_of_yyyymmdd: "20260808",
+            format: "xlsx",
+            open_bills: &[bill("Selected basis", "10.00")],
+            unallocated_by_party: &[],
+            ageing_anchor: OutstandingsAgeingAnchor::BillDate,
+            render: |_: &PartyStatement| Ok(b"synthetic workbook".to_vec()),
+        })
+        .expect("statement batch succeeds");
+
+        let manifest = fs::read_to_string(&result.manifest_path).expect("manifest is written");
+        assert!(manifest.contains("\"ageing_anchor\": \"bill_date\""));
     }
 
     #[test]

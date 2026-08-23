@@ -1261,10 +1261,28 @@ changes the buckets. On a bill dated 1-May-26 with a 30-day credit period, due 3
 Both are correct. Neither is "the" answer, so **any tool computing ageing must state which
 basis it used.**
 
-`BILLCREDITPERIOD` tags appear in the ordinary wildcard voucher fetch — 19 occurrences in a
-single partition capture of a book that sets none. That establishes serialization of the empty
-field only, not the usable value or format of a configured credit period. Capture and read back
-a nonzero period before claiming that due-date ageing needs no request-shape change.
+Licensed-gateway capture/read-back evidence on **2026-08-23** establishes these accepted units:
+
+| entered value | returned `BILLCREDITPERIOD` |
+| --- | --- |
+| `2 Months` | `2 Months` |
+| `3 Weeks` | `3 Weeks` |
+| `1 Day` | `1 Days` |
+
+The voucher parser accepts explicit `N Day(s)`, `N Week(s)`, and `N Month(s)` forms only. It
+rejects an unknown unit rather than guessing a day count. Weeks add exactly seven days each;
+months use a calendar-month operation that preserves the day of month when possible and otherwise
+clamps to the target month's last day. The same licensed-gateway evidence measured:
+
+| bill date and period | due date |
+| --- | --- |
+| 15-Jan-26 + 4 Weeks | 12-Feb-26 |
+| 30-Jan-26 + 1 Month | 28-Feb-26 |
+| 31-Jan-26 + 1 Month | 28-Feb-26 |
+| 31-Mar-26 + 2 Months | 31-May-26 |
+
+2026 is not a leap year. The 29-Feb clamp is implemented from the Gregorian calendar rule but was
+not directly observed in this capture.
 
 **`BILLOVERDUE` in the native report is not usable as an ageing oracle.** Its as-of is
 Tally's own period date, not the caller's, and it does **not** follow the `F6` setting:
