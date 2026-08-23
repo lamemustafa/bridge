@@ -71,7 +71,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "461420c8d59671cc7a2d0ab54f9eccbf255520e7e176853e2a98fd232ab29f4c"
+      "sha256": "81a74bb6f3ac2d1b6734899224d1eef8ae39b319538f60075e9c288ba7af784e"
     },
     {
       "path": "scripts/check-tally-live-read-boundary.mjs",
@@ -478,5 +478,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "efeb91eae826e9e59585c7ae5a79ad41e0a9b47fee10b90daca12861e8a91f45"
+  "manifest_sha256": "c26058d0396d7fe63d18e43e0d15f49ef5e10019f1088513c7cd3ee4d3977933"
 }
