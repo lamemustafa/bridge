@@ -45,6 +45,7 @@ type LoadResult =
       reason_code: string;
       requested_as_of_yyyymmdd?: string;
       tally_as_of_yyyymmdd?: string;
+      foreign_currency_ledger_name?: string;
     };
 
 type Entry = { company: string; company_guid: string; result: LoadResult };
@@ -239,6 +240,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
           reasonCode: entry.result.state === "partial" ? entry.result.reason_code : null,
           requestedAsOf: entry.result.state === "partial" ? entry.result.requested_as_of_yyyymmdd : undefined,
           tallyAsOf: entry.result.state === "partial" ? entry.result.tally_as_of_yyyymmdd : undefined,
+          foreignCurrencyLedgerName: entry.result.state === "partial" ? entry.result.foreign_currency_ledger_name : undefined,
           receivable: complete ? amountOf(complete.report.receivable_total) : null,
           overdue: complete ? amountOf(complete.report.ageing.days_90_plus) : null,
           unallocated: complete ? amountOf(complete.unallocated_total) : null,
@@ -340,7 +342,12 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
 
   const renderRow = (row: (typeof rows)[number]) => {
     const partial = row.reasonCode
-      ? outstandingsPartialState(row.reasonCode, row.requestedAsOf, row.tallyAsOf)
+      ? outstandingsPartialState(
+        row.reasonCode,
+        row.requestedAsOf,
+        row.tallyAsOf,
+        row.foreignCurrencyLedgerName,
+      )
       : null;
     return (
       <button

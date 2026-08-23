@@ -2230,12 +2230,40 @@ pub struct CompanyOutstandingsEntry {
 }
 
 fn company_sweep_result(
-    result: Result<OutstandingsLoadResult, &'static str>,
+    result: Result<OutstandingsLoadResult, CompanySweepFailure>,
 ) -> OutstandingsLoadResult {
-    result.unwrap_or_else(|reason_code| OutstandingsLoadResult::Partial {
-        reason: crate::tally::OutstandingsPartialReason::code(reason_code),
+    let reason = match result {
+        Ok(result) => return result,
+        Err(CompanySweepFailure::ReasonCode(reason_code)) => {
+            crate::tally::OutstandingsPartialReason::code(reason_code)
+        }
+        Err(CompanySweepFailure::OutstandingsRead(error)) => {
+            company_sweep_outstandings_partial_reason(&error)
+        }
+    };
+    OutstandingsLoadResult::Partial {
+        reason,
         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
-    })
+    }
+}
+
+enum CompanySweepFailure {
+    ReasonCode(&'static str),
+    OutstandingsRead(anyhow::Error),
+}
+
+fn company_sweep_outstandings_partial_reason(
+    error: &anyhow::Error,
+) -> crate::tally::OutstandingsPartialReason {
+    if let Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>())
+    {
+        return crate::tally::OutstandingsPartialReason::foreign_currency_ledger_balance(
+            ledger_name.clone(),
+        );
+    }
+    crate::tally::OutstandingsPartialReason::code("company_outstandings_read_failed")
 }
 
 /// Reads outstandings for several companies in one action.
@@ -2266,7 +2294,7 @@ pub async fn fetch_tally_outstandings_all_companies(
     let mut entries = Vec::with_capacity(request.companies.len());
     for entry in request.companies {
         let result = if validate_company_name(&entry.company).is_err() {
-            Err("company_selection_invalid")
+            Err(CompanySweepFailure::ReasonCode("company_selection_invalid"))
         } else {
             match runtime
                 .detect_base_currency(
@@ -2276,8 +2304,12 @@ pub async fn fetch_tally_outstandings_all_companies(
                 )
                 .await
             {
-                Err(_) => Err("company_currency_probe_failed"),
-                Ok(currency) if !currency.is_inr => Err("company_base_currency_not_inr"),
+                Err(_) => Err(CompanySweepFailure::ReasonCode(
+                    "company_currency_probe_failed",
+                )),
+                Ok(currency) if !currency.is_inr => Err(CompanySweepFailure::ReasonCode(
+                    "company_base_currency_not_inr",
+                )),
                 Ok(_) => runtime
                     .fetch_outstandings(
                         request.config.clone(),
@@ -2288,7 +2320,7 @@ pub async fn fetch_tally_outstandings_all_companies(
                         request.ageing_anchor,
                     )
                     .await
-                    .map_err(|_| "company_outstandings_read_failed"),
+                    .map_err(CompanySweepFailure::OutstandingsRead),
             }
         };
         entries.push(CompanyOutstandingsEntry {
@@ -2468,7 +2500,7 @@ mod tests {
         company_sweep_result, first_calendar_day_canary_window, portable_export_file_name,
         reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
         tally_command_error, tally_runtime_command_error, validate_dsc_pins, write_unique_download,
-        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
+        CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
@@ -2480,6 +2512,7 @@ mod tests {
         SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
+    use bridge_tally_protocol::native_outstandings::NativeOutstandingsError;
     use std::collections::BTreeMap;
 
     /// Regression for the destination-picker leak: `select_party_statement_
@@ -2553,8 +2586,12 @@ mod tests {
                 reason: crate::tally::OutstandingsPartialReason::code("first_book_partial"),
                 synced_at_unix_ms: 1,
             }),
-            Err("company_currency_probe_failed"),
-            Err("company_outstandings_read_failed"),
+            Err(CompanySweepFailure::ReasonCode(
+                "company_currency_probe_failed",
+            )),
+            Err(CompanySweepFailure::ReasonCode(
+                "company_outstandings_read_failed",
+            )),
             Ok(OutstandingsLoadResult::Partial {
                 reason: crate::tally::OutstandingsPartialReason::code("last_book_partial"),
                 synced_at_unix_ms: 2,
@@ -2583,6 +2620,22 @@ mod tests {
             &outcomes[3],
             OutstandingsLoadResult::Partial { reason, .. }
                 if reason.reason_code == "last_book_partial"
+        ));
+    }
+
+    #[test]
+    fn company_sweep_preserves_foreign_currency_ledger_diagnostic() {
+        let outcome = company_sweep_result(Err(CompanySweepFailure::OutstandingsRead(
+            anyhow::Error::new(NativeOutstandingsError::ForeignCurrencyLedgerBalance {
+                ledger_name: "Synthetic FX Debtor".to_string(),
+            }),
+        )));
+
+        assert!(matches!(
+            outcome,
+            OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "company_foreign_currency_ledger_balance"
+                    && reason.foreign_currency_ledger_name.as_deref() == Some("Synthetic FX Debtor")
         ));
     }
 

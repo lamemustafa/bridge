@@ -89,6 +89,7 @@ type LoadResult =
       reason_code: string;
       requested_as_of_yyyymmdd?: string;
       tally_as_of_yyyymmdd?: string;
+      foreign_currency_ledger_name?: string;
       synced_at_unix_ms: number;
     };
 
@@ -175,6 +176,7 @@ export function OutstandingsScreen({
       result.reason_code,
       result.requested_as_of_yyyymmdd,
       result.tally_as_of_yyyymmdd,
+      result.foreign_currency_ledger_name,
     )
     : null;
   const outstandingsUnavailable = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);

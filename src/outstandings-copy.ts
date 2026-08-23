@@ -10,6 +10,7 @@ export function outstandingsPartialReason(
   value: string,
   requestedAsOf?: string,
   tallyAsOf?: string,
+  foreignCurrencyLedgerName?: string,
 ) {
   if (value === "native_outstandings_as_of_refused") {
     if (requestedAsOf && tallyAsOf) {
@@ -34,6 +35,11 @@ export function outstandingsPartialReason(
   }
   if (value === "company_outstandings_read_failed") {
     return "this company read failed while the remaining companies continued";
+  }
+  if (value === "company_foreign_currency_ledger_balance") {
+    return foreignCurrencyLedgerName
+      ? `Tally reported a foreign-currency closing balance for ledger ${foreignCurrencyLedgerName}`
+      : "Tally reported a foreign-currency closing balance";
   }
   if (value === "tally_segment_latency_trending_restart_recommended") {
     return "comparable segments kept slowing toward the safety deadline; Tally may need a restart before another sync";
@@ -82,6 +88,7 @@ export function outstandingsPartialState(
   reasonCode: string,
   requestedAsOf?: string,
   tallyAsOf?: string,
+  foreignCurrencyLedgerName?: string,
 ): OutstandingsPartialState {
   if (reasonCode === "native_outstandings_as_of_refused") {
     return {
@@ -122,6 +129,14 @@ export function outstandingsPartialState(
     return {
       title: "Outstandings are not available for this company",
       message: "Bridge completed a coverage check, but bill-wise opening balances fall outside the current read scope. It did not calculate totals. Repeating the same scan won't resolve this.",
+      retryable: false,
+      tallyReadAttempted: true,
+    };
+  }
+  if (reasonCode === "company_foreign_currency_ledger_balance") {
+    return {
+      title: "Outstandings are not available for this company",
+      message: `${outstandingsPartialReason(reasonCode, requestedAsOf, tallyAsOf, foreignCurrencyLedgerName)}. Bridge withheld the totals rather than guessing a base-currency amount.`,
       retryable: false,
       tallyReadAttempted: true,
     };

@@ -152,8 +152,8 @@ pub enum OutstandingsLoadResult {
 
 /// A machine-readable reason for withholding outstandings totals. The stable
 /// `reason_code` serialization stays compatible with the frontend while the
-/// refused-period variant carries both dates as separate, typed fields rather
-/// than asking presentation code to parse a message.
+/// exceptional variants carry their diagnostic values as separate, typed
+/// fields rather than asking presentation code to parse a message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OutstandingsPartialReason {
     pub reason_code: String,
@@ -161,6 +161,8 @@ pub struct OutstandingsPartialReason {
     pub requested_as_of_yyyymmdd: Option<TallyDate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tally_as_of_yyyymmdd: Option<TallyDate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub foreign_currency_ledger_name: Option<String>,
 }
 
 impl OutstandingsPartialReason {
@@ -169,6 +171,7 @@ impl OutstandingsPartialReason {
             reason_code: reason_code.into(),
             requested_as_of_yyyymmdd: None,
             tally_as_of_yyyymmdd: None,
+            foreign_currency_ledger_name: None,
         }
     }
 
@@ -177,6 +180,16 @@ impl OutstandingsPartialReason {
             reason_code: "native_outstandings_as_of_refused".to_string(),
             requested_as_of_yyyymmdd: Some(requested_as_of.clone()),
             tally_as_of_yyyymmdd: Some(tally_as_of.clone()),
+            foreign_currency_ledger_name: None,
+        }
+    }
+
+    pub fn foreign_currency_ledger_balance(ledger_name: String) -> Self {
+        Self {
+            reason_code: "company_foreign_currency_ledger_balance".to_string(),
+            requested_as_of_yyyymmdd: None,
+            tally_as_of_yyyymmdd: None,
+            foreign_currency_ledger_name: Some(ledger_name),
         }
     }
 }
