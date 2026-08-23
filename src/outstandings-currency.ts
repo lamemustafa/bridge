@@ -6,3 +6,13 @@ export function canStartOutstandingsRead(
 ) {
   return company?.guid === inrAssertedCompanyGuid;
 }
+
+export type OutstandingsCurrencyAssertion = "INR";
+
+export function outstandingsCurrencySymbol(currencyAssertion: OutstandingsCurrencyAssertion) {
+  return currencyAssertion === "INR" ? "₹" : unreachableCurrencyAssertion(currencyAssertion);
+}
+
+function unreachableCurrencyAssertion(currencyAssertion: never): never {
+  throw new Error(`Unsupported outstandings currency assertion: ${currencyAssertion}`);
+}

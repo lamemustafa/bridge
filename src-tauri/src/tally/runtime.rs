@@ -2480,8 +2480,19 @@ mod tests {
         const EXTENT: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
         );
-        const CURRENCY: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><CURRENCY>0</CURRENCY></CMPINFO></DESC><DATA><COLLECTION><CURRENCY NAME="Rs." RESERVEDNAME=""><MAILINGNAME TYPE="String">Indian Rupees</MAILINGNAME></CURRENCY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        const CURRENCY: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+        );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+
+        let currency = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
+            CURRENCY,
+            "text/xml; charset=utf-16",
+            bridge_tally_protocol::ExpectedTallyTextEncoding::Utf16Le,
+            CURRENCY.len(),
+        )
+        .expect("captured currency response decodes")
+        .text;
 
         // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
         // (`fetch_company_book_extent`) now requires that witness, so inject it into this
@@ -2509,9 +2520,9 @@ mod tests {
                 STATUS,
                 opening_extent.as_str(),
                 STATUS,
-                CURRENCY,
+                currency.as_str(),
                 STATUS,
-                CURRENCY,
+                currency.as_str(),
                 STATUS,
                 closing_extent.as_str(),
                 STATUS,

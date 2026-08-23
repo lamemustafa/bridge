@@ -365,6 +365,61 @@ fn parse_ledger_amount(text: &str) -> Result<ExactDecimal, NativeOutstandingsErr
     ExactDecimal::parse(text).map_err(|_| NativeOutstandingsError::InvalidAmount)
 }
 
+fn parse_ledger_closing_balance(
+    text: &str,
+    ledger_name: &str,
+) -> Result<ExactDecimal, NativeOutstandingsError> {
+    if text.is_empty() {
+        return Ok(ExactDecimal::zero());
+    }
+    ExactDecimal::parse(text).map_err(|_| {
+        if is_foreign_currency_balance(text) {
+            NativeOutstandingsError::ForeignCurrencyLedgerBalance {
+                ledger_name: ledger_name.to_string(),
+            }
+        } else {
+            NativeOutstandingsError::InvalidAmount
+        }
+    })
+}
+
+/// A foreign-currency ledger balance is a display expression, not a decimal:
+/// `<qualified amount> @ <qualified rate> = <qualified base amount>`. Keep
+/// this structural so the diagnostic does not depend on a particular symbol.
+fn is_foreign_currency_balance(text: &str) -> bool {
+    let mut parts = text.split('@');
+    let Some(foreign_amount) = parts.next() else {
+        return false;
+    };
+    let Some(rate_and_base) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    let mut rate_parts = rate_and_base.split('=');
+    let Some(rate) = rate_parts.next() else {
+        return false;
+    };
+    let Some(base_amount) = rate_parts.next() else {
+        return false;
+    };
+    rate_parts.next().is_none()
+        && is_currency_qualified_numeric(foreign_amount)
+        && is_currency_qualified_numeric(rate)
+        && is_currency_qualified_numeric(base_amount)
+}
+
+fn is_currency_qualified_numeric(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.chars().any(|character| character.is_ascii_digit())
+        && value.chars().any(|character| {
+            !character.is_ascii_digit()
+                && !matches!(character, '+' | '-' | '.' | ',' | '/' | ' ' | '\t')
+        })
+}
+
 pub fn parse_native_ledger_snapshot(
     xml: &str,
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
@@ -761,7 +816,7 @@ fn parse_ledger_row(
                                 "ledger_duplicate_closing_balance",
                             ));
                         }
-                        closing_balance = Some(parse_ledger_amount(text.trim())?);
+                        closing_balance = Some(parse_ledger_closing_balance(text.trim(), &name)?);
                     }
                     b"OPENINGBALANCE" => {
                         let text = read_element_text(reader, child.name())?;
@@ -997,7 +1052,9 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
     // Only a single defined currency lets this read name the BASE currency.
     // "Rs." is shared by several currencies, so only the observed Indian
     // mailing identity is authoritative enough to put ₹ before real money.
-    let is_inr = currency_count == 1 && mailing_name.eq_ignore_ascii_case("Indian Rupees");
+    let is_inr = currency_count == 1
+        && (mailing_name.eq_ignore_ascii_case("Indian Rupees")
+            || mailing_name.eq_ignore_ascii_case("INR"));
 
     Ok(CompanyCurrency {
         symbol,
@@ -1052,23 +1109,74 @@ fn parse_currency_row(
 mod currency_tests {
     use super::*;
 
-    const LIVE: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><CURRENCY>0</CURRENCY></CMPINFO></DESC><DATA><COLLECTION><CURRENCY NAME="Rs." RESERVEDNAME=""><MAILINGNAME TYPE="String">Indian Rupees</MAILINGNAME><DECIMALPLACES TYPE="Number"> 2</DECIMALPLACES></CURRENCY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    const MODERN_LIVE: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/currency_inr_modern_live.utf16le.xml"
+    ));
+    const LEGACY_LIVE: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/currency_inr_legacy_live.utf16le.xml"
+    ));
+    const MULTI_LIVE: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/currency_multi_live.utf16le.xml"
+    ));
+
+    fn decode_utf16le(bytes: &[u8]) -> String {
+        let (units, remainder) = bytes.as_chunks::<2>();
+        assert!(
+            remainder.is_empty(),
+            "captured UTF-16LE must have whole units"
+        );
+        String::from_utf16(
+            &units
+                .iter()
+                .map(|unit| u16::from_le_bytes(*unit))
+                .collect::<Vec<_>>(),
+        )
+        .expect("captured UTF-16LE must decode")
+    }
 
     #[test]
-    fn reads_the_live_indian_rupee_shape_and_ignores_the_cmpinfo_counter() {
-        let currency = parse_company_currency(LIVE).expect("parses");
-        assert_eq!(currency.symbol, "Rs.");
-        assert_eq!(currency.mailing_name, "Indian Rupees");
-        assert_eq!(
-            currency.currency_count, 1,
-            "the CMPINFO counter is not a row"
-        );
-        assert!(currency.is_inr);
+    fn captured_currency_collections_recognize_both_indian_spellings_without_guessing() {
+        for (bytes, sha256, symbol, mailing_name, count, is_inr) in [
+            (
+                MODERN_LIVE,
+                "0dc84aa287cab1e1922db7e99a01f9f2b0bacd0d777fdd0b080adedc6622ed22",
+                "I₹",
+                "INR",
+                1,
+                true,
+            ),
+            (
+                LEGACY_LIVE,
+                "dcc3539205080c4272b42d333b693e6c90e1cdd6b9e9e080d4ea6b8ae2abb06e",
+                "Rs.",
+                "Indian Rupees",
+                1,
+                true,
+            ),
+            (
+                MULTI_LIVE,
+                "b64c0d5feb528fa02f81de576de5c766a95e1da1000975b1e2932868ae34118b",
+                "$",
+                "USD",
+                2,
+                false,
+            ),
+        ] {
+            assert_eq!(sha256_hex(bytes), sha256, "captured wire bytes changed");
+            let currency = parse_company_currency(&decode_utf16le(bytes)).expect("parses");
+            assert_eq!(currency.symbol, symbol);
+            assert_eq!(currency.mailing_name, mailing_name);
+            assert_eq!(currency.currency_count, count, "CMPINFO is not a row");
+            assert_eq!(currency.is_inr, is_inr);
+        }
     }
 
     #[test]
     fn several_currencies_cannot_name_the_base_currency() {
-        let xml = LIVE.replace(
+        let xml = decode_utf16le(LEGACY_LIVE).replace(
             "</COLLECTION>",
             r#"<CURRENCY NAME="$" RESERVEDNAME=""><MAILINGNAME TYPE="String">US Dollars</MAILINGNAME></CURRENCY></COLLECTION>"#,
         );
@@ -1079,7 +1187,8 @@ mod currency_tests {
 
     #[test]
     fn a_non_indian_single_currency_is_not_inr() {
-        let xml = LIVE
+        // Constructed: no captured company has this single-currency shape.
+        let xml = decode_utf16le(LEGACY_LIVE)
             .replace("Indian Rupees", "US Dollars")
             .replace(r#"NAME="Rs.""#, r#"NAME="$""#);
         let currency = parse_company_currency(&xml).expect("parses");
@@ -1099,9 +1208,20 @@ mod currency_tests {
 
     #[test]
     fn common_rs_symbol_does_not_prove_indian_rupees() {
-        let xml = LIVE.replace("Indian Rupees", "Pakistani Rupees");
+        let xml = decode_utf16le(LEGACY_LIVE).replace("Indian Rupees", "Pakistani Rupees");
         let currency = parse_company_currency(&xml).expect("shaped collection parses");
         assert!(!currency.is_inr);
+    }
+
+    #[test]
+    fn foreign_currency_closing_balance_names_the_ledger_without_parsing_it() {
+        let xml = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="FX USD Debtor 02"><PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>-$ 2000.00 @ I₹ 84/$ = -I₹ 168000.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        assert_eq!(
+            parse_native_ledger_snapshot(xml),
+            Err(NativeOutstandingsError::ForeignCurrencyLedgerBalance {
+                ledger_name: "FX USD Debtor 02".to_string(),
+            })
+        );
     }
 }
 

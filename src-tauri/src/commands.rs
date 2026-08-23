@@ -42,6 +42,7 @@ use bridge_tally_core::{
     CompanyRef as CoreCompanyRef, EvidenceConfidence, ReadWindow, RequestContext, TallyConnector,
     TallyDate, TransportId, CORE_ACCOUNTING_SCHEMA_VERSION,
 };
+use bridge_tally_protocol::native_outstandings::NativeOutstandingsError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, State};
@@ -80,6 +81,21 @@ fn tally_command_error(
 }
 
 fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
+    if let Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>())
+    {
+        return tally_command_error(
+            "company_foreign_currency_ledger_balance",
+            "Tally application",
+            format!(
+                "Tally reported a foreign-currency closing balance for ledger {ledger_name}; Bridge left the company unread rather than guessing a base-currency amount."
+            ),
+            "after_change",
+            true,
+            "Inspect the named ledger in Tally and use a base-currency company for the native outstandings read.",
+        );
+    }
     if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
         return match control {
             TallyRuntimeControlError::Cancelled => tally_command_error(
@@ -2642,6 +2658,19 @@ mod tests {
         ));
         assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
         assert_eq!(discovery_limit.category, "Discovery listing");
+
+        let foreign_currency = tally_runtime_command_error(anyhow::Error::new(
+            bridge_tally_protocol::native_outstandings::NativeOutstandingsError::ForeignCurrencyLedgerBalance {
+                ledger_name: "Synthetic FX Debtor".to_string(),
+            },
+        ));
+        assert_eq!(
+            foreign_currency.code,
+            "company_foreign_currency_ledger_balance"
+        );
+        assert_eq!(foreign_currency.category, "Tally application");
+        assert!(foreign_currency.message.contains("Synthetic FX Debtor"));
+        assert!(foreign_currency.message.contains("foreign-currency"));
     }
 
     #[test]

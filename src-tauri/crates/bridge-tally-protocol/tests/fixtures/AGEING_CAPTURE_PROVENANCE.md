@@ -63,3 +63,26 @@ GSTINs held on the master records are deliberately non-conforming in any case â€
 - 2026 is not a leap year, so no 29-February clamp appears in these bytes.
 - Recorded but **not** present here: Tally normalises a submitted `"1 Day"` to `"1 Days"` on write.
   That was measured separately; no bill in these captures carries a singular form.
+
+## Addendum 2026-08-23 â€” `vouchers_agst_ref_reopen_live`
+
+- **Host / gateway:** TallyPrime **Silver (licensed)**, `http://localhost:9001`, TallyPrime 7.1.
+- **Date / request:** 2026-08-23; production `BridgeVoucherExport` collection with its
+  `SYSTEM TYPE="Formulae"` filter over 2024-04-01 through 2026-08-31; `STATUS 1`.
+- **Encoding:** BOM-less UTF-16LE, exactly as received.
+
+| file | bytes | sha256 | company |
+|---|---:|---|---|
+| `vouchers_agst_ref_reopen_live.utf16le.xml` | 127,166 | `6c2978198a4fe802ea211dc8d7a7d0402331bd5b37319adf181c7015fcf10125` | `BRIDGE CORPUS SETTLED` |
+
+The capture has 24 vouchers and 48 bill allocations: 12 `New Ref` and 12 `Agst Ref`, all
+with `30 Days`. Tally supplied `BILLDATE` and `BILLCREDITPERIOD` on each `Agst Ref` without
+those fields being sent by the generator. For example, the 2025-04-28 receipt allocation for
+`SET-INV-001` carries `<BILLDATE>20250408</BILLDATE>`,
+`<BILLCREDITPERIOD JD="45754" P="30 Days">30 Days</BILLCREDITPERIOD>`, and
+`<BILLTYPE>Agst Ref</BILLTYPE>`. The generator call was
+`entry(party, False, amount, ref, "Agst Ref")`, with neither field supplied.
+
+Limits: one release and one machine; every bill carries `30 Days`; no reopening against a
+zero-credit-period bill; each `Agst Ref` is a Receipt settling the bill exactly to zero; no
+partial settlement or sign-flip reopening is represented.
