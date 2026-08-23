@@ -415,13 +415,12 @@ fn convert_bill_allocation(
     }))
 }
 
-// A credit term can span at most one calendar year. The 366-day allowance
-// admits an annual term in a leap year; 52 weeks and 12 months express the
-// equivalent wire units. Longer magnitudes are neither ordinary terms nor
-// safe untrusted work for a report reader.
-const MAX_CREDIT_PERIOD_DAYS: u32 = 366;
-const MAX_CREDIT_PERIOD_WEEKS: u32 = 52;
-const MAX_CREDIT_PERIOD_MONTHS: u32 = 12;
+// Licensed TallyPrime 7.1 read-back on 2026-08-23 retained up to 9999 days,
+// but silently discarded 10000 days to an empty credit period. This is a
+// measured wire-format ceiling, not a business-term policy. Weeks and months
+// have no equivalent measured ceiling, so their checked resulting date is the
+// bound instead.
+const MAX_TALLY_CREDIT_PERIOD_DAYS: u32 = 9999;
 
 fn parse_credit_period(value: &str) -> Result<CreditPeriod, OutstandingsError> {
     let value = value.trim();
@@ -432,32 +431,32 @@ fn parse_credit_period(value: &str) -> Result<CreditPeriod, OutstandingsError> {
         (
             " Months",
             CreditPeriod::Months as fn(u32) -> CreditPeriod,
-            MAX_CREDIT_PERIOD_MONTHS,
+            None,
         ),
         (
             " Month",
             CreditPeriod::Months as fn(u32) -> CreditPeriod,
-            MAX_CREDIT_PERIOD_MONTHS,
+            None,
         ),
         (
             " Weeks",
             CreditPeriod::Weeks as fn(u32) -> CreditPeriod,
-            MAX_CREDIT_PERIOD_WEEKS,
+            None,
         ),
         (
             " Week",
             CreditPeriod::Weeks as fn(u32) -> CreditPeriod,
-            MAX_CREDIT_PERIOD_WEEKS,
+            None,
         ),
         (
             " Days",
             CreditPeriod::Days as fn(u32) -> CreditPeriod,
-            MAX_CREDIT_PERIOD_DAYS,
+            Some(MAX_TALLY_CREDIT_PERIOD_DAYS),
         ),
         (
             " Day",
             CreditPeriod::Days as fn(u32) -> CreditPeriod,
-            MAX_CREDIT_PERIOD_DAYS,
+            Some(MAX_TALLY_CREDIT_PERIOD_DAYS),
         ),
     ]
     .into_iter()
@@ -478,10 +477,12 @@ fn parse_credit_period(value: &str) -> Result<CreditPeriod, OutstandingsError> {
     let magnitude = magnitude
         .parse::<u32>()
         .map_err(|_| OutstandingsError::InvalidResponse("bill_credit_period_invalid"))?;
-    if magnitude > maximum {
-        return Err(OutstandingsError::InvalidResponse(
-            "bill_credit_period_invalid",
-        ));
+    if let Some(maximum) = maximum {
+        if magnitude > maximum {
+            return Err(OutstandingsError::InvalidResponse(
+                "bill_credit_period_invalid",
+            ));
+        }
     }
     Ok(period(magnitude))
 }
@@ -615,7 +616,25 @@ mod tests {
             CreditPeriod::Months(2)
         );
         assert_eq!(parse_credit_period(" ").unwrap(), CreditPeriod::Days(0));
-        assert_eq!(parse_credit_period("366 Days").unwrap(), CreditPeriod::Days(366));
+        // Licensed TallyPrime 7.1 read-back on 2026-08-23 retained all four
+        // values. Only the day-unit ceiling is measured: 10000 Days comes
+        // back empty from Tally rather than as an over-limit period.
+        assert_eq!(
+            parse_credit_period("9999 Days").unwrap(),
+            CreditPeriod::Days(9999)
+        );
+        assert_eq!(
+            parse_credit_period("3650 Days").unwrap(),
+            CreditPeriod::Days(3650)
+        );
+        assert_eq!(
+            parse_credit_period("100 Months").unwrap(),
+            CreditPeriod::Months(100)
+        );
+        assert_eq!(
+            parse_credit_period("1000 Months").unwrap(),
+            CreditPeriod::Months(1000)
+        );
         assert_eq!(
             parse_credit_period("2 Fortnights"),
             Err(OutstandingsError::InvalidResponse(
@@ -623,7 +642,7 @@ mod tests {
             ))
         );
         assert_eq!(
-            parse_credit_period("1000000 Days"),
+            parse_credit_period("10000 Days"),
             Err(OutstandingsError::InvalidResponse(
                 "bill_credit_period_invalid"
             ))

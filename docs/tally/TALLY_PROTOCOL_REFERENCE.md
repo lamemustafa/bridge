@@ -1269,6 +1269,26 @@ Licensed-gateway capture/read-back evidence on **2026-08-23** establishes these 
 | `3 Weeks` | `3 Weeks` |
 | `1 Day` | `1 Days` |
 
+The same licensed TallyPrime 7.1 import/read-back on **2026-08-23** measured the
+day-unit persistence ceiling and confirms that it is not a shared ceiling for
+other units:
+
+| entered value | returned `BILLCREDITPERIOD` |
+| --- | --- |
+| `365 Days` | `365 Days` |
+| `3650 Days` | `3650 Days` |
+| `9999 Days` | `9999 Days` |
+| `10000 Days` | empty |
+| `100 Months` | `100 Months` |
+| `1000 Months` | `1000 Months` |
+
+Tally silently discards a day count above `9999` to an **empty** credit period.
+That is not neutral: due-date ageing then uses the bill date as the due date,
+which can move the bill to a different ageing bucket. The parser therefore
+rejects day counts above the measured `9999` ceiling, but does not invent a
+matching weeks or months ceiling; those units are constrained by checked
+resulting-date arithmetic instead.
+
 The voucher parser accepts explicit `N Day(s)`, `N Week(s)`, and `N Month(s)` forms only. It
 rejects an unknown unit rather than guessing a day count. Weeks add exactly seven days each;
 months use a calendar-month operation that preserves the day of month when possible and otherwise
