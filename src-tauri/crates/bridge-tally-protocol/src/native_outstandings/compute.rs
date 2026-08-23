@@ -9,7 +9,7 @@ use crate::{is_tally_reserved_root, TallyNamedMaster};
 
 use super::model::{
     AgeingAnchor, LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError,
-    NativeOutstandingsResult, PartyResidual,
+    NativeOutstandingsResult, NativeOverdueCrosscheck, PartyResidual,
 };
 
 #[derive(Default)]
@@ -68,7 +68,6 @@ pub fn compute_native_outstandings(
         days_61_90: 0,
         days_90_plus: 0,
     };
-    let mut overdue_crosscheck_mismatches = 0_usize;
     let mut parties = BTreeMap::<String, PartyAccumulator>::new();
 
     for row in receivable_rows
@@ -87,13 +86,6 @@ pub fn compute_native_outstandings(
         receivable_total = add(&receivable_total, &amount)?;
 
         let age = overdue_days(bill_anchor_date(row, anchor), as_of)?;
-        if let Some(tally_overdue) = row.tally_overdue_days {
-            let age_from_due = overdue_days(&row.due_date, as_of)?.unwrap_or(0);
-            if i64::from(age_from_due) != tally_overdue {
-                overdue_crosscheck_mismatches += 1;
-            }
-        }
-
         let totals = parties.entry(row.party.clone()).or_default();
         totals.receivable = Some(add(
             totals.receivable.as_ref().unwrap_or(&ExactDecimal::zero()),
@@ -186,6 +178,8 @@ pub fn compute_native_outstandings(
         masters.ledgers,
         masters.groups,
     )?;
+    let overdue_crosscheck =
+        classify_overdue_crosscheck(receivable_rows, payable_rows, &residual_total, as_of)?;
 
     let report = OutstandingsReport {
         company_name: company_name.to_string(),
@@ -205,8 +199,124 @@ pub fn compute_native_outstandings(
         report,
         residuals,
         residual_total,
-        overdue_crosscheck_mismatches,
+        overdue_crosscheck,
     })
+}
+
+/// Classifies the returned bill counters with the following exhaustive
+/// decision table. **Honored requires positive evidence that the requested
+/// date was used**: empty and zero counters can constrain a proven candidate,
+/// but never create one. `positive` means `BILLOVERDUE > 0`, whose implied date
+/// is `BILLDUE + BILLOVERDUE`. The substituted-date rows are policy cases; a
+/// refusal is not currently reproducible on the licensed local instance.
+///
+/// | rows | residual | counters and due date | implied dates | verdict | why |
+/// | --- | --- | --- | --- | --- | --- |
+/// | none | zero | none; due n/a | absent | unconfirmed effective date | settled historical rows can be absent under a substituted date |
+/// | none | non-zero | none; due n/a | absent | unconfirmed without bill references | ledger money has no bill evidence at all |
+/// | some | either | only empty; due earlier/equal/later | absent | unconfirmed effective date | empty counters identify no date |
+/// | some | either | only zero; due earlier/equal/later | absent | unconfirmed effective date | zero counters identify no date, including equality |
+/// | some | either | empty and zero only; due earlier/equal/later | absent | unconfirmed effective date | combining non-evidence does not create evidence |
+/// | some | either | any negative or unrepresentable counter | absent | inconsistent | the counter cannot imply a valid civil date |
+/// | some | either | positive counters disagree | disagree | inconsistent | one response cannot have two effective dates |
+/// | some | either | positives agree on requested; no companions | all agree | honored | positive counters independently identify the request |
+/// | some | either | positives agree on requested; empty companions later | all agree | honored | an empty counter is compatible only for a future-due bill |
+/// | some | either | positives agree on requested; empty companion earlier/equal | all agree | inconsistent | an empty counter contradicts the proven candidate |
+/// | some | either | positives agree on requested; zero companions equal/later | all agree | honored | zero is compatible but not relied on as proof |
+/// | some | either | positives agree on requested; zero companion earlier | all agree | inconsistent | zero contradicts the proven candidate |
+/// | some | either | one positive agrees on another date | all agree | inconsistent | one row cannot establish a refused period |
+/// | some | either | at least two positives agree on another date; every empty is later and every zero is equal/later at that date | all agree | refused | independent counters identify one substituted date |
+/// | some | either | at least two positives agree on another date; any incompatible companion | all agree | inconsistent | the claimed common date is contradicted |
+///
+/// `residual_total` distinguishes only the no-row cases; once bill rows exist,
+/// date evidence comes exclusively from their counters. Unreachable combinations
+/// are: rows=`none` with any counter, due relation, or non-absent implied date;
+/// implied=`all agree`/`disagree` without a positive counter; and a missing
+/// `BILLOVERDUE` field, which the wire parser rejects before this function.
+/// See `TALLY_PROTOCOL_REFERENCE.md` §5.3 for the observed product-specific
+/// boundary facts; this table deliberately makes no claim that future-due
+/// counters are always empty or always zero.
+fn classify_overdue_crosscheck(
+    receivable_rows: &[NativeBillRow],
+    payable_rows: &[NativeBillRow],
+    residual_total: &ExactDecimal,
+    requested_as_of: &TallyDate,
+) -> Result<NativeOverdueCrosscheck, NativeOutstandingsError> {
+    let rows = receivable_rows.iter().chain(payable_rows.iter());
+    let mut any_row = false;
+    let mut informative_dates = Vec::new();
+    let mut counterless_rows = Vec::new();
+    let mut zero_rows = Vec::new();
+
+    for row in rows {
+        any_row = true;
+        let Some(tally_overdue) = row.tally_overdue_days else {
+            counterless_rows.push(row);
+            continue;
+        };
+        if tally_overdue == 0 {
+            zero_rows.push(row);
+            continue;
+        }
+
+        let Some(implied) = implied_as_of_date(&row.due_date, tally_overdue)? else {
+            return Ok(NativeOverdueCrosscheck::Inconsistent);
+        };
+        informative_dates.push(implied);
+    }
+
+    if !any_row {
+        return Ok(if residual_total.is_zero() {
+            NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence
+        } else {
+            NativeOverdueCrosscheck::UnconfirmedAsOfWithoutBillReferences
+        });
+    }
+    let Some(tally_as_of) = informative_dates.first() else {
+        return Ok(NativeOverdueCrosscheck::UnconfirmedAsOfWithoutEffectiveDateEvidence);
+    };
+    if informative_dates
+        .iter()
+        .any(|implied_as_of| implied_as_of != tally_as_of)
+    {
+        return Ok(NativeOverdueCrosscheck::Inconsistent);
+    }
+    if counterless_rows
+        .iter()
+        .any(|row| row.due_date <= *tally_as_of)
+        || zero_rows.iter().any(|row| row.due_date < *tally_as_of)
+    {
+        return Ok(NativeOverdueCrosscheck::Inconsistent);
+    }
+    if *tally_as_of == *requested_as_of {
+        return Ok(NativeOverdueCrosscheck::Honored);
+    }
+    if informative_dates.len() >= 2 {
+        Ok(NativeOverdueCrosscheck::RefusedAsOf {
+            tally_as_of: tally_as_of.clone(),
+        })
+    } else {
+        Ok(NativeOverdueCrosscheck::Inconsistent)
+    }
+}
+
+fn implied_as_of_date(
+    due_date: &TallyDate,
+    tally_overdue_days: i64,
+) -> Result<Option<TallyDate>, NativeOutstandingsError> {
+    let Ok(overdue_days) = u32::try_from(tally_overdue_days) else {
+        return Ok(None);
+    };
+    let day = civil_day(due_date)?
+        .checked_add(i64::from(overdue_days))
+        .ok_or(NativeOutstandingsError::ArithmeticOverflow)?;
+    let (year, month, day) = civil_from_day(day);
+    if !(1..=9999).contains(&year) {
+        return Ok(None);
+    }
+    TallyDate::parse(format!("{year:04}{month:02}{day:02}"))
+        .map(Some)
+        .map_err(|_| NativeOutstandingsError::InvalidDate("native_implied_as_of_invalid"))
 }
 
 /// Per-party residual: `ledger CLOSINGBALANCE - sum(receivable BILLCL) -
@@ -472,6 +582,19 @@ fn civil_day(date: &TallyDate) -> Result<i64, NativeOutstandingsError> {
     let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     Ok(era * 146_097 + day_of_era)
+}
+
+fn civil_from_day(day: i64) -> (i64, i64, i64) {
+    let era = day.div_euclid(146_097);
+    let day_of_era = day - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    (year + i64::from(month <= 2), month, day)
 }
 
 #[cfg(test)]

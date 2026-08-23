@@ -11,6 +11,7 @@ mod observability;
 pub mod reports;
 pub mod sync;
 pub mod tally;
+pub mod warning_codes;
 
 use std::path::PathBuf;
 use tauri::Manager;

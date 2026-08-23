@@ -26,7 +26,7 @@ pub use connector::{
 };
 pub use runtime::{
     CachedProbeReservation, EndpointKey, ExposureDirection, OpenBillRow,
-    OutstandingsCurrencyAssertion, OutstandingsLoadResult, TallyRuntime, TallySessionSnapshot,
-    TallyTelemetryPreviewExport, UnallocatedParty,
+    OutstandingsCurrencyAssertion, OutstandingsLoadResult, OutstandingsPartialReason, TallyRuntime,
+    TallySessionSnapshot, TallyTelemetryPreviewExport, UnallocatedParty,
 };
 pub use xml_parser::{TallyCompany, TallyImportResult, TallyLedger, TallyVoucher};

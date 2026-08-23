@@ -1972,6 +1972,10 @@ pub struct OutstandingsRequest {
     pub company: String,
     pub expected_company_guid: String,
     pub currency_assertion: OutstandingsCurrencyAssertion,
+    /// An explicit operator-selected date when present. Omission preserves
+    /// today's date for existing callers and licensed Tally users.
+    #[serde(default)]
+    pub as_of_yyyymmdd: Option<TallyDate>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2070,6 +2074,24 @@ pub async fn fetch_tally_vouchers(
         .map_err(tally_runtime_command_error)
 }
 
+fn requested_outstandings_as_of(
+    explicit_as_of: Option<TallyDate>,
+) -> Result<TallyDate, TallyCommandError> {
+    explicit_as_of
+        .map(Ok)
+        .unwrap_or_else(|| TallyDate::parse(chrono::Local::now().format("%Y%m%d").to_string()))
+        .map_err(|_| {
+            tally_command_error(
+                "current_date_invalid",
+                "Bridge application",
+                "Bridge could not construct today's outstandings date.",
+                "after_change",
+                false,
+                "Check the workstation date and time, then repeat the read-only action.",
+            )
+        })
+}
+
 #[tauri::command]
 pub async fn fetch_tally_outstandings(
     request: OutstandingsRequest,
@@ -2085,17 +2107,7 @@ pub async fn fetch_tally_outstandings(
             "Select the intended GUID-bearing company and repeat the read-only action.",
         )
     })?;
-    let as_of =
-        TallyDate::parse(chrono::Local::now().format("%Y%m%d").to_string()).map_err(|_| {
-            tally_command_error(
-                "current_date_invalid",
-                "Bridge application",
-                "Bridge could not construct today's outstandings date.",
-                "after_change",
-                false,
-                "Check the workstation date and time, then repeat the read-only action.",
-            )
-        })?;
+    let as_of = requested_outstandings_as_of(request.as_of_yyyymmdd)?;
     runtime
         .fetch_outstandings(
             request.config,
@@ -2172,6 +2184,8 @@ pub struct AllCompaniesOutstandingsRequest {
     pub config: TallyConfig,
     pub companies: Vec<AllCompaniesEntry>,
     pub currency_assertion: OutstandingsCurrencyAssertion,
+    #[serde(default)]
+    pub as_of_yyyymmdd: Option<TallyDate>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2191,7 +2205,7 @@ fn company_sweep_result(
     result: Result<OutstandingsLoadResult, &'static str>,
 ) -> OutstandingsLoadResult {
     result.unwrap_or_else(|reason_code| OutstandingsLoadResult::Partial {
-        reason_code: reason_code.to_string(),
+        reason: crate::tally::OutstandingsPartialReason::code(reason_code),
         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
     })
 }
@@ -2219,17 +2233,7 @@ pub async fn fetch_tally_outstandings_all_companies(
     if request.companies.is_empty() {
         return Ok(Vec::new());
     }
-    let as_of =
-        TallyDate::parse(chrono::Local::now().format("%Y%m%d").to_string()).map_err(|_| {
-            tally_command_error(
-                "current_date_invalid",
-                "Bridge application",
-                "Bridge could not construct today's outstandings date.",
-                "after_change",
-                false,
-                "Check the workstation date and time, then repeat the read-only action.",
-            )
-        })?;
+    let as_of = requested_outstandings_as_of(request.as_of_yyyymmdd)?;
 
     let mut entries = Vec::with_capacity(request.companies.len());
     for entry in request.companies {
@@ -2517,13 +2521,13 @@ mod tests {
     fn company_sweep_keeps_probe_and_read_failures_in_band() {
         let outcomes = [
             Ok(OutstandingsLoadResult::Partial {
-                reason_code: "first_book_partial".to_string(),
+                reason: crate::tally::OutstandingsPartialReason::code("first_book_partial"),
                 synced_at_unix_ms: 1,
             }),
             Err("company_currency_probe_failed"),
             Err("company_outstandings_read_failed"),
             Ok(OutstandingsLoadResult::Partial {
-                reason_code: "last_book_partial".to_string(),
+                reason: crate::tally::OutstandingsPartialReason::code("last_book_partial"),
                 synced_at_unix_ms: 2,
             }),
         ]
@@ -2538,18 +2542,18 @@ mod tests {
         );
         assert!(matches!(
             &outcomes[1],
-            OutstandingsLoadResult::Partial { reason_code, .. }
-                if reason_code == "company_currency_probe_failed"
+            OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "company_currency_probe_failed"
         ));
         assert!(matches!(
             &outcomes[2],
-            OutstandingsLoadResult::Partial { reason_code, .. }
-                if reason_code == "company_outstandings_read_failed"
+            OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "company_outstandings_read_failed"
         ));
         assert!(matches!(
             &outcomes[3],
-            OutstandingsLoadResult::Partial { reason_code, .. }
-                if reason_code == "last_book_partial"
+            OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "last_book_partial"
         ));
     }
 

@@ -103,10 +103,30 @@ pub struct NativeOutstandingsResult {
     /// Sum of the absolute magnitude of every party residual: the total
     /// unallocated (on-account) exposure the bill-level reports cannot see.
     pub residual_total: ExactDecimal,
-    /// Count of receivable rows where Tally's own `BILLOVERDUE` did not
-    /// equal Bridge's independently computed age-from-`DueDate`. Retained as
-    /// a cross-check signal only; it is never used to alter computed ageing.
-    pub overdue_crosscheck_mismatches: usize,
+    /// The outcome of independently comparing Tally's `BILLOVERDUE` values
+    /// with Bridge's due-date ageing. It is never used as ageing's source of
+    /// truth, but a refused as-of date is materially different from scattered
+    /// source-data disagreement and must reach the operator distinctly.
+    pub overdue_crosscheck: NativeOverdueCrosscheck,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativeOverdueCrosscheck {
+    Honored,
+    Inconsistent,
+    RefusedAsOf {
+        tally_as_of: TallyDate,
+    },
+    /// No bill row can corroborate the requested date, while the separately
+    /// read ledger snapshot carries an unallocated balance whose period could
+    /// have moved. The report must remain partial rather than claiming the
+    /// requested as-of date was honored.
+    UnconfirmedAsOfWithoutBillReferences,
+    /// The response carried no positive overdue counter that can identify
+    /// Tally's effective date. This includes no bill rows, empty counters,
+    /// and zero-only counters; none can establish that Tally honored the
+    /// requested as-of date.
+    UnconfirmedAsOfWithoutEffectiveDateEvidence,
 }
 
 /// What Tally reports about a company's currencies.

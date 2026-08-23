@@ -15,6 +15,12 @@ import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
 import { OutstandingsScreen } from "./OutstandingsScreen";
 import { AllClientsScreen } from "./AllClientsScreen";
+import {
+  automaticOutstandingsAsOf,
+  millisecondsUntilNextLocalMidnight,
+  operatorSelectedOutstandingsAsOf,
+  refreshAutomaticOutstandingsAsOf,
+} from "./outstandings-as-of";
 import { GstScreen } from "./GstScreen";
 import { DscScreen } from "./DscScreen";
 import { DocumentsScreen } from "./DocumentsScreen";
@@ -446,6 +452,9 @@ function App() {
   const [axalSession, setAxalSession] = React.useState<{ id: string; integration: AxalIntegration } | null>(null);
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
   const [view, setView] = React.useState<View>("dashboard");
+  const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
+    () => automaticOutstandingsAsOf(),
+  );
   const [busy, setBusy] = React.useState(false);
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
   const tallyResultsVersion = React.useRef(0);
@@ -503,6 +512,33 @@ function App() {
     if (view !== "companies" && view !== "outstandings" && view !== "clients") return;
     void refreshPersistedCompanyProfiles();
   }, [view, refreshPersistedCompanyProfiles]);
+
+  React.useEffect(() => {
+    if (view !== "outstandings" && view !== "clients") return;
+
+    let timer: number | undefined;
+    const refreshAutomaticDate = () => {
+      setOutstandingsAsOfSelection((current) => refreshAutomaticOutstandingsAsOf(current));
+    };
+    const scheduleLocalMidnightRefresh = () => {
+      timer = window.setTimeout(() => {
+        refreshAutomaticDate();
+        scheduleLocalMidnightRefresh();
+      }, millisecondsUntilNextLocalMidnight());
+    };
+
+    // Entering the workflow must not reuse a date from a previous local day;
+    // the helper leaves a deliberate operator choice untouched.
+    refreshAutomaticDate();
+    scheduleLocalMidnightRefresh();
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [view]);
+
+  const changeOutstandingsAsOf = React.useCallback((value: string) => {
+    setOutstandingsAsOfSelection(operatorSelectedOutstandingsAsOf(value));
+  }, []);
 
   React.useEffect(() => {
     mainContentRef.current?.focus();
@@ -1535,6 +1571,7 @@ function App() {
           <ErrorBoundary key="clients" label="All clients">
           <AllClientsScreen
             config={config}
+            asOf={outstandingsAsOfSelection.value}
             /* Every company Tally reports open, GUID-verified by the probe --
                NOT only the ones already saved. Requiring a save first was
                correct while company discovery could never be trusted
@@ -1562,6 +1599,8 @@ function App() {
             onChangeSetup={() => setView("companies")}
             onViewAllClients={() => setView("clients")}
             openBookCount={currentProbeCompanyList.filter((entry) => entry.guid).length}
+            asOf={outstandingsAsOfSelection.value}
+            onAsOfChange={changeOutstandingsAsOf}
           />
           </ErrorBoundary>
         )}
