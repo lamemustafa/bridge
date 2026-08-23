@@ -414,6 +414,13 @@ impl BillReferenceKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreditPeriod {
+    Days(u32),
+    Weeks(u32),
+    Months(u32),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BillAllocation {
     pub name: Option<String>,
     pub bill_type: BillReferenceKind,
@@ -422,10 +429,10 @@ pub struct BillAllocation {
     /// a bill's date can differ from the date of the voucher that opened it,
     /// and using the voucher date then puts the balance in the wrong bucket.
     pub bill_date: Option<TallyDate>,
-    /// Number of calendar days Tally adds to the bill date for due-date
-    /// ageing. The parser accepts only the measured `N Days` wire grammar;
-    /// a missing or malformed value cannot silently become a different basis.
-    pub credit_period_days: u32,
+    /// Tally's credit-period unit and magnitude. It stays typed until the
+    /// due date is calculated: months are calendar operations, not a guessed
+    /// number of days. Unknown wire units fail at the parser boundary.
+    pub credit_period: CreditPeriod,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

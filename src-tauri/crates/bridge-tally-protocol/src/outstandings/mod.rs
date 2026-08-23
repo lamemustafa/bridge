@@ -17,8 +17,8 @@ pub use completeness::{
 pub use compute::{compute_outstandings, compute_outstandings_with_ageing_anchor};
 pub use model::{
     AgeingAnchor, AlterIdRange, BillAllocation, BillReferenceKind, CompanyBookExtent, CompleteScan,
-    CompleteSegment, CompleteWitnessPair, CorroboratedDatePartition, DateBoundaryProfile,
-    DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness,
+    CompleteSegment, CompleteWitnessPair, CorroboratedDatePartition, CreditPeriod,
+    DateBoundaryProfile, DateWindow, EmptyDateWindowVerification, EmptyDateWindowWitness,
     EmptyPartitionControlProvenance, EmptyPartitionWitness, LedgerEntry, LedgerOpeningCoverage,
     MoneyValue, NarrowDateWindow, OutstandingsError, PartialScan, PinnedCompany, ScanResult,
     SegmentVerification, StrictlyWiderDateCover, Voucher, VoucherAlterId, VoucherAlterIdHighWater,

@@ -190,6 +190,35 @@ impl TallyDate {
             "{previous_year:04}{previous_month:02}{previous_day:02}"
         ))
     }
+
+    /// Adds calendar months, clamping a month-end source date to the last
+    /// valid day of the target month. Thus 31-Jan + 1 month is 28-Feb (or
+    /// 29-Feb in a leap year), rather than an implicit fixed-day conversion.
+    pub fn add_months_clamped(&self, months: u32) -> Result<Self, TallyError> {
+        let year = self.0[0..4]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let month = self.0[4..6]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let day = self.0[6..8]
+            .parse::<u32>()
+            .map_err(|_| invalid_data("invalid_tally_date"))?;
+        let month_index = month
+            .checked_sub(1)
+            .and_then(|value| value.checked_add(months))
+            .ok_or_else(|| invalid_data("tally_date_overflow"))?;
+        let target_year = year
+            .checked_add(month_index / 12)
+            .filter(|value| *value <= 9999)
+            .ok_or_else(|| invalid_data("tally_date_overflow"))?;
+        let target_month = month_index % 12 + 1;
+        let target_day = day.min(
+            gregorian_month_days(target_year, target_month)
+                .ok_or_else(|| invalid_data("invalid_tally_date"))?,
+        );
+        Self::parse(format!("{target_year:04}{target_month:02}{target_day:02}"))
+    }
 }
 
 impl<'de> Deserialize<'de> for TallyDate {
@@ -227,5 +256,30 @@ fn gregorian_month_days(year: u32, month: u32) -> Option<u32> {
 fn invalid_data(code: &'static str) -> TallyError {
     TallyError::InvalidData {
         code: code.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TallyDate;
+
+    #[test]
+    fn adding_calendar_months_clamps_to_the_target_month_end() {
+        assert_eq!(
+            TallyDate::parse("20260131")
+                .unwrap()
+                .add_months_clamped(1)
+                .unwrap()
+                .as_str(),
+            "20260228"
+        );
+        assert_eq!(
+            TallyDate::parse("20240131")
+                .unwrap()
+                .add_months_clamped(1)
+                .unwrap()
+                .as_str(),
+            "20240229"
+        );
     }
 }

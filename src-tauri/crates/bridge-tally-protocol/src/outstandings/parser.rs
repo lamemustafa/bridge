@@ -9,7 +9,7 @@ use super::{
         Envelope, Header, LedgerCollection, RawBillAllocation, RawLedgerEntry, RawVoucher,
         RawWitnessVoucher, VoucherCollection, WitnessVoucherCollection,
     },
-    AlterIdRange, BillAllocation, BillReferenceKind, DateWindow, LedgerEntry,
+    AlterIdRange, BillAllocation, BillReferenceKind, CreditPeriod, DateWindow, LedgerEntry,
     LedgerOpeningCoverage, MoneyValue, Voucher, VoucherAlterId, WitnessVoucher,
 };
 
@@ -393,14 +393,14 @@ fn convert_bill_allocation(
         }
         _ => None,
     };
-    let credit_period_days = match raw.bill_credit_period {
-        Some(value) => parse_credit_period_days(&value.text)?,
+    let credit_period = match raw.bill_credit_period {
+        Some(value) => parse_credit_period(&value.text)?,
         None if bill_type.requires_named_reference() => {
             return Err(OutstandingsError::InvalidResponse(
                 "bill_credit_period_missing",
             ))
         }
-        None => 0,
+        None => CreditPeriod::Days(0),
     };
     Ok(Some(BillAllocation {
         name,
@@ -411,26 +411,41 @@ fn convert_bill_allocation(
                 .text,
         )?,
         bill_date,
-        credit_period_days,
+        credit_period,
     }))
 }
 
-fn parse_credit_period_days(value: &str) -> Result<u32, OutstandingsError> {
+fn parse_credit_period(value: &str) -> Result<CreditPeriod, OutstandingsError> {
     let value = value.trim();
     if value.is_empty() {
-        return Ok(0);
+        return Ok(CreditPeriod::Days(0));
     }
-    let Some(days) = value.strip_suffix(" Days") else {
+    let Some((magnitude, period)) = [
+        (" Months", CreditPeriod::Months as fn(u32) -> CreditPeriod),
+        (" Month", CreditPeriod::Months as fn(u32) -> CreditPeriod),
+        (" Weeks", CreditPeriod::Weeks as fn(u32) -> CreditPeriod),
+        (" Week", CreditPeriod::Weeks as fn(u32) -> CreditPeriod),
+        (" Days", CreditPeriod::Days as fn(u32) -> CreditPeriod),
+        (" Day", CreditPeriod::Days as fn(u32) -> CreditPeriod),
+    ]
+    .into_iter()
+    .find_map(|(suffix, period)| {
+        value
+            .strip_suffix(suffix)
+            .map(|magnitude| (magnitude, period))
+    }) else {
         return Err(OutstandingsError::InvalidResponse(
             "bill_credit_period_invalid",
         ));
     };
-    if days.is_empty() || !days.bytes().all(|byte| byte.is_ascii_digit()) {
+    if magnitude.is_empty() || !magnitude.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(OutstandingsError::InvalidResponse(
             "bill_credit_period_invalid",
         ));
     }
-    days.parse::<u32>()
+    magnitude
+        .parse::<u32>()
+        .map(period)
         .map_err(|_| OutstandingsError::InvalidResponse("bill_credit_period_invalid"))
 }
 
@@ -544,7 +559,32 @@ fn trimmed_optional(value: Option<String>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::count_voucher_start_elements;
+    use super::{count_voucher_start_elements, parse_credit_period};
+    use crate::outstandings::{CreditPeriod, OutstandingsError};
+
+    #[test]
+    fn credit_period_accepts_verified_units_and_rejects_unknown_ones() {
+        assert_eq!(
+            parse_credit_period("45 Days").unwrap(),
+            CreditPeriod::Days(45)
+        );
+        assert_eq!(parse_credit_period("1 Day").unwrap(), CreditPeriod::Days(1));
+        assert_eq!(
+            parse_credit_period("3 Weeks").unwrap(),
+            CreditPeriod::Weeks(3)
+        );
+        assert_eq!(
+            parse_credit_period("2 Months").unwrap(),
+            CreditPeriod::Months(2)
+        );
+        assert_eq!(parse_credit_period(" ").unwrap(), CreditPeriod::Days(0));
+        assert_eq!(
+            parse_credit_period("2 Fortnights"),
+            Err(OutstandingsError::InvalidResponse(
+                "bill_credit_period_invalid"
+            ))
+        );
+    }
 
     #[test]
     fn voucher_rows_are_counted_structurally_not_by_one_textual_spelling() {

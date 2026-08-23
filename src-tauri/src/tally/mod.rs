@@ -25,7 +25,7 @@ pub use connector::{
     company_source_identity, core_snapshot_start_authorized, source_lineage, RuntimeTallyConnector,
 };
 pub use runtime::{
-    CachedProbeReservation, EndpointKey, ExposureDirection, OpenBillRow,
+    CachedProbeReservation, EndpointKey, ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor,
     OutstandingsCurrencyAssertion, OutstandingsLoadResult, OutstandingsPartialReason, TallyRuntime,
     TallySessionSnapshot, TallyTelemetryPreviewExport, UnallocatedParty,
 };

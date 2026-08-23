@@ -60,7 +60,7 @@ pub fn render_party_statement_xlsx(
     )?;
     row += 1;
     worksheet.write_string(row, 0, "Ageing basis")?;
-    worksheet.write_string(row, 1, "Due date")?;
+    worksheet.write_string(row, 1, statement.ageing_anchor.label())?;
     row += 1;
 
     let has_unallocated = !statement.unallocated.is_zero();

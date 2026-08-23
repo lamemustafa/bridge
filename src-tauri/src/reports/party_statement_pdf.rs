@@ -316,7 +316,7 @@ fn statement_lines(statement: &PartyStatement) -> Result<Vec<PdfLine>, PartyStat
         "As of",
         &display_date(&statement.as_of_yyyymmdd)?,
     )?;
-    push_label_value(&mut lines, "Ageing basis", "Due date")?;
+    push_label_value(&mut lines, "Ageing basis", statement.ageing_anchor.label())?;
     lines.push(PdfLine::body(""));
 
     if !statement.unallocated.is_zero() {
@@ -582,7 +582,9 @@ mod tests {
     use super::*;
     use crate::reports::party_statement::build_party_statement;
     use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
-    use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
+    use crate::tally::{
+        ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, UnallocatedParty,
+    };
     use bridge_tally_core::ExactDecimal;
     use bridge_tally_protocol::native_outstandings::parse_native_ledger_snapshot;
     use std::io::{Cursor, Read};
@@ -748,6 +750,27 @@ mod tests {
         let text = extracted_text(&pdf);
         assert!(text.contains("INR 1,250.75"));
         assert!(!text.contains('\u{20b9}'));
+    }
+
+    #[test]
+    fn pdf_and_xlsx_disclose_the_statement_selected_ageing_basis() {
+        let mut statement = build_party_statement(
+            "Synthetic Books Pvt Ltd",
+            "20260808",
+            "Synthetic Party",
+            &[bill("INV-1", "1250.75", 40)],
+            &[],
+        )
+        .unwrap();
+        statement.ageing_anchor = OutstandingsAgeingAnchor::BillDate;
+
+        let xlsx_text = xlsx_sheet_xml(&render_party_statement_xlsx(&statement).unwrap());
+        assert!(statement_lines(&statement)
+            .unwrap()
+            .iter()
+            .any(|line| line.text == b"Ageing basis: Bill date"));
+        assert!(xlsx_text.contains("Ageing basis"));
+        assert!(xlsx_text.contains("Bill date"));
     }
 
     #[test]

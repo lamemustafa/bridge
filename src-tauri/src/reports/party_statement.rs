@@ -7,7 +7,7 @@
 
 use bridge_tally_core::ExactDecimal;
 
-use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
+use crate::tally::{ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, UnallocatedParty};
 
 /// Which ageing bucket a bill's age falls into. Boundaries match
 /// `bridge_tally_protocol::native_outstandings::compute` exactly, so a
@@ -129,6 +129,9 @@ pub struct PartyStatement {
     pub company: String,
     pub party: String,
     pub as_of_yyyymmdd: String,
+    /// The operator-selected basis that produced every bill age and bucket in
+    /// this statement. Renderers must disclose this rather than assume due date.
+    pub ageing_anchor: OutstandingsAgeingAnchor,
     /// Oldest bill first (largest `age_days` first), matching the order the
     /// party's drill-down panel already shows.
     pub bills: Vec<StatementBill>,
@@ -172,6 +175,27 @@ pub fn build_party_statement(
     party: &str,
     open_bills: &[OpenBillRow],
     unallocated_by_party: &[UnallocatedParty],
+) -> Result<PartyStatement, PartyStatementError> {
+    build_party_statement_with_ageing_anchor(
+        company,
+        as_of_yyyymmdd,
+        party,
+        open_bills,
+        unallocated_by_party,
+        OutstandingsAgeingAnchor::DueDate,
+    )
+}
+
+/// Builds a statement with the selected report basis retained for every
+/// client-facing renderer. The compatibility wrapper above is due-date only
+/// for existing internal callers that predate the selector.
+pub fn build_party_statement_with_ageing_anchor(
+    company: &str,
+    as_of_yyyymmdd: &str,
+    party: &str,
+    open_bills: &[OpenBillRow],
+    unallocated_by_party: &[UnallocatedParty],
+    ageing_anchor: OutstandingsAgeingAnchor,
 ) -> Result<PartyStatement, PartyStatementError> {
     let mut bills: Vec<StatementBill> = open_bills
         .iter()
@@ -240,6 +264,7 @@ pub fn build_party_statement(
         company: company.to_string(),
         party: party.to_string(),
         as_of_yyyymmdd: as_of_yyyymmdd.to_string(),
+        ageing_anchor,
         bills,
         subtotals,
         bill_total,

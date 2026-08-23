@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use super::party_statement::{build_party_statement, PartyStatement};
-use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
+use super::party_statement::{build_party_statement_with_ageing_anchor, PartyStatement};
+use crate::tally::{ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, UnallocatedParty};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BulkPartyStatementResult {
@@ -82,6 +82,29 @@ pub fn write_bulk_party_statements(
     unallocated_by_party: &[UnallocatedParty],
     render: impl Fn(&PartyStatement) -> Result<Vec<u8>, String>,
 ) -> Result<BulkPartyStatementResult, String> {
+    write_bulk_party_statements_with_ageing_anchor(
+        destination,
+        company,
+        as_of_yyyymmdd,
+        format,
+        open_bills,
+        unallocated_by_party,
+        OutstandingsAgeingAnchor::DueDate,
+        render,
+    )
+}
+
+/// Writes statements while retaining the selected ageing basis in every file.
+pub fn write_bulk_party_statements_with_ageing_anchor(
+    destination: &Path,
+    company: &str,
+    as_of_yyyymmdd: &str,
+    format: &str,
+    open_bills: &[OpenBillRow],
+    unallocated_by_party: &[UnallocatedParty],
+    ageing_anchor: OutstandingsAgeingAnchor,
+    render: impl Fn(&PartyStatement) -> Result<Vec<u8>, String>,
+) -> Result<BulkPartyStatementResult, String> {
     if !destination.is_dir() {
         return Err("Bridge could not use that statement destination folder.".to_string());
     }
@@ -90,12 +113,13 @@ pub fn write_bulk_party_statements(
     let mut written = Vec::with_capacity(parties.len());
     let mut failures = Vec::new();
     for party in parties {
-        let statement = match build_party_statement(
+        let statement = match build_party_statement_with_ageing_anchor(
             company,
             as_of_yyyymmdd,
             &party,
             open_bills,
             unallocated_by_party,
+            ageing_anchor,
         ) {
             Ok(statement) => statement,
             Err(error) => {

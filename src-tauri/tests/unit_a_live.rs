@@ -8,7 +8,8 @@
 
 #[cfg(feature = "live-calibration-harness")]
 use bridge_lib::tally::{
-    OutstandingsCurrencyAssertion, OutstandingsLoadResult, TallyConfig, TallyRuntime,
+    OutstandingsAgeingAnchor, OutstandingsCurrencyAssertion, OutstandingsLoadResult, TallyConfig,
+    TallyRuntime,
 };
 #[cfg(feature = "live-calibration-harness")]
 use bridge_tally_core::TallyDate;
@@ -56,6 +57,7 @@ async fn unit_a_outstandings_live_exit_check_withholds_without_residual_coverage
             company_guid,
             TallyDate::parse(EXIT_AS_OF).expect("fixed reconciliation as-of date is valid"),
             OutstandingsCurrencyAssertion::Inr,
+            OutstandingsAgeingAnchor::DueDate,
         )
         .await
         .expect("live outstandings request completes");

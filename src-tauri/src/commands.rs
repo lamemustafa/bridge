@@ -11,9 +11,11 @@ use crate::db::tally_mirror::{
 };
 use crate::gst::{GstDraftRequest, GstReturnDraft};
 use crate::reports::bulk_party_statement::{
-    bulk_party_statement_party_count, write_bulk_party_statements,
+    bulk_party_statement_party_count, write_bulk_party_statements_with_ageing_anchor,
 };
-use crate::reports::party_statement::{build_party_statement, PartyStatementError};
+use crate::reports::party_statement::{
+    build_party_statement_with_ageing_anchor, PartyStatementError,
+};
 use crate::reports::party_statement_pdf::render_party_statement_pdf;
 use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
 use crate::sync::coordinator::{SnapshotCoordinator, SnapshotJobStatus};
@@ -1977,6 +1979,11 @@ pub struct OutstandingsRequest {
     /// today's date for existing callers and licensed Tally users.
     #[serde(default)]
     pub as_of_yyyymmdd: Option<TallyDate>,
+    /// Existing callers predate an operator-visible selector and therefore
+    /// retain the established due-date report. New callers must send their
+    /// selection so every rendered/exported figure names the same basis.
+    #[serde(default)]
+    pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2116,6 +2123,7 @@ pub async fn fetch_tally_outstandings(
             request.expected_company_guid,
             as_of,
             request.currency_assertion,
+            request.ageing_anchor,
         )
         .await
         .map_err(tally_runtime_command_error)
@@ -2187,6 +2195,8 @@ pub struct AllCompaniesOutstandingsRequest {
     pub currency_assertion: OutstandingsCurrencyAssertion,
     #[serde(default)]
     pub as_of_yyyymmdd: Option<TallyDate>,
+    #[serde(default)]
+    pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2258,6 +2268,7 @@ pub async fn fetch_tally_outstandings_all_companies(
                         entry.expected_company_guid.clone(),
                         as_of.clone(),
                         request.currency_assertion,
+                        request.ageing_anchor,
                     )
                     .await
                     .map_err(|_| "company_outstandings_read_failed"),
@@ -2969,6 +2980,7 @@ pub struct ExportPartyStatementRequest {
     /// XLSX remains the default for callers that predate the PDF option.
     #[serde(default)]
     pub format: PartyStatementFormat,
+    pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
     /// The `open_bills`/`unallocated_by_party` rows the frontend already
     /// holds from `fetch_tally_outstandings`. This command reads no Tally
     /// endpoint of its own -- `OutstandingsLoadResult::Complete` already
@@ -2990,6 +3002,7 @@ pub struct ExportBulkPartyStatementsRequest {
     pub company: String,
     pub as_of_yyyymmdd: String,
     pub format: PartyStatementFormat,
+    pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
     /// Chosen by the native folder picker. The command still checks that it
     /// exists and is a directory before any statement name is joined to it.
     pub destination: String,
@@ -3069,22 +3082,24 @@ pub async fn export_bulk_party_statements(
     let destination = std::path::PathBuf::from(request.destination);
 
     match request.format {
-        PartyStatementFormat::Xlsx => write_bulk_party_statements(
+        PartyStatementFormat::Xlsx => write_bulk_party_statements_with_ageing_anchor(
             &destination,
             &request.company,
             &request.as_of_yyyymmdd,
             "xlsx",
             &request.open_bills,
             &request.unallocated_by_party,
+            request.ageing_anchor,
             |statement| render_party_statement_xlsx(statement).map_err(|error| error.to_string()),
         ),
-        PartyStatementFormat::Pdf => write_bulk_party_statements(
+        PartyStatementFormat::Pdf => write_bulk_party_statements_with_ageing_anchor(
             &destination,
             &request.company,
             &request.as_of_yyyymmdd,
             "pdf",
             &request.open_bills,
             &request.unallocated_by_party,
+            request.ageing_anchor,
             |statement| render_party_statement_pdf(statement).map_err(|error| error.to_string()),
         ),
     }
@@ -3103,12 +3118,13 @@ pub async fn export_party_statement(
 ) -> Result<String, String> {
     use tauri::Manager as _;
 
-    let statement = build_party_statement(
+    let statement = build_party_statement_with_ageing_anchor(
         &request.company,
         &request.as_of_yyyymmdd,
         &request.party,
         &request.open_bills,
         &request.unallocated_by_party,
+        request.ageing_anchor,
     )
     .map_err(|error| match error {
         PartyStatementError::PartyNotFound => {
@@ -3263,6 +3279,7 @@ mod party_statement_export_tests {
             "company": "Synthetic Books Pvt Ltd",
             "as_of_yyyymmdd": "20260808",
             "party": "Synthetic Party",
+            "ageing_anchor": "due_date",
             "open_bills": [],
             "unallocated_by_party": [],
         });

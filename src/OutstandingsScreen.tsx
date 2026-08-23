@@ -107,6 +107,7 @@ export function OutstandingsScreen({
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [inrAssertedCompanyGuid, setInrAssertedCompanyGuid] = React.useState<string | null>(null);
+  const [ageingAnchor, setAgeingAnchor] = React.useState<OutstandingsAgeingAnchor>("due_date");
   const [view, setView] = React.useState<"ageing" | "unallocated">("ageing");
   const [exportNotice, setExportNotice] = React.useState<{
     message: string;
@@ -156,6 +157,17 @@ export function OutstandingsScreen({
     setExpandedParty(null);
   }, [requestedAsOf]);
 
+  React.useEffect(() => {
+    // Switching Tally's F6-equivalent basis changes every bucket and every
+    // statement row. Hide the previous basis immediately and issue a fresh,
+    // version-bound read through the normal selected-company path.
+    requestVersion.current += 1;
+    setLoadedResult(null);
+    setError(null);
+    setLoading(false);
+    setExpandedParty(null);
+  }, [ageingAnchor]);
+
   const currencyReadPermitted = canStartOutstandingsRead(company, inrAssertedCompanyGuid);
   const readPermitted = currencyReadPermitted && requestedAsOf !== null;
   const partialState = result?.state === "partial"
@@ -170,7 +182,7 @@ export function OutstandingsScreen({
 
   const load = React.useCallback(async () => {
     if (!readPermitted || !company || !requestedAsOf) return;
-    const argument = singleCompanyOutstandingsInvokeArgument(config, company, asOf);
+    const argument = singleCompanyOutstandingsInvokeArgument(config, company, asOf, ageingAnchor);
     if (!argument) return;
     const requestedAsOfYyyymmdd = argument.request.as_of_yyyymmdd;
     const version = requestVersion.current + 1;
@@ -194,16 +206,16 @@ export function OutstandingsScreen({
     } finally {
       if (requestVersion.current === version) setLoading(false);
     }
-  }, [asOf, config.host, config.port, company?.guid, company?.name, readPermitted, requestedAsOf]);
+  }, [ageingAnchor, asOf, config.host, config.port, company?.guid, company?.name, readPermitted, requestedAsOf]);
 
   React.useEffect(() => {
-    const key = company ? `${config.host}:${config.port}:${company.guid}` : null;
+    const key = company ? `${config.host}:${config.port}:${company.guid}:${ageingAnchor}` : null;
     if (!readPermitted || !key || initialReadKey.current === key) return;
     initialReadKey.current = key;
     void load();
     // A newly opened company keeps the existing default-today behaviour. A
     // later date choice is deliberate and waits for the operator to refresh.
-  }, [company?.guid, config.host, config.port, load, readPermitted]);
+  }, [ageingAnchor, company?.guid, config.host, config.port, load, readPermitted]);
 
   // Establish the base currency from Tally rather than making the operator
   // assert it. The INR requirement stays -- putting a rupee symbol in front of
@@ -395,6 +407,19 @@ export function OutstandingsScreen({
               aria-describedby="outstandings-as-of-help"
             />
             <small id="outstandings-as-of-help">Choose the exact date, then refresh.</small>
+          </label>
+          <label className="outstandings-as-of">
+            <span>Age from</span>
+            <select
+              value={ageingAnchor}
+              onChange={(event) => setAgeingAnchor(event.target.value as OutstandingsAgeingAnchor)}
+              disabled={loading}
+              aria-describedby="outstandings-ageing-anchor-help"
+            >
+              <option value="due_date">Due date</option>
+              <option value="bill_date">Bill date</option>
+            </select>
+            <small id="outstandings-ageing-anchor-help">Refreshes the report and every statement export.</small>
           </label>
           {onViewAllClients && openBookCount > 1 && (
             <button className="secondary-action" type="button" onClick={onViewAllClients}>

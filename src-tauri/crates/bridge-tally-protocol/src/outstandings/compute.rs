@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 
 use super::{
-    AgeingAnchor, AgeingBillCounts, AgeingBuckets, BillReferenceKind, CompleteScan, MoneyValue,
-    OutstandingsError, OutstandingsReport, PartyOutstanding,
+    AgeingAnchor, AgeingBillCounts, AgeingBuckets, BillReferenceKind, CompleteScan, CreditPeriod,
+    MoneyValue, OutstandingsError, OutstandingsReport, PartyOutstanding,
 };
 
 /// How a bill is identified within one ledger.
@@ -271,7 +271,27 @@ fn bill_age_date(
     }?;
     match ageing_anchor {
         AgeingAnchor::BillDate => Ok(bill_date),
-        AgeingAnchor::DueDate => add_days(&bill_date, allocation.credit_period_days),
+        AgeingAnchor::DueDate => add_credit_period(&bill_date, &allocation.credit_period),
+    }
+}
+
+fn add_credit_period(
+    date: &TallyDate,
+    period: &CreditPeriod,
+) -> Result<TallyDate, OutstandingsError> {
+    match period {
+        CreditPeriod::Days(days) => add_days(date, *days),
+        CreditPeriod::Weeks(weeks) => add_days(
+            date,
+            weeks
+                .checked_mul(7)
+                .ok_or(OutstandingsError::InvalidResponse(
+                    "bill_credit_period_invalid",
+                ))?,
+        ),
+        CreditPeriod::Months(months) => date
+            .add_months_clamped(*months)
+            .map_err(|_| OutstandingsError::InvalidDateWindow),
     }
 }
 
@@ -329,14 +349,45 @@ mod tests {
 
     use crate::{
         outstandings::{
-            BillAllocation, BillReferenceKind, CompleteScan, DateBoundaryProfile, DateWindow,
-            LedgerEntry, MoneyValue, PinnedCompany, Voucher, VoucherAlterId,
+            BillAllocation, BillReferenceKind, CompleteScan, CreditPeriod, DateBoundaryProfile,
+            DateWindow, LedgerEntry, MoneyValue, PinnedCompany, Voucher, VoucherAlterId,
             VoucherAlterIdHighWater,
         },
         xml_read_profiles::ValidatedCompanyName,
     };
 
-    use super::compute_outstandings;
+    use super::{add_credit_period, compute_outstandings};
+
+    #[test]
+    fn credit_periods_produce_calendar_due_dates_without_unit_guessing() {
+        assert_eq!(
+            add_credit_period(
+                &TallyDate::parse("20260131").unwrap(),
+                &CreditPeriod::Months(1)
+            )
+            .unwrap()
+            .as_str(),
+            "20260228"
+        );
+        assert_eq!(
+            add_credit_period(
+                &TallyDate::parse("20260101").unwrap(),
+                &CreditPeriod::Weeks(3)
+            )
+            .unwrap()
+            .as_str(),
+            "20260122"
+        );
+        assert_eq!(
+            add_credit_period(
+                &TallyDate::parse("20260101").unwrap(),
+                &CreditPeriod::Days(45)
+            )
+            .unwrap()
+            .as_str(),
+            "20260215"
+        );
+    }
 
     #[test]
     fn exact_bill_balances_age_and_split_receivable_from_payable() {
@@ -571,7 +622,7 @@ mod tests {
                         _ => panic!("synthetic test must use a known kind"),
                     },
                     amount: MoneyValue::Exact(amount),
-                    credit_period_days: 0,
+                    credit_period: CreditPeriod::Days(0),
                 }],
             }],
         }
