@@ -12,6 +12,7 @@ use crate::db::tally_mirror::{
 use crate::gst::{GstDraftRequest, GstReturnDraft};
 use crate::reports::bulk_party_statement::{
     bulk_party_statement_party_count, write_bulk_party_statements_with_ageing_anchor,
+    BulkPartyStatementRequest,
 };
 use crate::reports::party_statement::{
     build_party_statement_with_ageing_anchor, PartyStatementError,
@@ -3082,26 +3083,34 @@ pub async fn export_bulk_party_statements(
     let destination = std::path::PathBuf::from(request.destination);
 
     match request.format {
-        PartyStatementFormat::Xlsx => write_bulk_party_statements_with_ageing_anchor(
-            &destination,
-            &request.company,
-            &request.as_of_yyyymmdd,
-            "xlsx",
-            &request.open_bills,
-            &request.unallocated_by_party,
-            request.ageing_anchor,
-            |statement| render_party_statement_xlsx(statement).map_err(|error| error.to_string()),
-        ),
-        PartyStatementFormat::Pdf => write_bulk_party_statements_with_ageing_anchor(
-            &destination,
-            &request.company,
-            &request.as_of_yyyymmdd,
-            "pdf",
-            &request.open_bills,
-            &request.unallocated_by_party,
-            request.ageing_anchor,
-            |statement| render_party_statement_pdf(statement).map_err(|error| error.to_string()),
-        ),
+        PartyStatementFormat::Xlsx => {
+            write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
+                destination: &destination,
+                company: &request.company,
+                as_of_yyyymmdd: &request.as_of_yyyymmdd,
+                format: "xlsx",
+                open_bills: &request.open_bills,
+                unallocated_by_party: &request.unallocated_by_party,
+                ageing_anchor: request.ageing_anchor,
+                render: |statement: &crate::reports::party_statement::PartyStatement| {
+                    render_party_statement_xlsx(statement).map_err(|error| error.to_string())
+                },
+            })
+        }
+        PartyStatementFormat::Pdf => {
+            write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
+                destination: &destination,
+                company: &request.company,
+                as_of_yyyymmdd: &request.as_of_yyyymmdd,
+                format: "pdf",
+                open_bills: &request.open_bills,
+                unallocated_by_party: &request.unallocated_by_party,
+                ageing_anchor: request.ageing_anchor,
+                render: |statement: &crate::reports::party_statement::PartyStatement| {
+                    render_party_statement_pdf(statement).map_err(|error| error.to_string())
+                },
+            })
+        }
     }
 }
 

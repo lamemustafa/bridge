@@ -21,6 +21,22 @@ pub struct BulkPartyStatementResult {
     pub failures: Vec<StatementFailure>,
 }
 
+/// All inputs needed to write a batch from a completed outstandings result.
+///
+/// Grouping the destination, report identity, selected ageing basis, and
+/// renderer keeps the write contract cohesive as client-facing statement
+/// metadata grows.
+pub struct BulkPartyStatementRequest<'a, Render> {
+    pub destination: &'a Path,
+    pub company: &'a str,
+    pub as_of_yyyymmdd: &'a str,
+    pub format: &'a str,
+    pub open_bills: &'a [OpenBillRow],
+    pub unallocated_by_party: &'a [UnallocatedParty],
+    pub ageing_anchor: OutstandingsAgeingAnchor,
+    pub render: Render,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WrittenStatement {
     pub party: String,
@@ -82,29 +98,35 @@ pub fn write_bulk_party_statements(
     unallocated_by_party: &[UnallocatedParty],
     render: impl Fn(&PartyStatement) -> Result<Vec<u8>, String>,
 ) -> Result<BulkPartyStatementResult, String> {
-    write_bulk_party_statements_with_ageing_anchor(
+    write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
         destination,
         company,
         as_of_yyyymmdd,
         format,
         open_bills,
         unallocated_by_party,
-        OutstandingsAgeingAnchor::DueDate,
+        ageing_anchor: OutstandingsAgeingAnchor::DueDate,
         render,
-    )
+    })
 }
 
 /// Writes statements while retaining the selected ageing basis in every file.
-pub fn write_bulk_party_statements_with_ageing_anchor(
-    destination: &Path,
-    company: &str,
-    as_of_yyyymmdd: &str,
-    format: &str,
-    open_bills: &[OpenBillRow],
-    unallocated_by_party: &[UnallocatedParty],
-    ageing_anchor: OutstandingsAgeingAnchor,
-    render: impl Fn(&PartyStatement) -> Result<Vec<u8>, String>,
-) -> Result<BulkPartyStatementResult, String> {
+pub fn write_bulk_party_statements_with_ageing_anchor<Render>(
+    request: BulkPartyStatementRequest<'_, Render>,
+) -> Result<BulkPartyStatementResult, String>
+where
+    Render: for<'statement> Fn(&'statement PartyStatement) -> Result<Vec<u8>, String>,
+{
+    let BulkPartyStatementRequest {
+        destination,
+        company,
+        as_of_yyyymmdd,
+        format,
+        open_bills,
+        unallocated_by_party,
+        ageing_anchor,
+        render,
+    } = request;
     if !destination.is_dir() {
         return Err("Bridge could not use that statement destination folder.".to_string());
     }
