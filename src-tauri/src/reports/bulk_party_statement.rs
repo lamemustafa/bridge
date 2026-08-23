@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use super::party_statement::{build_party_statement, PartyStatement};
-use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
+use super::party_statement::{build_party_statement_with_ageing_anchor, PartyStatement};
+use crate::tally::{ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, UnallocatedParty};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BulkPartyStatementResult {
@@ -19,6 +19,22 @@ pub struct BulkPartyStatementResult {
     pub manifest_path: String,
     pub written: Vec<WrittenStatement>,
     pub failures: Vec<StatementFailure>,
+}
+
+/// All inputs needed to write a batch from a completed outstandings result.
+///
+/// Grouping the destination, report identity, selected ageing basis, and
+/// renderer keeps the write contract cohesive as client-facing statement
+/// metadata grows.
+pub struct BulkPartyStatementRequest<'a, Render> {
+    pub destination: &'a Path,
+    pub company: &'a str,
+    pub as_of_yyyymmdd: &'a str,
+    pub format: &'a str,
+    pub open_bills: &'a [OpenBillRow],
+    pub unallocated_by_party: &'a [UnallocatedParty],
+    pub ageing_anchor: OutstandingsAgeingAnchor,
+    pub render: Render,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +80,7 @@ struct StatementManifest<'a> {
     company: &'a str,
     as_of_yyyymmdd: &'a str,
     format: &'a str,
+    ageing_anchor: OutstandingsAgeingAnchor,
     written: &'a [WrittenStatement],
     failures: &'a [StatementFailure],
 }
@@ -82,6 +99,35 @@ pub fn write_bulk_party_statements(
     unallocated_by_party: &[UnallocatedParty],
     render: impl Fn(&PartyStatement) -> Result<Vec<u8>, String>,
 ) -> Result<BulkPartyStatementResult, String> {
+    write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
+        destination,
+        company,
+        as_of_yyyymmdd,
+        format,
+        open_bills,
+        unallocated_by_party,
+        ageing_anchor: OutstandingsAgeingAnchor::DueDate,
+        render,
+    })
+}
+
+/// Writes statements while retaining the selected ageing basis in every file.
+pub fn write_bulk_party_statements_with_ageing_anchor<Render>(
+    request: BulkPartyStatementRequest<'_, Render>,
+) -> Result<BulkPartyStatementResult, String>
+where
+    Render: for<'statement> Fn(&'statement PartyStatement) -> Result<Vec<u8>, String>,
+{
+    let BulkPartyStatementRequest {
+        destination,
+        company,
+        as_of_yyyymmdd,
+        format,
+        open_bills,
+        unallocated_by_party,
+        ageing_anchor,
+        render,
+    } = request;
     if !destination.is_dir() {
         return Err("Bridge could not use that statement destination folder.".to_string());
     }
@@ -90,12 +136,13 @@ pub fn write_bulk_party_statements(
     let mut written = Vec::with_capacity(parties.len());
     let mut failures = Vec::new();
     for party in parties {
-        let statement = match build_party_statement(
+        let statement = match build_party_statement_with_ageing_anchor(
             company,
             as_of_yyyymmdd,
             &party,
             open_bills,
             unallocated_by_party,
+            ageing_anchor,
         ) {
             Ok(statement) => statement,
             Err(error) => {
@@ -152,6 +199,7 @@ pub fn write_bulk_party_statements(
         company,
         as_of_yyyymmdd,
         format,
+        ageing_anchor,
         written: &written,
         failures: &failures,
     };
@@ -177,9 +225,8 @@ fn statement_directional_totals(statement: &PartyStatement) -> Result<(String, S
     let mut payable = bridge_tally_core::ExactDecimal::zero();
     for bill in &statement.bills {
         let total = match bill.kind {
-            "receivable" => &mut receivable,
-            "payable" => &mut payable,
-            _ => return Err("Bridge found an unknown statement direction.".to_string()),
+            ExposureDirection::Receivable => &mut receivable,
+            ExposureDirection::Payable => &mut payable,
         };
         *total = total
             .checked_add(&bill.amount)
@@ -326,7 +373,7 @@ mod tests {
             due_date: "20260201".to_string(),
             amount: ExactDecimal::parse(amount).expect("synthetic decimal"),
             age_days: Some(40),
-            kind: "receivable",
+            kind: ExposureDirection::Receivable,
         }
     }
 
@@ -390,6 +437,7 @@ mod tests {
         assert!(manifest.contains("Synthetic Books Pvt Ltd"));
         assert!(manifest.contains("\"receivable_amount\": \"10\""));
         assert!(manifest.contains("\"payable_amount\": \"0\""));
+        assert!(manifest.contains("\"ageing_anchor\": \"due_date\""));
         assert!(!manifest.contains("\"amount\":"));
         assert!(manifest.contains("Broken Party"));
         assert!(manifest.contains("\"code\": \"rendering\""));
@@ -400,7 +448,7 @@ mod tests {
     fn manifest_totals_keep_receivable_and_payable_directions_separate() {
         let destination = tempfile::tempdir().expect("temporary destination");
         let mut payable_bill = bill("Mixed Party", "4.00");
-        payable_bill.kind = "payable";
+        payable_bill.kind = ExposureDirection::Payable;
         let unallocated = [UnallocatedParty {
             party: "Mixed Party".to_string(),
             amount: ExactDecimal::parse("3.00").expect("synthetic decimal"),
@@ -420,6 +468,25 @@ mod tests {
 
         assert_eq!(result.written[0].receivable_amount, "10");
         assert_eq!(result.written[0].payable_amount, "7");
+    }
+
+    #[test]
+    fn manifest_discloses_the_selected_ageing_anchor() {
+        let destination = tempfile::tempdir().expect("temporary destination");
+        let result = write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
+            destination: destination.path(),
+            company: "Synthetic Books Pvt Ltd",
+            as_of_yyyymmdd: "20260808",
+            format: "xlsx",
+            open_bills: &[bill("Selected basis", "10.00")],
+            unallocated_by_party: &[],
+            ageing_anchor: OutstandingsAgeingAnchor::BillDate,
+            render: |_: &PartyStatement| Ok(b"synthetic workbook".to_vec()),
+        })
+        .expect("statement batch succeeds");
+
+        let manifest = fs::read_to_string(&result.manifest_path).expect("manifest is written");
+        assert!(manifest.contains("\"ageing_anchor\": \"bill_date\""));
     }
 
     #[test]

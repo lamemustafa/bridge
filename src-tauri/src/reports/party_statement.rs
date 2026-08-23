@@ -7,7 +7,7 @@
 
 use bridge_tally_core::ExactDecimal;
 
-use crate::tally::{ExposureDirection, OpenBillRow, UnallocatedParty};
+use crate::tally::{ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, UnallocatedParty};
 
 /// Which ageing bucket a bill's age falls into. Boundaries match
 /// `bridge_tally_protocol::native_outstandings::compute` exactly, so a
@@ -52,8 +52,8 @@ pub struct StatementBill {
     pub due_date: String,
     pub amount: ExactDecimal,
     pub age_days: Option<u32>,
-    /// `receivable` or `payable` -- see `OpenBillRow::kind`.
-    pub kind: &'static str,
+    /// Balance direction -- see `OpenBillRow::kind`.
+    pub kind: ExposureDirection,
     pub bucket: Option<AgeingBucket>,
 }
 
@@ -129,6 +129,9 @@ pub struct PartyStatement {
     pub company: String,
     pub party: String,
     pub as_of_yyyymmdd: String,
+    /// The operator-selected basis that produced every bill age and bucket in
+    /// this statement. Renderers must disclose this rather than assume due date.
+    pub ageing_anchor: OutstandingsAgeingAnchor,
     /// Oldest bill first (largest `age_days` first), matching the order the
     /// party's drill-down panel already shows.
     pub bills: Vec<StatementBill>,
@@ -172,6 +175,27 @@ pub fn build_party_statement(
     party: &str,
     open_bills: &[OpenBillRow],
     unallocated_by_party: &[UnallocatedParty],
+) -> Result<PartyStatement, PartyStatementError> {
+    build_party_statement_with_ageing_anchor(
+        company,
+        as_of_yyyymmdd,
+        party,
+        open_bills,
+        unallocated_by_party,
+        OutstandingsAgeingAnchor::DueDate,
+    )
+}
+
+/// Builds a statement with the selected report basis retained for every
+/// client-facing renderer. The compatibility wrapper above is due-date only
+/// for existing internal callers that predate the selector.
+pub fn build_party_statement_with_ageing_anchor(
+    company: &str,
+    as_of_yyyymmdd: &str,
+    party: &str,
+    open_bills: &[OpenBillRow],
+    unallocated_by_party: &[UnallocatedParty],
+    ageing_anchor: OutstandingsAgeingAnchor,
 ) -> Result<PartyStatement, PartyStatementError> {
     let mut bills: Vec<StatementBill> = open_bills
         .iter()
@@ -217,13 +241,8 @@ pub fn build_party_statement(
             .checked_add(&bill.amount)
             .map_err(|_| PartyStatementError::ArithmeticOverflow)?;
         let directional_subtotals = match bill.kind {
-            "receivable" => &mut subtotals.receivable,
-            "payable" => &mut subtotals.payable,
-            // The PDF/XLSX writers retain the existing explicit invalid-kind
-            // rejection before emitting a document. Keep this builder's
-            // public error surface stable rather than misreporting an
-            // unsupported direction as arithmetic overflow.
-            _ => &mut subtotals.receivable,
+            ExposureDirection::Receivable => &mut subtotals.receivable,
+            ExposureDirection::Payable => &mut subtotals.payable,
         };
         let bucket_subtotal = match bill.bucket {
             Some(AgeingBucket::Days0To30) => &mut directional_subtotals.days_0_30,
@@ -245,6 +264,7 @@ pub fn build_party_statement(
         company: company.to_string(),
         party: party.to_string(),
         as_of_yyyymmdd: as_of_yyyymmdd.to_string(),
+        ageing_anchor,
         bills,
         subtotals,
         bill_total,
@@ -263,7 +283,7 @@ mod tests {
         reference: &str,
         amount: &str,
         age_days: Option<u32>,
-        kind: &'static str,
+        kind: ExposureDirection,
     ) -> OpenBillRow {
         OpenBillRow {
             party: party.to_string(),
@@ -300,10 +320,34 @@ mod tests {
     #[test]
     fn builds_a_statement_sorted_oldest_first_and_filtered_to_the_party() {
         let bills = vec![
-            bill("Aarav Textiles", "INV-3", "1000.00", Some(10), "receivable"),
-            bill("Aarav Textiles", "INV-1", "2500.50", Some(95), "receivable"),
-            bill("Aarav Textiles", "INV-2", "300.00", Some(45), "receivable"),
-            bill("Other Party", "INV-9", "999.00", Some(200), "receivable"),
+            bill(
+                "Aarav Textiles",
+                "INV-3",
+                "1000.00",
+                Some(10),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Aarav Textiles",
+                "INV-1",
+                "2500.50",
+                Some(95),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Aarav Textiles",
+                "INV-2",
+                "300.00",
+                Some(45),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Other Party",
+                "INV-9",
+                "999.00",
+                Some(200),
+                ExposureDirection::Receivable,
+            ),
         ];
         let unallocated_rows = vec![unallocated("Aarav Textiles", "150.25")];
 
@@ -344,14 +388,62 @@ mod tests {
     #[test]
     fn aged_bucket_subtotals_sum_to_exactly_the_bill_total() {
         let bills = vec![
-            bill("Party", "A", "10.10", Some(5), "receivable"),
-            bill("Party", "B", "20.20", Some(30), "receivable"),
-            bill("Party", "C", "30.30", Some(31), "receivable"),
-            bill("Party", "D", "40.40", Some(60), "receivable"),
-            bill("Party", "E", "50.50", Some(61), "receivable"),
-            bill("Party", "F", "60.60", Some(90), "receivable"),
-            bill("Party", "G", "70.70", Some(91), "receivable"),
-            bill("Party", "H", "80.80", Some(500), "receivable"),
+            bill(
+                "Party",
+                "A",
+                "10.10",
+                Some(5),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Party",
+                "B",
+                "20.20",
+                Some(30),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Party",
+                "C",
+                "30.30",
+                Some(31),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Party",
+                "D",
+                "40.40",
+                Some(60),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Party",
+                "E",
+                "50.50",
+                Some(61),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Party",
+                "F",
+                "60.60",
+                Some(90),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Party",
+                "G",
+                "70.70",
+                Some(91),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Party",
+                "H",
+                "80.80",
+                Some(500),
+                ExposureDirection::Receivable,
+            ),
         ];
         let statement = build_party_statement("Lab Co", "20260808", "Party", &bills, &[])
             .expect("party has exposure");
@@ -386,8 +478,20 @@ mod tests {
     #[test]
     fn aged_and_unaged_subtotals_reconcile_to_the_exact_bill_total() {
         let bills = vec![
-            bill("Party", "AGED", "10.10", Some(5), "receivable"),
-            bill("Party", "UNAGED", "20.20", None, "receivable"),
+            bill(
+                "Party",
+                "AGED",
+                "10.10",
+                Some(5),
+                ExposureDirection::Receivable,
+            ),
+            bill(
+                "Party",
+                "UNAGED",
+                "20.20",
+                None,
+                ExposureDirection::Receivable,
+            ),
         ];
         let statement = build_party_statement("Lab Co", "20260808", "Party", &bills, &[])
             .expect("party has exposure");
@@ -418,7 +522,13 @@ mod tests {
 
     #[test]
     fn an_unknown_party_is_rejected_rather_than_producing_an_empty_statement() {
-        let bills = vec![bill("Known Party", "INV-1", "10.00", Some(5), "receivable")];
+        let bills = vec![bill(
+            "Known Party",
+            "INV-1",
+            "10.00",
+            Some(5),
+            ExposureDirection::Receivable,
+        )];
         let error =
             build_party_statement("Lab Co", "20260808", "Unknown Party", &bills, &[]).unwrap_err();
         assert_eq!(error, PartyStatementError::PartyNotFound);
@@ -429,7 +539,13 @@ mod tests {
         // `unallocated_by_party` already drops zero residuals upstream (see
         // `top_unallocated_parties`), but this guards the statement builder
         // itself against ever surfacing a zero as if it were real exposure.
-        let bills = vec![bill("Party", "INV-1", "10.00", Some(5), "receivable")];
+        let bills = vec![bill(
+            "Party",
+            "INV-1",
+            "10.00",
+            Some(5),
+            ExposureDirection::Receivable,
+        )];
         let unallocated_rows = vec![unallocated("Party", "0")];
         let statement =
             build_party_statement("Lab Co", "20260808", "Party", &bills, &unallocated_rows)

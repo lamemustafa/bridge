@@ -84,6 +84,10 @@ pub(super) struct RawLedgerEntry {
 
 #[derive(Deserialize)]
 pub(super) struct RawBillAllocation {
+    // BILLID and BILLCREATIONDATE are deliberately not modeled: the scan's
+    // bill identity is the Tally ledger plus NAME, and neither field changes
+    // ageing or reconciliation. Carrying unused identifiers would create an
+    // alternate, unverified key without improving either contract.
     #[serde(rename = "NAME", default)]
     pub(super) name: Option<Value>,
     #[serde(rename = "BILLTYPE", default)]
@@ -94,4 +98,6 @@ pub(super) struct RawBillAllocation {
     /// the enclosing voucher's date. The wildcard fetch already returns it.
     #[serde(rename = "BILLDATE", default)]
     pub(super) bill_date: Option<Value>,
+    #[serde(rename = "BILLCREDITPERIOD", default)]
+    pub(super) bill_credit_period: Option<Value>,
 }

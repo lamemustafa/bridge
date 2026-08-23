@@ -385,6 +385,16 @@ pub enum BillReferenceKind {
     OnAccount,
 }
 
+/// The explicit date basis used to place named bills into ageing buckets.
+///
+/// Tally offers both bases. Neither can be inferred from the response path:
+/// callers must select one and disclose it with the resulting report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgeingAnchor {
+    BillDate,
+    DueDate,
+}
+
 impl BillReferenceKind {
     pub(crate) fn parse(value: &str) -> Result<Self, OutstandingsError> {
         match value.trim() {
@@ -404,6 +414,13 @@ impl BillReferenceKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreditPeriod {
+    Days(u32),
+    Weeks(u32),
+    Months(u32),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BillAllocation {
     pub name: Option<String>,
     pub bill_type: BillReferenceKind,
@@ -412,6 +429,10 @@ pub struct BillAllocation {
     /// a bill's date can differ from the date of the voucher that opened it,
     /// and using the voucher date then puts the balance in the wrong bucket.
     pub bill_date: Option<TallyDate>,
+    /// Tally's credit-period unit and magnitude. It stays typed until the
+    /// due date is calculated: months are calendar operations, not a guessed
+    /// number of days. Unknown wire units fail at the parser boundary.
+    pub credit_period: CreditPeriod,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

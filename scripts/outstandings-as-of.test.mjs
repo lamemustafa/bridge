@@ -119,6 +119,7 @@ test("the single-company request emits the selected canonical as-of date", () =>
       { host: "127.0.0.1", port: 9000 },
       { name: "Bridge Validation Lab", guid: "guid-1" },
       "2026-08-17",
+      "bill_date",
     ),
     {
       request: {
@@ -127,10 +128,11 @@ test("the single-company request emits the selected canonical as-of date", () =>
         expected_company_guid: "guid-1",
         currency_assertion: "INR",
         as_of_yyyymmdd: "20260817",
+        ageing_anchor: "bill_date",
       },
     },
   );
-  assert.equal(singleCompanyOutstandingsInvokeArgument({ host: "127.0.0.1", port: 9000 }, { name: "Lab", guid: "guid-1" }, "2026-8-17"), null);
+  assert.equal(singleCompanyOutstandingsInvokeArgument({ host: "127.0.0.1", port: 9000 }, { name: "Lab", guid: "guid-1" }, "2026-8-17", "due_date"), null);
 });
 
 test("compare clients emits the same selected canonical as-of date", () => {
@@ -142,6 +144,7 @@ test("compare clients emits the same selected canonical as-of date", () => {
         { name: "Bridge Ageing Lab", guid: "guid-2" },
       ],
       "2026-08-17",
+      "bill_date",
     ),
     {
       request: {
@@ -152,6 +155,7 @@ test("compare clients emits the same selected canonical as-of date", () => {
         ],
         currency_assertion: "INR",
         as_of_yyyymmdd: "20260817",
+        ageing_anchor: "bill_date",
       },
     },
   );
@@ -160,6 +164,7 @@ test("compare clients emits the same selected canonical as-of date", () => {
 test("Excel and PDF statement builders emit the report's actual as-of date", () => {
   const result = {
     report: { company_name: "Bridge Validation Lab", as_of_yyyymmdd: "20260801" },
+    ageing_anchor: "bill_date",
     statement_open_bills: [{ party: "Alpha", amount: "1" }],
     statement_unallocated_by_party: [{ party: "Alpha", amount: "2" }],
   };
@@ -172,6 +177,7 @@ test("Excel and PDF statement builders emit the report's actual as-of date", () 
         as_of_yyyymmdd: "20260801",
         party: "Alpha",
         format: "xlsx",
+        ageing_anchor: "bill_date",
         open_bills: [{ party: "Alpha", amount: "1" }],
         unallocated_by_party: [{ party: "Alpha", amount: "2" }],
       },
@@ -184,6 +190,7 @@ test("Excel and PDF statement builders emit the report's actual as-of date", () 
       as_of_yyyymmdd: "20260801",
       destination: "/tmp/statements",
       format: "pdf",
+      ageing_anchor: "bill_date",
       open_bills: [{ party: "Alpha", amount: "1" }],
       unallocated_by_party: [{ party: "Alpha", amount: "2" }],
     },

@@ -4,7 +4,11 @@ import React from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
-import { outstandingsPartialState } from "./outstandings-copy";
+import {
+  outstandingsAgeingAnchorLabel,
+  outstandingsPartialState,
+  type OutstandingsAgeingAnchor,
+} from "./outstandings-copy";
 import {
   allCompaniesOutstandingsInvokeArgument,
   asOfBoundValueForAsOf,
@@ -104,6 +108,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   const [loadedEntries, setLoadedEntries] = React.useState<AsOfBoundValue<Entry[]> | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [ageingAnchor, setAgeingAnchor] = React.useState<OutstandingsAgeingAnchor>("due_date");
   const [groupLabels, setGroupLabels] = React.useState<ClientGroupLabels>({});
   const [groupLabelError, setGroupLabelError] = React.useState<string | null>(null);
   const persistedGroupLabels = React.useRef<ClientGroupLabels>({});
@@ -130,6 +135,13 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     setLoading(false);
     setError(null);
   }, [requestedAsOf]);
+
+  React.useEffect(() => {
+    requestVersion.current += 1;
+    setLoadedEntries(null);
+    setLoading(false);
+    setError(null);
+  }, [ageingAnchor]);
 
   React.useEffect(() => {
     let active = true;
@@ -174,7 +186,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   }, []);
 
   const load = React.useCallback(async () => {
-    const argument = allCompaniesOutstandingsInvokeArgument(config, companies, asOf);
+    const argument = allCompaniesOutstandingsInvokeArgument(config, companies, asOf, ageingAnchor);
     if (companies.length === 0 || !argument) return;
     const requestedAsOfYyyymmdd = argument.request.as_of_yyyymmdd;
     const version = requestVersion.current + 1;
@@ -202,7 +214,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     } finally {
       if (requestVersion.current === version) setLoading(false);
     }
-  }, [asOf, config.host, config.port, companies.map((company) => company.guid).join("|")]);
+  }, [ageingAnchor, asOf, config.host, config.port, companies.map((company) => company.guid).join("|")]);
 
   const rows = React.useMemo(() => {
     if (!entries) return [];
@@ -380,8 +392,21 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
               : `${companies.length} ${companies.length === 1 ? "book" : "books"} open in Tally`}
           </p>
           <p>As of {asOf}</p>
+          <p>{outstandingsAgeingAnchorLabel(ageingAnchor)}</p>
         </div>
         <div className="outstandings-heading-actions">
+          <label className="outstandings-as-of">
+            <span>Age from</span>
+            <select
+              value={ageingAnchor}
+              onChange={(event) => setAgeingAnchor(event.target.value as OutstandingsAgeingAnchor)}
+              disabled={loading}
+            >
+              <option value="due_date">Due date</option>
+              <option value="bill_date">Bill date</option>
+            </select>
+            <small>Applies to every client in this read.</small>
+          </label>
           {onBack && (
             <button className="secondary-action" type="button" onClick={onBack}>
               Back to one client

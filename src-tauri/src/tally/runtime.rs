@@ -21,15 +21,16 @@ use bridge_tally_protocol::native_outstandings::{
     compute_native_outstandings, parse_company_currency, parse_native_bill_rows,
     parse_native_group_snapshot, parse_native_ledger_snapshot, render_company_currency_request,
     render_native_bills_request, render_native_group_snapshot_request,
-    render_native_ledger_snapshot_request, AgeingAnchor, CompanyCurrency, NativeBillsReportKind,
-    NativeGroupSnapshot, NativeMasterSnapshot, NativeOverdueCrosscheck,
+    render_native_ledger_snapshot_request, AgeingAnchor as NativeAgeingAnchor, CompanyCurrency,
+    NativeBillsReportKind, NativeGroupSnapshot, NativeMasterSnapshot, NativeOverdueCrosscheck,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
-    assemble_partitioned_scan, assemble_scan, compute_outstandings,
-    corroborate_empty_date_partition, nearest_non_empty_primary_partition, CompleteWitnessPair,
-    CorroboratedDatePartition, DateWindow, NarrowDateWindow, PartialScan, ScanResult,
-    SegmentVerification, StrictlyWiderDateCover, VoucherAlterIdHighWater, WitnessPairVerification,
+    assemble_partitioned_scan, assemble_scan, compute_outstandings_with_ageing_anchor,
+    corroborate_empty_date_partition, nearest_non_empty_primary_partition,
+    AgeingAnchor as LegacyAgeingAnchor, CompleteWitnessPair, CorroboratedDatePartition, DateWindow,
+    NarrowDateWindow, PartialScan, ScanResult, SegmentVerification, StrictlyWiderDateCover,
+    VoucherAlterIdHighWater, WitnessPairVerification,
 };
 use bridge_tally_protocol::outstandings_shared::{DateBoundaryProfile, OutstandingsReport};
 use bridge_tally_transport::TallyTransportError;
@@ -182,26 +183,29 @@ impl OutstandingsPartialReason {
 
 /// Flattens both native reports into displayable bill rows, oldest first.
 ///
-/// Ageing anchors on the DUE date to match the report and Tally's own
-/// `BILLOVERDUE` column; where no credit period exists the two dates coincide.
 const MISSING_BILL_REFERENCE_LABEL: &str = "No reference reported";
 
 fn all_open_bill_rows(
     receivable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
     payable: &[bridge_tally_protocol::native_outstandings::NativeBillRow],
+    ageing_anchor: OutstandingsAgeingAnchor,
     as_of: &TallyDate,
 ) -> Vec<OpenBillRow> {
     let mut rows = receivable
         .iter()
-        .map(|row| (row, "receivable"))
-        .chain(payable.iter().map(|row| (row, "payable")))
+        .map(|row| (row, ExposureDirection::Receivable))
+        .chain(payable.iter().map(|row| (row, ExposureDirection::Payable)))
         .filter_map(|(row, kind)| {
             let amount = row.closing_balance.abs().ok()?;
-            let age_days = if &row.due_date > as_of {
+            let anchor_date = match ageing_anchor {
+                OutstandingsAgeingAnchor::DueDate => &row.due_date,
+                OutstandingsAgeingAnchor::BillDate => &row.bill_date,
+            };
+            let age_days = if anchor_date > as_of {
                 None
             } else {
                 Some(
-                    bridge_tally_protocol::native_outstandings::age_in_days(&row.due_date, as_of)
+                    bridge_tally_protocol::native_outstandings::age_in_days(anchor_date, as_of)
                         .ok()?,
                 )
             };
@@ -262,7 +266,7 @@ fn all_unallocated_parties(
     ranked
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenBillRow {
     pub party: String,
     pub reference: String,
@@ -270,16 +274,10 @@ pub struct OpenBillRow {
     pub due_date: String,
     pub amount: ExactDecimal,
     pub age_days: Option<u32>,
-    /// `receivable` for a debit-balance bill, `payable` for a credit one.
-    /// Named by balance direction because that is what Tally's two reports
-    /// actually scope by -- a supplier advance is a receivable bill.
-    ///
-    /// Not `Deserialize`: a `&'static str` field forces any struct that
-    /// embeds this one into a `'de: 'static` bound on its own derive, which
-    /// a Tauri command argument (deserialized from a short-lived JSON
-    /// buffer) cannot satisfy. `commands::OpenBillRowInput` is the
-    /// deserializable counterpart used at that boundary instead.
-    pub kind: &'static str,
+    /// Direction of the native report that returned this bill. A supplier
+    /// advance can still be receivable, so this is balance direction rather
+    /// than party role.
+    pub kind: ExposureDirection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -288,11 +286,45 @@ pub enum ExposureDirection {
     Receivable,
     Payable,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+
+impl ExposureDirection {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Receivable => "Receivable",
+            Self::Payable => "Payable",
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutstandingsAgeingAnchor {
+    #[default]
     DueDate,
     BillDate,
+}
+
+impl OutstandingsAgeingAnchor {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::DueDate => "Due date",
+            Self::BillDate => "Bill date",
+        }
+    }
+
+    const fn native_anchor(self) -> NativeAgeingAnchor {
+        match self {
+            Self::DueDate => NativeAgeingAnchor::DueDate,
+            Self::BillDate => NativeAgeingAnchor::BillDate,
+        }
+    }
+
+    #[cfg(feature = "voucher-scan")]
+    const fn legacy_anchor(self) -> LegacyAgeingAnchor {
+        match self {
+            Self::DueDate => LegacyAgeingAnchor::DueDate,
+            Self::BillDate => LegacyAgeingAnchor::BillDate,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1347,6 +1379,7 @@ impl TallyRuntime {
         expected_company_guid: String,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
         let _lease = self.begin_ordinary_read(&config)?;
         self.execute(
@@ -1456,7 +1489,7 @@ impl TallyRuntime {
                             ledgers: &ledger_rows,
                             groups: NativeGroupSnapshot::Complete(&group_rows),
                         },
-                        AgeingAnchor::DueDate,
+                        ageing_anchor.native_anchor(),
                         &as_of,
                         total_bytes,
                     )?;
@@ -1466,12 +1499,12 @@ impl TallyRuntime {
                     }
 
                     let statement_open_bills =
-                        all_open_bill_rows(&receivable_rows, &payable_rows, &as_of);
+                        all_open_bill_rows(&receivable_rows, &payable_rows, ageing_anchor, &as_of);
                     let statement_unallocated_by_party = all_unallocated_parties(&result.residuals);
                     Ok(OutstandingsLoadResult::Complete {
                         report: Box::new(result.report),
                         currency_assertion,
-                        ageing_anchor: OutstandingsAgeingAnchor::DueDate,
+                        ageing_anchor,
                         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                         unallocated_total: Some(result.residual_total),
                         statement_unallocated_by_party,
@@ -1544,6 +1577,7 @@ impl TallyRuntime {
         expected_company_guid: String,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
         self.fetch_outstandings_native(
             config,
@@ -1551,6 +1585,7 @@ impl TallyRuntime {
             expected_company_guid,
             as_of,
             currency_assertion,
+            ageing_anchor,
         )
         .await
     }
@@ -1563,6 +1598,7 @@ impl TallyRuntime {
         expected_company_guid: String,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
         // Tally's own Bills Receivable/Payable reports answer this question in
         // O(open bills) instead of O(vouchers), so they need no segment
@@ -1587,6 +1623,7 @@ impl TallyRuntime {
                     expected_company_guid,
                     as_of,
                     currency_assertion,
+                    ageing_anchor,
                 )
                 .await;
         };
@@ -1904,9 +1941,13 @@ impl TallyRuntime {
                             corroborated_date_partitions,
                         ) {
                             ScanResult::Complete(scan) => Ok(OutstandingsLoadResult::Complete {
-                                report: Box::new(compute_outstandings(&scan, as_of)?),
+                                report: Box::new(compute_outstandings_with_ageing_anchor(
+                                    &scan,
+                                    as_of,
+                                    ageing_anchor.legacy_anchor(),
+                                )?),
                                 currency_assertion,
-                                ageing_anchor: OutstandingsAgeingAnchor::BillDate,
+                                ageing_anchor,
                                 synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                                 // The voucher scan derives bills from vouchers
                                 // and cannot establish the unallocated
@@ -2297,6 +2338,7 @@ mod tests {
         let rows = all_open_bill_rows(
             &receivable,
             &[],
+            OutstandingsAgeingAnchor::DueDate,
             &TallyDate::parse("20260817").expect("capture as-of"),
         );
         let future = rows
@@ -2305,6 +2347,21 @@ mod tests {
             .expect("captured future-due bill remains present");
         assert_eq!(future.amount.as_str(), "22222.00");
         assert_eq!(future.age_days, None);
+
+        let bill_date_rows = all_open_bill_rows(
+            &receivable,
+            &[],
+            OutstandingsAgeingAnchor::BillDate,
+            &TallyDate::parse("20260817").expect("capture as-of"),
+        );
+        let bill_date_future = bill_date_rows
+            .iter()
+            .find(|row| row.reference == "ALPHA-FUTURE")
+            .expect("captured future-due bill remains present for bill-date ageing");
+        assert!(
+            bill_date_future.age_days.is_some(),
+            "the selected bill-date basis must not reuse the future due date"
+        );
     }
 
     #[test]
@@ -2325,7 +2382,7 @@ mod tests {
                 ledgers: &[],
                 groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
             },
-            AgeingAnchor::DueDate,
+            NativeAgeingAnchor::DueDate,
             &TallyDate::parse("20260817").expect("synthetic as-of"),
             0,
         )
@@ -2366,7 +2423,7 @@ mod tests {
                 ledgers: &ledgers,
                 groups: NativeGroupSnapshot::Complete(&groups),
             },
-            AgeingAnchor::DueDate,
+            NativeAgeingAnchor::DueDate,
             &requested_as_of,
             0,
         )
@@ -2399,7 +2456,7 @@ mod tests {
             &as_of,
         )
         .expect("paired empty BILLREF values remain parseable");
-        let rows = all_open_bill_rows(&parsed, &[], &as_of);
+        let rows = all_open_bill_rows(&parsed, &[], OutstandingsAgeingAnchor::DueDate, &as_of);
 
         assert_eq!(rows.len(), 2, "empty identities must not collapse rows");
         let total = rows
@@ -2557,7 +2614,7 @@ mod tests {
                 ledgers: &ledgers,
                 groups: NativeGroupSnapshot::LegacyFixtureWithoutGroups,
             },
-            AgeingAnchor::DueDate,
+            NativeAgeingAnchor::DueDate,
             &as_of,
             bills_xml.len() + ledger_xml.len(),
         )
@@ -2570,7 +2627,8 @@ mod tests {
         assert_eq!(computed.report.ageing.days_90_plus, ExactDecimal::zero());
         assert_eq!(computed.report.open_receivable_bill_count, 1);
 
-        let statement_rows = all_open_bill_rows(&receivable, &[], &as_of);
+        let statement_rows =
+            all_open_bill_rows(&receivable, &[], OutstandingsAgeingAnchor::DueDate, &as_of);
         assert_eq!(
             statement_rows.len(),
             1,
@@ -2865,6 +2923,7 @@ mod tests {
                 "synthetic-guid".to_string(),
                 TallyDate::parse("20260731").unwrap(),
                 OutstandingsCurrencyAssertion::Inr,
+                OutstandingsAgeingAnchor::DueDate,
             )
             .await
             .expect_err("a non-loopback endpoint must never be contacted");
@@ -2888,6 +2947,7 @@ mod tests {
                 "synthetic-guid".to_string(),
                 TallyDate::parse("20260731").unwrap(),
                 OutstandingsCurrencyAssertion::Inr,
+                OutstandingsAgeingAnchor::DueDate,
             )
             .await
             .expect("missing coverage is an in-band partial result");

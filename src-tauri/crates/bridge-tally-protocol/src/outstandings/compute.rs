@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 
 use super::{
-    AgeingBillCounts, AgeingBuckets, BillReferenceKind, CompleteScan, MoneyValue,
-    OutstandingsError, OutstandingsReport, PartyOutstanding,
+    AgeingAnchor, AgeingBillCounts, AgeingBuckets, BillReferenceKind, CompleteScan, CreditPeriod,
+    MoneyValue, OutstandingsError, OutstandingsReport, PartyOutstanding,
 };
 
 /// How a bill is identified within one ledger.
@@ -43,6 +43,17 @@ pub fn compute_outstandings(
     scan: &CompleteScan,
     as_of: TallyDate,
 ) -> Result<OutstandingsReport, OutstandingsError> {
+    compute_outstandings_with_ageing_anchor(scan, as_of, AgeingAnchor::DueDate)
+}
+
+/// Computes aged outstandings using the caller-selected bill or due-date
+/// basis. The default entry point uses `DueDate`, which matches Tally's
+/// native overdue report where credit periods exist.
+pub fn compute_outstandings_with_ageing_anchor(
+    scan: &CompleteScan,
+    as_of: TallyDate,
+    ageing_anchor: AgeingAnchor,
+) -> Result<OutstandingsReport, OutstandingsError> {
     if &as_of < scan.window().to() {
         return Err(OutstandingsError::InvalidDateWindow);
     }
@@ -79,7 +90,7 @@ pub fn compute_outstandings(
                     Some(name) => (
                         BillKey::Named(name.to_string()),
                         OpenBillKind::Named {
-                            oldest_date: bill_age_date(allocation, voucher)?,
+                            oldest_date: bill_age_date(allocation, voucher, ageing_anchor)?,
                         },
                     ),
                     None if matches!(allocation.bill_type, BillReferenceKind::OnAccount) => {
@@ -110,7 +121,7 @@ pub fn compute_outstandings(
                     .map_err(|_| OutstandingsError::ArithmeticOverflow)?;
                 if previous_balance.is_zero() {
                     if let OpenBillKind::Named { oldest_date } = &mut bill.kind {
-                        *oldest_date = bill_age_date(allocation, voucher)?;
+                        *oldest_date = bill_age_date(allocation, voucher, ageing_anchor)?;
                     }
                 } else if !next_balance.is_zero()
                     && previous_balance.is_negative() != next_balance.is_negative()
@@ -154,7 +165,7 @@ pub fn compute_outstandings(
             .map_err(|_| OutstandingsError::ArithmeticOverflow)?;
         let totals = parties.entry(party).or_default();
         let bill_age = match &bill.kind {
-            OpenBillKind::Named { oldest_date } => Some(days_between(oldest_date, &as_of)?),
+            OpenBillKind::Named { oldest_date } => overdue_days(oldest_date, &as_of)?,
             OpenBillKind::OnAccount => None,
         };
         if bill.balance.is_negative() {
@@ -164,14 +175,18 @@ pub fn compute_outstandings(
                 totals.receivable.as_ref().unwrap_or(&ExactDecimal::zero()),
                 &amount,
             )?);
-            if let Some(age) = bill_age {
-                totals.oldest_bill_age =
-                    Some(totals.oldest_bill_age.map_or(age, |oldest| oldest.max(age)));
-                let (bucket, bill_count) = match age {
-                    0..=30 => (&mut ageing.days_0_30, &mut ageing_bill_counts.days_0_30),
-                    31..=60 => (&mut ageing.days_31_60, &mut ageing_bill_counts.days_31_60),
-                    61..=90 => (&mut ageing.days_61_90, &mut ageing_bill_counts.days_61_90),
-                    _ => (
+            if matches!(&bill.kind, OpenBillKind::Named { .. }) {
+                // Match the native report: a future-due named bill remains in
+                // the first bucket, but has no truthful overdue age and cannot
+                // become a party's oldest aged bill. On Account remains a
+                // separate unaged aggregate and never enters bill buckets.
+                let (bucket, bill_count) = match bill_age {
+                    None | Some(0..=30) => {
+                        (&mut ageing.days_0_30, &mut ageing_bill_counts.days_0_30)
+                    }
+                    Some(31..=60) => (&mut ageing.days_31_60, &mut ageing_bill_counts.days_31_60),
+                    Some(61..=90) => (&mut ageing.days_61_90, &mut ageing_bill_counts.days_61_90),
+                    Some(_) => (
                         &mut ageing.days_90_plus,
                         &mut ageing_bill_counts.days_90_plus,
                     ),
@@ -180,6 +195,10 @@ pub fn compute_outstandings(
                 *bill_count = bill_count
                     .checked_add(1)
                     .ok_or(OutstandingsError::ArithmeticOverflow)?;
+                if let Some(age) = bill_age {
+                    totals.oldest_bill_age =
+                        Some(totals.oldest_bill_age.map_or(age, |oldest| oldest.max(age)));
+                }
             }
         } else {
             payable_total = add(&payable_total, &amount)?;
@@ -242,8 +261,9 @@ pub fn compute_outstandings(
 fn bill_age_date(
     allocation: &super::BillAllocation,
     voucher: &super::Voucher,
+    ageing_anchor: AgeingAnchor,
 ) -> Result<TallyDate, OutstandingsError> {
-    match allocation.bill_type {
+    let bill_date = match allocation.bill_type {
         // TALLY_PROTOCOL_REFERENCE §12a.2 (PR #117): Tally reported a 1-Jun
         // bill settled to zero and re-opened by a 1-Jul Agst Ref as due on
         // 1-Jun, 60 days overdue; zero re-opens age from the original
@@ -256,7 +276,36 @@ fn bill_age_date(
         BillReferenceKind::OnAccount => Err(OutstandingsError::InvalidResponse(
             "bill_reference_forbidden",
         )),
+    }?;
+    match ageing_anchor {
+        AgeingAnchor::BillDate => Ok(bill_date),
+        AgeingAnchor::DueDate => add_credit_period(&bill_date, &allocation.credit_period),
     }
+}
+
+fn add_credit_period(
+    date: &TallyDate,
+    period: &CreditPeriod,
+) -> Result<TallyDate, OutstandingsError> {
+    match period {
+        CreditPeriod::Days(days) => add_days(date, *days),
+        CreditPeriod::Weeks(weeks) => add_days(
+            date,
+            weeks
+                .checked_mul(7)
+                .ok_or(OutstandingsError::InvalidResponse(
+                    "bill_credit_period_invalid",
+                ))?,
+        ),
+        CreditPeriod::Months(months) => date
+            .add_months_clamped(*months)
+            .map_err(|_| OutstandingsError::InvalidDateWindow),
+    }
+}
+
+fn add_days(date: &TallyDate, days: u32) -> Result<TallyDate, OutstandingsError> {
+    date.add_days(days)
+        .map_err(|_| OutstandingsError::InvalidDateWindow)
 }
 
 fn exact(value: &MoneyValue) -> Result<&ExactDecimal, OutstandingsError> {
@@ -275,6 +324,16 @@ fn days_between(from: &TallyDate, to: &TallyDate) -> Result<u32, OutstandingsErr
     let from = civil_day(from)?;
     let to = civil_day(to)?;
     u32::try_from(to - from).map_err(|_| OutstandingsError::InvalidDateWindow)
+}
+
+/// Future-due open bills are open exposure, not a negative-aged error. They
+/// remain in the first bucket, while their party has no `oldest_bill_age_days`
+/// until the selected ageing date arrives.
+fn overdue_days(from: &TallyDate, to: &TallyDate) -> Result<Option<u32>, OutstandingsError> {
+    if from > to {
+        return Ok(None);
+    }
+    days_between(from, to).map(Some)
 }
 
 fn civil_day(date: &TallyDate) -> Result<i64, OutstandingsError> {
@@ -300,17 +359,121 @@ fn civil_day(date: &TallyDate) -> Result<i64, OutstandingsError> {
 #[cfg(test)]
 mod tests {
     use bridge_tally_primitives::{ExactDecimal, TallyDate};
+    use sha2::{Digest, Sha256};
 
     use crate::{
+        decode_tally_xml_response_bytes_limited,
         outstandings::{
-            BillAllocation, BillReferenceKind, CompleteScan, DateBoundaryProfile, DateWindow,
-            LedgerEntry, MoneyValue, PinnedCompany, Voucher, VoucherAlterId,
-            VoucherAlterIdHighWater,
+            AlterIdRange, BillAllocation, BillReferenceKind, CompleteScan, CreditPeriod,
+            DateBoundaryProfile, DateWindow, LedgerEntry, MoneyValue, PinnedCompany, Voucher,
+            VoucherAlterId, VoucherAlterIdHighWater,
         },
         xml_read_profiles::ValidatedCompanyName,
+        ExpectedTallyTextEncoding,
     };
 
-    use super::compute_outstandings;
+    use super::super::parser::parse_segment;
+    use super::{add_credit_period, compute_outstandings, compute_outstandings_with_ageing_anchor};
+
+    const AGEING_CORPUS: &[u8] =
+        include_bytes!("../../tests/fixtures/vouchers_ageing_corpus_live.utf16le.xml");
+    const GST_CREDIT_PERIOD_CORPUS: &[u8] =
+        include_bytes!("../../tests/fixtures/vouchers_gst_credit_periods_live.utf16le.xml");
+    const AGEING_CORPUS_GUID: &str = "2f65b86f-edf4-471c-99ed-da0de7163836";
+    const GST_CREDIT_PERIOD_CORPUS_GUID: &str = "46faa869-1208-4119-8961-f28db4df3b8e";
+
+    #[test]
+    fn credit_periods_produce_calendar_due_dates_without_unit_guessing() {
+        assert_eq!(
+            add_credit_period(
+                &TallyDate::parse("20260131").unwrap(),
+                &CreditPeriod::Months(1)
+            )
+            .unwrap()
+            .as_str(),
+            "20260228"
+        );
+        assert_eq!(
+            add_credit_period(
+                &TallyDate::parse("20260101").unwrap(),
+                &CreditPeriod::Weeks(3)
+            )
+            .unwrap()
+            .as_str(),
+            "20260122"
+        );
+        assert_eq!(
+            add_credit_period(
+                &TallyDate::parse("20260101").unwrap(),
+                &CreditPeriod::Days(45)
+            )
+            .unwrap()
+            .as_str(),
+            "20260215"
+        );
+    }
+
+    #[test]
+    fn captured_ageing_corpus_moves_seven_of_eight_bills_between_anchors() {
+        let scan = captured_scan(
+            AGEING_CORPUS,
+            "BRIDGE CORPUS AGEING",
+            AGEING_CORPUS_GUID,
+            "20250401",
+            "20260331",
+            8,
+            "497aec1804603b5c79a6ece404554c1f0ee1fb005ce3187b627f3292c51605f6",
+        );
+        let as_of = TallyDate::parse("20260331").unwrap();
+        let bill_date = compute_outstandings_with_ageing_anchor(
+            &scan,
+            as_of.clone(),
+            crate::outstandings::AgeingAnchor::BillDate,
+        )
+        .expect("captured bill-date ageing computes");
+        let due_date = compute_outstandings_with_ageing_anchor(
+            &scan,
+            as_of,
+            crate::outstandings::AgeingAnchor::DueDate,
+        )
+        .expect("captured due-date ageing computes");
+
+        assert_eq!(bill_date.ageing_bill_counts.days_0_30, 1);
+        assert_eq!(bill_date.ageing_bill_counts.days_31_60, 2);
+        assert_eq!(bill_date.ageing_bill_counts.days_61_90, 2);
+        assert_eq!(bill_date.ageing_bill_counts.days_90_plus, 3);
+        assert_eq!(due_date.ageing_bill_counts.days_0_30, 4);
+        assert_eq!(due_date.ageing_bill_counts.days_31_60, 3);
+        assert_eq!(due_date.ageing_bill_counts.days_61_90, 1);
+        assert_eq!(due_date.ageing_bill_counts.days_90_plus, 0);
+        assert_ne!(bill_date.ageing, due_date.ageing);
+    }
+
+    #[test]
+    fn captured_gst_corpus_parses_week_and_month_credit_period_units() {
+        let scan = captured_scan(
+            GST_CREDIT_PERIOD_CORPUS,
+            "BRIDGE CORPUS GST",
+            GST_CREDIT_PERIOD_CORPUS_GUID,
+            "20250401",
+            "20250420",
+            40,
+            "1e340126eda8e767d2b53cab8bb2086add1ed35f53f7216a16edbc16624b30b8",
+        );
+        let periods = scan
+            .vouchers()
+            .iter()
+            .flat_map(|voucher| voucher.ledger_entries.iter())
+            .flat_map(|entry| entry.bill_allocations.iter())
+            .map(|allocation| &allocation.credit_period)
+            .collect::<Vec<_>>();
+
+        assert!(periods.contains(&&CreditPeriod::Days(15)));
+        assert!(periods.contains(&&CreditPeriod::Days(30)));
+        assert!(periods.contains(&&CreditPeriod::Weeks(2)));
+        assert!(periods.contains(&&CreditPeriod::Months(1)));
+        assert!(periods.contains(&&CreditPeriod::Months(2)));
+    }
 
     #[test]
     fn exact_bill_balances_age_and_split_receivable_from_payable() {
@@ -455,6 +618,97 @@ mod tests {
     }
 
     #[test]
+    fn future_due_open_bill_is_bucketed_without_claiming_an_overdue_age() {
+        let company = PinnedCompany::verified(
+            ValidatedCompanyName::new("Synthetic Company").unwrap(),
+            "synthetic-guid".to_string(),
+        )
+        .unwrap();
+        let mut future_due = voucher(
+            "future-due",
+            "20260315",
+            "Customer",
+            "Invoice-future",
+            "New Ref",
+            "-100.00",
+        );
+        future_due.ledger_entries[0].bill_allocations[0].credit_period = CreditPeriod::Days(30);
+        let scan = CompleteScan {
+            company,
+            reporting_window: DateWindow::parse(
+                DateBoundaryProfile::ModeAgnostic,
+                "20260101",
+                "20260331",
+            )
+            .unwrap(),
+            voucher_alter_id_high_water: VoucherAlterIdHighWater::parse("1").unwrap(),
+            vouchers: vec![future_due],
+            encoded_bytes: 1024,
+            empty_partition_witnesses: Vec::new(),
+        };
+
+        let report = compute_outstandings(&scan, TallyDate::parse("20260331").unwrap())
+            .expect("a future-due bill must not fail the complete report");
+
+        assert_eq!(report.receivable_total.as_str(), "100");
+        assert_eq!(report.ageing.days_0_30.as_str(), "100");
+        assert_eq!(report.open_receivable_bill_count, 1);
+        assert_eq!(report.top_parties[0].oldest_bill_age_days, None);
+    }
+
+    fn captured_scan(
+        bytes: &[u8],
+        company_name: &str,
+        company_guid: &str,
+        from: &str,
+        to: &str,
+        high_water: u64,
+        expected_sha256: &str,
+    ) -> CompleteScan {
+        let observed_sha256 = Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            observed_sha256, expected_sha256,
+            "captured wire bytes changed"
+        );
+        let xml = decode_tally_xml_response_bytes_limited(
+            bytes,
+            "text/xml; charset=utf-16",
+            ExpectedTallyTextEncoding::Utf16Le,
+            bytes.len(),
+        )
+        .expect("captured BOM-less UTF-16LE response decodes")
+        .text;
+        let company = PinnedCompany::verified(
+            ValidatedCompanyName::new(company_name)
+                .expect("synthetic capture company name is valid"),
+            company_guid.to_string(),
+        )
+        .expect("captured company identity is pinned");
+        let window = DateWindow::parse(DateBoundaryProfile::ModeAgnostic, from, to)
+            .expect("captured date window is valid");
+        let parsed = parse_segment(
+            &xml,
+            &company,
+            &window,
+            AlterIdRange::new(0, high_water).expect("captured AlterID range is valid"),
+        )
+        .expect("captured response parses");
+        assert_eq!(parsed.raw_row_count, parsed.vouchers.len());
+        CompleteScan {
+            company,
+            reporting_window: window,
+            voucher_alter_id_high_water: VoucherAlterIdHighWater::parse(&high_water.to_string())
+                .unwrap(),
+            vouchers: parsed.vouchers,
+            encoded_bytes: bytes.len(),
+            empty_partition_witnesses: Vec::new(),
+        }
+    }
+
+    #[test]
     fn optional_vouchers_are_excluded_from_ordinary_book_totals() {
         // Optional vouchers are non-posting in Tally. Tally's own
         // bank-statement import creates vouchers as Optional by default, so a
@@ -545,6 +799,7 @@ mod tests {
                         _ => panic!("synthetic test must use a known kind"),
                     },
                     amount: MoneyValue::Exact(amount),
+                    credit_period: CreditPeriod::Days(0),
                 }],
             }],
         }

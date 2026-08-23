@@ -1443,7 +1443,8 @@ summary:focus-visible,
   font-size: 13px;
 }
 
-.outstandings-as-of input {
+.outstandings-as-of input,
+.outstandings-as-of select {
   min-height: 36px;
   border: 1px solid #c9d5ce;
   border-radius: 6px;
@@ -1809,7 +1810,8 @@ summary:focus-visible,
     grid-template-columns: 1fr;
   }
 
-  .outstandings-as-of input {
+  .outstandings-as-of input,
+  .outstandings-as-of select {
     width: 100%;
   }
 

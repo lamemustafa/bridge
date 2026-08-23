@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OutstandingsAgeingAnchor } from "./outstandings-copy";
+
 /** Local calendar date for a native date input; UTC conversion would show a
  * different day for operators west/east of the UTC boundary. */
 export function todayAsDateInput(now = new Date()) {
@@ -76,6 +78,7 @@ export function singleCompanyOutstandingsInvokeArgument(
   config: OutstandingsConfig,
   company: OutstandingsCompany,
   asOf: string,
+  ageingAnchor: OutstandingsAgeingAnchor,
 ) {
   const asOfYyyymmddValue = asOfYyyymmdd(asOf);
   if (!asOfYyyymmddValue) return null;
@@ -86,6 +89,7 @@ export function singleCompanyOutstandingsInvokeArgument(
       expected_company_guid: company.guid,
       currency_assertion: "INR" as const,
       as_of_yyyymmdd: asOfYyyymmddValue,
+      ageing_anchor: ageingAnchor,
     },
   };
 }
@@ -95,6 +99,7 @@ export function allCompaniesOutstandingsInvokeArgument(
   config: OutstandingsConfig,
   companies: OutstandingsCompany[],
   asOf: string,
+  ageingAnchor: OutstandingsAgeingAnchor,
 ) {
   const asOfYyyymmddValue = asOfYyyymmdd(asOf);
   if (!asOfYyyymmddValue) return null;
@@ -107,12 +112,14 @@ export function allCompaniesOutstandingsInvokeArgument(
       })),
       currency_assertion: "INR" as const,
       as_of_yyyymmdd: asOfYyyymmddValue,
+      ageing_anchor: ageingAnchor,
     },
   };
 }
 
 type StatementExportSource = {
   report: { company_name: string; as_of_yyyymmdd: string };
+  ageing_anchor: OutstandingsAgeingAnchor;
   statement_open_bills?: unknown[];
   statement_unallocated_by_party?: Array<{ party: string; amount: string }>;
 };
@@ -129,6 +136,7 @@ export function partyStatementInvokeArgument(
       as_of_yyyymmdd: result.report.as_of_yyyymmdd,
       party,
       format,
+      ageing_anchor: result.ageing_anchor,
       open_bills: result.statement_open_bills ?? [],
       unallocated_by_party: result.statement_unallocated_by_party ?? [],
     },
@@ -147,6 +155,7 @@ export function bulkPartyStatementsInvokeArgument(
       as_of_yyyymmdd: result.report.as_of_yyyymmdd,
       destination,
       format,
+      ageing_anchor: result.ageing_anchor,
       open_bills: result.statement_open_bills ?? [],
       unallocated_by_party: result.statement_unallocated_by_party ?? [],
     },

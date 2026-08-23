@@ -9,7 +9,7 @@ use super::{
         Envelope, Header, LedgerCollection, RawBillAllocation, RawLedgerEntry, RawVoucher,
         RawWitnessVoucher, VoucherCollection, WitnessVoucherCollection,
     },
-    AlterIdRange, BillAllocation, BillReferenceKind, DateWindow, LedgerEntry,
+    AlterIdRange, BillAllocation, BillReferenceKind, CreditPeriod, DateWindow, LedgerEntry,
     LedgerOpeningCoverage, MoneyValue, Voucher, VoucherAlterId, WitnessVoucher,
 };
 
@@ -393,6 +393,15 @@ fn convert_bill_allocation(
         }
         _ => None,
     };
+    let credit_period = match raw.bill_credit_period {
+        Some(value) => parse_credit_period(&value.text)?,
+        None if bill_type.requires_named_reference() => {
+            return Err(OutstandingsError::InvalidResponse(
+                "bill_credit_period_missing",
+            ))
+        }
+        None => CreditPeriod::Days(0),
+    };
     Ok(Some(BillAllocation {
         name,
         bill_type,
@@ -402,7 +411,80 @@ fn convert_bill_allocation(
                 .text,
         )?,
         bill_date,
+        credit_period,
     }))
+}
+
+// Licensed TallyPrime 7.1 read-back on 2026-08-23 retained up to 9999 days,
+// but silently discarded 10000 days to an empty credit period. This is a
+// measured wire-format ceiling, not a business-term policy. Weeks and months
+// have no equivalent measured ceiling, so their checked resulting date is the
+// bound instead.
+const MAX_TALLY_CREDIT_PERIOD_DAYS: u32 = 9999;
+
+fn parse_credit_period(value: &str) -> Result<CreditPeriod, OutstandingsError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(CreditPeriod::Days(0));
+    }
+    let Some((magnitude, period, maximum)) = [
+        (
+            " Months",
+            CreditPeriod::Months as fn(u32) -> CreditPeriod,
+            None,
+        ),
+        (
+            " Month",
+            CreditPeriod::Months as fn(u32) -> CreditPeriod,
+            None,
+        ),
+        (
+            " Weeks",
+            CreditPeriod::Weeks as fn(u32) -> CreditPeriod,
+            None,
+        ),
+        (
+            " Week",
+            CreditPeriod::Weeks as fn(u32) -> CreditPeriod,
+            None,
+        ),
+        (
+            " Days",
+            CreditPeriod::Days as fn(u32) -> CreditPeriod,
+            Some(MAX_TALLY_CREDIT_PERIOD_DAYS),
+        ),
+        (
+            " Day",
+            CreditPeriod::Days as fn(u32) -> CreditPeriod,
+            Some(MAX_TALLY_CREDIT_PERIOD_DAYS),
+        ),
+    ]
+    .into_iter()
+    .find_map(|(suffix, period, maximum)| {
+        value
+            .strip_suffix(suffix)
+            .map(|magnitude| (magnitude, period, maximum))
+    }) else {
+        return Err(OutstandingsError::InvalidResponse(
+            "bill_credit_period_invalid",
+        ));
+    };
+    if magnitude.is_empty() || !magnitude.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(OutstandingsError::InvalidResponse(
+            "bill_credit_period_invalid",
+        ));
+    }
+    let magnitude = magnitude
+        .parse::<u32>()
+        .map_err(|_| OutstandingsError::InvalidResponse("bill_credit_period_invalid"))?;
+    if let Some(maximum) = maximum {
+        if magnitude > maximum {
+            return Err(OutstandingsError::InvalidResponse(
+                "bill_credit_period_invalid",
+            ));
+        }
+    }
+    Ok(period(magnitude))
 }
 
 fn parse_money(value: String) -> Result<MoneyValue, OutstandingsError> {
@@ -515,7 +597,57 @@ fn trimmed_optional(value: Option<String>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::count_voucher_start_elements;
+    use super::{count_voucher_start_elements, parse_credit_period};
+    use crate::outstandings::{CreditPeriod, OutstandingsError};
+
+    #[test]
+    fn credit_period_accepts_verified_units_and_rejects_unknown_ones() {
+        assert_eq!(
+            parse_credit_period("45 Days").unwrap(),
+            CreditPeriod::Days(45)
+        );
+        assert_eq!(parse_credit_period("1 Day").unwrap(), CreditPeriod::Days(1));
+        assert_eq!(
+            parse_credit_period("3 Weeks").unwrap(),
+            CreditPeriod::Weeks(3)
+        );
+        assert_eq!(
+            parse_credit_period("2 Months").unwrap(),
+            CreditPeriod::Months(2)
+        );
+        assert_eq!(parse_credit_period(" ").unwrap(), CreditPeriod::Days(0));
+        // Licensed TallyPrime 7.1 read-back on 2026-08-23 retained all four
+        // values. Only the day-unit ceiling is measured: 10000 Days comes
+        // back empty from Tally rather than as an over-limit period.
+        assert_eq!(
+            parse_credit_period("9999 Days").unwrap(),
+            CreditPeriod::Days(9999)
+        );
+        assert_eq!(
+            parse_credit_period("3650 Days").unwrap(),
+            CreditPeriod::Days(3650)
+        );
+        assert_eq!(
+            parse_credit_period("100 Months").unwrap(),
+            CreditPeriod::Months(100)
+        );
+        assert_eq!(
+            parse_credit_period("1000 Months").unwrap(),
+            CreditPeriod::Months(1000)
+        );
+        assert_eq!(
+            parse_credit_period("2 Fortnights"),
+            Err(OutstandingsError::InvalidResponse(
+                "bill_credit_period_invalid"
+            ))
+        );
+        assert_eq!(
+            parse_credit_period("10000 Days"),
+            Err(OutstandingsError::InvalidResponse(
+                "bill_credit_period_invalid"
+            ))
+        );
+    }
 
     #[test]
     fn voucher_rows_are_counted_structurally_not_by_one_textual_spelling() {
