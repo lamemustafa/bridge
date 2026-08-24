@@ -2882,8 +2882,16 @@ mod tests {
         assert_eq!(statement.bill_total.as_str(), "100");
 
         let destination = tempfile::tempdir().expect("synthetic destination");
+        let approvals =
+            crate::reports::bulk_party_statement::PartyStatementDestinationApprovals::default();
+        let approval_id = approvals
+            .issue(destination.path().to_path_buf())
+            .expect("approve synthetic destination");
+        let approved_destination = approvals
+            .consume(&approval_id, destination.path())
+            .expect("consume synthetic approval");
         let bulk = crate::reports::bulk_party_statement::write_bulk_party_statements(
-            destination.path(),
+            &approved_destination,
             "Synthetic Company",
             as_of.as_str(),
             "xlsx",

@@ -12,7 +12,7 @@ use crate::db::tally_mirror::{
 use crate::gst::{GstDraftRequest, GstReturnDraft};
 use crate::reports::bulk_party_statement::{
     bulk_party_statement_party_count, write_bulk_party_statements_with_ageing_anchor,
-    BulkPartyStatementRequest,
+    BulkPartyStatementRequest, PartyStatementDestinationApprovals,
 };
 use crate::reports::party_statement::{
     build_party_statement_with_ageing_anchor, PartyStatementError,
@@ -58,6 +58,27 @@ pub struct TallyCommandError {
     pub local_state_changed: bool,
     pub tally_state_may_have_changed: bool,
     pub remediation: &'static str,
+}
+
+/// Bulk statement exports historically returned a plain message for filesystem
+/// failures. Keep that IPC behavior intact while making an unapproved
+/// destination distinguishable to callers through the standard error envelope.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum BulkPartyStatementExportError {
+    DestinationNotAuthorized(TallyCommandError),
+    Existing(String),
+}
+
+fn party_statement_destination_not_authorized_error() -> TallyCommandError {
+    tally_command_error(
+        "statement_destination_not_authorized",
+        "Operation",
+        "The statement destination was not selected in this Bridge session.",
+        "after_change",
+        false,
+        "Choose the destination folder again, then restart the statement export.",
+    )
 }
 
 fn tally_command_error(
@@ -3098,9 +3119,13 @@ pub struct ExportBulkPartyStatementsRequest {
     pub format: PartyStatementFormat,
     #[serde(default)]
     pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
-    /// Chosen by the native folder picker. The command still checks that it
-    /// exists and is a directory before any statement name is joined to it.
+    /// Returned by the native folder picker. The command verifies it against
+    /// that picker result, then still checks it exists and is a directory
+    /// before any statement name is joined to it.
     pub destination: String,
+    /// Opaque, single-use proof returned with the native picker destination.
+    /// A renderer cannot mint this proof for an arbitrary local path.
+    pub approval_id: String,
     /// These are complete statement-source rows from the finished local read,
     /// not the dashboard's display projections.
     pub open_bills: Vec<OpenBillRow>,
@@ -3120,18 +3145,52 @@ pub struct BulkPartyStatementsPreview {
     pub party_count: usize,
 }
 
+/// The picker result the renderer must preserve verbatim until it starts the
+/// matching export. The proof is intentionally opaque to the UI.
+#[derive(Debug, Serialize)]
+pub struct PartyStatementDestinationSelection {
+    pub destination: String,
+    pub approval_id: String,
+}
+
 /// Lets the operator choose where the whole statement batch will be written.
 #[tauri::command]
-pub async fn select_party_statement_destination() -> Result<Option<String>, String> {
-    tokio::task::spawn_blocking(|| {
+pub async fn select_party_statement_destination(
+    approvals: State<'_, PartyStatementDestinationApprovals>,
+) -> Result<Option<PartyStatementDestinationSelection>, String> {
+    let selected = tokio::task::spawn_blocking(|| {
         rfd::FileDialog::new()
             .set_title("Choose a folder for party statements")
             .pick_folder()
-            .map(require_utf8_destination)
-            .transpose()
     })
     .await
-    .map_err(|_| "Bridge could not open the statement destination picker.".to_string())?
+    .map_err(|_| "Bridge could not open the statement destination picker.".to_string())?;
+
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let destination = require_utf8_destination(selected)?;
+    let approval_id = approvals
+        .issue(std::path::PathBuf::from(&destination))
+        .map_err(|_| {
+            "Bridge could not record the statement destination. Choose the folder again."
+                .to_string()
+        })?;
+    Ok(Some(PartyStatementDestinationSelection {
+        destination,
+        approval_id,
+    }))
+}
+
+/// Releases a picker approval when the renderer abandons its pending export.
+#[tauri::command]
+pub async fn revoke_party_statement_destination(
+    approval_id: String,
+    approvals: State<'_, PartyStatementDestinationApprovals>,
+) -> Result<(), String> {
+    approvals.revoke(&approval_id).map_err(|_| {
+        "Bridge could not release the statement destination. Choose the folder again.".to_string()
+    })
 }
 
 /// Converts a user-picked folder into the UTF-8 text Bridge's own IPC
@@ -3173,13 +3232,36 @@ pub async fn preview_bulk_party_statements(
 #[tauri::command]
 pub async fn export_bulk_party_statements(
     request: ExportBulkPartyStatementsRequest,
-) -> Result<crate::reports::bulk_party_statement::BulkPartyStatementResult, String> {
-    let destination = std::path::PathBuf::from(request.destination);
+    approvals: State<'_, PartyStatementDestinationApprovals>,
+) -> Result<
+    crate::reports::bulk_party_statement::BulkPartyStatementResult,
+    BulkPartyStatementExportError,
+> {
+    export_bulk_party_statements_at_selected_destination(request, &approvals)
+}
 
-    match request.format {
+fn export_bulk_party_statements_at_selected_destination(
+    request: ExportBulkPartyStatementsRequest,
+    approvals: &PartyStatementDestinationApprovals,
+) -> Result<
+    crate::reports::bulk_party_statement::BulkPartyStatementResult,
+    BulkPartyStatementExportError,
+> {
+    let approved_destination = approvals
+        .consume(
+            &request.approval_id,
+            std::path::Path::new(&request.destination),
+        )
+        .map_err(|_| {
+            BulkPartyStatementExportError::DestinationNotAuthorized(
+                party_statement_destination_not_authorized_error(),
+            )
+        })?;
+
+    let result = match request.format {
         PartyStatementFormat::Xlsx => {
             write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
-                destination: &destination,
+                destination: &approved_destination,
                 company: &request.company,
                 as_of_yyyymmdd: &request.as_of_yyyymmdd,
                 format: "xlsx",
@@ -3193,7 +3275,7 @@ pub async fn export_bulk_party_statements(
         }
         PartyStatementFormat::Pdf => {
             write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
-                destination: &destination,
+                destination: &approved_destination,
                 company: &request.company,
                 as_of_yyyymmdd: &request.as_of_yyyymmdd,
                 format: "pdf",
@@ -3205,7 +3287,8 @@ pub async fn export_bulk_party_statements(
                 },
             })
         }
-    }
+    };
+    result.map_err(BulkPartyStatementExportError::Existing)
 }
 
 /// Builds one party's aged-bills statement in the requested format and writes
@@ -3377,6 +3460,48 @@ mod party_statement_export_tests {
     use super::*;
 
     #[test]
+    fn utf8_picker_destination_round_trips_to_the_authorized_path() {
+        let destination = tempfile::tempdir().expect("temporary destination");
+        let selected_path = destination.path().to_path_buf();
+        let approvals = PartyStatementDestinationApprovals::default();
+        let approval_id = approvals
+            .issue(selected_path.clone())
+            .expect("approve picker destination");
+        let ipc_destination =
+            require_utf8_destination(selected_path).expect("temporary destination is valid UTF-8");
+
+        let approved = approvals
+            .consume(&approval_id, std::path::Path::new(&ipc_destination))
+            .expect("IPC path reconstruction retains the selected destination");
+
+        assert_eq!(approved.path(), std::path::Path::new(&ipc_destination));
+    }
+
+    fn bulk_export_request(
+        destination: &std::path::Path,
+        approval_id: &str,
+    ) -> ExportBulkPartyStatementsRequest {
+        ExportBulkPartyStatementsRequest {
+            company: "Synthetic Books Pvt Ltd".to_string(),
+            as_of_yyyymmdd: "20260808".to_string(),
+            format: PartyStatementFormat::Xlsx,
+            ageing_anchor: crate::tally::OutstandingsAgeingAnchor::DueDate,
+            destination: destination.to_string_lossy().into_owned(),
+            approval_id: approval_id.to_string(),
+            open_bills: vec![OpenBillRow {
+                party: "Synthetic Party".to_string(),
+                reference: "SYNTHETIC-1".to_string(),
+                bill_date: "20260801".to_string(),
+                due_date: "20260831".to_string(),
+                amount: bridge_tally_core::ExactDecimal::parse("100.00").expect("synthetic amount"),
+                age_days: Some(7),
+                kind: crate::tally::ExposureDirection::Receivable,
+            }],
+            unallocated_by_party: Vec::new(),
+        }
+    }
+
+    #[test]
     fn statement_export_format_defaults_to_xlsx_and_accepts_pdf() {
         let base = serde_json::json!({
             "company": "Synthetic Books Pvt Ltd",
@@ -3405,6 +3530,7 @@ mod party_statement_export_tests {
             "as_of_yyyymmdd": "20260808",
             "format": "xlsx",
             "destination": "/tmp/statements",
+            "approval_id": "synthetic-approval",
             "open_bills": [],
             "unallocated_by_party": [],
         }))
@@ -3413,6 +3539,189 @@ mod party_statement_export_tests {
         assert!(matches!(
             request.ageing_anchor,
             crate::tally::OutstandingsAgeingAnchor::DueDate
+        ));
+    }
+
+    #[test]
+    fn bulk_statement_export_rejects_an_unselected_destination_without_writing() {
+        let destination = tempfile::tempdir().expect("unselected synthetic destination");
+        let approvals = PartyStatementDestinationApprovals::default();
+
+        let error = export_bulk_party_statements_at_selected_destination(
+            bulk_export_request(destination.path(), "not-issued"),
+            &approvals,
+        )
+        .expect_err("an unselected destination must be rejected");
+
+        match error {
+            BulkPartyStatementExportError::DestinationNotAuthorized(error) => {
+                assert_eq!(error.code, "statement_destination_not_authorized");
+                assert_eq!(error.retry, "after_change");
+                assert!(!error.local_state_changed);
+            }
+            BulkPartyStatementExportError::Existing(error) => {
+                panic!("expected typed destination error, got {error}");
+            }
+        }
+        assert!(
+            std::fs::read_dir(destination.path())
+                .expect("destination remains readable")
+                .next()
+                .is_none(),
+            "the rejected batch must not write a statement or manifest"
+        );
+    }
+
+    #[test]
+    fn bulk_statement_export_writes_to_the_destination_approved_by_the_picker() {
+        let destination = tempfile::tempdir().expect("selected synthetic destination");
+        let approvals = PartyStatementDestinationApprovals::default();
+        let approval_id = approvals
+            .issue(destination.path().to_path_buf())
+            .expect("record picker destination");
+
+        let result = export_bulk_party_statements_at_selected_destination(
+            bulk_export_request(destination.path(), &approval_id),
+            &approvals,
+        )
+        .expect("recorded destination is accepted");
+
+        assert_eq!(result.written.len(), 1);
+        assert!(std::path::Path::new(&result.manifest_path).is_file());
+        assert!(destination
+            .path()
+            .join(&result.written[0].file_name)
+            .is_file());
+    }
+
+    #[test]
+    fn independent_picker_approvals_export_to_their_own_destinations() {
+        let first_destination = tempfile::tempdir().expect("first synthetic destination");
+        let second_destination = tempfile::tempdir().expect("second synthetic destination");
+        let approvals = PartyStatementDestinationApprovals::default();
+        // Both selections exist before either export starts; neither replaces
+        // the other as the previous singleton store did.
+        let first_approval = approvals
+            .issue(first_destination.path().to_path_buf())
+            .expect("approve first destination");
+        let second_approval = approvals
+            .issue(second_destination.path().to_path_buf())
+            .expect("approve second destination");
+
+        let first = export_bulk_party_statements_at_selected_destination(
+            bulk_export_request(first_destination.path(), &first_approval),
+            &approvals,
+        )
+        .expect("first approved destination writes");
+        let second = export_bulk_party_statements_at_selected_destination(
+            bulk_export_request(second_destination.path(), &second_approval),
+            &approvals,
+        )
+        .expect("second approved destination writes");
+
+        assert!(std::path::Path::new(&first.manifest_path).starts_with(first_destination.path()));
+        assert!(std::path::Path::new(&second.manifest_path).starts_with(second_destination.path()));
+        assert!(first_destination
+            .path()
+            .join(&first.written[0].file_name)
+            .is_file());
+        assert!(second_destination
+            .path()
+            .join(&second.written[0].file_name)
+            .is_file());
+    }
+
+    #[test]
+    fn cancelled_picker_leaves_no_approval_that_can_export() {
+        let destination = tempfile::tempdir().expect("cancelled synthetic destination");
+        let approvals = PartyStatementDestinationApprovals::default();
+
+        let error = export_bulk_party_statements_at_selected_destination(
+            bulk_export_request(destination.path(), "no-picker-selection"),
+            &approvals,
+        )
+        .expect_err("a cancelled picker has no approval to consume");
+
+        assert!(matches!(
+            error,
+            BulkPartyStatementExportError::DestinationNotAuthorized(error)
+                if error.code == "statement_destination_not_authorized"
+        ));
+        assert!(
+            std::fs::read_dir(destination.path())
+                .expect("destination remains readable")
+                .next()
+                .is_none(),
+            "the cancelled selection must not write a statement or manifest"
+        );
+    }
+
+    #[test]
+    fn approval_destination_mismatch_is_rejected_without_writing() {
+        let approved_destination = tempfile::tempdir().expect("approved synthetic destination");
+        let requested_destination = tempfile::tempdir().expect("requested synthetic destination");
+        let approvals = PartyStatementDestinationApprovals::default();
+        let approval_id = approvals
+            .issue(approved_destination.path().to_path_buf())
+            .expect("approve first destination");
+
+        let error = export_bulk_party_statements_at_selected_destination(
+            bulk_export_request(requested_destination.path(), &approval_id),
+            &approvals,
+        )
+        .expect_err("an approval cannot be substituted for another destination");
+
+        assert!(matches!(
+            error,
+            BulkPartyStatementExportError::DestinationNotAuthorized(error)
+                if error.code == "statement_destination_not_authorized"
+        ));
+        let reuse_error = export_bulk_party_statements_at_selected_destination(
+            bulk_export_request(approved_destination.path(), &approval_id),
+            &approvals,
+        )
+        .expect_err("a mismatched approval must be consumed");
+        assert!(matches!(
+            reuse_error,
+            BulkPartyStatementExportError::DestinationNotAuthorized(error)
+                if error.code == "statement_destination_not_authorized"
+        ));
+        assert!(
+            std::fs::read_dir(requested_destination.path())
+                .expect("requested destination remains readable")
+                .next()
+                .is_none(),
+            "the rejected mismatch must not write a statement or manifest"
+        );
+        assert!(
+            std::fs::read_dir(approved_destination.path())
+                .expect("approved destination remains readable")
+                .next()
+                .is_none(),
+            "a consumed mismatch approval must not write after a retry"
+        );
+    }
+
+    #[test]
+    fn bulk_statement_export_keeps_the_existing_deleted_destination_failure() {
+        let destination = tempfile::tempdir().expect("selected synthetic destination");
+        let destination_path = destination.path().to_path_buf();
+        let approvals = PartyStatementDestinationApprovals::default();
+        let approval_id = approvals
+            .issue(destination_path.clone())
+            .expect("record picker destination");
+        destination.close().expect("remove selected destination");
+
+        let error = export_bulk_party_statements_at_selected_destination(
+            bulk_export_request(&destination_path, &approval_id),
+            &approvals,
+        )
+        .expect_err("a deleted selected destination must fail the existing directory check");
+
+        assert!(matches!(
+            error,
+            BulkPartyStatementExportError::Existing(message)
+                if message == "Bridge could not use that statement destination folder."
         ));
     }
 
