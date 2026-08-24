@@ -75,8 +75,10 @@ GSTINs held on the master records are deliberately non-conforming in any case â€
 |---|---:|---|---|
 | `vouchers_agst_ref_reopen_live.utf16le.xml` | 127,166 | `6c2978198a4fe802ea211dc8d7a7d0402331bd5b37319adf181c7015fcf10125` | `BRIDGE CORPUS SETTLED` |
 
-The capture has 24 vouchers and 48 bill allocations: 12 `New Ref` and 12 `Agst Ref`, all
-with `30 Days`. Tally supplied `BILLDATE` and `BILLCREDITPERIOD` on each `Agst Ref` without
+The capture has 24 vouchers and **24 populated bill allocations**: 12 `New Ref` and 12 `Agst Ref`,
+all with `30 Days`. It has 48 `<BILLALLOCATIONS.LIST>` containers because the other 24 are empty
+counterpart-ledger entries with no `BILLTYPE`; counting containers as allocations would double the
+actual populated rows. Tally supplied `BILLDATE` and `BILLCREDITPERIOD` on each `Agst Ref` without
 those fields being sent by the generator. For example, the 2025-04-28 receipt allocation for
 `SET-INV-001` carries `<BILLDATE>20250408</BILLDATE>`,
 `<BILLCREDITPERIOD JD="45754" P="30 Days">30 Days</BILLCREDITPERIOD>`, and

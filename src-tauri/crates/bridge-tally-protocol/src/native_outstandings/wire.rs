@@ -1121,6 +1121,10 @@ mod currency_tests {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/currency_multi_live.utf16le.xml"
     ));
+    const FOREX_COMPOSITE_LIVE: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/ledgers_forex_composite_live.utf16le.xml"
+    ));
 
     fn decode_utf16le(bytes: &[u8]) -> String {
         let (units, remainder) = bytes.as_chunks::<2>();
@@ -1214,13 +1218,43 @@ mod currency_tests {
     }
 
     #[test]
-    fn foreign_currency_closing_balance_names_the_ledger_without_parsing_it() {
-        let xml = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME="FX USD Debtor 02"><PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>-$ 2000.00 @ I₹ 84/$ = -I₹ 168000.00</CLOSINGBALANCE><OPENINGBALANCE>0</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    fn captured_forex_composite_closing_balance_names_the_ledger_without_parsing_it() {
         assert_eq!(
-            parse_native_ledger_snapshot(xml),
+            sha256_hex(FOREX_COMPOSITE_LIVE),
+            "4941f30826ec51da9ab1c834abb1abcd711ffec22464044d5c669b77aaa313f8",
+            "captured wire bytes changed"
+        );
+        let xml = decode_utf16le(FOREX_COMPOSITE_LIVE);
+        assert_eq!(xml.matches("<LEDGER NAME=").count(), 8);
+        assert_eq!(xml.matches(" @ ").count(), 1);
+        assert_eq!(
+            parse_native_ledger_snapshot(&xml),
             Err(NativeOutstandingsError::ForeignCurrencyLedgerBalance {
                 ledger_name: "FX USD Debtor 02".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn constructed_forex_composite_boundaries_remain_fail_closed() {
+        let xml = decode_utf16le(FOREX_COMPOSITE_LIVE);
+        // Constructed: the capture contains only the measured negative composite balance.
+        let positive = xml.replacen(
+            "-$ 2000.00 @ I₹ 84/$  = -I₹ 168000.00",
+            "$ 2000.00 @ I₹ 84/$  = I₹ 168000.00",
+            1,
+        );
+        assert!(matches!(
+            parse_native_ledger_snapshot(&positive),
+            Err(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name })
+                if ledger_name == "FX USD Debtor 02"
+        ));
+
+        // Constructed: a near-miss without a base-currency tail is invalid, not foreign currency.
+        let malformed = xml.replacen(" @ I₹ 84/$  = ", " @ I₹ 84/$ ", 1);
+        assert_eq!(
+            parse_native_ledger_snapshot(&malformed),
+            Err(NativeOutstandingsError::InvalidAmount)
         );
     }
 }

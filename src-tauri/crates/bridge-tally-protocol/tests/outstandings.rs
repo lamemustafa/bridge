@@ -586,7 +586,7 @@ fn captured_agst_ref_settlements_preserve_original_bill_date_and_credit_period()
 
     let xml = decode_utf16le_capture(AGST_REF_REOPEN_LIVE);
     let extent = agst_ref_reopen_extent();
-    let window = DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20250401", "20260831")
+    let window = DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20240401", "20260831")
         .expect("captured date window");
     let SegmentVerification::Complete(segment) = verify_segment_pair(
         &xml,
@@ -599,7 +599,7 @@ fn captured_agst_ref_settlements_preserve_original_bill_date_and_credit_period()
         panic!("identical captured responses must be complete")
     };
     assert_eq!(segment.vouchers().len(), 24);
-    let agst_refs = segment
+    let allocations = segment
         .vouchers()
         .iter()
         .flat_map(|voucher| {
@@ -614,6 +614,22 @@ fn captured_agst_ref_settlements_preserve_original_bill_date_and_credit_period()
                 .iter()
                 .map(move |allocation| (voucher, allocation))
         })
+        .collect::<Vec<_>>();
+    assert_eq!(xml.matches("<BILLALLOCATIONS.LIST>").count(), 48);
+    assert_eq!(
+        allocations.len(),
+        24,
+        "only populated allocation rows parse"
+    );
+    assert_eq!(
+        allocations
+            .iter()
+            .filter(|(_, allocation)| allocation.bill_type == BillReferenceKind::NewRef)
+            .count(),
+        12
+    );
+    let agst_refs = allocations
+        .into_iter()
         .filter(|(_, allocation)| allocation.bill_type == BillReferenceKind::AgstRef)
         .collect::<Vec<_>>();
     assert_eq!(agst_refs.len(), 12);
