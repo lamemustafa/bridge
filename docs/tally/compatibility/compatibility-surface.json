@@ -247,7 +247,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "2feef66eaeff0eed11d4cc544e0d343fa7b023e9382add210ce79f134376ac1c"
+      "sha256": "60a1c24b3f9f737a8cbffb966a593c9dbe1da9a2ce726d672857b6034422186a"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -371,7 +371,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "dc373140931463ad8af790061ad2b2b3efab7931819bcd38309fa1184f156a18"
+      "sha256": "89f69d5a92587874f8a71a089b9eb0bbf7cb410d645736a46a50af209feab11a"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -478,5 +478,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "f2727f17c99e4f5ddded245d67e7a2f274fa4d587332b4d266cac959e1d88f8e"
+  "manifest_sha256": "0545e03c8e170461fea31d51578f543bc2f3282ac2a9939a307af51ae6b2e9c9"
 }
