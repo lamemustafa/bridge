@@ -802,6 +802,24 @@ with the gateway healthy):
 **Batching is valid here because unknown elements are silently ignored** — a batch that still
 reports the same "required" error disproves every name in it at once.
 
+#### Correction — 2026-08-23: base-currency fields are Currency-master properties
+
+The negative object-export result above remains valid, but its conclusion was too broad.
+`TYPE=Object` / `SUBTYPE=Company` with `<FETCH>*</FETCH>` does **not** emit the base-currency
+fields: they are not properties of the `Company` object. It does not establish that Tally never
+exports them.
+
+The Currency master collection does return them. The request rendered by
+`render_company_currency_request` is exactly `TYPE=Collection` with `<TYPE>Currency</TYPE>` and
+fetches `NAME`, `MAILINGNAME`, and `DECIMALPLACES`. Three captures committed on this PR establish
+that response shape. On the same licensed TallyPrime Silver 7.1 machine on 2026-08-23, current books
+reported `I₹` (U+0049 followed by U+20B9) with `MAILINGNAME` `INR`; older books reported `Rs.`
+with `MAILINGNAME` `Indian Rupees`.
+
+The Company Creation formal name remains a property on a different master. That boundary explains
+why the 19 earlier probes, sent as `Company` children, all failed; it does not justify treating
+the fields as form-local or relying on a Company object export to recover them.
+
 ### 9.10b `ORIGINALNAME` at `COMPANY` level hangs the gateway — **TRAP**
 
 **VERIFIED 2026-07-30.** A flat combination of

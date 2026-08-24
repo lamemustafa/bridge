@@ -8,21 +8,28 @@
 
 use bridge_tally_primitives::TallyDate;
 use bridge_tally_protocol::{
+    decode_tally_xml_response_bytes_limited,
     outstandings::{
         assemble_partitioned_scan, assemble_scan, compute_outstandings, parse_company_book_extent,
         parse_ledger_opening_coverage, verify_segment_pair, AlterIdRange, BillReferenceKind,
-        CorroboratedDatePartition, DateBoundaryProfile, DateWindow, MoneyValue, NarrowDateWindow,
-        OutstandingsError, ScanResult, SegmentVerification, StrictlyWiderDateCover,
-        VoucherAlterIdHighWater,
+        CorroboratedDatePartition, CreditPeriod, DateBoundaryProfile, DateWindow, MoneyValue,
+        NarrowDateWindow, OutstandingsError, ScanResult, SegmentVerification,
+        StrictlyWiderDateCover, VoucherAlterIdHighWater,
     },
     xml_read_profiles::ReadOnlyProfile,
+    ExpectedTallyTextEncoding,
 };
 use proptest::{
     prelude::*,
     test_runner::{Config as ProptestConfig, RngSeed},
 };
+use sha2::{Digest, Sha256};
 const COMPANY_EXTENT: &str = include_str!("fixtures/unit_a_company_extent_live.xml");
 const VOUCHERS_LEGACY_SHAPE: &str = include_str!("fixtures/unit_a_vouchers_wildcard_live.xml");
+const AGST_REF_REOPEN_LIVE: &[u8] =
+    include_bytes!("fixtures/vouchers_agst_ref_reopen_live.utf16le.xml");
+const AGST_REF_REOPEN_COMPANY: &str = "BRIDGE CORPUS SETTLED";
+const AGST_REF_REOPEN_GUID: &str = "74d7e825-396a-4667-90b2-83f593f06a36";
 
 /// The retained wildcard capture predates `ISOPTIONAL` joining the sealed
 /// request's FETCH list, so it carries no such element and the parser now fails
@@ -57,6 +64,29 @@ fn full_alter_id_range() -> AlterIdRange {
 
 fn capture_high_water() -> VoucherAlterIdHighWater {
     VoucherAlterIdHighWater::parse("440").unwrap()
+}
+
+fn decode_utf16le_capture(bytes: &[u8]) -> String {
+    decode_tally_xml_response_bytes_limited(
+        bytes,
+        "text/xml; charset=utf-16",
+        ExpectedTallyTextEncoding::Utf16Le,
+        bytes.len(),
+    )
+    .expect("captured BOM-less UTF-16LE response decodes")
+    .text
+}
+
+fn agst_ref_reopen_extent() -> bridge_tally_protocol::outstandings::CompanyBookExtent {
+    // The production response does not carry company metadata. This minimal
+    // identity companion binds the captured voucher GUID prefix for the parser.
+    let xml = COMPANY_EXTENT
+        .replace(COMPANY_NAME, AGST_REF_REOPEN_COMPANY)
+        .replace(COMPANY_GUID, AGST_REF_REOPEN_GUID)
+        .replace("20260401", "20260831")
+        .replace("20240401", "20250401");
+    parse_company_book_extent(&xml, AGST_REF_REOPEN_COMPANY, AGST_REF_REOPEN_GUID)
+        .expect("synthetic identity companion parses")
 }
 
 fn parse_coverage(
@@ -540,6 +570,99 @@ fn wildcard_live_capture_preserves_named_bill_type_distribution() {
     assert!(allocations
         .iter()
         .all(|allocation| matches!(&allocation.amount, MoneyValue::Exact(_))));
+}
+
+#[test]
+fn captured_agst_ref_settlements_preserve_original_bill_date_and_credit_period() {
+    let expected_sha256 = "6c2978198a4fe802ea211dc8d7a7d0402331bd5b37319adf181c7015fcf10125";
+    let observed_sha256: String = Sha256::digest(AGST_REF_REOPEN_LIVE)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        observed_sha256, expected_sha256,
+        "captured wire bytes changed"
+    );
+
+    let xml = decode_utf16le_capture(AGST_REF_REOPEN_LIVE);
+    let extent = agst_ref_reopen_extent();
+    let window = DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20240401", "20260831")
+        .expect("captured date window");
+    let SegmentVerification::Complete(segment) = verify_segment_pair(
+        &xml,
+        &xml,
+        extent.company(),
+        window.clone(),
+        AlterIdRange::new(0, 24).expect("captured AlterID range"),
+    )
+    .expect("paired captured bytes verify") else {
+        panic!("identical captured responses must be complete")
+    };
+    assert_eq!(segment.vouchers().len(), 24);
+    let allocations = segment
+        .vouchers()
+        .iter()
+        .flat_map(|voucher| {
+            voucher
+                .ledger_entries
+                .iter()
+                .map(move |entry| (voucher, entry))
+        })
+        .flat_map(|(voucher, entry)| {
+            entry
+                .bill_allocations
+                .iter()
+                .map(move |allocation| (voucher, allocation))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(xml.matches("<BILLALLOCATIONS.LIST>").count(), 48);
+    assert_eq!(
+        allocations.len(),
+        24,
+        "only populated allocation rows parse"
+    );
+    assert_eq!(
+        allocations
+            .iter()
+            .filter(|(_, allocation)| allocation.bill_type == BillReferenceKind::NewRef)
+            .count(),
+        12
+    );
+    let agst_refs = allocations
+        .into_iter()
+        .filter(|(_, allocation)| allocation.bill_type == BillReferenceKind::AgstRef)
+        .collect::<Vec<_>>();
+    assert_eq!(agst_refs.len(), 12);
+    assert!(agst_refs.iter().all(|(_, allocation)| {
+        allocation.bill_date.is_some() && allocation.credit_period == CreditPeriod::Days(30)
+    }));
+    let (receipt, allocation) = agst_refs
+        .iter()
+        .find(|(_, allocation)| allocation.name.as_deref() == Some("SET-INV-001"))
+        .expect("captured Agst Ref allocation");
+    assert_eq!(receipt.date.as_str(), "20250428");
+    assert_eq!(
+        allocation
+            .bill_date
+            .as_ref()
+            .expect("captured BILLDATE")
+            .as_str(),
+        "20250408"
+    );
+
+    let ScanResult::Complete(scan) = assemble_scan(
+        extent.company().clone(),
+        window,
+        VoucherAlterIdHighWater::parse("24").expect("captured high-water"),
+        vec![SegmentVerification::Complete(segment)],
+    ) else {
+        panic!("captured scan assembles")
+    };
+    let report = compute_outstandings(&scan, TallyDate::parse("20260831").unwrap())
+        .expect("fully settled capture computes");
+    assert_eq!(report.open_receivable_bill_count, 0);
+    assert_eq!(report.receivable_total.as_str(), "0");
+    assert_eq!(report.payable_total.as_str(), "0");
 }
 
 #[test]
@@ -1287,22 +1410,22 @@ fn named_on_account_fails_closed_at_the_parser_boundary() {
 fn against_ref_reopened_after_zero_balance_ages_from_original_bill_date() {
     let voucher = |guid_suffix: u8, date: &str, bill_type: &str, amount: &str| {
         format!(
-            "<VOUCHER REMOTEID=\"r{guid_suffix}\"><GUID>{company_guid}-0000000{guid_suffix}</GUID><MASTERID>{guid_suffix}</MASTERID><ALTERID>{guid_suffix}</ALTERID><DATE TYPE=\"Date\">{date}</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED><ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>REF-1</NAME><BILLTYPE>{bill_type}</BILLTYPE><BILLDATE TYPE=\"Date\">20260601</BILLDATE><BILLCREDITPERIOD></BILLCREDITPERIOD><AMOUNT>{amount}</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
+            "<VOUCHER REMOTEID=\"r{guid_suffix}\"><GUID>{company_guid}-0000000{guid_suffix}</GUID><MASTERID>{guid_suffix}</MASTERID><ALTERID>{guid_suffix}</ALTERID><DATE TYPE=\"Date\">{date}</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><PARTYLEDGERNAME>Customer</PARTYLEDGERNAME><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ISDELETED>No</ISDELETED><ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><BILLALLOCATIONS.LIST><NAME>REF-1</NAME><BILLTYPE>{bill_type}</BILLTYPE><BILLDATE TYPE=\"Date\">20250408</BILLDATE><BILLCREDITPERIOD>30 Days</BILLCREDITPERIOD><AMOUNT>{amount}</AMOUNT></BILLALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST></VOUCHER>",
             company_guid = COMPANY_GUID
         )
     };
     let xml = format!(
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>{}</COLLECTION></DATA></BODY></ENVELOPE>",
         [
-            voucher(1, "20260601", "New Ref", "-3000"),
-            voucher(2, "20260602", "Agst Ref", "3000"),
-            voucher(3, "20260701", "Agst Ref", "1500"),
+            voucher(1, "20250408", "New Ref", "-3000"),
+            voucher(2, "20250428", "Agst Ref", "3000"),
+            voucher(3, "20250701", "Agst Ref", "1500"),
         ]
         .join("")
     );
     let extent = extent();
     let window =
-        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20260601", "20260701").unwrap();
+        DateWindow::parse(DateBoundaryProfile::ModeAgnostic, "20250408", "20250701").unwrap();
     let SegmentVerification::Complete(segment) = verify_segment_pair(
         &xml,
         &xml,
@@ -1323,12 +1446,12 @@ fn against_ref_reopened_after_zero_balance_ages_from_original_bill_date() {
     };
 
     let report =
-        compute_outstandings(&scan, TallyDate::parse("20260731").unwrap()).expect("computes");
+        compute_outstandings(&scan, TallyDate::parse("20250807").unwrap()).expect("computes");
     assert_eq!(report.payable_total.as_str(), "1500");
     assert_eq!(
         report.top_parties[0].oldest_bill_age_days,
-        Some(60),
-        "an Agst Ref after full settlement must age from the original bill's BILLDATE"
+        Some(91),
+        "an Agst Ref after full settlement must age from the captured original due date, 2025-05-08"
     );
 }
 

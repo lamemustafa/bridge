@@ -42,6 +42,7 @@ use bridge_tally_core::{
     CompanyRef as CoreCompanyRef, EvidenceConfidence, ReadWindow, RequestContext, TallyConnector,
     TallyDate, TransportId, CORE_ACCOUNTING_SCHEMA_VERSION,
 };
+use bridge_tally_protocol::native_outstandings::NativeOutstandingsError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, State};
@@ -80,6 +81,21 @@ fn tally_command_error(
 }
 
 fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
+    if let Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>())
+    {
+        return tally_command_error(
+            "company_foreign_currency_ledger_balance",
+            "Tally application",
+            format!(
+                "Tally reported a foreign-currency closing balance for ledger {ledger_name}; Bridge left the company unread rather than guessing a base-currency amount."
+            ),
+            "after_change",
+            true,
+            "Inspect the named ledger in Tally and use a base-currency company for the native outstandings read.",
+        );
+    }
     if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
         return match control {
             TallyRuntimeControlError::Cancelled => tally_command_error(
@@ -2214,12 +2230,56 @@ pub struct CompanyOutstandingsEntry {
 }
 
 fn company_sweep_result(
-    result: Result<OutstandingsLoadResult, &'static str>,
+    result: Result<OutstandingsLoadResult, CompanySweepFailure>,
 ) -> OutstandingsLoadResult {
-    result.unwrap_or_else(|reason_code| OutstandingsLoadResult::Partial {
-        reason: crate::tally::OutstandingsPartialReason::code(reason_code),
+    let reason = match result {
+        Ok(result) => return result,
+        Err(CompanySweepFailure::ReasonCode(reason_code)) => {
+            crate::tally::OutstandingsPartialReason::code(reason_code)
+        }
+        Err(CompanySweepFailure::OutstandingsRead(error)) => {
+            company_sweep_outstandings_partial_reason(&error)
+        }
+    };
+    OutstandingsLoadResult::Partial {
+        reason,
         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
-    })
+    }
+}
+
+enum CompanySweepFailure {
+    ReasonCode(&'static str),
+    OutstandingsRead(anyhow::Error),
+}
+
+fn company_sweep_outstandings_partial_reason(
+    error: &anyhow::Error,
+) -> crate::tally::OutstandingsPartialReason {
+    if let Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>())
+    {
+        return crate::tally::OutstandingsPartialReason::foreign_currency_ledger_balance(
+            ledger_name.clone(),
+        );
+    }
+    crate::tally::OutstandingsPartialReason::code("company_outstandings_read_failed")
+}
+
+fn company_sweep_currency_preflight_failure(
+    currency_count: usize,
+    is_inr: bool,
+) -> Option<&'static str> {
+    if currency_count > 1 {
+        return Some("company_base_currency_undetermined");
+    }
+    if currency_count == 1 && !is_inr {
+        return Some("company_base_currency_not_inr");
+    }
+    if currency_count == 1 {
+        return None;
+    }
+    Some("company_currency_probe_failed")
 }
 
 /// Reads outstandings for several companies in one action.
@@ -2250,7 +2310,7 @@ pub async fn fetch_tally_outstandings_all_companies(
     let mut entries = Vec::with_capacity(request.companies.len());
     for entry in request.companies {
         let result = if validate_company_name(&entry.company).is_err() {
-            Err("company_selection_invalid")
+            Err(CompanySweepFailure::ReasonCode("company_selection_invalid"))
         } else {
             match runtime
                 .detect_base_currency(
@@ -2260,19 +2320,26 @@ pub async fn fetch_tally_outstandings_all_companies(
                 )
                 .await
             {
-                Err(_) => Err("company_currency_probe_failed"),
-                Ok(currency) if !currency.is_inr => Err("company_base_currency_not_inr"),
-                Ok(_) => runtime
-                    .fetch_outstandings(
-                        request.config.clone(),
-                        entry.company.clone(),
-                        entry.expected_company_guid.clone(),
-                        as_of.clone(),
-                        request.currency_assertion,
-                        request.ageing_anchor,
-                    )
-                    .await
-                    .map_err(|_| "company_outstandings_read_failed"),
+                Err(_) => Err(CompanySweepFailure::ReasonCode(
+                    "company_currency_probe_failed",
+                )),
+                Ok(currency) => match company_sweep_currency_preflight_failure(
+                    currency.currency_count,
+                    currency.is_inr,
+                ) {
+                    Some(reason_code) => Err(CompanySweepFailure::ReasonCode(reason_code)),
+                    None => runtime
+                        .fetch_outstandings(
+                            request.config.clone(),
+                            entry.company.clone(),
+                            entry.expected_company_guid.clone(),
+                            as_of.clone(),
+                            request.currency_assertion,
+                            request.ageing_anchor,
+                        )
+                        .await
+                        .map_err(CompanySweepFailure::OutstandingsRead),
+                },
             }
         };
         entries.push(CompanyOutstandingsEntry {
@@ -2449,9 +2516,10 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 #[cfg(test)]
 mod tests {
     use super::{
-        company_sweep_result, first_calendar_day_canary_window, portable_export_file_name,
-        reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
-        tally_command_error, tally_runtime_command_error, validate_dsc_pins, write_unique_download,
+        company_sweep_currency_preflight_failure, company_sweep_result,
+        first_calendar_day_canary_window, portable_export_file_name, reconcile_review_cleanup,
+        reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
+        tally_runtime_command_error, validate_dsc_pins, write_unique_download, CompanySweepFailure,
         OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
@@ -2464,6 +2532,7 @@ mod tests {
         SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
+    use bridge_tally_protocol::native_outstandings::NativeOutstandingsError;
     use std::collections::BTreeMap;
 
     /// Regression for the destination-picker leak: `select_party_statement_
@@ -2537,8 +2606,15 @@ mod tests {
                 reason: crate::tally::OutstandingsPartialReason::code("first_book_partial"),
                 synced_at_unix_ms: 1,
             }),
-            Err("company_currency_probe_failed"),
-            Err("company_outstandings_read_failed"),
+            Err(CompanySweepFailure::ReasonCode(
+                "company_currency_probe_failed",
+            )),
+            Err(CompanySweepFailure::ReasonCode(
+                "company_base_currency_undetermined",
+            )),
+            Err(CompanySweepFailure::ReasonCode(
+                "company_outstandings_read_failed",
+            )),
             Ok(OutstandingsLoadResult::Partial {
                 reason: crate::tally::OutstandingsPartialReason::code("last_book_partial"),
                 synced_at_unix_ms: 2,
@@ -2550,7 +2626,7 @@ mod tests {
 
         assert_eq!(
             outcomes.len(),
-            4,
+            5,
             "one bad book must not truncate the sweep"
         );
         assert!(matches!(
@@ -2561,12 +2637,58 @@ mod tests {
         assert!(matches!(
             &outcomes[2],
             OutstandingsLoadResult::Partial { reason, .. }
-                if reason.reason_code == "company_outstandings_read_failed"
+                if reason.reason_code == "company_base_currency_undetermined"
         ));
         assert!(matches!(
             &outcomes[3],
             OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "company_outstandings_read_failed"
+        ));
+        assert!(matches!(
+            &outcomes[4],
+            OutstandingsLoadResult::Partial { reason, .. }
                 if reason.reason_code == "last_book_partial"
+        ));
+    }
+
+    #[test]
+    fn company_sweep_currency_preflight_names_undetermined_base_currency() {
+        assert_eq!(
+            company_sweep_currency_preflight_failure(2, false),
+            Some("company_base_currency_undetermined"),
+            "several currency masters do not identify the company's base currency"
+        );
+        assert_eq!(
+            company_sweep_currency_preflight_failure(2, true),
+            Some("company_base_currency_undetermined"),
+            "the parser's INR flag is not authoritative when several currency masters exist"
+        );
+        assert_eq!(
+            company_sweep_currency_preflight_failure(1, false),
+            Some("company_base_currency_not_inr"),
+            "one non-Indian currency identifies an unsupported base currency"
+        );
+        assert_eq!(company_sweep_currency_preflight_failure(1, true), None);
+        assert_eq!(
+            company_sweep_currency_preflight_failure(0, false),
+            Some("company_currency_probe_failed"),
+            "an impossible empty collection remains fail-closed"
+        );
+    }
+
+    #[test]
+    fn company_sweep_preserves_foreign_currency_ledger_diagnostic() {
+        let outcome = company_sweep_result(Err(CompanySweepFailure::OutstandingsRead(
+            anyhow::Error::new(NativeOutstandingsError::ForeignCurrencyLedgerBalance {
+                ledger_name: "Synthetic FX Debtor".to_string(),
+            }),
+        )));
+
+        assert!(matches!(
+            outcome,
+            OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "company_foreign_currency_ledger_balance"
+                    && reason.foreign_currency_ledger_name.as_deref() == Some("Synthetic FX Debtor")
         ));
     }
 
@@ -2642,6 +2764,19 @@ mod tests {
         ));
         assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
         assert_eq!(discovery_limit.category, "Discovery listing");
+
+        let foreign_currency = tally_runtime_command_error(anyhow::Error::new(
+            bridge_tally_protocol::native_outstandings::NativeOutstandingsError::ForeignCurrencyLedgerBalance {
+                ledger_name: "Synthetic FX Debtor".to_string(),
+            },
+        ));
+        assert_eq!(
+            foreign_currency.code,
+            "company_foreign_currency_ledger_balance"
+        );
+        assert_eq!(foreign_currency.category, "Tally application");
+        assert!(foreign_currency.message.contains("Synthetic FX Debtor"));
+        assert!(foreign_currency.message.contains("foreign-currency"));
     }
 
     #[test]

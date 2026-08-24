@@ -3,7 +3,7 @@ import { Building2, ChevronRight, Download, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialState, type OutstandingsAgeingAnchor } from "./outstandings-copy";
 import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstandings-csv";
-import { canStartOutstandingsRead } from "./outstandings-currency";
+import { canStartOutstandingsRead, outstandingsCurrencySymbol } from "./outstandings-currency";
 import { groupOpenBillsByParty, type OpenBill, type PartyBillsState } from "./outstandings-bills";
 import {
   asOfBoundValueForAsOf,
@@ -89,6 +89,7 @@ type LoadResult =
       reason_code: string;
       requested_as_of_yyyymmdd?: string;
       tally_as_of_yyyymmdd?: string;
+      foreign_currency_ledger_name?: string;
       synced_at_unix_ms: number;
     };
 
@@ -175,6 +176,7 @@ export function OutstandingsScreen({
       result.reason_code,
       result.requested_as_of_yyyymmdd,
       result.tally_as_of_yyyymmdd,
+      result.foreign_currency_ledger_name,
     )
     : null;
   const outstandingsUnavailable = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);
@@ -1027,19 +1029,11 @@ function formatMoney(value: string, currencyAssertion: "INR") {
   const tail = whole.slice(-3);
   const head = whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",");
   const grouped = head ? `${head},${tail}` : tail;
-  return `${negative ? "−" : ""}${currencySymbol(currencyAssertion)}${grouped}${fraction ? `.${fraction.padEnd(2, "0")}` : ""}`;
+  return `${negative ? "−" : ""}${outstandingsCurrencySymbol(currencyAssertion)}${grouped}${fraction ? `.${fraction.padEnd(2, "0")}` : ""}`;
 }
 
 function isInrCompleteResult(result: LoadResult | null): result is InrCompleteResult {
   return result?.state === "complete" && result.currency_assertion === "INR";
-}
-
-function currencySymbol(currencyAssertion: "INR") {
-  return currencyAssertion === "INR" ? "₹" : unreachableCurrencyAssertion(currencyAssertion);
-}
-
-function unreachableCurrencyAssertion(currencyAssertion: never): never {
-  throw new Error(`Unsupported outstandings currency assertion: ${currencyAssertion}`);
 }
 
 function formatDate(value: string) {

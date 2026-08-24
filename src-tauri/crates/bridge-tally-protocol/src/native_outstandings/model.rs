@@ -10,6 +10,11 @@ pub enum NativeOutstandingsError {
     /// date, or its lexeme did not match the observed `D-MMM-YY` shape.
     InvalidDate(&'static str),
     InvalidAmount,
+    /// A ledger's `CLOSINGBALANCE` was a foreign-currency display expression
+    /// rather than the base-currency decimal this read requires.
+    ForeignCurrencyLedgerBalance {
+        ledger_name: String,
+    },
     /// Tally's response did not match the documented grammar. The code
     /// identifies which structural rule was violated.
     InvalidResponse(&'static str),
@@ -29,6 +34,10 @@ impl fmt::Display for NativeOutstandingsError {
                 write!(formatter, "native outstandings date invalid ({code})")
             }
             Self::InvalidAmount => formatter.write_str("Tally returned an invalid native amount"),
+            Self::ForeignCurrencyLedgerBalance { ledger_name } => write!(
+                formatter,
+                "Tally reported a foreign-currency closing balance for ledger {ledger_name}"
+            ),
             Self::InvalidResponse(code) => {
                 write!(formatter, "native outstandings response invalid ({code})")
             }

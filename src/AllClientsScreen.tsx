@@ -16,6 +16,7 @@ import {
   settleAsOfBoundValue,
   type AsOfBoundValue,
 } from "./outstandings-as-of";
+import { outstandingsCurrencySymbol } from "./outstandings-currency";
 
 type CompanyRef = { name: string; guid: string };
 
@@ -44,6 +45,7 @@ type LoadResult =
       reason_code: string;
       requested_as_of_yyyymmdd?: string;
       tally_as_of_yyyymmdd?: string;
+      foreign_currency_ledger_name?: string;
     };
 
 type Entry = { company: string; company_guid: string; result: LoadResult };
@@ -54,27 +56,28 @@ function amountOf(value: string | undefined) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function formatMoney(value: string) {
+function formatMoney(value: string, currencyAssertion: "INR") {
   const negative = value.startsWith("-");
   const unsigned = negative ? value.slice(1) : value;
   const [whole, fraction] = unsigned.split(".");
   const tail = whole.slice(-3);
   const head = whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",");
   const grouped = head ? `${head},${tail}` : tail;
-  return `${negative ? "−" : ""}₹${grouped}${fraction ? `.${fraction.padEnd(2, "0")}` : ""}`;
+  return `${negative ? "−" : ""}${outstandingsCurrencySymbol(currencyAssertion)}${grouped}${fraction ? `.${fraction.padEnd(2, "0")}` : ""}`;
 }
 
 /// Compact form for a wide table: a crore figure at full precision makes every
 /// column unreadable, and at this altitude the reader is comparing clients, not
 /// reconciling paise. The exact figure is one click away on the client's own
 /// screen, and in the export.
-function formatCompact(value: string | undefined) {
+function formatCompact(value: string | undefined, currencyAssertion: "INR") {
   const amount = amountOf(value);
   if (amount === null) return "Amount unavailable";
   if (amount === 0) return "—";
-  if (amount >= 10_000_000) return `₹${(amount / 10_000_000).toFixed(2)} cr`;
-  if (amount >= 100_000) return `₹${(amount / 100_000).toFixed(2)} L`;
-  return `₹${Math.round(amount).toLocaleString("en-IN")}`;
+  const symbol = outstandingsCurrencySymbol(currencyAssertion);
+  if (amount >= 10_000_000) return `${symbol}${(amount / 10_000_000).toFixed(2)} cr`;
+  if (amount >= 100_000) return `${symbol}${(amount / 100_000).toFixed(2)} L`;
+  return `${symbol}${Math.round(amount).toLocaleString("en-IN")}`;
 }
 
 type SortKey = "client" | "receivable" | "overdue" | "unallocated" | "oldest";
@@ -237,6 +240,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
           reasonCode: entry.result.state === "partial" ? entry.result.reason_code : null,
           requestedAsOf: entry.result.state === "partial" ? entry.result.requested_as_of_yyyymmdd : undefined,
           tallyAsOf: entry.result.state === "partial" ? entry.result.tally_as_of_yyyymmdd : undefined,
+          foreignCurrencyLedgerName: entry.result.state === "partial" ? entry.result.foreign_currency_ledger_name : undefined,
           receivable: complete ? amountOf(complete.report.receivable_total) : null,
           overdue: complete ? amountOf(complete.report.ageing.days_90_plus) : null,
           unallocated: complete ? amountOf(complete.unallocated_total) : null,
@@ -338,7 +342,12 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
 
   const renderRow = (row: (typeof rows)[number]) => {
     const partial = row.reasonCode
-      ? outstandingsPartialState(row.reasonCode, row.requestedAsOf, row.tallyAsOf)
+      ? outstandingsPartialState(
+        row.reasonCode,
+        row.requestedAsOf,
+        row.tallyAsOf,
+        row.foreignCurrencyLedgerName,
+      )
       : null;
     return (
       <button
@@ -366,11 +375,11 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
               <em>{row.unallocatedShare}% carries no bill reference</em>
             )}
         </span>
-        <span role="cell">{row.complete ? formatCompact(row.exactAmounts.receivable) : "—"}</span>
+        <span role="cell">{row.complete ? formatCompact(row.exactAmounts.receivable, "INR") : "—"}</span>
         <span role="cell" className={row.overdue !== null && row.overdue > 0 ? "is-overdue" : undefined}>
-          {row.complete ? formatCompact(row.exactAmounts.overdue) : "—"}
+          {row.complete ? formatCompact(row.exactAmounts.overdue, "INR") : "—"}
         </span>
-        <span role="cell">{row.complete ? formatCompact(row.exactAmounts.unallocated) : "—"}</span>
+        <span role="cell">{row.complete ? formatCompact(row.exactAmounts.unallocated, "INR") : "—"}</span>
         <span role="cell" className="clients-age">
           {row.oldest === null
             ? <em className="age-chip is-none">none</em>
@@ -484,11 +493,11 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
               <React.Fragment key={group.label}>
                 <div className="clients-row clients-group-total" role="row" aria-label={`Totals for ${group.label}`}>
                   <span role="cell" className="clients-name"><strong>{group.label}</strong><em>Group total</em></span>
-                  <span role="cell">{formatCompact(group.totals.receivable)}</span>
+                  <span role="cell">{formatCompact(group.totals.receivable, "INR")}</span>
                   <span role="cell" className={(amountOf(group.totals.overdue) ?? 0) > 0 ? "is-overdue" : undefined}>
-                    {formatCompact(group.totals.overdue)}
+                    {formatCompact(group.totals.overdue, "INR")}
                   </span>
-                  <span role="cell">{formatCompact(group.totals.unallocated)}</span>
+                  <span role="cell">{formatCompact(group.totals.unallocated, "INR")}</span>
                   <span role="cell" />
                 </div>
                 {group.rows.map(renderRow)}

@@ -31,7 +31,26 @@ test("new native and sweep boundaries have operator-readable reasons", () => {
   );
   assert.match(outstandingsPartialReason("company_currency_probe_failed"), /base currency/i);
   assert.match(outstandingsPartialReason("company_base_currency_not_inr"), /not INR/i);
+  assert.match(
+    outstandingsPartialReason("company_base_currency_undetermined"),
+    /multiple Currency masters.*confirm INR manually.*single-company read.*foreign-currency ledger/i,
+  );
   assert.match(outstandingsPartialReason("company_outstandings_read_failed"), /company read failed/i);
+});
+
+test("a foreign-currency ledger names the blocked book without inviting a repeat", () => {
+  const state = outstandingsPartialState(
+    "company_foreign_currency_ledger_balance",
+    undefined,
+    undefined,
+    "Synthetic FX Debtor",
+  );
+
+  assert.match(state.title, /not available for this company/i);
+  assert.match(state.message, /Synthetic FX Debtor/);
+  assert.match(state.message, /rather than guessing a base-currency amount/i);
+  assert.equal(state.retryable, false);
+  assert.equal(state.tallyReadAttempted, true);
 });
 
 test("missing, empty, or zero-only counters name the unconfirmed effective-date boundary", () => {
