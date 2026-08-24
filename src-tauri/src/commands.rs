@@ -2266,6 +2266,22 @@ fn company_sweep_outstandings_partial_reason(
     crate::tally::OutstandingsPartialReason::code("company_outstandings_read_failed")
 }
 
+fn company_sweep_currency_preflight_failure(
+    currency_count: usize,
+    is_inr: bool,
+) -> Option<&'static str> {
+    if currency_count > 1 {
+        return Some("company_base_currency_undetermined");
+    }
+    if currency_count == 1 && !is_inr {
+        return Some("company_base_currency_not_inr");
+    }
+    if currency_count == 1 {
+        return None;
+    }
+    Some("company_currency_probe_failed")
+}
+
 /// Reads outstandings for several companies in one action.
 ///
 /// This is the read Tally structurally will not do: it is per-company by
@@ -2307,20 +2323,23 @@ pub async fn fetch_tally_outstandings_all_companies(
                 Err(_) => Err(CompanySweepFailure::ReasonCode(
                     "company_currency_probe_failed",
                 )),
-                Ok(currency) if !currency.is_inr => Err(CompanySweepFailure::ReasonCode(
-                    "company_base_currency_not_inr",
-                )),
-                Ok(_) => runtime
-                    .fetch_outstandings(
-                        request.config.clone(),
-                        entry.company.clone(),
-                        entry.expected_company_guid.clone(),
-                        as_of.clone(),
-                        request.currency_assertion,
-                        request.ageing_anchor,
-                    )
-                    .await
-                    .map_err(CompanySweepFailure::OutstandingsRead),
+                Ok(currency) => match company_sweep_currency_preflight_failure(
+                    currency.currency_count,
+                    currency.is_inr,
+                ) {
+                    Some(reason_code) => Err(CompanySweepFailure::ReasonCode(reason_code)),
+                    None => runtime
+                        .fetch_outstandings(
+                            request.config.clone(),
+                            entry.company.clone(),
+                            entry.expected_company_guid.clone(),
+                            as_of.clone(),
+                            request.currency_assertion,
+                            request.ageing_anchor,
+                        )
+                        .await
+                        .map_err(CompanySweepFailure::OutstandingsRead),
+                },
             }
         };
         entries.push(CompanyOutstandingsEntry {
@@ -2497,10 +2516,11 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 #[cfg(test)]
 mod tests {
     use super::{
-        company_sweep_result, first_calendar_day_canary_window, portable_export_file_name,
-        reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
-        tally_command_error, tally_runtime_command_error, validate_dsc_pins, write_unique_download,
-        CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
+        company_sweep_currency_preflight_failure, company_sweep_result,
+        first_calendar_day_canary_window, portable_export_file_name, reconcile_review_cleanup,
+        reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
+        tally_runtime_command_error, validate_dsc_pins, write_unique_download, CompanySweepFailure,
+        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
@@ -2590,6 +2610,9 @@ mod tests {
                 "company_currency_probe_failed",
             )),
             Err(CompanySweepFailure::ReasonCode(
+                "company_base_currency_undetermined",
+            )),
+            Err(CompanySweepFailure::ReasonCode(
                 "company_outstandings_read_failed",
             )),
             Ok(OutstandingsLoadResult::Partial {
@@ -2603,7 +2626,7 @@ mod tests {
 
         assert_eq!(
             outcomes.len(),
-            4,
+            5,
             "one bad book must not truncate the sweep"
         );
         assert!(matches!(
@@ -2614,13 +2637,43 @@ mod tests {
         assert!(matches!(
             &outcomes[2],
             OutstandingsLoadResult::Partial { reason, .. }
-                if reason.reason_code == "company_outstandings_read_failed"
+                if reason.reason_code == "company_base_currency_undetermined"
         ));
         assert!(matches!(
             &outcomes[3],
             OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "company_outstandings_read_failed"
+        ));
+        assert!(matches!(
+            &outcomes[4],
+            OutstandingsLoadResult::Partial { reason, .. }
                 if reason.reason_code == "last_book_partial"
         ));
+    }
+
+    #[test]
+    fn company_sweep_currency_preflight_names_undetermined_base_currency() {
+        assert_eq!(
+            company_sweep_currency_preflight_failure(2, false),
+            Some("company_base_currency_undetermined"),
+            "several currency masters do not identify the company's base currency"
+        );
+        assert_eq!(
+            company_sweep_currency_preflight_failure(2, true),
+            Some("company_base_currency_undetermined"),
+            "the parser's INR flag is not authoritative when several currency masters exist"
+        );
+        assert_eq!(
+            company_sweep_currency_preflight_failure(1, false),
+            Some("company_base_currency_not_inr"),
+            "one non-Indian currency identifies an unsupported base currency"
+        );
+        assert_eq!(company_sweep_currency_preflight_failure(1, true), None);
+        assert_eq!(
+            company_sweep_currency_preflight_failure(0, false),
+            Some("company_currency_probe_failed"),
+            "an impossible empty collection remains fail-closed"
+        );
     }
 
     #[test]

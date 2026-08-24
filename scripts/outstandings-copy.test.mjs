@@ -31,6 +31,10 @@ test("new native and sweep boundaries have operator-readable reasons", () => {
   );
   assert.match(outstandingsPartialReason("company_currency_probe_failed"), /base currency/i);
   assert.match(outstandingsPartialReason("company_base_currency_not_inr"), /not INR/i);
+  assert.match(
+    outstandingsPartialReason("company_base_currency_undetermined"),
+    /multiple Currency masters.*confirm INR manually.*single-company read.*foreign-currency ledger/i,
+  );
   assert.match(outstandingsPartialReason("company_outstandings_read_failed"), /company read failed/i);
 });
 
