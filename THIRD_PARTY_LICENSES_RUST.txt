@@ -911,7 +911,7 @@ rfd 0.17.2
 License: MIT
 Source: https://github.com/PolyMeilex/rfd
 
-rust_xlsxwriter 0.97.1
+rust_xlsxwriter 0.98.2
 License: MIT OR Apache-2.0
 Source: https://github.com/jmcnamara/rust_xlsxwriter
 
@@ -1375,7 +1375,7 @@ utf8_iter 1.0.4
 License: Apache-2.0 OR MIT
 Source: https://github.com/hsivonen/utf8_iter
 
-uuid 1.24.0
+uuid 1.24.1
 License: Apache-2.0 OR MIT
 Source: https://github.com/uuid-rs/uuid
 
@@ -2892,7 +2892,7 @@ Apache License 2.0
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- rust_xlsxwriter 0.97.1
+- rust_xlsxwriter 0.98.2
 
                                  Apache License
                            Version 2.0, January 2004
@@ -7358,7 +7358,7 @@ Apache License 2.0
 - thread_local 1.1.10
 - unicode-segmentation 1.13.3
 - url 2.5.8
-- uuid 1.24.0
+- uuid 1.24.1
 - version_check 0.9.5
 - wait-timeout 0.2.1
 - web_atoms 0.2.6
