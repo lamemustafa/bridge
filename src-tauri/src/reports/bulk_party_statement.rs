@@ -101,10 +101,26 @@ impl PartyStatementDestinationApprovals {
         }
         Ok(ApprovedPartyStatementDestination(approval.destination))
     }
+
+    /// Releases an approval that the renderer will not present for export.
+    /// This is intentionally idempotent: an export may already have consumed
+    /// the approval before its renderer-side cleanup runs.
+    pub(crate) fn revoke(
+        &self,
+        approval_id: &str,
+    ) -> Result<(), PartyStatementDestinationApprovalError> {
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| PartyStatementDestinationApprovalError::StoreUnavailable)?;
+        discard_expired_approvals(&mut pending);
+        pending.remove(approval_id);
+        Ok(())
+    }
 }
 
 impl ApprovedPartyStatementDestination {
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -505,6 +521,41 @@ mod tests {
                 .expect_err("a consumed approval cannot authorize another export"),
             PartyStatementDestinationApprovalError::NotAuthorized
         );
+    }
+
+    #[test]
+    fn revoked_destination_approval_frees_its_bounded_slot() {
+        let approvals = PartyStatementDestinationApprovals::default();
+        let approvals_to_revoke = (0..MAX_PENDING_DESTINATION_APPROVALS)
+            .map(|index| {
+                approvals
+                    .issue(PathBuf::from(format!("synthetic-destination-{index}")))
+                    .expect("fill bounded approval store")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            approvals
+                .issue(PathBuf::from("synthetic-overflow"))
+                .expect_err("a full approval store rejects another selection"),
+            PartyStatementDestinationApprovalError::CapacityReached
+        );
+
+        approvals
+            .revoke(&approvals_to_revoke[0])
+            .expect("release abandoned approval");
+        assert_eq!(
+            approvals
+                .consume(
+                    &approvals_to_revoke[0],
+                    Path::new("synthetic-destination-0"),
+                )
+                .expect_err("a revoked approval cannot still authorize an export"),
+            PartyStatementDestinationApprovalError::NotAuthorized
+        );
+        approvals
+            .issue(PathBuf::from("synthetic-replacement"))
+            .expect("released approval slot accepts another selection");
     }
 
     #[test]

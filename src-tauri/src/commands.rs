@@ -3182,6 +3182,17 @@ pub async fn select_party_statement_destination(
     }))
 }
 
+/// Releases a picker approval when the renderer abandons its pending export.
+#[tauri::command]
+pub async fn revoke_party_statement_destination(
+    approval_id: String,
+    approvals: State<'_, PartyStatementDestinationApprovals>,
+) -> Result<(), String> {
+    approvals.revoke(&approval_id).map_err(|_| {
+        "Bridge could not release the statement destination. Choose the folder again.".to_string()
+    })
+}
+
 /// Converts a user-picked folder into the UTF-8 text Bridge's own IPC
 /// boundary and file APIs require.
 ///
@@ -3447,6 +3458,24 @@ mod statement_export_tests {
 #[cfg(test)]
 mod party_statement_export_tests {
     use super::*;
+
+    #[test]
+    fn utf8_picker_destination_round_trips_to_the_authorized_path() {
+        let destination = tempfile::tempdir().expect("temporary destination");
+        let selected_path = destination.path().to_path_buf();
+        let approvals = PartyStatementDestinationApprovals::default();
+        let approval_id = approvals
+            .issue(selected_path.clone())
+            .expect("approve picker destination");
+        let ipc_destination =
+            require_utf8_destination(selected_path).expect("temporary destination is valid UTF-8");
+
+        let approved = approvals
+            .consume(&approval_id, std::path::Path::new(&ipc_destination))
+            .expect("IPC path reconstruction retains the selected destination");
+
+        assert_eq!(approved.path(), std::path::Path::new(&ipc_destination));
+    }
 
     fn bulk_export_request(
         destination: &std::path::Path,

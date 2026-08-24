@@ -355,12 +355,14 @@ export function OutstandingsScreen({
       || completeResult.statement_unallocated_by_party !== undefined);
   const exportAllPartyStatements = async (format: "xlsx" | "pdf") => {
     if (!completeResult) return;
+    let approvalIdToRevoke: string | null = null;
     // Disable both batch-export controls before opening the native picker so
     // two click handlers cannot race each other in the renderer.
     setBulkStatementExporting(true);
     try {
       const selection = await invoke<BulkPartyStatementDestinationSelection | null>("select_party_statement_destination");
       if (!selection) return;
+      approvalIdToRevoke = selection.approval_id;
       const preview = await previewBulkPartyStatements(completeResult);
       if (preview.party_count === 0) {
         setExportNotice({ message: "No parties with outstanding balances are available for statements." });
@@ -381,6 +383,13 @@ export function OutstandingsScreen({
     } catch (cause) {
       setExportNotice({ message: operatorMessage(cause) });
     } finally {
+      if (approvalIdToRevoke) {
+        try {
+          await revokePartyStatementDestination(approvalIdToRevoke);
+        } catch (cause) {
+          setExportNotice({ message: operatorMessage(cause) });
+        }
+      }
       setBulkStatementExporting(false);
     }
   };
@@ -771,6 +780,10 @@ async function exportBulkPartyStatements(
     "export_bulk_party_statements",
     bulkPartyStatementsInvokeArgument(result, selection.destination, selection.approval_id, format),
   );
+}
+
+async function revokePartyStatementDestination(approvalId: string) {
+  return invoke<void>("revoke_party_statement_destination", { approvalId });
 }
 
 /// Uses the same complete source rows and backend counting rule as the writer,

@@ -184,11 +184,12 @@ test("Excel and PDF statement builders emit the report's actual as-of date", () 
     },
   );
   assert.deepEqual(
-    bulkPartyStatementsInvokeArgument(result, "/tmp/statements", "pdf").request,
+    bulkPartyStatementsInvokeArgument(result, "/tmp/statements", "synthetic-approval", "pdf").request,
     {
       company: "Bridge Validation Lab",
       as_of_yyyymmdd: "20260801",
       destination: "/tmp/statements",
+      approval_id: "synthetic-approval",
       format: "pdf",
       ageing_anchor: "bill_date",
       open_bills: [{ party: "Alpha", amount: "1" }],
