@@ -508,6 +508,29 @@ mod tests {
     }
 
     #[test]
+    fn outstanding_destination_approvals_remain_independent() {
+        let first_destination = tempfile::tempdir().expect("first temporary destination");
+        let second_destination = tempfile::tempdir().expect("second temporary destination");
+        let approvals = PartyStatementDestinationApprovals::default();
+        let first_approval = approvals
+            .issue(first_destination.path().to_path_buf())
+            .expect("approve first destination");
+        let second_approval = approvals
+            .issue(second_destination.path().to_path_buf())
+            .expect("approve second destination");
+
+        let first = approvals
+            .consume(&first_approval, first_destination.path())
+            .expect("second approval must not invalidate the first");
+        assert_eq!(first.path(), first_destination.path());
+
+        let second = approvals
+            .consume(&second_approval, second_destination.path())
+            .expect("second approval remains available after consuming the first");
+        assert_eq!(second.path(), second_destination.path());
+    }
+
+    #[test]
     fn traversal_like_party_name_cannot_escape_the_selected_directory() {
         let destination = tempfile::tempdir().expect("temporary destination");
         let approved = approved_destination(destination.path());
