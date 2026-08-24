@@ -36,7 +36,7 @@ pub use request::{
     render_native_group_snapshot_request, render_native_ledger_export_request,
     render_native_ledger_snapshot_request, render_native_voucher_export_request,
     render_native_voucher_type_export_request, NativeBillsReportKind, NativeLedgerExportPeriod,
-    NativeLedgerExportPeriodError,
+    NativeLedgerExportPeriodError, NativeLedgerSnapshotPeriod, NativeLedgerSnapshotPeriodError,
 };
 pub use wire::{
     parse_company_currency, parse_native_bill_rows, parse_native_group_snapshot,

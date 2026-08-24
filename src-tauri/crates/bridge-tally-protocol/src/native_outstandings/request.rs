@@ -62,6 +62,57 @@ pub enum NativeLedgerExportPeriodError {
     UnsupportedBoundary,
 }
 
+/// A ledger snapshot period whose opening and as-of boundaries have both been
+/// admitted by the endpoint's compatibility profile.
+///
+/// `CLOSINGBALANCE` is as-of scoped, unlike the export's `OPENINGBALANCE`.
+/// The same collection measured Rs -44,09,597 at `SVTODATE=20260731` and
+/// Rs -21,19,377 at `SVTODATE=20250401`, so a silently refused `to` boundary
+/// can produce a plausible but wrong residual. This is intentionally distinct
+/// from [`NativeLedgerExportPeriod`], whose `to` is safe to leave ordinary
+/// because that request does not fetch `CLOSINGBALANCE`.
+///
+/// This Collection also returns a byte-identical empty `STATUS 1` response for
+/// a closed company and a nonexistent company (measured 2026-08-24: 2,994
+/// bytes, zero rows). The enclosing GUID-pinned extent read currently rejects
+/// a closed company before this request runs; that independent guard does not
+/// establish this request's period semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeLedgerSnapshotPeriod {
+    from: TallyDate,
+    to: TallyDate,
+}
+
+impl NativeLedgerSnapshotPeriod {
+    pub fn new(
+        boundary_profile: DateBoundaryProfile,
+        from: TallyDate,
+        to: TallyDate,
+    ) -> Result<Self, NativeLedgerSnapshotPeriodError> {
+        if from > to {
+            return Err(NativeLedgerSnapshotPeriodError::InvalidRange);
+        }
+        if !boundary_profile.accepts_boundary(&from) || !boundary_profile.accepts_boundary(&to) {
+            return Err(NativeLedgerSnapshotPeriodError::UnsupportedBoundary);
+        }
+        Ok(Self { from, to })
+    }
+
+    pub fn from(&self) -> &TallyDate {
+        &self.from
+    }
+
+    pub fn to(&self) -> &TallyDate {
+        &self.to
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeLedgerSnapshotPeriodError {
+    InvalidRange,
+    UnsupportedBoundary,
+}
+
 impl NativeBillsReportKind {
     const fn report_id(self) -> &'static str {
         match self {
@@ -106,14 +157,13 @@ pub fn render_native_bills_request(
 /// correct precisely because it was only exercised at the current date.)
 pub fn render_native_ledger_snapshot_request(
     company: &str,
-    from: &TallyDate,
-    to: &TallyDate,
+    period: &NativeLedgerSnapshotPeriod,
 ) -> String {
     format!(
         r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
-        from = from.as_str(),
-        to = to.as_str(),
+        from = period.from().as_str(),
+        to = period.to().as_str(),
     )
 }
 
@@ -334,6 +384,48 @@ mod tests {
     }
 
     #[test]
+    fn ledger_snapshot_period_validates_both_closing_balance_boundaries() {
+        let legal_from = TallyDate::parse("20240101").unwrap();
+        let ordinary_to = TallyDate::parse("20240115").unwrap();
+        assert_eq!(
+            NativeLedgerSnapshotPeriod::new(
+                DateBoundaryProfile::EducationRestricted,
+                legal_from.clone(),
+                ordinary_to,
+            ),
+            Err(NativeLedgerSnapshotPeriodError::UnsupportedBoundary),
+            "a snapshot CLOSINGBALANCE must not be requested with an Education-refused as-of boundary"
+        );
+        assert_eq!(
+            NativeLedgerSnapshotPeriod::new(
+                DateBoundaryProfile::EducationRestricted,
+                TallyDate::parse("20240115").unwrap(),
+                TallyDate::parse("20240131").unwrap(),
+            ),
+            Err(NativeLedgerSnapshotPeriodError::UnsupportedBoundary),
+            "the opening boundary remains independently required"
+        );
+        assert_eq!(
+            NativeLedgerSnapshotPeriod::new(
+                DateBoundaryProfile::EducationRestricted,
+                TallyDate::parse("20240201").unwrap(),
+                TallyDate::parse("20240131").unwrap(),
+            ),
+            Err(NativeLedgerSnapshotPeriodError::InvalidRange),
+            "inverted snapshot ranges remain invalid"
+        );
+        assert!(
+            NativeLedgerSnapshotPeriod::new(
+                DateBoundaryProfile::ModeAgnostic,
+                legal_from,
+                TallyDate::parse("20240115").unwrap(),
+            )
+            .is_ok(),
+            "licensed and unknown modes retain arbitrary calendar boundaries"
+        );
+    }
+
+    #[test]
     fn escapes_company_names_in_both_requests() {
         let from = TallyDate::parse("20240401").unwrap();
         let to = TallyDate::parse("20260731").unwrap();
@@ -346,7 +438,13 @@ mod tests {
         assert!(xml.contains("A &amp; B &lt;Co&gt;"));
         assert!(!xml.contains("A & B <Co>"));
 
-        let ledger_xml = render_native_ledger_snapshot_request("A & B <Co>", &from, &to);
+        let snapshot_period = NativeLedgerSnapshotPeriod::new(
+            DateBoundaryProfile::ModeAgnostic,
+            from.clone(),
+            to.clone(),
+        )
+        .expect("mode-agnostic profile accepts valid calendar dates");
+        let ledger_xml = render_native_ledger_snapshot_request("A & B <Co>", &snapshot_period);
         assert!(ledger_xml.contains("A &amp; B &lt;Co&gt;"));
         assert!(ledger_xml
             .contains("<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH>"));

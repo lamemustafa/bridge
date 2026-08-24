@@ -22,7 +22,8 @@ use bridge_tally_protocol::native_outstandings::{
     parse_native_group_snapshot, parse_native_ledger_snapshot, render_company_currency_request,
     render_native_bills_request, render_native_group_snapshot_request,
     render_native_ledger_snapshot_request, AgeingAnchor as NativeAgeingAnchor, CompanyCurrency,
-    NativeBillsReportKind, NativeGroupSnapshot, NativeMasterSnapshot, NativeOverdueCrosscheck,
+    NativeBillsReportKind, NativeGroupSnapshot, NativeLedgerSnapshotPeriod, NativeMasterSnapshot,
+    NativeOverdueCrosscheck,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -1394,6 +1395,7 @@ impl TallyRuntime {
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
+        let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
         self.execute(
             config,
@@ -1411,6 +1413,16 @@ impl TallyRuntime {
                         return Ok(partial_result("as_of_precedes_books_from"));
                     }
                     let books_from = extent.books_from().clone();
+                    let snapshot_period = NativeLedgerSnapshotPeriod::new(
+                        boundary_profile,
+                        books_from.clone(),
+                        as_of.clone(),
+                    )
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "Tally native ledger snapshot period is not supported by the endpoint compatibility profile"
+                        )
+                    })?;
                     let mut total_bytes = 0usize;
                     let read =
                         |kind| render_native_bills_request(kind, &company, &books_from, &as_of);
@@ -1457,8 +1469,7 @@ impl TallyRuntime {
                     let ledgers = client
                         .fetch_native_report_paired(render_native_ledger_snapshot_request(
                             &company,
-                            &books_from,
-                            &as_of,
+                            &snapshot_period,
                         ))
                         .await?;
                     let NativePairedRead::Stable {
