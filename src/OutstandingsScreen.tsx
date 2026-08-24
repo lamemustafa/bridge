@@ -94,6 +94,10 @@ type LoadResult =
     };
 
 type InrCompleteResult = Extract<LoadResult, { state: "complete" }> & { currency_assertion: "INR" };
+type BulkPartyStatementDestinationSelection = {
+  destination: string;
+  approval_id: string;
+};
 
 export function OutstandingsScreen({
   config,
@@ -351,9 +355,12 @@ export function OutstandingsScreen({
       || completeResult.statement_unallocated_by_party !== undefined);
   const exportAllPartyStatements = async (format: "xlsx" | "pdf") => {
     if (!completeResult) return;
+    // Disable both batch-export controls before opening the native picker so
+    // two click handlers cannot race each other in the renderer.
+    setBulkStatementExporting(true);
     try {
-      const destination = await invoke<string | null>("select_party_statement_destination");
-      if (!destination) return;
+      const selection = await invoke<BulkPartyStatementDestinationSelection | null>("select_party_statement_destination");
+      if (!selection) return;
       const preview = await previewBulkPartyStatements(completeResult);
       if (preview.party_count === 0) {
         setExportNotice({ message: "No parties with outstanding balances are available for statements." });
@@ -361,11 +368,10 @@ export function OutstandingsScreen({
       }
       const label = format === "xlsx" ? "Excel" : "PDF";
       const confirmed = window.confirm(
-        `Create ${preview.party_count} ${label} statement${preview.party_count === 1 ? "" : "s"} in:\n${destination}\n\nThe dashboard shows only its largest parties. This batch includes every party with a non-zero outstanding balance.`,
+        `Create ${preview.party_count} ${label} statement${preview.party_count === 1 ? "" : "s"} in:\n${selection.destination}\n\nThe dashboard shows only its largest parties. This batch includes every party with a non-zero outstanding balance.`,
       );
       if (!confirmed) return;
-      setBulkStatementExporting(true);
-      const batch = await exportBulkPartyStatements(completeResult, destination, format);
+      const batch = await exportBulkPartyStatements(completeResult, selection, format);
       setExportNotice({
         message: `${batch.written.length} ${label} statement${batch.written.length === 1 ? "" : "s"} written`,
         path: batch.manifest_path,
@@ -758,12 +764,12 @@ type BulkPartyStatementsPreview = { party_count: number };
 /// a batch must not silently omit a party beyond a display cap.
 async function exportBulkPartyStatements(
   result: InrCompleteResult,
-  destination: string,
+  selection: BulkPartyStatementDestinationSelection,
   format: "xlsx" | "pdf",
 ) {
   return invoke<BulkPartyStatementResult>(
     "export_bulk_party_statements",
-    bulkPartyStatementsInvokeArgument(result, destination, format),
+    bulkPartyStatementsInvokeArgument(result, selection.destination, selection.approval_id, format),
   );
 }
 

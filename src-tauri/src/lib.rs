@@ -75,7 +75,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(tally::TallyRuntime::default())
-        .manage(commands::PartyStatementDestinationStore::default())
+        .manage(reports::bulk_party_statement::PartyStatementDestinationApprovals::default())
         .manage(sync::coordinator::SnapshotCoordinator::default())
         .setup(|app| {
             let app_data_directory = app.path().app_data_dir()?;

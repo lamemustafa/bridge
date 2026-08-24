@@ -3,15 +3,115 @@
 //! This module deliberately has no Tally transport dependency. The caller
 //! supplies the rows obtained during the completed outstandings read.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use uuid::Uuid;
 
 use super::party_statement::{build_party_statement_with_ageing_anchor, PartyStatement};
 use crate::tally::{ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, UnallocatedParty};
+
+const MAX_PENDING_DESTINATION_APPROVALS: usize = 8;
+const DESTINATION_APPROVAL_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// Process-local authorizations issued only after the native folder picker
+/// returns a folder. Each approval is scoped to one destination and is
+/// consumed by the first export that presents it. Keeping a small, expiring
+/// set lets independent picker flows coexist without making an old selection
+/// reusable indefinitely.
+#[derive(Default)]
+pub struct PartyStatementDestinationApprovals {
+    pending: Mutex<HashMap<String, PendingDestinationApproval>>,
+}
+
+struct PendingDestinationApproval {
+    destination: PathBuf,
+    issued_at: Instant,
+}
+
+/// Why an approval could not be issued or consumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartyStatementDestinationApprovalError {
+    StoreUnavailable,
+    CapacityReached,
+    NotAuthorized,
+}
+
+/// A destination that the native picker approved for one bulk export.
+///
+/// Its field is private: only `PartyStatementDestinationApprovals::consume`
+/// can turn a renderer-provided token and destination into a value accepted by
+/// the bulk writer.
+#[cfg_attr(
+    not(feature = "live-calibration-harness"),
+    doc = "```compile_fail\nuse bridge_lib::reports::bulk_party_statement::ApprovedPartyStatementDestination;\nlet _ = ApprovedPartyStatementDestination(std::path::PathBuf::from(\"/tmp\"));\n```"
+)]
+#[derive(Debug)]
+pub struct ApprovedPartyStatementDestination(PathBuf);
+
+impl PartyStatementDestinationApprovals {
+    /// Records one successful picker choice and returns the opaque token that
+    /// must accompany the subsequent export request.
+    pub(crate) fn issue(
+        &self,
+        destination: PathBuf,
+    ) -> Result<String, PartyStatementDestinationApprovalError> {
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| PartyStatementDestinationApprovalError::StoreUnavailable)?;
+        discard_expired_approvals(&mut pending);
+        if pending.len() >= MAX_PENDING_DESTINATION_APPROVALS {
+            return Err(PartyStatementDestinationApprovalError::CapacityReached);
+        }
+
+        let approval_id = Uuid::new_v4().to_string();
+        pending.insert(
+            approval_id.clone(),
+            PendingDestinationApproval {
+                destination,
+                issued_at: Instant::now(),
+            },
+        );
+        Ok(approval_id)
+    }
+
+    /// Consumes a picker approval. A destination mismatch also consumes the
+    /// token so an intercepted request cannot probe or reuse it.
+    pub(crate) fn consume(
+        &self,
+        approval_id: &str,
+        destination: &Path,
+    ) -> Result<ApprovedPartyStatementDestination, PartyStatementDestinationApprovalError> {
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| PartyStatementDestinationApprovalError::StoreUnavailable)?;
+        discard_expired_approvals(&mut pending);
+        let Some(approval) = pending.remove(approval_id) else {
+            return Err(PartyStatementDestinationApprovalError::NotAuthorized);
+        };
+        if approval.destination != destination {
+            return Err(PartyStatementDestinationApprovalError::NotAuthorized);
+        }
+        Ok(ApprovedPartyStatementDestination(approval.destination))
+    }
+}
+
+impl ApprovedPartyStatementDestination {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+fn discard_expired_approvals(pending: &mut HashMap<String, PendingDestinationApproval>) {
+    pending.retain(|_, approval| approval.issued_at.elapsed() < DESTINATION_APPROVAL_TTL);
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BulkPartyStatementResult {
@@ -27,7 +127,7 @@ pub struct BulkPartyStatementResult {
 /// renderer keeps the write contract cohesive as client-facing statement
 /// metadata grows.
 pub struct BulkPartyStatementRequest<'a, Render> {
-    pub destination: &'a Path,
+    pub destination: &'a ApprovedPartyStatementDestination,
     pub company: &'a str,
     pub as_of_yyyymmdd: &'a str,
     pub format: &'a str,
@@ -91,7 +191,7 @@ struct StatementManifest<'a> {
 /// attempted. That makes a partially completed batch explicit, while still
 /// giving the operator usable files for parties whose statements rendered.
 pub fn write_bulk_party_statements(
-    destination: &Path,
+    destination: &ApprovedPartyStatementDestination,
     company: &str,
     as_of_yyyymmdd: &str,
     format: &str,
@@ -128,6 +228,7 @@ where
         ageing_anchor,
         render,
     } = request;
+    let destination = destination.path();
     if !destination.is_dir() {
         return Err("Bridge could not use that statement destination folder.".to_string());
     }
@@ -377,11 +478,41 @@ mod tests {
         }
     }
 
+    fn approved_destination(path: &Path) -> ApprovedPartyStatementDestination {
+        let approvals = PartyStatementDestinationApprovals::default();
+        let approval_id = approvals
+            .issue(path.to_path_buf())
+            .expect("approve synthetic destination");
+        approvals
+            .consume(&approval_id, path)
+            .expect("consume synthetic approval")
+    }
+
+    #[test]
+    fn destination_approval_is_single_use() {
+        let destination = tempfile::tempdir().expect("temporary destination");
+        let approvals = PartyStatementDestinationApprovals::default();
+        let approval_id = approvals
+            .issue(destination.path().to_path_buf())
+            .expect("approve destination");
+
+        let _approved = approvals
+            .consume(&approval_id, destination.path())
+            .expect("first export consumes approval");
+        assert_eq!(
+            approvals
+                .consume(&approval_id, destination.path())
+                .expect_err("a consumed approval cannot authorize another export"),
+            PartyStatementDestinationApprovalError::NotAuthorized
+        );
+    }
+
     #[test]
     fn traversal_like_party_name_cannot_escape_the_selected_directory() {
         let destination = tempfile::tempdir().expect("temporary destination");
+        let approved = approved_destination(destination.path());
         let result = write_bulk_party_statements(
-            destination.path(),
+            &approved,
             "Synthetic Books Pvt Ltd",
             "20260808",
             "xlsx",
@@ -408,8 +539,9 @@ mod tests {
     #[test]
     fn renderer_failure_is_recorded_in_result_and_manifest_while_other_parties_write() {
         let destination = tempfile::tempdir().expect("temporary destination");
+        let approved = approved_destination(destination.path());
         let result = write_bulk_party_statements(
-            destination.path(),
+            &approved,
             "Synthetic Books Pvt Ltd",
             "20260808",
             "pdf",
@@ -447,6 +579,7 @@ mod tests {
     #[test]
     fn manifest_totals_keep_receivable_and_payable_directions_separate() {
         let destination = tempfile::tempdir().expect("temporary destination");
+        let approved = approved_destination(destination.path());
         let mut payable_bill = bill("Mixed Party", "4.00");
         payable_bill.kind = ExposureDirection::Payable;
         let unallocated = [UnallocatedParty {
@@ -456,7 +589,7 @@ mod tests {
         }];
 
         let result = write_bulk_party_statements(
-            destination.path(),
+            &approved,
             "Synthetic Books Pvt Ltd",
             "20260808",
             "pdf",
@@ -473,8 +606,9 @@ mod tests {
     #[test]
     fn manifest_discloses_the_selected_ageing_anchor() {
         let destination = tempfile::tempdir().expect("temporary destination");
+        let approved = approved_destination(destination.path());
         let result = write_bulk_party_statements_with_ageing_anchor(BulkPartyStatementRequest {
-            destination: destination.path(),
+            destination: &approved,
             company: "Synthetic Books Pvt Ltd",
             as_of_yyyymmdd: "20260808",
             format: "xlsx",
@@ -492,8 +626,9 @@ mod tests {
     #[test]
     fn per_party_file_creation_failure_is_retained_in_the_manifest() {
         let destination = tempfile::tempdir().expect("temporary destination");
+        let approved = approved_destination(destination.path());
         let result = write_bulk_party_statements(
-            destination.path(),
+            &approved,
             "Synthetic Books Pvt Ltd",
             "20260808",
             "pdf/invalid",
@@ -531,9 +666,10 @@ mod tests {
             .to_str()
             .expect("temp destination path is valid UTF-8")
             .to_string();
+        let approved = approved_destination(destination.path());
 
         let result = write_bulk_party_statements(
-            destination.path(),
+            &approved,
             "Synthetic Books Pvt Ltd",
             "20260808",
             "pdf/invalid",
@@ -562,8 +698,9 @@ mod tests {
     #[test]
     fn colliding_safe_names_are_written_to_distinct_files() {
         let destination = tempfile::tempdir().expect("temporary destination");
+        let approved = approved_destination(destination.path());
         let result = write_bulk_party_statements(
-            destination.path(),
+            &approved,
             "Synthetic Books Pvt Ltd",
             "20260808",
             "xlsx",

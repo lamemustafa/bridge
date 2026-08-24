@@ -147,6 +147,7 @@ export function partyStatementInvokeArgument(
 export function bulkPartyStatementsInvokeArgument(
   result: StatementExportSource,
   destination: string,
+  approvalId: string,
   format: "xlsx" | "pdf",
 ) {
   return {
@@ -154,6 +155,7 @@ export function bulkPartyStatementsInvokeArgument(
       company: result.report.company_name,
       as_of_yyyymmdd: result.report.as_of_yyyymmdd,
       destination,
+      approval_id: approvalId,
       format,
       ageing_anchor: result.ageing_anchor,
       open_bills: result.statement_open_bills ?? [],
