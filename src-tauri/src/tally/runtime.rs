@@ -22,7 +22,8 @@ use bridge_tally_protocol::native_outstandings::{
     parse_native_group_snapshot, parse_native_ledger_snapshot, render_company_currency_request,
     render_native_bills_request, render_native_group_snapshot_request,
     render_native_ledger_snapshot_request, AgeingAnchor as NativeAgeingAnchor, CompanyCurrency,
-    NativeBillsReportKind, NativeGroupSnapshot, NativeMasterSnapshot, NativeOverdueCrosscheck,
+    NativeBillsReportKind, NativeGroupSnapshot, NativeLedgerSnapshotPeriod, NativeMasterSnapshot,
+    NativeOverdueCrosscheck,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -351,6 +352,24 @@ fn partial_result(reason: impl Into<OutstandingsPartialReason>) -> OutstandingsL
     OutstandingsLoadResult::Partial {
         reason: reason.into(),
         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+    }
+}
+
+enum NativeLedgerSnapshotPeriodAdmission {
+    Period(NativeLedgerSnapshotPeriod),
+    Partial(OutstandingsLoadResult),
+}
+
+fn admit_native_ledger_snapshot_period(
+    boundary_profile: DateBoundaryProfile,
+    books_from: TallyDate,
+    as_of: TallyDate,
+) -> NativeLedgerSnapshotPeriodAdmission {
+    match NativeLedgerSnapshotPeriod::new(boundary_profile, books_from, as_of) {
+        Ok(period) => NativeLedgerSnapshotPeriodAdmission::Period(period),
+        Err(_) => NativeLedgerSnapshotPeriodAdmission::Partial(partial_result(
+            "as_of_has_no_valid_window_boundary",
+        )),
     }
 }
 
@@ -1394,6 +1413,7 @@ impl TallyRuntime {
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
+        let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
         self.execute(
             config,
@@ -1411,6 +1431,16 @@ impl TallyRuntime {
                         return Ok(partial_result("as_of_precedes_books_from"));
                     }
                     let books_from = extent.books_from().clone();
+                    let snapshot_period = match admit_native_ledger_snapshot_period(
+                        boundary_profile,
+                        books_from.clone(),
+                        as_of.clone(),
+                    ) {
+                        NativeLedgerSnapshotPeriodAdmission::Period(period) => period,
+                        NativeLedgerSnapshotPeriodAdmission::Partial(partial) => {
+                            return Ok(partial);
+                        }
+                    };
                     let mut total_bytes = 0usize;
                     let read =
                         |kind| render_native_bills_request(kind, &company, &books_from, &as_of);
@@ -1457,8 +1487,7 @@ impl TallyRuntime {
                     let ledgers = client
                         .fetch_native_report_paired(render_native_ledger_snapshot_request(
                             &company,
-                            &books_from,
-                            &as_of,
+                            &snapshot_period,
                         ))
                         .await?;
                     let NativePairedRead::Stable {
@@ -2703,6 +2732,25 @@ mod tests {
         assert!(workbook_text.contains("FUTURE-1"));
         assert!(workbook_text.contains("Not due"));
         assert!(workbook_text.contains("Unaged"));
+    }
+
+    #[test]
+    fn education_snapshot_period_refusal_is_an_in_band_partial() {
+        let result = match admit_native_ledger_snapshot_period(
+            DateBoundaryProfile::EducationRestricted,
+            TallyDate::parse("20260401").expect("Education-valid book start"),
+            TallyDate::parse("20260415").expect("ordinary calendar as-of"),
+        ) {
+            NativeLedgerSnapshotPeriodAdmission::Period(_) => {
+                panic!("an Education-refused as-of must not construct a snapshot period")
+            }
+            NativeLedgerSnapshotPeriodAdmission::Partial(partial) => partial,
+        };
+        assert!(matches!(
+            result,
+            OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "as_of_has_no_valid_window_boundary"
+        ));
     }
 
     #[cfg(feature = "voucher-scan")]

@@ -379,8 +379,11 @@ mod tests {
         include_bytes!("../../tests/fixtures/vouchers_ageing_corpus_live.utf16le.xml");
     const GST_CREDIT_PERIOD_CORPUS: &[u8] =
         include_bytes!("../../tests/fixtures/vouchers_gst_credit_periods_live.utf16le.xml");
+    const SETTLE_THEN_REOPEN_CORPUS: &[u8] =
+        include_bytes!("../../tests/fixtures/vouchers_settle_then_reopen_live.utf16le.xml");
     const AGEING_CORPUS_GUID: &str = "2f65b86f-edf4-471c-99ed-da0de7163836";
     const GST_CREDIT_PERIOD_CORPUS_GUID: &str = "46faa869-1208-4119-8961-f28db4df3b8e";
+    const SETTLE_THEN_REOPEN_CORPUS_GUID: &str = "ec4454ae-5c4c-4bfa-b3b0-68182a749689";
 
     #[test]
     fn credit_periods_produce_calendar_due_dates_without_unit_guessing() {
@@ -473,6 +476,105 @@ mod tests {
         assert!(periods.contains(&&CreditPeriod::Weeks(2)));
         assert!(periods.contains(&&CreditPeriod::Months(1)));
         assert!(periods.contains(&&CreditPeriod::Months(2)));
+    }
+
+    #[test]
+    fn captured_settle_then_reopen_preserves_each_original_age_date() {
+        let xml = decode_tally_xml_response_bytes_limited(
+            SETTLE_THEN_REOPEN_CORPUS,
+            "text/xml; charset=utf-16",
+            ExpectedTallyTextEncoding::Utf16Le,
+            SETTLE_THEN_REOPEN_CORPUS.len(),
+        )
+        .expect("captured BOM-less UTF-16LE response decodes")
+        .text;
+        assert_eq!(xml.matches("<BILLALLOCATIONS.LIST>").count(), 38);
+
+        let scan = captured_scan(
+            SETTLE_THEN_REOPEN_CORPUS,
+            "BRIDGE PROBE B SANDBOX",
+            SETTLE_THEN_REOPEN_CORPUS_GUID,
+            "20260810",
+            "20260814",
+            2785,
+            "02a93b8a12c1ba80445ee136c690e72236ed372c25b333491a90e1fcd72f2737",
+        );
+        assert_eq!(scan.vouchers().len(), 19);
+        let allocations = scan
+            .vouchers()
+            .iter()
+            .flat_map(|voucher| voucher.ledger_entries.iter())
+            .flat_map(|entry| entry.bill_allocations.iter())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            allocations.len(),
+            19,
+            "only populated allocation rows parse"
+        );
+
+        let reopened_due_dates = scan
+            .vouchers()
+            .iter()
+            .filter(|voucher| voucher.date.as_str() == "20260814")
+            .flat_map(|voucher| voucher.ledger_entries.iter())
+            .flat_map(|entry| entry.bill_allocations.iter())
+            .filter(|allocation| allocation.bill_type == BillReferenceKind::AgstRef)
+            .map(|allocation| {
+                (
+                    allocation
+                        .name
+                        .as_deref()
+                        .expect("captured named bill reference"),
+                    add_credit_period(
+                        allocation
+                            .bill_date
+                            .as_ref()
+                            .expect("captured original BILLDATE"),
+                        &allocation.credit_period,
+                    )
+                    .expect("captured credit period produces due date")
+                    .as_str()
+                    .to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reopened_due_dates,
+            vec![
+                ("RO-INV-001", "20260909".to_string()),
+                ("RO-INV-002", "20260924".to_string()),
+                ("RO-INV-003", "20261010".to_string()),
+                ("RO-INV-004", "20260831".to_string()),
+                ("RO-INV-005", "20261009".to_string()),
+            ],
+            "each reopening must retain its own original bill date and credit period"
+        );
+
+        let as_of = TallyDate::parse("20261015").unwrap();
+        let due_date = compute_outstandings_with_ageing_anchor(
+            &scan,
+            as_of.clone(),
+            crate::outstandings::AgeingAnchor::DueDate,
+        )
+        .expect("captured due-date reopening computes");
+        assert_eq!(due_date.open_receivable_bill_count, 5);
+        assert_eq!(due_date.receivable_total.as_str(), "3850");
+        assert_eq!(due_date.ageing.days_0_30.as_str(), "2550");
+        assert_eq!(due_date.ageing.days_31_60.as_str(), "1300");
+        assert_eq!(due_date.ageing_bill_counts.days_0_30, 3);
+        assert_eq!(due_date.ageing_bill_counts.days_31_60, 2);
+        assert_eq!(due_date.ageing_bill_counts.days_61_90, 0);
+        assert_eq!(due_date.ageing_bill_counts.days_90_plus, 0);
+
+        let bill_date = compute_outstandings_with_ageing_anchor(
+            &scan,
+            as_of,
+            crate::outstandings::AgeingAnchor::BillDate,
+        )
+        .expect("captured bill-date reopening computes");
+        assert_eq!(bill_date.open_receivable_bill_count, 5);
+        assert_eq!(bill_date.ageing.days_61_90.as_str(), "3850");
+        assert_eq!(bill_date.ageing_bill_counts.days_61_90, 5);
     }
 
     #[test]

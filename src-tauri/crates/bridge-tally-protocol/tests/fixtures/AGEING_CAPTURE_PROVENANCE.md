@@ -88,3 +88,9 @@ those fields being sent by the generator. For example, the 2025-04-28 receipt al
 Limits: one release and one machine; every bill carries `30 Days`; no reopening against a
 zero-credit-period bill; each `Agst Ref` is a Receipt settling the bill exactly to zero; no
 partial settlement or sign-flip reopening is represented.
+
+The settle-only limitation is now covered separately by
+`vouchers_settle_then_reopen_live.utf16le.xml` and its
+`REOPEN_CAPTURE_PROVENANCE.md`: it captures five bills reopened after exact
+settlement, each with its own original credit period. This addendum remains the
+provenance for this capture only; it does not establish the later reopening arm.
