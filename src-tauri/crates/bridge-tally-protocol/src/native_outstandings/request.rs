@@ -66,11 +66,12 @@ pub enum NativeLedgerExportPeriodError {
 /// admitted by the endpoint's compatibility profile.
 ///
 /// `CLOSINGBALANCE` is as-of scoped, unlike the export's `OPENINGBALANCE`.
-/// The same collection measured Rs -44,09,597 at `SVTODATE=20260731` and
-/// Rs -21,19,377 at `SVTODATE=20250401`, so a silently refused `to` boundary
-/// can produce a plausible but wrong residual. This is intentionally distinct
-/// from [`NativeLedgerExportPeriod`], whose `to` is safe to leave ordinary
-/// because that request does not fetch `CLOSINGBALANCE`.
+/// TALLY_PROTOCOL_REFERENCE §7 (corrected 2026-08-24) records two production
+/// collection shapes whose balances changed with `SVTODATE`; a silently
+/// refused `to` boundary can therefore produce a plausible but wrong residual.
+/// This is intentionally distinct from [`NativeLedgerExportPeriod`], whose
+/// `to` is safe to leave ordinary because that request does not fetch
+/// `CLOSINGBALANCE`.
 ///
 /// This Collection also returns a byte-identical empty `STATUS 1` response for
 /// a closed company and a nonexistent company (measured 2026-08-24: 2,994
@@ -144,9 +145,8 @@ pub fn render_native_bills_request(
 /// `NAME`, `PARENT`, `CLOSINGBALANCE`, `OPENINGBALANCE`, `ISBILLWISEON`.
 ///
 /// **`SVFROMDATE`/`SVTODATE` are load-bearing here and must match the bills
-/// request exactly.** `CLOSINGBALANCE` *is* as-of scoped -- measured
-/// 2026-08-07, the same collection returned a Sundry total of Rs -44,09,597 at
-/// `SVTODATE=20260731` and Rs -21,19,377 at `20250401`. The bills reports are
+/// request exactly.** `CLOSINGBALANCE` is as-of scoped; see
+/// TALLY_PROTOCOL_REFERENCE §7 (corrected 2026-08-24). The bills reports are
 /// as-of scoped too, so if this request omitted the period the residual
 /// `CLOSINGBALANCE - sum(BILLCL)` would subtract historical bills from a
 /// current balance and silently report a wrong on-account figure at every

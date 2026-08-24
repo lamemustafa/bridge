@@ -42,13 +42,23 @@ Five distinct credit periods were used deliberately — `30 Days`, `45 Days`, `2
 `60 Days` — and **each is echoed exactly on its own reopening**, so this is Tally resolving the
 referenced bill rather than substituting a default.
 
-The generator sends **neither** `BILLDATE` nor `BILLCREDITPERIOD` on the reopening allocation:
+The committed generator record [`generators/build_reopen.py`](./generators/build_reopen.py)
+calls `entry(party, True, reopen_amount, ref, "Agst Ref")` for the reopening.
+[`generators/lib.py`](./generators/lib.py) defines
+`entry(led, debit, amount, bill=None, billtype=None, billdate=None, credit_period=None)` and
+emits `BILLDATE` and `BILLCREDITPERIOD` only when those optional arguments are present. The
+generator therefore sends **neither** field on the reopening allocation:
 
 ```python
 entry(party, True, reopen_amount, ref, "Agst Ref")   # bill reference and type only
 ```
 
 so the returned values cannot be an echo of its input.
+
+These generator files are committed as an auditable record of what was sent, **not as runnable
+scripts**. In particular, `lib.py` imports the session-local `tq.post` probe helper, which is
+not part of this repository; running `python generators/build_reopen.py` is not a reproduction
+procedure.
 
 **Consequence:** recomputing the age date from a reopening allocation recovers the original due date
 by construction. Under `AgeingAnchor::DueDate` the reopened balance of `RO-INV-003` must age from

@@ -381,12 +381,19 @@ Largely moot if you use collection exports (§2.1).
 
 ## 7. Balances
 
-**VERIFIED.** A `Ledger` collection's `ClosingBalance` is a **lifetime figure**. It ignores
-the requested window entirely — four different windows, including one with no date variables
-at all, returned the identical value, derived from transactions outside three of them.
+**CORRECTION — 2026-08-24, licensed TallyPrime Silver 7.1.** The earlier claim that a
+`Ledger` collection's `ClosingBalance` was a lifetime figure that ignored the requested window
+was wrong. Against `BRIDGE CORPUS DENSE` (29,930 vouchers, 2025-04-01 through 2026-03-31),
+`SVTODATE=20250630` returned `-2715644.20` and `SVTODATE=20260331` returned
+`-11815459.60`; 122 of 123 ledgers differed, with only empty `Cash` unchanged. The result
+held for both `List of Ledgers` with `ISMODIFY="Yes"` (the production shape) and plain
+`<TYPE>Ledger</TYPE>` with `ISMODIFY="No"`, so `ISMODIFY` is not the discriminator.
 
-**Do not read `ClosingBalance` as a period balance.** Compute period balances locally from
-window-filtered vouchers.
+`ClosingBalance` is therefore **as-of scoped** and must be read with the same admitted
+`SVFROMDATE`/`SVTODATE` window as the bill report it is reconciled against. The prior four
+windows all enclosed every transaction in the observed book; identical balances were the
+expected result of that accidental test shape, not evidence that the window was ignored. This
+is the same window-mismatch trap corrected on #177.
 
 **PARTIAL.** At certain `SVTODATE` values the field renders as **empty** rather than a
 number. An empty `TYPE="Amount"` is not zero — coercing it silently produces a wrong balance.
@@ -1400,14 +1407,13 @@ the report and ledger reads. Bracket the reads with unchanged content/high-water
 retain the non-atomic qualification; no cross-request combination becomes `Verified` solely
 because its arithmetic agrees.
 
-**This identity does not hold for a historical as-of.** §7 establishes that a `Ledger`
-collection's `CLOSINGBALANCE` ignores the requested window and reflects lifetime activity,
-while `BILLCL` comes from the report period. Subtracting them across different time bases
-would misclassify later activity as `On Account` and silently overstate the residual. For any
-as-of other than now, derive the ledger balance at the same as-of before subtracting. The ledger read costs **0.08 s / 36 KB**
-for 88 ledgers. A candidate current-as-of view needs at least both sign-scoped native reports
-plus the ledger read, and separate identity bracketing; it must not be described as full
-atomic coverage.
+**CORRECTION — 2026-08-24.** §7 now establishes that `CLOSINGBALANCE` is as-of scoped, so
+this identity can be evaluated at a historical as-of when the ledger snapshot and `BILLCL`
+report use the same validated `SVFROMDATE`/`SVTODATE` window. Mixing windows would still
+misclassify later activity as `On Account` and silently overstate the residual. The ledger
+read costs **0.08 s / 36 KB** for 88 ledgers. A candidate as-of view needs at least both
+sign-scoped native reports plus the ledger read, and separate identity bracketing; it must not
+be described as full atomic coverage.
 
 **Any outstandings figure that omits this is silently incomplete.** Depending on the residual's
 sign, it can understate receivables, overstate them, or hide a payable position. On the observed
