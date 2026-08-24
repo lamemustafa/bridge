@@ -22,8 +22,8 @@ use bridge_tally_protocol::native_outstandings::{
     parse_native_group_snapshot, parse_native_ledger_snapshot, render_company_currency_request,
     render_native_bills_request, render_native_group_snapshot_request,
     render_native_ledger_snapshot_request, AgeingAnchor as NativeAgeingAnchor, CompanyCurrency,
-    NativeBillsReportKind, NativeGroupSnapshot, NativeLedgerSnapshotPeriod, NativeMasterSnapshot,
-    NativeOverdueCrosscheck,
+    LedgerSnapshotEntry, NativeBillsReportKind, NativeGroupSnapshot, NativeLedgerSnapshotPeriod,
+    NativeMasterSnapshot, NativeOutstandingsError, NativeOverdueCrosscheck,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -360,6 +360,11 @@ enum NativeLedgerSnapshotPeriodAdmission {
     Partial(OutstandingsLoadResult),
 }
 
+enum NativeLedgerSnapshotAdmission {
+    Snapshot(Vec<LedgerSnapshotEntry>),
+    Partial(OutstandingsLoadResult),
+}
+
 fn admit_native_ledger_snapshot_period(
     boundary_profile: DateBoundaryProfile,
     books_from: TallyDate,
@@ -370,6 +375,25 @@ fn admit_native_ledger_snapshot_period(
         Err(_) => NativeLedgerSnapshotPeriodAdmission::Partial(partial_result(
             "as_of_has_no_valid_window_boundary",
         )),
+    }
+}
+
+fn admit_native_ledger_snapshot(
+    snapshot: anyhow::Result<Vec<LedgerSnapshotEntry>>,
+) -> anyhow::Result<NativeLedgerSnapshotAdmission> {
+    match snapshot {
+        Ok(snapshot) => Ok(NativeLedgerSnapshotAdmission::Snapshot(snapshot)),
+        Err(error) => {
+            let Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) = error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>())
+            else {
+                return Err(error);
+            };
+            Ok(NativeLedgerSnapshotAdmission::Partial(partial_result(
+                OutstandingsPartialReason::foreign_currency_ledger_balance(ledger_name.clone()),
+            )))
+        }
     }
 }
 
@@ -1513,7 +1537,12 @@ impl TallyRuntime {
                     let receivable_rows =
                         parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;
                     let payable_rows = parse_native_bill_rows(&payable_body, &books_from, &as_of)?;
-                    let ledger_rows = parse_native_ledger_snapshot(&ledger_body)?;
+                    let ledger_rows = match admit_native_ledger_snapshot(
+                        parse_native_ledger_snapshot(&ledger_body).map_err(anyhow::Error::from),
+                    )? {
+                        NativeLedgerSnapshotAdmission::Snapshot(snapshot) => snapshot,
+                        NativeLedgerSnapshotAdmission::Partial(partial) => return Ok(partial),
+                    };
                     let group_rows =
                         parse_native_group_snapshot(&group_body, &expected_company_guid)?;
 
@@ -2333,17 +2362,22 @@ fn map_execution_error(error: ReadExecutionError<anyhow::Error>) -> anyhow::Erro
 mod tests {
     use super::*;
     use crate::tally::TallyProduct;
+    use anyhow::Context;
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
         let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
+        utf16_xml_response_bytes(&body)
+    }
+
+    fn utf16_xml_response_bytes(body: &[u8]) -> Vec<u8> {
         let headers = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-16\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         );
-        [headers.as_bytes(), &body].concat()
+        [headers.as_bytes(), body].concat()
     }
 
     fn utf8_status_response(body: impl AsRef<str>) -> Vec<u8> {
@@ -2353,6 +2387,41 @@ mod tests {
             body.len()
         );
         [headers.as_bytes(), body].concat()
+    }
+
+    async fn read_http_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        let (header_end, content_length) = loop {
+            let read = socket.read(&mut buffer).await.expect("read request");
+            assert!(read > 0, "request ended before headers completed");
+            request.extend_from_slice(&buffer[..read]);
+            let Some(header_end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") else {
+                continue;
+            };
+            let header = std::str::from_utf8(&request[..header_end])
+                .expect("request headers are valid UTF-8");
+            let content_length = header
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then_some(value.trim())
+                })
+                .map(|value| {
+                    value
+                        .parse::<usize>()
+                        .expect("request Content-Length is numeric")
+                })
+                .unwrap_or(0);
+            break (header_end + 4, content_length);
+        };
+        while request.len() < header_end + content_length {
+            let read = socket.read(&mut buffer).await.expect("read request body");
+            assert!(read > 0, "request ended before declared body completed");
+            request.extend_from_slice(&buffer[..read]);
+        }
+        request
     }
 
     #[test]
@@ -2365,6 +2434,115 @@ mod tests {
             serde_json::to_value(OutstandingsAgeingAnchor::BillDate).unwrap(),
             serde_json::json!("bill_date")
         );
+    }
+
+    #[test]
+    fn single_company_forex_ledger_capture_returns_a_typed_partial() {
+        const FOREX_LEDGER_CAPTURE: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/ledgers_forex_composite_live.utf16le.xml"
+        );
+        let ledger_body = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
+            FOREX_LEDGER_CAPTURE,
+            "text/xml; charset=utf-16",
+            bridge_tally_protocol::ExpectedTallyTextEncoding::Utf16Le,
+            FOREX_LEDGER_CAPTURE.len(),
+        )
+        .expect("captured forex ledger response decodes")
+        .text;
+        let admitted = admit_native_ledger_snapshot(
+            parse_native_ledger_snapshot(&ledger_body)
+                .map_err(anyhow::Error::from)
+                .context("stable native ledger snapshot"),
+        )
+        .expect("a foreign-currency ledger is an in-band partial");
+
+        assert!(matches!(
+            admitted,
+            NativeLedgerSnapshotAdmission::Partial(OutstandingsLoadResult::Partial { reason, .. })
+                if reason.reason_code == "company_foreign_currency_ledger_balance"
+                    && reason.foreign_currency_ledger_name.as_deref() == Some("FX USD Debtor 02")
+        ));
+    }
+
+    #[tokio::test]
+    async fn single_company_read_returns_the_forex_capture_partial() {
+        const EXTENT: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        const FOREX_LEDGER_CAPTURE: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/ledgers_forex_composite_live.utf16le.xml"
+        );
+        const RECEIVABLE: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/bills_receivable_aarav.xml"
+        );
+        const PAYABLE: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/bills_payable_aarav.xml"
+        );
+        const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+
+        let extent = EXTENT.replacen(
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
+            1,
+        );
+        assert_ne!(extent, EXTENT, "the extent witness injection must apply");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic outstandings server");
+        let address = listener.local_addr().expect("synthetic server address");
+        let server = tokio::spawn(async move {
+            for index in 0..24 {
+                let (mut socket, _) =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
+                        .await
+                        .expect("outstandings request timed out")
+                        .expect("accept outstandings request");
+                let request = read_http_request(&mut socket).await;
+                let expected_method: &[u8] = if index % 2 == 0 {
+                    b"POST /"
+                } else {
+                    b"GET /status"
+                };
+                assert!(
+                    request.starts_with(expected_method),
+                    "request {index} did not preserve paired-read health bracketing"
+                );
+                let response = match index {
+                    0 | 2 | 20 | 22 => utf16_xml_response(&extent),
+                    1 | 3 | 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 => {
+                        utf8_status_response(STATUS)
+                    }
+                    4 | 6 => utf16_xml_response(RECEIVABLE),
+                    12 | 14 => utf16_xml_response(PAYABLE),
+                    _ => utf16_xml_response_bytes(FOREX_LEDGER_CAPTURE),
+                };
+                socket.write_all(&response).await.expect("write response");
+            }
+        });
+
+        let result = TallyRuntime::default()
+            .fetch_outstandings(
+                TallyConfig {
+                    host: address.ip().to_string(),
+                    port: address.port(),
+                },
+                "Aarav Trading Company Demo".to_string(),
+                "bb8ad19e-6aef-4239-a917-87fec0c6215e".to_string(),
+                TallyDate::parse("20260401").expect("captured book as-of"),
+                OutstandingsCurrencyAssertion::Inr,
+                OutstandingsAgeingAnchor::DueDate,
+            )
+            .await
+            .expect("foreign-currency capture returns an in-band partial");
+
+        assert!(matches!(
+            result,
+            OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "company_foreign_currency_ledger_balance"
+                    && reason.foreign_currency_ledger_name.as_deref() == Some("FX USD Debtor 02")
+        ));
+        server.await.expect("synthetic outstandings server task");
     }
 
     #[test]

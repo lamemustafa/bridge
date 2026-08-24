@@ -42,7 +42,6 @@ use bridge_tally_core::{
     CompanyRef as CoreCompanyRef, EvidenceConfidence, ReadWindow, RequestContext, TallyConnector,
     TallyDate, TransportId, CORE_ACCOUNTING_SCHEMA_VERSION,
 };
-use bridge_tally_protocol::native_outstandings::NativeOutstandingsError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, State};
@@ -81,21 +80,6 @@ fn tally_command_error(
 }
 
 fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
-    if let Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) = error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>())
-    {
-        return tally_command_error(
-            "company_foreign_currency_ledger_balance",
-            "Tally application",
-            format!(
-                "Tally reported a foreign-currency closing balance for ledger {ledger_name}; Bridge left the company unread rather than guessing a base-currency amount."
-            ),
-            "after_change",
-            true,
-            "Inspect the named ledger in Tally and use a base-currency company for the native outstandings read.",
-        );
-    }
     if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
         return match control {
             TallyRuntimeControlError::Cancelled => tally_command_error(
@@ -2237,8 +2221,8 @@ fn company_sweep_result(
         Err(CompanySweepFailure::ReasonCode(reason_code)) => {
             crate::tally::OutstandingsPartialReason::code(reason_code)
         }
-        Err(CompanySweepFailure::OutstandingsRead(error)) => {
-            company_sweep_outstandings_partial_reason(&error)
+        Err(CompanySweepFailure::OutstandingsRead) => {
+            crate::tally::OutstandingsPartialReason::code("company_outstandings_read_failed")
         }
     };
     OutstandingsLoadResult::Partial {
@@ -2249,21 +2233,7 @@ fn company_sweep_result(
 
 enum CompanySweepFailure {
     ReasonCode(&'static str),
-    OutstandingsRead(anyhow::Error),
-}
-
-fn company_sweep_outstandings_partial_reason(
-    error: &anyhow::Error,
-) -> crate::tally::OutstandingsPartialReason {
-    if let Some(NativeOutstandingsError::ForeignCurrencyLedgerBalance { ledger_name }) = error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<NativeOutstandingsError>())
-    {
-        return crate::tally::OutstandingsPartialReason::foreign_currency_ledger_balance(
-            ledger_name.clone(),
-        );
-    }
-    crate::tally::OutstandingsPartialReason::code("company_outstandings_read_failed")
+    OutstandingsRead,
 }
 
 fn company_sweep_currency_preflight_failure(
@@ -2338,7 +2308,7 @@ pub async fn fetch_tally_outstandings_all_companies(
                             request.ageing_anchor,
                         )
                         .await
-                        .map_err(CompanySweepFailure::OutstandingsRead),
+                        .map_err(|_| CompanySweepFailure::OutstandingsRead),
                 },
             }
         };
@@ -2532,7 +2502,6 @@ mod tests {
         SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
-    use bridge_tally_protocol::native_outstandings::NativeOutstandingsError;
     use std::collections::BTreeMap;
 
     /// Regression for the destination-picker leak: `select_party_statement_
@@ -2677,12 +2646,13 @@ mod tests {
     }
 
     #[test]
-    fn company_sweep_preserves_foreign_currency_ledger_diagnostic() {
-        let outcome = company_sweep_result(Err(CompanySweepFailure::OutstandingsRead(
-            anyhow::Error::new(NativeOutstandingsError::ForeignCurrencyLedgerBalance {
-                ledger_name: "Synthetic FX Debtor".to_string(),
-            }),
-        )));
+    fn company_sweep_preserves_runtime_foreign_currency_partial() {
+        let outcome = company_sweep_result(Ok(OutstandingsLoadResult::Partial {
+            reason: crate::tally::OutstandingsPartialReason::foreign_currency_ledger_balance(
+                "Synthetic FX Debtor".to_string(),
+            ),
+            synced_at_unix_ms: 1,
+        }));
 
         assert!(matches!(
             outcome,
@@ -2764,19 +2734,6 @@ mod tests {
         ));
         assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
         assert_eq!(discovery_limit.category, "Discovery listing");
-
-        let foreign_currency = tally_runtime_command_error(anyhow::Error::new(
-            bridge_tally_protocol::native_outstandings::NativeOutstandingsError::ForeignCurrencyLedgerBalance {
-                ledger_name: "Synthetic FX Debtor".to_string(),
-            },
-        ));
-        assert_eq!(
-            foreign_currency.code,
-            "company_foreign_currency_ledger_balance"
-        );
-        assert_eq!(foreign_currency.category, "Tally application");
-        assert!(foreign_currency.message.contains("Synthetic FX Debtor"));
-        assert!(foreign_currency.message.contains("foreign-currency"));
     }
 
     #[test]
