@@ -12,6 +12,7 @@ import {
   partyStatementInvokeArgument,
   settleAsOfBoundValue,
   singleCompanyOutstandingsInvokeArgument,
+  workingPaperInvokeArgument,
   type AsOfBoundValue,
 } from "./outstandings-as-of";
 
@@ -76,13 +77,19 @@ type LoadResult =
       currency_assertion: string;
       ageing_anchor: OutstandingsAgeingAnchor;
       synced_at_unix_ms: number;
+      working_paper_export_id?: string;
+      working_paper_unavailable_reason_code?: string;
       // Absent when the read path cannot establish it. Absent is not zero and
       // must never render as zero.
       unallocated_total?: string;
       // Complete, uncapped rows. The dashboard applies its own display caps;
       // statement exports always use these complete sources.
       statement_open_bills?: Array<OpenBill>;
-      statement_unallocated_by_party?: Array<{ party: string; amount: string }>;
+      statement_unallocated_by_party?: Array<{
+        party: string;
+        amount: string;
+        direction: "receivable" | "payable";
+      }>;
     }
   | {
       state: "partial";
@@ -121,7 +128,9 @@ export function OutstandingsScreen({
     failures?: Array<{ party: string; code: string; reason: string }>;
   } | null>(null);
   const [expandedParty, setExpandedParty] = React.useState<string | null>(null);
-  const [bulkStatementExporting, setBulkStatementExporting] = React.useState(false);
+  const [exporting, setExporting] = React.useState<"csv" | "working-paper" | "batch" | "party" | null>(null);
+  const [consumedWorkingPaperId, setConsumedWorkingPaperId] = React.useState<string | null>(null);
+  const exportLock = React.useRef(false);
   const [partySort, setPartySort] = React.useState<PartySort | null>(null);
   const [currencyCheck, setCurrencyCheck] = React.useState<"idle" | "checking" | "inr" | "undetermined">("idle");
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
@@ -343,6 +352,16 @@ export function OutstandingsScreen({
     if (partySort?.key !== key) return "none";
     return partySort.direction === "asc" ? "ascending" : "descending";
   }
+  function beginExport(kind: NonNullable<typeof exporting>) {
+    if (exportLock.current) return false;
+    exportLock.current = true;
+    setExporting(kind);
+    return true;
+  }
+  function endExport() {
+    exportLock.current = false;
+    setExporting(null);
+  }
   // Redundant once the unallocated total is known: that case now has its own
   // "Unallocated" figure in the totals row and its own "Unallocated by
   // party" tab, so this paragraph only earns its place when the total is
@@ -353,12 +372,17 @@ export function OutstandingsScreen({
   const batchStatementRowsAvailable = completeResult !== null
     && (completeResult.statement_open_bills !== undefined
       || completeResult.statement_unallocated_by_party !== undefined);
+  // A present unallocated control identifies the native path that computed
+  // the complete bill and residual sources. Empty vectors are omitted from
+  // serialization, so vector absence can also truthfully mean zero rows.
+  const workingPaperExportId = completeResult?.working_paper_export_id;
+  const workingPaperAvailable = workingPaperExportId !== undefined
+    && (exporting === "working-paper" || workingPaperExportId !== consumedWorkingPaperId);
   const exportAllPartyStatements = async (format: "xlsx" | "pdf") => {
-    if (!completeResult) return;
+    if (!completeResult || !beginExport("batch")) return;
     let approvalIdToRevoke: string | null = null;
     // Disable both batch-export controls before opening the native picker so
     // two click handlers cannot race each other in the renderer.
-    setBulkStatementExporting(true);
     try {
       const selection = await invoke<BulkPartyStatementDestinationSelection | null>("select_party_statement_destination");
       if (!selection) return;
@@ -390,7 +414,7 @@ export function OutstandingsScreen({
           setExportNotice({ message: operatorMessage(cause) });
         }
       }
-      setBulkStatementExporting(false);
+      endExport();
     }
   };
   return (
@@ -448,12 +472,16 @@ export function OutstandingsScreen({
             <button
               className="secondary-action"
               type="button"
+              disabled={exporting !== null}
               onClick={async () => {
+                if (!beginExport("csv")) return;
                 try {
                   const path = await exportCsv(completeResult);
                   setExportNotice({ message: fileNameOf(path), path });
                 } catch (cause) {
                   setExportNotice({ message: operatorMessage(cause) });
+                } finally {
+                  endExport();
                 }
               }}
             >
@@ -461,21 +489,45 @@ export function OutstandingsScreen({
               Export
             </button>
           )}
+          {workingPaperAvailable && (
+            <button
+              className="secondary-action"
+              type="button"
+              disabled={exporting !== null}
+              onClick={async () => {
+                if (!completeResult || !beginExport("working-paper")) return;
+                setConsumedWorkingPaperId(completeResult.working_paper_export_id ?? null);
+                try {
+                  const path = await exportWorkingPaper(completeResult);
+                  setExportNotice({ message: fileNameOf(path), path });
+                } catch (cause) {
+                  setExportNotice({
+                    message: `${operatorMessage(cause)} Refresh outstandings before trying another working-paper export.`,
+                  });
+                } finally {
+                  endExport();
+                }
+              }}
+            >
+              <Download size={16} />
+              {exporting === "working-paper" ? "Building working paper…" : "Excel working paper"}
+            </button>
+          )}
           {batchStatementRowsAvailable && (
             <>
               <button
                 className="secondary-action"
                 type="button"
-                disabled={bulkStatementExporting}
+                disabled={exporting !== null}
                 onClick={() => void exportAllPartyStatements("xlsx")}
               >
                 <Download size={16} />
-                {bulkStatementExporting ? "Writing statements…" : "All Excel statements"}
+                {exporting === "batch" ? "Writing statements…" : "All Excel statements"}
               </button>
               <button
                 className="secondary-action"
                 type="button"
-                disabled={bulkStatementExporting}
+                disabled={exporting !== null}
                 onClick={() => void exportAllPartyStatements("pdf")}
               >
                 <Download size={16} />
@@ -694,12 +746,16 @@ export function OutstandingsScreen({
                             <button
                               type="button"
                               className="party-statement-action"
+                              disabled={exporting !== null}
                               onClick={async () => {
+                                if (!beginExport("party")) return;
                                 try {
                                   const path = await exportPartyStatement(completeResult, party.party, "xlsx");
                                   setExportNotice({ message: fileNameOf(path), path });
                                 } catch (cause) {
                                   setExportNotice({ message: operatorMessage(cause) });
+                                } finally {
+                                  endExport();
                                 }
                               }}
                             >
@@ -709,12 +765,16 @@ export function OutstandingsScreen({
                             <button
                               type="button"
                               className="party-statement-action"
+                              disabled={exporting !== null}
                               onClick={async () => {
+                                if (!beginExport("party")) return;
                                 try {
                                   const path = await exportPartyStatement(completeResult, party.party, "pdf");
                                   setExportNotice({ message: fileNameOf(path), path });
                                 } catch (cause) {
                                   setExportNotice({ message: operatorMessage(cause) });
+                                } finally {
+                                  endExport();
                                 }
                               }}
                             >
@@ -795,6 +855,17 @@ async function previewBulkPartyStatements(result: InrCompleteResult) {
       unallocated_by_party: result.statement_unallocated_by_party ?? [],
     },
   });
+}
+
+/// Builds the complete dual-ageing workbook from the finished native read.
+/// The Rust command re-parses dates, recomputes both ages, and reconciles all
+/// exact controls before it writes a file; it performs no Tally request.
+async function exportWorkingPaper(result: InrCompleteResult) {
+  const argument = workingPaperInvokeArgument(result);
+  if (!argument) {
+    throw new Error("This read cannot substantiate a complete working paper.");
+  }
+  return invoke<string>("export_outstandings_working_paper", argument);
 }
 
 /// Builds the report as CSV.

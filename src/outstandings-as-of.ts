@@ -163,3 +163,9 @@ export function bulkPartyStatementsInvokeArgument(
     },
   };
 }
+
+/** Uses only the opaque Rust-owned binding returned with the completed read. */
+export function workingPaperInvokeArgument(result: { working_paper_export_id?: string }) {
+  if (!result.working_paper_export_id) return null;
+  return { request: { export_id: result.working_paper_export_id } };
+}
