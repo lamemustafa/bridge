@@ -14,6 +14,7 @@ import {
   singleCompanyOutstandingsInvokeArgument,
   type AsOfBoundValue,
 } from "./outstandings-as-of";
+import { trialBalanceExportMessage, trialBalanceInvokeArgument, type TrialBalanceExportSummary } from "./trial-balance-export";
 
 type Props = {
   config: { host: string; port: number };
@@ -122,6 +123,7 @@ export function OutstandingsScreen({
   } | null>(null);
   const [expandedParty, setExpandedParty] = React.useState<string | null>(null);
   const [bulkStatementExporting, setBulkStatementExporting] = React.useState(false);
+  const [trialBalanceExporting, setTrialBalanceExporting] = React.useState(false);
   const [partySort, setPartySort] = React.useState<PartySort | null>(null);
   const [currencyCheck, setCurrencyCheck] = React.useState<"idle" | "checking" | "inr" | "undetermined">("idle");
   const [, refreshClock] = React.useReducer((value) => value + 1, 0);
@@ -393,8 +395,29 @@ export function OutstandingsScreen({
       setBulkStatementExporting(false);
     }
   };
+  const exportTrialBalance = async () => {
+    const argument = trialBalanceInvokeArgument(config, company, requestedAsOf);
+    if (!argument) return;
+    const version = requestVersion.current;
+    setTrialBalanceExporting(true);
+    setExportNotice(null);
+    try {
+      const summary = await invoke<TrialBalanceExportSummary>("export_tally_trial_balance", argument);
+      if (requestVersion.current !== version) return;
+      setExportNotice({
+        message: trialBalanceExportMessage(summary),
+        path: summary.path,
+      });
+    } catch (cause) {
+      if (requestVersion.current === version) {
+        setExportNotice({ message: operatorMessage(cause) });
+      }
+    } finally {
+      setTrialBalanceExporting(false);
+    }
+  };
   return (
-    <section className="outstandings-screen" aria-busy={loading}>
+    <section className="outstandings-screen" aria-busy={loading || trialBalanceExporting}>
       <div className="outstandings-heading">
         <div>
           <h2>{company.name}</h2>
@@ -420,17 +443,17 @@ export function OutstandingsScreen({
                 setLoadedResult(null);
                 setError(null);
               }}
-              disabled={loading}
+              disabled={loading || trialBalanceExporting}
               aria-describedby="outstandings-as-of-help"
             />
-            <small id="outstandings-as-of-help">Choose the exact date, then refresh.</small>
+            <small id="outstandings-as-of-help">Choose the exact date, then refresh or export.</small>
           </label>
           <label className="outstandings-as-of">
             <span>Age from</span>
             <select
               value={ageingAnchor}
               onChange={(event) => setAgeingAnchor(event.target.value as OutstandingsAgeingAnchor)}
-              disabled={loading}
+              disabled={loading || trialBalanceExporting}
               aria-describedby="outstandings-ageing-anchor-help"
             >
               <option value="due_date">Due date</option>
@@ -444,6 +467,16 @@ export function OutstandingsScreen({
               Compare clients
             </button>
           )}
+          <button
+            className="secondary-action"
+            type="button"
+            disabled={loading || trialBalanceExporting || !requestedAsOf}
+            onClick={() => void exportTrialBalance()}
+            title="Reads native ledger balances from the company’s books start through the selected date."
+          >
+            <Download size={16} />
+            {trialBalanceExporting ? "Building Trial Balance…" : "Trial Balance"}
+          </button>
           {completeResult && (
             <button
               className="secondary-action"
@@ -485,7 +518,7 @@ export function OutstandingsScreen({
           )}
           <button className="secondary-action" type="button" onClick={onChangeSetup}>Manage Tally</button>
           {!outstandingsUnavailable && (
-            <button type="button" onClick={load} disabled={loading || !requestedAsOf}>
+            <button type="button" onClick={load} disabled={loading || trialBalanceExporting || !requestedAsOf}>
               <RefreshCw size={18} className={loading ? "spin" : undefined} />
               {loading ? "Reading…" : result ? "Refresh" : "Load outstandings"}
             </button>

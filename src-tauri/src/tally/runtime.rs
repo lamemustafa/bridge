@@ -1,6 +1,7 @@
 use super::{ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger};
 use super::{TallyProbeResult, TallyVoucher};
 use crate::observability::BodyBytesObservation;
+use crate::reports::trial_balance::TrialBalanceWorkbookSource;
 use crate::tally::connection::NativePairedRead;
 use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
 #[cfg(feature = "voucher-scan")]
@@ -34,6 +35,7 @@ use bridge_tally_protocol::outstandings::{
     VoucherAlterIdHighWater, WitnessPairVerification,
 };
 use bridge_tally_protocol::outstandings_shared::{DateBoundaryProfile, OutstandingsReport};
+use bridge_tally_protocol::trial_balance::{parse_trial_balance, render_trial_balance_request};
 use bridge_tally_transport::TallyTransportError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1408,6 +1410,69 @@ impl TallyRuntime {
         .await
     }
 
+    /// Reads one GUID-bracketed, byte-stable native ledger collection for a
+    /// book-to-date Trial Balance. The response never crosses the webview:
+    /// callers receive a Rust-owned source ready for fail-closed rendering.
+    pub async fn fetch_trial_balance_source(
+        &self,
+        config: TallyConfig,
+        company: String,
+        expected_company_guid: String,
+        as_of: TallyDate,
+    ) -> anyhow::Result<TrialBalanceWorkbookSource> {
+        let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
+        let _lease = self.begin_ordinary_read(&config)?;
+        self.execute(
+            config,
+            ReadOperation::MasterExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let company = company.clone();
+                let expected_company_guid = expected_company_guid.clone();
+                let as_of = as_of.clone();
+                async move {
+                    let extent = client
+                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .await?;
+                    if &as_of < extent.books_from() {
+                        anyhow::bail!("trial_balance_as_of_precedes_books_from");
+                    }
+                    let period = NativeLedgerSnapshotPeriod::new(
+                        boundary_profile,
+                        extent.books_from().clone(),
+                        as_of.clone(),
+                    )
+                    .map_err(|_| anyhow::anyhow!("trial_balance_period_boundary_unsupported"))?;
+                    let paired = client
+                        .fetch_native_report_paired(render_trial_balance_request(&company, &period))
+                        .await?;
+                    let NativePairedRead::Stable {
+                        body,
+                        encoded_bytes,
+                    } = paired
+                    else {
+                        anyhow::bail!("trial_balance_snapshot_drifted");
+                    };
+                    let closing_extent = client
+                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .await?;
+                    if closing_extent != extent {
+                        anyhow::bail!("book_changed_during_trial_balance_read");
+                    }
+                    let trial_balance = parse_trial_balance(&body, &expected_company_guid)?;
+                    Ok(TrialBalanceWorkbookSource {
+                        company,
+                        from_yyyymmdd: period.from().as_str().to_string(),
+                        to_yyyymmdd: period.to().as_str().to_string(),
+                        source_bytes: encoded_bytes,
+                        trial_balance,
+                    })
+                }
+            },
+        )
+        .await
+    }
+
     /// Outstandings via Tally's own `TYPE=Data` bills reports plus one ledger
     /// snapshot.
     ///
@@ -2543,6 +2608,87 @@ mod tests {
                     && reason.foreign_currency_ledger_name.as_deref() == Some("FX USD Debtor 02")
         ));
         server.await.expect("synthetic outstandings server task");
+    }
+
+    #[tokio::test]
+    async fn trial_balance_read_is_paired_and_extent_bracketed() {
+        const EXTENT: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        const CAPTURE: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/trial_balance_probe_b.xml"
+        );
+        const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        const COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+
+        let extent = EXTENT.replacen(
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
+            1,
+        );
+        let trial_balance = CAPTURE.replace("ec4454ae-5c4c-4bfa-b3b0-68182a749689", COMPANY_GUID);
+        let expected_source_bytes = trial_balance.encode_utf16().count() * 2 + 2;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind synthetic Trial Balance server");
+        let address = listener.local_addr().expect("synthetic server address");
+        let server = tokio::spawn(async move {
+            for index in 0..12 {
+                let (mut socket, _) =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
+                        .await
+                        .expect("Trial Balance request timed out")
+                        .expect("accept Trial Balance request");
+                let request = read_http_request(&mut socket).await;
+                let expected_method: &[u8] = if index % 2 == 0 {
+                    b"POST /"
+                } else {
+                    b"GET /status"
+                };
+                assert!(
+                    request.starts_with(expected_method),
+                    "request {index} did not preserve paired-read health bracketing"
+                );
+                if matches!(index, 4 | 6) {
+                    for field in ["TBALOPENING", "TBALCLOSING"] {
+                        let utf16le = field
+                            .encode_utf16()
+                            .flat_map(u16::to_le_bytes)
+                            .collect::<Vec<_>>();
+                        assert!(request
+                            .windows(utf16le.len())
+                            .any(|window| window == utf16le));
+                    }
+                }
+                let response = match index {
+                    0 | 2 | 8 | 10 => utf16_xml_response(&extent),
+                    1 | 3 | 5 | 7 | 9 | 11 => utf8_status_response(STATUS),
+                    4 | 6 => utf16_xml_response(&trial_balance),
+                    _ => unreachable!(),
+                };
+                socket.write_all(&response).await.expect("write response");
+            }
+        });
+
+        let source = TallyRuntime::default()
+            .fetch_trial_balance_source(
+                TallyConfig {
+                    host: address.ip().to_string(),
+                    port: address.port(),
+                },
+                "Aarav Trading Company Demo".to_string(),
+                COMPANY_GUID.to_string(),
+                TallyDate::parse("20260401").unwrap(),
+            )
+            .await
+            .expect("stable Trial Balance source");
+
+        assert_eq!(source.company, "Aarav Trading Company Demo");
+        assert_eq!(source.from_yyyymmdd, "20240401");
+        assert_eq!(source.to_yyyymmdd, "20260401");
+        assert_eq!(source.trial_balance.rows.len(), 24);
+        assert_eq!(source.source_bytes, expected_source_bytes);
+        server.await.expect("synthetic Trial Balance server task");
     }
 
     #[test]

@@ -399,6 +399,35 @@ is the same window-mismatch trap corrected on #177.
 number. An empty `TYPE="Amount"` is not zero — coercing it silently produces a wrong balance.
 Fail closed or quarantine. Cause not established.
 
+### 7.1 Trial Balance uses `TBALOPENING` / `TBALCLOSING`, not `CLOSINGBALANCE`
+
+**VERIFIED — live 2026-08-26, synthetic `BRIDGE PROBE B SANDBOX`, TallyPrime Silver
+7.1.** A production-shaped native `List of Ledgers` request over
+`BOOKSFROM..SVTODATE` returned 24 ledger rows with `TBALOPENING` and `TBALCLOSING`.
+Two serialized reads were byte-identical at 18,196 bytes. The selected company's
+GUID and accounting extent were unchanged in the paired reads surrounding the wider
+capture programme.
+
+For a ledger-wise Trial Balance:
+
+- use `TBALOPENING` and `TBALCLOSING` as the opening and closing columns;
+- do not substitute `OPENINGBALANCE` or `CLOSINGBALANCE`, which serve a different
+  ledger/balance presentation;
+- interpret a negative amount as debit and a positive amount as credit;
+- prove `sum(TBALCLOSING - TBALOPENING) = 0` exactly before publishing; and
+- if `sum(TBALOPENING) != 0`, add a separately labelled **Difference in opening
+  balances** control row equal to `-sum(TBALOPENING)` to both opening and closing.
+  Do not absorb that difference into a ledger or hide it in totals.
+
+The two native fields provide net opening and closing positions only. Their difference
+is a **net change**, not gross debit and credit voucher turnover. The captured synthetic
+book had 24 rows, explicit zero openings, and an exact zero movement sum. This evidence
+does not establish the company's currency, customer-book completeness, gross turnover,
+other Tally profiles, or Windows workbook behaviour. A workbook must therefore leave the
+currency unasserted unless a separate company-currency proof exists. The byte-exact
+response, exact request, SHA-256 values, and scope statement are retained with the native
+Trial Balance fixture.
+
 ---
 
 ## 8. `FETCH` semantics
@@ -1535,3 +1564,4 @@ rename behaviour, other releases, and other configurations remain unverified.
 | 2026-07-30 | Recorded the outstandings-only wildcard exception, curated bill-type corruption, and the contextual polarity finding. |
 | 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
 | 2026-08-22 | Updated §5.3 with the observed Education `{1,2,31}` boundary rule and the limited TallyPrime Silver arbitrary-day observations; this settles #115 item 1 for the recorded profile. |
+| 2026-08-26 | Added §7.1 from the paired synthetic Trial Balance capture: `TBALOPENING` / `TBALCLOSING`, exact movement control, and the explicit opening-difference row. |

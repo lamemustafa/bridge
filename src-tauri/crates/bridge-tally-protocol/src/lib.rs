@@ -41,6 +41,9 @@ pub mod outstandings;
 /// for why this is scoped the way it is.
 pub mod outstandings_shared;
 mod tolerant_xml;
+pub mod trial_balance;
+mod trial_balance_model;
+mod trial_balance_request;
 pub mod xml_read_profiles;
 
 pub const BRIDGE_LEDGER_EXPORT_SCHEMA: &str = "bridge.tally.ledgers/1";

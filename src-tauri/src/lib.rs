@@ -91,6 +91,7 @@ pub fn run() {
             commands::tally_write_fixture_enrollment_status,
             commands::revoke_tally_write_fixture_enrollment,
             commands::save_report_download,
+            commands::export_tally_trial_balance,
             commands::reveal_exported_file,
             commands::export_party_statement,
             commands::select_party_statement_destination,

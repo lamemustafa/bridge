@@ -19,6 +19,8 @@ use crate::reports::party_statement::{
 };
 use crate::reports::party_statement_pdf::render_party_statement_pdf;
 use crate::reports::party_statement_xlsx::render_party_statement_xlsx;
+use crate::reports::trial_balance::TrialBalanceExportSummary;
+use crate::reports::trial_balance_xlsx::render_trial_balance_xlsx;
 use crate::sync::coordinator::{SnapshotCoordinator, SnapshotJobStatus};
 use crate::sync::reconciliation::ExternalReferenceCatalog;
 use crate::sync::snapshot::{
@@ -2009,6 +2011,14 @@ pub struct OutstandingsRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ExportTrialBalanceRequest {
+    pub config: TallyConfig,
+    pub company: String,
+    pub expected_company_guid: String,
+    pub as_of_yyyymmdd: TallyDate,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct VoucherRequest {
     pub config: TallyConfig,
     pub company: String,
@@ -2149,6 +2159,98 @@ pub async fn fetch_tally_outstandings(
         )
         .await
         .map_err(tally_runtime_command_error)
+}
+
+/// Reads and saves a GUID-bracketed native, book-to-date Trial Balance.
+/// Ledger rows remain Rust-owned; only the resulting path and control summary
+/// cross the webview boundary. No Tally write is sent.
+#[tauri::command]
+pub async fn export_tally_trial_balance(
+    app: tauri::AppHandle,
+    request: ExportTrialBalanceRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<TrialBalanceExportSummary, TallyCommandError> {
+    use tauri::Manager as _;
+
+    validate_company_name(&request.company).map_err(|message| {
+        tally_command_error(
+            "company_selection_invalid",
+            "Tally application",
+            message,
+            "after_change",
+            false,
+            "Select the intended GUID-bearing company and repeat the read-only action.",
+        )
+    })?;
+    let expected_company_guid =
+        normalize_company_guid(&request.expected_company_guid).map_err(|_| {
+            tally_command_error(
+                "company_selection_invalid",
+                "Tally application",
+                "The selected company GUID is invalid.",
+                "after_change",
+                false,
+                "Select the intended GUID-bearing company and repeat the read-only action.",
+            )
+        })?;
+    let source = runtime
+        .fetch_trial_balance_source(
+            request.config,
+            request.company,
+            expected_company_guid,
+            request.as_of_yyyymmdd,
+        )
+        .await
+        .map_err(tally_runtime_command_error)?;
+    let bytes = render_trial_balance_xlsx(&source).map_err(|_| {
+        tally_command_error(
+            "trial_balance_render_failed",
+            "Financial data",
+            "Bridge could not build a Trial Balance whose exact controls and Excel values agree.",
+            "after_change",
+            false,
+            "Keep the book unchanged, then repeat the export. If it fails again, retain the selected period for support.",
+        )
+    })?;
+    let downloads = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .map_err(|_| {
+            tally_command_error(
+                "trial_balance_destination_unavailable",
+                "Filesystem",
+                "Bridge could not locate a folder for the Trial Balance export.",
+                "after_change",
+                false,
+                "Check the workstation Downloads folder and repeat the export.",
+            )
+        })?;
+    let mut company_slug = statement_filename_slug(&source.company);
+    company_slug.truncate(100);
+    let stem = format!(
+        "trial-balance-{company_slug}-{}-to-{}",
+        source.from_yyyymmdd, source.to_yyyymmdd
+    );
+    let path = write_unique_export_file(&downloads, &stem, "xlsx", &bytes, "Trial Balance")
+        .map_err(|_| {
+            tally_command_error(
+                "trial_balance_write_failed",
+                "Filesystem",
+                "Bridge could not finish writing the Trial Balance export.",
+                "after_change",
+                false,
+                "Check free disk space and Downloads-folder permissions, then repeat the export.",
+            )
+        })?;
+    Ok(TrialBalanceExportSummary {
+        path: path.to_string_lossy().into_owned(),
+        company: source.company,
+        from_yyyymmdd: source.from_yyyymmdd,
+        to_yyyymmdd: source.to_yyyymmdd,
+        ledger_count: source.trial_balance.rows.len(),
+        opening_difference: source.trial_balance.opening_difference.as_str().to_string(),
+    })
 }
 
 /// Reads operator-owned filing labels from ordinary application configuration.
@@ -3357,6 +3459,16 @@ fn write_unique_statement_file(
     extension: &str,
     bytes: &[u8],
 ) -> Result<std::path::PathBuf, String> {
+    write_unique_export_file(destination, stem, extension, bytes, "statement")
+}
+
+fn write_unique_export_file(
+    destination: &std::path::Path,
+    stem: &str,
+    extension: &str,
+    bytes: &[u8],
+    export_label: &str,
+) -> Result<std::path::PathBuf, String> {
     if stem.is_empty()
         || stem.len() > 190
         || std::path::Path::new(stem).components().count() != 1
@@ -3381,7 +3493,7 @@ fn write_unique_statement_file(
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(format!(
-                    "Bridge could not create the statement export: {error}"
+                    "Bridge could not create the {export_label} export: {error}"
                 ))
             }
         };
@@ -3389,7 +3501,7 @@ fn write_unique_statement_file(
             drop(file);
             let _ = std::fs::remove_file(&path);
             return Err(format!(
-                "Bridge could not finish writing the statement export: {error}"
+                "Bridge could not finish writing the {export_label} export: {error}"
             ));
         }
         return Ok(path);
