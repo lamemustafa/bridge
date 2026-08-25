@@ -11,6 +11,7 @@ pub mod bills_reconciliation;
 mod pack_models;
 pub mod reconciliation;
 pub mod report_tie_out;
+pub mod structured_import;
 pub mod transport_qualification;
 
 pub use pack_models::*;
