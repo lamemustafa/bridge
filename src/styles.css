@@ -1740,6 +1740,23 @@ summary:focus-visible,
   padding: 0 16px;
 }
 
+.outstandings-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.outstandings-empty .outstandings-as-of {
+  max-width: 420px;
+  margin-top: 18px;
+}
+
+.outstandings-empty .outstandings-empty-actions .secondary-action {
+  border: 1px solid #c9d5ce;
+  background: #f8faf8;
+  color: #27352e;
+}
+
 @media (max-width: 860px) {
   .shell {
     height: auto;
@@ -2035,6 +2052,13 @@ summary:focus-visible,
   font-size: 12px;
   cursor: pointer;
   text-decoration: underline;
+}
+
+.outstandings-empty .outstandings-export-notice button {
+  min-height: auto;
+  margin-top: 0;
+  padding: 0;
+  border-radius: 0;
 }
 
 .outstandings-export-failures {

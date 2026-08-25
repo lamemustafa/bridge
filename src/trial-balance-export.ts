@@ -7,7 +7,6 @@ export type TrialBalanceExportSummary = {
   from_yyyymmdd: string;
   to_yyyymmdd: string;
   ledger_count: number;
-  opening_difference: string;
 };
 
 export function trialBalanceInvokeArgument(
@@ -27,18 +26,10 @@ export function trialBalanceInvokeArgument(
 }
 
 export function trialBalanceExportMessage(summary: TrialBalanceExportSummary) {
-  const difference = openingDifferenceMessage(summary.opening_difference);
-  return `Book-to-date Trial Balance · ${summary.ledger_count} ledgers · ${displayDate(summary.from_yyyymmdd)} to ${displayDate(summary.to_yyyymmdd)}${difference}`;
+  return `Book-to-date Trial Balance · ${summary.ledger_count} ledgers · ${displayDate(summary.from_yyyymmdd)} to ${displayDate(summary.to_yyyymmdd)}`;
 }
 
 function displayDate(value: string) {
   if (!/^\d{8}$/.test(value)) return value;
   return `${value.slice(6, 8)}-${value.slice(4, 6)}-${value.slice(0, 4)}`;
-}
-
-function openingDifferenceMessage(value: string) {
-  if (/^-?0(?:\.0+)?$/.test(value)) return "";
-  const direction = value.startsWith("-") ? "Dr" : "Cr";
-  const magnitude = value.replace(/^-/, "");
-  return ` · includes opening difference ${magnitude} ${direction}`;
 }

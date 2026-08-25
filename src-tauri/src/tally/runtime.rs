@@ -608,6 +608,30 @@ pub(crate) enum TallyRuntimeReadError {
     ApplicationResponseRejected,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum TrialBalanceReadError {
+    #[error("trial_balance_as_of_precedes_books_from")]
+    AsOfPrecedesBooksFrom,
+    #[error("trial_balance_period_boundary_unsupported")]
+    PeriodBoundaryUnsupported,
+    #[error("trial_balance_snapshot_drifted")]
+    SnapshotDrifted,
+    #[error("book_changed_during_trial_balance_read")]
+    BookChanged,
+}
+
+fn stable_trial_balance_read(
+    paired: NativePairedRead,
+) -> Result<(String, usize), TrialBalanceReadError> {
+    match paired {
+        NativePairedRead::Stable {
+            body,
+            encoded_bytes,
+        } => Ok((body, encoded_bytes)),
+        NativePairedRead::Drifted => Err(TrialBalanceReadError::SnapshotDrifted),
+    }
+}
+
 #[derive(Clone)]
 struct CachedProbe {
     review_id: String,
@@ -1435,29 +1459,23 @@ impl TallyRuntime {
                         .fetch_company_book_extent(&company, &expected_company_guid)
                         .await?;
                     if &as_of < extent.books_from() {
-                        anyhow::bail!("trial_balance_as_of_precedes_books_from");
+                        return Err(TrialBalanceReadError::AsOfPrecedesBooksFrom.into());
                     }
                     let period = NativeLedgerSnapshotPeriod::new(
                         boundary_profile,
                         extent.books_from().clone(),
                         as_of.clone(),
                     )
-                    .map_err(|_| anyhow::anyhow!("trial_balance_period_boundary_unsupported"))?;
+                    .map_err(|_| TrialBalanceReadError::PeriodBoundaryUnsupported)?;
                     let paired = client
                         .fetch_native_report_paired(render_trial_balance_request(&company, &period))
                         .await?;
-                    let NativePairedRead::Stable {
-                        body,
-                        encoded_bytes,
-                    } = paired
-                    else {
-                        anyhow::bail!("trial_balance_snapshot_drifted");
-                    };
+                    let (body, encoded_bytes) = stable_trial_balance_read(paired)?;
                     let closing_extent = client
                         .fetch_company_book_extent(&company, &expected_company_guid)
                         .await?;
                     if closing_extent != extent {
-                        anyhow::bail!("book_changed_during_trial_balance_read");
+                        return Err(TrialBalanceReadError::BookChanged.into());
                     }
                     let trial_balance = parse_trial_balance(&body, &expected_company_guid)?;
                     Ok(TrialBalanceWorkbookSource {
@@ -2689,6 +2707,14 @@ mod tests {
         assert_eq!(source.trial_balance.rows.len(), 24);
         assert_eq!(source.source_bytes, expected_source_bytes);
         server.await.expect("synthetic Trial Balance server task");
+    }
+
+    #[test]
+    fn trial_balance_pair_drift_remains_typed() {
+        assert!(matches!(
+            stable_trial_balance_read(NativePairedRead::Drifted),
+            Err(TrialBalanceReadError::SnapshotDrifted)
+        ));
     }
 
     #[test]

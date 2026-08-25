@@ -38,20 +38,8 @@ test("completed export copy names its book-to-date scope", () => {
       from_yyyymmdd: "20250401",
       to_yyyymmdd: "20260814",
       ledger_count: 24,
-      opening_difference: "0",
     }),
     "Book-to-date Trial Balance · 24 ledgers · 01-04-2025 to 14-08-2026",
-  );
-  assert.match(
-    trialBalanceExportMessage({
-      path: "/synthetic/trial-balance.xlsx",
-      company: "Synthetic Books",
-      from_yyyymmdd: "20250401",
-      to_yyyymmdd: "20260814",
-      ledger_count: 24,
-      opening_difference: "425000.00",
-    }),
-    /includes opening difference 425000\.00 Cr/,
   );
 });
 
@@ -62,5 +50,12 @@ test("screen and Tauri registration expose the Rust-owned export", async () => {
   ]);
   assert.match(screen, /invoke<TrialBalanceExportSummary>\("export_tally_trial_balance", argument\)/);
   assert.match(screen, /Building Trial Balance…/);
+  assert.match(screen, /Trial Balance remains currency-neutral and can be exported independently/);
+  assert.match(screen, /When Bridge detects Education mode, choose day 1, 2, or 31/);
+  assert.match(screen, /without assuming Tally will accept it/);
+  assert.ok(
+    screen.indexOf("const exportTrialBalance") < screen.indexOf("if (!currencyReadPermitted)"),
+    "currency-neutral Trial Balance action must be constructed before the INR-only early return",
+  );
   assert.match(commands, /commands::export_tally_trial_balance/);
 });

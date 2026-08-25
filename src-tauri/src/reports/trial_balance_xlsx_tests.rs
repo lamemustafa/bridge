@@ -1,6 +1,5 @@
 use std::io::{Cursor, Read};
 
-use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::trial_balance::parse_trial_balance;
 
 use super::trial_balance::{TrialBalanceWorkbookSource, TrialBalanceXlsxError};
@@ -46,21 +45,9 @@ fn captured_balances_render_as_a_real_numeric_workbook() {
 }
 
 #[test]
-fn opening_difference_is_explicit_and_never_absorbed_into_totals() {
-    let mut source = captured_source();
-    source.trial_balance.rows[0].opening = ExactDecimal::parse("-100.00").unwrap();
-    source.trial_balance.rows[0].closing = source.trial_balance.rows[0]
-        .closing
-        .checked_subtract(&ExactDecimal::parse("100.00").unwrap())
-        .unwrap();
-    source.trial_balance.opening_difference = ExactDecimal::parse("100.00").unwrap();
+fn mutated_nonzero_opening_control_fails_closed() {
+    use bridge_tally_core::ExactDecimal;
 
-    let xml = workbook_xml(render_trial_balance_xlsx(&source).unwrap());
-    assert!(xml.contains("Difference in opening balances"));
-}
-
-#[test]
-fn stale_or_missing_opening_difference_fails_closed() {
     let mut source = captured_source();
     source.trial_balance.rows[0].opening = ExactDecimal::parse("-100.00").unwrap();
     source.trial_balance.rows[0].closing = source.trial_balance.rows[0]

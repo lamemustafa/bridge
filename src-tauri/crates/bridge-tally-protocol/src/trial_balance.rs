@@ -171,13 +171,12 @@ pub fn parse_trial_balance(
             "movement_does_not_balance",
         ));
     }
-    let opening_difference = ExactDecimal::zero()
-        .checked_subtract(&opening_total)
-        .map_err(|_| TrialBalanceError::Arithmetic)?;
-    Ok(TrialBalance {
-        rows,
-        opening_difference,
-    })
+    if !opening_total.is_zero() {
+        return Err(TrialBalanceError::InvalidResponse(
+            "opening_difference_unverified",
+        ));
+    }
+    Ok(TrialBalance { rows })
 }
 
 fn parse_ledger(

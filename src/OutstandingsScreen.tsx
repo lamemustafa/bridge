@@ -99,6 +99,12 @@ type BulkPartyStatementDestinationSelection = {
   destination: string;
   approval_id: string;
 };
+type ExportNotice = {
+  message: string;
+  path?: string;
+  location?: string;
+  failures?: Array<{ party: string; code: string; reason: string }>;
+};
 
 export function OutstandingsScreen({
   config,
@@ -115,12 +121,7 @@ export function OutstandingsScreen({
   const [inrAssertedCompanyGuid, setInrAssertedCompanyGuid] = React.useState<string | null>(null);
   const [ageingAnchor, setAgeingAnchor] = React.useState<OutstandingsAgeingAnchor>("due_date");
   const [view, setView] = React.useState<"ageing" | "unallocated">("ageing");
-  const [exportNotice, setExportNotice] = React.useState<{
-    message: string;
-    path?: string;
-    location?: string;
-    failures?: Array<{ party: string; code: string; reason: string }>;
-  } | null>(null);
+  const [exportNotice, setExportNotice] = React.useState<ExportNotice | null>(null);
   const [expandedParty, setExpandedParty] = React.useState<string | null>(null);
   const [bulkStatementExporting, setBulkStatementExporting] = React.useState(false);
   const [trialBalanceExporting, setTrialBalanceExporting] = React.useState(false);
@@ -274,6 +275,29 @@ export function OutstandingsScreen({
     setFullyLoadedParties(new Set());
   }, [inrCompleteResult]);
 
+  const exportTrialBalance = async () => {
+    if (!company) return;
+    const argument = trialBalanceInvokeArgument(config, company, requestedAsOf);
+    if (!argument) return;
+    const version = requestVersion.current;
+    setTrialBalanceExporting(true);
+    setExportNotice(null);
+    try {
+      const summary = await invoke<TrialBalanceExportSummary>("export_tally_trial_balance", argument);
+      if (requestVersion.current !== version) return;
+      setExportNotice({
+        message: trialBalanceExportMessage(summary),
+        path: summary.path,
+      });
+    } catch (cause) {
+      if (requestVersion.current === version) {
+        setExportNotice({ message: operatorMessage(cause) });
+      }
+    } finally {
+      setTrialBalanceExporting(false);
+    }
+  };
+
   // On a book where most balances carry no bill reference, the ageing panel
   // can describe a rounding error against total exposure. Default to
   // whichever breakdown describes more money, but only once per report -- a
@@ -309,10 +333,38 @@ export function OutstandingsScreen({
       );
     }
     return (
-      <section className="panel wide outstandings-empty">
+      <section className="panel wide outstandings-empty" aria-busy={trialBalanceExporting}>
         <h2>Confirm the base currency</h2>
-        <p>Tally did not settle this company&rsquo;s base currency — it defines more than one currency, or one that is not the Indian rupee. Bridge shows totals in rupees, so confirm before continuing.</p>
-        <button type="button" onClick={() => setInrAssertedCompanyGuid(company.guid)}>This company uses INR</button>
+        <p>Tally did not settle this company&rsquo;s base currency — it defines more than one currency, or one that is not the Indian rupee. Confirm INR only to load rupee-denominated outstandings. The Trial Balance remains currency-neutral and can be exported independently.</p>
+        <label className="outstandings-as-of">
+          <span>Trial Balance as of</span>
+          <input
+            type="date"
+            value={asOf}
+            onChange={(event) => {
+              onAsOfChange(event.target.value);
+              setLoadedResult(null);
+              setError(null);
+            }}
+            disabled={trialBalanceExporting}
+            aria-describedby="trial-balance-as-of-help"
+          />
+          <small id="trial-balance-as-of-help">When Bridge detects Education mode, choose day 1, 2, or 31. For other modes, Bridge sends the selected date without assuming Tally will accept it.</small>
+        </label>
+        <div className="outstandings-empty-actions">
+          <button type="button" onClick={() => setInrAssertedCompanyGuid(company.guid)}>This company uses INR</button>
+          <button
+            className="secondary-action"
+            type="button"
+            disabled={trialBalanceExporting || !requestedAsOf}
+            onClick={() => void exportTrialBalance()}
+            title="Reads currency-neutral native ledger balances through the selected date."
+          >
+            <Download size={16} />
+            {trialBalanceExporting ? "Building Trial Balance…" : "Export Trial Balance"}
+          </button>
+        </div>
+        <ExportNoticeBanner notice={exportNotice} onDismiss={() => setExportNotice(null)} />
       </section>
     );
   }
@@ -393,27 +445,6 @@ export function OutstandingsScreen({
         }
       }
       setBulkStatementExporting(false);
-    }
-  };
-  const exportTrialBalance = async () => {
-    const argument = trialBalanceInvokeArgument(config, company, requestedAsOf);
-    if (!argument) return;
-    const version = requestVersion.current;
-    setTrialBalanceExporting(true);
-    setExportNotice(null);
-    try {
-      const summary = await invoke<TrialBalanceExportSummary>("export_tally_trial_balance", argument);
-      if (requestVersion.current !== version) return;
-      setExportNotice({
-        message: trialBalanceExportMessage(summary),
-        path: summary.path,
-      });
-    } catch (cause) {
-      if (requestVersion.current === version) {
-        setExportNotice({ message: operatorMessage(cause) });
-      }
-    } finally {
-      setTrialBalanceExporting(false);
     }
   };
   return (
@@ -526,30 +557,7 @@ export function OutstandingsScreen({
         </div>
       </div>
 
-      {exportNotice && (
-        <div className="outstandings-export-notice" role="status">
-          <span>
-            {exportNotice.path
-              ? <>Saved <strong>{exportNotice.message}</strong> to {exportNotice.location ?? "Downloads"}</>
-              : exportNotice.message}
-          </span>
-          <span className="export-notice-actions">
-            {exportNotice.path && (
-              <button type="button" onClick={() => void invoke("reveal_exported_file", { path: exportNotice.path })}>
-                {revealLabel()}
-              </button>
-            )}
-            <button type="button" onClick={() => setExportNotice(null)} aria-label="Dismiss">Dismiss</button>
-          </span>
-          {exportNotice.failures && exportNotice.failures.length > 0 && (
-            <ul className="outstandings-export-failures">
-              {exportNotice.failures.map((failure) => (
-                <li key={failure.party}><strong>{failure.party}</strong>: {failure.reason}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+      <ExportNoticeBanner notice={exportNotice} onDismiss={() => setExportNotice(null)} />
       {error && <div className="outstandings-state error" role="alert"><strong>Read failed</strong><span>{error}</span></div>}
       {loading && !report && (
         <div className="outstandings-state" role="status" aria-live="polite">
@@ -1112,4 +1120,38 @@ function operatorMessage(cause: unknown) {
     return cause.message;
   }
   return typeof cause === "string" ? cause : "The local Tally read did not complete.";
+}
+
+function ExportNoticeBanner({
+  notice,
+  onDismiss,
+}: {
+  notice: ExportNotice | null;
+  onDismiss: () => void;
+}) {
+  if (!notice) return null;
+  return (
+    <div className="outstandings-export-notice" role="status">
+      <span>
+        {notice.path
+          ? <>Saved <strong>{notice.message}</strong> to {notice.location ?? "Downloads"}</>
+          : notice.message}
+      </span>
+      <span className="export-notice-actions">
+        {notice.path && (
+          <button type="button" onClick={() => void invoke("reveal_exported_file", { path: notice.path })}>
+            {revealLabel()}
+          </button>
+        )}
+        <button type="button" onClick={onDismiss} aria-label="Dismiss">Dismiss</button>
+      </span>
+      {notice.failures && notice.failures.length > 0 && (
+        <ul className="outstandings-export-failures">
+          {notice.failures.map((failure) => (
+            <li key={failure.party}><strong>{failure.party}</strong>: {failure.reason}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }

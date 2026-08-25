@@ -14,9 +14,6 @@ pub struct TrialBalanceLedger {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrialBalance {
     pub rows: Vec<TrialBalanceLedger>,
-    /// A synthetic control row equal to `-sum(opening)`. Tally renders this as
-    /// "Difference in opening balances" but does not emit it on the wire.
-    pub opening_difference: ExactDecimal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

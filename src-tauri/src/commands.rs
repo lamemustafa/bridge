@@ -27,7 +27,7 @@ use crate::sync::snapshot::{
     capability_profile_sha256, AdaptiveWindowPolicy, PlannedWindow, SnapshotPlan,
     SqliteSnapshotStateStore,
 };
-use crate::tally::runtime::TallyRuntimeControlError;
+use crate::tally::runtime::{TallyRuntimeControlError, TrialBalanceReadError};
 use crate::tally::validators::{
     normalize_company_guid, validate_company_name, validate_date_range,
 };
@@ -44,6 +44,7 @@ use bridge_tally_core::{
     CompanyRef as CoreCompanyRef, EvidenceConfidence, ReadWindow, RequestContext, TallyConnector,
     TallyDate, TransportId, CORE_ACCOUNTING_SCHEMA_VERSION,
 };
+use bridge_tally_protocol::trial_balance::TrialBalanceError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, State};
@@ -103,6 +104,58 @@ fn tally_command_error(
 }
 
 fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
+    if let Some(trial_balance) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<TrialBalanceReadError>())
+    {
+        return match trial_balance {
+            TrialBalanceReadError::AsOfPrecedesBooksFrom => tally_command_error(
+                "trial_balance_as_of_precedes_books_from",
+                "Financial data",
+                "The selected Trial Balance date is before this company’s books start. Choose a date on or after the books start and export again.",
+                "after_change",
+                true,
+                "Choose a date on or after the company books start, then repeat the export.",
+            ),
+            TrialBalanceReadError::PeriodBoundaryUnsupported => tally_command_error(
+                "trial_balance_period_boundary_unsupported",
+                "Financial data",
+                "This Tally mode supports Trial Balance exports only on day 1, 2, or 31. Choose one of those dates and export again.",
+                "after_change",
+                true,
+                "Choose day 1, 2, or 31 in the As of control, then repeat the export.",
+            ),
+            TrialBalanceReadError::SnapshotDrifted => tally_command_error(
+                "trial_balance_snapshot_drifted",
+                "Financial data",
+                "Tally returned different Trial Balance snapshots. Keep the company unchanged, wait for a stable moment, and export again.",
+                "after_change",
+                true,
+                "Keep the selected company unchanged and repeat the export after current Tally activity settles.",
+            ),
+            TrialBalanceReadError::BookChanged => tally_command_error(
+                "trial_balance_book_changed",
+                "Financial data",
+                "The company changed during the Trial Balance read. Keep the book unchanged, wait for a stable moment, and export again.",
+                "after_change",
+                true,
+                "Keep the selected company unchanged and repeat the export after current Tally activity settles.",
+            ),
+        };
+    }
+    if error
+        .chain()
+        .any(|cause| cause.downcast_ref::<TrialBalanceError>().is_some())
+    {
+        return tally_command_error(
+            "trial_balance_response_unverified",
+            "Financial data",
+            "Tally’s Trial Balance response did not satisfy Bridge’s exact identity and accounting controls. No workbook was created.",
+            "after_change",
+            true,
+            "Keep the selected company unchanged and retain the selected date for support before retrying.",
+        );
+    }
     if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
         return match control {
             TallyRuntimeControlError::Cancelled => tally_command_error(
@@ -2249,7 +2302,6 @@ pub async fn export_tally_trial_balance(
         from_yyyymmdd: source.from_yyyymmdd,
         to_yyyymmdd: source.to_yyyymmdd,
         ledger_count: source.trial_balance.rows.len(),
-        opening_difference: source.trial_balance.opening_difference.as_str().to_string(),
     })
 }
 
@@ -2620,11 +2672,13 @@ mod tests {
     // the test, or Windows fails on an unused import under `-D warnings`.
     #[cfg(unix)]
     use super::require_utf8_destination;
+    use crate::tally::runtime::TrialBalanceReadError;
     use crate::tally::{
         ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
         SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
+    use bridge_tally_protocol::trial_balance::TrialBalanceError;
     use std::collections::BTreeMap;
 
     /// Regression for the destination-picker leak: `select_party_statement_
@@ -2857,6 +2911,38 @@ mod tests {
         ));
         assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
         assert_eq!(discovery_limit.category, "Discovery listing");
+
+        for (source, expected_code) in [
+            (
+                TrialBalanceReadError::AsOfPrecedesBooksFrom,
+                "trial_balance_as_of_precedes_books_from",
+            ),
+            (
+                TrialBalanceReadError::PeriodBoundaryUnsupported,
+                "trial_balance_period_boundary_unsupported",
+            ),
+            (
+                TrialBalanceReadError::SnapshotDrifted,
+                "trial_balance_snapshot_drifted",
+            ),
+            (
+                TrialBalanceReadError::BookChanged,
+                "trial_balance_book_changed",
+            ),
+        ] {
+            let mapped = tally_runtime_command_error(anyhow::Error::new(source));
+            assert_eq!(mapped.code, expected_code);
+            assert_eq!(mapped.category, "Financial data");
+            assert!(mapped.local_state_changed);
+            assert!(!mapped.message.contains("endpoint"));
+        }
+
+        let unverified_opening = tally_runtime_command_error(anyhow::Error::new(
+            TrialBalanceError::InvalidResponse("opening_difference_unverified"),
+        ));
+        assert_eq!(unverified_opening.code, "trial_balance_response_unverified");
+        assert_eq!(unverified_opening.category, "Financial data");
+        assert!(!unverified_opening.message.contains("opening_difference"));
     }
 
     #[test]

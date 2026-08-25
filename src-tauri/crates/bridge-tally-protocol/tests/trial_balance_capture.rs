@@ -55,7 +55,6 @@ fn captured_trial_balance_is_identity_bound_and_exactly_balanced() {
     );
     let trial_balance = parse_trial_balance(RESPONSE, COMPANY_GUID).unwrap();
     assert_eq!(trial_balance.rows.len(), 24);
-    assert!(trial_balance.opening_difference.is_zero());
     assert!(trial_balance
         .rows
         .iter()
@@ -87,6 +86,22 @@ fn collection_identity_and_balanced_movement_fail_closed() {
     assert_eq!(
         parse_trial_balance(&unbalanced, COMPANY_GUID).unwrap_err(),
         TrialBalanceError::InvalidResponse("movement_does_not_balance")
+    );
+
+    let opening_difference = RESPONSE
+        .replacen(
+            "<TBALOPENING TYPE=\"Amount\">0.00</TBALOPENING>",
+            "<TBALOPENING TYPE=\"Amount\">-100.00</TBALOPENING>",
+            1,
+        )
+        .replacen(
+            "<TBALCLOSING TYPE=\"Amount\">-5500.00</TBALCLOSING>",
+            "<TBALCLOSING TYPE=\"Amount\">-5600.00</TBALCLOSING>",
+            1,
+        );
+    assert_eq!(
+        parse_trial_balance(&opening_difference, COMPANY_GUID).unwrap_err(),
+        TrialBalanceError::InvalidResponse("opening_difference_unverified")
     );
 }
 

@@ -68,7 +68,7 @@ pub fn render_trial_balance_xlsx(
     worksheet.write_string(
         row,
         1,
-        "Net change balances exactly. Difference in opening balances is shown as its own row when non-zero.",
+        "Opening, net change, and closing balances each reconcile exactly.",
     )?;
     row += 1;
     worksheet.write_string(
@@ -98,24 +98,6 @@ pub fn render_trial_balance_xlsx(
 
     for ledger in &source.trial_balance.rows {
         write_ledger_row(worksheet, row, ledger, &amount)?;
-        row += 1;
-    }
-    if !source.trial_balance.opening_difference.is_zero() {
-        worksheet.write_string_with_format(row, 0, "Difference in opening balances", &bold)?;
-        write_directional(
-            worksheet,
-            row,
-            2,
-            &source.trial_balance.opening_difference,
-            &bold_amount,
-        )?;
-        write_directional(
-            worksheet,
-            row,
-            6,
-            &source.trial_balance.opening_difference,
-            &bold_amount,
-        )?;
         row += 1;
     }
 
@@ -151,10 +133,6 @@ fn controls(
         opening.add(&ledger.opening)?;
         closing.add(&ledger.closing)?;
         movement.add(&subtract(&ledger.closing, &ledger.opening)?)?;
-    }
-    if !source.trial_balance.opening_difference.is_zero() {
-        opening.add(&source.trial_balance.opening_difference)?;
-        closing.add(&source.trial_balance.opening_difference)?;
     }
     if !opening.balances()? || !movement.balances()? || !closing.balances()? {
         return Err(TrialBalanceXlsxError::ControlMismatch);

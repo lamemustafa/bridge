@@ -17,7 +17,6 @@ pub struct TrialBalanceExportSummary {
     pub from_yyyymmdd: String,
     pub to_yyyymmdd: String,
     pub ledger_count: usize,
-    pub opening_difference: String,
 }
 
 #[derive(Debug, thiserror::Error)]
