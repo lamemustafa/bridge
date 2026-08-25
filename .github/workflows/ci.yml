@@ -56,12 +56,13 @@ jobs:
           fi
 
           changed_files="$(git diff --name-only "$base" "$GITHUB_SHA")"
-          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|rust-toolchain\.toml|src-tauri/)'; then
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|rust-toolchain\.toml|src-tauri/|tools/)'; then
             echo 'native=true' >> "$GITHUB_OUTPUT"
           else
             echo 'native=false' >> "$GITHUB_OUTPUT"
           fi
 
+          # tools/ is deliberately excluded: it is not shipped in the bundle, which validates the artifact and its resources.
           if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|package\.json|pnpm-lock\.yaml|\.node-version|vite\.config\.ts|tsconfig\.json|postcss\.config\.js|index\.html|src/|src-tauri/(src/|crates/|Cargo\.lock|Cargo\.toml|.*/Cargo\.toml|tauri\.conf\.json|build\.rs|icons/)|LICENSE$|NOTICE$|THIRD_PARTY_LICENSES\.txt$|THIRD_PARTY_LICENSES_RUST\.txt$|scripts/(check-license-metadata\.mjs|check-dependency-inventory\.mjs|check-windows-bundle-resources\.ps1|check-macos-bundle-resources\.mjs)$)'; then
             echo 'bundle=true' >> "$GITHUB_OUTPUT"
           else
@@ -274,6 +275,9 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native prerequisites'
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-native-prerequisites.outputs.cache-hit }}`'
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast
+      - name: Test Tally qualification tools workspace
+        working-directory: tools
+        run: cargo test --locked --workspace --no-fail-fast
       - name: Test isolated native outstandings qualification feature
         working-directory: tools
         run: >-
@@ -281,6 +285,9 @@ jobs:
           --features bills-native-outstandings-probe-runner
           --all-targets -- --test-threads=1
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
+      - name: Lint Tally qualification tools workspace
+        working-directory: tools
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Lint isolated native outstandings qualification feature
         working-directory: tools
         run: >-
