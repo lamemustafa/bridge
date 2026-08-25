@@ -2166,14 +2166,25 @@ pub async fn fetch_tally_outstandings(
         )
         .await
         .map_err(tally_runtime_command_error)?;
-    let (working_paper_export_id, working_paper_unavailable_reason_code) =
+    let (working_paper_source, source_unavailable_reason_code) =
         match source_from_complete_result(&result, &expected_company_guid) {
-            Ok(Some(source)) => match working_paper_exports.issue(source) {
-                Ok(export_id) => (Some(export_id), None),
-                Err(_) => (None, Some("working_paper_export_store_unavailable")),
-            },
-            Ok(None) => (None, Some("working_paper_complete_source_unavailable")),
+            Ok(Some(source)) => (Some(source), None),
+            Ok(None) if matches!(&result, OutstandingsLoadResult::Complete { .. }) => {
+                (None, Some("working_paper_complete_source_unavailable"))
+            }
+            Ok(None) => (None, None),
             Err(_) => (None, Some("working_paper_resource_limit")),
+        };
+    // A successful refresh supersedes every older working-paper approval for
+    // this company even when the new result cannot issue one. Replacement is
+    // performed in one store lock so a stale snapshot never survives beside
+    // the result that displaced it in the webview.
+    let (working_paper_export_id, working_paper_unavailable_reason_code) =
+        match working_paper_exports
+            .replace_for_company(&expected_company_guid, working_paper_source)
+        {
+            Ok(export_id) => (export_id, source_unavailable_reason_code),
+            Err(_) => (None, Some("working_paper_export_store_unavailable")),
         };
     Ok(FetchOutstandingsResponse {
         result,

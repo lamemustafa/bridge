@@ -5,6 +5,7 @@ use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, XlsxError};
 use super::outstandings_working_paper::{
     AgeingBucketControls, DualAgeBillRow, OutstandingsWorkingPaper, PartyWorkingPaperRow,
 };
+use super::party_statement_xlsx::amount_to_f64 as statement_amount_to_f64;
 use crate::tally::OutstandingsCurrencyAssertion;
 
 const AMOUNT_NUM_FORMAT: &str = "##,##,##0.00";
@@ -421,57 +422,11 @@ fn currency_label(assertion: OutstandingsCurrencyAssertion) -> &'static str {
 }
 
 fn amount_to_f64(text: &str) -> Result<f64, OutstandingsWorkingPaperXlsxError> {
-    let canonical = canonical_decimal_value(text)
-        .ok_or_else(|| OutstandingsWorkingPaperXlsxError::InvalidAmount(text.to_string()))?;
-    let unsigned = canonical.strip_prefix('-').unwrap_or(&canonical);
-    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
-    let significant_digits = whole
-        .trim_start_matches('0')
-        .len()
-        .checked_add(fraction.len())
-        .ok_or_else(|| OutstandingsWorkingPaperXlsxError::InvalidAmount(text.to_string()))?;
-    if fraction.len() > 2 || significant_digits > 15 {
-        return Err(OutstandingsWorkingPaperXlsxError::InvalidAmount(
-            text.to_string(),
-        ));
-    }
-    let value = text
-        .parse::<f64>()
-        .map_err(|_| OutstandingsWorkingPaperXlsxError::InvalidAmount(text.to_string()))?;
-    if !value.is_finite() || Some(canonical) != canonical_decimal_value(&value.to_string()) {
-        return Err(OutstandingsWorkingPaperXlsxError::InvalidAmount(
-            text.to_string(),
-        ));
-    }
-    Ok(value)
-}
-
-fn canonical_decimal_value(value: &str) -> Option<String> {
-    let (negative, unsigned) = value
-        .strip_prefix('-')
-        .map_or((false, value), |unsigned| (true, unsigned));
-    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
-    if whole.is_empty()
-        || !whole.bytes().all(|byte| byte.is_ascii_digit())
-        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return None;
-    }
-    let whole = whole.trim_start_matches('0');
-    let fraction = fraction.trim_end_matches('0');
-    if whole.is_empty() && fraction.is_empty() {
-        return Some("0".to_string());
-    }
-    let mut canonical = String::new();
-    if negative {
-        canonical.push('-');
-    }
-    canonical.push_str(if whole.is_empty() { "0" } else { whole });
-    if !fraction.is_empty() {
-        canonical.push('.');
-        canonical.push_str(fraction);
-    }
-    Some(canonical)
+    // Reuse the party-statement projection policy. Both workbooks are fed by
+    // the same ExactDecimal source and must accept or reject the same Excel
+    // numeric values; source scale alone is not a financial boundary.
+    statement_amount_to_f64(text)
+        .map_err(|_| OutstandingsWorkingPaperXlsxError::InvalidAmount(text.to_string()))
 }
 
 fn excel_date(yyyymmdd: &str) -> Result<ExcelDateTime, OutstandingsWorkingPaperXlsxError> {
@@ -579,12 +534,9 @@ mod tests {
     }
 
     #[test]
-    fn numeric_projection_enforces_scale_and_precision_bounds() {
+    fn numeric_projection_reuses_the_party_statement_round_trip_policy() {
         assert_eq!(amount_to_f64("0.10").unwrap(), 0.1);
-        assert!(matches!(
-            amount_to_f64("0.001"),
-            Err(OutstandingsWorkingPaperXlsxError::InvalidAmount(_))
-        ));
+        assert_eq!(amount_to_f64("0.001").unwrap(), 0.001);
         assert!(matches!(
             amount_to_f64("9007199254740993"),
             Err(OutstandingsWorkingPaperXlsxError::InvalidAmount(_))

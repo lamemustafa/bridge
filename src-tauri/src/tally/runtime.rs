@@ -211,6 +211,12 @@ fn all_open_bill_rows(
         .chain(payable.iter().map(|row| (row, ExposureDirection::Payable)))
         .filter_map(|(row, kind)| {
             let amount = row.closing_balance.abs().ok()?;
+            // Tally can retain a fully settled native bill row with BILLCL=0.
+            // It is not an open exposure and must be removed at this native
+            // boundary before any statement or working-paper consumer sees it.
+            if amount.is_zero() {
+                return None;
+            }
             let anchor_date = match ageing_anchor {
                 OutstandingsAgeingAnchor::DueDate => &row.due_date,
                 OutstandingsAgeingAnchor::BillDate => &row.bill_date,
@@ -2582,6 +2588,113 @@ mod tests {
             bill_date_future.age_days.is_some(),
             "the selected bill-date basis must not reuse the future due date"
         );
+    }
+
+    #[test]
+    fn settled_native_bill_rows_do_not_reach_statement_or_export_sources() {
+        let books_from = TallyDate::parse("20250401").expect("synthetic BooksFrom");
+        let as_of = TallyDate::parse("20260817").expect("synthetic as-of");
+        let parsed = parse_native_bill_rows(
+            "<ENVELOPE><BILLFIXED><BILLDATE>1-Aug-26</BILLDATE><BILLREF>SETTLED</BILLREF>\
+             <BILLPARTY>Synthetic Customer</BILLPARTY></BILLFIXED><BILLCL>0.00</BILLCL>\
+             <BILLDUE>1-Aug-26</BILLDUE><BILLOVERDUE>16</BILLOVERDUE></ENVELOPE>",
+            &books_from,
+            &as_of,
+        )
+        .expect("synthetic settled row parses at the wire boundary");
+
+        assert_eq!(parsed.len(), 1, "the fixture proves the native row existed");
+        assert!(
+            all_open_bill_rows(&parsed, &[], OutstandingsAgeingAnchor::DueDate, &as_of).is_empty(),
+            "a zero closing balance is not an open bill"
+        );
+    }
+
+    #[test]
+    fn captured_validation_lab_bytes_render_a_complete_working_paper_end_to_end() {
+        const COMPANY: &str = "Bridge Validation Lab";
+        const COMPANY_GUID: &str = "c6afd306-00e1-4f51-802a-babe44daddd3";
+        let books_from = TallyDate::parse("20250401").expect("captured BooksFrom");
+        let as_of = TallyDate::parse("20260801").expect("captured as-of date");
+        let receivable_xml = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/bills_receivable_validation_lab.xml"
+        );
+        let payable_xml = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/bills_payable_validation_lab.xml"
+        );
+        let groups_xml = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_validation_lab.xml"
+        );
+        let ledgers_xml = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/native/ledger_snapshot_validation_lab.xml"
+        );
+
+        let receivable = parse_native_bill_rows(receivable_xml, &books_from, &as_of)
+            .expect("captured receivable rows parse");
+        let payable = parse_native_bill_rows(payable_xml, &books_from, &as_of)
+            .expect("captured payable rows parse");
+        let groups = parse_native_group_snapshot(groups_xml, COMPANY_GUID)
+            .expect("captured group identity and ancestry parse");
+        let ledgers =
+            parse_native_ledger_snapshot(ledgers_xml).expect("captured ledger controls parse");
+        let source_bytes = receivable_xml
+            .len()
+            .checked_add(payable_xml.len())
+            .and_then(|value| value.checked_add(groups_xml.len()))
+            .and_then(|value| value.checked_add(ledgers_xml.len()))
+            .expect("captured source byte count fits usize");
+        let computed = compute_native_outstandings(
+            COMPANY,
+            &receivable,
+            &payable,
+            NativeMasterSnapshot {
+                ledgers: &ledgers,
+                groups: NativeGroupSnapshot::Complete(&groups),
+            },
+            NativeAgeingAnchor::DueDate,
+            &as_of,
+            source_bytes,
+        )
+        .expect("captured native controls compute");
+        assert_eq!(
+            native_crosscheck_partial_reason(&computed, &as_of),
+            None,
+            "captured overdue counters must positively prove the requested date"
+        );
+
+        let statement_open_bills = all_open_bill_rows(
+            &receivable,
+            &payable,
+            OutstandingsAgeingAnchor::DueDate,
+            &as_of,
+        );
+        assert_eq!(statement_open_bills.len(), 6);
+        assert!(statement_open_bills.iter().all(|row| !row.amount.is_zero()));
+        let statement_unallocated_by_party = all_unallocated_parties(&computed.residuals);
+        let result = OutstandingsLoadResult::Complete {
+            report: Box::new(computed.report),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            ageing_anchor: OutstandingsAgeingAnchor::DueDate,
+            synced_at_unix_ms: 1_777_000_000_000,
+            unallocated_total: Some(computed.residual_total),
+            statement_unallocated_by_party,
+            statement_open_bills,
+        };
+        let source = crate::reports::outstandings_working_paper_store::source_from_complete_result(
+            &result,
+            COMPANY_GUID,
+        )
+        .expect("captured source stays inside export budgets")
+        .expect("captured complete result substantiates a source");
+        assert_eq!(source.source_bytes, 33_575);
+        assert_eq!(source.open_bills.len(), 6);
+        let paper =
+            crate::reports::outstandings_working_paper::build_outstandings_working_paper(source)
+                .expect("captured exact controls reconcile into a working paper");
+        let workbook = crate::reports::outstandings_working_paper_xlsx::render_outstandings_working_paper_xlsx(&paper)
+            .expect("captured working paper renders");
+        assert!(workbook.len() > 200);
+        assert_eq!(&workbook[0..2], b"PK");
     }
 
     #[test]

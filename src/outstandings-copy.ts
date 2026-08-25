@@ -156,6 +156,41 @@ export function isNonRetryableOutstandingsBoundary(value: string) {
   return !outstandingsPartialState(value).retryable;
 }
 
+export type WorkingPaperUnavailableState = {
+  title: string;
+  message: string;
+};
+
+/// Explains a working-paper-only failure without implying that the completed
+/// outstandings totals were withheld. The report and its other exports remain
+/// separate capabilities.
+export function workingPaperUnavailableState(
+  reasonCode: string,
+): WorkingPaperUnavailableState {
+  if (reasonCode === "working_paper_resource_limit") {
+    return {
+      title: "Excel working paper unavailable",
+      message: "The outstandings report is complete, but this working paper exceeds Bridge’s safe export limits. The other report exports remain available.",
+    };
+  }
+  if (reasonCode === "working_paper_complete_source_unavailable") {
+    return {
+      title: "Excel working paper unavailable for this read",
+      message: "This completed read does not carry the native bill and unallocated controls needed to substantiate an all-party working paper. The other report exports remain available.",
+    };
+  }
+  if (reasonCode === "working_paper_export_store_unavailable") {
+    return {
+      title: "Excel working paper not prepared",
+      message: "The outstandings report is complete, but Bridge could not protect its one-use working-paper snapshot. Refresh outstandings to try again; the other report exports remain available.",
+    };
+  }
+  return {
+    title: "Excel working paper unavailable",
+    message: "The outstandings report is complete, but Bridge could not prepare its working-paper export. The other report exports remain available.",
+  };
+}
+
 export function outstandingsAgeingDisclosure(
   hasUnagedReceivable: boolean,
   unallocatedTotalKnown = false,

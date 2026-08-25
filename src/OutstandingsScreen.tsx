@@ -1,7 +1,7 @@
 import React from "react";
 import { Building2, ChevronRight, Download, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialState, type OutstandingsAgeingAnchor } from "./outstandings-copy";
+import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialState, workingPaperUnavailableState, type OutstandingsAgeingAnchor } from "./outstandings-copy";
 import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstandings-csv";
 import { canStartOutstandingsRead, outstandingsCurrencySymbol } from "./outstandings-currency";
 import { groupOpenBillsByParty, type OpenBill, type PartyBillsState } from "./outstandings-bills";
@@ -378,6 +378,9 @@ export function OutstandingsScreen({
   const workingPaperExportId = completeResult?.working_paper_export_id;
   const workingPaperAvailable = workingPaperExportId !== undefined
     && (exporting === "working-paper" || workingPaperExportId !== consumedWorkingPaperId);
+  const workingPaperUnavailable = completeResult?.working_paper_unavailable_reason_code
+    ? workingPaperUnavailableState(completeResult.working_paper_unavailable_reason_code)
+    : null;
   const exportAllPartyStatements = async (format: "xlsx" | "pdf") => {
     if (!completeResult || !beginExport("batch")) return;
     let approvalIdToRevoke: string | null = null;
@@ -567,6 +570,12 @@ export function OutstandingsScreen({
               ))}
             </ul>
           )}
+        </div>
+      )}
+      {workingPaperUnavailable && (
+        <div className="outstandings-state" role="status">
+          <strong>{workingPaperUnavailable.title}</strong>
+          <span>{workingPaperUnavailable.message}</span>
         </div>
       )}
       {error && <div className="outstandings-state error" role="alert"><strong>Read failed</strong><span>{error}</span></div>}

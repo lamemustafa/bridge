@@ -1,0 +1,533 @@
+<ENVELOPE>
+ <HEADER>
+  <VERSION>1</VERSION>
+  <STATUS>1</STATUS>
+ </HEADER>
+ <BODY>
+  <DESC>
+   <CMPINFO>
+    <COMPANY>0</COMPANY>
+    <GROUP>0</GROUP>
+    <LEDGER>0</LEDGER>
+    <COSTCATEGORY>0</COSTCATEGORY>
+    <COSTCENTRE>0</COSTCENTRE>
+    <GODOWN>0</GODOWN>
+    <STOCKGROUP>0</STOCKGROUP>
+    <STOCKCATEGORY>0</STOCKCATEGORY>
+    <STOCKITEM>0</STOCKITEM>
+    <VOUCHERTYPE>0</VOUCHERTYPE>
+    <CURRENCY>0</CURRENCY>
+    <UNIT>0</UNIT>
+    <BUDGET>0</BUDGET>
+    <CLIENTRULE>0</CLIENTRULE>
+    <SERVERRULE>0</SERVERRULE>
+    <STATE>0</STATE>
+    <TDSRATE>0</TDSRATE>
+    <TAXCLASSIFICATION>0</TAXCLASSIFICATION>
+    <STCATEGORY>0</STCATEGORY>
+    <DEDUCTEETYPE>0</DEDUCTEETYPE>
+    <ATTENDANCETYPE>0</ATTENDANCETYPE>
+    <FBTCATEGORY>0</FBTCATEGORY>
+    <FBTASSESSEETYPE>0</FBTASSESSEETYPE>
+    <TARIFFCLASSIFICATION>0</TARIFFCLASSIFICATION>
+    <EXCISEDUTYCLASSIFICATION>0</EXCISEDUTYCLASSIFICATION>
+    <SERIALNUMBER>0</SERIALNUMBER>
+    <ADJUSTMENTCLASSIFICATION>0</ADJUSTMENTCLASSIFICATION>
+    <INCOMETAXSLAB>0</INCOMETAXSLAB>
+    <INCOMETAXCLASSIFICATION>0</INCOMETAXCLASSIFICATION>
+    <LBTCLASSIFICATION>0</LBTCLASSIFICATION>
+    <TAXUNIT>0</TAXUNIT>
+    <RETURNMASTER>0</RETURNMASTER>
+    <GSTCLASSIFICATION>0</GSTCLASSIFICATION>
+    <VOUCHERNUMBERSERIES>0</VOUCHERNUMBERSERIES>
+    <VOUCHER>0</VOUCHER>
+   </CMPINFO>
+  </DESC>
+  <DATA>
+   <COLLECTION ISMSTDEPTYPE="Yes" MSTDEPTYPE="4">
+    <GROUP NAME="Bank Accounts" RESERVEDNAME="Bank Accounts">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000016</GUID>
+     <PARENT TYPE="String">Current Assets</PARENT>
+     <RESERVEDNAME TYPE="String">Bank Accounts</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Bank Accounts</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 23</ALTERID>
+     <MASTERID TYPE="Number"> 22</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Bank AccountsCurrent Assets</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Current Assets</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Bank Accounts</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Bank OD A/c" RESERVEDNAME="Bank OD A/c">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-0000000b</GUID>
+     <PARENT TYPE="String">Loans (Liability)</PARENT>
+     <RESERVEDNAME TYPE="String">Bank OD A/c</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Bank OD A/c</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 12</ALTERID>
+     <MASTERID TYPE="Number"> 11</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Bank OD A/cLoans (Liability)</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Loans (Liability)</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Bank OD A/c</NAME>
+       <NAME>Bank OCC A/c</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Branch / Divisions" RESERVEDNAME="Branch / Divisions">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000007</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Branch / Divisions</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Branch / Divisions</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 8</ALTERID>
+     <MASTERID TYPE="Number"> 7</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Branch / Divisions</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Branch / Divisions</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Capital Account" RESERVEDNAME="Capital Account">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000001</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Capital Account</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Capital Account</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 2</ALTERID>
+     <MASTERID TYPE="Number"> 1</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Capital Account</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Capital Account</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Cash-in-Hand" RESERVEDNAME="Cash-in-Hand">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000015</GUID>
+     <PARENT TYPE="String">Current Assets</PARENT>
+     <RESERVEDNAME TYPE="String">Cash-in-Hand</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Cash-in-Hand</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 22</ALTERID>
+     <MASTERID TYPE="Number"> 21</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Cash-in-HandCurrent Assets</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Current Assets</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Cash-in-Hand</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Current Assets" RESERVEDNAME="Current Assets">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000006</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Current Assets</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Current Assets</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 7</ALTERID>
+     <MASTERID TYPE="Number"> 6</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Current Assets</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Current Assets</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Current Liabilities" RESERVEDNAME="Current Liabilities">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000003</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Current Liabilities</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Current Liabilities</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 4</ALTERID>
+     <MASTERID TYPE="Number"> 3</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Current Liabilities</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Current Liabilities</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Deposits (Asset)" RESERVEDNAME="Deposits (Asset)">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000012</GUID>
+     <PARENT TYPE="String">Current Assets</PARENT>
+     <RESERVEDNAME TYPE="String">Deposits (Asset)</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Deposits (Asset)</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 19</ALTERID>
+     <MASTERID TYPE="Number"> 18</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Deposits (Asset)Current Assets</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Current Assets</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Deposits (Asset)</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Direct Expenses" RESERVEDNAME="Direct Expenses">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-0000001a</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Direct Expenses</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Direct Expenses</RESERVENAME>
+     <ISREVENUE TYPE="Logical">Yes</ISREVENUE>
+     <ALTERID TYPE="Number"> 27</ALTERID>
+     <MASTERID TYPE="Number"> 26</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Direct Expenses</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Direct Expenses</NAME>
+       <NAME>Expenses (Direct)</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Direct Incomes" RESERVEDNAME="Direct Incomes">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000019</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Direct Incomes</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Direct Incomes</RESERVENAME>
+     <ISREVENUE TYPE="Logical">Yes</ISREVENUE>
+     <ALTERID TYPE="Number"> 26</ALTERID>
+     <MASTERID TYPE="Number"> 25</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Direct Incomes</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Direct Incomes</NAME>
+       <NAME>Income (Direct)</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Duties &amp; Taxes" RESERVEDNAME="Duties &amp; Taxes">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-0000000e</GUID>
+     <PARENT TYPE="String">Current Liabilities</PARENT>
+     <RESERVEDNAME TYPE="String">Duties &amp; Taxes</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Duties &amp; Taxes</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 15</ALTERID>
+     <MASTERID TYPE="Number"> 14</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Duties &amp; TaxesCurrent Liabilities</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Current Liabilities</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Duties &amp; Taxes</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Fixed Assets" RESERVEDNAME="Fixed Assets">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000004</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Fixed Assets</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Fixed Assets</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 5</ALTERID>
+     <MASTERID TYPE="Number"> 4</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Fixed Assets</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Fixed Assets</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Indirect Expenses" RESERVEDNAME="Indirect Expenses">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-0000001c</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Indirect Expenses</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Indirect Expenses</RESERVENAME>
+     <ISREVENUE TYPE="Logical">Yes</ISREVENUE>
+     <ALTERID TYPE="Number"> 29</ALTERID>
+     <MASTERID TYPE="Number"> 28</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Indirect Expenses</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Indirect Expenses</NAME>
+       <NAME>Expenses (Indirect)</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Indirect Incomes" RESERVEDNAME="Indirect Incomes">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-0000001b</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Indirect Incomes</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Indirect Incomes</RESERVENAME>
+     <ISREVENUE TYPE="Logical">Yes</ISREVENUE>
+     <ALTERID TYPE="Number"> 28</ALTERID>
+     <MASTERID TYPE="Number"> 27</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Indirect Incomes</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Indirect Incomes</NAME>
+       <NAME>Income (Indirect)</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Investments" RESERVEDNAME="Investments">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000005</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Investments</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Investments</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 6</ALTERID>
+     <MASTERID TYPE="Number"> 5</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Investments</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Investments</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Loans &amp; Advances (Asset)" RESERVEDNAME="Loans &amp; Advances (Asset)">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000013</GUID>
+     <PARENT TYPE="String">Current Assets</PARENT>
+     <RESERVEDNAME TYPE="String">Loans &amp; Advances (Asset)</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Loans &amp; Advances (Asset)</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 20</ALTERID>
+     <MASTERID TYPE="Number"> 19</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Loans &amp; Advances (Asset)Current Assets</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Current Assets</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Loans &amp; Advances (Asset)</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Loans (Liability)" RESERVEDNAME="Loans (Liability)">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000002</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Loans (Liability)</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Loans (Liability)</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 3</ALTERID>
+     <MASTERID TYPE="Number"> 2</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Loans (Liability)</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Loans (Liability)</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Misc. Expenses (ASSET)" RESERVEDNAME="Misc. Expenses (ASSET)">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000008</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Misc. Expenses (ASSET)</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Misc. Expenses (ASSET)</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 9</ALTERID>
+     <MASTERID TYPE="Number"> 8</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Misc. Expenses (ASSET)</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Misc. Expenses (ASSET)</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Provisions" RESERVEDNAME="Provisions">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-0000000f</GUID>
+     <PARENT TYPE="String">Current Liabilities</PARENT>
+     <RESERVEDNAME TYPE="String">Provisions</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Provisions</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 16</ALTERID>
+     <MASTERID TYPE="Number"> 15</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">ProvisionsCurrent Liabilities</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Current Liabilities</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Provisions</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Purchase Accounts" RESERVEDNAME="Purchase Accounts">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000018</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Purchase Accounts</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Purchase Accounts</RESERVENAME>
+     <ISREVENUE TYPE="Logical">Yes</ISREVENUE>
+     <ALTERID TYPE="Number"> 25</ALTERID>
+     <MASTERID TYPE="Number"> 24</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Purchase Accounts</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Purchase Accounts</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Reserves &amp; Surplus" RESERVEDNAME="Reserves &amp; Surplus">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-0000000a</GUID>
+     <PARENT TYPE="String">Capital Account</PARENT>
+     <RESERVEDNAME TYPE="String">Reserves &amp; Surplus</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Reserves &amp; Surplus</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 11</ALTERID>
+     <MASTERID TYPE="Number"> 10</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Reserves &amp; SurplusCapital Account</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Capital Account</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Reserves &amp; Surplus</NAME>
+       <NAME>Retained Earnings</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Sales Accounts" RESERVEDNAME="Sales Accounts">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000017</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Sales Accounts</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Sales Accounts</RESERVENAME>
+     <ISREVENUE TYPE="Logical">Yes</ISREVENUE>
+     <ALTERID TYPE="Number"> 24</ALTERID>
+     <MASTERID TYPE="Number"> 23</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Sales Accounts</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Sales Accounts</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Secured Loans" RESERVEDNAME="Secured Loans">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-0000000c</GUID>
+     <PARENT TYPE="String">Loans (Liability)</PARENT>
+     <RESERVEDNAME TYPE="String">Secured Loans</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Secured Loans</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 13</ALTERID>
+     <MASTERID TYPE="Number"> 12</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Secured LoansLoans (Liability)</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Loans (Liability)</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Secured Loans</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Stock-in-Hand" RESERVEDNAME="Stock-in-Hand">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000011</GUID>
+     <PARENT TYPE="String">Current Assets</PARENT>
+     <RESERVEDNAME TYPE="String">Stock-in-Hand</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Stock-in-Hand</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 18</ALTERID>
+     <MASTERID TYPE="Number"> 17</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Stock-in-HandCurrent Assets</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Current Assets</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Stock-in-Hand</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Sundry Creditors" RESERVEDNAME="Sundry Creditors">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000010</GUID>
+     <PARENT TYPE="String">Current Liabilities</PARENT>
+     <RESERVEDNAME TYPE="String">Sundry Creditors</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Sundry Creditors</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 17</ALTERID>
+     <MASTERID TYPE="Number"> 16</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Sundry CreditorsCurrent Liabilities</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Current Liabilities</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Sundry Creditors</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Sundry Debtors" RESERVEDNAME="Sundry Debtors">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000014</GUID>
+     <PARENT TYPE="String">Current Assets</PARENT>
+     <RESERVEDNAME TYPE="String">Sundry Debtors</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Sundry Debtors</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 21</ALTERID>
+     <MASTERID TYPE="Number"> 20</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Sundry DebtorsCurrent Assets</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Current Assets</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Sundry Debtors</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Suspense A/c" RESERVEDNAME="Suspense A/c">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-00000009</GUID>
+     <PARENT TYPE="String">&#4; Primary</PARENT>
+     <RESERVEDNAME TYPE="String">Suspense A/c</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Suspense A/c</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 10</ALTERID>
+     <MASTERID TYPE="Number"> 9</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Suspense A/c</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">&#4; Primary</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Suspense A/c</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+    <GROUP NAME="Unsecured Loans" RESERVEDNAME="Unsecured Loans">
+     <GUID TYPE="String">c6afd306-00e1-4f51-802a-babe44daddd3-0000000d</GUID>
+     <PARENT TYPE="String">Loans (Liability)</PARENT>
+     <RESERVEDNAME TYPE="String">Unsecured Loans</RESERVEDNAME>
+     <RESERVENAME TYPE="String">Unsecured Loans</RESERVENAME>
+     <ISREVENUE TYPE="Logical">No</ISREVENUE>
+     <ALTERID TYPE="Number"> 14</ALTERID>
+     <MASTERID TYPE="Number"> 13</MASTERID>
+     <PARENTSTRUCTURE TYPE="String">Unsecured LoansLoans (Liability)</PARENTSTRUCTURE>
+     <PRIMARYGRPPARENT TYPE="String">Loans (Liability)</PRIMARYGRPPARENT>
+     <LANGUAGENAME.LIST>
+      <NAME.LIST TYPE="String">
+       <NAME>Unsecured Loans</NAME>
+      </NAME.LIST>
+      <LANGUAGEID> 1033</LANGUAGEID>
+     </LANGUAGENAME.LIST>
+    </GROUP>
+   </COLLECTION>
+  </DATA>
+ </BODY>
+</ENVELOPE>

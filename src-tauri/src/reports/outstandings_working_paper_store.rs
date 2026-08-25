@@ -40,16 +40,24 @@ pub enum WorkingPaperExportStoreError {
 }
 
 impl WorkingPaperExportStore {
-    pub fn issue(
+    /// Replaces every older approval for `company_guid` with the source from
+    /// the newest completed read. Passing `None` still revokes the older
+    /// approval: a partial or otherwise ineligible refresh must not leave a
+    /// now-hidden snapshot exportable by a stale webview capability.
+    pub fn replace_for_company(
         &self,
-        source: OutstandingsWorkingPaperSource,
-    ) -> Result<String, WorkingPaperExportStoreError> {
+        company_guid: &str,
+        source: Option<OutstandingsWorkingPaperSource>,
+    ) -> Result<Option<String>, WorkingPaperExportStoreError> {
         let mut entries = self
             .entries
             .lock()
             .map_err(|_| WorkingPaperExportStoreError::Unavailable)?;
         let now = Instant::now();
-        entries.retain(|entry| entry.expires_at > now);
+        entries.retain(|entry| entry.expires_at > now && entry.source.company_guid != company_guid);
+        let Some(source) = source else {
+            return Ok(None);
+        };
         while entries.len() >= MAX_STORED_EXPORTS {
             entries.pop_front();
         }
@@ -59,7 +67,7 @@ impl WorkingPaperExportStore {
             expires_at: now + EXPORT_HANDLE_TTL,
             source,
         });
-        Ok(id)
+        Ok(Some(id))
     }
 
     pub fn take(
@@ -216,7 +224,10 @@ mod tests {
             open_bills: Vec::new(),
             unallocated_by_party: Vec::new(),
         };
-        let id = store.issue(source).expect("handle issued");
+        let id = store
+            .replace_for_company("synthetic-guid", Some(source))
+            .expect("handle issued")
+            .expect("source produces a handle");
         assert!(store.take(&id).is_ok());
         assert_eq!(
             store.take(&id).unwrap_err(),
@@ -224,6 +235,55 @@ mod tests {
         );
         assert_eq!(
             store.take("not-an-id").unwrap_err(),
+            WorkingPaperExportStoreError::InvalidOrExpired
+        );
+    }
+
+    #[test]
+    fn a_new_company_snapshot_revokes_its_superseded_handle() {
+        let store = WorkingPaperExportStore::default();
+        let first_source = source_from_complete_result(&zero_complete(1, true), "synthetic-guid")
+            .unwrap()
+            .unwrap();
+        let first = store
+            .replace_for_company("synthetic-guid", Some(first_source))
+            .unwrap()
+            .unwrap();
+
+        let replacement_source =
+            source_from_complete_result(&zero_complete(2, true), "synthetic-guid")
+                .unwrap()
+                .unwrap();
+        let replacement = store
+            .replace_for_company("synthetic-guid", Some(replacement_source))
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(first, replacement);
+        assert_eq!(
+            store.take(&first).unwrap_err(),
+            WorkingPaperExportStoreError::InvalidOrExpired
+        );
+        assert!(store.take(&replacement).is_ok());
+    }
+
+    #[test]
+    fn an_ineligible_refresh_revokes_the_previous_company_snapshot() {
+        let store = WorkingPaperExportStore::default();
+        let source = source_from_complete_result(&zero_complete(1, true), "synthetic-guid")
+            .unwrap()
+            .unwrap();
+        let id = store
+            .replace_for_company("synthetic-guid", Some(source))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            store.replace_for_company("synthetic-guid", None).unwrap(),
+            None
+        );
+        assert_eq!(
+            store.take(&id).unwrap_err(),
             WorkingPaperExportStoreError::InvalidOrExpired
         );
     }
