@@ -735,7 +735,7 @@ was confirmed safe against a known-good `SUBTYPE=Ledger` control before being po
 
 ### 9.11b A year-end split can duplicate a company GUID — **VERIFIED; composite identity required**
 
-**VERIFIED 2026-08-25 from captured Company-collection responses.** The pre-split capture
+**VERIFIED 2026-08-26 from captured Company-collection responses.** The pre-split capture
 has 14 companies; the post-split capture has 15. The added child retained its parent's `GUID`.
 Tally distinguishes the two displayed books with a name suffix, not a new GUID. Across the
 post-split capture, `COMPANYNUMBER` and `NAME` each have 15 distinct values, `GUID` has 14,
