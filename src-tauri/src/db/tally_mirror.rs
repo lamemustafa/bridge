@@ -8417,6 +8417,20 @@ mod tests {
     #[tokio::test]
     async fn composite_identity_migration_retires_prior_observed_guid_pin() {
         let (repository, _, company) = seed_repository(repository_through_v13().await).await;
+        sqlx::query(
+            "INSERT INTO tally_write_fixture_enrollments(\
+                id, company_id, review_commitment_sha256, enrollment_payload_sha256, \
+                contract_version, disposable_company_attested, no_customer_data_attested, \
+                backup_guidance_acknowledged, enrolled_at_unix_ms\
+             ) VALUES (?1, ?2, ?3, ?4, 1, 1, 1, 1, 100)",
+        )
+        .bind("pre-composite-enrollment")
+        .bind(&company.id)
+        .bind("a".repeat(64))
+        .bind("b".repeat(64))
+        .execute(&repository.pool)
+        .await
+        .expect("seed active GUID-only fixture enrollment");
         repository
             .migrate()
             .await
@@ -8437,6 +8451,17 @@ mod tests {
             .await
             .expect("read retired confidence"),
             "unknown"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_write_fixture_revocations \
+                 WHERE enrollment_id = 'pre-composite-enrollment'",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read migration revocation"),
+            1,
+            "retiring a GUID-only pin must also retire its fixture authority"
         );
     }
 

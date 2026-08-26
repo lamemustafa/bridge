@@ -28,6 +28,7 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;
 
+use super::connection::DirectCompanyBootstrapError;
 use super::runtime::{TallyRuntimeControlError, TallyRuntimeReadError};
 use super::{tdl_engine, TallyConfig, TallyRuntime};
 
@@ -630,6 +631,12 @@ fn company_guids_equal(left: &str, right: &str) -> bool {
 }
 
 fn map_transport_error(error: anyhow::Error) -> TallyError {
+    if error
+        .downcast_ref::<DirectCompanyBootstrapError>()
+        .is_some()
+    {
+        return protocol_error("company_identity_not_found");
+    }
     if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
         return match control {
             TallyRuntimeControlError::Cancelled => TallyError::Cancelled,

@@ -107,9 +107,23 @@ pub fn save_label(
     company_key: &str,
     label: &str,
 ) -> Result<(), ClientGroupLabelsError> {
+    save_label_with_legacy(directory, company_key, label, None)
+}
+
+pub fn save_label_with_legacy(
+    directory: &Path,
+    company_key: &str,
+    label: &str,
+    legacy_company_key: Option<&str>,
+) -> Result<(), ClientGroupLabelsError> {
     let mut labels = try_load(directory)?;
     let company_key = company_key.trim();
     let label = label.trim();
+    if let Some(legacy_company_key) = legacy_company_key.map(str::trim) {
+        if !legacy_company_key.is_empty() && legacy_company_key != company_key {
+            labels.remove(legacy_company_key);
+        }
+    }
     if label.is_empty() {
         labels.remove(company_key);
     } else {

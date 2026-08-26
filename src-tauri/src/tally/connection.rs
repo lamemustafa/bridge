@@ -50,6 +50,14 @@ use bridge_tally_transport::{
 
 pub type TallyConfig = TallyEndpointConfig;
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DirectCompanyBootstrapError {
+    #[error("Tally direct company identity did not match its enumerated candidate")]
+    CandidateGuidMismatch,
+    #[error("Tally direct company candidate omitted a complete identity tuple")]
+    IncompleteTuple,
+}
+
 #[cfg(feature = "voucher-scan")]
 #[derive(Debug)]
 pub(crate) struct OutstandingsSegmentObservation {
@@ -711,11 +719,24 @@ impl TallyClient {
         let observed = parse_standard_ledger_identity_observation(&xml, &candidate.name)?;
         let guid = normalize_company_guid(&observed.company_guid)
             .map_err(|_| anyhow::anyhow!("Tally standard ledger identity was invalid"))?;
+        if candidate
+            .guid
+            .as_deref()
+            .is_none_or(|listed_guid| !listed_guid.eq_ignore_ascii_case(&guid))
+        {
+            return Err(DirectCompanyBootstrapError::CandidateGuidMismatch.into());
+        }
+        let Some(company_number) = candidate.company_number.clone() else {
+            return Err(DirectCompanyBootstrapError::IncompleteTuple.into());
+        };
+        let Some(books_from) = candidate.books_from.clone() else {
+            return Err(DirectCompanyBootstrapError::IncompleteTuple.into());
+        };
         Ok(TallyCompany {
             name: candidate.name.clone(),
             guid: Some(guid),
-            company_number: None,
-            books_from: None,
+            company_number: Some(company_number),
+            books_from: Some(books_from),
         })
     }
 
@@ -2783,7 +2804,7 @@ mod tests {
         // response carries that shape rather than the legacy `CompanyListV1`
         // direct report. Its GUID must still not escape into the returned
         // identity -- only the second, scoped `standard` read may do that.
-        let discovered = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">discovered-guid-must-not-escape</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let discovered = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">scoped-guid</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
         let standard = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\"><SyntheticLedger NAME=\"synthetic-ledger\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">ledger-guid</GUID><PARENT TYPE=\"String\">Primary</PARENT><BRIDGECOMPANYGUID TYPE=\"String\">scoped-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE=\"String\">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>";
         let server = tokio::spawn(async move {
             for body in [discovered, standard] {
@@ -2809,6 +2830,8 @@ mod tests {
 
         assert_eq!(company.name, "Synthetic Company");
         assert_eq!(company.guid.as_deref(), Some("scoped-guid"));
+        assert_eq!(company.company_number.as_deref(), Some("100001"));
+        assert_eq!(company.books_from.as_deref(), Some("20260401"));
     }
 
     #[tokio::test]

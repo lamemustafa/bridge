@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { applyClientGroupLabel, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, resolveClientGroupLabel, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
+import { companyIdentityKey } from "../src/company-identity.ts";
 
 // Mirrors AllClientsScreen's saveGroupLabel wiring exactly (issue a stamp,
 // apply the optimistic edit, then on settle check the stamp against the
@@ -184,7 +185,11 @@ test("legacy GUID labels remain available for one book but never merge split boo
     "legacy-guid",
     ["legacy-guid"],
   );
-  assert.deepEqual(lone, { label: "Legacy practice", ambiguousLegacyLabel: false });
+  assert.deepEqual(lone, {
+    label: "Legacy practice",
+    legacyCompanyKey: "legacy-guid",
+    ambiguousLegacyLabel: false,
+  });
 
   const splitRows = [
     {
@@ -210,6 +215,39 @@ test("legacy GUID labels remain available for one book but never merge split boo
     ).ambiguousLegacyLabel,
     true,
   );
+});
+
+test("saving a legacy fallback migrates or clears the exact raw-GUID entry", () => {
+  const labels = { "legacy-guid": "Legacy practice" };
+  assert.deepEqual(
+    applyClientGroupLabel(labels, "composite-book", "Reviewed practice", "legacy-guid"),
+    { "composite-book": "Reviewed practice" },
+  );
+  assert.deepEqual(
+    applyClientGroupLabel(labels, "composite-book", "", "legacy-guid"),
+    {},
+    "clearing a fallback must retire the original raw key without resolving it again",
+  );
+});
+
+test("the shared composite key keeps endpoint, GUID, number, name, and books-from distinct", () => {
+  const base = {
+    canonical_origin: "http://127.0.0.1:9000",
+    company_guid: "SAME-GUID",
+    company_number: "100001",
+    company_name: "Client Book",
+    books_from_yyyymmdd: "20260401",
+  };
+  const key = companyIdentityKey(base);
+  assert.equal(key, companyIdentityKey({ ...base, company_guid: "same-guid" }));
+  for (const changed of [
+    { canonical_origin: "http://127.0.0.1:9001" },
+    { company_number: "100002" },
+    { company_name: "Client Book FY27" },
+    { books_from_yyyymmdd: "20270401" },
+  ]) {
+    assert.notEqual(key, companyIdentityKey({ ...base, ...changed }));
+  }
 });
 
 test("group totals preserve decimal precision without IEEE-754 rounding", () => {
@@ -240,9 +278,9 @@ test("all-client responses carry the pinned composite tuple back to the open act
   assert.match(commands, /company_guid: selected\.company_guid/);
   assert.match(commands, /company_number: selected\.company_number/);
   assert.match(commands, /books_from_yyyymmdd: selected\.books_from_yyyymmdd/);
-  assert.match(allClients, /companyGuid: companyIdentityKey\(entry\)/);
+  assert.match(allClients, /companyGuid: companyIdentityKey\(\{/);
   assert.match(allClients, /company\.company_number === row\.companyNumber/);
-  assert.match(allClients, /request: \{ company_key: companyKey, label: attemptedLabel \}/);
+  assert.match(allClients, /legacy_company_key: legacyKeyToRetire/);
   assert.match(allClients, /key=\{row\.companyGuid\}/);
   assert.doesNotMatch(allClients, /groupLabels\[company\.guid\]/);
   assert.doesNotMatch(allClients, /companies\.find\(\(company\) => company\.name === entry\.company\)/);

@@ -516,17 +516,14 @@ pub async fn qualify_selected_tally_reads(
             "Probe again and select one company from the replacement result.",
         ));
     };
-    let Some(observed_guid) = company.guid.clone() else {
+    if company.guid.is_none() {
         return Err(reviewed_probe_changed_error());
-    };
+    }
 
+    let identity =
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     let ledger_result = runtime
-        .qualify_selected_ledgers(
-            request.config.clone(),
-            &reservation,
-            company.name.clone(),
-            observed_guid.clone(),
-        )
+        .qualify_selected_ledgers(request.config.clone(), &reservation, &identity)
         .await;
     let ledger_result = match ledger_result {
         Err(error) if selected_read_cancelled(&error) => {
@@ -553,8 +550,7 @@ pub async fn qualify_selected_tally_reads(
             .qualify_selected_vouchers(
                 request.config.clone(),
                 &reservation,
-                company.name.clone(),
-                observed_guid.clone(),
+                &identity,
                 request.voucher_from_yyyymmdd.clone(),
                 request.voucher_to_yyyymmdd.clone(),
             )
@@ -613,7 +609,7 @@ pub async fn qualify_selected_tally_reads(
             date_window_verified: observation.date_window_verified,
         })
         .collect::<Vec<_>>();
-    let casefolded_guid = observed_guid.to_ascii_lowercase();
+    let casefolded_guid = identity.company_guid().to_ascii_lowercase();
     let scope_commitment_sha256 =
         match selected_read_scope_commitment_sha256(&SelectedReadScopeCommitmentMaterial {
             parent_review_commitment_sha256: parent_commitment.clone(),
@@ -882,6 +878,80 @@ pub struct SelectedCompanyIdentity {
     pub company_guid: String,
     pub company_number: String,
     pub books_from_yyyymmdd: String,
+}
+
+/// A complete company tuple that a fresh Company collection has matched once.
+///
+/// The fields are intentionally private: a bare GUID cannot authorize a
+/// company-scoped read after a year-end split.
+#[cfg_attr(
+    not(feature = "live-calibration-harness"),
+    doc = "```compile_fail\nuse bridge_lib::commands::VerifiedCompanyIdentity;\nlet _ = VerifiedCompanyIdentity { display_name: String::new(), company_guid: String::new(), company_number: String::new(), books_from_yyyymmdd: String::new() };\n```"
+)]
+#[derive(Debug, Clone)]
+pub struct VerifiedCompanyIdentity {
+    display_name: String,
+    company_guid: String,
+    company_number: String,
+    books_from_yyyymmdd: String,
+}
+
+impl VerifiedCompanyIdentity {
+    #[cfg(test)]
+    pub(crate) fn test_fixture(
+        display_name: impl Into<String>,
+        company_guid: impl Into<String>,
+    ) -> Self {
+        Self {
+            display_name: display_name.into(),
+            company_guid: company_guid.into(),
+            company_number: "1".to_string(),
+            books_from_yyyymmdd: "20260401".to_string(),
+        }
+    }
+
+    #[cfg(feature = "live-calibration-harness")]
+    pub fn live_calibration_harness_identity(
+        display_name: impl Into<String>,
+        company_guid: impl Into<String>,
+    ) -> Self {
+        Self {
+            display_name: display_name.into(),
+            company_guid: company_guid.into(),
+            company_number: "1".to_string(),
+            books_from_yyyymmdd: "20260401".to_string(),
+        }
+    }
+
+    pub(crate) fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    pub(crate) fn company_guid(&self) -> &str {
+        &self.company_guid
+    }
+
+    pub(crate) fn matches_observed_company(&self, company: &TallyCompany) -> bool {
+        company.name == self.display_name
+            && company
+                .guid
+                .as_deref()
+                .is_some_and(|guid| guid.eq_ignore_ascii_case(&self.company_guid))
+            && company.company_number.as_deref() == Some(self.company_number.as_str())
+            && company.books_from.as_deref() == Some(self.books_from_yyyymmdd.as_str())
+    }
+
+    pub(crate) fn is_case_or_whitespace_guid_sibling(&self, company: &TallyCompany) -> bool {
+        company.name != self.display_name
+            && company
+                .guid
+                .as_deref()
+                .is_some_and(|guid| guid.eq_ignore_ascii_case(&self.company_guid))
+            && company
+                .name
+                .trim()
+                .eq_ignore_ascii_case(self.display_name.trim())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -2106,7 +2176,7 @@ async fn verify_observed_company_tuple(
     runtime: &TallyRuntime,
     config: &TallyConfig,
     selected: &SelectedCompanyIdentity,
-) -> Result<String, TallyCommandError> {
+) -> Result<VerifiedCompanyIdentity, TallyCommandError> {
     validate_company_name(&selected.display_name).map_err(|message| {
         tally_command_error(
             "company_selection_invalid",
@@ -2144,23 +2214,35 @@ async fn verify_observed_company_tuple(
             "Probe again and choose an observed company identity.",
         ));
     }
-    let matches = runtime
+    let companies = runtime
         .fetch_companies(config.clone())
         .await
-        .map_err(tally_runtime_command_error)?
+        .map_err(tally_runtime_command_error)?;
+    let identity = VerifiedCompanyIdentity {
+        display_name: selected.display_name.clone(),
+        company_guid: selected_guid,
+        company_number: selected.company_number.clone(),
+        books_from_yyyymmdd: selected.books_from_yyyymmdd.clone(),
+    };
+    if companies
+        .iter()
+        .any(|company| identity.is_case_or_whitespace_guid_sibling(company))
+    {
+        return Err(tally_command_error(
+            "company_identity_ambiguous",
+            "Tally application",
+            "Tally returned a same-GUID company name that differs only by case or whitespace.",
+            "not_recommended",
+            false,
+            "Do not read this scope. Inspect the Tally company list before continuing.",
+        ));
+    }
+    let matches = companies
         .into_iter()
-        .filter(|company| {
-            company.name == selected.display_name
-                && company
-                    .guid
-                    .as_deref()
-                    .is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
-                && company.company_number.as_deref() == Some(selected.company_number.as_str())
-                && company.books_from.as_deref() == Some(selected.books_from_yyyymmdd.as_str())
-        })
+        .filter(|company| identity.matches_observed_company(company))
         .collect::<Vec<_>>();
     match matches.as_slice() {
-        [company] => Ok(company.guid.clone().expect("matched company has GUID")),
+        [_company] => Ok(identity),
         [] => Err(tally_command_error(
             "reviewed_company_scope_changed",
             "Tally application",
@@ -2185,14 +2267,10 @@ pub async fn fetch_tally_ledgers(
     request: CompanyRequest,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<Vec<TallyLedger>, TallyCommandError> {
-    let expected_company_guid =
+    let identity =
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     runtime
-        .fetch_ledgers(
-            request.config,
-            request.selected_company.display_name,
-            expected_company_guid,
-        )
+        .fetch_ledgers(request.config, &identity)
         .await
         .map_err(tally_runtime_command_error)
 }
@@ -2202,14 +2280,10 @@ pub async fn fetch_standard_tally_ledger_catalog(
     request: CompanyRequest,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<Vec<TallyLedger>, TallyCommandError> {
-    let expected_company_guid =
+    let identity =
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     runtime
-        .fetch_standard_ledger_catalog(
-            request.config,
-            request.selected_company.display_name,
-            expected_company_guid,
-        )
+        .fetch_standard_ledger_catalog(request.config, &identity)
         .await
         .map_err(tally_runtime_command_error)
 }
@@ -2219,7 +2293,7 @@ pub async fn fetch_tally_vouchers(
     request: VoucherRequest,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<Vec<TallyVoucher>, TallyCommandError> {
-    let expected_company_guid =
+    let identity =
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     validate_date_range(&request.from, &request.to).map_err(|message| {
         tally_command_error(
@@ -2232,13 +2306,7 @@ pub async fn fetch_tally_vouchers(
         )
     })?;
     runtime
-        .fetch_vouchers(
-            request.config,
-            request.selected_company.display_name,
-            expected_company_guid,
-            request.from,
-            request.to,
-        )
+        .fetch_vouchers(request.config, &identity, request.from, request.to)
         .await
         .map_err(tally_runtime_command_error)
 }
@@ -2278,13 +2346,12 @@ pub async fn fetch_tally_outstandings(
         &request.selected_company.display_name,
         &request.selected_company.books_from_yyyymmdd,
     );
-    let expected_company_guid =
+    let identity =
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     let result = runtime
         .fetch_outstandings(
             request.config,
-            request.selected_company.display_name,
-            expected_company_guid.clone(),
+            &identity,
             as_of,
             request.currency_assertion,
             request.ageing_anchor,
@@ -2292,7 +2359,7 @@ pub async fn fetch_tally_outstandings(
         .await
         .map_err(tally_runtime_command_error)?;
     let (working_paper_source, source_unavailable_reason_code) =
-        match source_from_complete_result(&result, &expected_company_guid) {
+        match source_from_complete_result(&result, identity.company_guid()) {
             Ok(Some(source)) => (Some(source), None),
             Ok(None) if matches!(&result, OutstandingsLoadResult::Complete { .. }) => {
                 (None, Some("working_paper_complete_source_unavailable"))
@@ -2345,6 +2412,7 @@ pub fn load_client_sort_preference(app: AppHandle) -> Option<client_groups::Clie
 pub struct SaveClientGroupLabelRequest {
     pub company_key: String,
     pub label: String,
+    pub legacy_company_key: Option<String>,
 }
 
 /// Saves one operator-owned filing label without accessing the Tally mirror.
@@ -2360,8 +2428,13 @@ pub fn save_client_group_label(
         .path()
         .app_config_dir()
         .map_err(|_| "Bridge could not locate its local group-label configuration.".to_string())?;
-    client_groups::save_label(&directory, &request.company_key, &request.label)
-        .map_err(|_| "Bridge could not save this group label.".to_string())
+    client_groups::save_label_with_legacy(
+        &directory,
+        &request.company_key,
+        &request.label,
+        request.legacy_company_key.as_deref(),
+    )
+    .map_err(|_| "Bridge could not save this group label.".to_string())
 }
 
 /// Saves the optional all-client sort preference without accessing the Tally mirror.
@@ -2483,13 +2556,9 @@ pub async fn fetch_tally_outstandings_all_companies(
         let result = match verify_observed_company_tuple(&runtime, &request.config, &selected).await
         {
             Err(error) => Err(CompanySweepFailure::CompanyVerification(error)),
-            Ok(expected_company_guid) => {
+            Ok(identity) => {
                 match runtime
-                    .detect_base_currency(
-                        request.config.clone(),
-                        selected.display_name.clone(),
-                        expected_company_guid.clone(),
-                    )
+                    .detect_base_currency(request.config.clone(), &identity)
                     .await
                 {
                     Err(_) => Err(CompanySweepFailure::ReasonCode(
@@ -2503,8 +2572,7 @@ pub async fn fetch_tally_outstandings_all_companies(
                         None => runtime
                             .fetch_outstandings(
                                 request.config.clone(),
-                                selected.display_name.clone(),
-                                expected_company_guid,
+                                &identity,
                                 as_of.clone(),
                                 request.currency_assertion,
                                 request.ageing_anchor,
@@ -2696,7 +2764,7 @@ mod tests {
         first_calendar_day_canary_window, portable_export_file_name, reconcile_review_cleanup,
         reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
         tally_runtime_command_error, validate_dsc_pins, write_unique_download, CompanySweepFailure,
-        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
+        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, VerifiedCompanyIdentity,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
@@ -2709,6 +2777,20 @@ mod tests {
     };
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn same_guid_case_or_whitespace_sibling_is_not_a_safe_scope() {
+        let identity = VerifiedCompanyIdentity::test_fixture("Client Book", "same-guid");
+        let sibling = TallyCompany {
+            name: " client book ".to_string(),
+            guid: Some("SAME-GUID".to_string()),
+            company_number: Some("2".to_string()),
+            books_from: Some("20270401".to_string()),
+        };
+
+        assert!(identity.is_case_or_whitespace_guid_sibling(&sibling));
+        assert!(!identity.matches_observed_company(&sibling));
+    }
 
     /// Regression for the destination-picker leak: `select_party_statement_
     /// destination` used to build the folder's IPC string with
@@ -4041,14 +4123,10 @@ pub async fn detect_tally_base_currency(
     request: BaseCurrencyRequest,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<bridge_tally_protocol::native_outstandings::CompanyCurrency, TallyCommandError> {
-    let expected_company_guid =
+    let identity =
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     runtime
-        .detect_base_currency(
-            request.config,
-            request.selected_company.display_name,
-            expected_company_guid,
-        )
+        .detect_base_currency(request.config, &identity)
         .await
         .map_err(tally_runtime_command_error)
 }

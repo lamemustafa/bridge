@@ -15,6 +15,7 @@ import {
   workingPaperInvokeArgument,
   type AsOfBoundValue,
 } from "./outstandings-as-of";
+import { companyIdentityKeyForConfig } from "./company-identity";
 
 type Props = {
   config: { host: string; port: number };
@@ -27,15 +28,6 @@ type Props = {
   asOf: string;
   onAsOfChange: (value: string) => void;
 };
-
-function companyIdentityKey(company: NonNullable<Props["company"]>) {
-  return JSON.stringify([
-    company.guid.toLowerCase(),
-    company.company_number,
-    company.name,
-    company.books_from_yyyymmdd,
-  ]);
-}
 
 type Report = {
   company_name: string;
@@ -191,7 +183,7 @@ export function OutstandingsScreen({
     setExpandedParty(null);
   }, [ageingAnchor]);
 
-  const currentCompanyIdentity = company ? companyIdentityKey(company) : null;
+  const currentCompanyIdentity = company ? companyIdentityKeyForConfig(config, company) : null;
   const currencyReadPermitted = canStartOutstandingsRead(currentCompanyIdentity, inrAssertedCompanyIdentity);
   const readPermitted = currencyReadPermitted && requestedAsOf !== null;
   const partialState = result?.state === "partial"
@@ -234,7 +226,7 @@ export function OutstandingsScreen({
   }, [ageingAnchor, asOf, config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, readPermitted, requestedAsOf]);
 
   React.useEffect(() => {
-    const key = company ? `${config.host}:${config.port}:${companyIdentityKey(company)}:${ageingAnchor}` : null;
+    const key = company ? `${companyIdentityKeyForConfig(config, company)}:${ageingAnchor}` : null;
     if (!readPermitted || !key || initialReadKey.current === key) return;
     initialReadKey.current = key;
     void load();
@@ -249,7 +241,7 @@ export function OutstandingsScreen({
   // Where Tally cannot settle it (several currencies defined, or a non-Indian
   // one) the manual confirmation below is still shown.
   React.useEffect(() => {
-    if (!company || inrAssertedCompanyIdentity === companyIdentityKey(company)) return;
+    if (!company || inrAssertedCompanyIdentity === companyIdentityKeyForConfig(config, company)) return;
     let cancelled = false;
     setCurrencyCheck("checking");
     void invoke<{ is_inr: boolean; mailing_name: string; currency_count: number }>(
@@ -266,7 +258,7 @@ export function OutstandingsScreen({
     )
       .then((currency) => {
         if (cancelled) return;
-        if (currency.is_inr) setInrAssertedCompanyIdentity(companyIdentityKey(company));
+        if (currency.is_inr) setInrAssertedCompanyIdentity(companyIdentityKeyForConfig(config, company));
         setCurrencyCheck(currency.is_inr ? "inr" : "undetermined");
       })
       .catch(() => {
@@ -337,7 +329,7 @@ export function OutstandingsScreen({
       <section className="panel wide outstandings-empty">
         <h2>Confirm the base currency</h2>
         <p>Tally did not settle this company&rsquo;s base currency — it defines more than one currency, or one that is not the Indian rupee. Bridge shows totals in rupees, so confirm before continuing.</p>
-        <button type="button" onClick={() => setInrAssertedCompanyIdentity(companyIdentityKey(company))}>This company uses INR</button>
+        <button type="button" onClick={() => setInrAssertedCompanyIdentity(companyIdentityKeyForConfig(config, company))}>This company uses INR</button>
       </section>
     );
   }

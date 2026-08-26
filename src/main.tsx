@@ -1621,7 +1621,9 @@ function App() {
             } : undefined}
             onChangeSetup={() => setView("companies")}
             onViewAllClients={() => setView("clients")}
-            openBookCount={currentProbeCompanyList.filter((entry) => entry.guid).length}
+            openBookCount={currentProbeCompanyList.filter(
+              (entry) => entry.guid && entry.company_number && entry.books_from_yyyymmdd,
+            ).length}
             asOf={outstandingsAsOfSelection.value}
             onAsOfChange={changeOutstandingsAsOf}
           />

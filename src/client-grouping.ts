@@ -4,16 +4,24 @@ export type ClientGroupLabels = Record<string, string>;
 
 export type ClientGroupLabelResolution = {
   label: string | undefined;
+  /// Exact persisted legacy key to retire if the operator saves this book.
+  /// Keeping the observed key prevents a save from re-resolving a raw GUID.
+  legacyCompanyKey: string | undefined;
   /// A pre-composite raw-GUID label exists but cannot safely be assigned to
   /// one of several year-end-split books.
   ambiguousLegacyLabel: boolean;
 };
 
-function legacyLabelForGuid(labels: ClientGroupLabels, guid: string): string | undefined {
+function legacyLabelForGuid(
+  labels: ClientGroupLabels,
+  guid: string,
+): { key: string; label: string } | undefined {
   const normalizedGuid = guid.trim().toLowerCase();
   if (!normalizedGuid) return undefined;
   for (const [key, label] of Object.entries(labels)) {
-    if (key.trim().toLowerCase() === normalizedGuid) return label.trim() || undefined;
+    if (key.trim().toLowerCase() === normalizedGuid && label.trim()) {
+      return { key, label: label.trim() };
+    }
   }
   return undefined;
 }
@@ -28,26 +36,28 @@ export function resolveClientGroupLabel(
   listedSourceGuids: readonly (string | undefined)[],
 ): ClientGroupLabelResolution {
   const exact = labels[companyKey]?.trim();
-  if (exact) return { label: exact, ambiguousLegacyLabel: false };
-  if (!sourceGuid) return { label: undefined, ambiguousLegacyLabel: false };
+  if (exact) return { label: exact, legacyCompanyKey: undefined, ambiguousLegacyLabel: false };
+  if (!sourceGuid) return { label: undefined, legacyCompanyKey: undefined, ambiguousLegacyLabel: false };
 
   const legacy = legacyLabelForGuid(labels, sourceGuid);
-  if (!legacy) return { label: undefined, ambiguousLegacyLabel: false };
+  if (!legacy) return { label: undefined, legacyCompanyKey: undefined, ambiguousLegacyLabel: false };
   const normalizedGuid = sourceGuid.trim().toLowerCase();
   const matchingBooks = listedSourceGuids.filter(
     (guid) => guid?.trim().toLowerCase() === normalizedGuid,
   ).length;
   return matchingBooks === 1
-    ? { label: legacy, ambiguousLegacyLabel: false }
-    : { label: undefined, ambiguousLegacyLabel: true };
+    ? { label: legacy.label, legacyCompanyKey: legacy.key, ambiguousLegacyLabel: false }
+    : { label: undefined, legacyCompanyKey: undefined, ambiguousLegacyLabel: true };
 }
 
 export function applyClientGroupLabel(
   labels: ClientGroupLabels,
   companyKey: string,
   label: string,
+  legacyCompanyKey?: string,
 ): ClientGroupLabels {
   const next = { ...labels };
+  if (legacyCompanyKey && legacyCompanyKey !== companyKey) delete next[legacyCompanyKey];
   const normalized = label.trim();
   if (normalized) next[companyKey] = normalized;
   else delete next[companyKey];

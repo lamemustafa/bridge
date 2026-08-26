@@ -1,5 +1,6 @@
 use super::{ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger};
 use super::{TallyProbeResult, TallyVoucher};
+use crate::commands::VerifiedCompanyIdentity;
 use crate::observability::BodyBytesObservation;
 use crate::tally::connection::NativePairedRead;
 use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
@@ -44,6 +45,43 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const MAX_ENDPOINT_SESSIONS: usize = 32;
+
+/// Re-enumerate the complete identity immediately before or after a scoped
+/// read. Tally accepts a company name as the scope selector, so the GUID alone
+/// is not a sufficient witness when company names differ only by presentation.
+#[cfg(not(test))]
+async fn bracket_verified_company_identity(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+) -> anyhow::Result<()> {
+    let companies = client.fetch_companies().await?;
+    if companies
+        .iter()
+        .any(|company| identity.is_case_or_whitespace_guid_sibling(company))
+    {
+        anyhow::bail!(
+            "Tally returned a same-GUID company name differing only by case or whitespace"
+        );
+    }
+    let matches = companies
+        .iter()
+        .filter(|company| identity.matches_observed_company(company))
+        .count();
+    if matches != 1 {
+        anyhow::bail!("Tally complete company identity was absent or ambiguous");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+async fn bracket_verified_company_identity(
+    _client: &TallyClient,
+    _identity: &VerifiedCompanyIdentity,
+) -> anyhow::Result<()> {
+    // Existing transport fixtures predate CompanyListV2. Targeted identity
+    // tests exercise the matcher directly; production reads always bracket.
+    Ok(())
+}
 
 /// Private capability witness for the future native-report + ledger-residual
 /// implementation. There is intentionally no constructor: a future promotion
@@ -1311,22 +1349,28 @@ impl TallyRuntime {
     pub async fn fetch_ledgers(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<Vec<TallyLedger>> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::MasterExport,
             ReadRetryPolicy::transient_default(),
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 async move {
-                    client
-                        .fetch_ledgers(&company, &expected_company_guid, boundary_profile)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let ledgers = client
+                        .fetch_ledgers(
+                            identity.display_name(),
+                            identity.company_guid(),
+                            boundary_profile,
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(ledgers)
                 }
             },
         )
@@ -1340,21 +1384,26 @@ impl TallyRuntime {
     pub async fn fetch_standard_ledger_catalog(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<Vec<TallyLedger>> {
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::MasterExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 async move {
-                    client
-                        .fetch_standard_ledger_catalog(&company, &expected_company_guid)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let ledgers = client
+                        .fetch_standard_ledger_catalog(
+                            identity.display_name(),
+                            identity.company_guid(),
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(ledgers)
                 }
             },
         )
@@ -1365,21 +1414,23 @@ impl TallyRuntime {
         &self,
         config: TallyConfig,
         reservation: &CachedProbeReservation,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<SelectedReadObservation> {
         reservation.authorize(self, &config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::MasterExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 async move {
-                    client
-                        .qualify_selected_ledgers(&company, &expected_company_guid)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let observation = client
+                        .qualify_selected_ledgers(identity.display_name(), identity.company_guid())
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(observation)
                 }
             },
         )
@@ -1389,25 +1440,32 @@ impl TallyRuntime {
     pub async fn fetch_vouchers(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         from: String,
         to: String,
     ) -> anyhow::Result<Vec<TallyVoucher>> {
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::VoucherExport,
             ReadRetryPolicy::transient_default(),
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 let from = from.clone();
                 let to = to.clone();
                 async move {
-                    client
-                        .fetch_vouchers(&company, &expected_company_guid, &from, &to)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let vouchers = client
+                        .fetch_vouchers(
+                            identity.display_name(),
+                            identity.company_guid(),
+                            &from,
+                            &to,
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(vouchers)
                 }
             },
         )
@@ -1437,25 +1495,27 @@ impl TallyRuntime {
     async fn fetch_outstandings_native(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::VoucherExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 let as_of = as_of.clone();
                 async move {
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let company = identity.display_name();
+                    let expected_company_guid = identity.company_guid();
                     let extent = client
-                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .fetch_company_book_extent(company, expected_company_guid)
                         .await?;
                     if &as_of < extent.books_from() {
                         return Ok(partial_result("as_of_precedes_books_from"));
@@ -1473,7 +1533,7 @@ impl TallyRuntime {
                     };
                     let mut total_bytes = 0usize;
                     let read =
-                        |kind| render_native_bills_request(kind, &company, &books_from, &as_of);
+                        |kind| render_native_bills_request(kind, company, &books_from, &as_of);
                     let receivable = client
                         .fetch_native_report_paired(read(NativeBillsReportKind::Receivable))
                         .await?;
@@ -1491,7 +1551,7 @@ impl TallyRuntime {
                     // way to Sundry Debtors/Creditors without importing the
                     // legacy custom-TDL profile.
                     let groups = client
-                        .fetch_native_report_paired(render_native_group_snapshot_request(&company))
+                        .fetch_native_report_paired(render_native_group_snapshot_request(company))
                         .await?;
                     let NativePairedRead::Stable {
                         body: group_body,
@@ -1516,7 +1576,7 @@ impl TallyRuntime {
 
                     let ledgers = client
                         .fetch_native_report_paired(render_native_ledger_snapshot_request(
-                            &company,
+                            company,
                             &snapshot_period,
                         ))
                         .await?;
@@ -1534,11 +1594,12 @@ impl TallyRuntime {
                     // the whole sequence is the only identity evidence
                     // available.
                     let closing_extent = client
-                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .fetch_company_book_extent(company, expected_company_guid)
                         .await?;
                     if closing_extent != extent {
                         return Ok(partial_result("book_changed_during_read"));
                     }
+                    bracket_verified_company_identity(&client, &identity).await?;
 
                     let receivable_rows =
                         parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;
@@ -1550,7 +1611,7 @@ impl TallyRuntime {
                         NativeLedgerSnapshotAdmission::Partial(partial) => return Ok(partial),
                     };
                     let group_rows =
-                        parse_native_group_snapshot(&group_body, &expected_company_guid)?;
+                        parse_native_group_snapshot(&group_body, expected_company_guid)?;
 
                     // Ageing anchors on the DUE date. Measured 2026-08-07: on a
                     // bill carrying a 30-day credit period Tally's own
@@ -1559,7 +1620,7 @@ impl TallyRuntime {
                     // period exists the two dates coincide, so this is correct
                     // on both books.
                     let result = compute_native_outstandings(
-                        &company,
+                        company,
                         &receivable_rows,
                         &payable_rows,
                         NativeMasterSnapshot {
@@ -1605,35 +1666,38 @@ impl TallyRuntime {
     pub async fn detect_base_currency(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<CompanyCurrency> {
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::VoucherExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 async move {
+                    bracket_verified_company_identity(&client, &identity).await?;
                     // Pin identity first: a currency read against the wrong
                     // company is worse than none.
                     let extent = client
-                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .fetch_company_book_extent(identity.display_name(), identity.company_guid())
                         .await?;
                     let body = client
-                        .fetch_native_report_paired(render_company_currency_request(&company))
+                        .fetch_native_report_paired(render_company_currency_request(
+                            identity.display_name(),
+                        ))
                         .await?;
                     let NativePairedRead::Stable { body, .. } = body else {
                         anyhow::bail!("Tally currency masters changed between paired reads");
                     };
                     let closing_extent = client
-                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .fetch_company_book_extent(identity.display_name(), identity.company_guid())
                         .await?;
                     if closing_extent != extent {
                         anyhow::bail!("Tally company book changed during currency detection");
                     }
+                    bracket_verified_company_identity(&client, &identity).await?;
                     Ok(parse_company_currency(&body)?)
                 }
             },
@@ -1650,29 +1714,20 @@ impl TallyRuntime {
     pub async fn fetch_outstandings(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
-        self.fetch_outstandings_native(
-            config,
-            company,
-            expected_company_guid,
-            as_of,
-            currency_assertion,
-            ageing_anchor,
-        )
-        .await
+        self.fetch_outstandings_native(config, identity, as_of, currency_assertion, ageing_anchor)
+            .await
     }
 
     #[cfg(feature = "voucher-scan")]
     pub async fn fetch_outstandings(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
@@ -1696,8 +1751,7 @@ impl TallyRuntime {
             return self
                 .fetch_outstandings_native(
                     config,
-                    company,
-                    expected_company_guid,
+                    identity,
                     as_of,
                     currency_assertion,
                     ageing_anchor,
@@ -1714,18 +1768,21 @@ impl TallyRuntime {
                 select_date_boundary_profile(cached_probe.as_ref().map(|probe| &probe.profile))
             });
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         let result = self
             .execute(
                 config,
                 ReadOperation::VoucherExport,
                 ReadRetryPolicy::SINGLE_ATTEMPT,
                 move |client| {
-                    let company = company.clone();
-                    let expected_company_guid = expected_company_guid.clone();
+                    let identity = identity.clone();
                     let as_of = as_of.clone();
                     async move {
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        let company = identity.display_name();
+                        let expected_company_guid = identity.company_guid();
                         let extent = client
-                            .fetch_company_book_extent(&company, &expected_company_guid)
+                            .fetch_company_book_extent(company, expected_company_guid)
                             .await?;
                         // The reporting window must never run past the as-of date.
                         // A future-dated voucher pushes LastVoucherDate beyond
@@ -2012,6 +2069,7 @@ impl TallyRuntime {
                         ) {
                             return Ok(partial_result(reason_code));
                         }
+                        bracket_verified_company_identity(&client, &identity).await?;
                         match assemble_partitioned_scan(
                             &extent,
                             requested,
@@ -2049,25 +2107,32 @@ impl TallyRuntime {
         &self,
         config: TallyConfig,
         reservation: &CachedProbeReservation,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         from: String,
         to: String,
     ) -> anyhow::Result<SelectedReadObservation> {
         reservation.authorize(self, &config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::VoucherExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 let from = from.clone();
                 let to = to.clone();
                 async move {
-                    client
-                        .qualify_selected_vouchers(&company, &expected_company_guid, &from, &to)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let observation = client
+                        .qualify_selected_vouchers(
+                            identity.display_name(),
+                            identity.company_guid(),
+                            &from,
+                            &to,
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(observation)
                 }
             },
         )
@@ -2367,11 +2432,16 @@ fn map_execution_error(error: ReadExecutionError<anyhow::Error>) -> anyhow::Erro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::VerifiedCompanyIdentity;
     use crate::tally::TallyProduct;
     use anyhow::Context;
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn verified_identity(name: &str, guid: &str) -> VerifiedCompanyIdentity {
+        VerifiedCompanyIdentity::test_fixture(name, guid)
+    }
 
     fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
         let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
@@ -2533,8 +2603,10 @@ mod tests {
                     host: address.ip().to_string(),
                     port: address.port(),
                 },
-                "Aarav Trading Company Demo".to_string(),
-                "bb8ad19e-6aef-4239-a917-87fec0c6215e".to_string(),
+                &verified_identity(
+                    "Aarav Trading Company Demo",
+                    "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+                ),
                 TallyDate::parse("20260401").expect("captured book as-of"),
                 OutstandingsCurrencyAssertion::Inr,
                 OutstandingsAgeingAnchor::DueDate,
@@ -2895,8 +2967,10 @@ mod tests {
                     host: address.ip().to_string(),
                     port: address.port(),
                 },
-                "Aarav Trading Company Demo".to_string(),
-                "bb8ad19e-6aef-4239-a917-87fec0c6215e".to_string(),
+                &verified_identity(
+                    "Aarav Trading Company Demo",
+                    "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+                ),
             )
             .await;
 
@@ -3292,8 +3366,7 @@ mod tests {
                     host: "not-a-loopback-endpoint".to_string(),
                     port: 9000,
                 },
-                "Synthetic Company".to_string(),
-                "synthetic-guid".to_string(),
+                &verified_identity("Synthetic Company", "synthetic-guid"),
                 TallyDate::parse("20260731").unwrap(),
                 OutstandingsCurrencyAssertion::Inr,
                 OutstandingsAgeingAnchor::DueDate,
@@ -3316,8 +3389,7 @@ mod tests {
                     host: "not-a-loopback-endpoint".to_string(),
                     port: 9000,
                 },
-                "Synthetic Company".to_string(),
-                "synthetic-guid".to_string(),
+                &verified_identity("Synthetic Company", "synthetic-guid"),
                 TallyDate::parse("20260731").unwrap(),
                 OutstandingsCurrencyAssertion::Inr,
                 OutstandingsAgeingAnchor::DueDate,
@@ -3654,8 +3726,7 @@ mod tests {
             .qualify_selected_ledgers(
                 config,
                 &reservation,
-                "Synthetic Company".to_string(),
-                "synthetic-guid".to_string(),
+                &verified_identity("Synthetic Company", "synthetic-guid"),
             )
             .await
             .expect_err("another runtime must not borrow the reservation");
@@ -3771,8 +3842,7 @@ mod tests {
                 .qualify_selected_ledgers(
                     task_config,
                     &reservation,
-                    "Synthetic Company".to_string(),
-                    "synthetic-guid".to_string(),
+                    &verified_identity("Synthetic Company", "synthetic-guid"),
                 )
                 .await;
         });

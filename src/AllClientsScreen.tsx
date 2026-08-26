@@ -17,6 +17,7 @@ import {
   type AsOfBoundValue,
 } from "./outstandings-as-of";
 import { outstandingsCurrencySymbol } from "./outstandings-currency";
+import { companyIdentityKey } from "./company-identity";
 
 type CompanyRef = {
   name: string;
@@ -61,16 +62,6 @@ type Entry = {
   canonical_origin: string;
   result: LoadResult;
 };
-
-function companyIdentityKey(entry: Pick<Entry, "canonical_origin" | "company" | "company_guid" | "company_number" | "books_from_yyyymmdd">) {
-  return JSON.stringify([
-    entry.canonical_origin,
-    entry.company_guid.toLowerCase(),
-    entry.company_number,
-    entry.company,
-    entry.books_from_yyyymmdd,
-  ]);
-}
 
 function amountOf(value: string | undefined) {
   if (!value || !/^-?\d+(?:\.\d+)?$/.test(value)) return null;
@@ -144,6 +135,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   // table at settle time is what makes a superseded response inert instead
   // of clobbering a newer save's outcome.
   const groupLabelSaveSequence = React.useRef<ClientGroupLabelSaveSequence>({});
+  const pendingLegacyGroupKeys = React.useRef<Record<string, string>>({});
   const requestVersion = React.useRef(0);
   const sortChangedDuringLoad = React.useRef(false);
   const requestedAsOf = asOfYyyymmdd(asOf);
@@ -259,7 +251,13 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
           company: entry.company,
           // Group labels and React row keys must not merge year-end split
           // books that share a Tally GUID.
-          companyGuid: companyIdentityKey(entry),
+          companyGuid: companyIdentityKey({
+            canonical_origin: entry.canonical_origin,
+            company_guid: entry.company_guid,
+            company_number: entry.company_number,
+            company_name: entry.company,
+            books_from_yyyymmdd: entry.books_from_yyyymmdd,
+          }),
           sourceGuid: entry.company_guid,
           companyNumber: entry.company_number,
           booksFromYyyymmdd: entry.books_from_yyyymmdd,
@@ -325,17 +323,28 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     0,
   );
 
-  const updateGroupLabel = React.useCallback((companyKey: string, label: string) => {
-    setGroupLabels((current) => applyClientGroupLabel(current, companyKey, label));
+  const updateGroupLabel = React.useCallback((companyKey: string, label: string, legacyCompanyKey?: string) => {
+    if (legacyCompanyKey) pendingLegacyGroupKeys.current[companyKey] = legacyCompanyKey;
+    setGroupLabels((current) => applyClientGroupLabel(
+      current,
+      companyKey,
+      label,
+      pendingLegacyGroupKeys.current[companyKey],
+    ));
   }, []);
 
-  const saveGroupLabel = React.useCallback((companyKey: string, label: string) => {
+  const saveGroupLabel = React.useCallback((companyKey: string, label: string, legacyCompanyKey?: string) => {
     const attemptedLabel = label.trim();
+    const legacyKeyToRetire = legacyCompanyKey ?? pendingLegacyGroupKeys.current[companyKey];
     setGroupLabelError(null);
     const { sequence, stamp } = issueClientGroupLabelSave(groupLabelSaveSequence.current, companyKey);
     groupLabelSaveSequence.current = sequence;
     void invoke("save_client_group_label", {
-      request: { company_key: companyKey, label: attemptedLabel },
+      request: {
+        company_key: companyKey,
+        label: attemptedLabel,
+        legacy_company_key: legacyKeyToRetire,
+      },
     })
       .then(() => {
         // A later save for this company has already been issued: this
@@ -347,7 +356,15 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
           persistedGroupLabels.current,
           companyKey,
           attemptedLabel,
+          legacyKeyToRetire,
         );
+        setGroupLabels((current) => applyClientGroupLabel(
+          current,
+          companyKey,
+          attemptedLabel,
+          legacyKeyToRetire,
+        ));
+        delete pendingLegacyGroupKeys.current[companyKey];
       })
       .catch(() => {
         // Same reasoning as above: a superseded failure must not roll back
@@ -360,6 +377,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
           attemptedLabel,
           persistedGroupLabels.current,
         ));
+        delete pendingLegacyGroupKeys.current[companyKey];
         setGroupLabelError("Bridge could not save this group label. The previous label was restored; your figures are unchanged.");
       });
   }, []);
@@ -502,8 +520,16 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
                       aria-label={`Group label for ${row.company}`}
                       value={resolution.label ?? ""}
                       placeholder={resolution.ambiguousLegacyLabel ? "Legacy label needs review" : "No group"}
-                      onChange={(event) => updateGroupLabel(row.companyGuid, event.target.value)}
-                      onBlur={(event) => saveGroupLabel(row.companyGuid, event.target.value)}
+                      onChange={(event) => updateGroupLabel(
+                        row.companyGuid,
+                        event.target.value,
+                        resolution.legacyCompanyKey,
+                      )}
+                      onBlur={(event) => saveGroupLabel(
+                        row.companyGuid,
+                        event.target.value,
+                        resolution.legacyCompanyKey,
+                      )}
                     />
                     {resolution.ambiguousLegacyLabel && (
                       <small>A legacy GUID-only label is shared by split books. Assign this book individually.</small>

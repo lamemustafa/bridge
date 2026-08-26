@@ -12,6 +12,25 @@ UPDATE tally_companies
 SET identity_confidence = 'unknown'
 WHERE identity_confidence = 'observed';
 
+-- A write-fixture enrollment is authority for future canary work. Once the
+-- company pin it names is deliberately retired, retaining that authority
+-- would let a pre-existing reservation cross the re-verification boundary.
+INSERT INTO tally_write_fixture_revocations(
+  event_sequence, id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms
+)
+SELECT
+  (SELECT COALESCE(MAX(event_sequence), 0) FROM tally_write_fixture_revocations)
+    + ROW_NUMBER() OVER (ORDER BY enrollment.id),
+  lower(hex(randomblob(16))), enrollment.id, lower(hex(randomblob(32))), 'operator_revoked',
+  CASE WHEN enrollment.enrolled_at_unix_ms > 0 THEN enrollment.enrolled_at_unix_ms ELSE 1 END
+FROM tally_write_fixture_enrollments AS enrollment
+JOIN tally_companies AS company ON company.id = enrollment.company_id
+WHERE company.identity_confidence = 'unknown'
+  AND NOT EXISTS (
+    SELECT 1 FROM tally_write_fixture_revocations AS prior
+    WHERE prior.enrollment_id = enrollment.id
+  );
+
 CREATE UNIQUE INDEX uq_tally_companies_observed_identity
   ON tally_companies(
     endpoint_id,
