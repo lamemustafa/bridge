@@ -71,7 +71,21 @@ export function asOfYyyymmdd(value: string) {
 }
 
 export type OutstandingsConfig = { host: string; port: number };
-export type OutstandingsCompany = { name: string; guid: string };
+export type OutstandingsCompany = {
+  name: string;
+  guid: string;
+  company_number: string;
+  books_from_yyyymmdd: string;
+};
+
+function selectedCompanyIdentity(company: OutstandingsCompany) {
+  return {
+    display_name: company.name,
+    company_guid: company.guid,
+    company_number: company.company_number,
+    books_from_yyyymmdd: company.books_from_yyyymmdd,
+  };
+}
 
 /** Builds the exact Tauri argument for one company's requested as-of date. */
 export function singleCompanyOutstandingsInvokeArgument(
@@ -85,8 +99,7 @@ export function singleCompanyOutstandingsInvokeArgument(
   return {
     request: {
       config,
-      company: company.name,
-      expected_company_guid: company.guid,
+      selected_company: selectedCompanyIdentity(company),
       currency_assertion: "INR" as const,
       as_of_yyyymmdd: asOfYyyymmddValue,
       ageing_anchor: ageingAnchor,
@@ -106,10 +119,7 @@ export function allCompaniesOutstandingsInvokeArgument(
   return {
     request: {
       config,
-      companies: companies.map((company) => ({
-        company: company.name,
-        expected_company_guid: company.guid,
-      })),
+      companies: companies.map((company) => ({ selected_company: selectedCompanyIdentity(company) })),
       currency_assertion: "INR" as const,
       as_of_yyyymmdd: asOfYyyymmddValue,
       ageing_anchor: ageingAnchor,

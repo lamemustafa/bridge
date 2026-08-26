@@ -2922,6 +2922,8 @@ mod tests {
             companies: vec![TallyCompany {
                 name: "Synthetic Company".to_string(),
                 guid: Some("synthetic-guid".to_string()),
+                company_number: None,
+                books_from: None,
             }],
             profile: CapabilityProfile {
                 profile_version: 2,

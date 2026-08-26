@@ -344,6 +344,14 @@ fn persisted_tally_probe_result(
             .guid
             .as_deref()
             .is_some_and(|guid| !guid.trim().is_empty())
+            && company
+                .company_number
+                .as_deref()
+                .is_some_and(|number| !number.trim().is_empty())
+            && company
+                .books_from
+                .as_deref()
+                .is_some_and(|books_from| !books_from.trim().is_empty())
         {
             "observed"
         } else {
@@ -352,10 +360,22 @@ fn persisted_tally_probe_result(
         let correlation_key = company
             .guid
             .as_deref()
-            .map(|guid| company_profile_correlation_key(&canonical_origin, guid));
+            .zip(company.company_number.as_deref())
+            .zip(company.books_from.as_deref())
+            .map(|((guid, company_number), books_from)| {
+                company_profile_correlation_key(
+                    &canonical_origin,
+                    guid,
+                    company_number,
+                    &company.name,
+                    books_from,
+                )
+            });
         companies.push(PersistedTallyCompany {
             name: company.name,
             guid: company.guid,
+            company_number: company.company_number,
+            books_from_yyyymmdd: company.books_from,
             mirror_company_id: None,
             correlation_key,
             identity_confidence,
@@ -380,7 +400,7 @@ pub struct QualifySelectedReadsRequest {
     pub config: TallyConfig,
     pub expected_review_id: String,
     pub expected_review_commitment_sha256: String,
-    pub selected_company_guid: String,
+    pub selected_company: SelectedCompanyIdentity,
     pub voucher_from_yyyymmdd: String,
     pub voucher_to_yyyymmdd: String,
 }
@@ -457,7 +477,7 @@ pub async fn qualify_selected_tally_reads(
     if parent_commitment != request.expected_review_commitment_sha256 {
         return Err(reviewed_probe_changed_error());
     }
-    let selected_guid = match normalize_company_guid(&request.selected_company_guid) {
+    let selected_guid = match normalize_company_guid(&request.selected_company.company_guid) {
         Ok(guid) => guid,
         Err(_) => {
             return Err(tally_command_error(
@@ -466,7 +486,7 @@ pub async fn qualify_selected_tally_reads(
                 "The selected company does not have a safe observed GUID.",
                 "after_change",
                 false,
-                "Select one GUID-bearing company from the current probe.",
+                "Select one company with an observed name, number, GUID, and book opening date from the current probe.",
             ));
         }
     };
@@ -474,10 +494,15 @@ pub async fn qualify_selected_tally_reads(
         .companies
         .iter()
         .filter(|company| {
-            company
-                .guid
-                .as_deref()
-                .is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
+            company.name == request.selected_company.display_name
+                && company
+                    .guid
+                    .as_deref()
+                    .is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
+                && company.company_number.as_deref()
+                    == Some(request.selected_company.company_number.as_str())
+                && company.books_from.as_deref()
+                    == Some(request.selected_company.books_from_yyyymmdd.as_str())
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -595,6 +620,8 @@ pub async fn qualify_selected_tally_reads(
             canonical_origin: canonical_origin.clone(),
             company_guid_ascii_casefolded: casefolded_guid.clone(),
             company_name: company.name.clone(),
+            company_number: request.selected_company.company_number.clone(),
+            books_from_yyyymmdd: request.selected_company.books_from_yyyymmdd.clone(),
             ledger_profile_id: SELECTED_LEDGER_QUERY_PROFILE_ID.to_string(),
             voucher_profile_id: SELECTED_VOUCHER_QUERY_PROFILE_ID.to_string(),
             voucher_from_yyyymmdd: request.voucher_from_yyyymmdd.clone(),
@@ -632,6 +659,8 @@ pub async fn qualify_selected_tally_reads(
         scope_commitment_sha256,
         parent_review_sha256: parent_commitment,
         company_guid_ascii_casefolded: casefolded_guid,
+        company_number: request.selected_company.company_number.clone(),
+        books_from_yyyymmdd: request.selected_company.books_from_yyyymmdd.clone(),
         observations,
     };
     probe.selected_read_scope = Some(selected_read_scope.clone());
@@ -842,7 +871,17 @@ pub struct SaveTallySetupRequest {
     pub config: TallyConfig,
     pub expected_review_id: String,
     pub expected_review_commitment_sha256: String,
-    pub selected_company_guid: String,
+    pub selected_company: SelectedCompanyIdentity,
+}
+
+/// Exact Company-collection tuple selected from the reviewed probe. Every
+/// field is subsequently matched against the cached probe before persistence.
+#[derive(Debug, Deserialize)]
+pub struct SelectedCompanyIdentity {
+    pub display_name: String,
+    pub company_guid: String,
+    pub company_number: String,
+    pub books_from_yyyymmdd: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -860,7 +899,7 @@ pub struct EnrollTallyWriteFixtureRequest {
     pub expected_review_id: String,
     pub expected_review_commitment_sha256: String,
     pub mirror_company_id: String,
-    pub selected_company_guid: String,
+    pub selected_company: SelectedCompanyIdentity,
     pub disposable_company_attested: bool,
     pub no_customer_data_attested: bool,
     pub backup_guidance_acknowledged: bool,
@@ -950,46 +989,47 @@ pub async fn save_tally_setup(
                 "Probe again and review the replacement Passport before saving.",
             ));
         }
-        let selected_guid = normalize_company_guid(&request.selected_company_guid).map_err(|_| {
+        let selected_guid = normalize_company_guid(&request.selected_company.company_guid).map_err(|_| {
             tally_command_error(
                 "stable_company_identity_required",
                 "Tally application",
                 "The selected company does not have an observed stable GUID.",
                 "after_change",
                 false,
-                "Select a GUID-bearing company from the current probe.",
+                "Select a company with an observed name, number, GUID, and book opening date from the current probe.",
             )
         })?;
         let mut matches = probe.companies.iter().filter(|company| {
-            company
-                .guid
-                .as_deref()
-                .is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
+            company.name == request.selected_company.display_name
+                && company.guid.as_deref().is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
+                && company.company_number.as_deref() == Some(request.selected_company.company_number.as_str())
+                && company.books_from.as_deref() == Some(request.selected_company.books_from_yyyymmdd.as_str())
         });
         let company = matches.next().cloned().ok_or_else(|| {
             tally_command_error(
                 "reviewed_company_scope_changed",
                 "Tally application",
-                "The selected company is not present in the reviewed probe.",
+                "The selected company's saved identity no longer matches the reviewed Tally probe.",
                 "safe",
                 false,
-                "Probe again and select a company from the current result.",
+                "This can happen after a year-end split or rename. Probe again and re-verify the intended book before any read.",
             )
         })?;
         if matches.next().is_some() {
             return Err(tally_command_error(
                 "company_identity_ambiguous",
                 "Tally application",
-                "The reviewed probe returned the selected GUID more than once.",
+                "The reviewed probe returned the same complete company identity more than once.",
                 "not_recommended",
                 false,
-                "Do not save this scope; inspect the synthetic or source company identities.",
+                "Do not save this scope. Inspect the loaded companies and choose the intended split book by its name, company number, and book opening date.",
             ));
         }
         if probe.selected_read_scope.as_ref().is_some_and(|scope| {
             !company.guid.as_deref().is_some_and(|guid| {
                 guid.to_ascii_lowercase() == scope.company_guid_ascii_casefolded
-            })
+            }) || company.company_number.as_deref() != Some(scope.company_number.as_str())
+                || company.books_from.as_deref() != Some(scope.books_from_yyyymmdd.as_str())
         }) {
             return Err(tally_command_error(
                 "qualified_company_scope_changed",
@@ -1025,6 +1065,8 @@ pub async fn save_tally_setup(
                     confidence: Some(Confidence::Observed),
                     ..SourceIdentityInput::default()
                 },
+                company_number: request.selected_company.company_number.clone(),
+                books_from_yyyymmdd: request.selected_company.books_from_yyyymmdd.clone(),
                 selected_read_scope: probe.selected_read_scope.as_ref().map(|scope| {
                     SelectedReadScopeInput {
                         scope_commitment_sha256: scope.scope_commitment_sha256.clone(),
@@ -1033,6 +1075,8 @@ pub async fn save_tally_setup(
                         voucher_profile_id: scope.voucher_profile_id.clone(),
                         voucher_from_yyyymmdd: scope.voucher_from_yyyymmdd.clone(),
                         voucher_to_yyyymmdd: scope.voucher_to_yyyymmdd.clone(),
+                        company_number: scope.company_number.clone(),
+                        books_from_yyyymmdd: scope.books_from_yyyymmdd.clone(),
                         observed_at_unix_ms,
                         observations: scope
                             .observations
@@ -1073,10 +1117,15 @@ pub async fn save_tally_setup(
                     "Verify encrypted storage, then retry this reviewed scope while it is fresh.",
                 )
             })?;
-        let correlation_key = company
-            .guid
-            .as_deref()
-            .map(|guid| company_profile_correlation_key(&canonical_origin, guid));
+        let correlation_key = company.guid.as_deref().zip(company.company_number.as_deref()).zip(company.books_from.as_deref()).map(
+            |((guid, company_number), books_from)| company_profile_correlation_key(
+                &canonical_origin,
+                guid,
+                company_number,
+                &company.name,
+                books_from,
+            ),
+        );
         Ok(SavedTallySetup {
             passport_snapshot_id: saved.snapshot.id,
             canonical_origin,
@@ -1085,6 +1134,8 @@ pub async fn save_tally_setup(
                 name: company.name,
                 correlation_key,
                 guid: company.guid,
+                company_number: company.company_number,
+                books_from_yyyymmdd: company.books_from,
                 mirror_company_id: Some(saved.company.id),
                 identity_confidence: "observed",
             },
@@ -1181,22 +1232,25 @@ pub async fn enroll_tally_write_fixture(
                 "safe", false, "Probe again and review the replacement Passport before enrolling.",
             ));
         }
-        let selected_guid = normalize_company_guid(&request.selected_company_guid).map_err(|_| {
+        let selected_guid = normalize_company_guid(&request.selected_company.company_guid).map_err(|_| {
             tally_command_error(
                 "stable_company_identity_required", "Tally application",
                 "The selected company does not have an observed stable GUID.",
-                "after_change", false, "Select a GUID-bearing company from the current probe.",
+                "after_change", false, "Select a company with an observed name, number, GUID, and book opening date from the current probe.",
             )
         })?;
         let matching_companies = probe.companies.iter().filter(|company| {
-            company.guid.as_deref().is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
+            company.name == request.selected_company.display_name
+                && company.guid.as_deref().is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
+                && company.company_number.as_deref() == Some(request.selected_company.company_number.as_str())
+                && company.books_from.as_deref() == Some(request.selected_company.books_from_yyyymmdd.as_str())
         }).count();
         if matching_companies != 1 {
             return Err(tally_command_error(
                 if matching_companies == 0 { "reviewed_company_scope_changed" } else { "company_identity_ambiguous" },
                 "Tally application",
-                "The selected company identity is not uniquely present in the reviewed probe.",
-                "safe", false, "Probe again and select one GUID-bearing company from the current result.",
+                "The selected complete company identity is not uniquely present in the reviewed probe.",
+                "safe", false, "Probe again and select one fully observed company tuple from the current result.",
             ));
         }
         if probe.profile.features.get(&CapabilityFeatureId::Write)
@@ -1215,7 +1269,12 @@ pub async fn enroll_tally_write_fixture(
                 "safe", false, "Save the reviewed company scope, then probe and enroll while it is fresh.",
             )
         })?;
-        if pin.canonical_origin != canonical_origin || !pin.company_guid.eq_ignore_ascii_case(&selected_guid) {
+        if pin.canonical_origin != canonical_origin
+            || !pin.company_guid.eq_ignore_ascii_case(&selected_guid)
+            || pin.display_name != request.selected_company.display_name
+            || pin.company_number != request.selected_company.company_number
+            || pin.books_from_yyyymmdd != request.selected_company.books_from_yyyymmdd
+        {
             return Err(tally_command_error(
                 "persisted_company_scope_changed", "Tally application",
                 "The persisted company pin does not match the fresh reviewed company identity.",
@@ -1321,6 +1380,8 @@ pub async fn revoke_tally_write_fixture_enrollment(
 pub struct PersistedTallyCompany {
     pub name: String,
     pub guid: Option<String>,
+    pub company_number: Option<String>,
+    pub books_from_yyyymmdd: Option<String>,
     pub mirror_company_id: Option<String>,
     pub correlation_key: Option<String>,
     pub identity_confidence: &'static str,
@@ -1617,7 +1678,13 @@ pub async fn start_tally_core_snapshot(
 
     let lineage = source_lineage(&request.config).map_err(|_| "Tally source lineage is invalid")?;
     let company = CoreCompanyRef {
-        identity: company_source_identity(&lineage, &pin.company_guid),
+        identity: company_source_identity(
+            &lineage,
+            &pin.company_guid,
+            &pin.company_number,
+            &pin.display_name,
+            &pin.books_from_yyyymmdd,
+        ),
         display_name: pin.display_name,
     };
     let run_id = uuid::Uuid::new_v4().to_string();
@@ -1816,7 +1883,13 @@ pub async fn resume_tally_core_snapshot(
         .map_err(|_| "Tally endpoint validation failed".to_string())?;
     let lineage = source_lineage(&request.config).map_err(|_| "Tally source lineage is invalid")?;
     let observed_company = CoreCompanyRef {
-        identity: company_source_identity(&lineage, &pin.company_guid),
+        identity: company_source_identity(
+            &lineage,
+            &pin.company_guid,
+            &pin.company_number,
+            &pin.display_name,
+            &pin.books_from_yyyymmdd,
+        ),
         display_name: pin.display_name.clone(),
     };
     if request_origin.as_str() != pin.canonical_origin
@@ -1992,15 +2065,13 @@ pub async fn bootstrap_direct_tally_company(
 #[derive(Debug, Deserialize)]
 pub struct CompanyRequest {
     pub config: TallyConfig,
-    pub company: String,
-    pub expected_company_guid: String,
+    pub selected_company: SelectedCompanyIdentity,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct OutstandingsRequest {
     pub config: TallyConfig,
-    pub company: String,
-    pub expected_company_guid: String,
+    pub selected_company: SelectedCompanyIdentity,
     pub currency_assertion: OutstandingsCurrencyAssertion,
     /// An explicit operator-selected date when present. Omission preserves
     /// today's date for existing callers and licensed Tally users.
@@ -2026,10 +2097,87 @@ pub struct FetchOutstandingsResponse {
 #[derive(Debug, Deserialize)]
 pub struct VoucherRequest {
     pub config: TallyConfig,
-    pub company: String,
-    pub expected_company_guid: String,
+    pub selected_company: SelectedCompanyIdentity,
     pub from: String,
     pub to: String,
+}
+
+async fn verify_observed_company_tuple(
+    runtime: &TallyRuntime,
+    config: &TallyConfig,
+    selected: &SelectedCompanyIdentity,
+) -> Result<String, TallyCommandError> {
+    validate_company_name(&selected.display_name).map_err(|message| {
+        tally_command_error(
+            "company_selection_invalid",
+            "Tally application",
+            message,
+            "after_change",
+            false,
+            "Select a company with an observed name, number, GUID, and book opening date.",
+        )
+    })?;
+    let selected_guid = normalize_company_guid(&selected.company_guid).map_err(|_| {
+        tally_command_error(
+            "company_selection_invalid",
+            "Tally application",
+            "The selected company GUID is invalid.",
+            "after_change",
+            false,
+            "Probe again and choose an observed company identity.",
+        )
+    })?;
+    if selected.company_number.is_empty()
+        || selected.company_number.len() > 16
+        || !selected
+            .company_number
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+        || TallyDate::parse(selected.books_from_yyyymmdd.clone()).is_err()
+    {
+        return Err(tally_command_error(
+            "company_selection_invalid",
+            "Tally application",
+            "The selected company tuple is incomplete or invalid.",
+            "after_change",
+            false,
+            "Probe again and choose an observed company identity.",
+        ));
+    }
+    let matches = runtime
+        .fetch_companies(config.clone())
+        .await
+        .map_err(tally_runtime_command_error)?
+        .into_iter()
+        .filter(|company| {
+            company.name == selected.display_name
+                && company
+                    .guid
+                    .as_deref()
+                    .is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
+                && company.company_number.as_deref() == Some(selected.company_number.as_str())
+                && company.books_from.as_deref() == Some(selected.books_from_yyyymmdd.as_str())
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [company] => Ok(company.guid.clone().expect("matched company has GUID")),
+        [] => Err(tally_command_error(
+            "reviewed_company_scope_changed",
+            "Tally application",
+            "The selected company tuple is no longer present in Tally.",
+            "safe",
+            false,
+            "Probe again and explicitly select the intended book.",
+        )),
+        _ => Err(tally_command_error(
+            "company_identity_ambiguous",
+            "Tally application",
+            "Tally returned the selected complete company identity more than once.",
+            "not_recommended",
+            false,
+            "Do not read this scope. Inspect the Tally company list before continuing.",
+        )),
+    }
 }
 
 #[tauri::command]
@@ -2037,21 +2185,13 @@ pub async fn fetch_tally_ledgers(
     request: CompanyRequest,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<Vec<TallyLedger>, TallyCommandError> {
-    validate_company_name(&request.company).map_err(|message| {
-        tally_command_error(
-            "company_selection_invalid",
-            "Tally application",
-            message,
-            "after_change",
-            false,
-            "Select the intended GUID-bearing company and repeat the read-only action.",
-        )
-    })?;
+    let expected_company_guid =
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     runtime
         .fetch_ledgers(
             request.config,
-            request.company,
-            request.expected_company_guid,
+            request.selected_company.display_name,
+            expected_company_guid,
         )
         .await
         .map_err(tally_runtime_command_error)
@@ -2062,21 +2202,13 @@ pub async fn fetch_standard_tally_ledger_catalog(
     request: CompanyRequest,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<Vec<TallyLedger>, TallyCommandError> {
-    validate_company_name(&request.company).map_err(|message| {
-        tally_command_error(
-            "company_selection_invalid",
-            "Tally application",
-            message,
-            "after_change",
-            false,
-            "Select the intended GUID-bearing company and repeat the read-only action.",
-        )
-    })?;
+    let expected_company_guid =
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     runtime
         .fetch_standard_ledger_catalog(
             request.config,
-            request.company,
-            request.expected_company_guid,
+            request.selected_company.display_name,
+            expected_company_guid,
         )
         .await
         .map_err(tally_runtime_command_error)
@@ -2087,16 +2219,8 @@ pub async fn fetch_tally_vouchers(
     request: VoucherRequest,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<Vec<TallyVoucher>, TallyCommandError> {
-    validate_company_name(&request.company).map_err(|message| {
-        tally_command_error(
-            "company_selection_invalid",
-            "Tally application",
-            message,
-            "after_change",
-            false,
-            "Select the intended GUID-bearing company and repeat the read-only action.",
-        )
-    })?;
+    let expected_company_guid =
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     validate_date_range(&request.from, &request.to).map_err(|message| {
         tally_command_error(
             "accounting_period_invalid",
@@ -2110,8 +2234,8 @@ pub async fn fetch_tally_vouchers(
     runtime
         .fetch_vouchers(
             request.config,
-            request.company,
-            request.expected_company_guid,
+            request.selected_company.display_name,
+            expected_company_guid,
             request.from,
             request.to,
         )
@@ -2143,23 +2267,24 @@ pub async fn fetch_tally_outstandings(
     runtime: State<'_, TallyRuntime>,
     working_paper_exports: State<'_, WorkingPaperExportStore>,
 ) -> Result<FetchOutstandingsResponse, TallyCommandError> {
-    validate_company_name(&request.company).map_err(|message| {
-        tally_command_error(
-            "company_selection_invalid",
-            "Tally application",
-            message,
-            "after_change",
-            false,
-            "Select the intended GUID-bearing company and repeat the read-only action.",
-        )
-    })?;
     let as_of = requested_outstandings_as_of(request.as_of_yyyymmdd)?;
-    let expected_company_guid = request.expected_company_guid.clone();
+    let canonical_origin = EndpointKey::from_config(&request.config)
+        .map(|endpoint| endpoint.as_str().to_string())
+        .map_err(tally_runtime_command_error)?;
+    let working_paper_company_key = company_profile_correlation_key(
+        &canonical_origin,
+        &request.selected_company.company_guid,
+        &request.selected_company.company_number,
+        &request.selected_company.display_name,
+        &request.selected_company.books_from_yyyymmdd,
+    );
+    let expected_company_guid =
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     let result = runtime
         .fetch_outstandings(
             request.config,
-            request.company,
-            request.expected_company_guid,
+            request.selected_company.display_name,
+            expected_company_guid.clone(),
             as_of,
             request.currency_assertion,
             request.ageing_anchor,
@@ -2181,7 +2306,7 @@ pub async fn fetch_tally_outstandings(
     // the result that displaced it in the webview.
     let (working_paper_export_id, working_paper_unavailable_reason_code) =
         match working_paper_exports
-            .replace_for_company(&expected_company_guid, working_paper_source)
+            .replace_for_company(&working_paper_company_key, working_paper_source)
         {
             Ok(export_id) => (export_id, source_unavailable_reason_code),
             Err(_) => (None, Some("working_paper_export_store_unavailable")),
@@ -2265,14 +2390,16 @@ pub struct AllCompaniesOutstandingsRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct AllCompaniesEntry {
-    pub company: String,
-    pub expected_company_guid: String,
+    pub selected_company: SelectedCompanyIdentity,
 }
 
 #[derive(Debug, Serialize)]
 pub struct CompanyOutstandingsEntry {
     pub company: String,
     pub company_guid: String,
+    pub company_number: String,
+    pub books_from_yyyymmdd: String,
+    pub canonical_origin: String,
     pub result: OutstandingsLoadResult,
 }
 
@@ -2338,46 +2465,55 @@ pub async fn fetch_tally_outstandings_all_companies(
     if request.companies.is_empty() {
         return Ok(Vec::new());
     }
+    let canonical_origin = EndpointKey::from_config(&request.config)
+        .map(|endpoint| endpoint.as_str().to_string())
+        .map_err(tally_runtime_command_error)?;
     let as_of = requested_outstandings_as_of(request.as_of_yyyymmdd)?;
 
     let mut entries = Vec::with_capacity(request.companies.len());
     for entry in request.companies {
-        let result = if validate_company_name(&entry.company).is_err() {
-            Err(CompanySweepFailure::ReasonCode("company_selection_invalid"))
-        } else {
-            match runtime
-                .detect_base_currency(
-                    request.config.clone(),
-                    entry.company.clone(),
-                    entry.expected_company_guid.clone(),
-                )
-                .await
-            {
-                Err(_) => Err(CompanySweepFailure::ReasonCode(
-                    "company_currency_probe_failed",
-                )),
-                Ok(currency) => match company_sweep_currency_preflight_failure(
-                    currency.currency_count,
-                    currency.is_inr,
-                ) {
-                    Some(reason_code) => Err(CompanySweepFailure::ReasonCode(reason_code)),
-                    None => runtime
-                        .fetch_outstandings(
-                            request.config.clone(),
-                            entry.company.clone(),
-                            entry.expected_company_guid.clone(),
-                            as_of.clone(),
-                            request.currency_assertion,
-                            request.ageing_anchor,
-                        )
-                        .await
-                        .map_err(|_| CompanySweepFailure::OutstandingsRead),
-                },
+        let selected = entry.selected_company;
+        let result = match verify_observed_company_tuple(&runtime, &request.config, &selected).await
+        {
+            Err(_) => Err(CompanySweepFailure::ReasonCode("company_selection_invalid")),
+            Ok(expected_company_guid) => {
+                match runtime
+                    .detect_base_currency(
+                        request.config.clone(),
+                        selected.display_name.clone(),
+                        expected_company_guid.clone(),
+                    )
+                    .await
+                {
+                    Err(_) => Err(CompanySweepFailure::ReasonCode(
+                        "company_currency_probe_failed",
+                    )),
+                    Ok(currency) => match company_sweep_currency_preflight_failure(
+                        currency.currency_count,
+                        currency.is_inr,
+                    ) {
+                        Some(reason_code) => Err(CompanySweepFailure::ReasonCode(reason_code)),
+                        None => runtime
+                            .fetch_outstandings(
+                                request.config.clone(),
+                                selected.display_name.clone(),
+                                expected_company_guid,
+                                as_of.clone(),
+                                request.currency_assertion,
+                                request.ageing_anchor,
+                            )
+                            .await
+                            .map_err(|_| CompanySweepFailure::OutstandingsRead),
+                    },
+                }
             }
         };
         entries.push(CompanyOutstandingsEntry {
-            company: entry.company,
-            company_guid: entry.expected_company_guid,
+            company: selected.display_name,
+            company_guid: selected.company_guid,
+            company_number: selected.company_number,
+            books_from_yyyymmdd: selected.books_from_yyyymmdd,
+            canonical_origin: canonical_origin.clone(),
             result: company_sweep_result(result),
         });
     }
@@ -2609,8 +2745,12 @@ mod tests {
     fn outstandings_accepts_only_an_explicit_inr_currency_assertion() {
         let accepted: OutstandingsRequest = serde_json::from_value(serde_json::json!({
             "config": { "host": "127.0.0.1", "port": 9000 },
-            "company": "Synthetic Company",
-            "expected_company_guid": "synthetic-guid",
+            "selected_company": {
+                "display_name": "Synthetic Company",
+                "company_guid": "synthetic-guid",
+                "company_number": "100001",
+                "books_from_yyyymmdd": "20260401"
+            },
             "currency_assertion": "INR"
         }))
         .expect("INR is the one supported explicit assertion");
@@ -2621,8 +2761,12 @@ mod tests {
 
         let rejected = serde_json::from_value::<OutstandingsRequest>(serde_json::json!({
             "config": { "host": "127.0.0.1", "port": 9000 },
-            "company": "Synthetic Company",
-            "expected_company_guid": "synthetic-guid",
+            "selected_company": {
+                "display_name": "Synthetic Company",
+                "company_guid": "synthetic-guid",
+                "company_number": "100001",
+                "books_from_yyyymmdd": "20260401"
+            },
             "currency_assertion": "USD"
         }));
         assert!(
@@ -2823,6 +2967,8 @@ mod tests {
             company: PersistedTallyCompany {
                 name: "Synthetic Company".to_string(),
                 guid: Some("synthetic-guid".to_string()),
+                company_number: Some("100001".to_string()),
+                books_from_yyyymmdd: Some("20260401".to_string()),
                 mirror_company_id: Some("company-1".to_string()),
                 correlation_key: Some("c".repeat(64)),
                 identity_confidence: "observed",
@@ -2867,6 +3013,8 @@ mod tests {
                 .map(|(index, name)| TallyCompany {
                     name: (*name).to_string(),
                     guid: Some(format!("guid-{index}")),
+                    company_number: Some(format!("1000{index}")),
+                    books_from: Some("20260401".to_string()),
                 })
                 .collect(),
             profile: CapabilityProfile {
@@ -3857,8 +4005,7 @@ mod party_statement_export_tests {
 #[derive(Debug, Deserialize)]
 pub struct BaseCurrencyRequest {
     pub config: TallyConfig,
-    pub company: String,
-    pub expected_company_guid: String,
+    pub selected_company: SelectedCompanyIdentity,
 }
 
 /// Establishes a company's base currency from Tally.
@@ -3867,21 +4014,13 @@ pub async fn detect_tally_base_currency(
     request: BaseCurrencyRequest,
     runtime: State<'_, TallyRuntime>,
 ) -> Result<bridge_tally_protocol::native_outstandings::CompanyCurrency, TallyCommandError> {
-    validate_company_name(&request.company).map_err(|message| {
-        tally_command_error(
-            "company_selection_invalid",
-            "Tally application",
-            message,
-            "after_change",
-            false,
-            "Select the intended GUID-bearing company and repeat the read-only action.",
-        )
-    })?;
+    let expected_company_guid =
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     runtime
         .detect_base_currency(
             request.config,
-            request.company,
-            request.expected_company_guid,
+            request.selected_company.display_name,
+            expected_company_guid,
         )
         .await
         .map_err(tally_runtime_command_error)

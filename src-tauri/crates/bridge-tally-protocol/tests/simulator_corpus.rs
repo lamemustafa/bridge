@@ -636,6 +636,62 @@ const COMPANY_COLLECTION_LIVE_RESPONSE: &str = r#"<ENVELOPE>
  </BODY>
 </ENVELOPE>"#;
 
+const COMPANY_IDENTITY_FIELDS_AFTER_SPLIT: &str =
+    include_str!("fixtures/company_identity_fields_after_split.utf8.xml");
+const COMPANY_LIST_BEFORE_SPLIT: &str = include_str!("fixtures/company_list_before_split.utf8.xml");
+const COMPANY_LIST_AFTER_SPLIT: &str = include_str!("fixtures/company_list_after_split.utf8.xml");
+
+#[test]
+fn captured_company_lists_preserve_the_observed_guid_collision() {
+    let before = parse_companies_from_collection(COMPANY_LIST_BEFORE_SPLIT)
+        .expect("pre-split Company collection must parse");
+    let after = parse_companies_from_collection(COMPANY_LIST_AFTER_SPLIT)
+        .expect("post-split Company collection must parse");
+    let split_guid = "ec4454ae-5c4c-4bfa-b3b0-68182a749689";
+    assert_eq!(before.len(), 14);
+    assert_eq!(after.len(), 15);
+    assert_eq!(
+        before
+            .iter()
+            .filter(|company| company.guid.as_deref() == Some(split_guid))
+            .count(),
+        1
+    );
+    assert_eq!(
+        after
+            .iter()
+            .filter(|company| company.guid.as_deref() == Some(split_guid))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn captured_year_end_split_companies_keep_their_distinguishing_tuple() {
+    let companies = parse_companies_from_collection(COMPANY_IDENTITY_FIELDS_AFTER_SPLIT)
+        .expect("captured Company collection must parse");
+    assert_eq!(companies.len(), 15);
+    let twins = companies
+        .iter()
+        .filter(|company| company.guid.as_deref() == Some("ec4454ae-5c4c-4bfa-b3b0-68182a749689"))
+        .collect::<Vec<_>>();
+    assert_eq!(twins.len(), 2);
+    assert_eq!(twins[0].company_number.as_deref(), Some("100005"));
+    assert_eq!(twins[0].books_from.as_deref(), Some("20250401"));
+    assert_eq!(twins[1].company_number.as_deref(), Some("100014"));
+    assert_eq!(twins[1].books_from.as_deref(), Some("20260401"));
+    assert_ne!(twins[0].name, twins[1].name);
+    // The capture carries MASTERID=29 for every one of the 15 rows. It is
+    // deliberately not parsed as an identity component because it conveys no
+    // book identity in this observed response.
+    assert_eq!(
+        COMPANY_IDENTITY_FIELDS_AFTER_SPLIT
+            .matches("<MASTERID")
+            .count(),
+        15
+    );
+}
+
 #[test]
 fn company_collection_response_parses_three_companies_with_correct_guids() {
     let companies = parse_companies_from_collection(COMPANY_COLLECTION_LIVE_RESPONSE)

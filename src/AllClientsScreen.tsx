@@ -18,7 +18,12 @@ import {
 } from "./outstandings-as-of";
 import { outstandingsCurrencySymbol } from "./outstandings-currency";
 
-type CompanyRef = { name: string; guid: string };
+type CompanyRef = {
+  name: string;
+  guid: string;
+  company_number: string;
+  books_from_yyyymmdd: string;
+};
 
 type Props = {
   config: { host: string; port: number };
@@ -48,7 +53,24 @@ type LoadResult =
       foreign_currency_ledger_name?: string;
     };
 
-type Entry = { company: string; company_guid: string; result: LoadResult };
+type Entry = {
+  company: string;
+  company_guid: string;
+  company_number: string;
+  books_from_yyyymmdd: string;
+  canonical_origin: string;
+  result: LoadResult;
+};
+
+function companyIdentityKey(entry: Pick<Entry, "canonical_origin" | "company" | "company_guid" | "company_number" | "books_from_yyyymmdd">) {
+  return JSON.stringify([
+    entry.canonical_origin,
+    entry.company_guid.toLowerCase(),
+    entry.company_number,
+    entry.company,
+    entry.books_from_yyyymmdd,
+  ]);
+}
 
 function amountOf(value: string | undefined) {
   if (!value || !/^-?\d+(?:\.\d+)?$/.test(value)) return null;
@@ -235,7 +257,12 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
           : null;
         return {
           company: entry.company,
-          companyGuid: entry.company_guid,
+          // Group labels and React row keys must not merge year-end split
+          // books that share a Tally GUID.
+          companyGuid: companyIdentityKey(entry),
+          sourceGuid: entry.company_guid,
+          companyNumber: entry.company_number,
+          booksFromYyyymmdd: entry.books_from_yyyymmdd,
           complete,
           reasonCode: entry.result.state === "partial" ? entry.result.reason_code : null,
           requestedAsOf: entry.result.state === "partial" ? entry.result.requested_as_of_yyyymmdd : undefined,
@@ -356,7 +383,12 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
         type="button"
         key={row.companyGuid}
         onClick={() => {
-          const match = companies.find((company) => company.guid === row.companyGuid);
+          const match = companies.find((company) =>
+            company.guid === row.sourceGuid
+              && company.company_number === row.companyNumber
+              && company.name === row.company
+              && company.books_from_yyyymmdd === row.booksFromYyyymmdd,
+          );
           if (match) onOpenCompany(match);
         }}
       >

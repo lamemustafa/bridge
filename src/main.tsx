@@ -45,6 +45,8 @@ type ConnectionStatus = {
 type TallyCompany = {
   name: string;
   guid?: string;
+  company_number?: string;
+  books_from_yyyymmdd?: string;
   guid_observed?: boolean;
   mirror_company_id?: string;
   correlation_key?: string;
@@ -317,7 +319,7 @@ const CAPABILITY_REASON_LABELS: Record<string, string> = {
   release_not_observed: "The Tally release was not observed, so this transport was not tested.",
   configuration_not_observed: "Bridge did not inspect this optional transport's configuration.",
   company_identity_invalid: "The company result contained an invalid or unsafe identity field.",
-  company_identity_ambiguous: "Two or more returned companies shared the same normalized GUID.",
+  company_identity_ambiguous: "Two or more returned companies shared the same complete observed identity.",
   direct_company_report_untrusted: "Tally returned a direct company report without the normal success wrapper. Its names remain unverified until separately checked.",
   standard_ledger_identity_profile_observed: "A strict, scoped standard ledger collection observed one local company identity. It does not establish completeness, sync eligibility, or write support.",
   scoped_standard_identity_observed: "A strict, scoped local company identity was observed. Responder authenticity and accounting completeness remain unestablished.",
@@ -853,8 +855,8 @@ function App() {
 
   async function saveReviewedTallySetup() {
     const company = companies.find((candidate) => tallyCompanyKey(candidate) === selectedCompany);
-    if (!reviewId || !reviewCommitmentSha256 || !company?.guid || !liveCompanyKeys.includes(tallyCompanyKey(company))) {
-      setCompanyError("Probe again and select a GUID-bearing company from the current result before saving.");
+    if (!reviewId || !reviewCommitmentSha256 || !company?.guid || !company.company_number || !company.books_from_yyyymmdd || !liveCompanyKeys.includes(tallyCompanyKey(company))) {
+      setCompanyError("Probe again and select a company with an observed name, number, GUID, and book opening date before saving.");
       return;
     }
     const resultsVersion = tallyResultsVersion.current;
@@ -867,7 +869,12 @@ function App() {
           config,
           expected_review_id: reviewId,
           expected_review_commitment_sha256: reviewCommitmentSha256,
-          selected_company_guid: company.guid,
+          selected_company: {
+            display_name: company.name,
+            company_guid: company.guid,
+            company_number: company.company_number,
+            books_from_yyyymmdd: company.books_from_yyyymmdd,
+          },
         },
       });
       if (resultsVersion !== tallyResultsVersion.current) return;
@@ -903,8 +910,8 @@ function App() {
 
   async function enrollWriteFixture() {
     const company = companies.find((candidate) => tallyCompanyKey(candidate) === selectedCompany);
-    if (!reviewId || !reviewCommitmentSha256 || !company?.mirror_company_id || !company.guid || !selectedCompanyLive) {
-      setCompanyError("Probe again, select the persisted GUID-bearing company, and review it before locally enrolling a synthetic fixture.");
+    if (!reviewId || !reviewCommitmentSha256 || !company?.mirror_company_id || !company.guid || !company.company_number || !company.books_from_yyyymmdd || !selectedCompanyLive) {
+      setCompanyError("Probe again, select the persisted company with an observed name, number, GUID, and book opening date, and review it before locally enrolling a synthetic fixture.");
       return;
     }
     if (!fixtureDisposableAttested || !fixtureNoCustomerDataAttested || !fixtureBackupGuidanceAcknowledged) {
@@ -923,7 +930,12 @@ function App() {
           expected_review_id: reviewId,
           expected_review_commitment_sha256: reviewCommitmentSha256,
           mirror_company_id: company.mirror_company_id,
-          selected_company_guid: company.guid,
+          selected_company: {
+            display_name: company.name,
+            company_guid: company.guid,
+            company_number: company.company_number,
+            books_from_yyyymmdd: company.books_from_yyyymmdd,
+          },
           disposable_company_attested: fixtureDisposableAttested,
           no_customer_data_attested: fixtureNoCustomerDataAttested,
           backup_guidance_acknowledged: fixtureBackupGuidanceAcknowledged,
@@ -1581,10 +1593,15 @@ function App() {
                holding ten client books will not bless each one before a
                cross-client screen works. */
             companies={currentProbeCompanyList
-              .filter((company) => company.guid)
-              .map((company) => ({ name: company.name, guid: company.guid as string }))}
+              .filter((company) => company.guid && company.company_number && company.books_from_yyyymmdd)
+              .map((company) => ({
+                name: company.name,
+                guid: company.guid as string,
+                company_number: company.company_number as string,
+                books_from_yyyymmdd: company.books_from_yyyymmdd as string,
+              }))}
             onOpenCompany={(company) => {
-              setSelectedCompany(tallyCompanyKey({ name: company.name, guid: company.guid }));
+              setSelectedCompany(tallyCompanyKey(company));
               setView("outstandings");
             }}
             onBack={() => setView("outstandings")}
@@ -1596,7 +1613,12 @@ function App() {
           <ErrorBoundary key="outstandings" label="Aged outstandings">
           <OutstandingsScreen
             config={config}
-            company={selectedCompanyReady && selectedCompanyRecord?.guid ? { name: selectedCompanyRecord.name, guid: selectedCompanyRecord.guid } : undefined}
+            company={selectedCompanyReady && selectedCompanyRecord?.guid && selectedCompanyRecord.company_number && selectedCompanyRecord.books_from_yyyymmdd ? {
+              name: selectedCompanyRecord.name,
+              guid: selectedCompanyRecord.guid,
+              company_number: selectedCompanyRecord.company_number,
+              books_from_yyyymmdd: selectedCompanyRecord.books_from_yyyymmdd,
+            } : undefined}
             onChangeSetup={() => setView("companies")}
             onViewAllClients={() => setView("clients")}
             openBookCount={currentProbeCompanyList.filter((entry) => entry.guid).length}
@@ -1958,6 +1980,8 @@ function mergeTallyCompanies(preferred: TallyCompany[], existing: TallyCompany[]
       ...current,
       ...company,
       guid: company.guid ?? current?.guid,
+      company_number: company.company_number ?? current?.company_number,
+      books_from_yyyymmdd: company.books_from_yyyymmdd ?? current?.books_from_yyyymmdd,
       guid_observed: company.guid_observed ?? current?.guid_observed,
       mirror_company_id: company.mirror_company_id ?? current?.mirror_company_id,
       correlation_key: company.correlation_key ?? current?.correlation_key,

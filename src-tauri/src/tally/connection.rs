@@ -170,6 +170,10 @@ pub struct SelectedReadScopeEvidence {
     #[serde(skip_serializing)]
     pub(crate) company_guid_ascii_casefolded: String,
     #[serde(skip_serializing)]
+    pub(crate) company_number: String,
+    #[serde(skip_serializing)]
+    pub(crate) books_from_yyyymmdd: String,
+    #[serde(skip_serializing)]
     pub(crate) observations: Vec<SelectedReadCapabilityObservation>,
 }
 
@@ -385,13 +389,13 @@ impl TallyClient {
                 confidence: xml_evidence.confidence,
                 safe_reason_code: Some(empty_company_reason()),
             }
-        } else if unique_company_guids(&companies) {
+        } else if unique_company_identities(&companies) {
             CapabilityEvidence {
                 state: CapabilityState::Supported,
                 confidence: EvidenceConfidence::Observed,
-                safe_reason_code: Some("stable_company_guid_observed".to_string()),
+                safe_reason_code: Some("stable_company_identity_observed".to_string()),
             }
-        } else if companies.iter().all(|company| company.guid.is_some()) {
+        } else if companies.iter().all(has_complete_company_identity) {
             CapabilityEvidence {
                 state: CapabilityState::Unknown,
                 confidence: EvidenceConfidence::Observed,
@@ -710,6 +714,8 @@ impl TallyClient {
         Ok(TallyCompany {
             name: candidate.name.clone(),
             guid: Some(guid),
+            company_number: None,
+            books_from: None,
         })
     }
 
@@ -1155,18 +1161,78 @@ fn normalize_discovered_companies(companies: Vec<TallyCompany>) -> Result<Vec<Ta
                 .map(normalize_company_guid)
                 .transpose()
                 .map_err(|_| ())?;
-            Ok(TallyCompany { name, guid })
+            let company_number = company
+                .company_number
+                .as_deref()
+                .map(normalize_company_number)
+                .transpose()
+                .map_err(|_| ())?;
+            let books_from = company
+                .books_from
+                .as_deref()
+                .map(normalize_books_from)
+                .transpose()
+                .map_err(|_| ())?;
+            Ok(TallyCompany {
+                name,
+                guid,
+                company_number,
+                books_from,
+            })
         })
         .collect()
 }
 
-fn unique_company_guids(companies: &[TallyCompany]) -> bool {
+fn normalize_company_number(value: &str) -> Result<String, ()> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 16
+        || !trimmed.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalize_books_from(value: &str) -> Result<String, ()> {
+    let trimmed = value.trim();
+    bridge_tally_core::TallyDate::parse(trimmed)
+        .map(|_| trimmed.to_string())
+        .map_err(|_| ())
+}
+
+fn has_complete_company_identity(company: &TallyCompany) -> bool {
+    company
+        .guid
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+        && company
+            .company_number
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        && company
+            .books_from
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        && !company.name.is_empty()
+}
+
+fn unique_company_identities(companies: &[TallyCompany]) -> bool {
     let mut seen = BTreeSet::new();
     companies.iter().all(|company| {
-        company
-            .guid
-            .as_deref()
-            .is_some_and(|guid| seen.insert(guid.to_ascii_lowercase()))
+        let (Some(guid), Some(company_number), Some(books_from)) = (
+            company.guid.as_deref(),
+            company.company_number.as_deref(),
+            company.books_from.as_deref(),
+        ) else {
+            return false;
+        };
+        seen.insert((
+            guid.to_ascii_lowercase(),
+            company_number.to_string(),
+            company.name.clone(),
+            books_from.to_string(),
+        ))
     })
 }
 
@@ -1310,7 +1376,7 @@ mod tests {
     use super::LedgerOpeningCoverageRead;
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
-        normalize_discovered_companies, tally_endpoint, unique_company_guids, TallyClient,
+        normalize_discovered_companies, tally_endpoint, unique_company_identities, TallyClient,
         TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
@@ -1516,21 +1582,27 @@ mod tests {
             crate::tally::TallyCompany {
                 name: "  Synthetic A  ".to_string(),
                 guid: Some("  GUID-1  ".to_string()),
+                company_number: Some("100005".to_string()),
+                books_from: Some("20250401".to_string()),
             },
             crate::tally::TallyCompany {
                 name: "Synthetic B".to_string(),
                 guid: Some("guid-1".to_string()),
+                company_number: Some("100014".to_string()),
+                books_from: Some("20260401".to_string()),
             },
         ])
         .expect("normalize company identities");
         assert_eq!(normalized[0].name, "Synthetic A");
         assert_eq!(normalized[0].guid.as_deref(), Some("GUID-1"));
-        assert!(!unique_company_guids(&normalized));
+        assert!(unique_company_identities(&normalized));
 
         assert!(
             normalize_discovered_companies(vec![crate::tally::TallyCompany {
                 name: "Synthetic\nCompany".to_string(),
                 guid: Some("guid-2".to_string()),
+                company_number: None,
+                books_from: None,
             }])
             .is_err()
         );
@@ -1538,6 +1610,8 @@ mod tests {
             normalize_discovered_companies(vec![crate::tally::TallyCompany {
                 name: "Synthetic Company".to_string(),
                 guid: Some("guid\n2".to_string()),
+                company_number: None,
+                books_from: None,
             }])
             .is_err()
         );
@@ -2460,7 +2534,7 @@ mod tests {
         let server = tokio::spawn(async move {
             for (index, body) in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
-                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE>No</EDUMODE><SILVER>Yes</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
+                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID><COMPANYNUMBER TYPE=\"Number\">100001</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20260401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE>No</EDUMODE><SILVER>Yes</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
             ]
             .into_iter()
             .enumerate()
@@ -2873,7 +2947,7 @@ mod tests {
             let mut requests = Vec::new();
             for (index, body) in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
-                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Synthetic Company A\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company A</NAME><GUID TYPE=\"String\">synthetic-guid-a</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n   <COMPANY NAME=\"Synthetic Company B\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company B</NAME><GUID TYPE=\"String\">synthetic-guid-b</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
+                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Synthetic Company A\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company A</NAME><GUID TYPE=\"String\">synthetic-guid-a</GUID><COMPANYNUMBER TYPE=\"Number\">100001</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20260401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n   <COMPANY NAME=\"Synthetic Company B\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company B</NAME><GUID TYPE=\"String\">synthetic-guid-b</GUID><COMPANYNUMBER TYPE=\"Number\">100002</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20260401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
             ]
             .into_iter()
             .enumerate()

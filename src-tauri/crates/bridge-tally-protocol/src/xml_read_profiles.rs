@@ -508,6 +508,8 @@ fn render_company_list_v2() -> String {
                         <TYPE>Company</TYPE>
                         <NATIVEMETHOD>NAME</NATIVEMETHOD>
                         <NATIVEMETHOD>GUID</NATIVEMETHOD>
+                        <NATIVEMETHOD>COMPANYNUMBER</NATIVEMETHOD>
+                        <NATIVEMETHOD>BOOKSFROM</NATIVEMETHOD>
                         <NATIVEMETHOD>PRODUCTNAME</NATIVEMETHOD>
                         <COMPUTE>EduMode : $$LicenseInfo:IsEducationalMode</COMPUTE>
                         <COMPUTE>Silver : $$LicenseInfo:IsSilver</COMPUTE>
@@ -1121,7 +1123,7 @@ mod tests {
             ),
             (
                 ReadOnlyProfileId::CompanyListV2,
-                "bcd28a4609082d6e7f33c9de735f914bdaf5422f88e4f3ec02a2e11ae6e9980f",
+                "5d0688c7863837094a8ceecb98983c8e80b09220cee332d1da5d95be36e3109b",
             ),
             (
                 ReadOnlyProfileId::CompanyBookExtentV1,

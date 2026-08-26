@@ -195,14 +195,17 @@ test("client amount views fail visibly instead of coercing or flipping amounts",
   assert.doesNotMatch(outstandings, /Math\.abs/);
 });
 
-test("all-client responses carry the pinned GUID back to the open action", async () => {
+test("all-client responses carry the pinned composite tuple back to the open action", async () => {
   const [allClients, commands] = await Promise.all([
     readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/src/commands.rs", import.meta.url), "utf8"),
   ]);
 
   assert.match(commands, /pub company_guid: String/);
-  assert.match(commands, /company_guid: entry\.expected_company_guid/);
-  assert.match(allClients, /companyGuid: entry\.company_guid/);
+  assert.match(commands, /company_guid: selected\.company_guid/);
+  assert.match(commands, /company_number: selected\.company_number/);
+  assert.match(commands, /books_from_yyyymmdd: selected\.books_from_yyyymmdd/);
+  assert.match(allClients, /companyGuid: companyIdentityKey\(entry\)/);
+  assert.match(allClients, /company\.company_number === row\.companyNumber/);
   assert.doesNotMatch(allClients, /companies\.find\(\(company\) => company\.name === entry\.company\)/);
 });
