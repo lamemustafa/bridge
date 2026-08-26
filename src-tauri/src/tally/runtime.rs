@@ -1346,6 +1346,26 @@ impl TallyRuntime {
         .await
     }
 
+    /// Re-enumerates companies while one reviewed setup operation holds the
+    /// exclusive cached-probe reservation. This is deliberately separate from
+    /// `fetch_companies`: an ordinary read must remain forbidden while setup
+    /// authority is reserved, but the reservation owner needs a fresh tuple
+    /// check before it can qualify its selected reads.
+    pub async fn fetch_companies_for_reservation(
+        &self,
+        config: TallyConfig,
+        reservation: &CachedProbeReservation,
+    ) -> anyhow::Result<Vec<TallyCompany>> {
+        reservation.authorize(self, &config)?;
+        self.execute(
+            config,
+            ReadOperation::CompanyList,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            |client| async move { client.fetch_companies().await },
+        )
+        .await
+    }
+
     pub async fn fetch_ledgers(
         &self,
         config: TallyConfig,
@@ -2437,6 +2457,7 @@ mod tests {
     use anyhow::Context;
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
+    use tally_protocol_simulator::Fixture;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn verified_identity(name: &str, guid: &str) -> VerifiedCompanyIdentity {
@@ -3738,6 +3759,65 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn reservation_owner_rechecks_the_tuple_then_qualifies_selected_ledgers() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind qualification server");
+        let address = listener.local_addr().expect("qualification server address");
+        let company_list = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="BRIDGE SYNTHETIC BOOK"><GUID TYPE="String">00000000-0000-4000-8000-000000000001</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let ledger_export = Fixture::NormalExport.body().into_owned();
+        let server = tokio::spawn(async move {
+            for body in [company_list.to_string(), ledger_export] {
+                let (mut socket, _) = listener.accept().await.expect("accept reserved read");
+                let request = read_http_request(&mut socket).await;
+                assert!(request.starts_with(b"POST /"));
+                socket
+                    .write_all(&utf16_xml_response(body))
+                    .await
+                    .expect("write reserved read response");
+            }
+        });
+        let runtime = TallyRuntime::default();
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let session = runtime.session(config.clone()).expect("runtime session");
+        let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
+        *session.cached_probe.write().expect("capability cache") = Some(CachedProbe {
+            review_id: "review-qualified-tuple".to_string(),
+            observed_at_unix_ms,
+            freshness_origin_unix_ms: observed_at_unix_ms,
+            result: synthetic_probe_result(),
+            reserved: false,
+        });
+        drop(session);
+        let reservation = runtime
+            .reserve_cached_probe_fresh(&config, "review-qualified-tuple", 300_000)
+            .expect("reserve reviewed setup")
+            .expect("fresh review");
+
+        let companies = runtime
+            .fetch_companies_for_reservation(config.clone(), &reservation)
+            .await
+            .expect("reservation owner may recheck company tuple");
+        assert_eq!(companies.len(), 1);
+        let observation = runtime
+            .qualify_selected_ledgers(
+                config,
+                &reservation,
+                &verified_identity(
+                    "BRIDGE SYNTHETIC BOOK",
+                    "00000000-0000-4000-8000-000000000001",
+                ),
+            )
+            .await
+            .expect("qualification must run after the reserved tuple recheck");
+        assert_eq!(observation.result_bucket, "non_empty_observed");
+        server.await.expect("finish reserved qualification server");
     }
 
     #[test]

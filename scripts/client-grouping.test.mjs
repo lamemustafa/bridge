@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { applyClientGroupLabel, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, resolveClientGroupLabel, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
+import { applyClientGroupLabel, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, migrateLegacyClientGroupLabels, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
 import { companyIdentityKey } from "../src/company-identity.ts";
 
 // Mirrors AllClientsScreen's saveGroupLabel wiring exactly (issue a stamp,
@@ -178,56 +178,34 @@ test("ungrouped companies remain separate and receive no synthetic total", () =>
   assert.equal(grouped.ungroupedRows.length, 2);
 });
 
-test("legacy GUID labels remain available for one book but never merge split books", () => {
-  const lone = resolveClientGroupLabel(
-    { "legacy-guid": "Legacy practice" },
-    "composite-one",
-    "legacy-guid",
-    ["legacy-guid"],
+test("legacy GUID labels migrate once or are dropped before grouping reads", () => {
+  const migration = migrateLegacyClientGroupLabels(
+    {
+      "legacy-one": "One practice",
+      "[composite-one]": "Exact practice",
+      "legacy-split": "Split practice",
+      "legacy-missing": "Old practice",
+    },
+    [
+      { companyKey: "[composite-one]", sourceGuid: "LEGACY-ONE" },
+      { companyKey: "[composite-parent]", sourceGuid: "legacy-split" },
+      { companyKey: "[composite-child]", sourceGuid: "legacy-split" },
+    ],
   );
-  assert.deepEqual(lone, {
-    label: "Legacy practice",
-    legacyCompanyKey: "legacy-guid",
-    ambiguousLegacyLabel: false,
-  });
-
-  const splitRows = [
-    {
-      companyGuid: "composite-parent",
-      sourceGuid: "legacy-guid",
-      exactAmounts: { receivable: "10", overdue: "2", unallocated: "1" },
-    },
-    {
-      companyGuid: "composite-child",
-      sourceGuid: "legacy-guid",
-      exactAmounts: { receivable: "20", overdue: "3", unallocated: "4" },
-    },
+  assert.deepEqual(
+    migration.labels,
+    { "[composite-one]": "Exact practice" },
+    "an explicit composite label wins over a legacy raw-GUID label",
+  );
+  assert.deepEqual(migration.dropped, [
+    { key: "legacy-split", reason: "multiple_matching_books" },
+    { key: "legacy-missing", reason: "no_matching_book" },
+  ]);
+  const rows = [
+    { companyGuid: "[composite-parent]", exactAmounts: { receivable: "10", overdue: "2", unallocated: "1" } },
+    { companyGuid: "[composite-child]", exactAmounts: { receivable: "20", overdue: "3", unallocated: "4" } },
   ];
-  const split = groupClientRows(splitRows, { "legacy-guid": "Legacy practice" });
-  assert.deepEqual(split.groups, []);
-  assert.equal(split.ungroupedRows.length, 2);
-  assert.equal(
-    resolveClientGroupLabel(
-      { "legacy-guid": "Legacy practice" },
-      "composite-parent",
-      "legacy-guid",
-      splitRows.map((row) => row.sourceGuid),
-    ).ambiguousLegacyLabel,
-    true,
-  );
-});
-
-test("saving a legacy fallback migrates or clears the exact raw-GUID entry", () => {
-  const labels = { "legacy-guid": "Legacy practice" };
-  assert.deepEqual(
-    applyClientGroupLabel(labels, "composite-book", "Reviewed practice", "legacy-guid"),
-    { "composite-book": "Reviewed practice" },
-  );
-  assert.deepEqual(
-    applyClientGroupLabel(labels, "composite-book", "", "legacy-guid"),
-    {},
-    "clearing a fallback must retire the original raw key without resolving it again",
-  );
+  assert.equal(groupClientRows(rows, migration.labels).groups.length, 0);
 });
 
 test("the shared composite key keeps endpoint, GUID, number, name, and books-from distinct", () => {
@@ -280,7 +258,9 @@ test("all-client responses carry the pinned composite tuple back to the open act
   assert.match(commands, /books_from_yyyymmdd: selected\.books_from_yyyymmdd/);
   assert.match(allClients, /companyGuid: companyIdentityKey\(\{/);
   assert.match(allClients, /company\.company_number === row\.companyNumber/);
-  assert.match(allClients, /legacy_company_key: legacyKeyToRetire/);
+  assert.match(allClients, /migrateLegacyClientGroupLabels/);
+  assert.match(allClients, /disabled=\{!groupLabelsReady\}/);
+  assert.match(allClients, /replace_client_group_labels/);
   assert.match(allClients, /key=\{row\.companyGuid\}/);
   assert.doesNotMatch(allClients, /groupLabels\[company\.guid\]/);
   assert.doesNotMatch(allClients, /companies\.find\(\(company\) => company\.name === entry\.company\)/);

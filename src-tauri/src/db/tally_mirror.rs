@@ -1934,6 +1934,7 @@ impl TallyMirrorRepository {
             let revocation_payload_sha256 = fixture_revocation_payload_sha256(
                 &enrollment_id,
                 &enrollment_payload_sha256,
+                "operator_revoked",
                 revoked_at_unix_ms,
             )?;
             sqlx::query(
@@ -2312,9 +2313,32 @@ impl TallyMirrorRepository {
         .fetch_one(&mut *transaction)
         .await?;
         if composite_company_identity_installed == 0 {
-            sqlx::raw_sql(MIRROR_MIGRATION_V23)
+            // SQLite otherwise reparses unrelated historical triggers while
+            // 0023 rebuilds the revocation table and rejects a deferred
+            // column reference outside this migration's scope.
+            sqlx::query("PRAGMA legacy_alter_table = ON")
                 .execute(&mut *transaction)
                 .await?;
+            let migration_result = sqlx::raw_sql(MIRROR_MIGRATION_V23)
+                .execute(&mut *transaction)
+                .await;
+            let reset_result = sqlx::query("PRAGMA legacy_alter_table = OFF")
+                .execute(&mut *transaction)
+                .await;
+            migration_result?;
+            reset_result?;
+            retire_precomposite_fixture_enrollments(
+                &mut transaction,
+                Utc::now().timestamp_millis(),
+            )
+            .await?;
+            sqlx::query(
+                "INSERT INTO tally_schema_migrations(version, description, applied_at_unix_ms) \
+                 VALUES (23, 'Tally composite company identity requires re-verification of GUID-only pins', ?1)",
+            )
+            .bind(Utc::now().timestamp_millis())
+            .execute(&mut *transaction)
+            .await?;
         }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
@@ -5421,15 +5445,62 @@ struct FixtureRevocationCommitment<'a> {
 fn fixture_revocation_payload_sha256(
     enrollment_id: &str,
     enrollment_payload_sha256: &str,
+    safe_reason_code: &'static str,
     revoked_at_unix_ms: i64,
 ) -> Result<String, MirrorError> {
     sha256_json(&FixtureRevocationCommitment {
         schema: "bridge.tally.write-fixture-revocation/1",
         enrollment_id,
         enrollment_payload_sha256,
-        safe_reason_code: "operator_revoked",
+        safe_reason_code,
         revoked_at_unix_ms,
     })
+}
+
+async fn retire_precomposite_fixture_enrollments(
+    transaction: &mut Transaction<'_, Sqlite>,
+    revoked_at_unix_ms: i64,
+) -> Result<(), MirrorError> {
+    let rows = sqlx::query(
+        "SELECT enrollment.id, enrollment.enrollment_payload_sha256 \
+         FROM tally_write_fixture_enrollments AS enrollment \
+         JOIN tally_companies AS company ON company.id = enrollment.company_id \
+         LEFT JOIN tally_write_fixture_revocations AS revocation \
+           ON revocation.enrollment_id = enrollment.id \
+         WHERE company.identity_confidence = 'unknown' \
+           AND revocation.enrollment_id IS NULL \
+         ORDER BY enrollment.id",
+    )
+    .fetch_all(&mut **transaction)
+    .await?;
+    let next_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM tally_write_fixture_revocations",
+    )
+    .fetch_one(&mut **transaction)
+    .await?;
+    for (offset, row) in rows.into_iter().enumerate() {
+        let enrollment_id: String = row.try_get("id")?;
+        let enrollment_payload_sha256: String = row.try_get("enrollment_payload_sha256")?;
+        let payload_sha256 = fixture_revocation_payload_sha256(
+            &enrollment_id,
+            &enrollment_payload_sha256,
+            "company_identity_reverification_required",
+            revoked_at_unix_ms,
+        )?;
+        sqlx::query(
+            "INSERT INTO tally_write_fixture_revocations(\
+               event_sequence, id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms\
+             ) VALUES (?1, ?2, ?3, ?4, 'company_identity_reverification_required', ?5)",
+        )
+        .bind(next_sequence + i64::try_from(offset).expect("enumerated migration rows fit i64"))
+        .bind(Uuid::new_v4().to_string())
+        .bind(enrollment_id)
+        .bind(payload_sha256)
+        .bind(revoked_at_unix_ms)
+        .execute(&mut **transaction)
+        .await?;
+    }
+    Ok(())
 }
 
 fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
@@ -8452,16 +8523,40 @@ mod tests {
             .expect("read retired confidence"),
             "unknown"
         );
+        let revocation = sqlx::query(
+            "SELECT revocation.safe_reason_code, revocation.revocation_payload_sha256, \
+                    revocation.revoked_at_unix_ms, enrollment.enrollment_payload_sha256 \
+             FROM tally_write_fixture_revocations AS revocation \
+             JOIN tally_write_fixture_enrollments AS enrollment \
+               ON enrollment.id = revocation.enrollment_id \
+             WHERE revocation.enrollment_id = 'pre-composite-enrollment'",
+        )
+        .fetch_one(&repository.pool)
+        .await
+        .expect("read truthful migration revocation");
+        let reason: String = revocation.try_get("safe_reason_code").expect("reason");
+        let payload: String = revocation
+            .try_get("revocation_payload_sha256")
+            .expect("payload");
+        let timestamp: i64 = revocation.try_get("revoked_at_unix_ms").expect("timestamp");
+        let enrollment_payload: String = revocation
+            .try_get("enrollment_payload_sha256")
+            .expect("enrollment payload");
+        assert_eq!(reason, "company_identity_reverification_required");
+        assert!(
+            timestamp > 100,
+            "migration time must not reuse enrollment time"
+        );
         assert_eq!(
-            sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM tally_write_fixture_revocations \
-                 WHERE enrollment_id = 'pre-composite-enrollment'",
+            payload,
+            fixture_revocation_payload_sha256(
+                "pre-composite-enrollment",
+                &enrollment_payload,
+                "company_identity_reverification_required",
+                timestamp,
             )
-            .fetch_one(&repository.pool)
-            .await
-            .expect("read migration revocation"),
-            1,
-            "retiring a GUID-only pin must also retire its fixture authority"
+            .expect("canonical migration payload"),
+            "immutable migration evidence must use the normal canonical binding"
         );
     }
 

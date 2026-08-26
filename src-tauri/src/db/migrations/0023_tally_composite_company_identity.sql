@@ -12,24 +12,57 @@ UPDATE tally_companies
 SET identity_confidence = 'unknown'
 WHERE identity_confidence = 'observed';
 
--- A write-fixture enrollment is authority for future canary work. Once the
--- company pin it names is deliberately retired, retaining that authority
--- would let a pre-existing reservation cross the re-verification boundary.
+-- Widen the immutable revocation evidence vocabulary before the Rust-owned
+-- migration step inserts the canonical re-verification records. SQLite cannot
+-- calculate Bridge's canonical JSON SHA-256 payload, so it must not fabricate
+-- those rows in SQL.
+DROP TRIGGER IF EXISTS tally_write_fixture_revocations_require_sequence;
+DROP TRIGGER IF EXISTS tally_write_fixture_revocations_no_update;
+DROP TRIGGER IF EXISTS tally_write_fixture_revocations_no_delete;
+DROP INDEX IF EXISTS idx_tally_write_fixture_revocations_sequence;
+ALTER TABLE tally_write_fixture_revocations RENAME TO tally_write_fixture_revocations_legacy;
+
+CREATE TABLE tally_write_fixture_revocations (
+  event_sequence INTEGER NOT NULL UNIQUE CHECK (event_sequence > 0),
+  id TEXT PRIMARY KEY,
+  enrollment_id TEXT NOT NULL UNIQUE,
+  revocation_payload_sha256 TEXT NOT NULL CHECK (
+    length(revocation_payload_sha256) = 64 AND
+    revocation_payload_sha256 NOT GLOB '*[^0-9a-f]*'
+  ),
+  safe_reason_code TEXT NOT NULL CHECK (
+    safe_reason_code IN ('operator_revoked', 'company_identity_reverification_required')
+  ),
+  revoked_at_unix_ms INTEGER NOT NULL CHECK (revoked_at_unix_ms > 0),
+  FOREIGN KEY (enrollment_id) REFERENCES tally_write_fixture_enrollments(id) ON DELETE RESTRICT
+);
+
 INSERT INTO tally_write_fixture_revocations(
   event_sequence, id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms
 )
 SELECT
-  (SELECT COALESCE(MAX(event_sequence), 0) FROM tally_write_fixture_revocations)
-    + ROW_NUMBER() OVER (ORDER BY enrollment.id),
-  lower(hex(randomblob(16))), enrollment.id, lower(hex(randomblob(32))), 'operator_revoked',
-  CASE WHEN enrollment.enrolled_at_unix_ms > 0 THEN enrollment.enrolled_at_unix_ms ELSE 1 END
-FROM tally_write_fixture_enrollments AS enrollment
-JOIN tally_companies AS company ON company.id = enrollment.company_id
-WHERE company.identity_confidence = 'unknown'
-  AND NOT EXISTS (
-    SELECT 1 FROM tally_write_fixture_revocations AS prior
-    WHERE prior.enrollment_id = enrollment.id
-  );
+  event_sequence, id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms
+FROM tally_write_fixture_revocations_legacy;
+DROP TABLE tally_write_fixture_revocations_legacy;
+
+CREATE UNIQUE INDEX idx_tally_write_fixture_revocations_sequence
+  ON tally_write_fixture_revocations(event_sequence);
+CREATE TRIGGER tally_write_fixture_revocations_require_sequence
+BEFORE INSERT ON tally_write_fixture_revocations
+WHEN NEW.event_sequence <= 0
+BEGIN
+  SELECT RAISE(ABORT, 'fixture revocation requires durable sequence');
+END;
+CREATE TRIGGER tally_write_fixture_revocations_no_update
+BEFORE UPDATE ON tally_write_fixture_revocations
+BEGIN
+  SELECT RAISE(ABORT, 'fixture revocations are immutable');
+END;
+CREATE TRIGGER tally_write_fixture_revocations_no_delete
+BEFORE DELETE ON tally_write_fixture_revocations
+BEGIN
+  SELECT RAISE(ABORT, 'fixture revocations cannot be deleted');
+END;
 
 CREATE UNIQUE INDEX uq_tally_companies_observed_identity
   ON tally_companies(
@@ -56,6 +89,3 @@ WHEN NOT EXISTS (
 BEGIN
   SELECT RAISE(ABORT, 'fixture enrollment requires observed composite company identity');
 END;
-
-INSERT OR IGNORE INTO tally_schema_migrations(version, description, applied_at_unix_ms)
-VALUES (23, 'Tally composite company identity requires re-verification of GUID-only pins', 0);

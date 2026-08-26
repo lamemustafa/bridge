@@ -107,32 +107,25 @@ pub fn save_label(
     company_key: &str,
     label: &str,
 ) -> Result<(), ClientGroupLabelsError> {
-    save_label_with_legacy(directory, company_key, label, None)
-}
-
-pub fn save_label_with_legacy(
-    directory: &Path,
-    company_key: &str,
-    label: &str,
-    legacy_company_key: Option<&str>,
-) -> Result<(), ClientGroupLabelsError> {
     let mut labels = try_load(directory)?;
     let company_key = company_key.trim();
     let label = label.trim();
-    if let Some(legacy_company_key) = legacy_company_key.map(str::trim) {
-        if !legacy_company_key.is_empty() && legacy_company_key != company_key {
-            labels.remove(legacy_company_key);
-        }
-    }
     if label.is_empty() {
         labels.remove(company_key);
     } else {
         labels.insert(company_key.to_string(), label.to_string());
     }
 
+    replace_labels(directory, labels)
+}
+
+pub fn replace_labels(
+    directory: &Path,
+    labels: ClientGroupLabels,
+) -> Result<(), ClientGroupLabelsError> {
     let contents = serde_json::to_vec_pretty(&ClientGroupLabelsFile {
         version: SCHEMA_VERSION,
-        labels,
+        labels: normalize(labels),
     })
     .expect("client group label schema always serializes");
     save_bytes(directory, FILE_NAME, &contents).map_err(ClientGroupLabelsError::Write)
@@ -289,6 +282,25 @@ mod tests {
 
         save_label(directory.path(), "synthetic-company-guid", "   ").expect("remove label");
         assert!(load(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn replacing_labels_atomically_retires_every_legacy_key() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        save_label(directory.path(), "legacy-guid", "Legacy practice").expect("seed legacy");
+        replace_labels(
+            directory.path(),
+            BTreeMap::from([(
+                "[\"http://127.0.0.1:9000\",\"legacy-guid\",\"100001\",\"Client\",\"20260401\"]"
+                    .to_string(),
+                "Composite practice".to_string(),
+            )]),
+        )
+        .expect("atomically replace labels");
+
+        let labels = load(directory.path());
+        assert!(!labels.contains_key("legacy-guid"));
+        assert_eq!(labels.len(), 1);
     }
 
     #[test]

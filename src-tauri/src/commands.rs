@@ -520,8 +520,13 @@ pub async fn qualify_selected_tally_reads(
         return Err(reviewed_probe_changed_error());
     }
 
-    let identity =
-        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
+    let identity = verify_observed_company_tuple_for_reservation(
+        &runtime,
+        &request.config,
+        &request.selected_company,
+        &reservation,
+    )
+    .await?;
     let ledger_result = runtime
         .qualify_selected_ledgers(request.config.clone(), &reservation, &identity)
         .await;
@@ -2177,6 +2182,30 @@ async fn verify_observed_company_tuple(
     config: &TallyConfig,
     selected: &SelectedCompanyIdentity,
 ) -> Result<VerifiedCompanyIdentity, TallyCommandError> {
+    let companies = runtime
+        .fetch_companies(config.clone())
+        .await
+        .map_err(tally_runtime_command_error)?;
+    verify_observed_company_tuple_from_companies(selected, companies)
+}
+
+async fn verify_observed_company_tuple_for_reservation(
+    runtime: &TallyRuntime,
+    config: &TallyConfig,
+    selected: &SelectedCompanyIdentity,
+    reservation: &CachedProbeReservation,
+) -> Result<VerifiedCompanyIdentity, TallyCommandError> {
+    let companies = runtime
+        .fetch_companies_for_reservation(config.clone(), reservation)
+        .await
+        .map_err(tally_runtime_command_error)?;
+    verify_observed_company_tuple_from_companies(selected, companies)
+}
+
+fn verify_observed_company_tuple_from_companies(
+    selected: &SelectedCompanyIdentity,
+    companies: Vec<TallyCompany>,
+) -> Result<VerifiedCompanyIdentity, TallyCommandError> {
     validate_company_name(&selected.display_name).map_err(|message| {
         tally_command_error(
             "company_selection_invalid",
@@ -2214,10 +2243,6 @@ async fn verify_observed_company_tuple(
             "Probe again and choose an observed company identity.",
         ));
     }
-    let companies = runtime
-        .fetch_companies(config.clone())
-        .await
-        .map_err(tally_runtime_command_error)?;
     let identity = VerifiedCompanyIdentity {
         display_name: selected.display_name.clone(),
         company_guid: selected_guid,
@@ -2412,7 +2437,6 @@ pub fn load_client_sort_preference(app: AppHandle) -> Option<client_groups::Clie
 pub struct SaveClientGroupLabelRequest {
     pub company_key: String,
     pub label: String,
-    pub legacy_company_key: Option<String>,
 }
 
 /// Saves one operator-owned filing label without accessing the Tally mirror.
@@ -2428,13 +2452,28 @@ pub fn save_client_group_label(
         .path()
         .app_config_dir()
         .map_err(|_| "Bridge could not locate its local group-label configuration.".to_string())?;
-    client_groups::save_label_with_legacy(
-        &directory,
-        &request.company_key,
-        &request.label,
-        request.legacy_company_key.as_deref(),
-    )
-    .map_err(|_| "Bridge could not save this group label.".to_string())
+    client_groups::save_label(&directory, &request.company_key, &request.label)
+        .map_err(|_| "Bridge could not save this group label.".to_string())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReplaceClientGroupLabelsRequest {
+    pub labels: client_groups::ClientGroupLabels,
+}
+
+/// Atomically persists the one-time local migration from raw GUID keys to
+/// composite company keys. It never accesses the Tally mirror.
+#[tauri::command]
+pub fn replace_client_group_labels(
+    app: AppHandle,
+    request: ReplaceClientGroupLabelsRequest,
+) -> Result<(), String> {
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|_| "Bridge could not locate its local group-label configuration.".to_string())?;
+    client_groups::replace_labels(&directory, request.labels)
+        .map_err(|_| "Bridge could not migrate local group labels.".to_string())
 }
 
 /// Saves the optional all-client sort preference without accessing the Tally mirror.
