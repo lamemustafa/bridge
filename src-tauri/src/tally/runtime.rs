@@ -1,6 +1,7 @@
-use super::{ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger};
+use super::{
+    ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger, VerifiedCompanyIdentity,
+};
 use super::{TallyProbeResult, TallyVoucher};
-use crate::commands::VerifiedCompanyIdentity;
 use crate::observability::BodyBytesObservation;
 use crate::tally::connection::NativePairedRead;
 use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};

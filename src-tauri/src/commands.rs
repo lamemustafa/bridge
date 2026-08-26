@@ -34,6 +34,7 @@ use crate::tally::runtime::TallyRuntimeControlError;
 use crate::tally::validators::{
     normalize_company_guid, validate_company_name, validate_date_range,
 };
+pub use crate::tally::VerifiedCompanyIdentity;
 use crate::tally::{
     company_source_identity, core_snapshot_start_authorized, source_lineage,
     CachedProbeReservation, ConnectionStatus, EndpointKey, OpenBillRow,
@@ -885,80 +886,6 @@ pub struct SelectedCompanyIdentity {
     pub books_from_yyyymmdd: String,
 }
 
-/// A complete company tuple that a fresh Company collection has matched once.
-///
-/// The fields are intentionally private: a bare GUID cannot authorize a
-/// company-scoped read after a year-end split.
-#[cfg_attr(
-    not(feature = "live-calibration-harness"),
-    doc = "```compile_fail\nuse bridge_lib::commands::VerifiedCompanyIdentity;\nlet _ = VerifiedCompanyIdentity { display_name: String::new(), company_guid: String::new(), company_number: String::new(), books_from_yyyymmdd: String::new() };\n```"
-)]
-#[derive(Debug, Clone)]
-pub struct VerifiedCompanyIdentity {
-    display_name: String,
-    company_guid: String,
-    company_number: String,
-    books_from_yyyymmdd: String,
-}
-
-impl VerifiedCompanyIdentity {
-    #[cfg(test)]
-    pub(crate) fn test_fixture(
-        display_name: impl Into<String>,
-        company_guid: impl Into<String>,
-    ) -> Self {
-        Self {
-            display_name: display_name.into(),
-            company_guid: company_guid.into(),
-            company_number: "1".to_string(),
-            books_from_yyyymmdd: "20260401".to_string(),
-        }
-    }
-
-    #[cfg(feature = "live-calibration-harness")]
-    pub fn live_calibration_harness_identity(
-        display_name: impl Into<String>,
-        company_guid: impl Into<String>,
-    ) -> Self {
-        Self {
-            display_name: display_name.into(),
-            company_guid: company_guid.into(),
-            company_number: "1".to_string(),
-            books_from_yyyymmdd: "20260401".to_string(),
-        }
-    }
-
-    pub(crate) fn display_name(&self) -> &str {
-        &self.display_name
-    }
-
-    pub(crate) fn company_guid(&self) -> &str {
-        &self.company_guid
-    }
-
-    pub(crate) fn matches_observed_company(&self, company: &TallyCompany) -> bool {
-        company.name == self.display_name
-            && company
-                .guid
-                .as_deref()
-                .is_some_and(|guid| guid.eq_ignore_ascii_case(&self.company_guid))
-            && company.company_number.as_deref() == Some(self.company_number.as_str())
-            && company.books_from.as_deref() == Some(self.books_from_yyyymmdd.as_str())
-    }
-
-    pub(crate) fn is_case_or_whitespace_guid_sibling(&self, company: &TallyCompany) -> bool {
-        company.name != self.display_name
-            && company
-                .guid
-                .as_deref()
-                .is_some_and(|guid| guid.eq_ignore_ascii_case(&self.company_guid))
-            && company
-                .name
-                .trim()
-                .eq_ignore_ascii_case(self.display_name.trim())
-    }
-}
-
 #[derive(Debug, Serialize)]
 pub struct SavedTallySetup {
     pub passport_snapshot_id: String,
@@ -1074,6 +1001,26 @@ pub async fn save_tally_setup(
                 "Select a company with an observed name, number, GUID, and book opening date from the current probe.",
             )
         })?;
+        let selected_identity = VerifiedCompanyIdentity::new(
+            request.selected_company.display_name.clone(),
+            selected_guid.clone(),
+            request.selected_company.company_number.clone(),
+            request.selected_company.books_from_yyyymmdd.clone(),
+        );
+        if probe
+            .companies
+            .iter()
+            .any(|company| selected_identity.is_case_or_whitespace_guid_sibling(company))
+        {
+            return Err(tally_command_error(
+                "company_identity_ambiguous",
+                "Tally application",
+                "The reviewed probe returned a same-GUID company name that differs only by case or whitespace.",
+                "not_recommended",
+                false,
+                "Do not save this scope. Inspect the loaded companies and choose an unambiguous book before any read.",
+            ));
+        }
         let mut matches = probe.companies.iter().filter(|company| {
             company.name == request.selected_company.display_name
                 && company.guid.as_deref().is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
@@ -2243,12 +2190,12 @@ fn verify_observed_company_tuple_from_companies(
             "Probe again and choose an observed company identity.",
         ));
     }
-    let identity = VerifiedCompanyIdentity {
-        display_name: selected.display_name.clone(),
-        company_guid: selected_guid,
-        company_number: selected.company_number.clone(),
-        books_from_yyyymmdd: selected.books_from_yyyymmdd.clone(),
-    };
+    let identity = VerifiedCompanyIdentity::new(
+        selected.display_name.clone(),
+        selected_guid,
+        selected.company_number.clone(),
+        selected.books_from_yyyymmdd.clone(),
+    );
     if companies
         .iter()
         .any(|company| identity.is_case_or_whitespace_guid_sibling(company))
@@ -2802,8 +2749,10 @@ mod tests {
         company_sweep_currency_preflight_failure, company_sweep_result,
         first_calendar_day_canary_window, portable_export_file_name, reconcile_review_cleanup,
         reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
-        tally_runtime_command_error, validate_dsc_pins, write_unique_download, CompanySweepFailure,
-        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, VerifiedCompanyIdentity,
+        tally_runtime_command_error, validate_dsc_pins,
+        verify_observed_company_tuple_from_companies, write_unique_download, CompanySweepFailure,
+        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity,
+        VerifiedCompanyIdentity,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
@@ -2829,6 +2778,36 @@ mod tests {
 
         assert!(identity.is_case_or_whitespace_guid_sibling(&sibling));
         assert!(!identity.matches_observed_company(&sibling));
+    }
+
+    #[test]
+    fn setup_rejects_presentation_equivalent_guid_siblings() {
+        let selected = SelectedCompanyIdentity {
+            display_name: "Client Book".to_string(),
+            company_guid: "same-guid".to_string(),
+            company_number: "1".to_string(),
+            books_from_yyyymmdd: "20260401".to_string(),
+        };
+        let error = verify_observed_company_tuple_from_companies(
+            &selected,
+            vec![
+                TallyCompany {
+                    name: "Client Book".to_string(),
+                    guid: Some("same-guid".to_string()),
+                    company_number: Some("1".to_string()),
+                    books_from: Some("20260401".to_string()),
+                },
+                TallyCompany {
+                    name: " client book ".to_string(),
+                    guid: Some("SAME-GUID".to_string()),
+                    company_number: Some("2".to_string()),
+                    books_from: Some("20270401".to_string()),
+                },
+            ],
+        )
+        .expect_err("presentation-equivalent company sibling must not be saved");
+
+        assert_eq!(error.code, "company_identity_ambiguous");
     }
 
     /// Regression for the destination-picker leak: `select_party_statement_

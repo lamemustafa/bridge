@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::connection::DirectCompanyBootstrapError;
 use super::runtime::{TallyRuntimeControlError, TallyRuntimeReadError};
-use super::{tdl_engine, TallyConfig, TallyRuntime};
+use super::{has_presentation_equivalent_guid_sibling, tdl_engine, TallyConfig, TallyRuntime};
 
 const CORE_QUERY_PROFILE: &str = "core_accounting_v3";
 
@@ -319,6 +319,13 @@ impl RuntimeTallyConnector {
             .snapshot_probe_with_observation(self.config.clone(), &self.company.display_name)
             .await
             .map_err(map_transport_error)?;
+        if has_presentation_equivalent_guid_sibling(
+            &self.company.display_name,
+            &self.company.identity.company_guid,
+            &result.companies,
+        ) {
+            return Err(protocol_error("company_identity_ambiguous"));
+        }
         let matching_companies = result
             .companies
             .iter()
@@ -1348,15 +1355,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duplicate_company_snapshot_probe_stops_before_core_exports() {
+    async fn presentation_equivalent_company_snapshot_probe_stops_before_core_exports() {
         let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "synthetic-company-guid";
         // `TallyClient::probe` requests the trusted `Company` collection
-        // (`CompanyListV2`) first, so the two duplicate-GUID rows this test
-        // exercises are expressed in that shape rather than the legacy
+        // (`CompanyListV2`) first, so the presentation-equivalent same-GUID
+        // rows this test exercises are expressed in that shape rather than the legacy
         // `CompanyListV1` direct report.
         let duplicate_company_xml = format!(
-            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company A"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY><COMPANY NAME="Synthetic Company A"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company A"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY><COMPANY NAME=" synthetic company a "><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100002</COMPANYNUMBER><BOOKSFROM TYPE="Date">20270401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         );
         let (address, server) = spawn_method_routed_server(vec![duplicate_company_xml]).await;
         let config = TallyConfig {
