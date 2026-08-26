@@ -1930,6 +1930,10 @@ summary:focus-visible,
     flex-direction: column;
   }
 
+  .client-switcher-current {
+    flex: 0 0 auto;
+  }
+
   .client-switcher-actions {
     justify-content: stretch;
   }

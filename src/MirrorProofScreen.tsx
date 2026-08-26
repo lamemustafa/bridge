@@ -673,7 +673,7 @@ export function MirrorProofScreen({
               <RefreshCw size={16} /> Refresh runs
             </button>
           </div>
-          <div className="table-shell">
+          <div className="table-wrap" role="region" aria-label="Recent durable Core Accounting runs" tabIndex={0}>
             <table>
               <caption>Showing up to 10 of {selectedRecentSnapshotRuns.length} loaded runs for {selectedCompanyRecord?.name}</caption>
               <thead><tr><th>Run</th><th>Pack</th><th>Phase</th><th>Executable windows</th><th>Worker</th><th>Action</th></tr></thead>
@@ -802,7 +802,7 @@ export function MirrorProofScreen({
             <span>A production Core Accounting attempt will append its outcome, gaps, returned-row counts, and local proof hash here.</span>
           </div>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" role="region" aria-label="Hash-linked local proof ledger" tabIndex={0}>
             <table>
               <caption>Loaded Proof of Sync attempt summaries; accepted/rejected values are returned run-scope rows, not source-completeness counts; older history may not be loaded</caption>
               <thead><tr><th>Completed</th><th>Run</th><th>Pack</th><th>Result</th><th>Accepted / rejected returned rows</th><th>Proof hash</th><th>Gaps</th><th>Warnings</th><th>Support export</th></tr></thead>

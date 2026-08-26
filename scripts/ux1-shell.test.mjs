@@ -23,9 +23,10 @@ test("UX1 keeps client selection searchable, reversible, and explicit about unav
 });
 
 test("UX1 has reachable responsive rules and contains wide content", async () => {
-  const [tauriConfig, styles] = await Promise.all([
+  const [tauriConfig, styles, mirrorProof] = await Promise.all([
     readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(tauriConfig, /"minWidth": 520/);
@@ -35,4 +36,12 @@ test("UX1 has reachable responsive rules and contains wide content", async () =>
   assert.doesNotMatch(styles, /(?:^|\n)table\s*\{[\s\S]{0,100}min-width:\s*820px;/);
   assert.match(styles, /\.outstandings-heading-actions\s*\{[\s\S]*?flex-wrap:\s*wrap;/);
   assert.match(styles, /\.outstandings-screen\s*\{[\s\S]*?min-width:\s*0;/);
+  assert.match(styles, /@media \(max-width: 860px\)\s*\{[\s\S]*?\.client-switcher-current\s*\{\s*flex:\s*0 0 auto;/);
+
+  const tableCount = [...mirrorProof.matchAll(/<table\b[^>]*>/g)].length;
+  const scrollableTableCount = [...mirrorProof.matchAll(/<div className="table-wrap"[^>]*>\s*<table\b[^>]*>/g)].length;
+  assert.equal(scrollableTableCount, tableCount, "every Mirror & Proof table must have a preceding table-wrap container");
+  assert.match(mirrorProof, /<div className="table-wrap" role="region" aria-label="Recent durable Core Accounting runs" tabIndex=\{0\}>/);
+  assert.match(mirrorProof, /<div className="table-wrap" role="region" aria-label="Paged local mirror records" tabIndex=\{0\}>/);
+  assert.match(mirrorProof, /<div className="table-wrap" role="region" aria-label="Hash-linked local proof ledger" tabIndex=\{0\}>/);
 });
