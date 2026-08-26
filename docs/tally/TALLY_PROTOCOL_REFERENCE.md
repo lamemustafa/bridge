@@ -414,10 +414,20 @@ For a ledger-wise Trial Balance:
 - do not substitute `OPENINGBALANCE` or `CLOSINGBALANCE`, which serve a different
   ledger/balance presentation;
 - interpret a negative amount as debit and a positive amount as credit;
-- prove `sum(TBALCLOSING - TBALOPENING) = 0` exactly before publishing; and
-- if `sum(TBALOPENING) != 0`, add a separately labelled **Difference in opening
-  balances** control row equal to `-sum(TBALOPENING)` to both opening and closing.
-  Do not absorb that difference into a ledger or hide it in totals.
+- require opening, net movement, and closing sums each to be exactly zero
+  before publishing.
+
+**UNVERIFIED — nonzero opening differences.** The capture has explicit zero
+openings and does not establish how a nonzero opening difference is represented.
+Reject a nonzero opening sum; do not synthesize a balancing row. Supporting this
+case requires a live nonzero capture before changing the parser or workbook.
+
+The response does not echo its effective period. Read fresh fixed-profile product
+and licence-mode evidence for every export, including after setup or restart;
+missing, unknown, or contradictory evidence must fail closed. Require unchanged
+product and mode evidence again before publishing. Apply the Education
+date-boundary restrictions before requesting the report, not from a transient
+setup cache. Education execution remains unverified live.
 
 The two native fields provide net opening and closing positions only. Their difference
 is a **net change**, not gross debit and credit voucher turnover. The captured synthetic

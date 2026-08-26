@@ -109,6 +109,14 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
         .find_map(|cause| cause.downcast_ref::<TrialBalanceReadError>())
     {
         return match trial_balance {
+            TrialBalanceReadError::ProductModeUnverified => tally_command_error(
+                "trial_balance_product_mode_unverified",
+                "Financial data",
+                "Bridge could not verify Tally's current product and licence mode, so the Trial Balance period is not trusted.",
+                "after_change",
+                true,
+                "Confirm the intended Tally instance and loaded company, then repeat the export.",
+            ),
             TrialBalanceReadError::AsOfPrecedesBooksFrom => tally_command_error(
                 "trial_balance_as_of_precedes_books_from",
                 "Financial data",
@@ -2268,12 +2276,13 @@ pub async fn export_tally_trial_balance(
     let downloads = app
         .path()
         .download_dir()
-        .or_else(|_| app.path().home_dir())
+        .map_err(|_| ())
+        .and_then(|path| require_utf8_destination(path).map_err(|_| ()))
         .map_err(|_| {
             tally_command_error(
                 "trial_balance_destination_unavailable",
                 "Filesystem",
-                "Bridge could not locate a folder for the Trial Balance export.",
+                "Bridge could not locate a UTF-8 Downloads folder for the Trial Balance export.",
                 "after_change",
                 false,
                 "Check the workstation Downloads folder and repeat the export.",
@@ -2285,19 +2294,35 @@ pub async fn export_tally_trial_balance(
         "trial-balance-{company_slug}-{}-to-{}",
         source.from_yyyymmdd, source.to_yyyymmdd
     );
-    let path = write_unique_export_file(&downloads, &stem, "xlsx", &bytes, "Trial Balance")
-        .map_err(|_| {
+    let path = write_unique_export_file(
+        std::path::Path::new(&downloads),
+        &stem,
+        "xlsx",
+        &bytes,
+        "Trial Balance",
+    )
+    .map_err(|_| {
+        tally_command_error(
+            "trial_balance_write_failed",
+            "Filesystem",
+            "Bridge could not finish writing the Trial Balance export.",
+            "after_change",
+            false,
+            "Check free disk space and Downloads-folder permissions, then repeat the export.",
+        )
+    })?;
+    Ok(TrialBalanceExportSummary {
+        // Directory was checked before writing; the generated filename is ASCII.
+        path: require_utf8_destination(path).map_err(|_| {
             tally_command_error(
-                "trial_balance_write_failed",
+                "trial_balance_destination_unavailable",
                 "Filesystem",
-                "Bridge could not finish writing the Trial Balance export.",
+                "Bridge could not represent the Trial Balance export path.",
                 "after_change",
                 false,
-                "Check free disk space and Downloads-folder permissions, then repeat the export.",
+                "Check the workstation Downloads folder and repeat the export.",
             )
-        })?;
-    Ok(TrialBalanceExportSummary {
-        path: path.to_string_lossy().into_owned(),
+        })?,
         company: source.company,
         from_yyyymmdd: source.from_yyyymmdd,
         to_yyyymmdd: source.to_yyyymmdd,
@@ -2913,6 +2938,10 @@ mod tests {
         assert_eq!(discovery_limit.category, "Discovery listing");
 
         for (source, expected_code) in [
+            (
+                TrialBalanceReadError::ProductModeUnverified,
+                "trial_balance_product_mode_unverified",
+            ),
             (
                 TrialBalanceReadError::AsOfPrecedesBooksFrom,
                 "trial_balance_as_of_precedes_books_from",

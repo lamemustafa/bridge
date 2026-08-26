@@ -59,3 +59,17 @@ test("screen and Tauri registration expose the Rust-owned export", async () => {
   );
   assert.match(commands, /commands::export_tally_trial_balance/);
 });
+
+test("Trial Balance checks a lossless Downloads destination before creating the export", async () => {
+  const source = await readFile(new URL("../src-tauri/src/commands.rs", import.meta.url), "utf8");
+  const command = source.slice(
+    source.indexOf("pub async fn export_tally_trial_balance("),
+    source.indexOf("/// Reads operator-owned filing labels"),
+  );
+  assert.match(command, /\.download_dir\(\)/);
+  assert.match(command, /require_utf8_destination\(path\)/);
+  assert.doesNotMatch(command, /home_dir|to_string_lossy/);
+  assert.ok(
+    command.indexOf("require_utf8_destination(path)") < command.indexOf("write_unique_export_file("),
+  );
+});

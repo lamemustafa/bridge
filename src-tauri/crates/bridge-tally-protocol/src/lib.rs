@@ -1073,12 +1073,17 @@ pub struct CompanyGatewayCapabilityObservation {
 
 /// Parses the gateway capability fields from `CompanyListV2`. A successful
 /// company listing remains usable if this stricter parser fails: callers must
-/// retain mode-agnostic behaviour and report the unavailable evidence rather
-/// than treating an unproven licence mode as licensed.
+/// report unavailable evidence rather than treating an unproven licence mode
+/// as licensed. Period-sensitive reads without returned span evidence must stop.
 pub fn parse_company_gateway_capability_observation(
     xml: &str,
 ) -> anyhow::Result<CompanyGatewayCapabilityObservation> {
     validate_export_response(xml)?;
+    // Period authority is stricter than interactive discovery: every company
+    // row must carry identity, and shaped in-band failures must not coexist
+    // with an apparently usable capability row.
+    parse_company_collection_rows(xml)?;
+    reject_company_capability_error_markers(xml)?;
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
     let mut observation = None;
@@ -1109,6 +1114,22 @@ pub fn parse_company_gateway_capability_observation(
         anyhow::bail!("company capability response ended before its root closed");
     }
     observation.ok_or_else(|| anyhow::anyhow!("company capability response omitted company rows"))
+}
+
+fn reject_company_capability_error_markers(xml: &str) -> anyhow::Result<()> {
+    let mut reader = configured_reader(xml);
+    loop {
+        match reader.read_event()? {
+            Event::Start(element) | Event::Empty(element)
+                if element.name().as_ref().eq_ignore_ascii_case(b"LINEERROR")
+                    || element.name().as_ref().eq_ignore_ascii_case(b"RESPONSE") =>
+            {
+                anyhow::bail!("company capability response contained an in-band failure marker")
+            }
+            Event::Eof => return Ok(()),
+            _ => {}
+        }
+    }
 }
 
 /// Validates the fixed, documented `List of Ledgers` collection used only to

@@ -71,11 +71,19 @@ pub(crate) enum NativePairedRead {
     Drifted,
 }
 
-#[cfg(feature = "voucher-scan")]
 struct OutstandingsWireResponse {
     text: String,
     encoded_bytes: usize,
     encoded_sha256: String,
+}
+
+fn native_wire_responses_match(
+    first: &OutstandingsWireResponse,
+    second: &OutstandingsWireResponse,
+) -> bool {
+    first.text == second.text
+        && first.encoded_bytes == second.encoded_bytes
+        && first.encoded_sha256 == second.encoded_sha256
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -598,17 +606,9 @@ impl TallyClient {
     }
 
     pub(super) async fn post_xml(&self, xml: String) -> anyhow::Result<String> {
-        self.post_xml_with_encoded_bytes(xml)
+        self.post_xml_with_wire_evidence(xml)
             .await
-            .map(|(xml, _)| xml)
-    }
-
-    async fn post_xml_with_encoded_bytes(&self, xml: String) -> anyhow::Result<(String, usize)> {
-        let response = self.http.post_xml_decoded(xml).await?;
-        let encoded_bytes = response.encoded_bytes();
-        self.record_observed_body_bytes(encoded_bytes);
-        self.record_observed_encoding(response.encoding());
-        Ok((response.into_text(), encoded_bytes))
+            .map(|response| response.text)
     }
 
     async fn post_xml_with_request_wire_sha256(
@@ -644,7 +644,6 @@ impl TallyClient {
 
     /// Uses the ordinary 32 MiB XML cap. Only the wildcard outstandings
     /// profile is allowed through `post_outstandings_xml_decoded`.
-    #[cfg(feature = "voucher-scan")]
     async fn post_xml_with_wire_evidence(
         &self,
         request: String,
@@ -659,6 +658,19 @@ impl TallyClient {
             encoded_bytes,
             encoded_sha256,
         })
+    }
+
+    /// Fresh fixed-profile mode evidence; never falls back to legacy discovery
+    /// or a setup-time cache when the requested period needs mode authority.
+    pub(crate) async fn fetch_gateway_product_mode(
+        &self,
+    ) -> anyhow::Result<Option<bridge_tally_protocol::CompanyGatewayCapabilityObservation>> {
+        self.http.get_status_decoded().await?;
+        let xml = self
+            .post_xml(ReadOnlyProfile::CompanyListV2.render())
+            .await?;
+        self.http.get_status_decoded().await?;
+        Ok(parse_company_gateway_capability_observation(&xml).ok())
     }
 
     /// Discovers companies through Tally's documented `Company` collection
@@ -852,24 +864,24 @@ impl TallyClient {
         &self,
         request_xml: String,
     ) -> anyhow::Result<NativePairedRead> {
-        let (first, first_bytes) = self
-            .post_xml_with_encoded_bytes(request_xml.clone())
+        let first = self
+            .post_xml_with_wire_evidence(request_xml.clone())
             .await?;
         self.http
             .get_status_decoded()
             .await
             .context("Tally health check between paired native report reads failed")?;
-        let (second, second_bytes) = self.post_xml_with_encoded_bytes(request_xml).await?;
+        let second = self.post_xml_with_wire_evidence(request_xml).await?;
         self.http
             .get_status_decoded()
             .await
             .context("Tally health check after paired native report reads failed")?;
-        if first != second || first_bytes != second_bytes {
+        if !native_wire_responses_match(&first, &second) {
             return Ok(NativePairedRead::Drifted);
         }
         Ok(NativePairedRead::Stable {
-            body: first,
-            encoded_bytes: first_bytes,
+            body: first.text,
+            encoded_bytes: first.encoded_bytes,
         })
     }
 
@@ -1340,6 +1352,21 @@ mod tests {
             body.len()
         );
         [headers.as_bytes(), body].concat()
+    }
+
+    #[test]
+    fn native_pair_requires_the_encoded_wire_digest_to_match() {
+        let first = super::OutstandingsWireResponse {
+            text: "same decoded XML".to_string(),
+            encoded_bytes: 32,
+            encoded_sha256: "first-wire-digest".to_string(),
+        };
+        let second = super::OutstandingsWireResponse {
+            text: first.text.clone(),
+            encoded_bytes: first.encoded_bytes,
+            encoded_sha256: "second-wire-digest".to_string(),
+        };
+        assert!(!super::native_wire_responses_match(&first, &second));
     }
 
     async fn read_complete_http_request(

@@ -610,6 +610,8 @@ pub(crate) enum TallyRuntimeReadError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum TrialBalanceReadError {
+    #[error("trial_balance_product_mode_unverified")]
+    ProductModeUnverified,
     #[error("trial_balance_as_of_precedes_books_from")]
     AsOfPrecedesBooksFrom,
     #[error("trial_balance_period_boundary_unsupported")]
@@ -618,6 +620,33 @@ pub(crate) enum TrialBalanceReadError {
     SnapshotDrifted,
     #[error("book_changed_during_trial_balance_read")]
     BookChanged,
+}
+
+fn trial_balance_boundary_profile(
+    observation: Option<&bridge_tally_protocol::CompanyGatewayCapabilityObservation>,
+) -> Result<DateBoundaryProfile, TrialBalanceReadError> {
+    let observation = observation.ok_or(TrialBalanceReadError::ProductModeUnverified)?;
+    let product = observation
+        .product
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    if !matches!(
+        product.as_str(),
+        "tallyprime" | "tallyprimeeditlog" | "tallyerp9"
+    ) {
+        return Err(TrialBalanceReadError::ProductModeUnverified);
+    }
+    match (
+        observation.educational_mode,
+        observation.silver,
+        observation.gold,
+    ) {
+        (true, false, false) => Ok(DateBoundaryProfile::EducationRestricted),
+        (false, true, false) | (false, false, true) => Ok(DateBoundaryProfile::ModeAgnostic),
+        _ => Err(TrialBalanceReadError::ProductModeUnverified),
+    }
 }
 
 fn stable_trial_balance_read(
@@ -1444,7 +1473,6 @@ impl TallyRuntime {
         expected_company_guid: String,
         as_of: TallyDate,
     ) -> anyhow::Result<TrialBalanceWorkbookSource> {
-        let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
         self.execute(
             config,
@@ -1455,6 +1483,11 @@ impl TallyRuntime {
                 let expected_company_guid = expected_company_guid.clone();
                 let as_of = as_of.clone();
                 async move {
+                    // Setup consumes cached probes and restarts discard them. This
+                    // report has no returned period span, so unknown mode cannot
+                    // authorize a requested date (protocol reference §7.1).
+                    let mode = client.fetch_gateway_product_mode().await?;
+                    let boundary_profile = trial_balance_boundary_profile(mode.as_ref())?;
                     let extent = client
                         .fetch_company_book_extent(&company, &expected_company_guid)
                         .await?;
@@ -1476,6 +1509,10 @@ impl TallyRuntime {
                         .await?;
                     if closing_extent != extent {
                         return Err(TrialBalanceReadError::BookChanged.into());
+                    }
+                    let closing_mode = client.fetch_gateway_product_mode().await?;
+                    if closing_mode != mode {
+                        return Err(TrialBalanceReadError::ProductModeUnverified.into());
                     }
                     let trial_balance = parse_trial_balance(&body, &expected_company_guid)?;
                     Ok(TrialBalanceWorkbookSource {
@@ -2630,6 +2667,15 @@ mod tests {
 
     #[tokio::test]
     async fn trial_balance_read_is_paired_and_extent_bracketed() {
+        for (education, closing_education) in [(false, false), (true, true), (false, true)] {
+            trial_balance_with_fresh_mode_and_no_setup_cache(education, closing_education).await;
+        }
+    }
+
+    async fn trial_balance_with_fresh_mode_and_no_setup_cache(
+        education: bool,
+        closing_education: bool,
+    ) {
         const EXTENT: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
         );
@@ -2646,19 +2692,31 @@ mod tests {
         );
         let trial_balance = CAPTURE.replace("ec4454ae-5c4c-4bfa-b3b0-68182a749689", COMPANY_GUID);
         let expected_source_bytes = trial_balance.encode_utf16().count() * 2 + 2;
+        // Mode mutations exercise the safety rule, not live Education qualification.
+        let mode = format!(
+            "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE>{}</EDUMODE><SILVER>{}</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
+            if education { "Yes" } else { "No" },
+            if education { "No" } else { "Yes" },
+        );
+        let closing_mode = if closing_education && !education {
+            mode.replace("<EDUMODE>No</EDUMODE>", "<EDUMODE>Yes</EDUMODE>")
+                .replace("<SILVER>Yes</SILVER>", "<SILVER>No</SILVER>")
+        } else {
+            mode.clone()
+        };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Trial Balance server");
         let address = listener.local_addr().expect("synthetic server address");
         let server = tokio::spawn(async move {
-            for index in 0..12 {
+            for index in 0..if education { 7 } else { 18 } {
                 let (mut socket, _) =
                     tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
                         .await
                         .expect("Trial Balance request timed out")
                         .expect("accept Trial Balance request");
                 let request = read_http_request(&mut socket).await;
-                let expected_method: &[u8] = if index % 2 == 0 {
+                let expected_method: &[u8] = if (index < 15 && index % 2 == 1) || index == 16 {
                     b"POST /"
                 } else {
                     b"GET /status"
@@ -2667,7 +2725,7 @@ mod tests {
                     request.starts_with(expected_method),
                     "request {index} did not preserve paired-read health bracketing"
                 );
-                if matches!(index, 4 | 6) {
+                if matches!(index, 7 | 9) {
                     for field in ["TBALOPENING", "TBALCLOSING"] {
                         let utf16le = field
                             .encode_utf16()
@@ -2679,16 +2737,18 @@ mod tests {
                     }
                 }
                 let response = match index {
-                    0 | 2 | 8 | 10 => utf16_xml_response(&extent),
-                    1 | 3 | 5 | 7 | 9 | 11 => utf8_status_response(STATUS),
-                    4 | 6 => utf16_xml_response(&trial_balance),
+                    1 => utf16_xml_response(&mode),
+                    16 => utf16_xml_response(&closing_mode),
+                    3 | 5 | 11 | 13 => utf16_xml_response(&extent),
+                    0 | 2 | 4 | 6 | 8 | 10 | 12 | 14 | 15 | 17 => utf8_status_response(STATUS),
+                    7 | 9 => utf16_xml_response(&trial_balance),
                     _ => unreachable!(),
                 };
                 socket.write_all(&response).await.expect("write response");
             }
         });
 
-        let source = TallyRuntime::default()
+        let result = TallyRuntime::default()
             .fetch_trial_balance_source(
                 TallyConfig {
                     host: address.ip().to_string(),
@@ -2696,10 +2756,38 @@ mod tests {
                 },
                 "Aarav Trading Company Demo".to_string(),
                 COMPANY_GUID.to_string(),
-                TallyDate::parse("20260401").unwrap(),
+                TallyDate::parse(if education || closing_education {
+                    "20260415"
+                } else {
+                    "20260401"
+                })
+                .unwrap(),
             )
-            .await
-            .expect("stable Trial Balance source");
+            .await;
+
+        if education {
+            assert_eq!(
+                result
+                    .expect_err("fresh Education mode rejects ordinary dates")
+                    .downcast_ref::<TrialBalanceReadError>(),
+                Some(&TrialBalanceReadError::PeriodBoundaryUnsupported),
+            );
+            server
+                .await
+                .expect("no report request was sent for Education ordinary date");
+            return;
+        }
+        if closing_education {
+            assert_eq!(
+                result
+                    .expect_err("changed mode must not publish a workbook")
+                    .downcast_ref::<TrialBalanceReadError>(),
+                Some(&TrialBalanceReadError::ProductModeUnverified)
+            );
+            server.await.expect("closing mode server task");
+            return;
+        }
+        let source = result.expect("stable Trial Balance source");
 
         assert_eq!(source.company, "Aarav Trading Company Demo");
         assert_eq!(source.from_yyyymmdd, "20240401");
@@ -2715,6 +2803,33 @@ mod tests {
             stable_trial_balance_read(NativePairedRead::Drifted),
             Err(TrialBalanceReadError::SnapshotDrifted)
         ));
+    }
+
+    #[test]
+    fn trial_balance_requires_known_consistent_mode_evidence() {
+        use bridge_tally_protocol::CompanyGatewayCapabilityObservation;
+        assert_eq!(
+            trial_balance_boundary_profile(None),
+            Err(TrialBalanceReadError::ProductModeUnverified)
+        );
+        for (product, education, silver, gold) in [
+            ("Unknown", false, true, false),
+            ("TallyPrime", false, false, false),
+            ("TallyPrime", true, true, false),
+            ("TallyPrime", true, false, true),
+            ("TallyPrime", false, true, true),
+        ] {
+            let observation = CompanyGatewayCapabilityObservation {
+                product: product.to_string(),
+                educational_mode: education,
+                silver,
+                gold,
+            };
+            assert_eq!(
+                trial_balance_boundary_profile(Some(&observation)),
+                Err(TrialBalanceReadError::ProductModeUnverified)
+            );
+        }
     }
 
     #[test]
