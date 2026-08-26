@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Building2, Cable, Check, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
+import { Building2, Cable, Check, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyProbeCompanySelectionTransition,
@@ -27,6 +27,7 @@ import { createDocumentsWorkspaceState, DocumentsScreen } from "./DocumentsScree
 import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
 import "./styles.css";
 
 type TallyConfig = {
@@ -272,6 +273,9 @@ type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll
 
 const TABLE_PREVIEW_LIMIT = 100;
 const MIRROR_PAGE_LIMIT = 25;
+// These workflows remain implemented but unavailable until their end-to-end
+// workflow evidence is complete.
+const NON_TALLY_SECTIONS_ENABLED = false;
 
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
@@ -405,7 +409,7 @@ function TallyErrorNotice({ message }: { message: OperatorError }) {
 
 function App() {
   const currentFinancialYear = React.useMemo(() => getCurrentFinancialYear(), []);
-  const [config, setConfig] = React.useState<TallyConfig>({ host: "localhost", port: 9000 });
+  const [config, setConfig] = React.useState<TallyConfig>({ host: "localhost", port: 9001 });
   const [status, setStatus] = React.useState<ConnectionStatus | null>(null);
   const [passport, setPassport] = React.useState<CapabilityProfile | null>(null);
   const [profileSha256, setProfileSha256] = React.useState<string | null>(null);
@@ -455,7 +459,7 @@ function App() {
   const [axalSession, setAxalSession] = React.useState<{ id: string; integration: AxalIntegration } | null>(null);
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
   const [documentsWorkspace, setDocumentsWorkspace] = React.useState(createDocumentsWorkspaceState);
-  const [view, setView] = React.useState<View>("dashboard");
+  const [view, setView] = React.useState<View>("outstandings");
   const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
     () => automaticOutstandingsAsOf(),
   );
@@ -513,7 +517,7 @@ function App() {
   }, [view, refreshRecentSnapshots]);
 
   React.useEffect(() => {
-    if (view !== "companies" && view !== "outstandings" && view !== "clients") return;
+    if (view !== "companies" && view !== "outstandings" && view !== "clients" && view !== "mirror") return;
     void refreshPersistedCompanyProfiles();
   }, [view, refreshPersistedCompanyProfiles]);
 
@@ -692,6 +696,40 @@ function App() {
     if (key === selectedCompany || savedCompanySelectionLocked) return;
     clearSelectedCompanyScope();
     setSelectedCompany(key);
+  }
+
+  function selectClientFromShell(key: string) {
+    const unverified = otherOpenCompanies.find((company, index) => `unverified:${company.name}:${index}` === key);
+    if (unverified) {
+      if (savedCompanySelectionLocked) return;
+      clearSelectedCompanyScope();
+      setSelectedCompany("");
+      setView("companies");
+      void bootstrapDirectCompany(unverified.name);
+      return;
+    }
+
+    const company = companies.find((candidate) => tallyCompanyKey(candidate) === key);
+    if (!company || savedCompanySelectionLocked) return;
+    if (company.mirror_company_id) {
+      selectSavedCompany(key);
+      if (liveCompanyKeys.includes(key) && company.canonical_endpoint === configuredTallyEndpoint(config)) {
+        setView("outstandings");
+      } else {
+        setCompanyError("Check the endpoint and re-verify this saved client before reading it.");
+        setView("companies");
+      }
+      return;
+    }
+    if (key === selectedCompany) return;
+    clearSelectedCompanyScope({
+      preserveCurrentProbeReview: canReuseCurrentProbeReview({
+        reviewAvailable: Boolean(reviewId && reviewCommitmentSha256),
+        setupSaved: Boolean(passportSnapshotId),
+      }),
+    });
+    setSelectedCompany(key);
+    setView("companies");
   }
 
   function updateTallyHost(host: string) {
@@ -1247,6 +1285,25 @@ function App() {
     companyCurrent: selectedCompanyLive,
     companySaved: Boolean(selectedCompanyRecord?.mirror_company_id),
   }).companyReady;
+  const selectedCompanyReadable = selectedCompanyReady;
+  const clientSwitcherClients: ClientSwitcherClient[] = [
+    ...companies.map((company) => ({
+      key: tallyCompanyKey(company),
+      name: company.name,
+      state: company.mirror_company_id
+        && liveCompanyKeys.includes(tallyCompanyKey(company))
+        && company.canonical_endpoint === configuredTallyEndpoint(config)
+        ? "ready" as const
+        : company.guid
+          ? "setup_required" as const
+          : "verification_required" as const,
+    })),
+    ...otherOpenCompanies.map((company, index) => ({
+      key: `unverified:${company.name}:${index}`,
+      name: company.name,
+      state: "verification_required" as const,
+    })),
+  ];
   const discoveredCompanyPrompt = companyDiscoveryPrompt(
     selectedCompany,
     liveCompanyKeys,
@@ -1341,35 +1398,48 @@ function App() {
           </div>
         </div>
         <nav aria-label="Bridge operations">
-          <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
-            <Activity size={18} /> Dashboard
-          </button>
           <button
-            aria-current={["outstandings", "companies", "clients"].includes(view) ? "page" : undefined}
-            className={["outstandings", "companies", "clients"].includes(view) ? "active" : ""}
-            onClick={() => setView(selectedCompanyReady ? "outstandings" : "companies")}
+            aria-current={view === "outstandings" ? "page" : undefined}
+            className={view === "outstandings" ? "active" : ""}
+            onClick={() => setView(selectedCompanyReadable ? "outstandings" : "companies")}
           >
-            <Cable size={18} /> Tally
+            <Cable size={18} /> Outstandings
           </button>
-          <button aria-current={view === "gst" ? "page" : undefined} className={view === "gst" ? "active" : ""} onClick={() => setView("gst")}>
-            <FileText size={18} /> GST Returns
+          <button aria-current={view === "clients" ? "page" : undefined} className={view === "clients" ? "active" : ""} onClick={() => setView(selectedCompanyReadable ? "clients" : "companies")}>
+            <Building2 size={18} /> Compare clients
+          </button>
+          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} onClick={() => setView("companies")}>
+            <Cable size={18} /> Manage Tally
           </button>
           <button aria-current={view === "mirror" ? "page" : undefined} className={view === "mirror" ? "active" : ""} onClick={() => setView("mirror")}>
             <Database size={18} /> Mirror &amp; Proof
           </button>
-          <button aria-current={view === "dsc" ? "page" : undefined} className={view === "dsc" ? "active" : ""} onClick={() => setView("dsc")}>
-            <KeyRound size={18} /> DSC Token
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby="future-sections-note">
+            <FileText size={18} /> GST Returns <small>Not yet available</small>
           </button>
-          <button aria-current={view === "documents" ? "page" : undefined} className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}>
-            <FolderOpen size={18} /> Documents
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby="future-sections-note">
+            <KeyRound size={18} /> DSC Token <small>Not yet available</small>
           </button>
-          <button aria-current={view === "axal" ? "page" : undefined} className={view === "axal" ? "active" : ""} onClick={() => setView("axal")}>
-            <Cloud size={18} /> AXAL Backend
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby="future-sections-note">
+            <FolderOpen size={18} /> Documents <small>Not yet available</small>
+          </button>
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby="future-sections-note">
+            <Cloud size={18} /> AXAL Backend <small>Not yet available</small>
           </button>
         </nav>
+        <p className="future-sections-note" id="future-sections-note">Unavailable until their workflow evidence is complete.</p>
       </aside>
 
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
+        <ClientSwitcher
+          clients={clientSwitcherClients}
+          selectedClientKey={selectedCompany}
+          selectionLocked={savedCompanySelectionLocked}
+          endpoint={`${config.host}:${config.port}`}
+          endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
+          onSelect={selectClientFromShell}
+          onManageTally={() => setView("companies")}
+        />
         <header>
           <div>
             {view !== "companies" && (
@@ -1605,8 +1675,7 @@ function App() {
                 canonical_origin: company.canonical_endpoint as string,
               }))}
             onOpenCompany={(company) => {
-              setSelectedCompany(tallyCompanyKey(company));
-              setView("outstandings");
+              selectClientFromShell(tallyCompanyKey(company));
             }}
             onBack={() => setView("outstandings")}
           />

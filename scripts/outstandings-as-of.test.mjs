@@ -13,6 +13,7 @@ import {
   operatorSelectedOutstandingsAsOf,
   partyStatementInvokeArgument,
   refreshAutomaticOutstandingsAsOf,
+  savedCompanyOutstandingsInvokeArgument,
   settleAsOfBoundValue,
   singleCompanyOutstandingsInvokeArgument,
   todayAsDateInput,
@@ -138,6 +139,26 @@ test("the single-company request emits the selected canonical as-of date", () =>
     },
   );
   assert.equal(singleCompanyOutstandingsInvokeArgument({ host: "127.0.0.1", port: 9000 }, { name: "Lab", guid: "guid-1", company_number: "100001", books_from_yyyymmdd: "20260401" }, "2026-8-17", "due_date"), null);
+});
+
+test("a saved client request keeps its GUID inside the Rust-owned binding", () => {
+  assert.deepEqual(
+    savedCompanyOutstandingsInvokeArgument(
+      { host: "127.0.0.1", port: 9001 },
+      { name: "Bridge Validation Lab", mirrorCompanyId: "opaque-mirror-id" },
+      "2026-08-17",
+      "due_date",
+    ),
+    {
+      request: {
+        config: { host: "127.0.0.1", port: 9001 },
+        mirror_company_id: "opaque-mirror-id",
+        currency_assertion: "INR",
+        as_of_yyyymmdd: "20260817",
+        ageing_anchor: "due_date",
+      },
+    },
+  );
 });
 
 test("compare clients emits the same selected canonical as-of date", () => {

@@ -92,11 +92,167 @@ nav button:hover {
   background: #27352e;
 }
 
+nav button:disabled {
+  cursor: not-allowed;
+  color: #829188;
+}
+
+nav button:disabled small {
+  margin-left: auto;
+  color: inherit;
+  font-size: 11px;
+}
+
+.future-sections-note {
+  color: #aab8b0;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 18px 12px 0;
+}
+
 .content {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
   padding: 32px;
+}
+
+.client-switcher {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  border-bottom: 1px solid #dce4de;
+  background: rgb(246 248 245 / 96%);
+  padding: 0 0 16px;
+  margin-bottom: 24px;
+  backdrop-filter: blur(8px);
+}
+
+.client-switcher-current {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 260px;
+  gap: 2px;
+}
+
+.client-switcher-current span,
+.client-switcher-current small {
+  color: #52645b;
+  font-size: 12px;
+}
+
+.client-switcher-current span {
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.client-switcher-current strong {
+  overflow: hidden;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.client-switcher-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.client-switcher-actions button {
+  min-height: 40px;
+}
+
+.client-switcher-menu {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% - 16px);
+  right: 0;
+  left: 0;
+  display: grid;
+  gap: 10px;
+  max-height: min(480px, calc(100dvh - 100px));
+  overflow: auto;
+  border: 1px solid #c9d5ce;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 16px rgb(23 32 38 / 12%);
+  padding: 12px;
+}
+
+.client-switcher-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #c9d5ce;
+  border-radius: 6px;
+  color: #52645b;
+  padding: 0 10px;
+}
+
+.client-switcher-search input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  border: 0;
+  outline: 0;
+}
+
+.client-switcher-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px;
+}
+
+.client-switcher-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  border: 1px solid #dce4de;
+  border-radius: 6px;
+  background: #fff;
+  color: #172026;
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.client-switcher-option:hover,
+.client-switcher-option.selected {
+  border-color: #6ba58b;
+  background: #f0f8f3;
+}
+
+.client-switcher-option:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.client-switcher-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.client-switcher-option small {
+  flex: 0 0 auto;
+  color: #52645b;
+  font-size: 11px;
+}
+
+.client-switcher-empty,
+.client-switcher-note {
+  color: #52645b;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
 }
 
 header {
@@ -1222,6 +1378,10 @@ td > small {
   overflow-x: auto;
 }
 
+.table-wrap > table {
+  min-width: 820px;
+}
+
 .proof-export-preview {
   border-top: 1px solid #dfe8e2;
   margin-top: 20px;
@@ -1261,7 +1421,6 @@ td > small {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 820px;
 }
 
 th,
@@ -1378,7 +1537,7 @@ summary:focus-visible,
 }
 
 .outstandings-screen {
-  overflow: hidden;
+  min-width: 0;
   border: 1px solid #dce4de;
   border-radius: 14px;
   background: #fff;
@@ -1388,14 +1547,21 @@ summary:focus-visible,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
+  flex-wrap: wrap;
+  gap: 20px 24px;
   padding: 28px 30px;
   border-bottom: 1px solid #e6ebe7;
+}
+
+.outstandings-heading > div:first-child {
+  min-width: 0;
+  flex: 1 1 260px;
 }
 
 .outstandings-heading h2 {
   margin-bottom: 6px;
   font-size: 24px;
+  overflow-wrap: anywhere;
 }
 
 .outstandings-heading p,
@@ -1431,6 +1597,9 @@ summary:focus-visible,
 .outstandings-heading-actions {
   display: flex;
   align-items: center;
+  flex: 1 1 520px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -1756,6 +1925,19 @@ summary:focus-visible,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .client-switcher {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .client-switcher-actions {
+    justify-content: stretch;
+  }
+
+  .client-switcher-actions button {
+    flex: 1 1 180px;
+  }
+
   header,
   .toolbar {
     align-items: stretch;
@@ -1838,6 +2020,10 @@ summary:focus-visible,
 @media (max-width: 520px) {
   .content {
     padding: 20px;
+  }
+
+  .client-switcher-list {
+    grid-template-columns: 1fr;
   }
 
   .passport-summary,
