@@ -23,7 +23,7 @@ import {
 } from "./outstandings-as-of";
 import { GstScreen } from "./GstScreen";
 import { DscScreen } from "./DscScreen";
-import { DocumentsScreen } from "./DocumentsScreen";
+import { createDocumentsWorkspaceState, DocumentsScreen } from "./DocumentsScreen";
 import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -451,6 +451,7 @@ function App() {
   // AxalScreen both reads and writes these two (see its Props comment).
   const [axalSession, setAxalSession] = React.useState<{ id: string; integration: AxalIntegration } | null>(null);
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
+  const [documentsWorkspace, setDocumentsWorkspace] = React.useState(createDocumentsWorkspaceState);
   const [view, setView] = React.useState<View>("dashboard");
   const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
     () => automaticOutstandingsAsOf(),
@@ -1859,7 +1860,14 @@ function App() {
 
         {view === "documents" && (
           <ErrorBoundary key="documents" label="Documents">
-          <DocumentsScreen busy={busy} setBusy={setBusy} axalConnection={axalConnection} axalSession={axalSession} />
+          <DocumentsScreen
+            busy={busy}
+            setBusy={setBusy}
+            axalConnection={axalConnection}
+            axalSession={axalSession}
+            workspaceState={documentsWorkspace}
+            setWorkspaceState={setDocumentsWorkspace}
+          />
           </ErrorBoundary>
         )}
 

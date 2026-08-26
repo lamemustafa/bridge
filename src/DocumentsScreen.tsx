@@ -47,6 +47,24 @@ type SelectedDocumentPath = {
 
 type AxalIntegration = "tally" | "documents" | "dsc";
 
+type DocumentsWorkspaceState = {
+  documentPaths: SelectedDocumentPath[];
+  documentScan: ScanDocumentsResponse | null;
+  documentSync: SyncDocumentsResponse | null;
+  documentError: string | null;
+  documentAction: "scan" | "sync" | null;
+};
+
+export function createDocumentsWorkspaceState(): DocumentsWorkspaceState {
+  return {
+    documentPaths: [],
+    documentScan: null,
+    documentSync: null,
+    documentError: null,
+    documentAction: null,
+  };
+}
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) {
     return "0 B";
@@ -69,27 +87,34 @@ type Props = {
   // never duplicated locally.
   axalConnection: { workspace: { id: string; name: string } } | null;
   axalSession: { id: string; integration: AxalIntegration } | null;
+  workspaceState: DocumentsWorkspaceState;
+  setWorkspaceState: React.Dispatch<React.SetStateAction<DocumentsWorkspaceState>>;
 };
 
-// Owns: the Documents view (view === "documents"), its selected-path/scan/
-// sync state, and the choose/scan/sync/clear handlers.
+// Owns: the Documents view (view === "documents") and the
+// choose/scan/sync/clear handlers.
 //
-// Deliberately does NOT own: `axalConnection` or `axalSession`. Those are
-// AXAL workspace-session state shared with the AXAL and DSC views, so they
-// stay in App() and are passed down read-only rather than duplicated here.
-// `busy` is likewise a cross-view flag owned by App().
-export function DocumentsScreen({ busy, setBusy, axalConnection, axalSession }: Props) {
-  const [documentPaths, setDocumentPaths] = React.useState<SelectedDocumentPath[]>([]);
-  const [documentScan, setDocumentScan] = React.useState<ScanDocumentsResponse | null>(null);
-  const [documentSync, setDocumentSync] = React.useState<SyncDocumentsResponse | null>(null);
-  const [documentError, setDocumentError] = React.useState<string | null>(null);
-  const [documentAction, setDocumentAction] = React.useState<"scan" | "sync" | null>(null);
+// Deliberately does NOT own cross-view state. The AXAL connection/session,
+// busy flag, and prepared Documents workspace all stay in App() so the
+// operator can visit AXAL and return without losing selected files or the
+// scanSessionId required for sync.
+export function DocumentsScreen({
+  busy,
+  setBusy,
+  axalConnection,
+  axalSession,
+  workspaceState,
+  setWorkspaceState,
+}: Props) {
+  const { documentPaths, documentScan, documentSync, documentError, documentAction } = workspaceState;
+
+  function updateWorkspaceState(patch: Partial<DocumentsWorkspaceState>) {
+    setWorkspaceState((current) => ({ ...current, ...patch }));
+  }
 
   async function scanDocuments() {
     setBusy(true);
-    setDocumentAction("scan");
-    setDocumentError(null);
-    setDocumentSync(null);
+    updateWorkspaceState({ documentAction: "scan", documentError: null, documentSync: null });
     try {
       const result = await invoke<ScanDocumentsResponse>("scan_document_paths", {
         request: {
@@ -99,40 +124,52 @@ export function DocumentsScreen({ busy, setBusy, axalConnection, axalSession }: 
           exclude_zero_byte_files: true,
         },
       });
-      setDocumentScan(result);
+      updateWorkspaceState({ documentScan: result });
     } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : String(error));
+      updateWorkspaceState({
+        documentError: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setBusy(false);
-      setDocumentAction(null);
+      updateWorkspaceState({ documentAction: null });
     }
   }
 
   async function chooseDocumentFiles() {
-    setDocumentError(null);
+    updateWorkspaceState({ documentError: null });
     try {
       const paths = await invoke<SelectedDocumentPath[]>("select_document_files");
       if (paths.length > 0) {
-        setDocumentPaths((current) => [...current, ...paths]);
-        setDocumentScan(null);
-        setDocumentSync(null);
+        setWorkspaceState((current) => ({
+          ...current,
+          documentPaths: [...current.documentPaths, ...paths],
+          documentScan: null,
+          documentSync: null,
+        }));
       }
     } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : String(error));
+      updateWorkspaceState({
+        documentError: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
   async function chooseDocumentFolder() {
-    setDocumentError(null);
+    updateWorkspaceState({ documentError: null });
     try {
       const paths = await invoke<SelectedDocumentPath[]>("select_document_folder");
       if (paths.length > 0) {
-        setDocumentPaths((current) => [...current, ...paths]);
-        setDocumentScan(null);
-        setDocumentSync(null);
+        setWorkspaceState((current) => ({
+          ...current,
+          documentPaths: [...current.documentPaths, ...paths],
+          documentScan: null,
+          documentSync: null,
+        }));
       }
     } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : String(error));
+      updateWorkspaceState({
+        documentError: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -141,20 +178,19 @@ export function DocumentsScreen({ busy, setBusy, axalConnection, axalSession }: 
       selectionIds: documentPaths.map((path) => path.selectionId),
       scanSessionId: documentScan?.scanSessionId ?? null,
     }).catch(() => undefined);
-    setDocumentPaths([]);
-    setDocumentScan(null);
-    setDocumentSync(null);
+    setWorkspaceState(createDocumentsWorkspaceState());
   }
 
   async function syncDocuments() {
     if (!documentScan?.files.length || !axalConnection || axalSession?.integration !== "documents") {
-      setDocumentError("Scan files and check AXAL workspace status before syncing documents.");
+      updateWorkspaceState({
+        documentError: "Scan files and check AXAL workspace status before syncing documents.",
+      });
       return;
     }
 
     setBusy(true);
-    setDocumentAction("sync");
-    setDocumentError(null);
+    updateWorkspaceState({ documentAction: "sync", documentError: null });
     try {
       const result = await invoke<SyncDocumentsResponse>("sync_documents_to_axal", {
         request: {
@@ -165,12 +201,14 @@ export function DocumentsScreen({ busy, setBusy, axalConnection, axalSession }: 
           maxFilesPerBatch: 20,
         },
       });
-      setDocumentSync(result);
+      updateWorkspaceState({ documentSync: result });
     } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : String(error));
+      updateWorkspaceState({
+        documentError: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setBusy(false);
-      setDocumentAction(null);
+      updateWorkspaceState({ documentAction: null });
     }
   }
 
