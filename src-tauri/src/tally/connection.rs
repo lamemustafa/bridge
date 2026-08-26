@@ -397,7 +397,9 @@ impl TallyClient {
                 confidence: xml_evidence.confidence,
                 safe_reason_code: Some(empty_company_reason()),
             }
-        } else if unique_company_identities(&companies) {
+        } else if unique_company_identities(&companies)
+            && !has_presentation_equivalent_guid_siblings(&companies)
+        {
             CapabilityEvidence {
                 state: CapabilityState::Supported,
                 confidence: EvidenceConfidence::Observed,
@@ -1257,6 +1259,25 @@ fn unique_company_identities(companies: &[TallyCompany]) -> bool {
     })
 }
 
+/// Tally scopes reads by display name, so a same-GUID book whose name differs
+/// only by case or surrounding whitespace cannot be safely selected even when
+/// its complete tuples are otherwise unique.
+fn has_presentation_equivalent_guid_siblings(companies: &[TallyCompany]) -> bool {
+    companies.iter().enumerate().any(|(index, company)| {
+        let Some(guid) = company.guid.as_deref() else {
+            return false;
+        };
+        companies[..index].iter().any(|other| {
+            company.name != other.name
+                && other
+                    .guid
+                    .as_deref()
+                    .is_some_and(|other_guid| other_guid.eq_ignore_ascii_case(guid))
+                && company.name.trim().eq_ignore_ascii_case(other.name.trim())
+        })
+    })
+}
+
 fn validate_selected_read_identity_evidence(
     parsed_record_count: usize,
     identified_record_count: u64,
@@ -1397,8 +1418,8 @@ mod tests {
     use super::LedgerOpeningCoverageRead;
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
-        normalize_discovered_companies, tally_endpoint, unique_company_identities, TallyClient,
-        TallyConfig, TallyProduct,
+        has_presentation_equivalent_guid_siblings, normalize_discovered_companies, tally_endpoint,
+        unique_company_identities, TallyClient, TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TallyDate,
@@ -1617,6 +1638,7 @@ mod tests {
         assert_eq!(normalized[0].name, "Synthetic A");
         assert_eq!(normalized[0].guid.as_deref(), Some("GUID-1"));
         assert!(unique_company_identities(&normalized));
+        assert!(!has_presentation_equivalent_guid_siblings(&normalized));
 
         assert!(
             normalize_discovered_companies(vec![crate::tally::TallyCompany {
@@ -1636,6 +1658,27 @@ mod tests {
             }])
             .is_err()
         );
+    }
+
+    #[test]
+    fn presentation_equivalent_guid_siblings_are_not_stable_company_identities() {
+        let companies = vec![
+            crate::tally::TallyCompany {
+                name: "Synthetic Company".to_string(),
+                guid: Some("guid-3".to_string()),
+                company_number: Some("100005".to_string()),
+                books_from: Some("20250401".to_string()),
+            },
+            crate::tally::TallyCompany {
+                name: " synthetic company ".to_string(),
+                guid: Some("GUID-3".to_string()),
+                company_number: Some("100014".to_string()),
+                books_from: Some("20260401".to_string()),
+            },
+        ];
+
+        assert!(unique_company_identities(&companies));
+        assert!(has_presentation_equivalent_guid_siblings(&companies));
     }
 
     #[test]
@@ -2961,7 +3004,7 @@ mod tests {
     /// `CompanyListV1` report: the mock server has exactly one POST response
     /// queued, so a fallback request would hang and fail this test.
     #[tokio::test]
-    async fn capability_probe_trusts_the_company_collection_without_falling_back() {
+    async fn capability_probe_marks_presentation_equivalent_guid_siblings_ambiguous() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
@@ -2970,7 +3013,7 @@ mod tests {
             let mut requests = Vec::new();
             for (index, body) in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
-                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Synthetic Company A\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company A</NAME><GUID TYPE=\"String\">synthetic-guid-a</GUID><COMPANYNUMBER TYPE=\"Number\">100001</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20260401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n   <COMPANY NAME=\"Synthetic Company B\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company B</NAME><GUID TYPE=\"String\">synthetic-guid-b</GUID><COMPANYNUMBER TYPE=\"Number\">100002</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20260401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
+                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Synthetic Company A\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company A</NAME><GUID TYPE=\"String\">synthetic-guid-a</GUID><COMPANYNUMBER TYPE=\"Number\">100001</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20260401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n   <COMPANY NAME=\" synthetic company a \" RESERVEDNAME=\"\"><NAME TYPE=\"String\"> synthetic company a </NAME><GUID TYPE=\"String\">SYNTHETIC-GUID-A</GUID><COMPANYNUMBER TYPE=\"Number\">100002</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20270401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
             ]
             .into_iter()
             .enumerate()
@@ -3004,8 +3047,8 @@ mod tests {
         assert_eq!(probe.companies.len(), 2);
         assert_eq!(probe.companies[0].name, "Synthetic Company A");
         assert_eq!(probe.companies[0].guid.as_deref(), Some("synthetic-guid-a"));
-        assert_eq!(probe.companies[1].name, "Synthetic Company B");
-        assert_eq!(probe.companies[1].guid.as_deref(), Some("synthetic-guid-b"));
+        assert_eq!(probe.companies[1].name, "synthetic company a");
+        assert_eq!(probe.companies[1].guid.as_deref(), Some("SYNTHETIC-GUID-A"));
         assert_eq!(probe.profile.product, "TallyPrime");
         assert_eq!(probe.profile.mode.as_deref(), Some("Licensed"));
         assert_eq!(
@@ -3013,8 +3056,14 @@ mod tests {
             CapabilityState::Supported
         );
         assert_eq!(
+            probe.profile.features[&CapabilityFeatureId::StableCompanyIdentity]
+                .safe_reason_code
+                .as_deref(),
+            Some("company_identity_ambiguous")
+        );
+        assert_eq!(
             probe.profile.features[&CapabilityFeatureId::StableCompanyIdentity].state,
-            CapabilityState::Supported
+            CapabilityState::Unknown
         );
 
         let post_request = requests
