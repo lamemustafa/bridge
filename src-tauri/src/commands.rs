@@ -14,6 +14,11 @@ use crate::reports::bulk_party_statement::{
     bulk_party_statement_party_count, write_bulk_party_statements_with_ageing_anchor,
     BulkPartyStatementRequest, PartyStatementDestinationApprovals,
 };
+use crate::reports::outstandings_working_paper::build_outstandings_working_paper;
+use crate::reports::outstandings_working_paper_store::{
+    source_from_complete_result, WorkingPaperExportStore,
+};
+use crate::reports::outstandings_working_paper_xlsx::render_outstandings_working_paper_xlsx;
 use crate::reports::party_statement::{
     build_party_statement_with_ageing_anchor, PartyStatementError,
 };
@@ -2008,6 +2013,16 @@ pub struct OutstandingsRequest {
     pub ageing_anchor: crate::tally::OutstandingsAgeingAnchor,
 }
 
+#[derive(Debug, Serialize)]
+pub struct FetchOutstandingsResponse {
+    #[serde(flatten)]
+    pub result: OutstandingsLoadResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_paper_export_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_paper_unavailable_reason_code: Option<&'static str>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct VoucherRequest {
     pub config: TallyConfig,
@@ -2126,7 +2141,8 @@ fn requested_outstandings_as_of(
 pub async fn fetch_tally_outstandings(
     request: OutstandingsRequest,
     runtime: State<'_, TallyRuntime>,
-) -> Result<OutstandingsLoadResult, TallyCommandError> {
+    working_paper_exports: State<'_, WorkingPaperExportStore>,
+) -> Result<FetchOutstandingsResponse, TallyCommandError> {
     validate_company_name(&request.company).map_err(|message| {
         tally_command_error(
             "company_selection_invalid",
@@ -2138,7 +2154,8 @@ pub async fn fetch_tally_outstandings(
         )
     })?;
     let as_of = requested_outstandings_as_of(request.as_of_yyyymmdd)?;
-    runtime
+    let expected_company_guid = request.expected_company_guid.clone();
+    let result = runtime
         .fetch_outstandings(
             request.config,
             request.company,
@@ -2148,7 +2165,32 @@ pub async fn fetch_tally_outstandings(
             request.ageing_anchor,
         )
         .await
-        .map_err(tally_runtime_command_error)
+        .map_err(tally_runtime_command_error)?;
+    let (working_paper_source, source_unavailable_reason_code) =
+        match source_from_complete_result(&result, &expected_company_guid) {
+            Ok(Some(source)) => (Some(source), None),
+            Ok(None) if matches!(&result, OutstandingsLoadResult::Complete { .. }) => {
+                (None, Some("working_paper_complete_source_unavailable"))
+            }
+            Ok(None) => (None, None),
+            Err(_) => (None, Some("working_paper_resource_limit")),
+        };
+    // A successful refresh supersedes every older working-paper approval for
+    // this company even when the new result cannot issue one. Replacement is
+    // performed in one store lock so a stale snapshot never survives beside
+    // the result that displaced it in the webview.
+    let (working_paper_export_id, working_paper_unavailable_reason_code) =
+        match working_paper_exports
+            .replace_for_company(&expected_company_guid, working_paper_source)
+        {
+            Ok(export_id) => (export_id, source_unavailable_reason_code),
+            Err(_) => (None, Some("working_paper_export_store_unavailable")),
+        };
+    Ok(FetchOutstandingsResponse {
+        result,
+        working_paper_export_id,
+        working_paper_unavailable_reason_code,
+    })
 }
 
 /// Reads operator-owned filing labels from ordinary application configuration.
@@ -3104,6 +3146,13 @@ pub struct ExportPartyStatementRequest {
     pub unallocated_by_party: Vec<UnallocatedParty>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ExportOutstandingsWorkingPaperRequest {
+    /// Opaque, one-use binding to source rows retained by Rust after the
+    /// completed native read. The webview never supplies financial rows.
+    pub export_id: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PartyStatementFormat {
@@ -3289,6 +3338,38 @@ fn export_bulk_party_statements_at_selected_destination(
         }
     };
     result.map_err(BulkPartyStatementExportError::Existing)
+}
+
+/// Builds the all-party, dual-ageing working paper from one completed native
+/// result and writes it to the user's Downloads folder. No Tally request is
+/// issued here.
+///
+/// Mirrors `save_report_download` exactly: Tauri's own path resolver, the
+/// same filename-traversal guard, and the full written path returned so the
+/// UI can say where the file went instead of leaving the operator to guess.
+#[tauri::command]
+pub async fn export_outstandings_working_paper(
+    app: tauri::AppHandle,
+    request: ExportOutstandingsWorkingPaperRequest,
+    working_paper_exports: State<'_, WorkingPaperExportStore>,
+) -> Result<String, String> {
+    let source = working_paper_exports
+        .take(&request.export_id)
+        .map_err(|error| format!("Bridge withheld the working paper: {error}"))?;
+    let paper = build_outstandings_working_paper(source)
+        .map_err(|error| format!("Bridge withheld the working paper: {error}"))?;
+    let bytes = render_outstandings_working_paper_xlsx(&paper)
+        .map_err(|error| format!("Bridge could not build the working paper: {error}"))?;
+    let mut slug = statement_filename_slug(paper.company());
+    slug.truncate(150);
+    save_report_download_bytes(
+        &app,
+        &format!(
+            "outstandings-working-paper-{slug}-{}.xlsx",
+            paper.as_of().as_str()
+        ),
+        &bytes,
+    )
 }
 
 /// Builds one party's aged-bills statement in the requested format and writes

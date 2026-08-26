@@ -16,6 +16,7 @@ import {
   settleAsOfBoundValue,
   singleCompanyOutstandingsInvokeArgument,
   todayAsDateInput,
+  workingPaperInvokeArgument,
 } from "../src/outstandings-as-of.ts";
 
 test("the visible as-of control defaults to the operator's local calendar date", () => {
@@ -196,4 +197,13 @@ test("Excel and PDF statement builders emit the report's actual as-of date", () 
       unallocated_by_party: [{ party: "Alpha", amount: "2" }],
     },
   );
+});
+
+test("working-paper export sends only the opaque Rust-owned read binding", () => {
+  assert.deepEqual(
+    workingPaperInvokeArgument({ working_paper_export_id: "synthetic-export-id" }),
+    { request: { export_id: "synthetic-export-id" } },
+  );
+  assert.equal(workingPaperInvokeArgument({}), null);
+  assert.equal(workingPaperInvokeArgument({ working_paper_export_id: "" }), null);
 });

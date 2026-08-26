@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialReason, outstandingsPartialState } from "../src/outstandings-copy.ts";
+import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outstandingsAgeingDisclosure, outstandingsPartialReason, outstandingsPartialState, workingPaperUnavailableState } from "../src/outstandings-copy.ts";
 
 test("the backend ageing anchor is disclosed in the bucket label", () => {
   assert.equal(outstandingsAgeingAnchorLabel("due_date"), "aged from due date");
@@ -163,6 +163,30 @@ test("deadline states keep the restart-before-next-sync instruction", () => {
 
 test("unknown reason codes remain readable", () => {
   assert.equal(outstandingsPartialReason("date_partition_scope_mismatch"), "date partition scope mismatch");
+});
+
+test("working-paper failures stay distinct from completed report availability", () => {
+  const resource = workingPaperUnavailableState("working_paper_resource_limit");
+  assert.match(resource.title, /working paper unavailable/i);
+  assert.match(resource.message, /report is complete/i);
+  assert.match(resource.message, /safe export limits/i);
+
+  const source = workingPaperUnavailableState("working_paper_complete_source_unavailable");
+  assert.match(source.message, /native bill and unallocated controls/i);
+
+  const store = workingPaperUnavailableState("working_paper_export_store_unavailable");
+  assert.match(store.message, /one-use working-paper snapshot/i);
+  assert.match(store.message, /refresh outstandings/i);
+  assert.match(store.message, /other report exports remain available/i);
+});
+
+test("the screen renders a complete-result working-paper reason in band", async () => {
+  const screen = await readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8");
+
+  assert.match(screen, /workingPaperUnavailableState\(completeResult\.working_paper_unavailable_reason_code\)/);
+  assert.match(screen, /workingPaperUnavailable && \(/);
+  assert.match(screen, /<strong>\{workingPaperUnavailable\.title\}<\/strong>/);
+  assert.match(screen, /<span>\{workingPaperUnavailable\.message\}<\/span>/);
 });
 
 test("unaged receivables disclose the ageing scope without inventing an On Account total", () => {

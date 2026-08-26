@@ -76,6 +76,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(tally::TallyRuntime::default())
         .manage(reports::bulk_party_statement::PartyStatementDestinationApprovals::default())
+        .manage(reports::outstandings_working_paper_store::WorkingPaperExportStore::default())
         .manage(sync::coordinator::SnapshotCoordinator::default())
         .setup(|app| {
             let app_data_directory = app.path().app_data_dir()?;
@@ -92,6 +93,7 @@ pub fn run() {
             commands::revoke_tally_write_fixture_enrollment,
             commands::save_report_download,
             commands::reveal_exported_file,
+            commands::export_outstandings_working_paper,
             commands::export_party_statement,
             commands::select_party_statement_destination,
             commands::revoke_party_statement_destination,

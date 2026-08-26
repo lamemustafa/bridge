@@ -216,7 +216,7 @@ pub fn render_party_statement_xlsx(
 ///
 /// Bridge's own arithmetic never touches `f64`; this is the last step before
 /// the cell, and Excel has no exact-decimal cell type to target instead.
-fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> {
+pub(super) fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> {
     let value = text
         .parse::<f64>()
         .map_err(|_| PartyStatementXlsxError::InvalidAmount(text.to_string()))?;
