@@ -9,7 +9,7 @@ export type ClientGroupLabelMigrationBook = {
 
 export type DroppedLegacyClientGroupLabel = {
   key: string;
-  reason: "no_matching_book" | "multiple_matching_books";
+  reason: "multiple_matching_books";
 };
 
 export function migrateLegacyClientGroupLabels(
@@ -33,9 +33,16 @@ export function migrateLegacyClientGroupLabels(
       if (!next[matchingBooks[0].companyKey]) next[matchingBooks[0].companyKey] = label;
       continue;
     }
+    if (matchingBooks.length === 0) {
+      // A closed book has no complete tuple in this probe. Keep its legacy
+      // label until a later probe can migrate it, but it cannot group any
+      // active composite row in the meantime.
+      next[key] = label;
+      continue;
+    }
     dropped.push({
       key,
-      reason: matchingBooks.length === 0 ? "no_matching_book" : "multiple_matching_books",
+      reason: "multiple_matching_books",
     });
   }
   return {

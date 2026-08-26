@@ -178,7 +178,7 @@ test("ungrouped companies remain separate and receive no synthetic total", () =>
   assert.equal(grouped.ungroupedRows.length, 2);
 });
 
-test("legacy GUID labels migrate once or are dropped before grouping reads", () => {
+test("legacy GUID labels migrate once and retain closed books before grouping reads", () => {
   const migration = migrateLegacyClientGroupLabels(
     {
       "legacy-one": "One practice",
@@ -194,12 +194,11 @@ test("legacy GUID labels migrate once or are dropped before grouping reads", () 
   );
   assert.deepEqual(
     migration.labels,
-    { "[composite-one]": "Exact practice" },
-    "an explicit composite label wins over a legacy raw-GUID label",
+    { "[composite-one]": "Exact practice", "legacy-missing": "Old practice" },
+    "an explicit composite label wins over a legacy raw-GUID label while a closed book's label is retained",
   );
   assert.deepEqual(migration.dropped, [
     { key: "legacy-split", reason: "multiple_matching_books" },
-    { key: "legacy-missing", reason: "no_matching_book" },
   ]);
   const rows = [
     { companyGuid: "[composite-parent]", exactAmounts: { receivable: "10", overdue: "2", unallocated: "1" } },

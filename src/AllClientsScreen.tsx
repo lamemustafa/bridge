@@ -188,7 +188,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
           setGroupLabels(migration.labels);
           if (migration.dropped.length) {
             setGroupLabelMigrationNotice(migration.dropped.map((dropped) =>
-              `${dropped.key}: ${dropped.reason === "no_matching_book" ? "no current book" : "multiple current books"}`,
+              `${dropped.key}: multiple current books`,
             ).join("; "));
           }
           setGroupLabelsReady(true);
