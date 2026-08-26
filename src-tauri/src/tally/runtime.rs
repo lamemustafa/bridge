@@ -3800,6 +3800,13 @@ mod tests {
             .expect("reserve reviewed setup")
             .expect("fresh review");
 
+        let ordinary_read = runtime
+            .fetch_companies(config.clone())
+            .await
+            .expect_err("ordinary reads must remain blocked by the reservation");
+        assert!(ordinary_read
+            .to_string()
+            .contains("reviewed setup operation is in progress"));
         let companies = runtime
             .fetch_companies_for_reservation(config.clone(), &reservation)
             .await
