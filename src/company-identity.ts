@@ -29,27 +29,3 @@ export function companyIdentityKey(input: CompanyIdentityKeyInput): CompanyIdent
     input.books_from_yyyymmdd,
   ]) as CompanyIdentityKey;
 }
-
-export function canonicalOriginForConfig(config: { host: string; port: number }): string {
-  // The Rust endpoint validator canonicalizes the loopback HTTP origin before
-  // a Tally read; mirror that stable presentation key for unsaved UI state.
-  return `http://${config.host.trim().toLowerCase()}:${config.port}`;
-}
-
-export function companyIdentityKeyForConfig(
-  config: { host: string; port: number },
-  company: {
-    guid: string;
-    company_number: string;
-    name: string;
-    books_from_yyyymmdd: string;
-  },
-): CompanyIdentityKey {
-  return companyIdentityKey({
-    canonical_origin: canonicalOriginForConfig(config),
-    company_guid: company.guid,
-    company_number: company.company_number,
-    company_name: company.name,
-    books_from_yyyymmdd: company.books_from_yyyymmdd,
-  });
-}

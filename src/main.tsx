@@ -1228,6 +1228,9 @@ function App() {
   const selectedCompanyRecord = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
   const selectedCompanyLive = !!selectedCompanyRecord && liveCompanyKeys.includes(tallyCompanyKey(selectedCompanyRecord));
   const currentProbeCompanyList = currentProbeCompanies(companies, liveCompanyKeys);
+  const completeCurrentProbeCompanies = currentProbeCompanyList.filter(
+    (company) => company.guid && company.company_number && company.books_from_yyyymmdd && company.canonical_endpoint,
+  );
   // Open in Tally but not already offered as a verified choice. Compared by
   // name because a discovered candidate has no GUID until it is verified --
   // establishing that GUID is exactly what choosing it does.
@@ -1592,13 +1595,13 @@ function App() {
                the probe verifies every open book on every run, and a firm
                holding ten client books will not bless each one before a
                cross-client screen works. */
-            companies={currentProbeCompanyList
-              .filter((company) => company.guid && company.company_number && company.books_from_yyyymmdd)
+            companies={completeCurrentProbeCompanies
               .map((company) => ({
                 name: company.name,
                 guid: company.guid as string,
                 company_number: company.company_number as string,
                 books_from_yyyymmdd: company.books_from_yyyymmdd as string,
+                canonical_origin: company.canonical_endpoint as string,
               }))}
             onOpenCompany={(company) => {
               setSelectedCompany(tallyCompanyKey(company));
@@ -1613,17 +1616,16 @@ function App() {
           <ErrorBoundary key="outstandings" label="Aged outstandings">
           <OutstandingsScreen
             config={config}
-            company={selectedCompanyReady && selectedCompanyRecord?.guid && selectedCompanyRecord.company_number && selectedCompanyRecord.books_from_yyyymmdd ? {
+            company={selectedCompanyReady && selectedCompanyRecord?.guid && selectedCompanyRecord.company_number && selectedCompanyRecord.books_from_yyyymmdd && selectedCompanyRecord.canonical_endpoint ? {
               name: selectedCompanyRecord.name,
               guid: selectedCompanyRecord.guid,
               company_number: selectedCompanyRecord.company_number,
               books_from_yyyymmdd: selectedCompanyRecord.books_from_yyyymmdd,
+              canonical_origin: selectedCompanyRecord.canonical_endpoint,
             } : undefined}
             onChangeSetup={() => setView("companies")}
             onViewAllClients={() => setView("clients")}
-            openBookCount={currentProbeCompanyList.filter(
-              (entry) => entry.guid && entry.company_number && entry.books_from_yyyymmdd,
-            ).length}
+            openBookCount={completeCurrentProbeCompanies.length}
             asOf={outstandingsAsOfSelection.value}
             onAsOfChange={changeOutstandingsAsOf}
           />

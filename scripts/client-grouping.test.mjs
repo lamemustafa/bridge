@@ -247,9 +247,11 @@ test("client amount views fail visibly instead of coercing or flipping amounts",
 });
 
 test("all-client responses carry the pinned composite tuple back to the open action", async () => {
-  const [allClients, commands] = await Promise.all([
+  const [allClients, commands, main, companyIdentity] = await Promise.all([
     readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/src/commands.rs", import.meta.url), "utf8"),
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/company-identity.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(commands, /pub company_guid: String/);
@@ -261,7 +263,12 @@ test("all-client responses carry the pinned composite tuple back to the open act
   assert.match(allClients, /migrateLegacyClientGroupLabels/);
   assert.match(allClients, /disabled=\{!groupLabelsReady\}/);
   assert.match(allClients, /replace_client_group_labels/);
+  assert.match(allClients, /canonical_origin: company\.canonical_origin/);
+  assert.doesNotMatch(companyIdentity, /canonicalOriginForConfig/);
   assert.match(allClients, /key=\{row\.companyGuid\}/);
   assert.doesNotMatch(allClients, /groupLabels\[company\.guid\]/);
   assert.doesNotMatch(allClients, /companies\.find\(\(company\) => company\.name === entry\.company\)/);
+  assert.match(main, /const completeCurrentProbeCompanies = currentProbeCompanyList\.filter\(/);
+  assert.match(main, /companies=\{completeCurrentProbeCompanies/);
+  assert.match(main, /openBookCount=\{completeCurrentProbeCompanies\.length\}/);
 });

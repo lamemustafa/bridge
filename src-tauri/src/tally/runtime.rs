@@ -3502,6 +3502,17 @@ mod tests {
     #[test]
     fn endpoint_identity_aliases_only_localhost_to_ipv4_loopback() {
         let runtime = TallyRuntime::default();
+        let localhost_identity = EndpointKey::from_config(&TallyConfig {
+            host: "localhost".to_string(),
+            port: 9000,
+        })
+        .expect("localhost identity");
+        let ipv4_identity = EndpointKey::from_config(&TallyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9000,
+        })
+        .expect("IPv4 loopback identity");
+        assert_eq!(localhost_identity, ipv4_identity);
         let first = runtime
             .session(TallyConfig {
                 host: "localhost".to_string(),

@@ -17,13 +17,14 @@ import {
   type AsOfBoundValue,
 } from "./outstandings-as-of";
 import { outstandingsCurrencySymbol } from "./outstandings-currency";
-import { companyIdentityKey, companyIdentityKeyForConfig } from "./company-identity";
+import { companyIdentityKey } from "./company-identity";
 
 type CompanyRef = {
   name: string;
   guid: string;
   company_number: string;
   books_from_yyyymmdd: string;
+  canonical_origin: string;
 };
 
 type Props = {
@@ -145,10 +146,16 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   const entries = asOfBoundValueForAsOf(loadedEntries, requestedAsOf);
   const migrationBooks = React.useMemo(
     () => companies.map((company) => ({
-      companyKey: companyIdentityKeyForConfig(config, company),
+      companyKey: companyIdentityKey({
+        canonical_origin: company.canonical_origin,
+        company_guid: company.guid,
+        company_number: company.company_number,
+        company_name: company.name,
+        books_from_yyyymmdd: company.books_from_yyyymmdd,
+      }),
       sourceGuid: company.guid,
     })),
-    [config.host, config.port, companies.map((company) => `${company.guid}:${company.company_number}:${company.books_from_yyyymmdd}:${company.name}`).join("|")],
+    [companies.map((company) => `${company.canonical_origin}:${company.guid}:${company.company_number}:${company.books_from_yyyymmdd}:${company.name}`).join("|")],
   );
 
   React.useEffect(() => {

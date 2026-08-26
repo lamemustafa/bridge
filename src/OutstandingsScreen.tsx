@@ -15,11 +15,17 @@ import {
   workingPaperInvokeArgument,
   type AsOfBoundValue,
 } from "./outstandings-as-of";
-import { companyIdentityKeyForConfig } from "./company-identity";
+import { companyIdentityKey } from "./company-identity";
 
 type Props = {
   config: { host: string; port: number };
-  company?: { name: string; guid: string; company_number: string; books_from_yyyymmdd: string };
+  company?: {
+    name: string;
+    guid: string;
+    company_number: string;
+    books_from_yyyymmdd: string;
+    canonical_origin: string;
+  };
   onChangeSetup: () => void;
   /// Switches to the cross-client view. Present only when more than one book
   /// is open, because a scope switch with one option is noise.
@@ -28,6 +34,16 @@ type Props = {
   asOf: string;
   onAsOfChange: (value: string) => void;
 };
+
+function companyIdentityFor(company: NonNullable<Props["company"]>) {
+  return companyIdentityKey({
+    canonical_origin: company.canonical_origin,
+    company_guid: company.guid,
+    company_number: company.company_number,
+    company_name: company.name,
+    books_from_yyyymmdd: company.books_from_yyyymmdd,
+  });
+}
 
 type Report = {
   company_name: string;
@@ -183,7 +199,7 @@ export function OutstandingsScreen({
     setExpandedParty(null);
   }, [ageingAnchor]);
 
-  const currentCompanyIdentity = company ? companyIdentityKeyForConfig(config, company) : null;
+  const currentCompanyIdentity = company ? companyIdentityFor(company) : null;
   const currencyReadPermitted = canStartOutstandingsRead(currentCompanyIdentity, inrAssertedCompanyIdentity);
   const readPermitted = currencyReadPermitted && requestedAsOf !== null;
   const partialState = result?.state === "partial"
@@ -226,7 +242,7 @@ export function OutstandingsScreen({
   }, [ageingAnchor, asOf, config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, readPermitted, requestedAsOf]);
 
   React.useEffect(() => {
-    const key = company ? `${companyIdentityKeyForConfig(config, company)}:${ageingAnchor}` : null;
+    const key = company ? `${companyIdentityFor(company)}:${ageingAnchor}` : null;
     if (!readPermitted || !key || initialReadKey.current === key) return;
     initialReadKey.current = key;
     void load();
@@ -241,7 +257,7 @@ export function OutstandingsScreen({
   // Where Tally cannot settle it (several currencies defined, or a non-Indian
   // one) the manual confirmation below is still shown.
   React.useEffect(() => {
-    if (!company || inrAssertedCompanyIdentity === companyIdentityKeyForConfig(config, company)) return;
+    if (!company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
     let cancelled = false;
     setCurrencyCheck("checking");
     void invoke<{ is_inr: boolean; mailing_name: string; currency_count: number }>(
@@ -258,7 +274,7 @@ export function OutstandingsScreen({
     )
       .then((currency) => {
         if (cancelled) return;
-        if (currency.is_inr) setInrAssertedCompanyIdentity(companyIdentityKeyForConfig(config, company));
+        if (currency.is_inr) setInrAssertedCompanyIdentity(companyIdentityFor(company));
         setCurrencyCheck(currency.is_inr ? "inr" : "undetermined");
       })
       .catch(() => {
@@ -329,7 +345,7 @@ export function OutstandingsScreen({
       <section className="panel wide outstandings-empty">
         <h2>Confirm the base currency</h2>
         <p>Tally did not settle this company&rsquo;s base currency — it defines more than one currency, or one that is not the Indian rupee. Bridge shows totals in rupees, so confirm before continuing.</p>
-        <button type="button" onClick={() => setInrAssertedCompanyIdentity(companyIdentityKeyForConfig(config, company))}>This company uses INR</button>
+        <button type="button" onClick={() => setInrAssertedCompanyIdentity(companyIdentityFor(company))}>This company uses INR</button>
       </section>
     );
   }
