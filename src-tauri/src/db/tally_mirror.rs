@@ -1073,6 +1073,9 @@ impl TallyMirrorRepository {
         &self,
         company_id: &str,
     ) -> Result<SnapshotSourcePin, MirrorError> {
+        // See TALLY_PROTOCOL_REFERENCE.md §9.11b: a year-end child can
+        // inherit its parent's GUID, so a persisted pin needs the full
+        // observed tuple rather than a GUID-only lookup.
         if company_id.trim().is_empty() {
             return Err(MirrorError::InvalidInput("company_pin"));
         }
@@ -4791,7 +4794,7 @@ fn reviewed_setup_payload_sha256(input: &ReviewedSetupInput) -> Result<String, M
         })
     });
     let payload = serde_json::json!({
-        "schema": "bridge.tally.reviewed-setup-payload/1",
+        "schema": "bridge.tally.reviewed-setup-payload/2",
         "capability": {
             "canonical_origin": input.capability.canonical_origin,
             "observed_at_unix_ms": input.capability.observed_at_unix_ms,
@@ -4805,6 +4808,8 @@ fn reviewed_setup_payload_sha256(input: &ReviewedSetupInput) -> Result<String, M
         "company": {
             "display_name": input.company_display_name,
             "guid": input.company_identity.guid,
+            "company_number": input.company_number,
+            "books_from_yyyymmdd": input.books_from_yyyymmdd,
             "remote_id": input.company_identity.remote_id,
             "master_id": input.company_identity.master_id,
             "fallback_fingerprint": input.company_identity.fallback_fingerprint,
@@ -5798,6 +5803,34 @@ mod tests {
             repository.save_reviewed_setup(changed).await,
             Err(MirrorError::InvalidInput("review_commitment_reused"))
         ));
+        assert_eq!(setup_row_counts(&repository).await, counts_after_commit);
+    }
+
+    #[tokio::test]
+    async fn reviewed_setup_commitment_cannot_be_reused_for_a_different_composite_tuple() {
+        let repository = repository().await;
+        let input = reviewed_setup_input(HASH_A);
+        repository
+            .save_reviewed_setup(input.clone())
+            .await
+            .expect("commit first reviewed setup");
+        let counts_after_commit = setup_row_counts(&repository).await;
+
+        for changed in [
+            ReviewedSetupInput {
+                company_number: "100002".to_string(),
+                ..input.clone()
+            },
+            ReviewedSetupInput {
+                books_from_yyyymmdd: "20270401".to_string(),
+                ..input.clone()
+            },
+        ] {
+            assert!(matches!(
+                repository.save_reviewed_setup(changed).await,
+                Err(MirrorError::InvalidInput("review_commitment_reused"))
+            ));
+        }
         assert_eq!(setup_row_counts(&repository).await, counts_after_commit);
     }
 

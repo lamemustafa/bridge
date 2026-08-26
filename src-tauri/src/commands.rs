@@ -2343,7 +2343,7 @@ pub fn load_client_sort_preference(app: AppHandle) -> Option<client_groups::Clie
 
 #[derive(Debug, Deserialize)]
 pub struct SaveClientGroupLabelRequest {
-    pub company_guid: String,
+    pub company_key: String,
     pub label: String,
 }
 
@@ -2353,14 +2353,14 @@ pub fn save_client_group_label(
     app: AppHandle,
     request: SaveClientGroupLabelRequest,
 ) -> Result<(), String> {
-    if request.company_guid.trim().is_empty() {
+    if request.company_key.trim().is_empty() {
         return Err("Bridge could not identify the company for this group label.".to_string());
     }
     let directory = app
         .path()
         .app_config_dir()
         .map_err(|_| "Bridge could not locate its local group-label configuration.".to_string())?;
-    client_groups::save_label(&directory, &request.company_guid, &request.label)
+    client_groups::save_label(&directory, &request.company_key, &request.label)
         .map_err(|_| "Bridge could not save this group label.".to_string())
 }
 
@@ -2411,6 +2411,9 @@ fn company_sweep_result(
         Err(CompanySweepFailure::ReasonCode(reason_code)) => {
             crate::tally::OutstandingsPartialReason::code(reason_code)
         }
+        Err(CompanySweepFailure::CompanyVerification(error)) => {
+            crate::tally::OutstandingsPartialReason::code(error.code)
+        }
         Err(CompanySweepFailure::OutstandingsRead) => {
             crate::tally::OutstandingsPartialReason::code("company_outstandings_read_failed")
         }
@@ -2423,6 +2426,10 @@ fn company_sweep_result(
 
 enum CompanySweepFailure {
     ReasonCode(&'static str),
+    /// A company-list transport/protocol failure is not evidence that the
+    /// operator selected the wrong tuple. Keep the command's typed reason so
+    /// the all-company view can direct the operator to the actual failure.
+    CompanyVerification(TallyCommandError),
     OutstandingsRead,
 }
 
@@ -2475,7 +2482,7 @@ pub async fn fetch_tally_outstandings_all_companies(
         let selected = entry.selected_company;
         let result = match verify_observed_company_tuple(&runtime, &request.config, &selected).await
         {
-            Err(_) => Err(CompanySweepFailure::ReasonCode("company_selection_invalid")),
+            Err(error) => Err(CompanySweepFailure::CompanyVerification(error)),
             Ok(expected_company_guid) => {
                 match runtime
                     .detect_base_currency(
@@ -2824,6 +2831,26 @@ mod tests {
             &outcomes[4],
             OutstandingsLoadResult::Partial { reason, .. }
                 if reason.reason_code == "last_book_partial"
+        ));
+    }
+
+    #[test]
+    fn company_sweep_preserves_a_company_listing_transport_reason() {
+        let result = company_sweep_result(Err(CompanySweepFailure::CompanyVerification(
+            tally_command_error(
+                "endpoint_unreachable",
+                "Endpoint configuration",
+                "Synthetic transport failure",
+                "after_change",
+                false,
+                "Restore connectivity.",
+            ),
+        )));
+
+        assert!(matches!(
+            result,
+            OutstandingsLoadResult::Partial { reason, .. }
+                if reason.reason_code == "endpoint_unreachable"
         ));
     }
 

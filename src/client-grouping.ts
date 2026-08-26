@@ -2,28 +2,68 @@
 
 export type ClientGroupLabels = Record<string, string>;
 
+export type ClientGroupLabelResolution = {
+  label: string | undefined;
+  /// A pre-composite raw-GUID label exists but cannot safely be assigned to
+  /// one of several year-end-split books.
+  ambiguousLegacyLabel: boolean;
+};
+
+function legacyLabelForGuid(labels: ClientGroupLabels, guid: string): string | undefined {
+  const normalizedGuid = guid.trim().toLowerCase();
+  if (!normalizedGuid) return undefined;
+  for (const [key, label] of Object.entries(labels)) {
+    if (key.trim().toLowerCase() === normalizedGuid) return label.trim() || undefined;
+  }
+  return undefined;
+}
+
+/// Resolves a label for the complete observed company identity. Labels from
+/// releases that keyed by GUID alone remain usable for a single listed book,
+/// but are never guessed onto either side of a split-GUID collision.
+export function resolveClientGroupLabel(
+  labels: ClientGroupLabels,
+  companyKey: string,
+  sourceGuid: string | undefined,
+  listedSourceGuids: readonly (string | undefined)[],
+): ClientGroupLabelResolution {
+  const exact = labels[companyKey]?.trim();
+  if (exact) return { label: exact, ambiguousLegacyLabel: false };
+  if (!sourceGuid) return { label: undefined, ambiguousLegacyLabel: false };
+
+  const legacy = legacyLabelForGuid(labels, sourceGuid);
+  if (!legacy) return { label: undefined, ambiguousLegacyLabel: false };
+  const normalizedGuid = sourceGuid.trim().toLowerCase();
+  const matchingBooks = listedSourceGuids.filter(
+    (guid) => guid?.trim().toLowerCase() === normalizedGuid,
+  ).length;
+  return matchingBooks === 1
+    ? { label: legacy, ambiguousLegacyLabel: false }
+    : { label: undefined, ambiguousLegacyLabel: true };
+}
+
 export function applyClientGroupLabel(
   labels: ClientGroupLabels,
-  companyGuid: string,
+  companyKey: string,
   label: string,
 ): ClientGroupLabels {
   const next = { ...labels };
   const normalized = label.trim();
-  if (normalized) next[companyGuid] = normalized;
-  else delete next[companyGuid];
+  if (normalized) next[companyKey] = normalized;
+  else delete next[companyKey];
   return next;
 }
 
 export function rollbackFailedClientGroupLabel(
   current: ClientGroupLabels,
-  companyGuid: string,
+  companyKey: string,
   attemptedLabel: string,
   persisted: ClientGroupLabels,
 ): ClientGroupLabels {
-  if ((current[companyGuid] ?? "").trim() !== attemptedLabel.trim()) {
+  if ((current[companyKey] ?? "").trim() !== attemptedLabel.trim()) {
     return current;
   }
-  return applyClientGroupLabel(current, companyGuid, persisted[companyGuid] ?? "");
+  return applyClientGroupLabel(current, companyKey, persisted[companyKey] ?? "");
 }
 
 /// Per-company counter of the most recently ISSUED group-label save. There is
@@ -37,10 +77,10 @@ export type ClientGroupLabelSaveSequence = Record<string, number>;
 /// (store it back) and the stamp to carry on that one request.
 export function issueClientGroupLabelSave(
   sequence: ClientGroupLabelSaveSequence,
-  companyGuid: string,
+  companyKey: string,
 ): { sequence: ClientGroupLabelSaveSequence; stamp: number } {
-  const stamp = (sequence[companyGuid] ?? 0) + 1;
-  return { sequence: { ...sequence, [companyGuid]: stamp }, stamp };
+  const stamp = (sequence[companyKey] ?? 0) + 1;
+  return { sequence: { ...sequence, [companyKey]: stamp }, stamp };
 }
 
 /// True only for the response belonging to the most recently issued save for
@@ -50,10 +90,10 @@ export function issueClientGroupLabelSave(
 /// would report on a request the user has already moved past.
 export function isLatestClientGroupLabelSave(
   sequence: ClientGroupLabelSaveSequence,
-  companyGuid: string,
+  companyKey: string,
   stamp: number,
 ): boolean {
-  return (sequence[companyGuid] ?? 0) === stamp;
+  return (sequence[companyKey] ?? 0) === stamp;
 }
 
 export function reconcileLoadedSortPreference<Sort>(
@@ -66,6 +106,7 @@ export function reconcileLoadedSortPreference<Sort>(
 
 export type GroupableClientRow = {
   companyGuid: string;
+  sourceGuid?: string;
   exactAmounts: {
     receivable: string | undefined;
     overdue: string | undefined;
@@ -124,9 +165,15 @@ export function groupClientRows<Row extends GroupableClientRow>(
 ): { groups: ClientGroup<Row>[]; ungroupedRows: Row[] } {
   const grouped = new Map<string, Row[]>();
   const ungroupedRows: Row[] = [];
+  const listedSourceGuids = rows.map((row) => row.sourceGuid);
 
   for (const row of rows) {
-    const label = labels[row.companyGuid]?.trim();
+    const { label } = resolveClientGroupLabel(
+      labels,
+      row.companyGuid,
+      row.sourceGuid,
+      listedSourceGuids,
+    );
     if (!label) {
       ungroupedRows.push(row);
       continue;

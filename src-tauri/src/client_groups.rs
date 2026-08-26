@@ -104,16 +104,16 @@ fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsErro
 
 pub fn save_label(
     directory: &Path,
-    company_guid: &str,
+    company_key: &str,
     label: &str,
 ) -> Result<(), ClientGroupLabelsError> {
     let mut labels = try_load(directory)?;
-    let company_guid = company_guid.trim();
+    let company_key = company_key.trim();
     let label = label.trim();
     if label.is_empty() {
-        labels.remove(company_guid);
+        labels.remove(company_key);
     } else {
-        labels.insert(company_guid.to_string(), label.to_string());
+        labels.insert(company_key.to_string(), label.to_string());
     }
 
     let contents = serde_json::to_vec_pretty(&ClientGroupLabelsFile {

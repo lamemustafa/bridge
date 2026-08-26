@@ -3,7 +3,7 @@
 import React from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
+import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, resolveClientGroupLabel, rollbackFailedClientGroupLabel } from "./client-grouping";
 import {
   outstandingsAgeingAnchorLabel,
   outstandingsPartialState,
@@ -314,6 +314,10 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     () => groupClientRows(rows, groupLabels),
     [rows, groupLabels],
   );
+  const listedSourceGuids = React.useMemo(
+    () => rows.map((row) => row.sourceGuid),
+    [rows],
+  );
 
   const readable = rows.filter((row) => row.complete).length;
   const largestExposure = Math.max(
@@ -321,27 +325,27 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     0,
   );
 
-  const updateGroupLabel = React.useCallback((companyGuid: string, label: string) => {
-    setGroupLabels((current) => applyClientGroupLabel(current, companyGuid, label));
+  const updateGroupLabel = React.useCallback((companyKey: string, label: string) => {
+    setGroupLabels((current) => applyClientGroupLabel(current, companyKey, label));
   }, []);
 
-  const saveGroupLabel = React.useCallback((companyGuid: string, label: string) => {
+  const saveGroupLabel = React.useCallback((companyKey: string, label: string) => {
     const attemptedLabel = label.trim();
     setGroupLabelError(null);
-    const { sequence, stamp } = issueClientGroupLabelSave(groupLabelSaveSequence.current, companyGuid);
+    const { sequence, stamp } = issueClientGroupLabelSave(groupLabelSaveSequence.current, companyKey);
     groupLabelSaveSequence.current = sequence;
     void invoke("save_client_group_label", {
-      request: { company_guid: companyGuid, label: attemptedLabel },
+      request: { company_key: companyKey, label: attemptedLabel },
     })
       .then(() => {
         // A later save for this company has already been issued: this
         // response is stale. Applying it would let a slow, superseded
         // success overwrite the record of whatever that newer save settles
         // to, so it is dropped instead.
-        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyGuid, stamp)) return;
+        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyKey, stamp)) return;
         persistedGroupLabels.current = applyClientGroupLabel(
           persistedGroupLabels.current,
-          companyGuid,
+          companyKey,
           attemptedLabel,
         );
       })
@@ -349,10 +353,10 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
         // Same reasoning as above: a superseded failure must not roll back
         // the UI to this attempt's baseline, or claim (falsely) that the
         // previous label was restored.
-        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyGuid, stamp)) return;
+        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyKey, stamp)) return;
         setGroupLabels((current) => rollbackFailedClientGroupLabel(
           current,
-          companyGuid,
+          companyKey,
           attemptedLabel,
           persistedGroupLabels.current,
         ));
@@ -484,18 +488,29 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
               <p>Optional filing labels. Ungrouped clients stay separate.</p>
             </div>
             <div className="client-group-label-grid">
-              {companies.map((company) => (
-                <label key={company.guid}>
-                  <span>{company.name}</span>
-                  <input
-                    aria-label={`Group label for ${company.name}`}
-                    value={groupLabels[company.guid] ?? ""}
-                    placeholder="No group"
-                    onChange={(event) => updateGroupLabel(company.guid, event.target.value)}
-                    onBlur={(event) => saveGroupLabel(company.guid, event.target.value)}
-                  />
-                </label>
-              ))}
+              {rows.map((row) => {
+                const resolution = resolveClientGroupLabel(
+                  groupLabels,
+                  row.companyGuid,
+                  row.sourceGuid,
+                  listedSourceGuids,
+                );
+                return (
+                  <label key={row.companyGuid}>
+                    <span>{row.company}</span>
+                    <input
+                      aria-label={`Group label for ${row.company}`}
+                      value={resolution.label ?? ""}
+                      placeholder={resolution.ambiguousLegacyLabel ? "Legacy label needs review" : "No group"}
+                      onChange={(event) => updateGroupLabel(row.companyGuid, event.target.value)}
+                      onBlur={(event) => saveGroupLabel(row.companyGuid, event.target.value)}
+                    />
+                    {resolution.ambiguousLegacyLabel && (
+                      <small>A legacy GUID-only label is shared by split books. Assign this book individually.</small>
+                    )}
+                  </label>
+                );
+              })}
             </div>
             {groupLabelError && <p className="client-group-label-error" role="alert">{groupLabelError}</p>}
           </section>

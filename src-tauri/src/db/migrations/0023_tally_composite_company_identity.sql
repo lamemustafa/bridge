@@ -1,4 +1,4 @@
--- A Tally year-end split can retain the parent's GUID. A GUID-only pin can
+-- See TALLY_PROTOCOL_REFERENCE.md §9.11b. A Tally year-end split can retain the parent's GUID. A GUID-only pin can
 -- therefore resolve to a different book after a rename. The Company
 -- collection's observed tuple is the only accepted company identity.
 DROP INDEX IF EXISTS uq_tally_companies_guid;

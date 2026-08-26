@@ -733,6 +733,25 @@ exactly the defence §9.11 calls for.
 was confirmed safe against a known-good `SUBTYPE=Ledger` control before being pointed at
 `Company`. **This is the recommended company-identity probe.**
 
+### 9.11b A year-end split can duplicate a company GUID — **VERIFIED; composite identity required**
+
+**VERIFIED 2026-08-25 from captured Company-collection responses.** The pre-split capture
+has 14 companies; the post-split capture has 15. The added child retained its parent's `GUID`.
+Tally distinguishes the two displayed books with a name suffix, not a new GUID. Across the
+post-split capture, `COMPANYNUMBER` and `NAME` each have 15 distinct values, `GUID` has 14,
+and `MASTERID` is the constant `29`. Company-level `ALTVCHID` also collided at `2785`; it is
+not an identity discriminator.
+
+`COMPANYNUMBER` is the Tally data-folder name. Tally's own migration guidance says an operator
+can rename it, and does not document whether a deleted number can later be reused. It must
+therefore remain observed provenance within the tuple, not become a Bridge re-key or a claim of
+permanent identity on its own.
+
+**Design rule.** Pin a company only by the complete observation
+`(canonical_origin, COMPANYNUMBER, GUID, NAME, BOOKSFROM)`. Never migrate an older GUID-only
+pin by guessing fields from a current listing: re-observe and review the full tuple. This rule
+is implemented by the composite-identity migration and `snapshot_source_pin`.
+
 ## 9.10 Company creation over XML — **PARTIAL: symbol element found, formal-name element not**
 
 **PARTIAL.** Company creation is *attempted* by Tally — it validates and returns specific

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { applyClientGroupLabel, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
+import { applyClientGroupLabel, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, resolveClientGroupLabel, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
 
 // Mirrors AllClientsScreen's saveGroupLabel wiring exactly (issue a stamp,
 // apply the optimistic edit, then on settle check the stamp against the
@@ -177,6 +177,41 @@ test("ungrouped companies remain separate and receive no synthetic total", () =>
   assert.equal(grouped.ungroupedRows.length, 2);
 });
 
+test("legacy GUID labels remain available for one book but never merge split books", () => {
+  const lone = resolveClientGroupLabel(
+    { "legacy-guid": "Legacy practice" },
+    "composite-one",
+    "legacy-guid",
+    ["legacy-guid"],
+  );
+  assert.deepEqual(lone, { label: "Legacy practice", ambiguousLegacyLabel: false });
+
+  const splitRows = [
+    {
+      companyGuid: "composite-parent",
+      sourceGuid: "legacy-guid",
+      exactAmounts: { receivable: "10", overdue: "2", unallocated: "1" },
+    },
+    {
+      companyGuid: "composite-child",
+      sourceGuid: "legacy-guid",
+      exactAmounts: { receivable: "20", overdue: "3", unallocated: "4" },
+    },
+  ];
+  const split = groupClientRows(splitRows, { "legacy-guid": "Legacy practice" });
+  assert.deepEqual(split.groups, []);
+  assert.equal(split.ungroupedRows.length, 2);
+  assert.equal(
+    resolveClientGroupLabel(
+      { "legacy-guid": "Legacy practice" },
+      "composite-parent",
+      "legacy-guid",
+      splitRows.map((row) => row.sourceGuid),
+    ).ambiguousLegacyLabel,
+    true,
+  );
+});
+
 test("group totals preserve decimal precision without IEEE-754 rounding", () => {
   assert.equal(sumExactDecimals(["9007199254740993", "0.01", "-1"]), "9007199254740992.01");
   assert.equal(sumExactDecimals(["42.00", "0.10"]), "42.1");
@@ -207,5 +242,8 @@ test("all-client responses carry the pinned composite tuple back to the open act
   assert.match(commands, /books_from_yyyymmdd: selected\.books_from_yyyymmdd/);
   assert.match(allClients, /companyGuid: companyIdentityKey\(entry\)/);
   assert.match(allClients, /company\.company_number === row\.companyNumber/);
+  assert.match(allClients, /request: \{ company_key: companyKey, label: attemptedLabel \}/);
+  assert.match(allClients, /key=\{row\.companyGuid\}/);
+  assert.doesNotMatch(allClients, /groupLabels\[company\.guid\]/);
   assert.doesNotMatch(allClients, /companies\.find\(\(company\) => company\.name === entry\.company\)/);
 });
