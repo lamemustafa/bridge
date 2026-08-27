@@ -570,6 +570,11 @@ function App() {
     || snapshotStartOutcomeUnknown
     || tallyAction !== null
     || childTallyReadCount > 0;
+  const endpointSettingsLockMessage = snapshotActive
+    ? "Endpoint settings are locked while the active snapshot continues against its reviewed source."
+    : childTallyReadCount > 0
+    ? "Endpoint settings are locked while a Tally read is in progress."
+    : null;
 
   React.useEffect(() => {
     if (!tallyAction && !snapshotActive) {
@@ -1769,7 +1774,8 @@ function App() {
               passportObserved={Boolean(passport)}
               companyReady={selectedCompanyReady}
               busy={tallyAction !== null}
-              settingsLocked={snapshotActive}
+              settingsLocked={endpointSettingsLockMessage !== null}
+              settingsLockMessage={endpointSettingsLockMessage}
               onHostChange={updateTallyHost}
               onPortChange={updateTallyPort}
               onCheck={checkTally}

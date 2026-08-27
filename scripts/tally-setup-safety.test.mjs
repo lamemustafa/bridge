@@ -108,10 +108,11 @@ test("persisted-company load failures remain visible before a Tally connection i
 });
 
 test("child Tally reads keep client selection locked until every invocation settles", async () => {
-  const [frontend, allClients, outstandings] = await Promise.all([
+  const [frontend, allClients, outstandings, readiness] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/TallyReadinessFlow.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(frontend, /const changeChildTallyReadActivity = React\.useCallback\(\(delta: 1 \| -1\) => \{\s*setChildTallyReadCount\(\(current\) => Math\.max\(0, current \+ delta\)\);/s);
@@ -126,6 +127,11 @@ test("child Tally reads keep client selection locked until every invocation sett
   assert.match(companySetup, /discoverUntrustedCompanies\(\)\} disabled=\{savedCompanySelectionLocked\}/);
   assert.match(companySetup, /saveReviewedTallySetup\(\)\} disabled=\{savedCompanySelectionLocked \|\| !passport/);
   assert.match(frontend, /onClick=\{checkTally\} disabled=\{tallyAction !== null \|\| childTallyReadCount > 0\}/);
+  assert.match(frontend, /const endpointSettingsLockMessage = snapshotActive[\s\S]*?childTallyReadCount > 0[\s\S]*?Tally read is in progress/);
+  assert.match(frontend, /settingsLocked=\{endpointSettingsLockMessage !== null\}\s*settingsLockMessage=\{endpointSettingsLockMessage\}/);
+  assert.match(readiness, /settingsLockMessage: string \| null;/);
+  assert.match(readiness, /\{settingsLockMessage && <p role="status">\{settingsLockMessage\}<\/p>\}/);
+  assert.match(readiness, /onClick=\{onCheck\} disabled=\{busy \|\| settingsLocked\}/);
 });
 
 test("the shell never treats a truncated profile page or stale unsaved identity as exhaustive", async () => {

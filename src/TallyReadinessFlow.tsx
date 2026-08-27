@@ -7,6 +7,7 @@ type Props = {
   companyReady: boolean;
   busy: boolean;
   settingsLocked: boolean;
+  settingsLockMessage: string | null;
   onHostChange: (value: string) => void;
   onPortChange: (value: number) => void;
   onCheck: () => void;
@@ -19,6 +20,7 @@ export function TallyReadinessFlow({
   companyReady,
   busy,
   settingsLocked,
+  settingsLockMessage,
   onHostChange,
   onPortChange,
   onCheck,
@@ -45,11 +47,11 @@ export function TallyReadinessFlow({
           </label>
         </div>
         <div className="tally-readiness-action-copy">
-          {settingsLocked ? <p>Endpoint settings are locked while the active snapshot continues against its reviewed source.</p> : null}
+          {settingsLockMessage && <p role="status">{settingsLockMessage}</p>}
           <p aria-live="polite">{guidance}</p>
         </div>
         <div className="tally-readiness-actions">
-          <button className="primary" type="button" onClick={onCheck} disabled={busy}>
+          <button className="primary" type="button" onClick={onCheck} disabled={busy || settingsLocked}>
             {endpointComplete && !busy ? <Check size={18} /> : <Cable size={18} />}
             {busy ? "Checking Tally…" : endpointComplete ? "Check Tally again" : "Check Tally"}
           </button>
