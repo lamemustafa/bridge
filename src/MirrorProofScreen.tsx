@@ -523,6 +523,7 @@ type Props = {
   snapshotActive: boolean;
   snapshotError: OperatorError | null;
   snapshotStartOutcomeUnknown: boolean;
+  liveReadActionsLocked: boolean;
   setSnapshotStartOutcomeUnknown: (value: boolean) => void;
   startCoreSnapshot: () => Promise<void>;
   cancelCoreSnapshot: () => Promise<void>;
@@ -575,6 +576,7 @@ export function MirrorProofScreen({
   snapshotActive,
   snapshotError,
   snapshotStartOutcomeUnknown,
+  liveReadActionsLocked,
   setSnapshotStartOutcomeUnknown,
   startCoreSnapshot,
   cancelCoreSnapshot,
@@ -624,11 +626,11 @@ export function MirrorProofScreen({
           <button className="secondary-action" onClick={() => void refreshSyncEvidence(true)} disabled={!selectedCompanyRecord?.mirror_company_id || tallyAction !== null}>
             <RefreshCw size={16} /> {tallyAction === "evidence" ? "Refreshing..." : "Refresh evidence"}
           </button>
-          <button className="secondary-action" onClick={() => void startCoreSnapshot()} disabled={!selectedCompanyRecord?.mirror_company_id || !selectedCompanyLive || snapshotActive || snapshotStartOutcomeUnknown || tallyAction !== null}>
+          <button className="secondary-action" onClick={() => void startCoreSnapshot()} disabled={!selectedCompanyRecord?.mirror_company_id || !selectedCompanyLive || snapshotActive || snapshotStartOutcomeUnknown || liveReadActionsLocked || tallyAction !== null}>
             <Play size={16} /> {tallyAction === "start" ? "Starting..." : "Run read-only Core Accounting evidence read"}
           </button>
           {snapshotJob?.resume_available && (
-            <button className="secondary-action" onClick={() => void resumeCoreSnapshot(snapshotJob.run_id)} disabled={tallyAction !== null}>
+            <button className="secondary-action" onClick={() => void resumeCoreSnapshot(snapshotJob.run_id)} disabled={liveReadActionsLocked || tallyAction !== null}>
               <Play size={16} /> {tallyAction === "resume" ? "Resuming..." : "Resume interrupted run"}
             </button>
           )}
@@ -642,6 +644,11 @@ export function MirrorProofScreen({
       {syncEvidenceError && <TallyErrorNotice message={syncEvidenceError} />}
       {snapshotError && <TallyErrorNotice message={snapshotError} />}
       {companyError && <TallyErrorNotice message={companyError} />}
+      {liveReadActionsLocked && (
+        <section className="status-strip" role="status">
+          <span>A Tally read is still in progress. Wait before starting or resuming a Core Accounting read.</span>
+        </section>
+      )}
       {snapshotStartOutcomeUnknown && (
         <section className="status-strip" role="alert">
           <span>A previous start outcome is unknown. Inspect the refreshed durable runs before allowing another start.</span>

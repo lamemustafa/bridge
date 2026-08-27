@@ -74,11 +74,17 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /aria-current=\{view === "clients" \? "page" : undefined\}[\s\S]*?disabled=\{childTallyReadCount > 0\}[\s\S]*?Compare clients/);
   assert.match(app, /onClick=\{\(\) => setView\("outstandings"\)\} disabled=\{childTallyReadCount > 0\} aria-describedby=\{childTallyReadCount > 0 \? "active-tally-read-note" : undefined\}>Open outstandings/);
   assert.match(app, /A Tally read is still in progress\. Wait before opening another live read\./);
+  assert.match(app, /liveReadActionsLocked=\{childTallyReadCount > 0\}/);
   assert.match(outstandings, /liveReadNavigationLocked: boolean;/);
   assert.match(outstandings, /onClick=\{onViewAllClients\} disabled=\{liveReadNavigationLocked\}/);
   assert.match(allClients, /liveReadNavigationLocked: boolean;/);
   assert.match(allClients, /onClick=\{onBack\} disabled=\{liveReadNavigationLocked\}/);
   assert.match(allClients, /key=\{row\.companyGuid\}\s*disabled=\{liveReadNavigationLocked\}/);
+  const mirrorProof = await readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url), "utf8");
+  assert.match(mirrorProof, /liveReadActionsLocked: boolean;/);
+  assert.match(mirrorProof, /disabled=\{!selectedCompanyRecord\?\.mirror_company_id \|\| !selectedCompanyLive \|\| snapshotActive \|\| snapshotStartOutcomeUnknown \|\| liveReadActionsLocked \|\| tallyAction !== null\}/);
+  assert.match(mirrorProof, /disabled=\{liveReadActionsLocked \|\| tallyAction !== null\}/);
+  assert.match(mirrorProof, /Wait before starting or resuming a Core Accounting read\./);
 });
 
 test("UX1 nav sends unreadable outstandings and client requests to Manage Tally", async () => {

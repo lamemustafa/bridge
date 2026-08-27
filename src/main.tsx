@@ -2014,6 +2014,7 @@ function App() {
             snapshotActive={snapshotActive}
             snapshotError={snapshotError}
             snapshotStartOutcomeUnknown={snapshotStartOutcomeUnknown}
+            liveReadActionsLocked={childTallyReadCount > 0}
             setSnapshotStartOutcomeUnknown={setSnapshotStartOutcomeUnknown}
             startCoreSnapshot={startCoreSnapshot}
             cancelCoreSnapshot={cancelCoreSnapshot}
