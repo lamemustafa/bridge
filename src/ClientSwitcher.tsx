@@ -18,6 +18,7 @@ type Props = {
   endpoint: string;
   endpointStatus: "checked" | "not_checked";
   loadError: string | null;
+  profilesLoading: boolean;
   profilesTruncated: boolean;
   loadedProfileCount: number;
   onOpen: () => void;
@@ -39,6 +40,7 @@ export function ClientSwitcher({
   endpoint,
   endpointStatus,
   loadError,
+  profilesLoading,
   profilesTruncated,
   loadedProfileCount,
   onOpen,
@@ -106,7 +108,7 @@ export function ClientSwitcher({
         </button>
       </div>
       {open && (
-        <div className="client-switcher-menu" id="client-switcher-list">
+        <div className="client-switcher-menu" id="client-switcher-list" aria-busy={profilesLoading}>
           <label className="client-switcher-search">
             <Search size={16} aria-hidden="true" />
             <span className="visually-hidden">Find a client</span>
@@ -141,7 +143,8 @@ export function ClientSwitcher({
                 <small>{STATE_LABELS[client.state]}</small>
               </button>
             ))}
-            {filtered.length === 0 && !loadError && (
+            {profilesLoading && <p className="client-switcher-empty" role="status">Loading saved client profiles…</p>}
+            {filtered.length === 0 && !loadError && !profilesLoading && (
               <p className="client-switcher-empty">
                 {profilesTruncated
                   ? `No loaded client matches that search. The fetched saved-profile page contains only the newest ${loadedProfileCount} records; an older saved client may still exist.`

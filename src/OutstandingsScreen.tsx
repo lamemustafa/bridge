@@ -30,6 +30,7 @@ type Props = {
   /// Switches to the cross-client view. Present only when more than one book
   /// is open, because a scope switch with one option is noise.
   onViewAllClients?: () => void;
+  liveReadNavigationLocked: boolean;
   openBookCount?: number;
   asOf: string;
   onAsOfChange: (value: string) => void;
@@ -129,6 +130,7 @@ export function OutstandingsScreen({
   company,
   onChangeSetup,
   onViewAllClients,
+  liveReadNavigationLocked,
   openBookCount = 1,
   asOf,
   onAsOfChange,
@@ -500,7 +502,7 @@ export function OutstandingsScreen({
             <small id="outstandings-ageing-anchor-help">Refreshes the report and every statement export.</small>
           </label>
           {onViewAllClients && openBookCount > 1 && (
-            <button className="secondary-action" type="button" onClick={onViewAllClients}>
+            <button className="secondary-action" type="button" onClick={onViewAllClients} disabled={liveReadNavigationLocked}>
               <Building2 size={16} />
               Compare clients
             </button>

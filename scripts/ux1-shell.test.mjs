@@ -5,9 +5,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("UX1 keeps client selection searchable, truthful about read readiness, and explicit about unavailable sections", async () => {
-  const [app, switcher] = await Promise.all([
+  const [app, switcher, outstandings, allClients] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/ClientSwitcher.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(app, /const NON_TALLY_SECTIONS_ENABLED = false/);
@@ -33,12 +35,19 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /setOpenCompanyNames\(\[\]\);\s*setUntrustedDiscoveredCompanies\(\[\]\);/);
   assert.match(app, /correlation_key: company\.correlation_key/);
   assert.match(app, /onOpen=\{\(\) => void refreshPersistedCompanyProfiles\(\)\}/);
+  assert.match(app, /const \[persistedCompanyProfilesLoading, setPersistedCompanyProfilesLoading\] = React\.useState\(false\);/);
+  assert.match(app, /const persistedCompanyProfileLoadVersion = React\.useRef\(0\);/);
+  assert.match(app, /setPersistedCompanyProfilesLoading\(true\);[\s\S]*?if \(loadVersion !== persistedCompanyProfileLoadVersion\.current\) return;/);
+  assert.match(app, /profilesLoading=\{persistedCompanyProfilesLoading\}/);
   assert.match(app, /activeView=\{view\}/);
   assert.match(app, /loadError=\{persistedCompanyProfileError \? toErrorMessage\(persistedCompanyProfileError\) : null\}/);
   assert.match(app, /profilesTruncated=\{persistedCompanyProfilesTruncated\}/);
   assert.match(app, /loadedProfileCount=\{persistedCompanyProfilesLoaded\}/);
   assert.doesNotMatch(app, /fetch_saved_tally_outstandings|detect_saved_tally_base_currency/);
   assert.match(switcher, /type="search"/);
+  assert.match(switcher, /profilesLoading: boolean;/);
+  assert.match(switcher, /aria-busy=\{profilesLoading\}/);
+  assert.match(switcher, /\{profilesLoading && <p className="client-switcher-empty" role="status">Loading saved client profiles…<\/p>\}/);
   assert.match(switcher, /disabled=\{selectionLocked\}/);
   assert.match(switcher, /if \(!current\) onOpen\(\);/);
   assert.match(switcher, /activeView: string;/);
@@ -48,6 +57,7 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(switcher, /selected && <small>\{selected\.summaryDiscriminator\}<\/small>/);
   assert.match(switcher, /\{loadError && <p className="client-switcher-error" role="alert">\{loadError\}<\/p>\}/);
   assert.match(switcher, /filtered\.length === 0 && !loadError/);
+  assert.match(switcher, /filtered\.length === 0 && !loadError && !profilesLoading/);
   assert.match(switcher, /profilesTruncated[\s\S]*?The fetched saved-profile page contains only the newest \$\{loadedProfileCount\} records/);
   assert.match(switcher, /close\(\);\s*onManageTally\(\);/s);
   assert.match(switcher, /onKeyDown=[\s\S]*?event\.key === "Escape"/);
@@ -60,6 +70,15 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /Books from \$\{booksFrom\}/);
   assert.match(app, /GUID \$\{company\.guid \?\? "not observed"\}/);
   assert.match(app, /Endpoint \$\{company\.canonical_endpoint \?\? "not observed"\}/);
+  assert.match(app, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Outstandings/);
+  assert.match(app, /aria-current=\{view === "clients" \? "page" : undefined\}[\s\S]*?disabled=\{childTallyReadCount > 0\}[\s\S]*?Compare clients/);
+  assert.match(app, /onClick=\{\(\) => setView\("outstandings"\)\} disabled=\{childTallyReadCount > 0\} aria-describedby=\{childTallyReadCount > 0 \? "active-tally-read-note" : undefined\}>Open outstandings/);
+  assert.match(app, /A Tally read is still in progress\. Wait before opening another live read\./);
+  assert.match(outstandings, /liveReadNavigationLocked: boolean;/);
+  assert.match(outstandings, /onClick=\{onViewAllClients\} disabled=\{liveReadNavigationLocked\}/);
+  assert.match(allClients, /liveReadNavigationLocked: boolean;/);
+  assert.match(allClients, /onClick=\{onBack\} disabled=\{liveReadNavigationLocked\}/);
+  assert.match(allClients, /key=\{row\.companyGuid\}\s*disabled=\{liveReadNavigationLocked\}/);
 });
 
 test("UX1 nav sends unreadable outstandings and client requests to Manage Tally", async () => {

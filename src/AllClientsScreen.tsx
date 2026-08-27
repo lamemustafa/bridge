@@ -35,6 +35,7 @@ type Props = {
   /// Returns to the single-company view. The two screens are the same
   /// question at two altitudes, so the switch has to work both ways.
   onBack?: () => void;
+  liveReadNavigationLocked: boolean;
   asOf: string;
   onTallyReadActivityChange: (delta: 1 | -1) => void;
 };
@@ -122,7 +123,7 @@ function ageTier(days: number | null) {
   return 4;
 }
 
-export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asOf, onTallyReadActivityChange }: Props) {
+export function AllClientsScreen({ config, companies, onOpenCompany, onBack, liveReadNavigationLocked, asOf, onTallyReadActivityChange }: Props) {
   const [sort, setSort] = React.useState<SortPreference>(defaultSort);
   const [loadedEntries, setLoadedEntries] = React.useState<AsOfBoundValue<Entry[]> | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -388,6 +389,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
         role="row"
         type="button"
         key={row.companyGuid}
+        disabled={liveReadNavigationLocked}
         onClick={() => {
           const match = companies.find((company) =>
             company.guid === row.sourceGuid
@@ -455,7 +457,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
             <small>Applies to every client in this read.</small>
           </label>
           {onBack && (
-            <button className="secondary-action" type="button" onClick={onBack}>
+            <button className="secondary-action" type="button" onClick={onBack} disabled={liveReadNavigationLocked}>
               Back to one client
             </button>
           )}

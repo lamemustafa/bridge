@@ -435,6 +435,7 @@ function App() {
   const [persistedCompanyProfileTotal, setPersistedCompanyProfileTotal] = React.useState(0);
   const [persistedCompanyProfilesLoaded, setPersistedCompanyProfilesLoaded] = React.useState(0);
   const [persistedCompanyProfilesTruncated, setPersistedCompanyProfilesTruncated] = React.useState(false);
+  const [persistedCompanyProfilesLoading, setPersistedCompanyProfilesLoading] = React.useState(false);
   const [voucherFrom, setVoucherFrom] = React.useState(currentFinancialYear.from);
   const [voucherTo, setVoucherTo] = React.useState(currentFinancialYear.to);
   const [companyError, setCompanyError] = React.useState<OperatorError | null>(null);
@@ -471,6 +472,7 @@ function App() {
   const [busy, setBusy] = React.useState(false);
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
   const tallyResultsVersion = React.useRef(0);
+  const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
   const snapshotSelectionVersion = React.useRef(0);
   const mainContentRef = React.useRef<HTMLElement>(null);
@@ -496,16 +498,26 @@ function App() {
   }, []);
 
   const refreshPersistedCompanyProfiles = React.useCallback(async () => {
+    const loadVersion = persistedCompanyProfileLoadVersion.current + 1;
+    persistedCompanyProfileLoadVersion.current = loadVersion;
+    setPersistedCompanyProfilesLoading(true);
+    setPersistedCompanyProfileError(null);
     try {
       const page = await invoke<PersistedCompanyProfilePage>("tally_persisted_company_profiles");
+      if (loadVersion !== persistedCompanyProfileLoadVersion.current) return;
       setCompanies((current) => mergeTallyCompanies(page.profiles, current));
       setPersistedCompanyProfileTotal(page.total_profiles);
       setPersistedCompanyProfilesLoaded(page.profiles.length);
       setPersistedCompanyProfilesTruncated(page.truncated);
       setPersistedCompanyProfileError(null);
     } catch (error) {
+      if (loadVersion !== persistedCompanyProfileLoadVersion.current) return;
       const operatorError = toOperatorError(error);
       setPersistedCompanyProfileError(operatorError);
+    } finally {
+      if (loadVersion === persistedCompanyProfileLoadVersion.current) {
+        setPersistedCompanyProfilesLoading(false);
+      }
     }
   }, []);
 
@@ -1446,11 +1458,13 @@ function App() {
           <button
             aria-current={view === "outstandings" ? "page" : undefined}
             className={view === "outstandings" ? "active" : ""}
+            disabled={childTallyReadCount > 0}
+            aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined}
             onClick={() => setView(selectedCompanyReadable ? "outstandings" : "companies")}
           >
             <Cable size={18} /> Outstandings
           </button>
-          <button aria-current={view === "clients" ? "page" : undefined} className={view === "clients" ? "active" : ""} onClick={() => setView(selectedCompanyReadable ? "clients" : "companies")}>
+          <button aria-current={view === "clients" ? "page" : undefined} className={view === "clients" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView(selectedCompanyReadable ? "clients" : "companies")}>
             <Building2 size={18} /> Compare clients
           </button>
           <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} onClick={() => setView("companies")}>
@@ -1478,6 +1492,9 @@ function App() {
         {!NON_TALLY_SECTIONS_ENABLED && (
           <p className="future-sections-note" id="future-sections-note">Unavailable until their workflow evidence is complete.</p>
         )}
+        {childTallyReadCount > 0 && (
+          <p className="future-sections-note" id="active-tally-read-note" role="status">A Tally read is still in progress. Wait before opening another live read.</p>
+        )}
       </aside>
 
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
@@ -1489,6 +1506,7 @@ function App() {
           endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
           loadError={persistedCompanyProfileError ? toErrorMessage(persistedCompanyProfileError) : null}
+          profilesLoading={persistedCompanyProfilesLoading}
           profilesTruncated={persistedCompanyProfilesTruncated}
           loadedProfileCount={persistedCompanyProfilesLoaded}
           onOpen={() => void refreshPersistedCompanyProfiles()}
@@ -1738,6 +1756,7 @@ function App() {
               selectClientFromShell(tallyCompanyKey(company));
             }}
             onBack={() => setView("outstandings")}
+            liveReadNavigationLocked={childTallyReadCount > 0}
             onTallyReadActivityChange={changeChildTallyReadActivity}
           />
           </ErrorBoundary>
@@ -1757,6 +1776,7 @@ function App() {
             } : undefined}
             onChangeSetup={() => setView("companies")}
             onViewAllClients={() => setView("clients")}
+            liveReadNavigationLocked={childTallyReadCount > 0}
             openBookCount={completeCurrentProbeCompanies.length}
             asOf={outstandingsAsOfSelection.value}
             onAsOfChange={changeOutstandingsAsOf}
@@ -1883,7 +1903,7 @@ function App() {
                   {selectedCompanyReady && (
                     <>
                       <p className="setup-complete" role="status"><Check size={18} /> {selectedCompanyRecord?.name} is ready.</p>
-                      <button className="primary" type="button" onClick={() => setView("outstandings")}>Open outstandings</button>
+                      <button className="primary" type="button" onClick={() => setView("outstandings")} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined}>Open outstandings</button>
                     </>
                   )}
                 </div>
