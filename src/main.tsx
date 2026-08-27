@@ -462,7 +462,7 @@ function App() {
   const [axalSession, setAxalSession] = React.useState<{ id: string; integration: AxalIntegration } | null>(null);
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
   const [documentsWorkspace, setDocumentsWorkspace] = React.useState(createDocumentsWorkspaceState);
-  const [view, setView] = React.useState<View>("outstandings");
+  const [view, setView] = React.useState<View>("dashboard");
   const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
     () => automaticOutstandingsAsOf(),
   );
@@ -1708,6 +1708,7 @@ function App() {
         {view === "outstandings" && (
           <ErrorBoundary key="outstandings" label="Aged outstandings">
           <OutstandingsScreen
+            key={selectedCompany || "unselected"}
             config={config}
             company={selectedCompanyReady && selectedCompanyRecord?.guid && selectedCompanyRecord.company_number && selectedCompanyRecord.books_from_yyyymmdd && selectedCompanyRecord.canonical_endpoint ? {
               name: selectedCompanyRecord.name,

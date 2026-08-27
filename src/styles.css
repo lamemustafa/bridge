@@ -2549,6 +2549,7 @@ button.outstandings-party {
 
 .clients-table {
   padding: 8px 30px 26px;
+  overflow-x: auto;
 }
 
 .clients-row {
@@ -2558,6 +2559,7 @@ button.outstandings-party {
   gap: 14px;
   width: 100%;
   min-height: 56px;
+  min-width: 680px;
   padding: 0;
   border: 0;
   border-top: 1px solid #eef2ef;

@@ -511,7 +511,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
             {groupLabelError && <p className="client-group-label-error" role="alert">{groupLabelError}</p>}
           </section>
 
-          <div className="clients-table" role="table" aria-label="Outstandings by client">
+          <div className="clients-table" role="table" aria-label="Outstandings by client" tabIndex={0}>
             <div className="clients-row is-head" role="row">
               {([
                 ["client", "Client"],

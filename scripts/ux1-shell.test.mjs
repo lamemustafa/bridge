@@ -18,6 +18,9 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /company\.canonical_endpoint === currentProbeCanonicalOrigin/);
   assert.doesNotMatch(app, /function configuredTallyEndpoint/);
   assert.match(app, /const selectedCompanyReadable = selectedCompanyReady/);
+  assert.match(app, /const \[view, setView\] = React\.useState<View>\("dashboard"\)/);
+  assert.match(app, /if \(view !== "companies" && view !== "outstandings" && view !== "clients" && view !== "mirror"\) return;/);
+  assert.match(app, /<OutstandingsScreen\s+key=\{selectedCompany \|\| "unselected"\}/);
   assert.doesNotMatch(app, /fetch_saved_tally_outstandings|detect_saved_tally_base_currency/);
   assert.match(switcher, /type="search"/);
   assert.match(switcher, /onKeyDown=[\s\S]*?event\.key === "Escape"/);
@@ -50,6 +53,8 @@ test("UX1 has reachable responsive rules and contains wide content", async () =>
   assert.doesNotMatch(styles, /(?:^|\n)table\s*\{[\s\S]{0,100}min-width:\s*820px;/);
   assert.match(styles, /\.outstandings-heading-actions\s*\{[\s\S]*?flex-wrap:\s*wrap;/);
   assert.match(styles, /\.outstandings-screen\s*\{[\s\S]*?min-width:\s*0;/);
+  assert.match(styles, /\.clients-table\s*\{[\s\S]*?overflow-x:\s*auto;/);
+  assert.match(styles, /\.clients-row\s*\{[\s\S]*?min-width:\s*680px;/);
   assert.match(styles, /@media \(max-width: 860px\)\s*\{[\s\S]*?\.client-switcher-current\s*\{\s*flex:\s*0 0 auto;/);
 
   const tableCount = [...mirrorProof.matchAll(/<table\b[^>]*>/g)].length;
