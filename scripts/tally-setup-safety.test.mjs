@@ -24,16 +24,18 @@ test("Tally setup does not expose unqualified legacy reads", async () => {
   assert.match(frontend, /async function discoverUntrustedCompanies\(\) \{\s*if \(currentProbeCompanyList\.length > 0\) return;/s);
 });
 
-test("Tally has one top-level navigation entry and keeps connection management in its workspace", async () => {
+test("Tally nav routes unreadable client views to connection management", async () => {
   const [frontend, outstandings] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
   ]);
   const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge operations">'), frontend.indexOf("</nav>"));
 
-  assert.match(nav, /<Cable size=\{18\} \/> Tally/);
-  assert.doesNotMatch(nav, /Outstandings|Tally Setup/);
-  assert.match(frontend, /selectedCompanyReady \? "outstandings" : "companies"/);
+  assert.match(nav, /<Cable size=\{18\} \/> Outstandings/);
+  assert.match(nav, /<Building2 size=\{18\} \/> Compare clients/);
+  assert.match(nav, /<Cable size=\{18\} \/> Manage Tally/);
+  assert.match(frontend, /selectedCompanyReadable \? "outstandings" : "companies"/);
+  assert.match(frontend, /selectedCompanyReadable \? "clients" : "companies"/);
   assert.match(frontend, /selectedCompanyRecord\?\.guid && selectedCompanyRecord\.company_number && selectedCompanyRecord\.books_from_yyyymmdd/);
   assert.match(outstandings, /Manage Tally/);
 });

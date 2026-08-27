@@ -2039,6 +2039,13 @@ function formatRuntimeTime(value?: number): string {
   return new Date(value).toLocaleString();
 }
 
+function configuredTallyEndpoint(config: TallyConfig): string | null {
+  const host = config.host.trim().toLocaleLowerCase();
+  if (host === "localhost" || host === "127.0.0.1") return `http://127.0.0.1:${config.port}`;
+  if (host === "::1") return `http://[::1]:${config.port}`;
+  return null;
+}
+
 function toTallyDate(value: string): string {
   return value.replace(/-/g, "");
 }
