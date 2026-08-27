@@ -21,8 +21,13 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /const \[view, setView\] = React\.useState<View>\("dashboard"\)/);
   assert.match(app, /if \(view !== "companies" && view !== "outstandings" && view !== "clients" && view !== "mirror"\) return;/);
   assert.match(app, /<OutstandingsScreen\s+key=\{selectedCompany \|\| "unselected"\}/);
+  assert.match(app, /setOpenCompanyNames\(\[\]\);\s*setUntrustedDiscoveredCompanies\(\[\]\);/);
+  assert.match(app, /correlation_key: company\.correlation_key/);
+  assert.match(app, /onOpen=\{\(\) => void refreshPersistedCompanyProfiles\(\)\}/);
   assert.doesNotMatch(app, /fetch_saved_tally_outstandings|detect_saved_tally_base_currency/);
   assert.match(switcher, /type="search"/);
+  assert.match(switcher, /disabled=\{selectionLocked\}/);
+  assert.match(switcher, /if \(!current\) onOpen\(\);/);
   assert.match(switcher, /onKeyDown=[\s\S]*?event\.key === "Escape"/);
   assert.match(switcher, /Setup and verification are required before other clients can be read/);
 });

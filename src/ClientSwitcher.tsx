@@ -13,6 +13,7 @@ type Props = {
   selectionLocked: boolean;
   endpoint: string;
   endpointStatus: "checked" | "not_checked";
+  onOpen: () => void;
   onSelect: (key: string) => void;
   onManageTally: () => void;
 };
@@ -29,6 +30,7 @@ export function ClientSwitcher({
   selectionLocked,
   endpoint,
   endpointStatus,
+  onOpen,
   onSelect,
   onManageTally,
 }: Props) {
@@ -63,7 +65,13 @@ export function ClientSwitcher({
           type="button"
           aria-expanded={open}
           aria-controls="client-switcher-list"
-          onClick={() => setOpen((current) => !current)}
+          disabled={selectionLocked}
+          onClick={() => {
+            setOpen((current) => {
+              if (!current) onOpen();
+              return !current;
+            });
+          }}
         >
           <Building2 size={16} />
           Switch client

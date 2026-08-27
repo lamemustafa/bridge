@@ -46,11 +46,22 @@ test("saved pins remain selectable for local proof review without a Tally read",
   assert.match(frontend, /savedCompanyList\.length > 0/);
   assert.match(frontend, /Review local Mirror &amp; Proof evidence without contacting Tally\./);
   assert.match(frontend, /Change saved company/);
-  assert.match(frontend, /const savedCompanyMutationPending = tallyAction === "save"\s*\|\| tallyAction === "fixture_enroll"\s*\|\| tallyAction === "fixture_revoke";/s);
-  assert.match(frontend, /const savedCompanySelectionLocked = snapshotActive\s*\|\| snapshotStartOutcomeUnknown\s*\|\| savedCompanyMutationPending\s*\|\| tallyAction === "start"\s*\|\| tallyAction === "resume";/s);
-  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;[\s\S]*?company\?\.mirror_company_id[\s\S]*?company\.canonical_endpoint === currentProbeCanonicalOrigin[\s\S]*?clearSelectedCompanyScope\(\{ preserveCurrentProbeReview \}\);\s*setSelectedCompany\(key\);\s*\}/s);
+  assert.match(frontend, /const savedCompanySelectionLocked = snapshotActive\s*\|\| snapshotStartOutcomeUnknown\s*\|\| tallyAction !== null;/s);
+  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
   assert.match(frontend, /selectSavedCompany\(""\)\} disabled=\{savedCompanySelectionLocked\}/);
   assert.match(frontend, /selectSavedCompany\(key\)\} disabled=\{savedCompanySelectionLocked\}/);
+});
+
+test("changing a saved client retains endpoint probe evidence but clears the old client review", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const clearSelection = frontend.slice(
+    frontend.indexOf("function clearSelectedCompanyScope"),
+    frontend.indexOf("function selectSavedCompany"),
+  );
+
+  assert.match(clearSelection, /if \(!preserveCurrentProbeReview\) \{\s*setReviewId\(null\);\s*setReviewCommitmentSha256\(null\);\s*setSelectedReadScope\(null\);/s);
+  assert.doesNotMatch(clearSelection, /setPassport\(null\)|setProfileSha256\(null\)/);
+  assert.match(frontend, /function selectSavedCompany[\s\S]*?clearSelectedCompanyScope\(\);/);
 });
 
 test("structured Tally errors retain their backend remediation", async () => {

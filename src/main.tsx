@@ -558,14 +558,9 @@ function App() {
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
     && !["completed", "partial", "failed", "cancelled"].includes(snapshotJob.phase);
-  const savedCompanyMutationPending = tallyAction === "save"
-    || tallyAction === "fixture_enroll"
-    || tallyAction === "fixture_revoke";
   const savedCompanySelectionLocked = snapshotActive
     || snapshotStartOutcomeUnknown
-    || savedCompanyMutationPending
-    || tallyAction === "start"
-    || tallyAction === "resume";
+    || tallyAction !== null;
 
   React.useEffect(() => {
     if (!tallyAction && !snapshotActive) {
@@ -664,12 +659,10 @@ function App() {
     clearCompanyScopedState({
       clearQualifiedReadReview: () => {
         if (!preserveCurrentProbeReview) {
-          setPassport(null);
-          setProfileSha256(null);
           setReviewId(null);
           setReviewCommitmentSha256(null);
+          setSelectedReadScope(null);
         }
-        setSelectedReadScope(null);
       },
       clearPassportSnapshot: () => setPassportSnapshotId(null),
       clearSyncEvidence: () => {
@@ -699,14 +692,7 @@ function App() {
 
   function selectSavedCompany(key: string) {
     if (key === selectedCompany || savedCompanySelectionLocked) return;
-    const company = companies.find((candidate) => tallyCompanyKey(candidate) === key);
-    const preserveCurrentProbeReview = Boolean(
-      company?.mirror_company_id
-        && currentProbeCanonicalOrigin
-        && liveCompanyKeys.includes(key)
-        && company.canonical_endpoint === currentProbeCanonicalOrigin,
-    );
-    clearSelectedCompanyScope({ preserveCurrentProbeReview });
+    clearSelectedCompanyScope();
     setSelectedCompany(key);
   }
 
@@ -736,12 +722,7 @@ function App() {
       return;
     }
     if (key === selectedCompany) return;
-    clearSelectedCompanyScope({
-      preserveCurrentProbeReview: canReuseCurrentProbeReview({
-        reviewAvailable: Boolean(reviewId && reviewCommitmentSha256),
-        setupSaved: Boolean(passportSnapshotId),
-      }),
-    });
+    clearSelectedCompanyScope();
     setSelectedCompany(key);
     setView("companies");
   }
@@ -790,6 +771,7 @@ function App() {
         );
         setSelectedCompany(selection.selectedCompany);
         void refreshPersistedCompanyProfiles();
+        setOpenCompanyNames([]);
         setUntrustedDiscoveredCompanies([]);
         setUntrustedDiscoveryError(null);
         if (result.profile.transports.xml_http?.safe_reason_code === "direct_company_report_untrusted") {
@@ -1460,6 +1442,7 @@ function App() {
           selectionLocked={savedCompanySelectionLocked}
           endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
+          onOpen={() => void refreshPersistedCompanyProfiles()}
           onSelect={selectClientFromShell}
           onManageTally={() => setView("companies")}
         />
@@ -1696,6 +1679,7 @@ function App() {
                 company_number: company.company_number as string,
                 books_from_yyyymmdd: company.books_from_yyyymmdd as string,
                 canonical_origin: company.canonical_endpoint as string,
+                correlation_key: company.correlation_key,
               }))}
             onOpenCompany={(company) => {
               selectClientFromShell(tallyCompanyKey(company));

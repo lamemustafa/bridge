@@ -25,6 +25,7 @@ type CompanyRef = {
   company_number: string;
   books_from_yyyymmdd: string;
   canonical_origin: string;
+  correlation_key?: string;
 };
 
 type Props = {
