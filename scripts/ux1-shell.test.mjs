@@ -12,10 +12,16 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
 
   assert.match(app, /const NON_TALLY_SECTIONS_ENABLED = false/);
   assert.match(app, /disabled=\{!NON_TALLY_SECTIONS_ENABLED\}/);
+  assert.match(app, /onClick=\{\(\) => setView\("gst"\)\}/);
+  assert.match(app, /onClick=\{\(\) => setView\("dsc"\)\}/);
+  assert.match(app, /onClick=\{\(\) => setView\("documents"\)\}/);
+  assert.match(app, /onClick=\{\(\) => setView\("axal"\)\}/);
+  assert.match(app, /\{!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available<\/small>\}/);
   assert.match(app, /Not yet available/);
   assert.match(app, /if \(!NON_TALLY_SECTIONS_ENABLED\) \{\s*setDashboardError\("GST availability is unavailable until end-to-end workflow evidence is complete\."\);\s*return;/s);
   const dashboard = app.slice(app.indexOf('{view === "dashboard" && ('), app.indexOf('{view === "gst" && ('));
   assert.match(dashboard, /\{NON_TALLY_SECTIONS_ENABLED \? \([\s\S]*?Check GST Availability[\s\S]*?: \(\s*<p className="future-sections-note" role="status">GST availability is unavailable until end-to-end workflow evidence is complete\.<\/p>/);
+  assert.match(app, /\{!NON_TALLY_SECTIONS_ENABLED && \(\s*<p className="future-sections-note" id="future-sections-note">Unavailable until their workflow evidence is complete\.<\/p>\s*\)\}/);
   assert.match(app, /port: 9000/);
   assert.match(app, /currentProbeCanonicalOrigin/);
   assert.match(app, /company\.canonical_endpoint === currentProbeCanonicalOrigin/);

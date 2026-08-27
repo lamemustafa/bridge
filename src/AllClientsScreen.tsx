@@ -36,6 +36,7 @@ type Props = {
   /// question at two altitudes, so the switch has to work both ways.
   onBack?: () => void;
   asOf: string;
+  onTallyReadActivityChange: (delta: 1 | -1) => void;
 };
 
 type Report = {
@@ -121,7 +122,7 @@ function ageTier(days: number | null) {
   return 4;
 }
 
-export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asOf }: Props) {
+export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asOf, onTallyReadActivityChange }: Props) {
   const [sort, setSort] = React.useState<SortPreference>(defaultSort);
   const [loadedEntries, setLoadedEntries] = React.useState<AsOfBoundValue<Entry[]> | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -213,6 +214,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     requestVersion.current = version;
     setLoading(true);
     setError(null);
+    onTallyReadActivityChange(1);
     try {
       const next = await invoke<Entry[]>("fetch_tally_outstandings_all_companies", argument);
       if (requestVersion.current !== version) return;
@@ -233,8 +235,9 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
       );
     } finally {
       if (requestVersion.current === version) setLoading(false);
+      onTallyReadActivityChange(-1);
     }
-  }, [ageingAnchor, asOf, config.host, config.port, companies.map((company) => company.guid).join("|")]);
+  }, [ageingAnchor, asOf, config.host, config.port, companies.map((company) => company.guid).join("|"), onTallyReadActivityChange]);
 
   const rows = React.useMemo(() => {
     if (!entries) return [];

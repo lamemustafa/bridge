@@ -46,7 +46,7 @@ test("saved pins remain selectable for local proof review without a Tally read",
   assert.match(frontend, /savedCompanyList\.length > 0/);
   assert.match(frontend, /Review local Mirror &amp; Proof evidence without contacting Tally\./);
   assert.match(frontend, /Change saved company/);
-  assert.match(frontend, /const savedCompanySelectionLocked = snapshotActive\s*\|\| snapshotStartOutcomeUnknown\s*\|\| tallyAction !== null;/s);
+  assert.match(frontend, /const savedCompanySelectionLocked = snapshotActive\s*\|\| snapshotStartOutcomeUnknown\s*\|\| tallyAction !== null\s*\|\| childTallyReadCount > 0;/s);
   assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
   assert.match(frontend, /selectSavedCompany\(""\)\} disabled=\{savedCompanySelectionLocked\}/);
   assert.match(frontend, /selectSavedCompany\(key\)\} disabled=\{savedCompanySelectionLocked\}/);
@@ -84,10 +84,31 @@ test("structured Tally errors retain their backend remediation", async () => {
 
 test("persisted-company load failures remain visible before a Tally connection is established", async () => {
   const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const profileLoad = frontend.slice(
+    frontend.indexOf("const refreshPersistedCompanyProfiles"),
+    frontend.indexOf("// Both of these are backed by the encrypted mirror"),
+  );
 
-  assert.match(frontend, /refreshPersistedCompanyProfiles[\s\S]*?setPersistedCompanyProfileError\(operatorError\);\s*setCompanyError\(operatorError\);/);
-  assert.match(frontend, /setPersistedCompanyProfilesTruncated\(page\.truncated\);\s*setPersistedCompanyProfileError\(null\);/s);
+  assert.match(profileLoad, /setPersistedCompanyProfileError\(operatorError\);/);
+  assert.match(profileLoad, /setPersistedCompanyProfilesTruncated\(page\.truncated\);\s*setPersistedCompanyProfileError\(null\);/s);
+  assert.doesNotMatch(profileLoad, /setCompanyError\(/);
+  assert.match(frontend, /\{persistedCompanyProfileError && !setupConnectionComplete && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
   assert.match(frontend, /\{companyError && !setupConnectionComplete && <TallyErrorNotice message=\{companyError\} \/>\}/);
+});
+
+test("child Tally reads keep client selection locked until every invocation settles", async () => {
+  const [frontend, allClients, outstandings] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(frontend, /const changeChildTallyReadActivity = React\.useCallback\(\(delta: 1 \| -1\) => \{\s*setChildTallyReadCount\(\(current\) => Math\.max\(0, current \+ delta\)\);/s);
+  assert.match(frontend, /onTallyReadActivityChange=\{changeChildTallyReadActivity\}/);
+  for (const screen of [allClients, outstandings]) {
+    assert.match(screen, /onTallyReadActivityChange\(1\);/);
+    assert.match(screen, /onTallyReadActivityChange\(-1\);/);
+  }
 });
 
 test("Tally setup uses the durable pin for readiness and keeps fixture control local to proof work", async () => {

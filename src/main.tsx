@@ -439,6 +439,7 @@ function App() {
   const [voucherTo, setVoucherTo] = React.useState(currentFinancialYear.to);
   const [companyError, setCompanyError] = React.useState<OperatorError | null>(null);
   const [persistedCompanyProfileError, setPersistedCompanyProfileError] = React.useState<OperatorError | null>(null);
+  const [childTallyReadCount, setChildTallyReadCount] = React.useState(0);
   const [fixtureStatus, setFixtureStatus] = React.useState<TallyWriteFixtureEnrollmentStatus | null>(null);
   const [fixtureStatusError, setFixtureStatusError] = React.useState<string | null>(null);
   const [fixtureDisposableAttested, setFixtureDisposableAttested] = React.useState(false);
@@ -505,8 +506,11 @@ function App() {
     } catch (error) {
       const operatorError = toOperatorError(error);
       setPersistedCompanyProfileError(operatorError);
-      setCompanyError(operatorError);
     }
+  }, []);
+
+  const changeChildTallyReadActivity = React.useCallback((delta: 1 | -1) => {
+    setChildTallyReadCount((current) => Math.max(0, current + delta));
   }, []);
 
   // Both of these are backed by the encrypted mirror, and touching the mirror
@@ -564,7 +568,8 @@ function App() {
     && !["completed", "partial", "failed", "cancelled"].includes(snapshotJob.phase);
   const savedCompanySelectionLocked = snapshotActive
     || snapshotStartOutcomeUnknown
-    || tallyAction !== null;
+    || tallyAction !== null
+    || childTallyReadCount > 0;
 
   React.useEffect(() => {
     if (!tallyAction && !snapshotActive) {
@@ -1433,20 +1438,22 @@ function App() {
           <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             <ShieldCheck size={18} /> Evidence dashboard
           </button>
-          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby="future-sections-note">
-            <FileText size={18} /> GST Returns <small>Not yet available</small>
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("gst")}>
+            <FileText size={18} /> GST Returns {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
           </button>
-          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby="future-sections-note">
-            <KeyRound size={18} /> DSC Token <small>Not yet available</small>
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("dsc")}>
+            <KeyRound size={18} /> DSC Token {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
           </button>
-          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby="future-sections-note">
-            <FolderOpen size={18} /> Documents <small>Not yet available</small>
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("documents")}>
+            <FolderOpen size={18} /> Documents {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
           </button>
-          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby="future-sections-note">
-            <Cloud size={18} /> AXAL Backend <small>Not yet available</small>
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("axal")}>
+            <Cloud size={18} /> AXAL Backend {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
           </button>
         </nav>
-        <p className="future-sections-note" id="future-sections-note">Unavailable until their workflow evidence is complete.</p>
+        {!NON_TALLY_SECTIONS_ENABLED && (
+          <p className="future-sections-note" id="future-sections-note">Unavailable until their workflow evidence is complete.</p>
+        )}
       </aside>
 
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
@@ -1704,6 +1711,7 @@ function App() {
               selectClientFromShell(tallyCompanyKey(company));
             }}
             onBack={() => setView("outstandings")}
+            onTallyReadActivityChange={changeChildTallyReadActivity}
           />
           </ErrorBoundary>
         )}
@@ -1725,6 +1733,7 @@ function App() {
             openBookCount={completeCurrentProbeCompanies.length}
             asOf={outstandingsAsOfSelection.value}
             onAsOfChange={changeOutstandingsAsOf}
+            onTallyReadActivityChange={changeChildTallyReadActivity}
           />
           </ErrorBoundary>
         )}
@@ -1745,6 +1754,7 @@ function App() {
             />
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
+            {persistedCompanyProfileError && !setupConnectionComplete && <TallyErrorNotice message={persistedCompanyProfileError} />}
             {companyError && !setupConnectionComplete && <TallyErrorNotice message={companyError} />}
 
             {setupConnectionComplete && (
