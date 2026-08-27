@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, Building2, Cable, Check, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
+import { Building2, Cable, Check, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyProbeCompanySelectionTransition,
@@ -27,6 +27,7 @@ import { createDocumentsWorkspaceState, DocumentsScreen } from "./DocumentsScree
 import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
 import "./styles.css";
 
 type TallyConfig = {
@@ -272,6 +273,9 @@ type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll
 
 const TABLE_PREVIEW_LIMIT = 100;
 const MIRROR_PAGE_LIMIT = 25;
+// These workflows remain implemented but unavailable until their end-to-end
+// workflow evidence is complete.
+const NON_TALLY_SECTIONS_ENABLED = false;
 
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
@@ -408,6 +412,9 @@ function App() {
   const [config, setConfig] = React.useState<TallyConfig>({ host: "localhost", port: 9000 });
   const [status, setStatus] = React.useState<ConnectionStatus | null>(null);
   const [passport, setPassport] = React.useState<CapabilityProfile | null>(null);
+  // This value comes from the Rust loopback boundary after a successful
+  // probe. The UI must not recreate that canonicalisation itself.
+  const [currentProbeCanonicalOrigin, setCurrentProbeCanonicalOrigin] = React.useState<string | null>(null);
   const [profileSha256, setProfileSha256] = React.useState<string | null>(null);
   const [reviewId, setReviewId] = React.useState<string | null>(null);
   const [reviewCommitmentSha256, setReviewCommitmentSha256] = React.useState<string | null>(null);
@@ -428,9 +435,12 @@ function App() {
   const [persistedCompanyProfileTotal, setPersistedCompanyProfileTotal] = React.useState(0);
   const [persistedCompanyProfilesLoaded, setPersistedCompanyProfilesLoaded] = React.useState(0);
   const [persistedCompanyProfilesTruncated, setPersistedCompanyProfilesTruncated] = React.useState(false);
+  const [persistedCompanyProfilesLoading, setPersistedCompanyProfilesLoading] = React.useState(false);
   const [voucherFrom, setVoucherFrom] = React.useState(currentFinancialYear.from);
   const [voucherTo, setVoucherTo] = React.useState(currentFinancialYear.to);
   const [companyError, setCompanyError] = React.useState<OperatorError | null>(null);
+  const [persistedCompanyProfileError, setPersistedCompanyProfileError] = React.useState<OperatorError | null>(null);
+  const [childTallyReadCount, setChildTallyReadCount] = React.useState(0);
   const [fixtureStatus, setFixtureStatus] = React.useState<TallyWriteFixtureEnrollmentStatus | null>(null);
   const [fixtureStatusError, setFixtureStatusError] = React.useState<string | null>(null);
   const [fixtureDisposableAttested, setFixtureDisposableAttested] = React.useState(false);
@@ -462,6 +472,7 @@ function App() {
   const [busy, setBusy] = React.useState(false);
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
   const tallyResultsVersion = React.useRef(0);
+  const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
   const snapshotSelectionVersion = React.useRef(0);
   const mainContentRef = React.useRef<HTMLElement>(null);
@@ -487,15 +498,31 @@ function App() {
   }, []);
 
   const refreshPersistedCompanyProfiles = React.useCallback(async () => {
+    const loadVersion = persistedCompanyProfileLoadVersion.current + 1;
+    persistedCompanyProfileLoadVersion.current = loadVersion;
+    setPersistedCompanyProfilesLoading(true);
+    setPersistedCompanyProfileError(null);
     try {
       const page = await invoke<PersistedCompanyProfilePage>("tally_persisted_company_profiles");
+      if (loadVersion !== persistedCompanyProfileLoadVersion.current) return;
       setCompanies((current) => mergeTallyCompanies(page.profiles, current));
       setPersistedCompanyProfileTotal(page.total_profiles);
       setPersistedCompanyProfilesLoaded(page.profiles.length);
       setPersistedCompanyProfilesTruncated(page.truncated);
+      setPersistedCompanyProfileError(null);
     } catch (error) {
-      setCompanyError(toOperatorError(error));
+      if (loadVersion !== persistedCompanyProfileLoadVersion.current) return;
+      const operatorError = toOperatorError(error);
+      setPersistedCompanyProfileError(operatorError);
+    } finally {
+      if (loadVersion === persistedCompanyProfileLoadVersion.current) {
+        setPersistedCompanyProfilesLoading(false);
+      }
     }
+  }, []);
+
+  const changeChildTallyReadActivity = React.useCallback((delta: 1 | -1) => {
+    setChildTallyReadCount((current) => Math.max(0, current + delta));
   }, []);
 
   // Both of these are backed by the encrypted mirror, and touching the mirror
@@ -513,7 +540,7 @@ function App() {
   }, [view, refreshRecentSnapshots]);
 
   React.useEffect(() => {
-    if (view !== "companies" && view !== "outstandings" && view !== "clients") return;
+    if (view !== "companies" && view !== "outstandings" && view !== "clients" && view !== "mirror") return;
     void refreshPersistedCompanyProfiles();
   }, [view, refreshPersistedCompanyProfiles]);
 
@@ -551,14 +578,15 @@ function App() {
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
     && !["completed", "partial", "failed", "cancelled"].includes(snapshotJob.phase);
-  const savedCompanyMutationPending = tallyAction === "save"
-    || tallyAction === "fixture_enroll"
-    || tallyAction === "fixture_revoke";
   const savedCompanySelectionLocked = snapshotActive
     || snapshotStartOutcomeUnknown
-    || savedCompanyMutationPending
-    || tallyAction === "start"
-    || tallyAction === "resume";
+    || tallyAction !== null
+    || childTallyReadCount > 0;
+  const endpointSettingsLockMessage = snapshotActive
+    ? "Endpoint settings are locked while the active snapshot continues against its reviewed source."
+    : childTallyReadCount > 0
+    ? "Endpoint settings are locked while a Tally read is in progress."
+    : null;
 
   React.useEffect(() => {
     if (!tallyAction && !snapshotActive) {
@@ -617,14 +645,18 @@ function App() {
 
   function invalidateTallyResults() {
     tallyResultsVersion.current += 1;
+    const selected = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
+    if (selected && !selected.mirror_company_id) setSelectedCompany("");
     setStatus(null);
     setPassport(null);
+    setCurrentProbeCanonicalOrigin(null);
     setProfileSha256(null);
     setReviewId(null);
     setReviewCommitmentSha256(null);
     setSelectedReadScope(null);
     setPassportSnapshotId(null);
     setLiveCompanyKeys([]);
+    setOpenCompanyNames([]);
     setUntrustedDiscoveredCompanies([]);
     setUntrustedDiscoveryError(null);
     setDraft(null);
@@ -655,12 +687,10 @@ function App() {
     clearCompanyScopedState({
       clearQualifiedReadReview: () => {
         if (!preserveCurrentProbeReview) {
-          setPassport(null);
-          setProfileSha256(null);
           setReviewId(null);
           setReviewCommitmentSha256(null);
+          setSelectedReadScope(null);
         }
-        setSelectedReadScope(null);
       },
       clearPassportSnapshot: () => setPassportSnapshotId(null),
       clearSyncEvidence: () => {
@@ -694,6 +724,47 @@ function App() {
     setSelectedCompany(key);
   }
 
+  function selectClientFromShell(key: string) {
+    const unverified = otherOpenCompanies.find((company, index) => `unverified:${company.name}:${index}` === key);
+    if (unverified) {
+      if (savedCompanySelectionLocked) return;
+      clearSelectedCompanyScope();
+      setSelectedCompany("");
+      setView("companies");
+      void bootstrapDirectCompany(unverified.name);
+      return;
+    }
+
+    const company = companies.find((candidate) => tallyCompanyKey(candidate) === key);
+    if (!company || savedCompanySelectionLocked) return;
+    if (company.mirror_company_id) {
+      const currentAtProbedEndpoint = liveCompanyKeys.includes(key)
+        && company.canonical_endpoint === currentProbeCanonicalOrigin;
+      selectSavedCompany(key);
+      if (view === "mirror") return;
+      if (currentAtProbedEndpoint) {
+        setView("outstandings");
+      } else {
+        setCompanyError("Check the endpoint and re-verify this saved client before reading it.");
+        setView("companies");
+      }
+      return;
+    }
+    if (key === selectedCompany) {
+      setView("companies");
+      return;
+    }
+    const preserveCurrentProbeReview = liveCompanyKeys.includes(key)
+      && company.canonical_endpoint === currentProbeCanonicalOrigin
+      && canReuseCurrentProbeReview({
+        reviewAvailable: Boolean(reviewId && reviewCommitmentSha256),
+        setupSaved: Boolean(passportSnapshotId),
+      });
+    clearSelectedCompanyScope({ preserveCurrentProbeReview });
+    setSelectedCompany(key);
+    setView("companies");
+  }
+
   function updateTallyHost(host: string) {
     setConfig((current) => ({ ...current, host }));
     invalidateTallyResults();
@@ -725,6 +796,7 @@ function App() {
             installProbeState: () => {
               setStatus(result.connection);
               setPassport(result.profile);
+              setCurrentProbeCanonicalOrigin(result.canonical_origin);
               setProfileSha256(result.profile_sha256);
               setReviewId(result.review_id);
               setReviewCommitmentSha256(result.review_commitment_sha256);
@@ -737,6 +809,7 @@ function App() {
         );
         setSelectedCompany(selection.selectedCompany);
         void refreshPersistedCompanyProfiles();
+        setOpenCompanyNames([]);
         setUntrustedDiscoveredCompanies([]);
         setUntrustedDiscoveryError(null);
         if (result.profile.transports.xml_http?.safe_reason_code === "direct_company_report_untrusted") {
@@ -745,7 +818,6 @@ function App() {
             const discovered = await invoke<UntrustedCompanyCandidate[]>("fetch_tally_companies", { config });
             if (discoveryResultsVersion === tallyResultsVersion.current) {
               setUntrustedDiscoveredCompanies(discovered);
-        setOpenCompanyNames(discovered.map((candidate) => candidate.name));
               setOpenCompanyNames(discovered.map((candidate) => candidate.name));
             }
           } catch (error) {
@@ -759,12 +831,16 @@ function App() {
       if (resultsVersion === tallyResultsVersion.current) {
         setStatus(null);
         setPassport(null);
+        setCurrentProbeCanonicalOrigin(null);
         setProfileSha256(null);
         setReviewId(null);
         setReviewCommitmentSha256(null);
         setSelectedReadScope(null);
         setPassportSnapshotId(null);
         setLiveCompanyKeys([]);
+        setOpenCompanyNames([]);
+        setUntrustedDiscoveredCompanies([]);
+        setUntrustedDiscoveryError(null);
         setDashboardError(toOperatorError(error));
       }
     } finally {
@@ -818,6 +894,7 @@ function App() {
           installProbeState: () => {
             setStatus(result.connection);
             setPassport(result.profile);
+            setCurrentProbeCanonicalOrigin(result.canonical_origin);
             setProfileSha256(result.profile_sha256);
             setReviewId(result.review_id);
             setReviewCommitmentSha256(result.review_commitment_sha256);
@@ -1195,6 +1272,10 @@ function App() {
   }
 
   async function prepareDraft() {
+    if (!NON_TALLY_SECTIONS_ENABLED) {
+      setDashboardError("GST availability is unavailable until end-to-end workflow evidence is complete.");
+      return;
+    }
     const company = gstCompany.trim();
     const financialYear = gstFinancialYear.trim();
     if (!company || !/^\d{4}-\d{4}$/.test(financialYear)) {
@@ -1244,9 +1325,46 @@ function App() {
   const selectedCompanyReady = tallyReadinessState({
     endpointComplete: setupConnectionComplete,
     companySelected: Boolean(selectedCompanyRecord),
-    companyCurrent: selectedCompanyLive,
+    companyCurrent: selectedCompanyLive
+      && selectedCompanyRecord?.canonical_endpoint === currentProbeCanonicalOrigin,
     companySaved: Boolean(selectedCompanyRecord?.mirror_company_id),
   }).companyReady;
+  const selectedCompanyReadable = selectedCompanyReady;
+  // An unsaved identity is only usable at the endpoint that returned it. Saved
+  // profiles remain available for local Mirror & Proof review even when no
+  // endpoint is currently checked.
+  const clientSwitcherCompanies = companies.filter(
+    (company) => Boolean(company.mirror_company_id) || company.canonical_endpoint === currentProbeCanonicalOrigin,
+  );
+  const clientSwitcherClients: ClientSwitcherClient[] = [
+    ...clientSwitcherCompanies.map((company) => {
+      const summaryDiscriminator = clientIdentitySummaryDiscriminator(company);
+      const identityDiscriminator = clientIdentityDiscriminator(company);
+      return {
+        key: tallyCompanyKey(company),
+        name: company.name,
+        summaryDiscriminator,
+        identityDiscriminator,
+        searchText: `${company.name} ${identityDiscriminator}`,
+        state: company.mirror_company_id
+          ? liveCompanyKeys.includes(tallyCompanyKey(company))
+            && company.canonical_endpoint === currentProbeCanonicalOrigin
+            ? "ready" as const
+            : "verification_required" as const
+          : company.guid
+            ? "setup_required" as const
+            : "verification_required" as const,
+      };
+    }),
+    ...otherOpenCompanies.map((company, index) => ({
+      key: `unverified:${company.name}:${index}`,
+      name: company.name,
+      summaryDiscriminator: "Identity not verified yet",
+      identityDiscriminator: "Identity not verified yet",
+      searchText: company.name,
+      state: "verification_required" as const,
+    })),
+  ];
   const discoveredCompanyPrompt = companyDiscoveryPrompt(
     selectedCompany,
     liveCompanyKeys,
@@ -1341,35 +1459,64 @@ function App() {
           </div>
         </div>
         <nav aria-label="Bridge operations">
-          <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
-            <Activity size={18} /> Dashboard
-          </button>
           <button
-            aria-current={["outstandings", "companies", "clients"].includes(view) ? "page" : undefined}
-            className={["outstandings", "companies", "clients"].includes(view) ? "active" : ""}
-            onClick={() => setView(selectedCompanyReady ? "outstandings" : "companies")}
+            aria-current={view === "outstandings" ? "page" : undefined}
+            className={view === "outstandings" ? "active" : ""}
+            disabled={childTallyReadCount > 0}
+            aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined}
+            onClick={() => setView(selectedCompanyReadable ? "outstandings" : "companies")}
           >
-            <Cable size={18} /> Tally
+            <Cable size={18} /> Outstandings
           </button>
-          <button aria-current={view === "gst" ? "page" : undefined} className={view === "gst" ? "active" : ""} onClick={() => setView("gst")}>
-            <FileText size={18} /> GST Returns
+          <button aria-current={view === "clients" ? "page" : undefined} className={view === "clients" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView(selectedCompanyReadable ? "clients" : "companies")}>
+            <Building2 size={18} /> Compare clients
+          </button>
+          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} onClick={() => setView("companies")}>
+            <Cable size={18} /> Manage Tally
           </button>
           <button aria-current={view === "mirror" ? "page" : undefined} className={view === "mirror" ? "active" : ""} onClick={() => setView("mirror")}>
             <Database size={18} /> Mirror &amp; Proof
           </button>
-          <button aria-current={view === "dsc" ? "page" : undefined} className={view === "dsc" ? "active" : ""} onClick={() => setView("dsc")}>
-            <KeyRound size={18} /> DSC Token
+          <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
+            <ShieldCheck size={18} /> Evidence dashboard
           </button>
-          <button aria-current={view === "documents" ? "page" : undefined} className={view === "documents" ? "active" : ""} onClick={() => setView("documents")}>
-            <FolderOpen size={18} /> Documents
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("gst")}>
+            <FileText size={18} /> GST Returns {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
           </button>
-          <button aria-current={view === "axal" ? "page" : undefined} className={view === "axal" ? "active" : ""} onClick={() => setView("axal")}>
-            <Cloud size={18} /> AXAL Backend
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("dsc")}>
+            <KeyRound size={18} /> DSC Token {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
+          </button>
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("documents")}>
+            <FolderOpen size={18} /> Documents {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
+          </button>
+          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("axal")}>
+            <Cloud size={18} /> AXAL Backend {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
           </button>
         </nav>
+        {!NON_TALLY_SECTIONS_ENABLED && (
+          <p className="future-sections-note" id="future-sections-note">Unavailable until their workflow evidence is complete.</p>
+        )}
+        {childTallyReadCount > 0 && (
+          <p className="future-sections-note" id="active-tally-read-note" role="status">A Tally read is still in progress. Wait before opening another live read.</p>
+        )}
       </aside>
 
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
+        <ClientSwitcher
+          clients={clientSwitcherClients}
+          selectedClientKey={selectedCompany}
+          activeView={view}
+          selectionLocked={savedCompanySelectionLocked}
+          endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
+          endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
+          loadError={persistedCompanyProfileError ? toErrorMessage(persistedCompanyProfileError) : null}
+          profilesLoading={persistedCompanyProfilesLoading}
+          profilesTruncated={persistedCompanyProfilesTruncated}
+          loadedProfileCount={persistedCompanyProfilesLoaded}
+          onOpen={() => void refreshPersistedCompanyProfiles()}
+          onSelect={selectClientFromShell}
+          onManageTally={() => setView("companies")}
+        />
         <header>
           <div>
             {view !== "companies" && (
@@ -1384,7 +1531,7 @@ function App() {
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
           {!["outstandings", "companies", "clients"].includes(view) && (
-            <button className="primary" onClick={checkTally} disabled={tallyAction !== null}>
+            <button className="primary" onClick={checkTally} disabled={tallyAction !== null || childTallyReadCount > 0}>
               <Cable size={18} />
               {tallyAction === "probe" ? "Checking endpoint..." : "Check Tally Endpoint"}
             </button>
@@ -1447,35 +1594,39 @@ function App() {
         {view === "dashboard" && (
           <ErrorBoundary key="dashboard" label="Tally evidence dashboard">
           <>
-            <section className="toolbar">
-              <label>
-                GST company
-                <input
-                  value={gstCompany}
-                  onChange={(event) => {
-                    setGstCompany(event.target.value);
-                    setDraft(null);
-                    tallyResultsVersion.current += 1;
-                  }}
-                />
-              </label>
-              <label>
-                Financial year
-                <input
-                  value={gstFinancialYear}
-                  placeholder="YYYY-YYYY"
-                  onChange={(event) => {
-                    setGstFinancialYear(event.target.value);
-                    setDraft(null);
-                    tallyResultsVersion.current += 1;
-                  }}
-                />
-              </label>
-              <button onClick={prepareDraft} disabled={busy}>
-                <Play size={18} />
-                Check GST Availability
-              </button>
-            </section>
+            {NON_TALLY_SECTIONS_ENABLED ? (
+              <section className="toolbar">
+                <label>
+                  GST company
+                  <input
+                    value={gstCompany}
+                    onChange={(event) => {
+                      setGstCompany(event.target.value);
+                      setDraft(null);
+                      tallyResultsVersion.current += 1;
+                    }}
+                  />
+                </label>
+                <label>
+                  Financial year
+                  <input
+                    value={gstFinancialYear}
+                    placeholder="YYYY-YYYY"
+                    onChange={(event) => {
+                      setGstFinancialYear(event.target.value);
+                      setDraft(null);
+                      tallyResultsVersion.current += 1;
+                    }}
+                  />
+                </label>
+                <button onClick={prepareDraft} disabled={busy}>
+                  <Play size={18} />
+                  Check GST Availability
+                </button>
+              </section>
+            ) : (
+              <p className="future-sections-note" role="status">GST availability is unavailable until end-to-end workflow evidence is complete.</p>
+            )}
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
 
@@ -1493,8 +1644,8 @@ function App() {
               <article className="panel">
                 <h2>GST preparation</h2>
                 <dl>
-                  <div><dt>Status</dt><dd>{gstDraftComplete ? "Calculated" : draft ? "Unavailable in this build" : "Not checked"}</dd></div>
-                  <div><dt>Company</dt><dd>{draft?.company ?? "No result"}</dd></div>
+                  <div><dt>Status</dt><dd>{NON_TALLY_SECTIONS_ENABLED && gstDraftComplete ? "Calculated" : "Unavailable pending evidence"}</dd></div>
+                  <div><dt>Company</dt><dd>{NON_TALLY_SECTIONS_ENABLED && draft ? draft.company : "Not available"}</dd></div>
                   <div><dt>GSTR-1 B2B</dt><dd>{gstDraftComplete ? draft.gstr1.b2b_invoice_count : "Not available"}</dd></div>
                   <div><dt>GSTR-3B taxable</dt><dd>{gstDraftComplete ? draft.gstr3b.outward_taxable_value : "Not available"}</dd></div>
                 </dl>
@@ -1603,12 +1754,14 @@ function App() {
                 company_number: company.company_number as string,
                 books_from_yyyymmdd: company.books_from_yyyymmdd as string,
                 canonical_origin: company.canonical_endpoint as string,
+                correlation_key: company.correlation_key,
               }))}
             onOpenCompany={(company) => {
-              setSelectedCompany(tallyCompanyKey(company));
-              setView("outstandings");
+              selectClientFromShell(tallyCompanyKey(company));
             }}
             onBack={() => setView("outstandings")}
+            liveReadNavigationLocked={childTallyReadCount > 0}
+            onTallyReadActivityChange={changeChildTallyReadActivity}
           />
           </ErrorBoundary>
         )}
@@ -1616,6 +1769,7 @@ function App() {
         {view === "outstandings" && (
           <ErrorBoundary key="outstandings" label="Aged outstandings">
           <OutstandingsScreen
+            key={selectedCompany || "unselected"}
             config={config}
             company={selectedCompanyReady && selectedCompanyRecord?.guid && selectedCompanyRecord.company_number && selectedCompanyRecord.books_from_yyyymmdd && selectedCompanyRecord.canonical_endpoint ? {
               name: selectedCompanyRecord.name,
@@ -1626,9 +1780,11 @@ function App() {
             } : undefined}
             onChangeSetup={() => setView("companies")}
             onViewAllClients={() => setView("clients")}
+            liveReadNavigationLocked={childTallyReadCount > 0}
             openBookCount={completeCurrentProbeCompanies.length}
             asOf={outstandingsAsOfSelection.value}
             onAsOfChange={changeOutstandingsAsOf}
+            onTallyReadActivityChange={changeChildTallyReadActivity}
           />
           </ErrorBoundary>
         )}
@@ -1642,13 +1798,15 @@ function App() {
               passportObserved={Boolean(passport)}
               companyReady={selectedCompanyReady}
               busy={tallyAction !== null}
-              settingsLocked={snapshotActive}
+              settingsLocked={endpointSettingsLockMessage !== null}
+              settingsLockMessage={endpointSettingsLockMessage}
               onHostChange={updateTallyHost}
               onPortChange={updateTallyPort}
               onCheck={checkTally}
             />
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
+            {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
             {companyError && !setupConnectionComplete && <TallyErrorNotice message={companyError} />}
 
             {setupConnectionComplete && (
@@ -1671,7 +1829,7 @@ function App() {
                             type="button"
                             key={key}
                             aria-pressed={selected}
-                            disabled={!current || tallyAction !== null || snapshotActive}
+                            disabled={!current || savedCompanySelectionLocked}
                             onClick={() => {
                               if (key === selectedCompany) return;
                               clearSelectedCompanyScope({
@@ -1694,7 +1852,7 @@ function App() {
                 ) : untrustedDiscoveredCompanies.length > 0 ? (
                   <div className="company-options" role="list" aria-label="Companies to verify">
                     {untrustedDiscoveredCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => (
-                      <button className="company-option" type="button" key={`${company.name}-${index}`} onClick={() => void bootstrapDirectCompany(company.name)} disabled={snapshotActive || tallyAction !== null}>
+                      <button className="company-option" type="button" key={`${company.name}-${index}`} onClick={() => void bootstrapDirectCompany(company.name)} disabled={savedCompanySelectionLocked}>
                         <Building2 size={20} />
                         <span>{company.name}</span>
                         <small>{tallyAction === "bootstrap" ? "Checking…" : "Use this company"}</small>
@@ -1705,7 +1863,7 @@ function App() {
                   <div className="setup-empty-state">
                     <Building2 size={28} />
                     <p>{untrustedDiscoveryError ? "Bridge could not list companies from Tally." : "No companies were found."}</p>
-                    <button className="secondary-action" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={snapshotActive || tallyAction !== null}>
+                    <button className="secondary-action" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={savedCompanySelectionLocked}>
                       {tallyAction === "discover" ? "Checking Tally…" : "Find companies"}
                     </button>
                   </div>
@@ -1729,7 +1887,7 @@ function App() {
                           type="button"
                           key={`other-${company.name}-${index}`}
                           onClick={() => void bootstrapDirectCompany(company.name)}
-                          disabled={snapshotActive || tallyAction !== null}
+                          disabled={savedCompanySelectionLocked}
                         >
                           <Building2 size={20} />
                           <span>{company.name}</span>
@@ -1742,14 +1900,14 @@ function App() {
                 <div className="setup-company-footer">
                   {selectedCompany && !selectedCompanyLive ? <p>Open this company in Tally, then check Tally again.</p> : null}
                   {selectedCompanyLive && !selectedCompanyReady && (
-                    <button className="primary" type="button" onClick={() => void saveReviewedTallySetup()} disabled={snapshotActive || tallyAction !== null || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyRecord?.guid}>
+                    <button className="primary" type="button" onClick={() => void saveReviewedTallySetup()} disabled={savedCompanySelectionLocked || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyRecord?.guid}>
                       {tallyAction === "save" ? "Saving company…" : "Use this company"}
                     </button>
                   )}
                   {selectedCompanyReady && (
                     <>
                       <p className="setup-complete" role="status"><Check size={18} /> {selectedCompanyRecord?.name} is ready.</p>
-                      <button className="primary" type="button" onClick={() => setView("outstandings")}>Open outstandings</button>
+                      <button className="primary" type="button" onClick={() => setView("outstandings")} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined}>Open outstandings</button>
                     </>
                   )}
                 </div>
@@ -1768,6 +1926,7 @@ function App() {
 
         {view === "mirror" && (
           <ErrorBoundary key="mirror" label="Accounting mirror and proof">
+          {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
           <MirrorProofScreen
             config={config}
             status={status}
@@ -1856,6 +2015,7 @@ function App() {
             snapshotActive={snapshotActive}
             snapshotError={snapshotError}
             snapshotStartOutcomeUnknown={snapshotStartOutcomeUnknown}
+            liveReadActionsLocked={childTallyReadCount > 0}
             setSnapshotStartOutcomeUnknown={setSnapshotStartOutcomeUnknown}
             startCoreSnapshot={startCoreSnapshot}
             cancelCoreSnapshot={cancelCoreSnapshot}
@@ -1995,6 +2155,24 @@ function mergeTallyCompanies(preferred: TallyCompany[], existing: TallyCompany[]
     });
   }
   return Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function clientIdentitySummaryDiscriminator(company: TallyCompany): string {
+  const booksFrom = company.books_from_yyyymmdd && /^\d{8}$/.test(company.books_from_yyyymmdd)
+    ? `${company.books_from_yyyymmdd.slice(0, 4)}-${company.books_from_yyyymmdd.slice(4, 6)}-${company.books_from_yyyymmdd.slice(6, 8)}`
+    : company.books_from_yyyymmdd ?? "not observed";
+  return [
+    `Company no. ${company.company_number ?? "not observed"}`,
+    `Books from ${booksFrom}`,
+  ].join(" · ");
+}
+
+function clientIdentityDiscriminator(company: TallyCompany): string {
+  return [
+    clientIdentitySummaryDiscriminator(company),
+    `GUID ${company.guid ?? "not observed"}`,
+    `Endpoint ${company.canonical_endpoint ?? "not observed"}`,
+  ].join(" · ");
 }
 
 function getCurrentFinancialYear(now = new Date()): { label: string; from: string; to: string } {

@@ -30,9 +30,11 @@ type Props = {
   /// Switches to the cross-client view. Present only when more than one book
   /// is open, because a scope switch with one option is noise.
   onViewAllClients?: () => void;
+  liveReadNavigationLocked: boolean;
   openBookCount?: number;
   asOf: string;
   onAsOfChange: (value: string) => void;
+  onTallyReadActivityChange: (delta: 1 | -1) => void;
 };
 
 function companyIdentityFor(company: NonNullable<Props["company"]>) {
@@ -128,9 +130,11 @@ export function OutstandingsScreen({
   company,
   onChangeSetup,
   onViewAllClients,
+  liveReadNavigationLocked,
   openBookCount = 1,
   asOf,
   onAsOfChange,
+  onTallyReadActivityChange,
 }: Props) {
   const [loadedResult, setLoadedResult] = React.useState<AsOfBoundValue<LoadResult> | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -222,6 +226,7 @@ export function OutstandingsScreen({
     requestVersion.current = version;
     setLoading(true);
     setError(null);
+    onTallyReadActivityChange(1);
     try {
       const next = await invoke<LoadResult>("fetch_tally_outstandings", argument);
       if (requestVersion.current !== version) return;
@@ -238,8 +243,9 @@ export function OutstandingsScreen({
       setError(operatorMessage(cause));
     } finally {
       if (requestVersion.current === version) setLoading(false);
+      onTallyReadActivityChange(-1);
     }
-  }, [ageingAnchor, asOf, config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, readPermitted, requestedAsOf]);
+  }, [ageingAnchor, asOf, config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, onTallyReadActivityChange, readPermitted, requestedAsOf]);
 
   React.useEffect(() => {
     const key = company ? `${companyIdentityFor(company)}:${ageingAnchor}` : null;
@@ -260,6 +266,7 @@ export function OutstandingsScreen({
     if (!company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
     let cancelled = false;
     setCurrencyCheck("checking");
+    onTallyReadActivityChange(1);
     void invoke<{ is_inr: boolean; mailing_name: string; currency_count: number }>(
       "detect_tally_base_currency",
       { request: {
@@ -279,11 +286,14 @@ export function OutstandingsScreen({
       })
       .catch(() => {
         if (!cancelled) setCurrencyCheck("undetermined");
+      })
+      .finally(() => {
+        onTallyReadActivityChange(-1);
       });
     return () => {
       cancelled = true;
     };
-  }, [config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, inrAssertedCompanyIdentity]);
+  }, [config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, inrAssertedCompanyIdentity, onTallyReadActivityChange]);
 
   // Must sit above the early returns below: a hook placed after them runs on
   // some renders and not others, which React rejects outright with "Rendered
@@ -492,7 +502,7 @@ export function OutstandingsScreen({
             <small id="outstandings-ageing-anchor-help">Refreshes the report and every statement export.</small>
           </label>
           {onViewAllClients && openBookCount > 1 && (
-            <button className="secondary-action" type="button" onClick={onViewAllClients}>
+            <button className="secondary-action" type="button" onClick={onViewAllClients} disabled={liveReadNavigationLocked}>
               <Building2 size={16} />
               Compare clients
             </button>

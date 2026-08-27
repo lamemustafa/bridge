@@ -25,6 +25,7 @@ type CompanyRef = {
   company_number: string;
   books_from_yyyymmdd: string;
   canonical_origin: string;
+  correlation_key?: string;
 };
 
 type Props = {
@@ -34,7 +35,9 @@ type Props = {
   /// Returns to the single-company view. The two screens are the same
   /// question at two altitudes, so the switch has to work both ways.
   onBack?: () => void;
+  liveReadNavigationLocked: boolean;
   asOf: string;
+  onTallyReadActivityChange: (delta: 1 | -1) => void;
 };
 
 type Report = {
@@ -120,7 +123,7 @@ function ageTier(days: number | null) {
   return 4;
 }
 
-export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asOf }: Props) {
+export function AllClientsScreen({ config, companies, onOpenCompany, onBack, liveReadNavigationLocked, asOf, onTallyReadActivityChange }: Props) {
   const [sort, setSort] = React.useState<SortPreference>(defaultSort);
   const [loadedEntries, setLoadedEntries] = React.useState<AsOfBoundValue<Entry[]> | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -212,6 +215,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     requestVersion.current = version;
     setLoading(true);
     setError(null);
+    onTallyReadActivityChange(1);
     try {
       const next = await invoke<Entry[]>("fetch_tally_outstandings_all_companies", argument);
       if (requestVersion.current !== version) return;
@@ -232,8 +236,9 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
       );
     } finally {
       if (requestVersion.current === version) setLoading(false);
+      onTallyReadActivityChange(-1);
     }
-  }, [ageingAnchor, asOf, config.host, config.port, companies.map((company) => company.guid).join("|")]);
+  }, [ageingAnchor, asOf, config.host, config.port, companies.map((company) => company.guid).join("|"), onTallyReadActivityChange]);
 
   const rows = React.useMemo(() => {
     if (!entries) return [];
@@ -384,6 +389,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
         role="row"
         type="button"
         key={row.companyGuid}
+        disabled={liveReadNavigationLocked}
         onClick={() => {
           const match = companies.find((company) =>
             company.guid === row.sourceGuid
@@ -451,7 +457,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
             <small>Applies to every client in this read.</small>
           </label>
           {onBack && (
-            <button className="secondary-action" type="button" onClick={onBack}>
+            <button className="secondary-action" type="button" onClick={onBack} disabled={liveReadNavigationLocked}>
               Back to one client
             </button>
           )}
@@ -511,7 +517,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
             {groupLabelError && <p className="client-group-label-error" role="alert">{groupLabelError}</p>}
           </section>
 
-          <div className="clients-table" role="table" aria-label="Outstandings by client">
+          <div className="clients-table" role="table" aria-label="Outstandings by client" tabIndex={0}>
             <div className="clients-row is-head" role="row">
               {([
                 ["client", "Client"],
