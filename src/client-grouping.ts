@@ -4,26 +4,26 @@ export type ClientGroupLabels = Record<string, string>;
 
 export function applyClientGroupLabel(
   labels: ClientGroupLabels,
-  companyGuid: string,
+  companyKey: string,
   label: string,
 ): ClientGroupLabels {
   const next = { ...labels };
   const normalized = label.trim();
-  if (normalized) next[companyGuid] = normalized;
-  else delete next[companyGuid];
+  if (normalized) next[companyKey] = normalized;
+  else delete next[companyKey];
   return next;
 }
 
 export function rollbackFailedClientGroupLabel(
   current: ClientGroupLabels,
-  companyGuid: string,
+  companyKey: string,
   attemptedLabel: string,
   persisted: ClientGroupLabels,
 ): ClientGroupLabels {
-  if ((current[companyGuid] ?? "").trim() !== attemptedLabel.trim()) {
+  if ((current[companyKey] ?? "").trim() !== attemptedLabel.trim()) {
     return current;
   }
-  return applyClientGroupLabel(current, companyGuid, persisted[companyGuid] ?? "");
+  return applyClientGroupLabel(current, companyKey, persisted[companyKey] ?? "");
 }
 
 /// Per-company counter of the most recently ISSUED group-label save. There is
@@ -37,10 +37,10 @@ export type ClientGroupLabelSaveSequence = Record<string, number>;
 /// (store it back) and the stamp to carry on that one request.
 export function issueClientGroupLabelSave(
   sequence: ClientGroupLabelSaveSequence,
-  companyGuid: string,
+  companyKey: string,
 ): { sequence: ClientGroupLabelSaveSequence; stamp: number } {
-  const stamp = (sequence[companyGuid] ?? 0) + 1;
-  return { sequence: { ...sequence, [companyGuid]: stamp }, stamp };
+  const stamp = (sequence[companyKey] ?? 0) + 1;
+  return { sequence: { ...sequence, [companyKey]: stamp }, stamp };
 }
 
 /// True only for the response belonging to the most recently issued save for
@@ -50,10 +50,10 @@ export function issueClientGroupLabelSave(
 /// would report on a request the user has already moved past.
 export function isLatestClientGroupLabelSave(
   sequence: ClientGroupLabelSaveSequence,
-  companyGuid: string,
+  companyKey: string,
   stamp: number,
 ): boolean {
-  return (sequence[companyGuid] ?? 0) === stamp;
+  return (sequence[companyKey] ?? 0) === stamp;
 }
 
 export function reconcileLoadedSortPreference<Sort>(
@@ -66,6 +66,7 @@ export function reconcileLoadedSortPreference<Sort>(
 
 export type GroupableClientRow = {
   companyGuid: string;
+  sourceGuid?: string;
   exactAmounts: {
     receivable: string | undefined;
     overdue: string | undefined;
@@ -124,9 +125,11 @@ export function groupClientRows<Row extends GroupableClientRow>(
 ): { groups: ClientGroup<Row>[]; ungroupedRows: Row[] } {
   const grouped = new Map<string, Row[]>();
   const ungroupedRows: Row[] = [];
-
   for (const row of rows) {
-    const label = labels[row.companyGuid]?.trim();
+    // Filing labels deliberately retain their pre-composite raw-GUID key.
+    // React still needs the composite key above so split books render as
+    // distinct rows; their optional labels, however, intentionally group.
+    const label = labels[row.sourceGuid ?? row.companyGuid]?.trim();
     if (!label) {
       ungroupedRows.push(row);
       continue;

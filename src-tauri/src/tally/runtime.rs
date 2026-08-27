@@ -1,4 +1,6 @@
-use super::{ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger};
+use super::{
+    ConnectionStatus, TallyClient, TallyCompany, TallyConfig, TallyLedger, VerifiedCompanyIdentity,
+};
 use super::{TallyProbeResult, TallyVoucher};
 use crate::observability::BodyBytesObservation;
 use crate::tally::connection::NativePairedRead;
@@ -44,6 +46,32 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const MAX_ENDPOINT_SESSIONS: usize = 32;
+
+/// Re-enumerate the complete identity immediately before or after a scoped
+/// read. Tally accepts a company name as the scope selector, so the GUID alone
+/// is not a sufficient witness when company names differ only by presentation.
+async fn bracket_verified_company_identity(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+) -> anyhow::Result<()> {
+    let companies = client.fetch_companies().await?;
+    if companies
+        .iter()
+        .any(|company| identity.is_presentation_equivalent_guid_sibling(company))
+    {
+        anyhow::bail!(
+            "Tally returned a presentation-equivalent same-GUID company with a distinct book tuple"
+        );
+    }
+    let matches = companies
+        .iter()
+        .filter(|company| identity.matches_observed_company(company))
+        .count();
+    if matches != 1 {
+        anyhow::bail!("Tally complete company identity was absent or ambiguous");
+    }
+    Ok(())
+}
 
 /// Private capability witness for the future native-report + ledger-residual
 /// implementation. There is intentionally no constructor: a future promotion
@@ -1308,25 +1336,51 @@ impl TallyRuntime {
         .await
     }
 
+    /// Re-enumerates companies while one reviewed setup operation holds the
+    /// exclusive cached-probe reservation. This is deliberately separate from
+    /// `fetch_companies`: an ordinary read must remain forbidden while setup
+    /// authority is reserved, but the reservation owner needs a fresh tuple
+    /// check before it can qualify its selected reads.
+    pub async fn fetch_companies_for_reservation(
+        &self,
+        config: TallyConfig,
+        reservation: &CachedProbeReservation,
+    ) -> anyhow::Result<Vec<TallyCompany>> {
+        reservation.authorize(self, &config)?;
+        self.execute(
+            config,
+            ReadOperation::CompanyList,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            |client| async move { client.fetch_companies().await },
+        )
+        .await
+    }
+
     pub async fn fetch_ledgers(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<Vec<TallyLedger>> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::MasterExport,
             ReadRetryPolicy::transient_default(),
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 async move {
-                    client
-                        .fetch_ledgers(&company, &expected_company_guid, boundary_profile)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let ledgers = client
+                        .fetch_ledgers(
+                            identity.display_name(),
+                            identity.company_guid(),
+                            boundary_profile,
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(ledgers)
                 }
             },
         )
@@ -1340,21 +1394,26 @@ impl TallyRuntime {
     pub async fn fetch_standard_ledger_catalog(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<Vec<TallyLedger>> {
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::MasterExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 async move {
-                    client
-                        .fetch_standard_ledger_catalog(&company, &expected_company_guid)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let ledgers = client
+                        .fetch_standard_ledger_catalog(
+                            identity.display_name(),
+                            identity.company_guid(),
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(ledgers)
                 }
             },
         )
@@ -1365,21 +1424,23 @@ impl TallyRuntime {
         &self,
         config: TallyConfig,
         reservation: &CachedProbeReservation,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<SelectedReadObservation> {
         reservation.authorize(self, &config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::MasterExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 async move {
-                    client
-                        .qualify_selected_ledgers(&company, &expected_company_guid)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let observation = client
+                        .qualify_selected_ledgers(identity.display_name(), identity.company_guid())
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(observation)
                 }
             },
         )
@@ -1389,25 +1450,32 @@ impl TallyRuntime {
     pub async fn fetch_vouchers(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         from: String,
         to: String,
     ) -> anyhow::Result<Vec<TallyVoucher>> {
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::VoucherExport,
             ReadRetryPolicy::transient_default(),
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 let from = from.clone();
                 let to = to.clone();
                 async move {
-                    client
-                        .fetch_vouchers(&company, &expected_company_guid, &from, &to)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let vouchers = client
+                        .fetch_vouchers(
+                            identity.display_name(),
+                            identity.company_guid(),
+                            &from,
+                            &to,
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(vouchers)
                 }
             },
         )
@@ -1437,25 +1505,27 @@ impl TallyRuntime {
     async fn fetch_outstandings_native(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::VoucherExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 let as_of = as_of.clone();
                 async move {
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let company = identity.display_name();
+                    let expected_company_guid = identity.company_guid();
                     let extent = client
-                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .fetch_company_book_extent(company, expected_company_guid)
                         .await?;
                     if &as_of < extent.books_from() {
                         return Ok(partial_result("as_of_precedes_books_from"));
@@ -1473,7 +1543,7 @@ impl TallyRuntime {
                     };
                     let mut total_bytes = 0usize;
                     let read =
-                        |kind| render_native_bills_request(kind, &company, &books_from, &as_of);
+                        |kind| render_native_bills_request(kind, company, &books_from, &as_of);
                     let receivable = client
                         .fetch_native_report_paired(read(NativeBillsReportKind::Receivable))
                         .await?;
@@ -1491,7 +1561,7 @@ impl TallyRuntime {
                     // way to Sundry Debtors/Creditors without importing the
                     // legacy custom-TDL profile.
                     let groups = client
-                        .fetch_native_report_paired(render_native_group_snapshot_request(&company))
+                        .fetch_native_report_paired(render_native_group_snapshot_request(company))
                         .await?;
                     let NativePairedRead::Stable {
                         body: group_body,
@@ -1516,7 +1586,7 @@ impl TallyRuntime {
 
                     let ledgers = client
                         .fetch_native_report_paired(render_native_ledger_snapshot_request(
-                            &company,
+                            company,
                             &snapshot_period,
                         ))
                         .await?;
@@ -1534,11 +1604,12 @@ impl TallyRuntime {
                     // the whole sequence is the only identity evidence
                     // available.
                     let closing_extent = client
-                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .fetch_company_book_extent(company, expected_company_guid)
                         .await?;
                     if closing_extent != extent {
                         return Ok(partial_result("book_changed_during_read"));
                     }
+                    bracket_verified_company_identity(&client, &identity).await?;
 
                     let receivable_rows =
                         parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;
@@ -1550,7 +1621,7 @@ impl TallyRuntime {
                         NativeLedgerSnapshotAdmission::Partial(partial) => return Ok(partial),
                     };
                     let group_rows =
-                        parse_native_group_snapshot(&group_body, &expected_company_guid)?;
+                        parse_native_group_snapshot(&group_body, expected_company_guid)?;
 
                     // Ageing anchors on the DUE date. Measured 2026-08-07: on a
                     // bill carrying a 30-day credit period Tally's own
@@ -1559,7 +1630,7 @@ impl TallyRuntime {
                     // period exists the two dates coincide, so this is correct
                     // on both books.
                     let result = compute_native_outstandings(
-                        &company,
+                        company,
                         &receivable_rows,
                         &payable_rows,
                         NativeMasterSnapshot {
@@ -1605,35 +1676,38 @@ impl TallyRuntime {
     pub async fn detect_base_currency(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<CompanyCurrency> {
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::VoucherExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 async move {
+                    bracket_verified_company_identity(&client, &identity).await?;
                     // Pin identity first: a currency read against the wrong
                     // company is worse than none.
                     let extent = client
-                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .fetch_company_book_extent(identity.display_name(), identity.company_guid())
                         .await?;
                     let body = client
-                        .fetch_native_report_paired(render_company_currency_request(&company))
+                        .fetch_native_report_paired(render_company_currency_request(
+                            identity.display_name(),
+                        ))
                         .await?;
                     let NativePairedRead::Stable { body, .. } = body else {
                         anyhow::bail!("Tally currency masters changed between paired reads");
                     };
                     let closing_extent = client
-                        .fetch_company_book_extent(&company, &expected_company_guid)
+                        .fetch_company_book_extent(identity.display_name(), identity.company_guid())
                         .await?;
                     if closing_extent != extent {
                         anyhow::bail!("Tally company book changed during currency detection");
                     }
+                    bracket_verified_company_identity(&client, &identity).await?;
                     Ok(parse_company_currency(&body)?)
                 }
             },
@@ -1650,29 +1724,20 @@ impl TallyRuntime {
     pub async fn fetch_outstandings(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<OutstandingsLoadResult> {
-        self.fetch_outstandings_native(
-            config,
-            company,
-            expected_company_guid,
-            as_of,
-            currency_assertion,
-            ageing_anchor,
-        )
-        .await
+        self.fetch_outstandings_native(config, identity, as_of, currency_assertion, ageing_anchor)
+            .await
     }
 
     #[cfg(feature = "voucher-scan")]
     pub async fn fetch_outstandings(
         &self,
         config: TallyConfig,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
@@ -1696,8 +1761,7 @@ impl TallyRuntime {
             return self
                 .fetch_outstandings_native(
                     config,
-                    company,
-                    expected_company_guid,
+                    identity,
                     as_of,
                     currency_assertion,
                     ageing_anchor,
@@ -1714,18 +1778,21 @@ impl TallyRuntime {
                 select_date_boundary_profile(cached_probe.as_ref().map(|probe| &probe.profile))
             });
         let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
         let result = self
             .execute(
                 config,
                 ReadOperation::VoucherExport,
                 ReadRetryPolicy::SINGLE_ATTEMPT,
                 move |client| {
-                    let company = company.clone();
-                    let expected_company_guid = expected_company_guid.clone();
+                    let identity = identity.clone();
                     let as_of = as_of.clone();
                     async move {
+                        bracket_verified_company_identity(&client, &identity).await?;
+                        let company = identity.display_name();
+                        let expected_company_guid = identity.company_guid();
                         let extent = client
-                            .fetch_company_book_extent(&company, &expected_company_guid)
+                            .fetch_company_book_extent(company, expected_company_guid)
                             .await?;
                         // The reporting window must never run past the as-of date.
                         // A future-dated voucher pushes LastVoucherDate beyond
@@ -2012,6 +2079,7 @@ impl TallyRuntime {
                         ) {
                             return Ok(partial_result(reason_code));
                         }
+                        bracket_verified_company_identity(&client, &identity).await?;
                         match assemble_partitioned_scan(
                             &extent,
                             requested,
@@ -2049,25 +2117,32 @@ impl TallyRuntime {
         &self,
         config: TallyConfig,
         reservation: &CachedProbeReservation,
-        company: String,
-        expected_company_guid: String,
+        identity: &VerifiedCompanyIdentity,
         from: String,
         to: String,
     ) -> anyhow::Result<SelectedReadObservation> {
         reservation.authorize(self, &config)?;
+        let identity = identity.clone();
         self.execute(
             config,
             ReadOperation::VoucherExport,
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
-                let company = company.clone();
-                let expected_company_guid = expected_company_guid.clone();
+                let identity = identity.clone();
                 let from = from.clone();
                 let to = to.clone();
                 async move {
-                    client
-                        .qualify_selected_vouchers(&company, &expected_company_guid, &from, &to)
-                        .await
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let observation = client
+                        .qualify_selected_vouchers(
+                            identity.display_name(),
+                            identity.company_guid(),
+                            &from,
+                            &to,
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(observation)
                 }
             },
         )
@@ -2367,11 +2442,17 @@ fn map_execution_error(error: ReadExecutionError<anyhow::Error>) -> anyhow::Erro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::VerifiedCompanyIdentity;
     use crate::tally::TallyProduct;
     use anyhow::Context;
     use bridge_tally_core::CapabilityProfile;
     use std::collections::BTreeMap;
+    use tally_protocol_simulator::Fixture;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn verified_identity(name: &str, guid: &str) -> VerifiedCompanyIdentity {
+        VerifiedCompanyIdentity::test_fixture(name, guid)
+    }
 
     fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
         let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
@@ -2485,6 +2566,7 @@ mod tests {
             "../../crates/bridge-tally-protocol/tests/fixtures/native/bills_payable_aarav.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        let company_list = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Aarav Trading Company Demo"><GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><COMPANYNUMBER TYPE="Number">1</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
 
         let extent = EXTENT.replacen(
             r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
@@ -2498,30 +2580,43 @@ mod tests {
             .expect("bind synthetic outstandings server");
         let address = listener.local_addr().expect("synthetic server address");
         let server = tokio::spawn(async move {
-            for index in 0..24 {
+            let mut source_post_index = 0;
+            for index in 0..26 {
                 let (mut socket, _) =
                     tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
                         .await
                         .expect("outstandings request timed out")
                         .expect("accept outstandings request");
                 let request = read_http_request(&mut socket).await;
-                let expected_method: &[u8] = if index % 2 == 0 {
-                    b"POST /"
+                let response = if request.starts_with(b"GET /status") {
+                    utf8_status_response(STATUS)
                 } else {
-                    b"GET /status"
-                };
-                assert!(
-                    request.starts_with(expected_method),
-                    "request {index} did not preserve paired-read health bracketing"
-                );
-                let response = match index {
-                    0 | 2 | 20 | 22 => utf16_xml_response(&extent),
-                    1 | 3 | 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 => {
-                        utf8_status_response(STATUS)
+                    assert!(request.starts_with(b"POST /"), "request {index}");
+                    let body_start = request
+                        .windows(4)
+                        .position(|bytes| bytes == b"\r\n\r\n")
+                        .expect("complete request headers")
+                        + 4;
+                    let xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+                        &request[body_start..],
+                        request.len() - body_start,
+                    )
+                    .expect("decode request")
+                    .text;
+                    if xml.contains("<ID>BridgeCompanyExtent</ID>")
+                        && !xml.contains("<SVCURRENTCOMPANY>")
+                    {
+                        utf16_xml_response(company_list)
+                    } else {
+                        let response = match source_post_index {
+                            0 | 1 | 10 | 11 => utf16_xml_response(&extent),
+                            2 | 3 => utf16_xml_response(RECEIVABLE),
+                            6 | 7 => utf16_xml_response(PAYABLE),
+                            _ => utf16_xml_response_bytes(FOREX_LEDGER_CAPTURE),
+                        };
+                        source_post_index += 1;
+                        response
                     }
-                    4 | 6 => utf16_xml_response(RECEIVABLE),
-                    12 | 14 => utf16_xml_response(PAYABLE),
-                    _ => utf16_xml_response_bytes(FOREX_LEDGER_CAPTURE),
                 };
                 socket.write_all(&response).await.expect("write response");
             }
@@ -2533,8 +2628,10 @@ mod tests {
                     host: address.ip().to_string(),
                     port: address.port(),
                 },
-                "Aarav Trading Company Demo".to_string(),
-                "bb8ad19e-6aef-4239-a917-87fec0c6215e".to_string(),
+                &verified_identity(
+                    "Aarav Trading Company Demo",
+                    "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+                ),
                 TallyDate::parse("20260401").expect("captured book as-of"),
                 OutstandingsCurrencyAssertion::Inr,
                 OutstandingsAgeingAnchor::DueDate,
@@ -2817,6 +2914,7 @@ mod tests {
             "../../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        let company_list = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Aarav Trading Company Demo"><GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><COMPANYNUMBER TYPE="Number">1</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
 
         let currency = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
             CURRENCY,
@@ -2848,21 +2946,8 @@ mod tests {
             .expect("bind synthetic currency server");
         let address = listener.local_addr().expect("synthetic server address");
         let server = tokio::spawn(async move {
-            let responses = [
-                opening_extent.as_str(),
-                STATUS,
-                opening_extent.as_str(),
-                STATUS,
-                currency.as_str(),
-                STATUS,
-                currency.as_str(),
-                STATUS,
-                closing_extent.as_str(),
-                STATUS,
-                closing_extent.as_str(),
-                STATUS,
-            ];
-            for (index, body) in responses.into_iter().enumerate() {
+            let mut source_post_index = 0;
+            for index in 0..13 {
                 let (mut socket, _) =
                     tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
                         .await
@@ -2870,19 +2955,35 @@ mod tests {
                         .expect("accept currency request");
                 let mut request = [0_u8; 16 * 1024];
                 let bytes_read = socket.read(&mut request).await.expect("read request");
-                let expected_method = if index % 2 == 0 {
-                    "POST /"
+                let request = &request[..bytes_read];
+                let response = if request.starts_with(b"GET /status") {
+                    utf8_status_response(STATUS)
                 } else {
-                    "GET /status"
-                };
-                assert!(
-                    String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_method),
-                    "request {index} did not preserve paired-read health bracketing"
-                );
-                let response = if index % 2 == 0 {
-                    utf16_xml_response(body)
-                } else {
-                    utf8_status_response(body)
+                    assert!(request.starts_with(b"POST /"), "request {index}");
+                    let body_start = request
+                        .windows(4)
+                        .position(|bytes| bytes == b"\r\n\r\n")
+                        .expect("complete request headers")
+                        + 4;
+                    let xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+                        &request[body_start..],
+                        request.len() - body_start,
+                    )
+                    .expect("decode request")
+                    .text;
+                    if xml.contains("<ID>BridgeCompanyExtent</ID>")
+                        && !xml.contains("<SVCURRENTCOMPANY>")
+                    {
+                        utf16_xml_response(company_list)
+                    } else {
+                        let response = match source_post_index {
+                            0 | 1 => utf16_xml_response(&opening_extent),
+                            2 | 3 => utf16_xml_response(&currency),
+                            _ => utf16_xml_response(&closing_extent),
+                        };
+                        source_post_index += 1;
+                        response
+                    }
                 };
                 socket.write_all(&response).await.expect("write response");
             }
@@ -2895,8 +2996,10 @@ mod tests {
                     host: address.ip().to_string(),
                     port: address.port(),
                 },
-                "Aarav Trading Company Demo".to_string(),
-                "bb8ad19e-6aef-4239-a917-87fec0c6215e".to_string(),
+                &verified_identity(
+                    "Aarav Trading Company Demo",
+                    "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+                ),
             )
             .await;
 
@@ -2922,6 +3025,8 @@ mod tests {
             companies: vec![TallyCompany {
                 name: "Synthetic Company".to_string(),
                 guid: Some("synthetic-guid".to_string()),
+                company_number: None,
+                books_from: None,
             }],
             profile: CapabilityProfile {
                 profile_version: 2,
@@ -3290,8 +3395,7 @@ mod tests {
                     host: "not-a-loopback-endpoint".to_string(),
                     port: 9000,
                 },
-                "Synthetic Company".to_string(),
-                "synthetic-guid".to_string(),
+                &verified_identity("Synthetic Company", "synthetic-guid"),
                 TallyDate::parse("20260731").unwrap(),
                 OutstandingsCurrencyAssertion::Inr,
                 OutstandingsAgeingAnchor::DueDate,
@@ -3314,8 +3418,7 @@ mod tests {
                     host: "not-a-loopback-endpoint".to_string(),
                     port: 9000,
                 },
-                "Synthetic Company".to_string(),
-                "synthetic-guid".to_string(),
+                &verified_identity("Synthetic Company", "synthetic-guid"),
                 TallyDate::parse("20260731").unwrap(),
                 OutstandingsCurrencyAssertion::Inr,
                 OutstandingsAgeingAnchor::DueDate,
@@ -3407,6 +3510,17 @@ mod tests {
     #[test]
     fn endpoint_identity_aliases_only_localhost_to_ipv4_loopback() {
         let runtime = TallyRuntime::default();
+        let localhost_identity = EndpointKey::from_config(&TallyConfig {
+            host: "localhost".to_string(),
+            port: 9000,
+        })
+        .expect("localhost identity");
+        let ipv4_identity = EndpointKey::from_config(&TallyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9000,
+        })
+        .expect("IPv4 loopback identity");
+        assert_eq!(localhost_identity, ipv4_identity);
         let first = runtime
             .session(TallyConfig {
                 host: "localhost".to_string(),
@@ -3652,8 +3766,7 @@ mod tests {
             .qualify_selected_ledgers(
                 config,
                 &reservation,
-                "Synthetic Company".to_string(),
-                "synthetic-guid".to_string(),
+                &verified_identity("Synthetic Company", "synthetic-guid"),
             )
             .await
             .expect_err("another runtime must not borrow the reservation");
@@ -3665,6 +3778,112 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn production_identity_bracket_rechecks_the_tuple_around_selected_ledger_qualification() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind qualification server");
+        let address = listener.local_addr().expect("qualification server address");
+        let company_list = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="BRIDGE SYNTHETIC BOOK"><GUID TYPE="String">00000000-0000-4000-8000-000000000001</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let ledger_export = Fixture::NormalExport.body().into_owned();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for body in [
+                company_list.to_string(),
+                company_list.to_string(),
+                ledger_export,
+                company_list.to_string(),
+            ] {
+                let (mut socket, _) = listener.accept().await.expect("accept reserved read");
+                let request = read_http_request(&mut socket).await;
+                assert!(request.starts_with(b"POST /"));
+                requests.push(request);
+                socket
+                    .write_all(&utf16_xml_response(body))
+                    .await
+                    .expect("write reserved read response");
+            }
+            requests
+        });
+        let runtime = TallyRuntime::default();
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let session = runtime.session(config.clone()).expect("runtime session");
+        let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
+        *session.cached_probe.write().expect("capability cache") = Some(CachedProbe {
+            review_id: "review-qualified-tuple".to_string(),
+            observed_at_unix_ms,
+            freshness_origin_unix_ms: observed_at_unix_ms,
+            result: synthetic_probe_result(),
+            reserved: false,
+        });
+        drop(session);
+        let reservation = runtime
+            .reserve_cached_probe_fresh(&config, "review-qualified-tuple", 300_000)
+            .expect("reserve reviewed setup")
+            .expect("fresh review");
+
+        let ordinary_read = runtime
+            .fetch_companies(config.clone())
+            .await
+            .expect_err("ordinary reads must remain blocked by the reservation");
+        assert!(ordinary_read
+            .to_string()
+            .contains("reviewed setup operation is in progress"));
+        let companies = runtime
+            .fetch_companies_for_reservation(config.clone(), &reservation)
+            .await
+            .expect("reservation owner may recheck company tuple");
+        assert_eq!(companies.len(), 1);
+        let identity = VerifiedCompanyIdentity::from_observed_companies(
+            "BRIDGE SYNTHETIC BOOK".to_string(),
+            "00000000-0000-4000-8000-000000000001".to_string(),
+            "100001".to_string(),
+            "20260401".to_string(),
+            &[TallyCompany {
+                name: "BRIDGE SYNTHETIC BOOK".to_string(),
+                guid: Some("00000000-0000-4000-8000-000000000001".to_string()),
+                company_number: Some("100001".to_string()),
+                books_from: Some("20260401".to_string()),
+            }],
+        )
+        .expect("synthetic qualification identity is complete");
+        let observation = runtime
+            .qualify_selected_ledgers(config, &reservation, &identity)
+            .await
+            .expect("qualification must run after the reserved tuple recheck");
+        assert_eq!(observation.result_bucket, "non_empty_observed");
+        let requests = server.await.expect("finish reserved qualification server");
+        assert_eq!(requests.len(), 4);
+        let decoded = requests
+            .iter()
+            .map(|request| {
+                let body_start = request
+                    .windows(4)
+                    .position(|bytes| bytes == b"\r\n\r\n")
+                    .expect("request has complete HTTP headers")
+                    + 4;
+                bridge_tally_protocol::decode_tally_text_bytes_limited(
+                    &request[body_start..],
+                    request.len() - body_start,
+                )
+                .expect("decode dispatched Tally request")
+                .text
+            })
+            .collect::<Vec<_>>();
+        for (index, request) in [0, 1, 3].into_iter().map(|index| (index, &decoded[index])) {
+            assert!(
+                request.contains("<TYPE>Collection</TYPE>"),
+                "request {index}"
+            );
+            assert!(request.contains("<TYPE>Company</TYPE>"), "request {index}");
+            assert!(!request.contains("<SVCURRENTCOMPANY>"), "request {index}");
+        }
+        assert!(decoded[2].contains("<SVCURRENTCOMPANY>BRIDGE SYNTHETIC BOOK</SVCURRENTCOMPANY>"));
     }
 
     #[test]
@@ -3769,8 +3988,7 @@ mod tests {
                 .qualify_selected_ledgers(
                     task_config,
                     &reservation,
-                    "Synthetic Company".to_string(),
-                    "synthetic-guid".to_string(),
+                    &verified_identity("Synthetic Company", "synthetic-guid"),
                 )
                 .await;
         });

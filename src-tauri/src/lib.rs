@@ -102,6 +102,7 @@ pub fn run() {
             commands::fetch_tally_outstandings_all_companies,
             commands::load_client_group_labels,
             commands::save_client_group_label,
+            commands::replace_client_group_labels,
             commands::load_client_sort_preference,
             commands::save_client_sort_preference,
             commands::detect_tally_base_currency,

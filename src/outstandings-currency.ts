@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export function canStartOutstandingsRead(
-  company: { name: string; guid: string } | undefined,
-  inrAssertedCompanyGuid: string | null,
+  companyIdentityKey: string | null,
+  inrAssertedCompanyIdentity: string | null,
 ) {
-  return company?.guid === inrAssertedCompanyGuid;
+  return companyIdentityKey !== null && companyIdentityKey === inrAssertedCompanyIdentity;
 }
 
 export type OutstandingsCurrencyAssertion = "INR";

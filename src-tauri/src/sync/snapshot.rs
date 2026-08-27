@@ -3526,6 +3526,9 @@ fn tally_error_code(error: &TallyError) -> &'static str {
             "capability_probe_required" => "capability_probe_required",
             "company_export_invalid" => "company_export_invalid",
             "company_identity_ambiguous" => "company_identity_ambiguous",
+            "company_identity_display_scope_ambiguous" => {
+                "company_identity_display_scope_ambiguous"
+            }
             "company_identity_not_found" => "company_identity_not_found",
             "group_export_invalid" => "group_export_invalid",
             "http_status_failure" => "http_status_failure",
@@ -3684,7 +3687,8 @@ mod tests {
         RunOutcome, SourceIdentityInput, VerificationState,
     };
     use crate::tally::{
-        connector::simulator_test_lock, RuntimeTallyConnector, TallyConfig, TallyRuntime,
+        company_source_identity, connector::simulator_test_lock, RuntimeTallyConnector,
+        TallyConfig, TallyRuntime,
     };
 
     use super::*;
@@ -4670,10 +4674,15 @@ mod tests {
         plan.resume_key = "resume-transport-adaptive-split".to_string();
         plan.run_id = "run-transport-adaptive-split".to_string();
         plan.pack_schema_version = bridge_tally_core::CORE_ACCOUNTING_SCHEMA_VERSION;
-        let company_guid = &plan.company.identity.company_guid;
+        let company_guid = plan.company.identity.company_guid.clone();
         let company_extent = || {
             format!(
                 r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260731</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20260701</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{company_guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            )
+        };
+        let company_list = || {
+            format!(
+                r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
             )
         };
         let native_groups = || {
@@ -4692,11 +4701,13 @@ mod tests {
             )
         };
         assert!(
-            parse_native_ledger_source_records_with_evidence(&native_ledgers(), company_guid)
+            parse_native_ledger_source_records_with_evidence(&native_ledgers(), &company_guid)
                 .is_ok(),
             "the synthetic native-ledger response must satisfy the dispatched parser"
         );
         let simulator = SequenceSimulator::spawn(vec![
+            ScenarioPlan::new(Fixture::SyntheticXml(company_list()))
+                .with_encoding(WireEncoding::Utf16Le),
             ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
                 .with_encoding(WireEncoding::Utf16Le),
             ScenarioPlan::new(Fixture::SyntheticXml(company_extent()))
@@ -4736,12 +4747,34 @@ mod tests {
             })
             .with_encoding(WireEncoding::Utf16Le)
             .with_framing(ResponseFraming::ConnectionClose),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_list()))
+                .with_encoding(WireEncoding::Utf16Le),
         ])
         .unwrap();
         let config = TallyConfig {
             host: "127.0.0.1".to_string(),
             port: simulator.address().port(),
         };
+        plan.company.identity = company_source_identity(
+            &format!("tally_xml_http:http://127.0.0.1:{}", config.port),
+            &company_guid,
+            "100001",
+            "Synthetic Company",
+            "20260401",
+        );
+        let listed = bridge_tally_protocol::parse_companies_from_collection(&company_list())
+            .expect("synthetic CompanyListV2 response parses");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            company_source_identity(
+                &plan.company.identity.bridge_source_lineage,
+                listed[0].guid.as_deref().expect("company GUID"),
+                listed[0].company_number.as_deref().expect("company number"),
+                &listed[0].name,
+                listed[0].books_from.as_deref().expect("books from"),
+            ),
+            plan.company.identity,
+        );
         let runtime = TallyRuntime::with_transport_policy(TransportPolicy {
             request_timeout: std::time::Duration::from_secs(30),
             status_response_max_bytes: TEST_RESPONSE_LIMIT,
@@ -4793,7 +4826,7 @@ mod tests {
                 .count(),
             2
         );
-        assert_eq!(requests.len(), 16);
+        assert_eq!(requests.len(), 18);
         assert!(requests.iter().all(|request| request.request_processed));
     }
 

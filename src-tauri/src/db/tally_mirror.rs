@@ -48,6 +48,9 @@ const MIRROR_MIGRATION_V21: &str =
     include_str!("migrations/0021_tally_write_canary_preflight_target_binding.sql");
 const MIRROR_MIGRATION_V22: &str =
     include_str!("migrations/0022_tally_bomless_utf16_read_evidence.sql");
+const MIRROR_MIGRATION_V23: &str =
+    include_str!("migrations/0023_tally_composite_company_identity.sql");
+const MIRROR_MIGRATION_V24: &str = include_str!("migrations/0024_tally_selected_read_scope_v2.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -238,6 +241,8 @@ pub struct ReviewedSetupInput {
     pub capability: CapabilitySnapshotInput,
     pub company_display_name: String,
     pub company_identity: SourceIdentityInput,
+    pub company_number: String,
+    pub books_from_yyyymmdd: String,
     pub selected_read_scope: Option<SelectedReadScopeInput>,
 }
 
@@ -249,6 +254,8 @@ pub struct SelectedReadScopeInput {
     pub voucher_profile_id: String,
     pub voucher_from_yyyymmdd: String,
     pub voucher_to_yyyymmdd: String,
+    pub company_number: String,
+    pub books_from_yyyymmdd: String,
     pub observed_at_unix_ms: i64,
     pub observations: Vec<SelectedReadObservationInput>,
 }
@@ -293,12 +300,27 @@ pub(crate) struct SelectedReadScopeCommitmentMaterial {
     pub canonical_origin: String,
     pub company_guid_ascii_casefolded: String,
     pub company_name: String,
+    pub company_number: String,
+    pub books_from_yyyymmdd: String,
     pub ledger_profile_id: String,
     pub voucher_profile_id: String,
     pub voucher_from_yyyymmdd: String,
     pub voucher_to_yyyymmdd: String,
     pub observed_at_unix_ms: i64,
     pub observations: Vec<SelectedReadObservationCommitmentMaterial>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SelectedReadScopeCommitmentMaterialV1 {
+    parent_review_commitment_sha256: String,
+    canonical_origin: String,
+    company_guid_ascii_casefolded: String,
+    ledger_profile_id: String,
+    voucher_profile_id: String,
+    voucher_from_yyyymmdd: String,
+    voucher_to_yyyymmdd: String,
+    observed_at_unix_ms: i64,
+    observations: Vec<SelectedReadObservationCommitmentMaterial>,
 }
 
 #[derive(Serialize)]
@@ -311,10 +333,32 @@ struct SelectedReadScopeCommitmentEnvelope<'a> {
     completeness_claimed: bool,
 }
 
+#[derive(Serialize)]
+struct SelectedReadScopeCommitmentEnvelopeV1<'a> {
+    schema: &'static str,
+    #[serde(flatten)]
+    material: &'a SelectedReadScopeCommitmentMaterialV1,
+    no_writes_attempted: bool,
+    raw_records_retained: bool,
+    completeness_claimed: bool,
+}
+
 pub(crate) fn selected_read_scope_commitment_sha256(
     material: &SelectedReadScopeCommitmentMaterial,
 ) -> Result<String, MirrorError> {
     sha256_json(&SelectedReadScopeCommitmentEnvelope {
+        schema: "bridge.tally.selected-read-scope/2",
+        material,
+        no_writes_attempted: true,
+        raw_records_retained: false,
+        completeness_claimed: false,
+    })
+}
+
+fn selected_read_scope_commitment_sha256_v1(
+    material: &SelectedReadScopeCommitmentMaterialV1,
+) -> Result<String, MirrorError> {
+    sha256_json(&SelectedReadScopeCommitmentEnvelopeV1 {
         schema: "bridge.tally.selected-read-scope/1",
         material,
         no_writes_attempted: true,
@@ -336,11 +380,16 @@ pub struct SnapshotSourcePin {
     pub canonical_origin: String,
     pub display_name: String,
     pub company_guid: String,
+    pub company_number: String,
+    pub books_from_yyyymmdd: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PersistedCompanyProfile {
     pub name: String,
+    pub guid: String,
+    pub company_number: String,
+    pub books_from_yyyymmdd: String,
     pub guid_observed: bool,
     pub mirror_company_id: String,
     pub correlation_key: String,
@@ -933,17 +982,21 @@ impl TallyMirrorRepository {
         let total_profiles = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_companies AS c \
              WHERE c.identity_confidence = 'observed' \
-               AND c.company_guid IS NOT NULL AND TRIM(c.company_guid) <> ''",
+               AND c.company_guid IS NOT NULL AND TRIM(c.company_guid) <> '' \
+               AND c.company_number IS NOT NULL AND TRIM(c.company_number) <> '' \
+               AND c.books_from_yyyymmdd IS NOT NULL AND TRIM(c.books_from_yyyymmdd) <> ''",
         )
         .fetch_one(&mut *transaction)
         .await?;
         let rows = sqlx::query(
             "SELECT c.id, c.display_name, c.company_guid, c.identity_confidence, \
-             c.last_observed_at_unix_ms, e.canonical_origin \
+             c.company_number, c.books_from_yyyymmdd, c.last_observed_at_unix_ms, e.canonical_origin \
              FROM tally_companies AS c \
              JOIN tally_endpoints AS e ON e.id = c.endpoint_id \
              WHERE c.identity_confidence = 'observed' \
                AND c.company_guid IS NOT NULL AND TRIM(c.company_guid) <> '' \
+               AND c.company_number IS NOT NULL AND TRIM(c.company_number) <> '' \
+               AND c.books_from_yyyymmdd IS NOT NULL AND TRIM(c.books_from_yyyymmdd) <> '' \
              ORDER BY c.last_observed_at_unix_ms DESC, c.id ASC LIMIT ?1",
         )
         .bind(i64::from(LIMIT))
@@ -955,13 +1008,22 @@ impl TallyMirrorRepository {
             .map(|row| {
                 let canonical_endpoint: String = row.try_get("canonical_origin")?;
                 let company_guid: String = row.try_get("company_guid")?;
+                let company_number: String = row.try_get("company_number")?;
+                let books_from_yyyymmdd: String = row.try_get("books_from_yyyymmdd")?;
+                let name: String = row.try_get("display_name")?;
                 Ok(PersistedCompanyProfile {
-                    name: row.try_get("display_name")?,
+                    name: name.clone(),
+                    guid: company_guid.clone(),
+                    company_number: company_number.clone(),
+                    books_from_yyyymmdd: books_from_yyyymmdd.clone(),
                     guid_observed: true,
                     mirror_company_id: row.try_get("id")?,
                     correlation_key: company_profile_correlation_key(
                         &canonical_endpoint,
                         &company_guid,
+                        &company_number,
+                        &name,
+                        &books_from_yyyymmdd,
                     ),
                     identity_confidence: row.try_get("identity_confidence")?,
                     canonical_endpoint,
@@ -1047,12 +1109,15 @@ impl TallyMirrorRepository {
         &self,
         company_id: &str,
     ) -> Result<SnapshotSourcePin, MirrorError> {
+        // See TALLY_PROTOCOL_REFERENCE.md §9.11b: a year-end child can
+        // inherit its parent's GUID, so a persisted pin needs the full
+        // observed tuple rather than a GUID-only lookup.
         if company_id.trim().is_empty() {
             return Err(MirrorError::InvalidInput("company_pin"));
         }
         let row = sqlx::query(
             "SELECT c.id AS company_id, c.endpoint_id, e.canonical_origin, c.display_name, \
-             c.company_guid, c.identity_confidence FROM tally_companies c \
+             c.company_guid, c.company_number, c.books_from_yyyymmdd, c.identity_confidence FROM tally_companies c \
              JOIN tally_endpoints e ON e.id = c.endpoint_id WHERE c.id = ?1",
         )
         .bind(company_id)
@@ -1060,7 +1125,16 @@ impl TallyMirrorRepository {
         .await?
         .ok_or(MirrorError::NotFound)?;
         let identity_confidence: String = row.try_get("identity_confidence")?;
+        let company_number: Option<String> = row.try_get("company_number")?;
+        let books_from_yyyymmdd: Option<String> = row.try_get("books_from_yyyymmdd")?;
         if identity_confidence != "observed" {
+            if company_number.as_deref().is_none_or(str::is_empty)
+                || books_from_yyyymmdd.as_deref().is_none_or(str::is_empty)
+            {
+                return Err(MirrorError::InvalidInput(
+                    "company_identity_reverification_required",
+                ));
+            }
             return Err(MirrorError::InvalidInput("company_identity_not_observed"));
         }
         let company_guid: Option<String> = row.try_get("company_guid")?;
@@ -1072,6 +1146,16 @@ impl TallyMirrorRepository {
             company_guid: company_guid
                 .filter(|guid| !guid.trim().is_empty())
                 .ok_or(MirrorError::InvalidInput("company_guid_unobserved"))?,
+            company_number: company_number
+                .filter(|number| !number.trim().is_empty())
+                .ok_or(MirrorError::InvalidInput(
+                    "company_identity_reverification_required",
+                ))?,
+            books_from_yyyymmdd: books_from_yyyymmdd
+                .filter(|date| !date.trim().is_empty())
+                .ok_or(MirrorError::InvalidInput(
+                    "company_identity_reverification_required",
+                ))?,
         })
     }
 
@@ -1886,6 +1970,7 @@ impl TallyMirrorRepository {
             let revocation_payload_sha256 = fixture_revocation_payload_sha256(
                 &enrollment_id,
                 &enrollment_payload_sha256,
+                "operator_revoked",
                 revoked_at_unix_ms,
             )?;
             sqlx::query(
@@ -2071,7 +2156,12 @@ impl TallyMirrorRepository {
         )
         .fetch_one(&mut *transaction)
         .await?;
-        if selected_read_evidence_installed == 0 {
+        let composite_company_identity_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 23",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if selected_read_evidence_installed == 0 && composite_company_identity_installed == 0 {
             let casefold_collisions = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM (\
                    SELECT endpoint_id, company_guid COLLATE NOCASE \
@@ -2258,9 +2348,61 @@ impl TallyMirrorRepository {
             migration_result?;
             reset_result?;
         }
+        let composite_company_identity_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 23",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if composite_company_identity_installed == 0 {
+            // SQLite otherwise reparses unrelated historical triggers while
+            // 0023 rebuilds the revocation table and rejects a deferred
+            // column reference outside this migration's scope.
+            sqlx::query("PRAGMA legacy_alter_table = ON")
+                .execute(&mut *transaction)
+                .await?;
+            let migration_result = sqlx::raw_sql(MIRROR_MIGRATION_V23)
+                .execute(&mut *transaction)
+                .await;
+            let reset_result = sqlx::query("PRAGMA legacy_alter_table = OFF")
+                .execute(&mut *transaction)
+                .await;
+            migration_result?;
+            reset_result?;
+            retire_precomposite_fixture_enrollments(
+                &mut transaction,
+                Utc::now().timestamp_millis(),
+            )
+            .await?;
+            sqlx::query(
+                "INSERT INTO tally_schema_migrations(version, description, applied_at_unix_ms) \
+                 VALUES (23, 'Tally composite company identity requires re-verification of GUID-only pins', ?1)",
+            )
+            .bind(Utc::now().timestamp_millis())
+            .execute(&mut *transaction)
+            .await?;
+        }
+        let selected_read_scope_v2_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 24",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if selected_read_scope_v2_installed == 0 {
+            sqlx::query("PRAGMA legacy_alter_table = ON")
+                .execute(&mut *transaction)
+                .await?;
+            let migration_result = sqlx::raw_sql(MIRROR_MIGRATION_V24)
+                .execute(&mut *transaction)
+                .await;
+            let reset_result = sqlx::query("PRAGMA legacy_alter_table = OFF")
+                .execute(&mut *transaction)
+                .await;
+            migration_result?;
+            reset_result?;
+            validate_legacy_v1_selected_read_scope_layouts(&mut transaction).await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -2429,6 +2571,77 @@ impl TallyMirrorRepository {
         })
     }
 
+    /// Persists only a complete, directly observed company tuple. This path is
+    /// deliberately separate from the generic source-record identity helper:
+    /// a Tally GUID is not unique after a year-end split, so a GUID match must
+    /// never select an older company row here.
+    async fn upsert_reviewed_company_in_transaction(
+        transaction: &mut Transaction<'_, Sqlite>,
+        endpoint_id: &str,
+        display_name: &str,
+        identity: &SourceIdentityInput,
+        company_number: &str,
+        books_from_yyyymmdd: &str,
+        observed_at_unix_ms: i64,
+    ) -> Result<CompanyRef, MirrorError> {
+        let guid = identity
+            .guid
+            .as_deref()
+            .ok_or(MirrorError::InvalidInput("company_guid_unobserved"))?;
+        let existing = sqlx::query(
+            "SELECT id FROM tally_companies WHERE endpoint_id = ?1 \
+             AND company_number = ?2 AND company_guid = ?3 COLLATE NOCASE \
+             AND display_name = ?4 AND books_from_yyyymmdd = ?5",
+        )
+        .bind(endpoint_id)
+        .bind(company_number)
+        .bind(guid)
+        .bind(display_name)
+        .bind(books_from_yyyymmdd)
+        .fetch_optional(&mut **transaction)
+        .await?;
+        let id = if let Some(existing) = existing {
+            let id: String = existing.try_get("id")?;
+            sqlx::query(
+                "UPDATE tally_companies SET last_observed_at_unix_ms = ?1, \
+                 identity_confidence = 'observed' WHERE id = ?2",
+            )
+            .bind(observed_at_unix_ms)
+            .bind(&id)
+            .execute(&mut **transaction)
+            .await?;
+            id
+        } else {
+            let id = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO tally_companies(\
+                   id, endpoint_id, display_name, company_guid, remote_id, master_id, \
+                   fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
+                   last_observed_at_unix_ms, company_number, books_from_yyyymmdd\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'observed', ?8, ?8, ?9, ?10)",
+            )
+            .bind(&id)
+            .bind(endpoint_id)
+            .bind(display_name)
+            .bind(guid)
+            // These legacy alternate identifiers are not part of the
+            // observed company tuple and can themselves collide across books.
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(observed_at_unix_ms)
+            .bind(company_number)
+            .bind(books_from_yyyymmdd)
+            .execute(&mut **transaction)
+            .await?;
+            id
+        };
+        Ok(CompanyRef {
+            id,
+            display_name: display_name.to_string(),
+        })
+    }
+
     pub async fn save_reviewed_setup(
         &self,
         input: ReviewedSetupInput,
@@ -2440,11 +2653,15 @@ impl TallyMirrorRepository {
         if let Some(guid) = input.company_identity.guid.as_deref() {
             validate_company_guid(guid)?;
         }
+        validate_company_number(&input.company_number)?;
+        validate_books_from_yyyymmdd(&input.books_from_yyyymmdd)?;
         validate_selected_read_scope(
             input.selected_read_scope.as_ref(),
             &input.capability,
             &input.company_display_name,
             input.company_identity.guid.as_deref(),
+            &input.company_number,
+            &input.books_from_yyyymmdd,
         )?;
         let setup_payload_sha256 = reviewed_setup_payload_sha256(&input)?;
 
@@ -2481,14 +2698,14 @@ impl TallyMirrorRepository {
             return Ok(reviewed);
         }
         let snapshot = Self::insert_capability_snapshot(&mut transaction, input.capability).await?;
-        let company = Self::upsert_company_in_transaction(
+        let company = Self::upsert_reviewed_company_in_transaction(
             &mut transaction,
-            CompanyInput {
-                endpoint_id: snapshot.endpoint_id.clone(),
-                display_name: input.company_display_name,
-                identity: input.company_identity,
-                observed_at_unix_ms,
-            },
+            &snapshot.endpoint_id,
+            &input.company_display_name,
+            &input.company_identity,
+            &input.company_number,
+            &input.books_from_yyyymmdd,
+            observed_at_unix_ms,
         )
         .await?;
         if let Some(scope) = input.selected_read_scope {
@@ -2526,7 +2743,7 @@ impl TallyMirrorRepository {
                voucher_profile_id, voucher_from_yyyymmdd, voucher_to_yyyymmdd, \
                observed_at_unix_ms, completeness_state, no_writes_attempted, \
                raw_records_retained\
-             ) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10, \
+             ) VALUES (?1, ?2, ?3, 2, ?4, ?5, ?6, ?7, ?8, ?9, ?10, \
                'not_claimed', 1, 0)",
         )
         .bind(&scope_id)
@@ -4299,12 +4516,21 @@ impl TallyMirrorRepository {
 pub(crate) fn company_profile_correlation_key(
     canonical_origin: &str,
     company_guid: &str,
+    company_number: &str,
+    display_name: &str,
+    books_from_yyyymmdd: &str,
 ) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"bridge.tally.company-profile-correlation/1\0");
+    digest.update(b"bridge.tally.company-profile-correlation/2\0");
     digest.update(canonical_origin.as_bytes());
     digest.update(b"\0");
     digest.update(company_guid.to_ascii_lowercase().as_bytes());
+    digest.update(b"\0");
+    digest.update(company_number.as_bytes());
+    digest.update(b"\0");
+    digest.update(display_name.as_bytes());
+    digest.update(b"\0");
+    digest.update(books_from_yyyymmdd.as_bytes());
     hex_digest(digest.finalize())
 }
 
@@ -4388,6 +4614,7 @@ fn validate_export_code(value: &str) -> Result<(), MirrorError> {
                 | "capability_profile_drift_check_unavailable"
                 | "capability_profile_changed_during_run"
                 | "company_identity_ambiguous"
+                | "company_identity_display_scope_ambiguous"
                 | "company_identity_not_found"
                 | "complete_source_count_disagreement"
                 | "duplicate_record_across_windows"
@@ -4652,7 +4879,7 @@ fn reviewed_setup_payload_sha256(input: &ReviewedSetupInput) -> Result<String, M
         })
     });
     let payload = serde_json::json!({
-        "schema": "bridge.tally.reviewed-setup-payload/1",
+        "schema": "bridge.tally.reviewed-setup-payload/2",
         "capability": {
             "canonical_origin": input.capability.canonical_origin,
             "observed_at_unix_ms": input.capability.observed_at_unix_ms,
@@ -4666,6 +4893,8 @@ fn reviewed_setup_payload_sha256(input: &ReviewedSetupInput) -> Result<String, M
         "company": {
             "display_name": input.company_display_name,
             "guid": input.company_identity.guid,
+            "company_number": input.company_number,
+            "books_from_yyyymmdd": input.books_from_yyyymmdd,
             "remote_id": input.company_identity.remote_id,
             "master_id": input.company_identity.master_id,
             "fallback_fingerprint": input.company_identity.fallback_fingerprint,
@@ -4682,6 +4911,8 @@ fn validate_selected_read_scope(
     capability: &CapabilitySnapshotInput,
     company_display_name: &str,
     company_guid: Option<&str>,
+    company_number: &str,
+    books_from_yyyymmdd: &str,
 ) -> Result<(), MirrorError> {
     let selected_items = capability
         .items
@@ -4809,11 +5040,20 @@ fn validate_selected_read_scope(
         "selected_read_company_guid_missing",
     ))?;
     validate_company_guid(company_guid)?;
+    validate_company_number(company_number)?;
+    validate_books_from_yyyymmdd(books_from_yyyymmdd)?;
+    if scope.company_number != company_number || scope.books_from_yyyymmdd != books_from_yyyymmdd {
+        return Err(MirrorError::InvalidInput(
+            "selected_read_company_identity_mismatch",
+        ));
+    }
     let material = SelectedReadScopeCommitmentMaterial {
         parent_review_commitment_sha256: scope.parent_review_sha256.clone(),
         canonical_origin: capability.canonical_origin.clone(),
         company_guid_ascii_casefolded: company_guid.to_ascii_lowercase(),
         company_name: company_display_name.to_string(),
+        company_number: company_number.to_string(),
+        books_from_yyyymmdd: books_from_yyyymmdd.to_string(),
         ledger_profile_id: scope.ledger_profile_id.clone(),
         voucher_profile_id: scope.voucher_profile_id.clone(),
         voucher_from_yyyymmdd: scope.voucher_from_yyyymmdd.clone(),
@@ -4857,6 +5097,19 @@ fn validate_company_guid(value: &str) -> Result<(), MirrorError> {
         return Err(MirrorError::InvalidInput("company_guid"));
     }
     Ok(())
+}
+
+fn validate_company_number(value: &str) -> Result<(), MirrorError> {
+    if value.is_empty() || value.len() > 16 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(MirrorError::InvalidInput("company_number"));
+    }
+    Ok(())
+}
+
+fn validate_books_from_yyyymmdd(value: &str) -> Result<(), MirrorError> {
+    TallyDate::parse(value)
+        .map(|_| ())
+        .map_err(|_| MirrorError::InvalidInput("books_from_yyyymmdd"))
 }
 
 fn validate_company_input(input: &CompanyInput) -> Result<(), MirrorError> {
@@ -5253,15 +5506,138 @@ struct FixtureRevocationCommitment<'a> {
 fn fixture_revocation_payload_sha256(
     enrollment_id: &str,
     enrollment_payload_sha256: &str,
+    safe_reason_code: &'static str,
     revoked_at_unix_ms: i64,
 ) -> Result<String, MirrorError> {
     sha256_json(&FixtureRevocationCommitment {
         schema: "bridge.tally.write-fixture-revocation/1",
         enrollment_id,
         enrollment_payload_sha256,
-        safe_reason_code: "operator_revoked",
+        safe_reason_code,
         revoked_at_unix_ms,
     })
+}
+
+async fn retire_precomposite_fixture_enrollments(
+    transaction: &mut Transaction<'_, Sqlite>,
+    revoked_at_unix_ms: i64,
+) -> Result<(), MirrorError> {
+    let rows = sqlx::query(
+        "SELECT enrollment.id, enrollment.enrollment_payload_sha256 \
+         FROM tally_write_fixture_enrollments AS enrollment \
+         JOIN tally_companies AS company ON company.id = enrollment.company_id \
+         LEFT JOIN tally_write_fixture_revocations AS revocation \
+           ON revocation.enrollment_id = enrollment.id \
+         WHERE company.identity_confidence = 'unknown' \
+           AND revocation.enrollment_id IS NULL \
+         ORDER BY enrollment.id",
+    )
+    .fetch_all(&mut **transaction)
+    .await?;
+    let next_sequence = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM tally_write_fixture_revocations",
+    )
+    .fetch_one(&mut **transaction)
+    .await?;
+    for (offset, row) in rows.into_iter().enumerate() {
+        let enrollment_id: String = row.try_get("id")?;
+        let enrollment_payload_sha256: String = row.try_get("enrollment_payload_sha256")?;
+        let payload_sha256 = fixture_revocation_payload_sha256(
+            &enrollment_id,
+            &enrollment_payload_sha256,
+            "company_identity_reverification_required",
+            revoked_at_unix_ms,
+        )?;
+        sqlx::query(
+            "INSERT INTO tally_write_fixture_revocations(\
+               event_sequence, id, enrollment_id, revocation_payload_sha256, safe_reason_code, revoked_at_unix_ms\
+             ) VALUES (?1, ?2, ?3, ?4, 'company_identity_reverification_required', ?5)",
+        )
+        .bind(next_sequence + i64::try_from(offset).expect("enumerated migration rows fit i64"))
+        .bind(Uuid::new_v4().to_string())
+        .bind(enrollment_id)
+        .bind(payload_sha256)
+        .bind(revoked_at_unix_ms)
+        .execute(&mut **transaction)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn validate_legacy_v1_selected_read_scope_layouts(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), MirrorError> {
+    let scopes = sqlx::query(
+        "SELECT scope.id, scope.scope_commitment_sha256, scope.parent_review_sha256, \
+                endpoint.canonical_origin, company.company_guid, scope.ledger_profile_id, \
+                scope.voucher_profile_id, scope.voucher_from_yyyymmdd, \
+                scope.voucher_to_yyyymmdd, scope.observed_at_unix_ms \
+         FROM tally_selected_read_scopes AS scope \
+         JOIN tally_capability_snapshots AS snapshot ON snapshot.id = scope.capability_snapshot_id \
+         JOIN tally_endpoints AS endpoint ON endpoint.id = snapshot.endpoint_id \
+         JOIN tally_companies AS company ON company.id = scope.company_id \
+         WHERE scope.scope_contract_version = 1 \
+         ORDER BY scope.id",
+    )
+    .fetch_all(&mut **transaction)
+    .await?;
+    for scope in scopes {
+        let scope_id: String = scope.try_get("id")?;
+        let company_guid: Option<String> = scope.try_get("company_guid")?;
+        let company_guid = company_guid.ok_or(MirrorError::InvalidInput(
+            "selected_read_scope_v1_layout_unverified",
+        ))?;
+        let observations = sqlx::query(
+            "SELECT capability_key, capability_state, confidence, safe_reason_code, \
+                    result_bucket, request_sha256, decoded_response_sha256, response_encoding, \
+                    company_context_verified, schema_verified, record_count_verified, \
+                    identity_evidence_state, date_window_verified \
+             FROM tally_selected_read_observations \
+             WHERE scope_id = ?1 ORDER BY capability_key",
+        )
+        .bind(&scope_id)
+        .fetch_all(&mut **transaction)
+        .await?
+        .into_iter()
+        .map(|observation| {
+            Ok(SelectedReadObservationCommitmentMaterial {
+                capability_key: observation.try_get("capability_key")?,
+                state: observation.try_get("capability_state")?,
+                confidence: observation.try_get("confidence")?,
+                safe_reason_code: observation.try_get("safe_reason_code")?,
+                result_bucket: observation.try_get("result_bucket")?,
+                request_sha256: observation.try_get("request_sha256")?,
+                decoded_response_sha256: observation.try_get("decoded_response_sha256")?,
+                response_encoding: observation.try_get("response_encoding")?,
+                company_context_verified: observation
+                    .try_get::<i64, _>("company_context_verified")?
+                    != 0,
+                schema_verified: observation.try_get::<i64, _>("schema_verified")? != 0,
+                record_count_verified: observation.try_get::<i64, _>("record_count_verified")? != 0,
+                identity_evidence_state: observation.try_get("identity_evidence_state")?,
+                date_window_verified: observation.try_get::<i64, _>("date_window_verified")? != 0,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        let material = SelectedReadScopeCommitmentMaterialV1 {
+            parent_review_commitment_sha256: scope.try_get("parent_review_sha256")?,
+            canonical_origin: scope.try_get("canonical_origin")?,
+            company_guid_ascii_casefolded: company_guid.to_ascii_lowercase(),
+            ledger_profile_id: scope.try_get("ledger_profile_id")?,
+            voucher_profile_id: scope.try_get("voucher_profile_id")?,
+            voucher_from_yyyymmdd: scope.try_get("voucher_from_yyyymmdd")?,
+            voucher_to_yyyymmdd: scope.try_get("voucher_to_yyyymmdd")?,
+            observed_at_unix_ms: scope.try_get("observed_at_unix_ms")?,
+            observations,
+        };
+        let stored_commitment: String = scope.try_get("scope_commitment_sha256")?;
+        if selected_read_scope_commitment_sha256_v1(&material)? != stored_commitment {
+            return Err(MirrorError::InvalidInput(
+                "selected_read_scope_v1_layout_unverified",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
@@ -5519,12 +5895,14 @@ mod tests {
                 confidence: Some(Confidence::Observed),
                 ..Default::default()
             },
+            company_number: "100001".to_string(),
+            books_from_yyyymmdd: "20260401".to_string(),
             selected_read_scope: None,
         }
     }
 
     #[tokio::test]
-    async fn reviewed_setup_rolls_back_snapshot_items_and_company_on_identity_collision() {
+    async fn reviewed_setup_keeps_guid_collision_as_separate_observed_company() {
         let (repository, snapshot, _) = seeded_repository().await;
         repository
             .upsert_company(CompanyInput {
@@ -5539,9 +5917,13 @@ mod tests {
             })
             .await
             .expect("seed second identity");
+        let company_count_before =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tally_companies")
+                .fetch_one(&repository.pool)
+                .await
+                .expect("count seeded company pins");
 
-        let counts_before = setup_row_counts(&repository).await;
-        let error = repository
+        let saved = repository
             .save_reviewed_setup(ReviewedSetupInput {
                 review_commitment_sha256: HASH_A.to_string(),
                 capability: CapabilitySnapshotInput {
@@ -5563,16 +5945,24 @@ mod tests {
                 company_display_name: "Synthetic Ambiguous".to_string(),
                 company_identity: SourceIdentityInput {
                     guid: Some("company-guid-1".to_string()),
-                    remote_id: Some("remote-peer-2".to_string()),
                     confidence: Some(Confidence::Observed),
                     ..Default::default()
                 },
+                company_number: "100002".to_string(),
+                books_from_yyyymmdd: "20260401".to_string(),
                 selected_read_scope: None,
             })
             .await
-            .expect_err("cross-record identity match must roll back the setup save");
-        assert!(matches!(error, MirrorError::IdentityCollision));
-        assert_eq!(setup_row_counts(&repository).await, counts_before);
+            .expect("a distinct observed tuple must not collide on GUID alone");
+        assert_eq!(saved.company.display_name, "Synthetic Ambiguous");
+        assert_ne!(saved.company.id, "company-1");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tally_companies")
+                .fetch_one(&repository.pool)
+                .await
+                .expect("count separately observed company pins"),
+            company_count_before + 1
+        );
     }
 
     #[tokio::test]
@@ -5621,6 +6011,34 @@ mod tests {
             repository.save_reviewed_setup(changed).await,
             Err(MirrorError::InvalidInput("review_commitment_reused"))
         ));
+        assert_eq!(setup_row_counts(&repository).await, counts_after_commit);
+    }
+
+    #[tokio::test]
+    async fn reviewed_setup_commitment_cannot_be_reused_for_a_different_composite_tuple() {
+        let repository = repository().await;
+        let input = reviewed_setup_input(HASH_A);
+        repository
+            .save_reviewed_setup(input.clone())
+            .await
+            .expect("commit first reviewed setup");
+        let counts_after_commit = setup_row_counts(&repository).await;
+
+        for changed in [
+            ReviewedSetupInput {
+                company_number: "100002".to_string(),
+                ..input.clone()
+            },
+            ReviewedSetupInput {
+                books_from_yyyymmdd: "20270401".to_string(),
+                ..input.clone()
+            },
+        ] {
+            assert!(matches!(
+                repository.save_reviewed_setup(changed).await,
+                Err(MirrorError::InvalidInput("review_commitment_reused"))
+            ));
+        }
         assert_eq!(setup_row_counts(&repository).await, counts_after_commit);
     }
 
@@ -6224,11 +6642,7 @@ mod tests {
 
     #[tokio::test]
     async fn v13_fixture_revocations_upgrade_to_durable_sequence() {
-        let repository = repository_through_v13().await;
-        let saved = repository
-            .save_reviewed_setup(reviewed_setup_input(HASH_A))
-            .await
-            .expect("seed observed company for legacy fixture evidence");
+        let (repository, _, company) = seed_repository(repository_through_v13().await).await;
         sqlx::query(
             "INSERT INTO tally_write_fixture_enrollments(\
                id, company_id, review_commitment_sha256, enrollment_payload_sha256, \
@@ -6236,7 +6650,7 @@ mod tests {
                backup_guidance_acknowledged, enrolled_at_unix_ms\
              ) VALUES ('legacy-enrollment', ?1, ?2, ?3, 1, 1, 1, 1, 3000)",
         )
-        .bind(&saved.company.id)
+        .bind(&company.id)
         .bind(HASH_B)
         .bind(HASH_A)
         .execute(&repository.pool)
@@ -6257,7 +6671,7 @@ mod tests {
             .await
             .expect("upgrade fixture revocation evidence from v13 to v14");
         let status = repository
-            .write_fixture_enrollment_status(&saved.company.id)
+            .write_fixture_enrollment_status(&company.id)
             .await
             .expect("read upgraded legacy fixture status");
         assert_eq!(status.fixture_state, "revoked");
@@ -6281,11 +6695,7 @@ mod tests {
 
     #[tokio::test]
     async fn already_sequenced_v13_fixture_revocations_upgrade_idempotently() {
-        let repository = repository_through_v13().await;
-        let saved = repository
-            .save_reviewed_setup(reviewed_setup_input(HASH_A))
-            .await
-            .expect("seed observed company for already-sequenced v13 fixture evidence");
+        let (repository, _, _company) = seed_repository(repository_through_v13().await).await;
         // Emulate the pre-merge v13 schema that already carried this column.
         sqlx::query(
             "ALTER TABLE tally_write_fixture_revocations \
@@ -6299,6 +6709,10 @@ mod tests {
             .migrate()
             .await
             .expect("upgrade already-sequenced v13 schema without duplicate column");
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("re-verify observed company after the composite-identity migration");
         repository
             .enroll_write_fixture(WriteFixtureEnrollmentInput {
                 company_id: saved.company.id.clone(),
@@ -6382,6 +6796,8 @@ mod tests {
                 canonical_origin: "http://127.0.0.1:9000".to_string(),
                 company_guid_ascii_casefolded: "qualified-company-guid".to_string(),
                 company_name: "Synthetic Qualified Company".to_string(),
+                company_number: "100003".to_string(),
+                books_from_yyyymmdd: "20260701".to_string(),
                 ledger_profile_id: "bridge.tally.ledgers/1".to_string(),
                 voucher_profile_id: "bridge.tally.vouchers/3".to_string(),
                 voucher_from_yyyymmdd: "20260701".to_string(),
@@ -6434,6 +6850,8 @@ mod tests {
                     confidence: Some(Confidence::Observed),
                     ..Default::default()
                 },
+                company_number: "100003".to_string(),
+                books_from_yyyymmdd: "20260701".to_string(),
                 selected_read_scope: Some(SelectedReadScopeInput {
                     scope_commitment_sha256,
                     parent_review_sha256: HASH_B.to_string(),
@@ -6441,6 +6859,8 @@ mod tests {
                     voucher_profile_id: "bridge.tally.vouchers/3".to_string(),
                     voucher_from_yyyymmdd: "20260701".to_string(),
                     voucher_to_yyyymmdd: "20260731".to_string(),
+                    company_number: "100003".to_string(),
+                    books_from_yyyymmdd: "20260701".to_string(),
                     observed_at_unix_ms: 2_000,
                     observations,
                 }),
@@ -6466,6 +6886,18 @@ mod tests {
         .await
         .expect("count saved selected-read observations");
         assert_eq!((scope_count, observation_count), (1, 2));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT scope_contract_version FROM tally_selected_read_scopes \
+                 WHERE capability_snapshot_id = ?1",
+            )
+            .bind(&saved.snapshot.id)
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read selected-read scope contract version"),
+            2,
+            "new composite selected-read material must be labelled v2"
+        );
         assert!(sqlx::query(
             "UPDATE tally_selected_read_scopes SET completeness_state = 'not_claimed' WHERE capability_snapshot_id = ?1",
         )
@@ -6483,7 +6915,11 @@ mod tests {
              INSERT INTO tally_capability_snapshots VALUES ('snap-a', 'ep', 1, 3, 'Unknown', NULL, NULL, 'unknown');\
              INSERT INTO tally_capability_snapshots VALUES ('snap-b', 'ep', 2, 3, 'Unknown', NULL, NULL, 'unknown');\
              INSERT INTO tally_capability_items VALUES ('snap-b', 'feature', 'selected_ledger_read', 'unknown', 'unknown', 'qualification_prerequisite_failed');\
-             INSERT INTO tally_companies VALUES ('company', 'ep', 'Synthetic', 'company-guid', NULL, NULL, NULL, 'observed', 1, 2);\
+             INSERT INTO tally_companies(\
+               id, endpoint_id, display_name, company_guid, remote_id, master_id, fallback_fingerprint,\
+               identity_confidence, first_observed_at_unix_ms, last_observed_at_unix_ms,\
+               company_number, books_from_yyyymmdd\
+             ) VALUES ('company', 'ep', 'Synthetic', 'company-guid', NULL, NULL, NULL, 'observed', 1, 2, '100001', '20260401');\
              INSERT INTO tally_selected_read_scopes VALUES (\
                'scope-a', 'snap-a', 'company', 1,\
                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',\
@@ -7472,13 +7908,22 @@ mod tests {
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)",
+             WHERE version IN (2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 21);
+        assert_eq!(migration_count, 22);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 7",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read retired GUID-only migration marker"),
+            0
+        );
         let target_binding_columns = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM pragma_table_info('tally_write_canary_preflight_evidence') \
              WHERE name IN ('canonical_endpoint_sha256', 'company_identity_sha256')",
@@ -7554,16 +7999,18 @@ mod tests {
         .await
         .expect("count normalized staging tables");
         assert_eq!(normalized_staging_tables, 2);
-        let guid_index_sql = sqlx::query_scalar::<_, String>(
-            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'uq_tally_companies_guid'",
+        let identity_index_sql = sqlx::query_scalar::<_, String>(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'uq_tally_companies_observed_identity'",
         )
         .fetch_one(&repository.pool)
         .await
-        .expect("read company GUID index");
-        assert!(guid_index_sql.contains("company_guid COLLATE NOCASE"));
+        .expect("read composite company identity index");
+        assert!(identity_index_sql.contains("company_guid COLLATE NOCASE"));
+        assert!(identity_index_sql.contains("company_number"));
+        assert!(identity_index_sql.contains("books_from_yyyymmdd"));
         let applied_at = sqlx::query_scalar::<_, i64>(
             "SELECT MIN(applied_at_unix_ms) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9)",
+             WHERE version IN (2, 3, 4, 5, 6, 8, 9)",
         )
         .fetch_one(&repository.pool)
         .await
@@ -7574,6 +8021,33 @@ mod tests {
     #[tokio::test]
     async fn bomless_utf16_migration_preserves_existing_selected_read_evidence() {
         let repository = repository_through_v21().await;
+        let legacy_scope_commitment =
+            selected_read_scope_commitment_sha256_v1(&SelectedReadScopeCommitmentMaterialV1 {
+                parent_review_commitment_sha256: HASH_B.to_string(),
+                canonical_origin: "http://127.0.0.1:9000".to_string(),
+                company_guid_ascii_casefolded: "company-guid".to_string(),
+                ledger_profile_id: "bridge.tally.ledgers/1".to_string(),
+                voucher_profile_id: "bridge.tally.vouchers/3".to_string(),
+                voucher_from_yyyymmdd: "20260701".to_string(),
+                voucher_to_yyyymmdd: "20260731".to_string(),
+                observed_at_unix_ms: 2,
+                observations: vec![SelectedReadObservationCommitmentMaterial {
+                    capability_key: "selected_ledger_read".to_string(),
+                    state: "supported".to_string(),
+                    confidence: "observed".to_string(),
+                    safe_reason_code: "selected_ledger_read_non_empty_observed".to_string(),
+                    result_bucket: "non_empty_observed".to_string(),
+                    request_sha256: Some(HASH_A.to_string()),
+                    decoded_response_sha256: Some(HASH_B.to_string()),
+                    response_encoding: Some("utf8".to_string()),
+                    company_context_verified: true,
+                    schema_verified: true,
+                    record_count_verified: true,
+                    identity_evidence_state: "verified".to_string(),
+                    date_window_verified: false,
+                }],
+            })
+            .expect("compute historic v1 scope commitment");
         sqlx::raw_sql(
             "INSERT INTO tally_endpoints VALUES ('ep', 'http://127.0.0.1:9000', 1, 2);\
              INSERT INTO tally_capability_snapshots VALUES ('snap', 'ep', 1, 3, 'Unknown', NULL, NULL, 'unknown');\
@@ -7583,26 +8057,35 @@ mod tests {
              );\
              INSERT INTO tally_companies VALUES (\
                'company', 'ep', 'Synthetic', 'company-guid', NULL, NULL, NULL, 'observed', 1, 2\
-             );\
-             INSERT INTO tally_selected_read_scopes VALUES (\
-               'scope', 'snap', 'company', 1,\
-               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',\
-               'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',\
-               'bridge.tally.ledgers/1', 'bridge.tally.vouchers/3',\
-               '20260701', '20260731', 2, 'not_claimed', 1, 0\
-             );\
-             INSERT INTO tally_selected_read_observations VALUES (\
-               'scope', 'snap', 'feature', 'selected_ledger_read',\
-               'supported', 'observed', 'selected_ledger_read_non_empty_observed',\
-               'non_empty_observed',\
-               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',\
-               'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',\
-               'utf8', 1, 1, 1, 'verified', 0\
-             );",
+             );"
         )
         .execute(&repository.pool)
         .await
         .expect("seed v21 selected-read evidence");
+        sqlx::query(
+            "INSERT INTO tally_selected_read_scopes VALUES (\
+               'scope', 'snap', 'company', 1, ?1, ?2,\
+               'bridge.tally.ledgers/1', 'bridge.tally.vouchers/3',\
+               '20260701', '20260731', 2, 'not_claimed', 1, 0\
+             )",
+        )
+        .bind(&legacy_scope_commitment)
+        .bind(HASH_B)
+        .execute(&repository.pool)
+        .await
+        .expect("seed historic v1 selected-read scope");
+        sqlx::query(
+            "INSERT INTO tally_selected_read_observations VALUES (\
+               'scope', 'snap', 'feature', 'selected_ledger_read',\
+               'supported', 'observed', 'selected_ledger_read_non_empty_observed',\
+               'non_empty_observed', ?1, ?2, 'utf8', 1, 1, 1, 'verified', 0\
+             )",
+        )
+        .bind(HASH_A)
+        .bind(HASH_B)
+        .execute(&repository.pool)
+        .await
+        .expect("seed historic v1 selected-read observation");
 
         repository
             .migrate()
@@ -7626,6 +8109,24 @@ mod tests {
             .await
             .expect("read v22 migration marker"),
             1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT scope_contract_version FROM tally_selected_read_scopes WHERE id = 'scope'",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read preserved historic scope version"),
+            1,
+            "historic digest material must remain explicitly v1"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM pragma_foreign_key_check")
+                .fetch_one(&repository.pool)
+                .await
+                .expect("check rebuilt selected-read foreign keys"),
+            0,
+            "observation rows must reference the rebuilt scope parent"
         );
         assert!(sqlx::query(
             "UPDATE tally_selected_read_observations SET response_encoding = 'utf16le' \
@@ -8009,25 +8510,58 @@ mod tests {
 
     #[test]
     fn company_profile_correlation_is_casefolded_scoped_and_opaque() {
-        let first =
-            company_profile_correlation_key("http://127.0.0.1:9000", "SENSITIVE-COMPANY-GUID");
-        let same =
-            company_profile_correlation_key("http://127.0.0.1:9000", "sensitive-company-guid");
-        let other_endpoint =
-            company_profile_correlation_key("http://127.0.0.1:9001", "sensitive-company-guid");
-        let other_company =
-            company_profile_correlation_key("http://127.0.0.1:9000", "other-company-guid");
+        let first = company_profile_correlation_key(
+            "http://127.0.0.1:9000",
+            "SENSITIVE-COMPANY-GUID",
+            "100001",
+            "Synthetic",
+            "20260401",
+        );
+        let same = company_profile_correlation_key(
+            "http://127.0.0.1:9000",
+            "sensitive-company-guid",
+            "100001",
+            "Synthetic",
+            "20260401",
+        );
+        let other_endpoint = company_profile_correlation_key(
+            "http://127.0.0.1:9001",
+            "sensitive-company-guid",
+            "100001",
+            "Synthetic",
+            "20260401",
+        );
+        let other_company = company_profile_correlation_key(
+            "http://127.0.0.1:9000",
+            "other-company-guid",
+            "100001",
+            "Synthetic",
+            "20260401",
+        );
+        let same_guid_different_book = company_profile_correlation_key(
+            "http://127.0.0.1:9000",
+            "sensitive-company-guid",
+            "100014",
+            "Synthetic",
+            "20270401",
+        );
 
         assert_eq!(first, same);
         assert_ne!(first, other_endpoint);
         assert_ne!(first, other_company);
+        assert_ne!(first, same_guid_different_book);
         assert_eq!(first.len(), 64);
         assert!(!first.contains("sensitive"));
     }
 
     #[tokio::test]
     async fn persisted_profiles_only_return_observed_stable_company_pins() {
-        let (repository, snapshot, observed) = seeded_repository().await;
+        let (repository, snapshot, _) = seeded_repository().await;
+        let observed = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("save complete observed company tuple")
+            .company;
         repository
             .upsert_company(CompanyInput {
                 endpoint_id: snapshot.endpoint_id,
@@ -8054,7 +8588,13 @@ mod tests {
         assert!(profiles[0].guid_observed);
         assert_eq!(
             profiles[0].correlation_key,
-            company_profile_correlation_key("http://127.0.0.1:9000", "company-guid-1")
+            company_profile_correlation_key(
+                "http://127.0.0.1:9000",
+                "reviewed-company-guid",
+                "100001",
+                "Synthetic Reviewed Company",
+                "20260401"
+            )
         );
         assert_eq!(profiles[0].identity_confidence, "observed");
         assert_eq!(profiles[0].canonical_endpoint, "http://127.0.0.1:9000");
@@ -8126,8 +8666,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn observed_probe_upgrades_company_pin_confidence() {
-        let (repository, snapshot, company) = seeded_repository().await;
+    async fn guid_only_company_pin_requires_reverification() {
+        let (repository, _snapshot, company) = seeded_repository().await;
         sqlx::query("UPDATE tally_companies SET identity_confidence = 'inferred' WHERE id = ?1")
             .bind(&company.id)
             .execute(&repository.pool)
@@ -8135,27 +8675,144 @@ mod tests {
             .expect("weaken synthetic confidence");
         assert!(matches!(
             repository.snapshot_source_pin(&company.id).await,
-            Err(MirrorError::InvalidInput("company_identity_not_observed"))
+            Err(MirrorError::InvalidInput(
+                "company_identity_reverification_required"
+            ))
         ));
 
-        repository
-            .upsert_company(CompanyInput {
-                endpoint_id: snapshot.endpoint_id,
-                display_name: company.display_name,
-                identity: SourceIdentityInput {
-                    guid: Some("company-guid-1".to_string()),
-                    confidence: Some(Confidence::Observed),
-                    ..Default::default()
-                },
-                observed_at_unix_ms: 2_000,
-            })
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
             .await
-            .expect("upgrade pin with direct observation");
+            .expect("full observed tuple re-verifies a separate eligible pin");
+        assert!(matches!(
+            repository.snapshot_source_pin(&company.id).await,
+            Err(MirrorError::InvalidInput(
+                "company_identity_reverification_required"
+            ))
+        ));
         let pin = repository
-            .snapshot_source_pin(&company.id)
+            .snapshot_source_pin(&saved.company.id)
             .await
-            .expect("observed pin is snapshot eligible");
-        assert_eq!(pin.company_guid, "company-guid-1");
+            .expect("re-verified tuple is snapshot eligible");
+        assert_eq!(pin.company_guid, "reviewed-company-guid");
+    }
+
+    #[tokio::test]
+    async fn composite_identity_migration_retires_prior_observed_guid_pin() {
+        let (repository, _, company) = seed_repository(repository_through_v13().await).await;
+        sqlx::query(
+            "INSERT INTO tally_write_fixture_enrollments(\
+                id, company_id, review_commitment_sha256, enrollment_payload_sha256, \
+                contract_version, disposable_company_attested, no_customer_data_attested, \
+                backup_guidance_acknowledged, enrolled_at_unix_ms\
+             ) VALUES (?1, ?2, ?3, ?4, 1, 1, 1, 1, 100)",
+        )
+        .bind("pre-composite-enrollment")
+        .bind(&company.id)
+        .bind("a".repeat(64))
+        .bind("b".repeat(64))
+        .execute(&repository.pool)
+        .await
+        .expect("seed active GUID-only fixture enrollment");
+        repository
+            .migrate()
+            .await
+            .expect("apply the composite company identity migration");
+
+        assert!(matches!(
+            repository.snapshot_source_pin(&company.id).await,
+            Err(MirrorError::InvalidInput(
+                "company_identity_reverification_required"
+            ))
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT identity_confidence FROM tally_companies WHERE id = ?1",
+            )
+            .bind(&company.id)
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read retired confidence"),
+            "unknown"
+        );
+        let revocation = sqlx::query(
+            "SELECT revocation.safe_reason_code, revocation.revocation_payload_sha256, \
+                    revocation.revoked_at_unix_ms, enrollment.enrollment_payload_sha256 \
+             FROM tally_write_fixture_revocations AS revocation \
+             JOIN tally_write_fixture_enrollments AS enrollment \
+               ON enrollment.id = revocation.enrollment_id \
+             WHERE revocation.enrollment_id = 'pre-composite-enrollment'",
+        )
+        .fetch_one(&repository.pool)
+        .await
+        .expect("read truthful migration revocation");
+        let reason: String = revocation.try_get("safe_reason_code").expect("reason");
+        let payload: String = revocation
+            .try_get("revocation_payload_sha256")
+            .expect("payload");
+        let timestamp: i64 = revocation.try_get("revoked_at_unix_ms").expect("timestamp");
+        let enrollment_payload: String = revocation
+            .try_get("enrollment_payload_sha256")
+            .expect("enrollment payload");
+        assert_eq!(reason, "company_identity_reverification_required");
+        assert!(
+            timestamp > 100,
+            "migration time must not reuse enrollment time"
+        );
+        assert_eq!(
+            payload,
+            fixture_revocation_payload_sha256(
+                "pre-composite-enrollment",
+                &enrollment_payload,
+                "company_identity_reverification_required",
+                timestamp,
+            )
+            .expect("canonical migration payload"),
+            "immutable migration evidence must use the normal canonical binding"
+        );
+    }
+
+    #[tokio::test]
+    async fn composite_identity_schema_rejects_legacy_v7_runner() {
+        let repository = repository_through_v13().await;
+        repository
+            .migrate()
+            .await
+            .expect("upgrade through the composite identity migration");
+        for (version, expected) in [(7, 0_i64), (23, 1_i64)] {
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = ?1",
+                )
+                .bind(version)
+                .fetch_one(&repository.pool)
+                .await
+                .expect("read migration marker"),
+                expected
+            );
+        }
+
+        let mut transaction = repository
+            .pool
+            .begin()
+            .await
+            .expect("begin legacy migration");
+        let error = sqlx::raw_sql(MIRROR_MIGRATION_V7)
+            .execute(&mut *transaction)
+            .await
+            .expect_err("a legacy GUID-only binary must fail closed");
+        assert!(error
+            .to_string()
+            .contains("composite company identity requires a compatible Bridge binary"));
+        transaction
+            .rollback()
+            .await
+            .expect("roll back rejected legacy migration");
+
+        repository
+            .migrate()
+            .await
+            .expect("current binary skips the retired migration marker");
     }
 
     #[tokio::test]

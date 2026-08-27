@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { applyClientGroupLabel, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
+import { companyIdentityKey } from "../src/company-identity.ts";
 
 // Mirrors AllClientsScreen's saveGroupLabel wiring exactly (issue a stamp,
 // apply the optimistic edit, then on settle check the stamp against the
@@ -177,6 +178,36 @@ test("ungrouped companies remain separate and receive no synthetic total", () =>
   assert.equal(grouped.ungroupedRows.length, 2);
 });
 
+test("raw GUID labels intentionally group split books", () => {
+  const rows = [
+    { companyGuid: "[composite-parent]", sourceGuid: "legacy-split", exactAmounts: { receivable: "10", overdue: "2", unallocated: "1" } },
+    { companyGuid: "[composite-child]", sourceGuid: "legacy-split", exactAmounts: { receivable: "20", overdue: "3", unallocated: "4" } },
+  ];
+  const grouped = groupClientRows(rows, { "legacy-split": "Split practice" });
+  assert.equal(grouped.groups.length, 1);
+  assert.deepEqual(grouped.groups[0].totals, { receivable: "30", overdue: "5", unallocated: "5" });
+});
+
+test("the shared composite key keeps endpoint, GUID, number, name, and books-from distinct", () => {
+  const base = {
+    canonical_origin: "http://127.0.0.1:9000",
+    company_guid: "SAME-GUID",
+    company_number: "100001",
+    company_name: "Client Book",
+    books_from_yyyymmdd: "20260401",
+  };
+  const key = companyIdentityKey(base);
+  assert.equal(key, companyIdentityKey({ ...base, company_guid: "same-guid" }));
+  for (const changed of [
+    { canonical_origin: "http://127.0.0.1:9001" },
+    { company_number: "100002" },
+    { company_name: "Client Book FY27" },
+    { books_from_yyyymmdd: "20270401" },
+  ]) {
+    assert.notEqual(key, companyIdentityKey({ ...base, ...changed }));
+  }
+});
+
 test("group totals preserve decimal precision without IEEE-754 rounding", () => {
   assert.equal(sumExactDecimals(["9007199254740993", "0.01", "-1"]), "9007199254740992.01");
   assert.equal(sumExactDecimals(["42.00", "0.10"]), "42.1");
@@ -195,14 +226,27 @@ test("client amount views fail visibly instead of coercing or flipping amounts",
   assert.doesNotMatch(outstandings, /Math\.abs/);
 });
 
-test("all-client responses carry the pinned GUID back to the open action", async () => {
-  const [allClients, commands] = await Promise.all([
+test("all-client responses carry the pinned composite tuple back to the open action", async () => {
+  const [allClients, commands, main, companyIdentity] = await Promise.all([
     readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/src/commands.rs", import.meta.url), "utf8"),
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/company-identity.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(commands, /pub company_guid: String/);
-  assert.match(commands, /company_guid: entry\.expected_company_guid/);
-  assert.match(allClients, /companyGuid: entry\.company_guid/);
+  assert.match(commands, /company_guid: selected\.company_guid/);
+  assert.match(commands, /company_number: selected\.company_number/);
+  assert.match(commands, /books_from_yyyymmdd: selected\.books_from_yyyymmdd/);
+  assert.match(allClients, /companyGuid: companyIdentityKey\(\{/);
+  assert.match(allClients, /company\.company_number === row\.companyNumber/);
+  assert.match(allClients, /disabled=\{!groupLabelsReady\}/);
+  assert.match(allClients, /canonical_origin: entry\.canonical_origin/);
+  assert.doesNotMatch(companyIdentity, /canonicalOriginForConfig/);
+  assert.match(allClients, /key=\{row\.companyGuid\}/);
+  assert.match(allClients, /groupLabels\[row\.sourceGuid\]/);
   assert.doesNotMatch(allClients, /companies\.find\(\(company\) => company\.name === entry\.company\)/);
+  assert.match(main, /const completeCurrentProbeCompanies = currentProbeCompanyList\.filter\(/);
+  assert.match(main, /companies=\{completeCurrentProbeCompanies/);
+  assert.match(main, /openBookCount=\{completeCurrentProbeCompanies\.length\}/);
 });

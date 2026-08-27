@@ -82,6 +82,12 @@ pub struct TallyEnvelope<T> {
 pub struct TallyCompany {
     pub name: String,
     pub guid: Option<String>,
+    /// Tally's data-folder number, observed as one component of the company
+    /// identity tuple. It is not independently stable enough to be a key.
+    pub company_number: Option<String>,
+    /// The book opening date returned by the Company collection, in Tally's
+    /// canonical `YYYYMMDD` form.
+    pub books_from: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1579,6 +1585,8 @@ fn parse_company_collection_row(
         .ok_or_else(|| anyhow::anyhow!("company collection omitted the company name"))?;
     let row_name = element.name().as_ref().to_ascii_uppercase();
     let mut guid = None::<String>;
+    let mut company_number = None::<String>;
+    let mut books_from = None::<String>;
     loop {
         match reader.read_event()? {
             Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
@@ -1595,6 +1603,36 @@ fn parse_company_collection_row(
             }
             Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
                 anyhow::bail!("company collection contained an empty company GUID");
+            }
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"COMPANYNUMBER") => {
+                validate_only_attributes(&child, &[b"TYPE"])?;
+                if company_number
+                    .replace(normalized_standard_value(
+                        &read_required_text(reader, child.name())?,
+                        "company number",
+                    )?)
+                    .is_some()
+                {
+                    anyhow::bail!("company collection repeated the company number");
+                }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"COMPANYNUMBER") => {
+                anyhow::bail!("company collection contained an empty company number");
+            }
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"BOOKSFROM") => {
+                validate_only_attributes(&child, &[b"TYPE"])?;
+                if books_from
+                    .replace(normalized_standard_value(
+                        &read_required_text(reader, child.name())?,
+                        "company books from",
+                    )?)
+                    .is_some()
+                {
+                    anyhow::bail!("company collection repeated the books-from date");
+                }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"BOOKSFROM") => {
+                anyhow::bail!("company collection contained an empty books-from date");
             }
             Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(&row_name) => break,
             // Tally echoes the company name as a CHILD element as well as the
@@ -1625,6 +1663,8 @@ fn parse_company_collection_row(
     Ok(TallyCompany {
         name,
         guid: Some(guid),
+        company_number,
+        books_from,
     })
 }
 
@@ -4642,6 +4682,8 @@ fn parse_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<TallyCompany
     let mut company = TallyCompany {
         name: String::new(),
         guid: None,
+        company_number: None,
+        books_from: None,
     };
     loop {
         match reader.read_event()? {

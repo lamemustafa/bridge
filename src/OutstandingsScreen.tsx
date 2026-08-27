@@ -15,10 +15,17 @@ import {
   workingPaperInvokeArgument,
   type AsOfBoundValue,
 } from "./outstandings-as-of";
+import { companyIdentityKey } from "./company-identity";
 
 type Props = {
   config: { host: string; port: number };
-  company?: { name: string; guid: string };
+  company?: {
+    name: string;
+    guid: string;
+    company_number: string;
+    books_from_yyyymmdd: string;
+    canonical_origin: string;
+  };
   onChangeSetup: () => void;
   /// Switches to the cross-client view. Present only when more than one book
   /// is open, because a scope switch with one option is noise.
@@ -27,6 +34,16 @@ type Props = {
   asOf: string;
   onAsOfChange: (value: string) => void;
 };
+
+function companyIdentityFor(company: NonNullable<Props["company"]>) {
+  return companyIdentityKey({
+    canonical_origin: company.canonical_origin,
+    company_guid: company.guid,
+    company_number: company.company_number,
+    company_name: company.name,
+    books_from_yyyymmdd: company.books_from_yyyymmdd,
+  });
+}
 
 type Report = {
   company_name: string;
@@ -118,7 +135,7 @@ export function OutstandingsScreen({
   const [loadedResult, setLoadedResult] = React.useState<AsOfBoundValue<LoadResult> | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
-  const [inrAssertedCompanyGuid, setInrAssertedCompanyGuid] = React.useState<string | null>(null);
+  const [inrAssertedCompanyIdentity, setInrAssertedCompanyIdentity] = React.useState<string | null>(null);
   const [ageingAnchor, setAgeingAnchor] = React.useState<OutstandingsAgeingAnchor>("due_date");
   const [view, setView] = React.useState<"ageing" | "unallocated">("ageing");
   const [exportNotice, setExportNotice] = React.useState<{
@@ -156,9 +173,9 @@ export function OutstandingsScreen({
     setLoadedResult(null);
     setError(null);
     setLoading(false);
-    setInrAssertedCompanyGuid(null);
+    setInrAssertedCompanyIdentity(null);
     setExpandedParty(null);
-  }, [config.host, config.port, company?.guid, company?.name]);
+  }, [config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd]);
 
   React.useEffect(() => {
     // The heading/control can change at local midnight while a read is still
@@ -182,7 +199,8 @@ export function OutstandingsScreen({
     setExpandedParty(null);
   }, [ageingAnchor]);
 
-  const currencyReadPermitted = canStartOutstandingsRead(company, inrAssertedCompanyGuid);
+  const currentCompanyIdentity = company ? companyIdentityFor(company) : null;
+  const currencyReadPermitted = canStartOutstandingsRead(currentCompanyIdentity, inrAssertedCompanyIdentity);
   const readPermitted = currencyReadPermitted && requestedAsOf !== null;
   const partialState = result?.state === "partial"
     ? outstandingsPartialState(
@@ -221,16 +239,16 @@ export function OutstandingsScreen({
     } finally {
       if (requestVersion.current === version) setLoading(false);
     }
-  }, [ageingAnchor, asOf, config.host, config.port, company?.guid, company?.name, readPermitted, requestedAsOf]);
+  }, [ageingAnchor, asOf, config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, readPermitted, requestedAsOf]);
 
   React.useEffect(() => {
-    const key = company ? `${config.host}:${config.port}:${company.guid}:${ageingAnchor}` : null;
+    const key = company ? `${companyIdentityFor(company)}:${ageingAnchor}` : null;
     if (!readPermitted || !key || initialReadKey.current === key) return;
     initialReadKey.current = key;
     void load();
     // A newly opened company keeps the existing default-today behaviour. A
     // later date choice is deliberate and waits for the operator to refresh.
-  }, [ageingAnchor, company?.guid, config.host, config.port, load, readPermitted]);
+  }, [ageingAnchor, company?.guid, company?.company_number, company?.books_from_yyyymmdd, config.host, config.port, load, readPermitted]);
 
   // Establish the base currency from Tally rather than making the operator
   // assert it. The INR requirement stays -- putting a rupee symbol in front of
@@ -239,16 +257,24 @@ export function OutstandingsScreen({
   // Where Tally cannot settle it (several currencies defined, or a non-Indian
   // one) the manual confirmation below is still shown.
   React.useEffect(() => {
-    if (!company || inrAssertedCompanyGuid === company.guid) return;
+    if (!company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
     let cancelled = false;
     setCurrencyCheck("checking");
     void invoke<{ is_inr: boolean; mailing_name: string; currency_count: number }>(
       "detect_tally_base_currency",
-      { request: { config, company: company.name, expected_company_guid: company.guid } },
+      { request: {
+        config,
+        selected_company: {
+          display_name: company.name,
+          company_guid: company.guid,
+          company_number: company.company_number,
+          books_from_yyyymmdd: company.books_from_yyyymmdd,
+        },
+      } },
     )
       .then((currency) => {
         if (cancelled) return;
-        if (currency.is_inr) setInrAssertedCompanyGuid(company.guid);
+        if (currency.is_inr) setInrAssertedCompanyIdentity(companyIdentityFor(company));
         setCurrencyCheck(currency.is_inr ? "inr" : "undetermined");
       })
       .catch(() => {
@@ -257,7 +283,7 @@ export function OutstandingsScreen({
     return () => {
       cancelled = true;
     };
-  }, [config.host, config.port, company?.guid, company?.name]);
+  }, [config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, inrAssertedCompanyIdentity]);
 
   // Must sit above the early returns below: a hook placed after them runs on
   // some renders and not others, which React rejects outright with "Rendered
@@ -300,7 +326,7 @@ export function OutstandingsScreen({
     return (
       <section className="panel wide outstandings-empty">
         <h2>Select a verified Tally company</h2>
-        <p>Outstandings require a persisted company name and observed GUID before any voucher read can start.</p>
+        <p>Outstandings require a persisted company name, number, GUID, and book opening date before any voucher read can start.</p>
         <button type="button" onClick={onChangeSetup}>Manage Tally</button>
       </section>
     );
@@ -319,7 +345,7 @@ export function OutstandingsScreen({
       <section className="panel wide outstandings-empty">
         <h2>Confirm the base currency</h2>
         <p>Tally did not settle this company&rsquo;s base currency — it defines more than one currency, or one that is not the Indian rupee. Bridge shows totals in rupees, so confirm before continuing.</p>
-        <button type="button" onClick={() => setInrAssertedCompanyGuid(company.guid)}>This company uses INR</button>
+        <button type="button" onClick={() => setInrAssertedCompanyIdentity(companyIdentityFor(company))}>This company uses INR</button>
       </section>
     );
   }

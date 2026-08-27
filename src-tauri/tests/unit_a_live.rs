@@ -7,6 +7,8 @@
 #![cfg(feature = "voucher-scan")]
 
 #[cfg(feature = "live-calibration-harness")]
+use bridge_lib::commands::VerifiedCompanyIdentity;
+#[cfg(feature = "live-calibration-harness")]
 use bridge_lib::tally::{
     OutstandingsAgeingAnchor, OutstandingsCurrencyAssertion, OutstandingsLoadResult, TallyConfig,
     TallyRuntime,
@@ -53,8 +55,7 @@ async fn unit_a_outstandings_live_exit_check_withholds_without_residual_coverage
                 host: "127.0.0.1".to_string(),
                 port,
             },
-            company,
-            company_guid,
+            &VerifiedCompanyIdentity::live_calibration_harness_identity(company, company_guid),
             TallyDate::parse(EXIT_AS_OF).expect("fixed reconciliation as-of date is valid"),
             OutstandingsCurrencyAssertion::Inr,
             OutstandingsAgeingAnchor::DueDate,

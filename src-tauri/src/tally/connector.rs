@@ -28,8 +28,12 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;
 
+use super::connection::DirectCompanyBootstrapError;
 use super::runtime::{TallyRuntimeControlError, TallyRuntimeReadError};
-use super::{tdl_engine, TallyConfig, TallyRuntime};
+use super::{
+    tdl_engine, TallyCompany, TallyConfig, TallyRuntime, VerifiedCompanyIdentity,
+    VerifiedCompanyIdentityError,
+};
 
 const CORE_QUERY_PROFILE: &str = "core_accounting_v3";
 
@@ -318,30 +322,23 @@ impl RuntimeTallyConnector {
             .snapshot_probe_with_observation(self.config.clone(), &self.company.display_name)
             .await
             .map_err(map_transport_error)?;
-        let matching_companies = result
-            .companies
-            .iter()
-            .filter(|company| {
-                company.guid.as_deref().is_some_and(|guid| {
-                    company_guids_equal(guid, &self.company.identity.company_guid)
-                })
-            })
-            .take(2)
-            .count();
-        if matching_companies != 1 {
-            return Err(protocol_error(if matching_companies == 0 {
-                "company_identity_not_found"
-            } else {
-                "company_identity_ambiguous"
-            }));
-        }
+        self.verify_snapshot_identity_from_companies(&result.companies)?;
         let boundary_profile = self.observe_snapshot_profile(&result.profile)?;
-        let core_evidence = match self
+        let source_read = self
             .extract_core_window(&self.canary_context, boundary_profile)
-            .await
-        {
-            Ok(window) => core_canary_capability(&window),
-            Err(error) => CapabilityEvidence {
+            .await;
+        // A failed source read is still a source-read attempt. Always make the
+        // closing full-tuple observation, while preserving the source error as
+        // the decisive capability evidence when both operations fail.
+        let closing_identity = self.verify_snapshot_identity().await;
+        let core_evidence = match (source_read, closing_identity) {
+            (Ok(window), Ok(())) => core_canary_capability(&window),
+            (Ok(_), Err(error)) => CapabilityEvidence {
+                state: CapabilityState::Unknown,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: Some(capability_failure_code(&error)),
+            },
+            (Err(error), _) => CapabilityEvidence {
                 state: CapabilityState::Unknown,
                 confidence: EvidenceConfidence::Observed,
                 safe_reason_code: Some(capability_failure_code(&error)),
@@ -355,6 +352,82 @@ impl RuntimeTallyConnector {
             reachable: result.connection.reachable,
             profile: result.profile,
         })
+    }
+
+    fn verify_snapshot_identity_from_companies(
+        &self,
+        companies: &[TallyCompany],
+    ) -> Result<(), TallyError> {
+        let matching = companies
+            .iter()
+            .filter(|company| {
+                let (Some(guid), Some(company_number), Some(books_from)) = (
+                    company.guid.as_deref(),
+                    company.company_number.as_deref(),
+                    company.books_from.as_deref(),
+                ) else {
+                    return false;
+                };
+                company_source_identity(
+                    &self.company.identity.bridge_source_lineage,
+                    guid,
+                    company_number,
+                    &company.name,
+                    books_from,
+                ) == self.company.identity
+            })
+            .collect::<Vec<_>>();
+        let Some(company) = matching.first() else {
+            return Err(protocol_error("company_identity_not_found"));
+        };
+        let (Some(guid), Some(company_number), Some(books_from)) = (
+            company.guid.as_deref(),
+            company.company_number.as_deref(),
+            company.books_from.as_deref(),
+        ) else {
+            return Err(protocol_error("company_identity_not_found"));
+        };
+        VerifiedCompanyIdentity::from_observed_companies(
+            company.name.clone(),
+            guid.to_string(),
+            company_number.to_string(),
+            books_from.to_string(),
+            companies,
+        )
+        .map(|_| ())
+        .map_err(|error| match error {
+            VerifiedCompanyIdentityError::Missing => protocol_error("company_identity_not_found"),
+            VerifiedCompanyIdentityError::DuplicateTuple => {
+                protocol_error("company_identity_ambiguous")
+            }
+            VerifiedCompanyIdentityError::DisplayScopeAmbiguous => {
+                protocol_error("company_identity_display_scope_ambiguous")
+            }
+        })
+    }
+
+    async fn verify_snapshot_identity(&self) -> Result<(), TallyError> {
+        let companies = self
+            .runtime
+            .fetch_companies(self.config.clone())
+            .await
+            .map_err(map_transport_error)?;
+        self.verify_snapshot_identity_from_companies(&companies)
+    }
+
+    /// Every source read gets a closing identity check. A closing mismatch
+    /// invalidates a successful source response, but it must not replace an
+    /// earlier source failure with a later, unrelated company-list failure.
+    async fn finish_snapshot_source_read<T>(
+        &self,
+        source_read: Result<T, TallyError>,
+    ) -> Result<T, TallyError> {
+        let closing_identity = self.verify_snapshot_identity().await;
+        match (source_read, closing_identity) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(error)) => Err(error),
+            (Err(error), _) => Err(error),
+        }
     }
 }
 
@@ -387,19 +460,33 @@ impl TallyConnector for RuntimeTallyConnector {
                 .await?,
         )
         .map_err(|_| protocol_error("company_export_invalid"))?;
-        Ok(companies
+        companies
             .into_iter()
-            .filter_map(|company| {
-                let guid = company.guid?;
-                if guid.trim().is_empty() {
-                    return None;
-                }
-                Some(CompanyRef {
-                    identity: company_source_identity(&lineage, &guid),
+            .map(|company| {
+                let guid = company
+                    .guid
+                    .filter(|guid| !guid.trim().is_empty())
+                    .ok_or_else(|| protocol_error("company_identity_incomplete"))?;
+                let company_number = company
+                    .company_number
+                    .filter(|number| !number.trim().is_empty())
+                    .ok_or_else(|| protocol_error("company_identity_incomplete"))?;
+                let books_from = company
+                    .books_from
+                    .filter(|date| !date.trim().is_empty())
+                    .ok_or_else(|| protocol_error("company_identity_incomplete"))?;
+                Ok(CompanyRef {
+                    identity: company_source_identity(
+                        &lineage,
+                        &guid,
+                        &company_number,
+                        &company.name,
+                        &books_from,
+                    ),
                     display_name: company.name,
                 })
             })
-            .collect())
+            .collect()
     }
 
     async fn read_pack_window(
@@ -414,7 +501,9 @@ impl TallyConnector for RuntimeTallyConnector {
             .read()
             .map_err(|_| invalid_data("snapshot_boundary_profile_unavailable"))?
             .ok_or_else(|| invalid_data("snapshot_boundary_profile_unavailable"))?;
-        self.extract_core_window(context, boundary_profile).await
+        self.verify_snapshot_identity().await?;
+        let window = self.extract_core_window(context, boundary_profile).await;
+        self.finish_snapshot_source_read(window).await
     }
 
     async fn read_core_period_balance_report(
@@ -434,6 +523,7 @@ impl TallyConnector for RuntimeTallyConnector {
         let validation_company_guid = expected_company_guid.clone();
         let validation_from = expected_from.clone();
         let validation_to = expected_to.clone();
+        self.verify_snapshot_identity().await?;
         let xml = self
             .post_xml_validated(
                 tdl_engine::ledger_period_balances_request(
@@ -450,7 +540,8 @@ impl TallyConnector for RuntimeTallyConnector {
                     })
                 },
             )
-            .await?;
+            .await;
+        let xml = self.finish_snapshot_source_read(xml).await?;
         let parsed = parse_ledger_period_balance_report(&xml)
             .map_err(|_| protocol_error("period_report_invalid"))?;
         if !company_guids_equal(
@@ -475,7 +566,7 @@ impl TallyConnector for RuntimeTallyConnector {
                 })
             })
             .collect::<Result<Vec<_>, TallyError>>()?;
-        Ok(LedgerPeriodBalanceReport {
+        let report = LedgerPeriodBalanceReport {
             source_identity: self.company.identity.clone(),
             window: ReadWindow {
                 from_yyyymmdd: parsed.context.from_yyyymmdd,
@@ -488,7 +579,8 @@ impl TallyConnector for RuntimeTallyConnector {
             ordinary_books_scope_observed: false,
             source_reported_count: parsed.context.source_record_count,
             balances,
-        })
+        };
+        Ok(report)
     }
 }
 
@@ -565,13 +657,25 @@ pub fn source_lineage(config: &TallyConfig) -> Result<String, TallyError> {
     Ok(format!("tally_xml_http:{}", endpoint.as_str()))
 }
 
-pub fn company_source_identity(lineage: &str, company_guid: &str) -> SourceIdentity {
+pub fn company_source_identity(
+    lineage: &str,
+    company_guid: &str,
+    company_number: &str,
+    display_name: &str,
+    books_from_yyyymmdd: &str,
+) -> SourceIdentity {
     let canonical_guid = company_guid.to_ascii_lowercase();
     let mut digest = Sha256::new();
-    digest.update(b"bridge-tally-company-observation-v1\0");
+    digest.update(b"bridge-tally-company-observation-v2\0");
     digest.update(lineage.as_bytes());
     digest.update(b"\0");
     digest.update(canonical_guid.as_bytes());
+    digest.update(b"\0");
+    digest.update(company_number.as_bytes());
+    digest.update(b"\0");
+    digest.update(display_name.as_bytes());
+    digest.update(b"\0");
+    digest.update(books_from_yyyymmdd.as_bytes());
     SourceIdentity {
         bridge_source_lineage: lineage.to_string(),
         company_guid: canonical_guid,
@@ -592,6 +696,12 @@ fn company_guids_equal(left: &str, right: &str) -> bool {
 }
 
 fn map_transport_error(error: anyhow::Error) -> TallyError {
+    if error
+        .downcast_ref::<DirectCompanyBootstrapError>()
+        .is_some()
+    {
+        return protocol_error("company_identity_not_found");
+    }
     if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
         return match control {
             TallyRuntimeControlError::Cancelled => TallyError::Cancelled,
@@ -834,7 +944,13 @@ mod tests {
         let context = RequestContext {
             run_id: "wr2-native-core-window".to_string(),
             company: CompanyRef {
-                identity: company_source_identity("synthetic-lineage", COMPANY_GUID),
+                identity: company_source_identity(
+                    "synthetic-lineage",
+                    COMPANY_GUID,
+                    "100001",
+                    COMPANY,
+                    "20260401",
+                ),
                 display_name: COMPANY.to_string(),
             },
             pack: CapabilityPackId::CoreAccounting,
@@ -1128,16 +1244,32 @@ mod tests {
         let lowercase = company_source_identity(
             "tally_xml_http:http://127.0.0.1:9000",
             "4c42a771-abcd-4def-8abc-001122aabbcc",
+            "100001",
+            "Synthetic",
+            "20260401",
         );
         let mixed_case = company_source_identity(
             "tally_xml_http:http://127.0.0.1:9000",
             "4C42A771-AbCd-4DeF-8AbC-001122AaBbCc",
+            "100001",
+            "Synthetic",
+            "20260401",
         );
 
         assert_eq!(mixed_case, lowercase);
         assert_eq!(
             mixed_case.company_guid,
             "4c42a771-abcd-4def-8abc-001122aabbcc"
+        );
+        assert_ne!(
+            lowercase,
+            company_source_identity(
+                "tally_xml_http:http://127.0.0.1:9000",
+                "4c42a771-abcd-4def-8abc-001122aabbcc",
+                "100014",
+                "Synthetic successor",
+                "20270401",
+            )
         );
     }
 
@@ -1281,15 +1413,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duplicate_company_snapshot_probe_stops_before_core_exports() {
+    async fn presentation_equivalent_company_snapshot_probe_stops_before_core_exports() {
         let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "synthetic-company-guid";
         // `TallyClient::probe` requests the trusted `Company` collection
-        // (`CompanyListV2`) first, so the two duplicate-GUID rows this test
-        // exercises are expressed in that shape rather than the legacy
+        // (`CompanyListV2`) first, so the presentation-equivalent same-GUID
+        // rows this test exercises are expressed in that shape rather than the legacy
         // `CompanyListV1` direct report.
         let duplicate_company_xml = format!(
-            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company A"><GUID TYPE="String">{company_guid}</GUID></COMPANY><COMPANY NAME="Synthetic Company B"><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company A"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY><COMPANY NAME=" synthetic company a "><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100002</COMPANYNUMBER><BOOKSFROM TYPE="Date">20270401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         );
         let (address, server) = spawn_method_routed_server(vec![duplicate_company_xml]).await;
         let config = TallyConfig {
@@ -1300,6 +1432,9 @@ mod tests {
             identity: company_source_identity(
                 &format!("tally_xml_http:http://{address}"),
                 company_guid,
+                "100001",
+                "Synthetic Company A",
+                "20260401",
             ),
             display_name: "Synthetic Company A".to_string(),
         };
@@ -1324,10 +1459,65 @@ mod tests {
             .expect_err("ambiguous company identity must stop the canary");
         assert!(matches!(
             error,
-            TallyError::Protocol { code } if code == "company_identity_ambiguous"
+            TallyError::Protocol { code } if code == "company_identity_display_scope_ambiguous"
         ));
         let methods = server.await.expect("join routed Tally server");
         assert_eq!(methods, ["GET", "POST"]);
+    }
+
+    #[tokio::test]
+    async fn failed_period_read_preserves_its_error_after_a_closing_identity_request() {
+        let _simulator_guard = simulator_test_lock().lock().await;
+        let company_guid = "synthetic-company-guid";
+        let company_collection = format!(
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+        );
+        let (address, server) = spawn_method_routed_server(vec![
+            company_collection.clone(),
+            "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER></ENVELOPE>".to_string(),
+            company_collection,
+        ])
+        .await;
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let company = CompanyRef {
+            identity: company_source_identity(
+                &format!("tally_xml_http:http://{address}"),
+                company_guid,
+                "100001",
+                "Synthetic Company",
+                "20260401",
+            ),
+            display_name: "Synthetic Company".to_string(),
+        };
+        let context = RequestContext {
+            run_id: "run-period-source-failure".to_string(),
+            company: company.clone(),
+            pack: CapabilityPackId::CoreAccounting,
+            schema_version: CORE_ACCOUNTING_SCHEMA_VERSION,
+            window: ReadWindow {
+                from_yyyymmdd: "20260701".to_string(),
+                to_yyyymmdd: "20260701".to_string(),
+            },
+            query_profile: bridge_tally_core::CanonicalText::parse(CORE_QUERY_PROFILE).unwrap(),
+            filters_sha256: bridge_tally_core::CanonicalText::parse("0".repeat(64)).unwrap(),
+        };
+        let connector =
+            RuntimeTallyConnector::new(TallyRuntime::default(), config, company, context.clone())
+                .unwrap();
+
+        let error = connector
+            .read_core_period_balance_report(&context)
+            .await
+            .expect_err("the rejected period response must remain the reported failure");
+        assert!(matches!(
+            error,
+            TallyError::Protocol { code } if code == "application_response_rejected"
+        ));
+        let methods = server.await.expect("join source-failure server");
+        assert_eq!(methods, ["POST", "POST", "POST"]);
     }
 
     /// `discover_companies` requests the native `Company` collection
@@ -1350,6 +1540,9 @@ mod tests {
             identity: company_source_identity(
                 &format!("tally_xml_http:http://{address}"),
                 company_guid,
+                "100001",
+                "Synthetic Company",
+                "20260401",
             ),
             display_name: "Synthetic Company".to_string(),
         };
@@ -1421,6 +1614,9 @@ mod tests {
             identity: company_source_identity(
                 &format!("tally_xml_http:http://{address}"),
                 COMPANY_GUID,
+                "100001",
+                COMPANY,
+                "20260401",
             ),
             display_name: COMPANY.to_string(),
         };
@@ -1456,7 +1652,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_company_snapshot_probe_reverifies_scoped_identity_before_core_exports() {
+    async fn direct_company_snapshot_probe_rejects_identity_without_company_collection_tuple() {
         let _simulator_guard = simulator_test_lock().lock().await;
         assert!(
             parse_native_group_source_records_with_evidence(
@@ -1485,24 +1681,6 @@ mod tests {
             direct.to_string(),
             discovered.to_string(),
             standard.to_string(),
-            company_extent("Synthetic Company", "scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
-            native_groups("scoped-guid", &[]),
-            native_groups("scoped-guid", &[]),
-            company_extent("Synthetic Company", "scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
-            native_ledgers("scoped-guid"),
-            native_ledgers("scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
-            native_voucher_types("scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
-            native_vouchers("scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
-            company_extent("Synthetic Company", "scoped-guid"),
         ])
         .await;
         let config = TallyConfig {
@@ -1513,6 +1691,9 @@ mod tests {
             identity: company_source_identity(
                 &format!("tally_xml_http:http://{address}"),
                 "scoped-guid",
+                "100001",
+                "Synthetic Company",
+                "20260401",
             ),
             display_name: "Synthetic Company".to_string(),
         };
@@ -1531,21 +1712,16 @@ mod tests {
         let connector =
             RuntimeTallyConnector::new(TallyRuntime::default(), config, company, context).unwrap();
 
-        let probe = connector
+        let error = connector
             .probe()
             .await
-            .expect("scoped re-verification should admit the snapshot probe");
+            .expect_err("a legacy direct identity omits the required company collection tuple");
         let methods = server.await.expect("join routed Tally server");
-        let core_evidence = probe
-            .profile
-            .packs
-            .get(&CapabilityPackId::CoreAccounting)
-            .unwrap();
-        assert!(
-            core_snapshot_start_authorized(core_evidence),
-            "core evidence was {core_evidence:?}; methods were {methods:?}"
-        );
-        assert_eq!(methods.len(), 23);
+        assert!(matches!(
+            error,
+            TallyError::Protocol { code } if code == "company_identity_not_found"
+        ));
+        assert_eq!(methods.len(), 5);
         assert_eq!(methods[0], "GET");
         assert!(methods[1..].iter().all(|method| method == "POST"));
     }
@@ -1555,16 +1731,17 @@ mod tests {
         let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "education-mid-month-guid";
         let company_collection = format!(
-            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Education Mid-month"><GUID TYPE="String">{company_guid}</GUID><PRODUCTNAME TYPE="String">TallyPrime</PRODUCTNAME><EDUMODE>Yes</EDUMODE><SILVER>No</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Education Mid-month"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20240115</BOOKSFROM><PRODUCTNAME TYPE="String">TallyPrime</PRODUCTNAME><EDUMODE>Yes</EDUMODE><SILVER>No</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         );
         let extent =
             company_extent_with_books_from("Education Mid-month", company_guid, "20240115");
-        // The nine POST responses below cover the actual snapshot probe and
+        // The ten POST responses below cover the actual snapshot probe,
         // the full group/extent bracket that precedes the ledger export. The
+        // final Company collection brackets the refused source read. The
         // routed server then fails if anything reaches it: an Education
         // profile must reject the mid-month BOOKSFROM before List of Ledgers.
         let (address, server) = spawn_method_routed_server_refusing_extra_requests(vec![
-            company_collection,
+            company_collection.clone(),
             extent.clone(),
             extent.clone(),
             native_groups(company_guid, &[]),
@@ -1573,6 +1750,7 @@ mod tests {
             extent.clone(),
             extent.clone(),
             extent,
+            company_collection,
         ])
         .await;
         let config = TallyConfig {
@@ -1583,6 +1761,9 @@ mod tests {
             identity: company_source_identity(
                 &format!("tally_xml_http:http://{address}"),
                 company_guid,
+                "100001",
+                "Education Mid-month",
+                "20240115",
             ),
             display_name: "Education Mid-month".to_string(),
         };
@@ -1630,7 +1811,7 @@ mod tests {
             "snapshot lifecycle evidence must not replace interactive setup review"
         );
         let methods = server.await.expect("join snapshot-start guard server");
-        assert_eq!(methods.len(), 10, "one GET and nine pre-ledger POSTs only");
+        assert_eq!(methods.len(), 11, "one GET and ten pre-ledger POSTs only");
         assert_eq!(methods[0], "GET");
         assert!(methods[1..].iter().all(|method| method == "POST"));
     }
@@ -1645,7 +1826,7 @@ mod tests {
         // one request and never falls back to the legacy, explicitly-untrusted
         // direct report.
         let company_collection_xml = format!(
-            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">{company_guid}</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20240101</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         );
         // `discover_companies` now posts the native `Company` collection
         // (`ReadOnlyProfile::CompanyListV2`) directly and parses it with
@@ -1674,6 +1855,7 @@ mod tests {
                 native_vouchers(company_guid),
                 company_extent("Synthetic Company", company_guid),
                 company_extent("Synthetic Company", company_guid),
+                company_collection_xml.clone(),
             ]);
         }
         post_responses.push(company_xml.clone());
@@ -1695,6 +1877,9 @@ mod tests {
             identity: company_source_identity(
                 &format!("tally_xml_http:http://{address}"),
                 company_guid,
+                "100001",
+                "Synthetic Company",
+                "20240101",
             ),
             display_name: "Synthetic Company".to_string(),
         };
@@ -1773,7 +1958,7 @@ mod tests {
                 .iter()
                 .filter(|method| method.as_str() == "POST")
                 .count(),
-            40
+            42
         );
     }
 
@@ -1830,6 +2015,9 @@ mod tests {
             identity: company_source_identity(
                 &format!("tally_xml_http:http://{}", simulator.address()),
                 company_guid,
+                "100001",
+                "Synthetic Company",
+                "20240101",
             ),
             display_name: "Synthetic Company".to_string(),
         };
