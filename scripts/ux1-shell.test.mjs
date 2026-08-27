@@ -13,8 +13,10 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /const NON_TALLY_SECTIONS_ENABLED = false/);
   assert.match(app, /disabled=\{!NON_TALLY_SECTIONS_ENABLED\}/);
   assert.match(app, /Not yet available/);
-  assert.match(app, /port: 9001/);
-  assert.match(app, /liveCompanyKeys\.includes\(key\).*company\.canonical_endpoint === configuredTallyEndpoint\(config\)/s);
+  assert.match(app, /port: 9000/);
+  assert.match(app, /currentProbeCanonicalOrigin/);
+  assert.match(app, /company\.canonical_endpoint === currentProbeCanonicalOrigin/);
+  assert.doesNotMatch(app, /function configuredTallyEndpoint/);
   assert.match(app, /const selectedCompanyReadable = selectedCompanyReady/);
   assert.doesNotMatch(app, /fetch_saved_tally_outstandings|detect_saved_tally_base_currency/);
   assert.match(switcher, /type="search"/);
@@ -29,6 +31,7 @@ test("UX1 nav sends unreadable outstandings and client requests to Manage Tally"
   assert.match(nav, /Outstandings/);
   assert.match(nav, /Compare clients/);
   assert.match(nav, /Manage Tally/);
+  assert.match(nav, /Evidence dashboard/);
   assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "outstandings" : "companies"\)\}/);
   assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "clients" : "companies"\)\}/);
 });

@@ -48,7 +48,7 @@ test("saved pins remain selectable for local proof review without a Tally read",
   assert.match(frontend, /Change saved company/);
   assert.match(frontend, /const savedCompanyMutationPending = tallyAction === "save"\s*\|\| tallyAction === "fixture_enroll"\s*\|\| tallyAction === "fixture_revoke";/s);
   assert.match(frontend, /const savedCompanySelectionLocked = snapshotActive\s*\|\| snapshotStartOutcomeUnknown\s*\|\| savedCompanyMutationPending\s*\|\| tallyAction === "start"\s*\|\| tallyAction === "resume";/s);
-  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
+  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;[\s\S]*?company\?\.mirror_company_id[\s\S]*?company\.canonical_endpoint === currentProbeCanonicalOrigin[\s\S]*?clearSelectedCompanyScope\(\{ preserveCurrentProbeReview \}\);\s*setSelectedCompany\(key\);\s*\}/s);
   assert.match(frontend, /selectSavedCompany\(""\)\} disabled=\{savedCompanySelectionLocked\}/);
   assert.match(frontend, /selectSavedCompany\(key\)\} disabled=\{savedCompanySelectionLocked\}/);
 });

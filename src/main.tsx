@@ -409,9 +409,12 @@ function TallyErrorNotice({ message }: { message: OperatorError }) {
 
 function App() {
   const currentFinancialYear = React.useMemo(() => getCurrentFinancialYear(), []);
-  const [config, setConfig] = React.useState<TallyConfig>({ host: "localhost", port: 9001 });
+  const [config, setConfig] = React.useState<TallyConfig>({ host: "localhost", port: 9000 });
   const [status, setStatus] = React.useState<ConnectionStatus | null>(null);
   const [passport, setPassport] = React.useState<CapabilityProfile | null>(null);
+  // This value comes from the Rust loopback boundary after a successful
+  // probe. The UI must not recreate that canonicalisation itself.
+  const [currentProbeCanonicalOrigin, setCurrentProbeCanonicalOrigin] = React.useState<string | null>(null);
   const [profileSha256, setProfileSha256] = React.useState<string | null>(null);
   const [reviewId, setReviewId] = React.useState<string | null>(null);
   const [reviewCommitmentSha256, setReviewCommitmentSha256] = React.useState<string | null>(null);
@@ -623,12 +626,14 @@ function App() {
     tallyResultsVersion.current += 1;
     setStatus(null);
     setPassport(null);
+    setCurrentProbeCanonicalOrigin(null);
     setProfileSha256(null);
     setReviewId(null);
     setReviewCommitmentSha256(null);
     setSelectedReadScope(null);
     setPassportSnapshotId(null);
     setLiveCompanyKeys([]);
+    setOpenCompanyNames([]);
     setUntrustedDiscoveredCompanies([]);
     setUntrustedDiscoveryError(null);
     setDraft(null);
@@ -694,7 +699,14 @@ function App() {
 
   function selectSavedCompany(key: string) {
     if (key === selectedCompany || savedCompanySelectionLocked) return;
-    clearSelectedCompanyScope();
+    const company = companies.find((candidate) => tallyCompanyKey(candidate) === key);
+    const preserveCurrentProbeReview = Boolean(
+      company?.mirror_company_id
+        && currentProbeCanonicalOrigin
+        && liveCompanyKeys.includes(key)
+        && company.canonical_endpoint === currentProbeCanonicalOrigin,
+    );
+    clearSelectedCompanyScope({ preserveCurrentProbeReview });
     setSelectedCompany(key);
   }
 
@@ -712,8 +724,10 @@ function App() {
     const company = companies.find((candidate) => tallyCompanyKey(candidate) === key);
     if (!company || savedCompanySelectionLocked) return;
     if (company.mirror_company_id) {
+      const currentAtProbedEndpoint = liveCompanyKeys.includes(key)
+        && company.canonical_endpoint === currentProbeCanonicalOrigin;
       selectSavedCompany(key);
-      if (liveCompanyKeys.includes(key) && company.canonical_endpoint === configuredTallyEndpoint(config)) {
+      if (currentAtProbedEndpoint) {
         setView("outstandings");
       } else {
         setCompanyError("Check the endpoint and re-verify this saved client before reading it.");
@@ -763,6 +777,7 @@ function App() {
             installProbeState: () => {
               setStatus(result.connection);
               setPassport(result.profile);
+              setCurrentProbeCanonicalOrigin(result.canonical_origin);
               setProfileSha256(result.profile_sha256);
               setReviewId(result.review_id);
               setReviewCommitmentSha256(result.review_commitment_sha256);
@@ -783,7 +798,6 @@ function App() {
             const discovered = await invoke<UntrustedCompanyCandidate[]>("fetch_tally_companies", { config });
             if (discoveryResultsVersion === tallyResultsVersion.current) {
               setUntrustedDiscoveredCompanies(discovered);
-        setOpenCompanyNames(discovered.map((candidate) => candidate.name));
               setOpenCompanyNames(discovered.map((candidate) => candidate.name));
             }
           } catch (error) {
@@ -797,12 +811,16 @@ function App() {
       if (resultsVersion === tallyResultsVersion.current) {
         setStatus(null);
         setPassport(null);
+        setCurrentProbeCanonicalOrigin(null);
         setProfileSha256(null);
         setReviewId(null);
         setReviewCommitmentSha256(null);
         setSelectedReadScope(null);
         setPassportSnapshotId(null);
         setLiveCompanyKeys([]);
+        setOpenCompanyNames([]);
+        setUntrustedDiscoveredCompanies([]);
+        setUntrustedDiscoveryError(null);
         setDashboardError(toOperatorError(error));
       }
     } finally {
@@ -856,6 +874,7 @@ function App() {
           installProbeState: () => {
             setStatus(result.connection);
             setPassport(result.profile);
+            setCurrentProbeCanonicalOrigin(result.canonical_origin);
             setProfileSha256(result.profile_sha256);
             setReviewId(result.review_id);
             setReviewCommitmentSha256(result.review_commitment_sha256);
@@ -1282,7 +1301,8 @@ function App() {
   const selectedCompanyReady = tallyReadinessState({
     endpointComplete: setupConnectionComplete,
     companySelected: Boolean(selectedCompanyRecord),
-    companyCurrent: selectedCompanyLive,
+    companyCurrent: selectedCompanyLive
+      && selectedCompanyRecord?.canonical_endpoint === currentProbeCanonicalOrigin,
     companySaved: Boolean(selectedCompanyRecord?.mirror_company_id),
   }).companyReady;
   const selectedCompanyReadable = selectedCompanyReady;
@@ -1292,7 +1312,7 @@ function App() {
       name: company.name,
       state: company.mirror_company_id
         && liveCompanyKeys.includes(tallyCompanyKey(company))
-        && company.canonical_endpoint === configuredTallyEndpoint(config)
+        && company.canonical_endpoint === currentProbeCanonicalOrigin
         ? "ready" as const
         : company.guid
           ? "setup_required" as const
@@ -1414,6 +1434,9 @@ function App() {
           <button aria-current={view === "mirror" ? "page" : undefined} className={view === "mirror" ? "active" : ""} onClick={() => setView("mirror")}>
             <Database size={18} /> Mirror &amp; Proof
           </button>
+          <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
+            <ShieldCheck size={18} /> Evidence dashboard
+          </button>
           <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby="future-sections-note">
             <FileText size={18} /> GST Returns <small>Not yet available</small>
           </button>
@@ -1435,7 +1458,7 @@ function App() {
           clients={clientSwitcherClients}
           selectedClientKey={selectedCompany}
           selectionLocked={savedCompanySelectionLocked}
-          endpoint={`${config.host}:${config.port}`}
+          endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
           onSelect={selectClientFromShell}
           onManageTally={() => setView("companies")}
@@ -2037,13 +2060,6 @@ function formatRuntimeTime(value?: number): string {
     return "Not observed";
   }
   return new Date(value).toLocaleString();
-}
-
-function configuredTallyEndpoint(config: TallyConfig): string | null {
-  const host = config.host.trim().toLocaleLowerCase();
-  if (host === "localhost" || host === "127.0.0.1") return `http://127.0.0.1:${config.port}`;
-  if (host === "::1") return `http://[::1]:${config.port}`;
-  return null;
 }
 
 function toTallyDate(value: string): string {
