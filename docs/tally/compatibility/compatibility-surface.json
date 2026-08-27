@@ -402,6 +402,14 @@
       "sha256": "f63a45ae8b693b92b6d3b00b1d74f1f4c96620faeb675922032e32f96c721145"
     },
     {
+      "path": "src/ClientSwitcher.tsx",
+      "sha256": "996c39f19ba12ee8413f1f2152e1ebd1ae1088e6cb0aa8675475e9e86087528f"
+    },
+    {
+      "path": "src/MirrorProofScreen.tsx",
+      "sha256": "0428d0c6f4cd2912e2d2d8f0e321defb608e0973c1916564cd6f7b1548189e44"
+    },
+    {
       "path": "src/OutstandingsScreen.tsx",
       "sha256": "0c6538d5ac241b79d9fe79b991de1a42b639882a26226076d628edec8fe62a65"
     },
@@ -482,5 +490,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "a42ed2df4986bfcf5a6c89c2c124aedc8e147a6b9f99ecdbd4e2965837e46739"
+  "manifest_sha256": "e0b40f44fd5ade4584fa0198e3257233a9f4554cb0dc837b68152e335d04a4c0"
 }

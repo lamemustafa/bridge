@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -97,6 +98,18 @@ test("UX1 nav sends unreadable outstandings and client requests to Manage Tally"
   assert.match(nav, /Evidence dashboard/);
   assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "outstandings" : "companies"\)\}/);
   assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "clients" : "companies"\)\}/);
+});
+
+test("compatibility surface binds every UX1 Tally read entry control", async () => {
+  const [surfaceBytes, clientSwitcher, mirrorProof] = await Promise.all([
+    readFile(new URL("../docs/tally/compatibility/compatibility-surface.json", import.meta.url), "utf8"),
+    readFile(new URL("../src/ClientSwitcher.tsx", import.meta.url)),
+    readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url)),
+  ]);
+  const hashes = new Map(JSON.parse(surfaceBytes).files.map(({ path, sha256 }) => [path, sha256]));
+
+  assert.equal(hashes.get("src/ClientSwitcher.tsx"), createHash("sha256").update(clientSwitcher).digest("hex"));
+  assert.equal(hashes.get("src/MirrorProofScreen.tsx"), createHash("sha256").update(mirrorProof).digest("hex"));
 });
 
 test("UX1 has reachable responsive rules and contains wide content", async () => {
