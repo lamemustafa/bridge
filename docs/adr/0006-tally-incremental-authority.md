@@ -36,9 +36,9 @@ deletion-authority receipts have private fields; production callers cannot self-
 
 ## Split-book `ALTVCHID` collision
 
-**VERIFIED 2026-08-26** on licensed TallyPrime Silver. A year-end split of `BRIDGE PROBE B
-SANDBOX` returned two genuinely distinct books from `COMPANY_EXTENT_FETCH` (`Name`, `GUID`,
-`BooksFrom`, `LastVoucherDate`, `ALTVCHID`, `ALTMSTID`):
+**VERIFIED 2026-08-26** on licensed TallyPrime Silver. Captured Company-collection responses
+(the evidence recorded in `TALLY_PROTOCOL_REFERENCE.md` §9.11b) established that a year-end
+split of `BRIDGE PROBE B SANDBOX` produced two genuinely distinct books:
 
 | COMPANYNUMBER | GUID | BOOKSFROM | ALTVCHID |
 | --- | --- | --- | ---: |
@@ -52,11 +52,17 @@ identity discriminator. The GUID collision itself is recorded in
 
 Any future incremental scope must key the complete observed book tuple
 `(canonical_origin, COMPANYNUMBER, GUID, NAME, BOOKSFROM)`, never GUID alone. In particular,
-two split twins must not share a `scope_sha256` or checkpoint watermark.
+two split twins must not share a `scope_sha256` or checkpoint head/state; their numeric high
+watermarks may legitimately coincide.
 
-This is latent, not a live defect: no runtime path writes `tally_incremental_*` checkpoint heads.
-Current Core Accounting snapshots are `Partial`, so they cannot establish incremental authority;
-the schema-only foundation remains behind an unreachable `Verified` establishment state.
+The incremental checkpoint collision is latent: no runtime path writes
+`tally_incremental_*` checkpoint heads, and Current Core Accounting snapshots are `Partial`, so
+they cannot establish incremental authority. The separate live compatibility defect is fail-closed:
+the GUID-only `CompanyBookExtentV1` parser rejects a loaded split pair as
+`company_identity_ambiguous` before it considers the expected display name. Any path that still
+uses that extent bracket, including native outstandings pairing, therefore needs a composite-tuple
+profile and parser before it can serve split books. Snapshot source reads use their separate
+composite identity brackets; that does not make the GUID-only extent parser safe for other callers.
 
 ## Reasons for remaining disabled
 
