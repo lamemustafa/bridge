@@ -628,6 +628,8 @@ function App() {
 
   function invalidateTallyResults() {
     tallyResultsVersion.current += 1;
+    const selected = companies.find((company) => tallyCompanyKey(company) === selectedCompany);
+    if (selected && !selected.mirror_company_id) setSelectedCompany("");
     setStatus(null);
     setPassport(null);
     setCurrentProbeCanonicalOrigin(null);
@@ -1307,8 +1309,14 @@ function App() {
     companySaved: Boolean(selectedCompanyRecord?.mirror_company_id),
   }).companyReady;
   const selectedCompanyReadable = selectedCompanyReady;
+  // An unsaved identity is only usable at the endpoint that returned it. Saved
+  // profiles remain available for local Mirror & Proof review even when no
+  // endpoint is currently checked.
+  const clientSwitcherCompanies = companies.filter(
+    (company) => Boolean(company.mirror_company_id) || company.canonical_endpoint === currentProbeCanonicalOrigin,
+  );
   const clientSwitcherClients: ClientSwitcherClient[] = [
-    ...companies.map((company) => ({
+    ...clientSwitcherCompanies.map((company) => ({
       key: tallyCompanyKey(company),
       name: company.name,
       state: company.mirror_company_id
@@ -1464,6 +1472,8 @@ function App() {
           endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
           loadError={persistedCompanyProfileError ? toErrorMessage(persistedCompanyProfileError) : null}
+          profilesTruncated={persistedCompanyProfilesTruncated}
+          loadedProfileCount={persistedCompanyProfilesLoaded}
           onOpen={() => void refreshPersistedCompanyProfiles()}
           onSelect={selectClientFromShell}
           onManageTally={() => setView("companies")}
@@ -1482,7 +1492,7 @@ function App() {
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
           {!["outstandings", "companies", "clients"].includes(view) && (
-            <button className="primary" onClick={checkTally} disabled={tallyAction !== null}>
+            <button className="primary" onClick={checkTally} disabled={tallyAction !== null || childTallyReadCount > 0}>
               <Cable size={18} />
               {tallyAction === "probe" ? "Checking endpoint..." : "Check Tally Endpoint"}
             </button>
@@ -1777,7 +1787,7 @@ function App() {
                             type="button"
                             key={key}
                             aria-pressed={selected}
-                            disabled={!current || tallyAction !== null || snapshotActive}
+                            disabled={!current || savedCompanySelectionLocked}
                             onClick={() => {
                               if (key === selectedCompany) return;
                               clearSelectedCompanyScope({
@@ -1800,7 +1810,7 @@ function App() {
                 ) : untrustedDiscoveredCompanies.length > 0 ? (
                   <div className="company-options" role="list" aria-label="Companies to verify">
                     {untrustedDiscoveredCompanies.slice(0, TABLE_PREVIEW_LIMIT).map((company, index) => (
-                      <button className="company-option" type="button" key={`${company.name}-${index}`} onClick={() => void bootstrapDirectCompany(company.name)} disabled={snapshotActive || tallyAction !== null}>
+                      <button className="company-option" type="button" key={`${company.name}-${index}`} onClick={() => void bootstrapDirectCompany(company.name)} disabled={savedCompanySelectionLocked}>
                         <Building2 size={20} />
                         <span>{company.name}</span>
                         <small>{tallyAction === "bootstrap" ? "Checking…" : "Use this company"}</small>
@@ -1811,7 +1821,7 @@ function App() {
                   <div className="setup-empty-state">
                     <Building2 size={28} />
                     <p>{untrustedDiscoveryError ? "Bridge could not list companies from Tally." : "No companies were found."}</p>
-                    <button className="secondary-action" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={snapshotActive || tallyAction !== null}>
+                    <button className="secondary-action" type="button" onClick={() => void discoverUntrustedCompanies()} disabled={savedCompanySelectionLocked}>
                       {tallyAction === "discover" ? "Checking Tally…" : "Find companies"}
                     </button>
                   </div>
@@ -1835,7 +1845,7 @@ function App() {
                           type="button"
                           key={`other-${company.name}-${index}`}
                           onClick={() => void bootstrapDirectCompany(company.name)}
-                          disabled={snapshotActive || tallyAction !== null}
+                          disabled={savedCompanySelectionLocked}
                         >
                           <Building2 size={20} />
                           <span>{company.name}</span>
@@ -1848,7 +1858,7 @@ function App() {
                 <div className="setup-company-footer">
                   {selectedCompany && !selectedCompanyLive ? <p>Open this company in Tally, then check Tally again.</p> : null}
                   {selectedCompanyLive && !selectedCompanyReady && (
-                    <button className="primary" type="button" onClick={() => void saveReviewedTallySetup()} disabled={snapshotActive || tallyAction !== null || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyRecord?.guid}>
+                    <button className="primary" type="button" onClick={() => void saveReviewedTallySetup()} disabled={savedCompanySelectionLocked || !passport || !reviewId || !reviewCommitmentSha256 || !selectedCompanyRecord?.guid}>
                       {tallyAction === "save" ? "Saving company…" : "Use this company"}
                     </button>
                   )}

@@ -14,6 +14,8 @@ type Props = {
   endpoint: string;
   endpointStatus: "checked" | "not_checked";
   loadError: string | null;
+  profilesTruncated: boolean;
+  loadedProfileCount: number;
   onOpen: () => void;
   onSelect: (key: string) => void;
   onManageTally: () => void;
@@ -32,6 +34,8 @@ export function ClientSwitcher({
   endpoint,
   endpointStatus,
   loadError,
+  profilesTruncated,
+  loadedProfileCount,
   onOpen,
   onSelect,
   onManageTally,
@@ -123,7 +127,13 @@ export function ClientSwitcher({
                 <small>{STATE_LABELS[client.state]}</small>
               </button>
             ))}
-            {filtered.length === 0 && !loadError && <p className="client-switcher-empty">No saved or discovered client matches that search.</p>}
+            {filtered.length === 0 && !loadError && (
+              <p className="client-switcher-empty">
+                {profilesTruncated
+                  ? `No loaded client matches that search. The fetched saved-profile page contains only the newest ${loadedProfileCount} records; an older saved client may still exist.`
+                  : "No saved or discovered client matches that search."}
+              </p>
+            )}
           </div>
           {loadError && <p className="client-switcher-error" role="alert">{loadError}</p>}
           <p className="client-switcher-note">Ready clients use their saved, endpoint-bound identity. Setup and verification are required before other clients can be read.</p>

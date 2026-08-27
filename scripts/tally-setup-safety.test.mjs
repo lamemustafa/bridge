@@ -109,6 +109,27 @@ test("child Tally reads keep client selection locked until every invocation sett
     assert.match(screen, /onTallyReadActivityChange\(1\);/);
     assert.match(screen, /onTallyReadActivityChange\(-1\);/);
   }
+  const companySetup = frontend.slice(frontend.indexOf("{setupConnectionComplete && ("), frontend.indexOf("{selectedCompanyReady && ("));
+  assert.match(companySetup, /disabled=\{!current \|\| savedCompanySelectionLocked\}/);
+  assert.match(companySetup, /bootstrapDirectCompany\(company\.name\)\} disabled=\{savedCompanySelectionLocked\}/);
+  assert.match(companySetup, /discoverUntrustedCompanies\(\)\} disabled=\{savedCompanySelectionLocked\}/);
+  assert.match(companySetup, /saveReviewedTallySetup\(\)\} disabled=\{savedCompanySelectionLocked \|\| !passport/);
+  assert.match(frontend, /onClick=\{checkTally\} disabled=\{tallyAction !== null \|\| childTallyReadCount > 0\}/);
+});
+
+test("the shell never treats a truncated profile page or stale unsaved identity as exhaustive", async () => {
+  const [frontend, switcher] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/ClientSwitcher.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(frontend, /const selected = companies\.find\(\(company\) => tallyCompanyKey\(company\) === selectedCompany\);\s*if \(selected && !selected\.mirror_company_id\) setSelectedCompany\(""\);/s);
+  assert.match(frontend, /const clientSwitcherCompanies = companies\.filter\(\s*\(company\) => Boolean\(company\.mirror_company_id\) \|\| company\.canonical_endpoint === currentProbeCanonicalOrigin,/s);
+  assert.match(frontend, /\.\.\.clientSwitcherCompanies\.map\(\(company\) =>/);
+  assert.match(frontend, /profilesTruncated=\{persistedCompanyProfilesTruncated\}/);
+  assert.match(frontend, /loadedProfileCount=\{persistedCompanyProfilesLoaded\}/);
+  assert.match(switcher, /profilesTruncated: boolean;/);
+  assert.match(switcher, /The fetched saved-profile page contains only the newest \$\{loadedProfileCount\} records; an older saved client may still exist\./);
 });
 
 test("Tally setup uses the durable pin for readiness and keeps fixture control local to proof work", async () => {
