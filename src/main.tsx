@@ -1475,6 +1475,7 @@ function App() {
         <ClientSwitcher
           clients={clientSwitcherClients}
           selectedClientKey={selectedCompany}
+          activeView={view}
           selectionLocked={savedCompanySelectionLocked}
           endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}

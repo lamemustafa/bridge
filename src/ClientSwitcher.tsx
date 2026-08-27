@@ -12,6 +12,7 @@ export type ClientSwitcherClient = {
 type Props = {
   clients: ClientSwitcherClient[];
   selectedClientKey: string;
+  activeView: string;
   selectionLocked: boolean;
   endpoint: string;
   endpointStatus: "checked" | "not_checked";
@@ -32,6 +33,7 @@ const STATE_LABELS: Record<ClientSwitcherClient["state"], string> = {
 export function ClientSwitcher({
   clients,
   selectedClientKey,
+  activeView,
   selectionLocked,
   endpoint,
   endpointStatus,
@@ -52,6 +54,11 @@ export function ClientSwitcher({
   React.useEffect(() => {
     if (open) searchRef.current?.focus();
   }, [open]);
+
+  React.useEffect(() => {
+    setOpen(false);
+    setQuery("");
+  }, [activeView]);
 
   function close() {
     setOpen(false);

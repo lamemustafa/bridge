@@ -33,6 +33,7 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /setOpenCompanyNames\(\[\]\);\s*setUntrustedDiscoveredCompanies\(\[\]\);/);
   assert.match(app, /correlation_key: company\.correlation_key/);
   assert.match(app, /onOpen=\{\(\) => void refreshPersistedCompanyProfiles\(\)\}/);
+  assert.match(app, /activeView=\{view\}/);
   assert.match(app, /loadError=\{persistedCompanyProfileError \? toErrorMessage\(persistedCompanyProfileError\) : null\}/);
   assert.match(app, /profilesTruncated=\{persistedCompanyProfilesTruncated\}/);
   assert.match(app, /loadedProfileCount=\{persistedCompanyProfilesLoaded\}/);
@@ -40,6 +41,8 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(switcher, /type="search"/);
   assert.match(switcher, /disabled=\{selectionLocked\}/);
   assert.match(switcher, /if \(!current\) onOpen\(\);/);
+  assert.match(switcher, /activeView: string;/);
+  assert.match(switcher, /React\.useEffect\(\(\) => \{\s*setOpen\(false\);\s*setQuery\(""\);\s*\}, \[activeView\]\);/s);
   assert.match(switcher, /client\.searchText\.toLocaleLowerCase\(\)\.includes/);
   assert.match(switcher, /client\.identityDiscriminator/);
   assert.match(switcher, /\{loadError && <p className="client-switcher-error" role="alert">\{loadError\}<\/p>\}/);
