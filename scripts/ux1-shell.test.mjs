@@ -13,6 +13,9 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /const NON_TALLY_SECTIONS_ENABLED = false/);
   assert.match(app, /disabled=\{!NON_TALLY_SECTIONS_ENABLED\}/);
   assert.match(app, /Not yet available/);
+  assert.match(app, /if \(!NON_TALLY_SECTIONS_ENABLED\) \{\s*setDashboardError\("GST availability is unavailable until end-to-end workflow evidence is complete\."\);\s*return;/s);
+  const dashboard = app.slice(app.indexOf('{view === "dashboard" && ('), app.indexOf('{view === "gst" && ('));
+  assert.match(dashboard, /\{NON_TALLY_SECTIONS_ENABLED \? \([\s\S]*?Check GST Availability[\s\S]*?: \(\s*<p className="future-sections-note" role="status">GST availability is unavailable until end-to-end workflow evidence is complete\.<\/p>/);
   assert.match(app, /port: 9000/);
   assert.match(app, /currentProbeCanonicalOrigin/);
   assert.match(app, /company\.canonical_endpoint === currentProbeCanonicalOrigin/);
@@ -24,10 +27,14 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /setOpenCompanyNames\(\[\]\);\s*setUntrustedDiscoveredCompanies\(\[\]\);/);
   assert.match(app, /correlation_key: company\.correlation_key/);
   assert.match(app, /onOpen=\{\(\) => void refreshPersistedCompanyProfiles\(\)\}/);
+  assert.match(app, /loadError=\{persistedCompanyProfileError \? toErrorMessage\(persistedCompanyProfileError\) : null\}/);
   assert.doesNotMatch(app, /fetch_saved_tally_outstandings|detect_saved_tally_base_currency/);
   assert.match(switcher, /type="search"/);
   assert.match(switcher, /disabled=\{selectionLocked\}/);
   assert.match(switcher, /if \(!current\) onOpen\(\);/);
+  assert.match(switcher, /\{loadError && <p className="client-switcher-error" role="alert">\{loadError\}<\/p>\}/);
+  assert.match(switcher, /filtered\.length === 0 && !loadError/);
+  assert.match(switcher, /close\(\);\s*onManageTally\(\);/s);
   assert.match(switcher, /onKeyDown=[\s\S]*?event\.key === "Escape"/);
   assert.match(switcher, /Setup and verification are required before other clients can be read/);
 });

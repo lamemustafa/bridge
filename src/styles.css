@@ -255,6 +255,14 @@ nav button:disabled small {
   margin: 0;
 }
 
+.client-switcher-error {
+  color: #922c2c;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  margin: 0;
+}
+
 header {
   display: flex;
   justify-content: space-between;

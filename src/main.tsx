@@ -438,6 +438,7 @@ function App() {
   const [voucherFrom, setVoucherFrom] = React.useState(currentFinancialYear.from);
   const [voucherTo, setVoucherTo] = React.useState(currentFinancialYear.to);
   const [companyError, setCompanyError] = React.useState<OperatorError | null>(null);
+  const [persistedCompanyProfileError, setPersistedCompanyProfileError] = React.useState<OperatorError | null>(null);
   const [fixtureStatus, setFixtureStatus] = React.useState<TallyWriteFixtureEnrollmentStatus | null>(null);
   const [fixtureStatusError, setFixtureStatusError] = React.useState<string | null>(null);
   const [fixtureDisposableAttested, setFixtureDisposableAttested] = React.useState(false);
@@ -500,8 +501,11 @@ function App() {
       setPersistedCompanyProfileTotal(page.total_profiles);
       setPersistedCompanyProfilesLoaded(page.profiles.length);
       setPersistedCompanyProfilesTruncated(page.truncated);
+      setPersistedCompanyProfileError(null);
     } catch (error) {
-      setCompanyError(toOperatorError(error));
+      const operatorError = toOperatorError(error);
+      setPersistedCompanyProfileError(operatorError);
+      setCompanyError(operatorError);
     }
   }, []);
 
@@ -722,7 +726,13 @@ function App() {
       return;
     }
     if (key === selectedCompany) return;
-    clearSelectedCompanyScope();
+    const preserveCurrentProbeReview = liveCompanyKeys.includes(key)
+      && company.canonical_endpoint === currentProbeCanonicalOrigin
+      && canReuseCurrentProbeReview({
+        reviewAvailable: Boolean(reviewId && reviewCommitmentSha256),
+        setupSaved: Boolean(passportSnapshotId),
+      });
+    clearSelectedCompanyScope({ preserveCurrentProbeReview });
     setSelectedCompany(key);
     setView("companies");
   }
@@ -1234,6 +1244,10 @@ function App() {
   }
 
   async function prepareDraft() {
+    if (!NON_TALLY_SECTIONS_ENABLED) {
+      setDashboardError("GST availability is unavailable until end-to-end workflow evidence is complete.");
+      return;
+    }
     const company = gstCompany.trim();
     const financialYear = gstFinancialYear.trim();
     if (!company || !/^\d{4}-\d{4}$/.test(financialYear)) {
@@ -1442,6 +1456,7 @@ function App() {
           selectionLocked={savedCompanySelectionLocked}
           endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
+          loadError={persistedCompanyProfileError ? toErrorMessage(persistedCompanyProfileError) : null}
           onOpen={() => void refreshPersistedCompanyProfiles()}
           onSelect={selectClientFromShell}
           onManageTally={() => setView("companies")}
@@ -1523,35 +1538,39 @@ function App() {
         {view === "dashboard" && (
           <ErrorBoundary key="dashboard" label="Tally evidence dashboard">
           <>
-            <section className="toolbar">
-              <label>
-                GST company
-                <input
-                  value={gstCompany}
-                  onChange={(event) => {
-                    setGstCompany(event.target.value);
-                    setDraft(null);
-                    tallyResultsVersion.current += 1;
-                  }}
-                />
-              </label>
-              <label>
-                Financial year
-                <input
-                  value={gstFinancialYear}
-                  placeholder="YYYY-YYYY"
-                  onChange={(event) => {
-                    setGstFinancialYear(event.target.value);
-                    setDraft(null);
-                    tallyResultsVersion.current += 1;
-                  }}
-                />
-              </label>
-              <button onClick={prepareDraft} disabled={busy}>
-                <Play size={18} />
-                Check GST Availability
-              </button>
-            </section>
+            {NON_TALLY_SECTIONS_ENABLED ? (
+              <section className="toolbar">
+                <label>
+                  GST company
+                  <input
+                    value={gstCompany}
+                    onChange={(event) => {
+                      setGstCompany(event.target.value);
+                      setDraft(null);
+                      tallyResultsVersion.current += 1;
+                    }}
+                  />
+                </label>
+                <label>
+                  Financial year
+                  <input
+                    value={gstFinancialYear}
+                    placeholder="YYYY-YYYY"
+                    onChange={(event) => {
+                      setGstFinancialYear(event.target.value);
+                      setDraft(null);
+                      tallyResultsVersion.current += 1;
+                    }}
+                  />
+                </label>
+                <button onClick={prepareDraft} disabled={busy}>
+                  <Play size={18} />
+                  Check GST Availability
+                </button>
+              </section>
+            ) : (
+              <p className="future-sections-note" role="status">GST availability is unavailable until end-to-end workflow evidence is complete.</p>
+            )}
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
 
@@ -1569,8 +1588,8 @@ function App() {
               <article className="panel">
                 <h2>GST preparation</h2>
                 <dl>
-                  <div><dt>Status</dt><dd>{gstDraftComplete ? "Calculated" : draft ? "Unavailable in this build" : "Not checked"}</dd></div>
-                  <div><dt>Company</dt><dd>{draft?.company ?? "No result"}</dd></div>
+                  <div><dt>Status</dt><dd>{NON_TALLY_SECTIONS_ENABLED && gstDraftComplete ? "Calculated" : "Unavailable pending evidence"}</dd></div>
+                  <div><dt>Company</dt><dd>{NON_TALLY_SECTIONS_ENABLED && draft ? draft.company : "Not available"}</dd></div>
                   <div><dt>GSTR-1 B2B</dt><dd>{gstDraftComplete ? draft.gstr1.b2b_invoice_count : "Not available"}</dd></div>
                   <div><dt>GSTR-3B taxable</dt><dd>{gstDraftComplete ? draft.gstr3b.outward_taxable_value : "Not available"}</dd></div>
                 </dl>

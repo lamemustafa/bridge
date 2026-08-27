@@ -13,6 +13,7 @@ type Props = {
   selectionLocked: boolean;
   endpoint: string;
   endpointStatus: "checked" | "not_checked";
+  loadError: string | null;
   onOpen: () => void;
   onSelect: (key: string) => void;
   onManageTally: () => void;
@@ -30,6 +31,7 @@ export function ClientSwitcher({
   selectionLocked,
   endpoint,
   endpointStatus,
+  loadError,
   onOpen,
   onSelect,
   onManageTally,
@@ -77,7 +79,14 @@ export function ClientSwitcher({
           Switch client
           <ChevronDown size={16} aria-hidden="true" />
         </button>
-        <button className="secondary-action" type="button" onClick={onManageTally}>
+        <button
+          className="secondary-action"
+          type="button"
+          onClick={() => {
+            close();
+            onManageTally();
+          }}
+        >
           <Settings2 size={16} /> Manage Tally
         </button>
       </div>
@@ -114,8 +123,9 @@ export function ClientSwitcher({
                 <small>{STATE_LABELS[client.state]}</small>
               </button>
             ))}
-            {filtered.length === 0 && <p className="client-switcher-empty">No saved or discovered client matches that search.</p>}
+            {filtered.length === 0 && !loadError && <p className="client-switcher-empty">No saved or discovered client matches that search.</p>}
           </div>
+          {loadError && <p className="client-switcher-error" role="alert">{loadError}</p>}
           <p className="client-switcher-note">Ready clients use their saved, endpoint-bound identity. Setup and verification are required before other clients can be read.</p>
         </div>
       )}

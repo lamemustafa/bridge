@@ -64,6 +64,18 @@ test("changing a saved client retains endpoint probe evidence but clears the old
   assert.match(frontend, /function selectSavedCompany[\s\S]*?clearSelectedCompanyScope\(\);/);
 });
 
+test("choosing a current unsaved client from the shell retains its unused probe review", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const shellSelection = frontend.slice(
+    frontend.indexOf("function selectClientFromShell"),
+    frontend.indexOf("function updateTallyHost"),
+  );
+
+  assert.match(shellSelection, /liveCompanyKeys\.includes\(key\)\s*&& company\.canonical_endpoint === currentProbeCanonicalOrigin/s);
+  assert.match(shellSelection, /canReuseCurrentProbeReview\(\{\s*reviewAvailable: Boolean\(reviewId && reviewCommitmentSha256\),\s*setupSaved: Boolean\(passportSnapshotId\),\s*\}\)/s);
+  assert.match(shellSelection, /clearSelectedCompanyScope\(\{ preserveCurrentProbeReview \}\);/);
+});
+
 test("structured Tally errors retain their backend remediation", async () => {
   const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
 
@@ -73,7 +85,8 @@ test("structured Tally errors retain their backend remediation", async () => {
 test("persisted-company load failures remain visible before a Tally connection is established", async () => {
   const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
 
-  assert.match(frontend, /refreshPersistedCompanyProfiles[\s\S]*?setCompanyError\(toOperatorError\(error\)\)/);
+  assert.match(frontend, /refreshPersistedCompanyProfiles[\s\S]*?setPersistedCompanyProfileError\(operatorError\);\s*setCompanyError\(operatorError\);/);
+  assert.match(frontend, /setPersistedCompanyProfilesTruncated\(page\.truncated\);\s*setPersistedCompanyProfileError\(null\);/s);
   assert.match(frontend, /\{companyError && !setupConnectionComplete && <TallyErrorNotice message=\{companyError\} \/>\}/);
 });
 
