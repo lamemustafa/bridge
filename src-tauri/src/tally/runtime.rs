@@ -58,10 +58,10 @@ async fn bracket_verified_company_identity(
     let companies = client.fetch_companies().await?;
     if companies
         .iter()
-        .any(|company| identity.is_case_or_whitespace_guid_sibling(company))
+        .any(|company| identity.is_presentation_equivalent_guid_sibling(company))
     {
         anyhow::bail!(
-            "Tally returned a same-GUID company name differing only by case or whitespace"
+            "Tally returned a presentation-equivalent same-GUID company with a distinct book tuple"
         );
     }
     let matches = companies

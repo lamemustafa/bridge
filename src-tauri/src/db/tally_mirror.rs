@@ -50,6 +50,7 @@ const MIRROR_MIGRATION_V22: &str =
     include_str!("migrations/0022_tally_bomless_utf16_read_evidence.sql");
 const MIRROR_MIGRATION_V23: &str =
     include_str!("migrations/0023_tally_composite_company_identity.sql");
+const MIRROR_MIGRATION_V24: &str = include_str!("migrations/0024_tally_selected_read_scope_v2.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -309,6 +310,19 @@ pub(crate) struct SelectedReadScopeCommitmentMaterial {
     pub observations: Vec<SelectedReadObservationCommitmentMaterial>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct SelectedReadScopeCommitmentMaterialV1 {
+    parent_review_commitment_sha256: String,
+    canonical_origin: String,
+    company_guid_ascii_casefolded: String,
+    ledger_profile_id: String,
+    voucher_profile_id: String,
+    voucher_from_yyyymmdd: String,
+    voucher_to_yyyymmdd: String,
+    observed_at_unix_ms: i64,
+    observations: Vec<SelectedReadObservationCommitmentMaterial>,
+}
+
 #[derive(Serialize)]
 struct SelectedReadScopeCommitmentEnvelope<'a> {
     schema: &'static str,
@@ -319,10 +333,32 @@ struct SelectedReadScopeCommitmentEnvelope<'a> {
     completeness_claimed: bool,
 }
 
+#[derive(Serialize)]
+struct SelectedReadScopeCommitmentEnvelopeV1<'a> {
+    schema: &'static str,
+    #[serde(flatten)]
+    material: &'a SelectedReadScopeCommitmentMaterialV1,
+    no_writes_attempted: bool,
+    raw_records_retained: bool,
+    completeness_claimed: bool,
+}
+
 pub(crate) fn selected_read_scope_commitment_sha256(
     material: &SelectedReadScopeCommitmentMaterial,
 ) -> Result<String, MirrorError> {
     sha256_json(&SelectedReadScopeCommitmentEnvelope {
+        schema: "bridge.tally.selected-read-scope/2",
+        material,
+        no_writes_attempted: true,
+        raw_records_retained: false,
+        completeness_claimed: false,
+    })
+}
+
+fn selected_read_scope_commitment_sha256_v1(
+    material: &SelectedReadScopeCommitmentMaterialV1,
+) -> Result<String, MirrorError> {
+    sha256_json(&SelectedReadScopeCommitmentEnvelopeV1 {
         schema: "bridge.tally.selected-read-scope/1",
         material,
         no_writes_attempted: true,
@@ -2340,9 +2376,28 @@ impl TallyMirrorRepository {
             .execute(&mut *transaction)
             .await?;
         }
+        let selected_read_scope_v2_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 24",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if selected_read_scope_v2_installed == 0 {
+            sqlx::query("PRAGMA legacy_alter_table = ON")
+                .execute(&mut *transaction)
+                .await?;
+            let migration_result = sqlx::raw_sql(MIRROR_MIGRATION_V24)
+                .execute(&mut *transaction)
+                .await;
+            let reset_result = sqlx::query("PRAGMA legacy_alter_table = OFF")
+                .execute(&mut *transaction)
+                .await;
+            migration_result?;
+            reset_result?;
+            validate_legacy_v1_selected_read_scope_layouts(&mut transaction).await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -2683,7 +2738,7 @@ impl TallyMirrorRepository {
                voucher_profile_id, voucher_from_yyyymmdd, voucher_to_yyyymmdd, \
                observed_at_unix_ms, completeness_state, no_writes_attempted, \
                raw_records_retained\
-             ) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10, \
+             ) VALUES (?1, ?2, ?3, 2, ?4, ?5, ?6, ?7, ?8, ?9, ?10, \
                'not_claimed', 1, 0)",
         )
         .bind(&scope_id)
@@ -5503,6 +5558,82 @@ async fn retire_precomposite_fixture_enrollments(
     Ok(())
 }
 
+async fn validate_legacy_v1_selected_read_scope_layouts(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), MirrorError> {
+    let scopes = sqlx::query(
+        "SELECT scope.id, scope.scope_commitment_sha256, scope.parent_review_sha256, \
+                endpoint.canonical_origin, company.company_guid, scope.ledger_profile_id, \
+                scope.voucher_profile_id, scope.voucher_from_yyyymmdd, \
+                scope.voucher_to_yyyymmdd, scope.observed_at_unix_ms \
+         FROM tally_selected_read_scopes AS scope \
+         JOIN tally_capability_snapshots AS snapshot ON snapshot.id = scope.capability_snapshot_id \
+         JOIN tally_endpoints AS endpoint ON endpoint.id = snapshot.endpoint_id \
+         JOIN tally_companies AS company ON company.id = scope.company_id \
+         WHERE scope.scope_contract_version = 1 \
+         ORDER BY scope.id",
+    )
+    .fetch_all(&mut **transaction)
+    .await?;
+    for scope in scopes {
+        let scope_id: String = scope.try_get("id")?;
+        let company_guid: Option<String> = scope.try_get("company_guid")?;
+        let company_guid = company_guid.ok_or(MirrorError::InvalidInput(
+            "selected_read_scope_v1_layout_unverified",
+        ))?;
+        let observations = sqlx::query(
+            "SELECT capability_key, capability_state, confidence, safe_reason_code, \
+                    result_bucket, request_sha256, decoded_response_sha256, response_encoding, \
+                    company_context_verified, schema_verified, record_count_verified, \
+                    identity_evidence_state, date_window_verified \
+             FROM tally_selected_read_observations \
+             WHERE scope_id = ?1 ORDER BY capability_key",
+        )
+        .bind(&scope_id)
+        .fetch_all(&mut **transaction)
+        .await?
+        .into_iter()
+        .map(|observation| {
+            Ok(SelectedReadObservationCommitmentMaterial {
+                capability_key: observation.try_get("capability_key")?,
+                state: observation.try_get("capability_state")?,
+                confidence: observation.try_get("confidence")?,
+                safe_reason_code: observation.try_get("safe_reason_code")?,
+                result_bucket: observation.try_get("result_bucket")?,
+                request_sha256: observation.try_get("request_sha256")?,
+                decoded_response_sha256: observation.try_get("decoded_response_sha256")?,
+                response_encoding: observation.try_get("response_encoding")?,
+                company_context_verified: observation
+                    .try_get::<i64, _>("company_context_verified")?
+                    != 0,
+                schema_verified: observation.try_get::<i64, _>("schema_verified")? != 0,
+                record_count_verified: observation.try_get::<i64, _>("record_count_verified")? != 0,
+                identity_evidence_state: observation.try_get("identity_evidence_state")?,
+                date_window_verified: observation.try_get::<i64, _>("date_window_verified")? != 0,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        let material = SelectedReadScopeCommitmentMaterialV1 {
+            parent_review_commitment_sha256: scope.try_get("parent_review_sha256")?,
+            canonical_origin: scope.try_get("canonical_origin")?,
+            company_guid_ascii_casefolded: company_guid.to_ascii_lowercase(),
+            ledger_profile_id: scope.try_get("ledger_profile_id")?,
+            voucher_profile_id: scope.try_get("voucher_profile_id")?,
+            voucher_from_yyyymmdd: scope.try_get("voucher_from_yyyymmdd")?,
+            voucher_to_yyyymmdd: scope.try_get("voucher_to_yyyymmdd")?,
+            observed_at_unix_ms: scope.try_get("observed_at_unix_ms")?,
+            observations,
+        };
+        let stored_commitment: String = scope.try_get("scope_commitment_sha256")?;
+        if selected_read_scope_commitment_sha256_v1(&material)? != stored_commitment {
+            return Err(MirrorError::InvalidInput(
+                "selected_read_scope_v1_layout_unverified",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
     bytes
         .as_ref()
@@ -6749,6 +6880,18 @@ mod tests {
         .await
         .expect("count saved selected-read observations");
         assert_eq!((scope_count, observation_count), (1, 2));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT scope_contract_version FROM tally_selected_read_scopes \
+                 WHERE capability_snapshot_id = ?1",
+            )
+            .bind(&saved.snapshot.id)
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read selected-read scope contract version"),
+            2,
+            "new composite selected-read material must be labelled v2"
+        );
         assert!(sqlx::query(
             "UPDATE tally_selected_read_scopes SET completeness_state = 'not_claimed' WHERE capability_snapshot_id = ?1",
         )
@@ -7863,6 +8006,33 @@ mod tests {
     #[tokio::test]
     async fn bomless_utf16_migration_preserves_existing_selected_read_evidence() {
         let repository = repository_through_v21().await;
+        let legacy_scope_commitment =
+            selected_read_scope_commitment_sha256_v1(&SelectedReadScopeCommitmentMaterialV1 {
+                parent_review_commitment_sha256: HASH_B.to_string(),
+                canonical_origin: "http://127.0.0.1:9000".to_string(),
+                company_guid_ascii_casefolded: "company-guid".to_string(),
+                ledger_profile_id: "bridge.tally.ledgers/1".to_string(),
+                voucher_profile_id: "bridge.tally.vouchers/3".to_string(),
+                voucher_from_yyyymmdd: "20260701".to_string(),
+                voucher_to_yyyymmdd: "20260731".to_string(),
+                observed_at_unix_ms: 2,
+                observations: vec![SelectedReadObservationCommitmentMaterial {
+                    capability_key: "selected_ledger_read".to_string(),
+                    state: "supported".to_string(),
+                    confidence: "observed".to_string(),
+                    safe_reason_code: "selected_ledger_read_non_empty_observed".to_string(),
+                    result_bucket: "non_empty_observed".to_string(),
+                    request_sha256: Some(HASH_A.to_string()),
+                    decoded_response_sha256: Some(HASH_B.to_string()),
+                    response_encoding: Some("utf8".to_string()),
+                    company_context_verified: true,
+                    schema_verified: true,
+                    record_count_verified: true,
+                    identity_evidence_state: "verified".to_string(),
+                    date_window_verified: false,
+                }],
+            })
+            .expect("compute historic v1 scope commitment");
         sqlx::raw_sql(
             "INSERT INTO tally_endpoints VALUES ('ep', 'http://127.0.0.1:9000', 1, 2);\
              INSERT INTO tally_capability_snapshots VALUES ('snap', 'ep', 1, 3, 'Unknown', NULL, NULL, 'unknown');\
@@ -7872,26 +8042,35 @@ mod tests {
              );\
              INSERT INTO tally_companies VALUES (\
                'company', 'ep', 'Synthetic', 'company-guid', NULL, NULL, NULL, 'observed', 1, 2\
-             );\
-             INSERT INTO tally_selected_read_scopes VALUES (\
-               'scope', 'snap', 'company', 1,\
-               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',\
-               'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',\
-               'bridge.tally.ledgers/1', 'bridge.tally.vouchers/3',\
-               '20260701', '20260731', 2, 'not_claimed', 1, 0\
-             );\
-             INSERT INTO tally_selected_read_observations VALUES (\
-               'scope', 'snap', 'feature', 'selected_ledger_read',\
-               'supported', 'observed', 'selected_ledger_read_non_empty_observed',\
-               'non_empty_observed',\
-               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',\
-               'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',\
-               'utf8', 1, 1, 1, 'verified', 0\
-             );",
+             );"
         )
         .execute(&repository.pool)
         .await
         .expect("seed v21 selected-read evidence");
+        sqlx::query(
+            "INSERT INTO tally_selected_read_scopes VALUES (\
+               'scope', 'snap', 'company', 1, ?1, ?2,\
+               'bridge.tally.ledgers/1', 'bridge.tally.vouchers/3',\
+               '20260701', '20260731', 2, 'not_claimed', 1, 0\
+             )",
+        )
+        .bind(&legacy_scope_commitment)
+        .bind(HASH_B)
+        .execute(&repository.pool)
+        .await
+        .expect("seed historic v1 selected-read scope");
+        sqlx::query(
+            "INSERT INTO tally_selected_read_observations VALUES (\
+               'scope', 'snap', 'feature', 'selected_ledger_read',\
+               'supported', 'observed', 'selected_ledger_read_non_empty_observed',\
+               'non_empty_observed', ?1, ?2, 'utf8', 1, 1, 1, 'verified', 0\
+             )",
+        )
+        .bind(HASH_A)
+        .bind(HASH_B)
+        .execute(&repository.pool)
+        .await
+        .expect("seed historic v1 selected-read observation");
 
         repository
             .migrate()
@@ -7915,6 +8094,24 @@ mod tests {
             .await
             .expect("read v22 migration marker"),
             1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT scope_contract_version FROM tally_selected_read_scopes WHERE id = 'scope'",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read preserved historic scope version"),
+            1,
+            "historic digest material must remain explicitly v1"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM pragma_foreign_key_check")
+                .fetch_one(&repository.pool)
+                .await
+                .expect("check rebuilt selected-read foreign keys"),
+            0,
+            "observation rows must reference the rebuilt scope parent"
         );
         assert!(sqlx::query(
             "UPDATE tally_selected_read_observations SET response_encoding = 'utf16le' \

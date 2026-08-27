@@ -41,7 +41,8 @@ use crate::tally::{
     OutstandingsCurrencyAssertion, OutstandingsLoadResult, RuntimeTallyConnector,
     SelectedReadObservation, SelectedReadScopeEvidence, TallyCompany, TallyConfig, TallyLedger,
     TallyRuntime, TallySessionSnapshot, TallyTelemetryPreviewExport, TallyVoucher,
-    UnallocatedParty, SELECTED_LEDGER_QUERY_PROFILE_ID, SELECTED_VOUCHER_QUERY_PROFILE_ID,
+    UnallocatedParty, VerifiedCompanyIdentityError, SELECTED_LEDGER_QUERY_PROFILE_ID,
+    SELECTED_VOUCHER_QUERY_PROFILE_ID,
 };
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityState,
@@ -653,7 +654,7 @@ pub async fn qualify_selected_tally_reads(
     }
     probe.profile.profile_version = 3;
     let selected_read_scope = SelectedReadScopeEvidence {
-        scope_version: 1,
+        scope_version: 2,
         ledger_profile_id: SELECTED_LEDGER_QUERY_PROFILE_ID.to_string(),
         voucher_profile_id: SELECTED_VOUCHER_QUERY_PROFILE_ID.to_string(),
         voucher_from_yyyymmdd: request.voucher_from_yyyymmdd.clone(),
@@ -991,62 +992,16 @@ pub async fn save_tally_setup(
                 "Probe again and review the replacement Passport before saving.",
             ));
         }
-        let selected_guid = normalize_company_guid(&request.selected_company.company_guid).map_err(|_| {
-            tally_command_error(
-                "stable_company_identity_required",
-                "Tally application",
-                "The selected company does not have an observed stable GUID.",
-                "after_change",
-                false,
-                "Select a company with an observed name, number, GUID, and book opening date from the current probe.",
-            )
-        })?;
-        let selected_identity = VerifiedCompanyIdentity::new(
-            request.selected_company.display_name.clone(),
-            selected_guid.clone(),
-            request.selected_company.company_number.clone(),
-            request.selected_company.books_from_yyyymmdd.clone(),
-        );
-        if probe
+        let selected_identity = verify_observed_company_tuple_from_companies(
+            &request.selected_company,
+            probe.companies.clone(),
+        )?;
+        let company = probe
             .companies
             .iter()
-            .any(|company| selected_identity.is_case_or_whitespace_guid_sibling(company))
-        {
-            return Err(tally_command_error(
-                "company_identity_ambiguous",
-                "Tally application",
-                "The reviewed probe returned a same-GUID company name that differs only by case or whitespace.",
-                "not_recommended",
-                false,
-                "Do not save this scope. Inspect the loaded companies and choose an unambiguous book before any read.",
-            ));
-        }
-        let mut matches = probe.companies.iter().filter(|company| {
-            company.name == request.selected_company.display_name
-                && company.guid.as_deref().is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
-                && company.company_number.as_deref() == Some(request.selected_company.company_number.as_str())
-                && company.books_from.as_deref() == Some(request.selected_company.books_from_yyyymmdd.as_str())
-        });
-        let company = matches.next().cloned().ok_or_else(|| {
-            tally_command_error(
-                "reviewed_company_scope_changed",
-                "Tally application",
-                "The selected company's saved identity no longer matches the reviewed Tally probe.",
-                "safe",
-                false,
-                "This can happen after a year-end split or rename. Probe again and re-verify the intended book before any read.",
-            )
-        })?;
-        if matches.next().is_some() {
-            return Err(tally_command_error(
-                "company_identity_ambiguous",
-                "Tally application",
-                "The reviewed probe returned the same complete company identity more than once.",
-                "not_recommended",
-                false,
-                "Do not save this scope. Inspect the loaded companies and choose the intended split book by its name, company number, and book opening date.",
-            ));
-        }
+            .find(|company| selected_identity.matches_observed_company(company))
+            .cloned()
+            .ok_or_else(reviewed_probe_changed_error)?;
         if probe.selected_read_scope.as_ref().is_some_and(|scope| {
             !company.guid.as_deref().is_some_and(|guid| {
                 guid.to_ascii_lowercase() == scope.company_guid_ascii_casefolded
@@ -1080,10 +1035,10 @@ pub async fn save_tally_setup(
                     },
                     items: capability_items(&probe.profile),
                 },
-                company_display_name: company.name.clone(),
+                company_display_name: selected_identity.display_name().to_string(),
                 company_identity: SourceIdentityInput {
                     // Persist the spelling observed from Tally, not caller-controlled casing.
-                    guid: company.guid.clone(),
+                    guid: Some(selected_identity.company_guid().to_string()),
                     confidence: Some(Confidence::Observed),
                     ..SourceIdentityInput::default()
                 },
@@ -1254,27 +1209,10 @@ pub async fn enroll_tally_write_fixture(
                 "safe", false, "Probe again and review the replacement Passport before enrolling.",
             ));
         }
-        let selected_guid = normalize_company_guid(&request.selected_company.company_guid).map_err(|_| {
-            tally_command_error(
-                "stable_company_identity_required", "Tally application",
-                "The selected company does not have an observed stable GUID.",
-                "after_change", false, "Select a company with an observed name, number, GUID, and book opening date from the current probe.",
-            )
-        })?;
-        let matching_companies = probe.companies.iter().filter(|company| {
-            company.name == request.selected_company.display_name
-                && company.guid.as_deref().is_some_and(|guid| guid.eq_ignore_ascii_case(&selected_guid))
-                && company.company_number.as_deref() == Some(request.selected_company.company_number.as_str())
-                && company.books_from.as_deref() == Some(request.selected_company.books_from_yyyymmdd.as_str())
-        }).count();
-        if matching_companies != 1 {
-            return Err(tally_command_error(
-                if matching_companies == 0 { "reviewed_company_scope_changed" } else { "company_identity_ambiguous" },
-                "Tally application",
-                "The selected complete company identity is not uniquely present in the reviewed probe.",
-                "safe", false, "Probe again and select one fully observed company tuple from the current result.",
-            ));
-        }
+        let selected_identity = verify_observed_company_tuple_from_companies(
+            &request.selected_company,
+            probe.companies.clone(),
+        )?;
         if probe.profile.features.get(&CapabilityFeatureId::Write)
             .is_some_and(|evidence| evidence.state == CapabilityState::Unsupported)
         {
@@ -1292,8 +1230,8 @@ pub async fn enroll_tally_write_fixture(
             )
         })?;
         if pin.canonical_origin != canonical_origin
-            || !pin.company_guid.eq_ignore_ascii_case(&selected_guid)
-            || pin.display_name != request.selected_company.display_name
+            || !pin.company_guid.eq_ignore_ascii_case(selected_identity.company_guid())
+            || pin.display_name != selected_identity.display_name()
             || pin.company_number != request.selected_company.company_number
             || pin.books_from_yyyymmdd != request.selected_company.books_from_yyyymmdd
         {
@@ -2190,48 +2128,31 @@ fn verify_observed_company_tuple_from_companies(
             "Probe again and choose an observed company identity.",
         ));
     }
-    let identity = VerifiedCompanyIdentity::new(
+    VerifiedCompanyIdentity::from_observed_companies(
         selected.display_name.clone(),
         selected_guid,
         selected.company_number.clone(),
         selected.books_from_yyyymmdd.clone(),
-    );
-    if companies
-        .iter()
-        .any(|company| identity.is_case_or_whitespace_guid_sibling(company))
-    {
-        return Err(tally_command_error(
-            "company_identity_ambiguous",
-            "Tally application",
-            "Tally returned a same-GUID company name that differs only by case or whitespace.",
-            "not_recommended",
-            false,
-            "Do not read this scope. Inspect the Tally company list before continuing.",
-        ));
-    }
-    let matches = companies
-        .into_iter()
-        .filter(|company| identity.matches_observed_company(company))
-        .collect::<Vec<_>>();
-    match matches.as_slice() {
-        [_company] => Ok(identity),
-        [] => Err(tally_command_error(
+        &companies,
+    )
+    .map_err(|error| match error {
+        VerifiedCompanyIdentityError::Missing => tally_command_error(
             "reviewed_company_scope_changed",
             "Tally application",
             "The selected company tuple is no longer present in Tally.",
             "safe",
             false,
             "Probe again and explicitly select the intended book.",
-        )),
-        _ => Err(tally_command_error(
+        ),
+        VerifiedCompanyIdentityError::Ambiguous => tally_command_error(
             "company_identity_ambiguous",
             "Tally application",
-            "Tally returned the selected complete company identity more than once.",
+            "Tally returned a same-GUID company whose display name cannot safely scope the selected book.",
             "not_recommended",
             false,
-            "Do not read this scope. Inspect the Tally company list before continuing.",
-        )),
-    }
+            "Do not read or enroll this scope. Inspect the Tally company list before continuing.",
+        ),
+    })
 }
 
 #[tauri::command]
@@ -2776,7 +2697,7 @@ mod tests {
             books_from: Some("20270401".to_string()),
         };
 
-        assert!(identity.is_case_or_whitespace_guid_sibling(&sibling));
+        assert!(identity.is_presentation_equivalent_guid_sibling(&sibling));
         assert!(!identity.matches_observed_company(&sibling));
     }
 
@@ -2806,6 +2727,36 @@ mod tests {
             ],
         )
         .expect_err("presentation-equivalent company sibling must not be saved");
+
+        assert_eq!(error.code, "company_identity_ambiguous");
+    }
+
+    #[test]
+    fn setup_rejects_identical_name_same_guid_different_book() {
+        let selected = SelectedCompanyIdentity {
+            display_name: "Client Book".to_string(),
+            company_guid: "same-guid".to_string(),
+            company_number: "1".to_string(),
+            books_from_yyyymmdd: "20260401".to_string(),
+        };
+        let error = verify_observed_company_tuple_from_companies(
+            &selected,
+            vec![
+                TallyCompany {
+                    name: "Client Book".to_string(),
+                    guid: Some("same-guid".to_string()),
+                    company_number: Some("1".to_string()),
+                    books_from: Some("20260401".to_string()),
+                },
+                TallyCompany {
+                    name: "Client Book".to_string(),
+                    guid: Some("same-guid".to_string()),
+                    company_number: Some("2".to_string()),
+                    books_from: Some("20270401".to_string()),
+                },
+            ],
+        )
+        .expect_err("an identically named sibling must not be saved or enrolled");
 
         assert_eq!(error.code, "company_identity_ambiguous");
     }

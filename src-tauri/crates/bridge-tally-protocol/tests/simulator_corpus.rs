@@ -12,6 +12,7 @@ use bridge_tally_protocol::{
     BRIDGE_VOUCHER_EXPORT_SCHEMA, BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
     MAX_INTERACTIVE_DISCOVERY_COMPANIES,
 };
+use quick_xml::{events::Event, Reader};
 use sha2::{Digest, Sha256};
 use tally_protocol_simulator::{
     generate_master_corpus, Fixture, MasterCorpusSpec, ScenarioPlan, WireEncoding,
@@ -684,12 +685,30 @@ fn captured_year_end_split_companies_keep_their_distinguishing_tuple() {
     // The capture carries MASTERID=29 for every one of the 15 rows. It is
     // deliberately not parsed as an identity component because it conveys no
     // book identity in this observed response.
-    assert_eq!(
-        COMPANY_IDENTITY_FIELDS_AFTER_SPLIT
-            .matches("<MASTERID")
-            .count(),
-        15
-    );
+    let mut reader = Reader::from_str(COMPANY_IDENTITY_FIELDS_AFTER_SPLIT);
+    reader.config_mut().trim_text(true);
+    let mut master_ids = Vec::new();
+    loop {
+        match reader
+            .read_event()
+            .expect("captured Company XML is well formed")
+        {
+            Event::Start(element) if element.name().as_ref() == b"MASTERID" => {
+                master_ids.push(
+                    reader
+                        .read_text(element.name())
+                        .expect("MASTERID has text")
+                        .decode()
+                        .expect("MASTERID text is valid")
+                        .trim()
+                        .to_owned(),
+                );
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    assert_eq!(master_ids, vec!["29"; 15]);
 }
 
 #[test]

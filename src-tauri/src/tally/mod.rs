@@ -43,18 +43,42 @@ pub struct VerifiedCompanyIdentity {
     books_from_yyyymmdd: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VerifiedCompanyIdentityError {
+    Missing,
+    Ambiguous,
+}
+
 impl VerifiedCompanyIdentity {
-    pub(crate) fn new(
+    /// Produces an identity only after the exact observed tuple is unique and
+    /// no same-GUID book can collide with Tally's display-name scope.
+    pub(crate) fn from_observed_companies(
         display_name: String,
         company_guid: String,
         company_number: String,
         books_from_yyyymmdd: String,
-    ) -> Self {
-        Self {
+        companies: &[TallyCompany],
+    ) -> Result<Self, VerifiedCompanyIdentityError> {
+        let identity = Self {
             display_name,
             company_guid,
             company_number,
             books_from_yyyymmdd,
+        };
+        if companies
+            .iter()
+            .any(|company| identity.is_presentation_equivalent_guid_sibling(company))
+        {
+            return Err(VerifiedCompanyIdentityError::Ambiguous);
+        }
+        match companies
+            .iter()
+            .filter(|company| identity.matches_observed_company(company))
+            .count()
+        {
+            0 => Err(VerifiedCompanyIdentityError::Missing),
+            1 => Ok(identity),
+            _ => Err(VerifiedCompanyIdentityError::Ambiguous),
         }
     }
 
@@ -63,12 +87,12 @@ impl VerifiedCompanyIdentity {
         display_name: impl Into<String>,
         company_guid: impl Into<String>,
     ) -> Self {
-        Self::new(
-            display_name.into(),
-            company_guid.into(),
-            "1".to_string(),
-            "20260401".to_string(),
-        )
+        Self {
+            display_name: display_name.into(),
+            company_guid: company_guid.into(),
+            company_number: "1".to_string(),
+            books_from_yyyymmdd: "20260401".to_string(),
+        }
     }
 
     #[cfg(feature = "live-calibration-harness")]
@@ -76,12 +100,21 @@ impl VerifiedCompanyIdentity {
         display_name: impl Into<String>,
         company_guid: impl Into<String>,
     ) -> Self {
-        Self::new(
-            display_name.into(),
-            company_guid.into(),
+        let display_name = display_name.into();
+        let company_guid = company_guid.into();
+        Self::from_observed_companies(
+            display_name.clone(),
+            company_guid.clone(),
             "1".to_string(),
             "20260401".to_string(),
+            &[TallyCompany {
+                name: display_name,
+                guid: Some(company_guid),
+                company_number: Some("1".to_string()),
+                books_from: Some("20260401".to_string()),
+            }],
         )
+        .expect("the fixed calibration fixture is one complete company tuple")
     }
 
     pub(crate) fn display_name(&self) -> &str {
@@ -102,16 +135,16 @@ impl VerifiedCompanyIdentity {
             && company.books_from.as_deref() == Some(self.books_from_yyyymmdd.as_str())
     }
 
-    pub(crate) fn is_case_or_whitespace_guid_sibling(&self, company: &TallyCompany) -> bool {
-        company.name != self.display_name
-            && company
-                .guid
-                .as_deref()
-                .is_some_and(|guid| guid.eq_ignore_ascii_case(&self.company_guid))
+    pub(crate) fn is_presentation_equivalent_guid_sibling(&self, company: &TallyCompany) -> bool {
+        company
+            .guid
+            .as_deref()
+            .is_some_and(|guid| guid.eq_ignore_ascii_case(&self.company_guid))
             && company
                 .name
                 .trim()
                 .eq_ignore_ascii_case(self.display_name.trim())
+            && !self.matches_observed_company(company)
     }
 }
 
@@ -120,15 +153,24 @@ pub(crate) fn has_presentation_equivalent_guid_sibling(
     company_guid: &str,
     companies: &[TallyCompany],
 ) -> bool {
-    companies.iter().any(|company| {
-        company.name != display_name
-            && company
-                .guid
-                .as_deref()
-                .is_some_and(|guid| guid.eq_ignore_ascii_case(company_guid))
+    companies.iter().enumerate().any(|(index, company)| {
+        company
+            .guid
+            .as_deref()
+            .is_some_and(|guid| guid.eq_ignore_ascii_case(company_guid))
             && company
                 .name
                 .trim()
                 .eq_ignore_ascii_case(display_name.trim())
+            && companies[..index].iter().any(|other| {
+                other
+                    .guid
+                    .as_deref()
+                    .is_some_and(|guid| guid.eq_ignore_ascii_case(company_guid))
+                    && other.name.trim().eq_ignore_ascii_case(display_name.trim())
+                    && (company.name != other.name
+                        || company.company_number != other.company_number
+                        || company.books_from != other.books_from)
+            })
     })
 }

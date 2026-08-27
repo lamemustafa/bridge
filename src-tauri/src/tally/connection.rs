@@ -1259,21 +1259,22 @@ fn unique_company_identities(companies: &[TallyCompany]) -> bool {
     })
 }
 
-/// Tally scopes reads by display name, so a same-GUID book whose name differs
-/// only by case or surrounding whitespace cannot be safely selected even when
-/// its complete tuples are otherwise unique.
+/// Tally scopes reads by display name, so presentation-equivalent same-GUID
+/// books with distinct observed tuples cannot be safely selected.
 fn has_presentation_equivalent_guid_siblings(companies: &[TallyCompany]) -> bool {
     companies.iter().enumerate().any(|(index, company)| {
         let Some(guid) = company.guid.as_deref() else {
             return false;
         };
         companies[..index].iter().any(|other| {
-            company.name != other.name
-                && other
-                    .guid
-                    .as_deref()
-                    .is_some_and(|other_guid| other_guid.eq_ignore_ascii_case(guid))
+            other
+                .guid
+                .as_deref()
+                .is_some_and(|other_guid| other_guid.eq_ignore_ascii_case(guid))
                 && company.name.trim().eq_ignore_ascii_case(other.name.trim())
+                && (company.name != other.name
+                    || company.company_number != other.company_number
+                    || company.books_from != other.books_from)
         })
     })
 }
@@ -1671,6 +1672,27 @@ mod tests {
             },
             crate::tally::TallyCompany {
                 name: " synthetic company ".to_string(),
+                guid: Some("GUID-3".to_string()),
+                company_number: Some("100014".to_string()),
+                books_from: Some("20260401".to_string()),
+            },
+        ];
+
+        assert!(unique_company_identities(&companies));
+        assert!(has_presentation_equivalent_guid_siblings(&companies));
+    }
+
+    #[test]
+    fn identical_name_same_guid_distinct_books_are_not_stable_company_identities() {
+        let companies = vec![
+            crate::tally::TallyCompany {
+                name: "Synthetic Company".to_string(),
+                guid: Some("guid-3".to_string()),
+                company_number: Some("100005".to_string()),
+                books_from: Some("20250401".to_string()),
+            },
+            crate::tally::TallyCompany {
+                name: "Synthetic Company".to_string(),
                 guid: Some("GUID-3".to_string()),
                 company_number: Some("100014".to_string()),
                 books_from: Some("20260401".to_string()),
