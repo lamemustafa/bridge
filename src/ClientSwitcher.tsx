@@ -4,6 +4,7 @@ import { Building2, ChevronDown, Search, Settings2 } from "lucide-react";
 export type ClientSwitcherClient = {
   key: string;
   name: string;
+  summaryDiscriminator: string;
   identityDiscriminator: string;
   searchText: string;
   state: "ready" | "setup_required" | "verification_required";
@@ -71,6 +72,7 @@ export function ClientSwitcher({
       <div className="client-switcher-current">
         <span>Client</span>
         <strong title={selected?.name}>{selected?.name ?? "Choose a client"}</strong>
+        {selected && <small>{selected.summaryDiscriminator}</small>}
         <small>{endpointStatus === "checked" ? `Tally checked at ${endpoint}` : `Tally endpoint ${endpoint} has not been checked`}</small>
       </div>
       <div className="client-switcher-actions">

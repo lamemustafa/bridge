@@ -724,6 +724,7 @@ function App() {
       const currentAtProbedEndpoint = liveCompanyKeys.includes(key)
         && company.canonical_endpoint === currentProbeCanonicalOrigin;
       selectSavedCompany(key);
+      if (view === "mirror") return;
       if (currentAtProbedEndpoint) {
         setView("outstandings");
       } else {
@@ -1317,10 +1318,12 @@ function App() {
   );
   const clientSwitcherClients: ClientSwitcherClient[] = [
     ...clientSwitcherCompanies.map((company) => {
+      const summaryDiscriminator = clientIdentitySummaryDiscriminator(company);
       const identityDiscriminator = clientIdentityDiscriminator(company);
       return {
         key: tallyCompanyKey(company),
         name: company.name,
+        summaryDiscriminator,
         identityDiscriminator,
         searchText: `${company.name} ${identityDiscriminator}`,
         state: company.mirror_company_id
@@ -1335,6 +1338,7 @@ function App() {
     ...otherOpenCompanies.map((company, index) => ({
       key: `unverified:${company.name}:${index}`,
       name: company.name,
+      summaryDiscriminator: "Identity not verified yet",
       identityDiscriminator: "Identity not verified yet",
       searchText: company.name,
       state: "verification_required" as const,
@@ -2121,13 +2125,19 @@ function mergeTallyCompanies(preferred: TallyCompany[], existing: TallyCompany[]
   return Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function clientIdentityDiscriminator(company: TallyCompany): string {
+function clientIdentitySummaryDiscriminator(company: TallyCompany): string {
   const booksFrom = company.books_from_yyyymmdd && /^\d{8}$/.test(company.books_from_yyyymmdd)
     ? `${company.books_from_yyyymmdd.slice(0, 4)}-${company.books_from_yyyymmdd.slice(4, 6)}-${company.books_from_yyyymmdd.slice(6, 8)}`
     : company.books_from_yyyymmdd ?? "not observed";
   return [
     `Company no. ${company.company_number ?? "not observed"}`,
     `Books from ${booksFrom}`,
+  ].join(" · ");
+}
+
+function clientIdentityDiscriminator(company: TallyCompany): string {
+  return [
+    clientIdentitySummaryDiscriminator(company),
     `GUID ${company.guid ?? "not observed"}`,
     `Endpoint ${company.canonical_endpoint ?? "not observed"}`,
   ].join(" · ");

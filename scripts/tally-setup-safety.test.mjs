@@ -76,6 +76,17 @@ test("choosing a current unsaved client from the shell retains its unused probe 
   assert.match(shellSelection, /clearSelectedCompanyScope\(\{ preserveCurrentProbeReview \}\);/);
 });
 
+test("saved-profile shell selections stay in local Mirror and Proof review", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const shellSelection = frontend.slice(
+    frontend.indexOf("function selectClientFromShell"),
+    frontend.indexOf("function updateTallyHost"),
+  );
+
+  assert.match(shellSelection, /if \(company\.mirror_company_id\) \{[\s\S]*?selectSavedCompany\(key\);\s*if \(view === "mirror"\) return;/);
+  assert.match(shellSelection, /if \(currentAtProbedEndpoint\) \{\s*setView\("outstandings"\);/s);
+});
+
 test("structured Tally errors retain their backend remediation", async () => {
   const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
 

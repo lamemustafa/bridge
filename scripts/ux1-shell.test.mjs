@@ -45,6 +45,7 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(switcher, /React\.useEffect\(\(\) => \{\s*setOpen\(false\);\s*setQuery\(""\);\s*\}, \[activeView\]\);/s);
   assert.match(switcher, /client\.searchText\.toLocaleLowerCase\(\)\.includes/);
   assert.match(switcher, /client\.identityDiscriminator/);
+  assert.match(switcher, /selected && <small>\{selected\.summaryDiscriminator\}<\/small>/);
   assert.match(switcher, /\{loadError && <p className="client-switcher-error" role="alert">\{loadError\}<\/p>\}/);
   assert.match(switcher, /filtered\.length === 0 && !loadError/);
   assert.match(switcher, /profilesTruncated[\s\S]*?The fetched saved-profile page contains only the newest \$\{loadedProfileCount\} records/);
@@ -52,6 +53,8 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(switcher, /onKeyDown=[\s\S]*?event\.key === "Escape"/);
   assert.match(switcher, /Setup and verification are required before other clients can be read/);
   assert.match(app, /const identityDiscriminator = clientIdentityDiscriminator\(company\);/);
+  assert.match(app, /const summaryDiscriminator = clientIdentitySummaryDiscriminator\(company\);/);
+  assert.match(app, /summaryDiscriminator,/);
   assert.match(app, /searchText: `\$\{company\.name\} \$\{identityDiscriminator\}`/);
   assert.match(app, /Company no\. \$\{company\.company_number \?\? "not observed"\}/);
   assert.match(app, /Books from \$\{booksFrom\}/);
