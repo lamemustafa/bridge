@@ -34,6 +34,36 @@ tombstone activation, scheduling, or a public incremental-start command. Portabl
 deletion-authority receipts have private fields; production callers cannot self-attest `Verified` or
 `Observed` authority.
 
+## Split-book `ALTVCHID` collision
+
+**VERIFIED 2026-08-26** on licensed TallyPrime Silver. Captured Company-collection responses
+(the evidence recorded in `TALLY_PROTOCOL_REFERENCE.md` §9.11b) established that a year-end
+split of `BRIDGE PROBE B SANDBOX` produced two genuinely distinct books:
+
+| COMPANYNUMBER | GUID | BOOKSFROM | ALTVCHID |
+| --- | --- | --- | ---: |
+| 100005 | `ec4454ae-5c4c-4bfa-b3b0-68182a749689` | 20250401 | 2785 |
+| 100014 | `ec4454ae-5c4c-4bfa-b3b0-68182a749689` | 20260401 | 2785 |
+
+The separate per-object `ALTERID` field differed (207 and 435); this observation is specifically
+that company-level `ALTVCHID` collided. `ALTVCHID` is therefore a progress counter, not an
+identity discriminator. The GUID collision itself is recorded in
+`TALLY_PROTOCOL_REFERENCE.md` §9.11b.
+
+Any future incremental scope must key the complete observed book tuple
+`(canonical_origin, COMPANYNUMBER, GUID, NAME, BOOKSFROM)`, never GUID alone. In particular,
+two split twins must not share a `scope_sha256` or checkpoint head/state; their numeric high
+watermarks may legitimately coincide.
+
+The incremental checkpoint collision is latent: no runtime path writes
+`tally_incremental_*` checkpoint heads, and Current Core Accounting snapshots are `Partial`, so
+they cannot establish incremental authority. The separate live compatibility defect is fail-closed:
+the GUID-only `CompanyBookExtentV1` parser rejects a loaded split pair as
+`company_identity_ambiguous` before it considers the expected display name. Any path that still
+uses that extent bracket, including native outstandings pairing, therefore needs a composite-tuple
+profile and parser before it can serve split books. Snapshot source reads use their separate
+composite identity brackets; that does not make the GUID-only extent parser safe for other callers.
+
 ## Reasons for remaining disabled
 
 - Current Core Accounting snapshots are `Partial`, so they cannot establish incremental authority.
