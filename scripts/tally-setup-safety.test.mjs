@@ -76,6 +76,16 @@ test("choosing a current unsaved client from the shell retains its unused probe 
   assert.match(shellSelection, /clearSelectedCompanyScope\(\{ preserveCurrentProbeReview \}\);/);
 });
 
+test("choosing an already-selected setup-required client opens Manage Tally", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const shellSelection = frontend.slice(
+    frontend.indexOf("function selectClientFromShell"),
+    frontend.indexOf("function updateTallyHost"),
+  );
+
+  assert.match(shellSelection, /if \(key === selectedCompany\) \{\s*setView\("companies"\);\s*return;\s*\}/s);
+});
+
 test("saved-profile shell selections stay in local Mirror and Proof review", async () => {
   const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
   const shellSelection = frontend.slice(
@@ -105,6 +115,8 @@ test("persisted-company load failures remain visible before a Tally connection i
   assert.doesNotMatch(profileLoad, /setCompanyError\(/);
   assert.match(frontend, /\{persistedCompanyProfileError && !setupConnectionComplete && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
   assert.match(frontend, /\{companyError && !setupConnectionComplete && <TallyErrorNotice message=\{companyError\} \/>\}/);
+  const mirror = frontend.slice(frontend.indexOf('{view === "mirror" && ('), frontend.indexOf("companyError={companyError}"));
+  assert.match(mirror, /\{persistedCompanyProfileError && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
 });
 
 test("child Tally reads keep client selection locked until every invocation settles", async () => {

@@ -750,7 +750,10 @@ function App() {
       }
       return;
     }
-    if (key === selectedCompany) return;
+    if (key === selectedCompany) {
+      setView("companies");
+      return;
+    }
     const preserveCurrentProbeReview = liveCompanyKeys.includes(key)
       && company.canonical_endpoint === currentProbeCanonicalOrigin
       && canReuseCurrentProbeReview({
@@ -1922,6 +1925,7 @@ function App() {
 
         {view === "mirror" && (
           <ErrorBoundary key="mirror" label="Accounting mirror and proof">
+          {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
           <MirrorProofScreen
             config={config}
             status={status}
