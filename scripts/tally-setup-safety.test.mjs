@@ -103,7 +103,7 @@ test("structured Tally errors retain their backend remediation", async () => {
   assert.match(frontend, /Next step: \{message\.remediation\}/);
 });
 
-test("persisted-company load failures remain visible before a Tally connection is established", async () => {
+test("persisted-company load failures remain visible regardless of Tally connection state", async () => {
   const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
   const profileLoad = frontend.slice(
     frontend.indexOf("const refreshPersistedCompanyProfiles"),
@@ -113,10 +113,21 @@ test("persisted-company load failures remain visible before a Tally connection i
   assert.match(profileLoad, /setPersistedCompanyProfileError\(operatorError\);/);
   assert.match(profileLoad, /setPersistedCompanyProfilesTruncated\(page\.truncated\);\s*setPersistedCompanyProfileError\(null\);/s);
   assert.doesNotMatch(profileLoad, /setCompanyError\(/);
-  assert.match(frontend, /\{persistedCompanyProfileError && !setupConnectionComplete && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
+  assert.match(frontend, /\{persistedCompanyProfileError && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
+  assert.doesNotMatch(frontend, /persistedCompanyProfileError && !setupConnectionComplete/);
   assert.match(frontend, /\{companyError && !setupConnectionComplete && <TallyErrorNotice message=\{companyError\} \/>\}/);
   const mirror = frontend.slice(frontend.indexOf('{view === "mirror" && ('), frontend.indexOf("companyError={companyError}"));
   assert.match(mirror, /\{persistedCompanyProfileError && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
+});
+
+test("saved clients absent from the current probe require verification, not setup", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const clientStates = frontend.slice(
+    frontend.indexOf("const clientSwitcherClients"),
+    frontend.indexOf("const discoveredCompanyPrompt"),
+  );
+
+  assert.match(clientStates, /state: company\.mirror_company_id\s*\? liveCompanyKeys\.includes\(tallyCompanyKey\(company\)\)[\s\S]*?\? "ready" as const\s*:\s*"verification_required" as const\s*:\s*company\.guid\s*\? "setup_required" as const\s*:\s*"verification_required" as const,/);
 });
 
 test("child Tally reads keep client selection locked until every invocation settles", async () => {

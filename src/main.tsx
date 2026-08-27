@@ -1347,9 +1347,10 @@ function App() {
         identityDiscriminator,
         searchText: `${company.name} ${identityDiscriminator}`,
         state: company.mirror_company_id
-          && liveCompanyKeys.includes(tallyCompanyKey(company))
-          && company.canonical_endpoint === currentProbeCanonicalOrigin
-          ? "ready" as const
+          ? liveCompanyKeys.includes(tallyCompanyKey(company))
+            && company.canonical_endpoint === currentProbeCanonicalOrigin
+            ? "ready" as const
+            : "verification_required" as const
           : company.guid
             ? "setup_required" as const
             : "verification_required" as const,
@@ -1805,7 +1806,7 @@ function App() {
             />
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
-            {persistedCompanyProfileError && !setupConnectionComplete && <TallyErrorNotice message={persistedCompanyProfileError} />}
+            {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
             {companyError && !setupConnectionComplete && <TallyErrorNotice message={companyError} />}
 
             {setupConnectionComplete && (
