@@ -104,21 +104,28 @@ fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsErro
 
 pub fn save_label(
     directory: &Path,
-    company_guid: &str,
+    company_key: &str,
     label: &str,
 ) -> Result<(), ClientGroupLabelsError> {
     let mut labels = try_load(directory)?;
-    let company_guid = company_guid.trim();
+    let company_key = company_key.trim();
     let label = label.trim();
     if label.is_empty() {
-        labels.remove(company_guid);
+        labels.remove(company_key);
     } else {
-        labels.insert(company_guid.to_string(), label.to_string());
+        labels.insert(company_key.to_string(), label.to_string());
     }
 
+    replace_labels(directory, labels)
+}
+
+pub fn replace_labels(
+    directory: &Path,
+    labels: ClientGroupLabels,
+) -> Result<(), ClientGroupLabelsError> {
     let contents = serde_json::to_vec_pretty(&ClientGroupLabelsFile {
         version: SCHEMA_VERSION,
-        labels,
+        labels: normalize(labels),
     })
     .expect("client group label schema always serializes");
     save_bytes(directory, FILE_NAME, &contents).map_err(ClientGroupLabelsError::Write)
@@ -275,6 +282,25 @@ mod tests {
 
         save_label(directory.path(), "synthetic-company-guid", "   ").expect("remove label");
         assert!(load(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn replacing_labels_atomically_retires_every_legacy_key() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        save_label(directory.path(), "legacy-guid", "Legacy practice").expect("seed legacy");
+        replace_labels(
+            directory.path(),
+            BTreeMap::from([(
+                "[\"http://127.0.0.1:9000\",\"legacy-guid\",\"100001\",\"Client\",\"20260401\"]"
+                    .to_string(),
+                "Composite practice".to_string(),
+            )]),
+        )
+        .expect("atomically replace labels");
+
+        let labels = load(directory.path());
+        assert!(!labels.contains_key("legacy-guid"));
+        assert_eq!(labels.len(), 1);
     }
 
     #[test]

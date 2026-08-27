@@ -118,22 +118,26 @@ test("the single-company request emits the selected canonical as-of date", () =>
   assert.deepEqual(
     singleCompanyOutstandingsInvokeArgument(
       { host: "127.0.0.1", port: 9000 },
-      { name: "Bridge Validation Lab", guid: "guid-1" },
+      { name: "Bridge Validation Lab", guid: "guid-1", company_number: "100001", books_from_yyyymmdd: "20260401" },
       "2026-08-17",
       "bill_date",
     ),
     {
       request: {
         config: { host: "127.0.0.1", port: 9000 },
-        company: "Bridge Validation Lab",
-        expected_company_guid: "guid-1",
+        selected_company: {
+          display_name: "Bridge Validation Lab",
+          company_guid: "guid-1",
+          company_number: "100001",
+          books_from_yyyymmdd: "20260401",
+        },
         currency_assertion: "INR",
         as_of_yyyymmdd: "20260817",
         ageing_anchor: "bill_date",
       },
     },
   );
-  assert.equal(singleCompanyOutstandingsInvokeArgument({ host: "127.0.0.1", port: 9000 }, { name: "Lab", guid: "guid-1" }, "2026-8-17", "due_date"), null);
+  assert.equal(singleCompanyOutstandingsInvokeArgument({ host: "127.0.0.1", port: 9000 }, { name: "Lab", guid: "guid-1", company_number: "100001", books_from_yyyymmdd: "20260401" }, "2026-8-17", "due_date"), null);
 });
 
 test("compare clients emits the same selected canonical as-of date", () => {
@@ -141,8 +145,8 @@ test("compare clients emits the same selected canonical as-of date", () => {
     allCompaniesOutstandingsInvokeArgument(
       { host: "127.0.0.1", port: 9000 },
       [
-        { name: "Bridge Validation Lab", guid: "guid-1" },
-        { name: "Bridge Ageing Lab", guid: "guid-2" },
+        { name: "Bridge Validation Lab", guid: "guid-1", company_number: "100001", books_from_yyyymmdd: "20260401" },
+        { name: "Bridge Ageing Lab", guid: "guid-2", company_number: "100014", books_from_yyyymmdd: "20270401" },
       ],
       "2026-08-17",
       "bill_date",
@@ -151,8 +155,8 @@ test("compare clients emits the same selected canonical as-of date", () => {
       request: {
         config: { host: "127.0.0.1", port: 9000 },
         companies: [
-          { company: "Bridge Validation Lab", expected_company_guid: "guid-1" },
-          { company: "Bridge Ageing Lab", expected_company_guid: "guid-2" },
+          { selected_company: { display_name: "Bridge Validation Lab", company_guid: "guid-1", company_number: "100001", books_from_yyyymmdd: "20260401" } },
+          { selected_company: { display_name: "Bridge Ageing Lab", company_guid: "guid-2", company_number: "100014", books_from_yyyymmdd: "20270401" } },
         ],
         currency_assertion: "INR",
         as_of_yyyymmdd: "20260817",

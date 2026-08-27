@@ -50,6 +50,14 @@ use bridge_tally_transport::{
 
 pub type TallyConfig = TallyEndpointConfig;
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DirectCompanyBootstrapError {
+    #[error("Tally direct company identity did not match its enumerated candidate")]
+    CandidateGuidMismatch,
+    #[error("Tally direct company candidate omitted a complete identity tuple")]
+    IncompleteTuple,
+}
+
 #[cfg(feature = "voucher-scan")]
 #[derive(Debug)]
 pub(crate) struct OutstandingsSegmentObservation {
@@ -169,6 +177,10 @@ pub struct SelectedReadScopeEvidence {
     pub(crate) parent_review_sha256: String,
     #[serde(skip_serializing)]
     pub(crate) company_guid_ascii_casefolded: String,
+    #[serde(skip_serializing)]
+    pub(crate) company_number: String,
+    #[serde(skip_serializing)]
+    pub(crate) books_from_yyyymmdd: String,
     #[serde(skip_serializing)]
     pub(crate) observations: Vec<SelectedReadCapabilityObservation>,
 }
@@ -385,13 +397,19 @@ impl TallyClient {
                 confidence: xml_evidence.confidence,
                 safe_reason_code: Some(empty_company_reason()),
             }
-        } else if unique_company_guids(&companies) {
+        } else if has_presentation_equivalent_guid_siblings(&companies) {
+            CapabilityEvidence {
+                state: CapabilityState::Unknown,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: Some("company_identity_display_scope_ambiguous".to_string()),
+            }
+        } else if unique_company_identities(&companies) {
             CapabilityEvidence {
                 state: CapabilityState::Supported,
                 confidence: EvidenceConfidence::Observed,
-                safe_reason_code: Some("stable_company_guid_observed".to_string()),
+                safe_reason_code: Some("stable_company_identity_observed".to_string()),
             }
-        } else if companies.iter().all(|company| company.guid.is_some()) {
+        } else if companies.iter().all(has_complete_company_identity) {
             CapabilityEvidence {
                 state: CapabilityState::Unknown,
                 confidence: EvidenceConfidence::Observed,
@@ -707,9 +725,24 @@ impl TallyClient {
         let observed = parse_standard_ledger_identity_observation(&xml, &candidate.name)?;
         let guid = normalize_company_guid(&observed.company_guid)
             .map_err(|_| anyhow::anyhow!("Tally standard ledger identity was invalid"))?;
+        if candidate
+            .guid
+            .as_deref()
+            .is_none_or(|listed_guid| !listed_guid.eq_ignore_ascii_case(&guid))
+        {
+            return Err(DirectCompanyBootstrapError::CandidateGuidMismatch.into());
+        }
+        let Some(company_number) = candidate.company_number.clone() else {
+            return Err(DirectCompanyBootstrapError::IncompleteTuple.into());
+        };
+        let Some(books_from) = candidate.books_from.clone() else {
+            return Err(DirectCompanyBootstrapError::IncompleteTuple.into());
+        };
         Ok(TallyCompany {
             name: candidate.name.clone(),
             guid: Some(guid),
+            company_number: Some(company_number),
+            books_from: Some(books_from),
         })
     }
 
@@ -1155,18 +1188,98 @@ fn normalize_discovered_companies(companies: Vec<TallyCompany>) -> Result<Vec<Ta
                 .map(normalize_company_guid)
                 .transpose()
                 .map_err(|_| ())?;
-            Ok(TallyCompany { name, guid })
+            let company_number = company
+                .company_number
+                .as_deref()
+                .map(normalize_company_number)
+                .transpose()
+                .map_err(|_| ())?;
+            let books_from = company
+                .books_from
+                .as_deref()
+                .map(normalize_books_from)
+                .transpose()
+                .map_err(|_| ())?;
+            Ok(TallyCompany {
+                name,
+                guid,
+                company_number,
+                books_from,
+            })
         })
         .collect()
 }
 
-fn unique_company_guids(companies: &[TallyCompany]) -> bool {
+fn normalize_company_number(value: &str) -> Result<String, ()> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 16
+        || !trimmed.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalize_books_from(value: &str) -> Result<String, ()> {
+    let trimmed = value.trim();
+    bridge_tally_core::TallyDate::parse(trimmed)
+        .map(|_| trimmed.to_string())
+        .map_err(|_| ())
+}
+
+fn has_complete_company_identity(company: &TallyCompany) -> bool {
+    company
+        .guid
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+        && company
+            .company_number
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        && company
+            .books_from
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        && !company.name.is_empty()
+}
+
+fn unique_company_identities(companies: &[TallyCompany]) -> bool {
     let mut seen = BTreeSet::new();
     companies.iter().all(|company| {
-        company
-            .guid
-            .as_deref()
-            .is_some_and(|guid| seen.insert(guid.to_ascii_lowercase()))
+        let (Some(guid), Some(company_number), Some(books_from)) = (
+            company.guid.as_deref(),
+            company.company_number.as_deref(),
+            company.books_from.as_deref(),
+        ) else {
+            return false;
+        };
+        seen.insert((
+            guid.to_ascii_lowercase(),
+            company_number.to_string(),
+            company.name.clone(),
+            books_from.to_string(),
+        ))
+    })
+}
+
+/// Tally scopes reads by display name, so presentation-equivalent same-GUID
+/// books with distinct observed tuples cannot be safely selected.
+fn has_presentation_equivalent_guid_siblings(companies: &[TallyCompany]) -> bool {
+    companies.iter().enumerate().any(|(index, company)| {
+        let Some(guid) = company.guid.as_deref() else {
+            return false;
+        };
+        companies[..index].iter().any(|other| {
+            other
+                .guid
+                .as_deref()
+                .is_some_and(|other_guid| other_guid.eq_ignore_ascii_case(guid))
+                && company.name.trim().eq_ignore_ascii_case(other.name.trim())
+                && (company.name != other.name
+                    || company.company_number != other.company_number
+                    || company.books_from != other.books_from)
+        })
     })
 }
 
@@ -1310,8 +1423,8 @@ mod tests {
     use super::LedgerOpeningCoverageRead;
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
-        normalize_discovered_companies, tally_endpoint, unique_company_guids, TallyClient,
-        TallyConfig, TallyProduct,
+        has_presentation_equivalent_guid_siblings, normalize_discovered_companies, tally_endpoint,
+        unique_company_identities, TallyClient, TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TallyDate,
@@ -1516,21 +1629,28 @@ mod tests {
             crate::tally::TallyCompany {
                 name: "  Synthetic A  ".to_string(),
                 guid: Some("  GUID-1  ".to_string()),
+                company_number: Some("100005".to_string()),
+                books_from: Some("20250401".to_string()),
             },
             crate::tally::TallyCompany {
                 name: "Synthetic B".to_string(),
                 guid: Some("guid-1".to_string()),
+                company_number: Some("100014".to_string()),
+                books_from: Some("20260401".to_string()),
             },
         ])
         .expect("normalize company identities");
         assert_eq!(normalized[0].name, "Synthetic A");
         assert_eq!(normalized[0].guid.as_deref(), Some("GUID-1"));
-        assert!(!unique_company_guids(&normalized));
+        assert!(unique_company_identities(&normalized));
+        assert!(!has_presentation_equivalent_guid_siblings(&normalized));
 
         assert!(
             normalize_discovered_companies(vec![crate::tally::TallyCompany {
                 name: "Synthetic\nCompany".to_string(),
                 guid: Some("guid-2".to_string()),
+                company_number: None,
+                books_from: None,
             }])
             .is_err()
         );
@@ -1538,9 +1658,53 @@ mod tests {
             normalize_discovered_companies(vec![crate::tally::TallyCompany {
                 name: "Synthetic Company".to_string(),
                 guid: Some("guid\n2".to_string()),
+                company_number: None,
+                books_from: None,
             }])
             .is_err()
         );
+    }
+
+    #[test]
+    fn presentation_equivalent_guid_siblings_are_not_stable_company_identities() {
+        let companies = vec![
+            crate::tally::TallyCompany {
+                name: "Synthetic Company".to_string(),
+                guid: Some("guid-3".to_string()),
+                company_number: Some("100005".to_string()),
+                books_from: Some("20250401".to_string()),
+            },
+            crate::tally::TallyCompany {
+                name: " synthetic company ".to_string(),
+                guid: Some("GUID-3".to_string()),
+                company_number: Some("100014".to_string()),
+                books_from: Some("20260401".to_string()),
+            },
+        ];
+
+        assert!(unique_company_identities(&companies));
+        assert!(has_presentation_equivalent_guid_siblings(&companies));
+    }
+
+    #[test]
+    fn identical_name_same_guid_distinct_books_are_not_stable_company_identities() {
+        let companies = vec![
+            crate::tally::TallyCompany {
+                name: "Synthetic Company".to_string(),
+                guid: Some("guid-3".to_string()),
+                company_number: Some("100005".to_string()),
+                books_from: Some("20250401".to_string()),
+            },
+            crate::tally::TallyCompany {
+                name: "Synthetic Company".to_string(),
+                guid: Some("GUID-3".to_string()),
+                company_number: Some("100014".to_string()),
+                books_from: Some("20260401".to_string()),
+            },
+        ];
+
+        assert!(unique_company_identities(&companies));
+        assert!(has_presentation_equivalent_guid_siblings(&companies));
     }
 
     #[test]
@@ -2460,7 +2624,7 @@ mod tests {
         let server = tokio::spawn(async move {
             for (index, body) in [
                 "<RESPONSE>LOCAL STATUS HEURISTIC UNRECOGNIZED</RESPONSE>",
-                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE>No</EDUMODE><SILVER>Yes</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
+                "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Synthetic Company\"><GUID TYPE=\"String\">guid-1</GUID><COMPANYNUMBER TYPE=\"Number\">100001</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20260401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE>No</EDUMODE><SILVER>Yes</SILVER><GOLD>No</GOLD></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>",
             ]
             .into_iter()
             .enumerate()
@@ -2709,7 +2873,7 @@ mod tests {
         // response carries that shape rather than the legacy `CompanyListV1`
         // direct report. Its GUID must still not escape into the returned
         // identity -- only the second, scoped `standard` read may do that.
-        let discovered = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">discovered-guid-must-not-escape</GUID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let discovered = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><GUID TYPE="String">scoped-guid</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
         let standard = "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\"><SyntheticLedger NAME=\"synthetic-ledger\" RESERVEDNAME=\"\"><GUID TYPE=\"String\">ledger-guid</GUID><PARENT TYPE=\"String\">Primary</PARENT><BRIDGECOMPANYGUID TYPE=\"String\">scoped-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE=\"String\">Synthetic Company</BRIDGECOMPANYNAME><LANGUAGENAME.LIST><LANGUAGEID>1033</LANGUAGEID></LANGUAGENAME.LIST></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>";
         let server = tokio::spawn(async move {
             for body in [discovered, standard] {
@@ -2735,6 +2899,8 @@ mod tests {
 
         assert_eq!(company.name, "Synthetic Company");
         assert_eq!(company.guid.as_deref(), Some("scoped-guid"));
+        assert_eq!(company.company_number.as_deref(), Some("100001"));
+        assert_eq!(company.books_from.as_deref(), Some("20260401"));
     }
 
     #[tokio::test]
@@ -2864,7 +3030,7 @@ mod tests {
     /// `CompanyListV1` report: the mock server has exactly one POST response
     /// queued, so a fallback request would hang and fail this test.
     #[tokio::test]
-    async fn capability_probe_trusts_the_company_collection_without_falling_back() {
+    async fn capability_probe_marks_presentation_equivalent_guid_siblings_ambiguous() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
@@ -2873,7 +3039,7 @@ mod tests {
             let mut requests = Vec::new();
             for (index, body) in [
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
-                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Synthetic Company A\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company A</NAME><GUID TYPE=\"String\">synthetic-guid-a</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n   <COMPANY NAME=\"Synthetic Company B\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company B</NAME><GUID TYPE=\"String\">synthetic-guid-b</GUID><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
+                "<ENVELOPE>\n <HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>\n <BODY><DESC><CMPINFO><COMPANY>0</COMPANY></CMPINFO></DESC>\n  <DATA><COLLECTION>\n   <COMPANY NAME=\"Synthetic Company A\" RESERVEDNAME=\"\"><NAME TYPE=\"String\">Synthetic Company A</NAME><GUID TYPE=\"String\">synthetic-guid-a</GUID><COMPANYNUMBER TYPE=\"Number\">100001</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20260401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n   <COMPANY NAME=\" synthetic company a \" RESERVEDNAME=\"\"><NAME TYPE=\"String\"> synthetic company a </NAME><GUID TYPE=\"String\">SYNTHETIC-GUID-A</GUID><COMPANYNUMBER TYPE=\"Number\">100002</COMPANYNUMBER><BOOKSFROM TYPE=\"Date\">20270401</BOOKSFROM><PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME><EDUMODE TYPE=\"Logical\">No</EDUMODE><SILVER TYPE=\"Logical\">Yes</SILVER><GOLD TYPE=\"Logical\">No</GOLD></COMPANY>\n  </COLLECTION></DATA>\n </BODY>\n</ENVELOPE>",
             ]
             .into_iter()
             .enumerate()
@@ -2907,8 +3073,8 @@ mod tests {
         assert_eq!(probe.companies.len(), 2);
         assert_eq!(probe.companies[0].name, "Synthetic Company A");
         assert_eq!(probe.companies[0].guid.as_deref(), Some("synthetic-guid-a"));
-        assert_eq!(probe.companies[1].name, "Synthetic Company B");
-        assert_eq!(probe.companies[1].guid.as_deref(), Some("synthetic-guid-b"));
+        assert_eq!(probe.companies[1].name, "synthetic company a");
+        assert_eq!(probe.companies[1].guid.as_deref(), Some("SYNTHETIC-GUID-A"));
         assert_eq!(probe.profile.product, "TallyPrime");
         assert_eq!(probe.profile.mode.as_deref(), Some("Licensed"));
         assert_eq!(
@@ -2916,8 +3082,14 @@ mod tests {
             CapabilityState::Supported
         );
         assert_eq!(
+            probe.profile.features[&CapabilityFeatureId::StableCompanyIdentity]
+                .safe_reason_code
+                .as_deref(),
+            Some("company_identity_display_scope_ambiguous")
+        );
+        assert_eq!(
             probe.profile.features[&CapabilityFeatureId::StableCompanyIdentity].state,
-            CapabilityState::Supported
+            CapabilityState::Unknown
         );
 
         let post_request = requests

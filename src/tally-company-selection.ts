@@ -37,13 +37,22 @@ export type ProbeSelectionEffects = {
 export type TallyCompanyIdentity = {
   name: string;
   guid?: string;
+  company_number?: string;
+  books_from_yyyymmdd?: string;
   correlation_key?: string;
   mirror_company_id?: string;
 };
 
 export function tallyCompanyKey(company: TallyCompanyIdentity): string {
   if (company.correlation_key) return `correlation:${company.correlation_key}`;
-  if (company.guid) return `guid:${company.guid.toLocaleLowerCase()}`;
+  if (company.guid && company.company_number && company.books_from_yyyymmdd) {
+    return `tuple:${JSON.stringify([
+      company.guid.toLowerCase(),
+      company.company_number,
+      company.name,
+      company.books_from_yyyymmdd,
+    ])}`;
+  }
   if (company.mirror_company_id) return `mirror:${company.mirror_company_id}`;
   return `unverified-name:${company.name}`;
 }

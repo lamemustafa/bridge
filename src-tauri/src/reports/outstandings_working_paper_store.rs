@@ -21,6 +21,7 @@ const MAX_AGGREGATE_TEXT_BYTES: usize = 64 * 1024 * 1024;
 struct StoredExport {
     id: String,
     expires_at: Instant,
+    revocation_key: String,
     source: OutstandingsWorkingPaperSource,
 }
 
@@ -40,13 +41,13 @@ pub enum WorkingPaperExportStoreError {
 }
 
 impl WorkingPaperExportStore {
-    /// Replaces every older approval for `company_guid` with the source from
+    /// Replaces every older approval for `company_revocation_key` with the source from
     /// the newest completed read. Passing `None` still revokes the older
     /// approval: a partial or otherwise ineligible refresh must not leave a
     /// now-hidden snapshot exportable by a stale webview capability.
     pub fn replace_for_company(
         &self,
-        company_guid: &str,
+        company_revocation_key: &str,
         source: Option<OutstandingsWorkingPaperSource>,
     ) -> Result<Option<String>, WorkingPaperExportStoreError> {
         let mut entries = self
@@ -54,7 +55,9 @@ impl WorkingPaperExportStore {
             .lock()
             .map_err(|_| WorkingPaperExportStoreError::Unavailable)?;
         let now = Instant::now();
-        entries.retain(|entry| entry.expires_at > now && entry.source.company_guid != company_guid);
+        entries.retain(|entry| {
+            entry.expires_at > now && entry.revocation_key != company_revocation_key
+        });
         let Some(source) = source else {
             return Ok(None);
         };
@@ -65,6 +68,7 @@ impl WorkingPaperExportStore {
         entries.push_back(StoredExport {
             id: id.clone(),
             expires_at: now + EXPORT_HANDLE_TTL,
+            revocation_key: company_revocation_key.to_string(),
             source,
         });
         Ok(Some(id))
@@ -280,6 +284,29 @@ mod tests {
 
         assert_eq!(
             store.replace_for_company("synthetic-guid", None).unwrap(),
+            None
+        );
+        assert_eq!(
+            store.take(&id).unwrap_err(),
+            WorkingPaperExportStoreError::InvalidOrExpired
+        );
+    }
+
+    #[test]
+    fn composite_refresh_revokes_a_prior_export_even_when_the_source_keeps_the_raw_guid() {
+        let store = WorkingPaperExportStore::default();
+        let source = source_from_complete_result(&zero_complete(1, true), "raw-tally-guid")
+            .unwrap()
+            .unwrap();
+        let id = store
+            .replace_for_company("opaque-composite-company-key", Some(source))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            store
+                .replace_for_company("opaque-composite-company-key", None)
+                .unwrap(),
             None
         );
         assert_eq!(

@@ -34,7 +34,7 @@ test("Tally has one top-level navigation entry and keeps connection management i
   assert.match(nav, /<Cable size=\{18\} \/> Tally/);
   assert.doesNotMatch(nav, /Outstandings|Tally Setup/);
   assert.match(frontend, /selectedCompanyReady \? "outstandings" : "companies"/);
-  assert.match(frontend, /company=\{selectedCompanyReady && selectedCompanyRecord\?\.guid \? \{ name: selectedCompanyRecord\.name, guid: selectedCompanyRecord\.guid \} : undefined\}/);
+  assert.match(frontend, /selectedCompanyRecord\?\.guid && selectedCompanyRecord\.company_number && selectedCompanyRecord\.books_from_yyyymmdd/);
   assert.match(outstandings, /Manage Tally/);
 });
 

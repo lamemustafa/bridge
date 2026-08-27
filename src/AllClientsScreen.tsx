@@ -17,8 +17,15 @@ import {
   type AsOfBoundValue,
 } from "./outstandings-as-of";
 import { outstandingsCurrencySymbol } from "./outstandings-currency";
+import { companyIdentityKey } from "./company-identity";
 
-type CompanyRef = { name: string; guid: string };
+type CompanyRef = {
+  name: string;
+  guid: string;
+  company_number: string;
+  books_from_yyyymmdd: string;
+  canonical_origin: string;
+};
 
 type Props = {
   config: { host: string; port: number };
@@ -48,7 +55,14 @@ type LoadResult =
       foreign_currency_ledger_name?: string;
     };
 
-type Entry = { company: string; company_guid: string; result: LoadResult };
+type Entry = {
+  company: string;
+  company_guid: string;
+  company_number: string;
+  books_from_yyyymmdd: string;
+  canonical_origin: string;
+  result: LoadResult;
+};
 
 function amountOf(value: string | undefined) {
   if (!value || !/^-?\d+(?:\.\d+)?$/.test(value)) return null;
@@ -114,6 +128,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   const [ageingAnchor, setAgeingAnchor] = React.useState<OutstandingsAgeingAnchor>("due_date");
   const [groupLabels, setGroupLabels] = React.useState<ClientGroupLabels>({});
   const [groupLabelError, setGroupLabelError] = React.useState<string | null>(null);
+  const [groupLabelsReady, setGroupLabelsReady] = React.useState(false);
   const persistedGroupLabels = React.useRef<ClientGroupLabels>({});
   // Tracks, per company, the sequence number of the most recently ISSUED
   // group-label save. Saves are never serialized -- the user keeps typing
@@ -128,7 +143,6 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   const currentRequestedAsOf = React.useRef(requestedAsOf);
   currentRequestedAsOf.current = requestedAsOf;
   const entries = asOfBoundValueForAsOf(loadedEntries, requestedAsOf);
-
   React.useEffect(() => {
     // A new effective date makes any previous financial rows ineligible for
     // display. Invalidate issued sweeps too, so a late old-date response is
@@ -148,12 +162,13 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
 
   React.useEffect(() => {
     let active = true;
+    setGroupLabelsReady(false);
     void invoke<ClientGroupLabels>("load_client_group_labels")
       .then((labels) => {
-        if (active) {
-          persistedGroupLabels.current = labels;
-          setGroupLabels(labels);
-        }
+        if (!active) return;
+        persistedGroupLabels.current = labels;
+        setGroupLabels(labels);
+        setGroupLabelsReady(true);
       })
       // A label is optional. If its local config cannot be read, continue as
       // ungrouped instead of turning the report into a failed screen.
@@ -161,6 +176,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
         if (active) {
           persistedGroupLabels.current = {};
           setGroupLabels({});
+          setGroupLabelsReady(true);
         }
       });
     return () => {
@@ -235,7 +251,18 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
           : null;
         return {
           company: entry.company,
-          companyGuid: entry.company_guid,
+          // Group labels and React row keys must not merge year-end split
+          // books that share a Tally GUID.
+          companyGuid: companyIdentityKey({
+            canonical_origin: entry.canonical_origin,
+            company_guid: entry.company_guid,
+            company_number: entry.company_number,
+            company_name: entry.company,
+            books_from_yyyymmdd: entry.books_from_yyyymmdd,
+          }),
+          sourceGuid: entry.company_guid,
+          companyNumber: entry.company_number,
+          booksFromYyyymmdd: entry.books_from_yyyymmdd,
           complete,
           reasonCode: entry.result.state === "partial" ? entry.result.reason_code : null,
           requestedAsOf: entry.result.state === "partial" ? entry.result.requested_as_of_yyyymmdd : undefined,
@@ -287,34 +314,36 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     () => groupClientRows(rows, groupLabels),
     [rows, groupLabels],
   );
-
   const readable = rows.filter((row) => row.complete).length;
   const largestExposure = Math.max(
     ...rows.map((row) => row.receivable === null || row.unallocated === null ? 0 : row.receivable + row.unallocated),
     0,
   );
 
-  const updateGroupLabel = React.useCallback((companyGuid: string, label: string) => {
-    setGroupLabels((current) => applyClientGroupLabel(current, companyGuid, label));
+  const updateGroupLabel = React.useCallback((companyKey: string, label: string) => {
+    setGroupLabels((current) => applyClientGroupLabel(current, companyKey, label));
   }, []);
 
-  const saveGroupLabel = React.useCallback((companyGuid: string, label: string) => {
+  const saveGroupLabel = React.useCallback((companyKey: string, label: string) => {
     const attemptedLabel = label.trim();
     setGroupLabelError(null);
-    const { sequence, stamp } = issueClientGroupLabelSave(groupLabelSaveSequence.current, companyGuid);
+    const { sequence, stamp } = issueClientGroupLabelSave(groupLabelSaveSequence.current, companyKey);
     groupLabelSaveSequence.current = sequence;
     void invoke("save_client_group_label", {
-      request: { company_guid: companyGuid, label: attemptedLabel },
+      request: {
+        company_key: companyKey,
+        label: attemptedLabel,
+      },
     })
       .then(() => {
         // A later save for this company has already been issued: this
         // response is stale. Applying it would let a slow, superseded
         // success overwrite the record of whatever that newer save settles
         // to, so it is dropped instead.
-        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyGuid, stamp)) return;
+        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyKey, stamp)) return;
         persistedGroupLabels.current = applyClientGroupLabel(
           persistedGroupLabels.current,
-          companyGuid,
+          companyKey,
           attemptedLabel,
         );
       })
@@ -322,10 +351,10 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
         // Same reasoning as above: a superseded failure must not roll back
         // the UI to this attempt's baseline, or claim (falsely) that the
         // previous label was restored.
-        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyGuid, stamp)) return;
+        if (!isLatestClientGroupLabelSave(groupLabelSaveSequence.current, companyKey, stamp)) return;
         setGroupLabels((current) => rollbackFailedClientGroupLabel(
           current,
-          companyGuid,
+          companyKey,
           attemptedLabel,
           persistedGroupLabels.current,
         ));
@@ -356,7 +385,12 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
         type="button"
         key={row.companyGuid}
         onClick={() => {
-          const match = companies.find((company) => company.guid === row.companyGuid);
+          const match = companies.find((company) =>
+            company.guid === row.sourceGuid
+              && company.company_number === row.companyNumber
+              && company.name === row.company
+              && company.books_from_yyyymmdd === row.booksFromYyyymmdd,
+          );
           if (match) onOpenCompany(match);
         }}
       >
@@ -452,18 +486,27 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
               <p>Optional filing labels. Ungrouped clients stay separate.</p>
             </div>
             <div className="client-group-label-grid">
-              {companies.map((company) => (
-                <label key={company.guid}>
-                  <span>{company.name}</span>
-                  <input
-                    aria-label={`Group label for ${company.name}`}
-                    value={groupLabels[company.guid] ?? ""}
-                    placeholder="No group"
-                    onChange={(event) => updateGroupLabel(company.guid, event.target.value)}
-                    onBlur={(event) => saveGroupLabel(company.guid, event.target.value)}
-                  />
-                </label>
-              ))}
+              {rows.map((row) => {
+                return (
+                  <label key={row.companyGuid}>
+                    <span>{row.company}</span>
+                    <input
+                      aria-label={`Group label for ${row.company}`}
+                      value={groupLabels[row.sourceGuid] ?? ""}
+                      placeholder="No group"
+                      disabled={!groupLabelsReady}
+                      onChange={(event) => updateGroupLabel(
+                        row.sourceGuid,
+                        event.target.value,
+                      )}
+                      onBlur={(event) => saveGroupLabel(
+                        row.sourceGuid,
+                        event.target.value,
+                      )}
+                    />
+                  </label>
+                );
+              })}
             </div>
             {groupLabelError && <p className="client-group-label-error" role="alert">{groupLabelError}</p>}
           </section>
