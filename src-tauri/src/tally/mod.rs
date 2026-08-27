@@ -46,7 +46,8 @@ pub struct VerifiedCompanyIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum VerifiedCompanyIdentityError {
     Missing,
-    Ambiguous,
+    DuplicateTuple,
+    DisplayScopeAmbiguous,
 }
 
 impl VerifiedCompanyIdentity {
@@ -69,7 +70,7 @@ impl VerifiedCompanyIdentity {
             .iter()
             .any(|company| identity.is_presentation_equivalent_guid_sibling(company))
         {
-            return Err(VerifiedCompanyIdentityError::Ambiguous);
+            return Err(VerifiedCompanyIdentityError::DisplayScopeAmbiguous);
         }
         match companies
             .iter()
@@ -78,7 +79,7 @@ impl VerifiedCompanyIdentity {
         {
             0 => Err(VerifiedCompanyIdentityError::Missing),
             1 => Ok(identity),
-            _ => Err(VerifiedCompanyIdentityError::Ambiguous),
+            _ => Err(VerifiedCompanyIdentityError::DuplicateTuple),
         }
     }
 
@@ -146,31 +147,4 @@ impl VerifiedCompanyIdentity {
                 .eq_ignore_ascii_case(self.display_name.trim())
             && !self.matches_observed_company(company)
     }
-}
-
-pub(crate) fn has_presentation_equivalent_guid_sibling(
-    display_name: &str,
-    company_guid: &str,
-    companies: &[TallyCompany],
-) -> bool {
-    companies.iter().enumerate().any(|(index, company)| {
-        company
-            .guid
-            .as_deref()
-            .is_some_and(|guid| guid.eq_ignore_ascii_case(company_guid))
-            && company
-                .name
-                .trim()
-                .eq_ignore_ascii_case(display_name.trim())
-            && companies[..index].iter().any(|other| {
-                other
-                    .guid
-                    .as_deref()
-                    .is_some_and(|guid| guid.eq_ignore_ascii_case(company_guid))
-                    && other.name.trim().eq_ignore_ascii_case(display_name.trim())
-                    && (company.name != other.name
-                        || company.company_number != other.company_number
-                        || company.books_from != other.books_from)
-            })
-    })
 }

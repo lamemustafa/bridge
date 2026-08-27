@@ -50,7 +50,6 @@ const MAX_ENDPOINT_SESSIONS: usize = 32;
 /// Re-enumerate the complete identity immediately before or after a scoped
 /// read. Tally accepts a company name as the scope selector, so the GUID alone
 /// is not a sufficient witness when company names differ only by presentation.
-#[cfg(not(test))]
 async fn bracket_verified_company_identity(
     client: &TallyClient,
     identity: &VerifiedCompanyIdentity,
@@ -71,16 +70,6 @@ async fn bracket_verified_company_identity(
     if matches != 1 {
         anyhow::bail!("Tally complete company identity was absent or ambiguous");
     }
-    Ok(())
-}
-
-#[cfg(test)]
-async fn bracket_verified_company_identity(
-    _client: &TallyClient,
-    _identity: &VerifiedCompanyIdentity,
-) -> anyhow::Result<()> {
-    // Existing transport fixtures predate CompanyListV2. Targeted identity
-    // tests exercise the matcher directly; production reads always bracket.
     Ok(())
 }
 
@@ -2577,6 +2566,7 @@ mod tests {
             "../../crates/bridge-tally-protocol/tests/fixtures/native/bills_payable_aarav.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        let company_list = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Aarav Trading Company Demo"><GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><COMPANYNUMBER TYPE="Number">1</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
 
         let extent = EXTENT.replacen(
             r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
@@ -2590,30 +2580,43 @@ mod tests {
             .expect("bind synthetic outstandings server");
         let address = listener.local_addr().expect("synthetic server address");
         let server = tokio::spawn(async move {
-            for index in 0..24 {
+            let mut source_post_index = 0;
+            for index in 0..26 {
                 let (mut socket, _) =
                     tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
                         .await
                         .expect("outstandings request timed out")
                         .expect("accept outstandings request");
                 let request = read_http_request(&mut socket).await;
-                let expected_method: &[u8] = if index % 2 == 0 {
-                    b"POST /"
+                let response = if request.starts_with(b"GET /status") {
+                    utf8_status_response(STATUS)
                 } else {
-                    b"GET /status"
-                };
-                assert!(
-                    request.starts_with(expected_method),
-                    "request {index} did not preserve paired-read health bracketing"
-                );
-                let response = match index {
-                    0 | 2 | 20 | 22 => utf16_xml_response(&extent),
-                    1 | 3 | 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 => {
-                        utf8_status_response(STATUS)
+                    assert!(request.starts_with(b"POST /"), "request {index}");
+                    let body_start = request
+                        .windows(4)
+                        .position(|bytes| bytes == b"\r\n\r\n")
+                        .expect("complete request headers")
+                        + 4;
+                    let xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+                        &request[body_start..],
+                        request.len() - body_start,
+                    )
+                    .expect("decode request")
+                    .text;
+                    if xml.contains("<ID>BridgeCompanyExtent</ID>")
+                        && !xml.contains("<SVCURRENTCOMPANY>")
+                    {
+                        utf16_xml_response(company_list)
+                    } else {
+                        let response = match source_post_index {
+                            0 | 1 | 10 | 11 => utf16_xml_response(&extent),
+                            2 | 3 => utf16_xml_response(RECEIVABLE),
+                            6 | 7 => utf16_xml_response(PAYABLE),
+                            _ => utf16_xml_response_bytes(FOREX_LEDGER_CAPTURE),
+                        };
+                        source_post_index += 1;
+                        response
                     }
-                    4 | 6 => utf16_xml_response(RECEIVABLE),
-                    12 | 14 => utf16_xml_response(PAYABLE),
-                    _ => utf16_xml_response_bytes(FOREX_LEDGER_CAPTURE),
                 };
                 socket.write_all(&response).await.expect("write response");
             }
@@ -2911,6 +2914,7 @@ mod tests {
             "../../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        let company_list = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Aarav Trading Company Demo"><GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><COMPANYNUMBER TYPE="Number">1</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
 
         let currency = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
             CURRENCY,
@@ -2942,21 +2946,8 @@ mod tests {
             .expect("bind synthetic currency server");
         let address = listener.local_addr().expect("synthetic server address");
         let server = tokio::spawn(async move {
-            let responses = [
-                opening_extent.as_str(),
-                STATUS,
-                opening_extent.as_str(),
-                STATUS,
-                currency.as_str(),
-                STATUS,
-                currency.as_str(),
-                STATUS,
-                closing_extent.as_str(),
-                STATUS,
-                closing_extent.as_str(),
-                STATUS,
-            ];
-            for (index, body) in responses.into_iter().enumerate() {
+            let mut source_post_index = 0;
+            for index in 0..13 {
                 let (mut socket, _) =
                     tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
                         .await
@@ -2964,19 +2955,35 @@ mod tests {
                         .expect("accept currency request");
                 let mut request = [0_u8; 16 * 1024];
                 let bytes_read = socket.read(&mut request).await.expect("read request");
-                let expected_method = if index % 2 == 0 {
-                    "POST /"
+                let request = &request[..bytes_read];
+                let response = if request.starts_with(b"GET /status") {
+                    utf8_status_response(STATUS)
                 } else {
-                    "GET /status"
-                };
-                assert!(
-                    String::from_utf8_lossy(&request[..bytes_read]).starts_with(expected_method),
-                    "request {index} did not preserve paired-read health bracketing"
-                );
-                let response = if index % 2 == 0 {
-                    utf16_xml_response(body)
-                } else {
-                    utf8_status_response(body)
+                    assert!(request.starts_with(b"POST /"), "request {index}");
+                    let body_start = request
+                        .windows(4)
+                        .position(|bytes| bytes == b"\r\n\r\n")
+                        .expect("complete request headers")
+                        + 4;
+                    let xml = bridge_tally_protocol::decode_tally_text_bytes_limited(
+                        &request[body_start..],
+                        request.len() - body_start,
+                    )
+                    .expect("decode request")
+                    .text;
+                    if xml.contains("<ID>BridgeCompanyExtent</ID>")
+                        && !xml.contains("<SVCURRENTCOMPANY>")
+                    {
+                        utf16_xml_response(company_list)
+                    } else {
+                        let response = match source_post_index {
+                            0 | 1 => utf16_xml_response(&opening_extent),
+                            2 | 3 => utf16_xml_response(&currency),
+                            _ => utf16_xml_response(&closing_extent),
+                        };
+                        source_post_index += 1;
+                        response
+                    }
                 };
                 socket.write_all(&response).await.expect("write response");
             }
@@ -3774,7 +3781,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reservation_owner_rechecks_the_tuple_then_qualifies_selected_ledgers() {
+    async fn production_identity_bracket_rechecks_the_tuple_around_selected_ledger_qualification() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind qualification server");
@@ -3782,15 +3789,23 @@ mod tests {
         let company_list = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="BRIDGE SYNTHETIC BOOK"><GUID TYPE="String">00000000-0000-4000-8000-000000000001</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
         let ledger_export = Fixture::NormalExport.body().into_owned();
         let server = tokio::spawn(async move {
-            for body in [company_list.to_string(), ledger_export] {
+            let mut requests = Vec::new();
+            for body in [
+                company_list.to_string(),
+                company_list.to_string(),
+                ledger_export,
+                company_list.to_string(),
+            ] {
                 let (mut socket, _) = listener.accept().await.expect("accept reserved read");
                 let request = read_http_request(&mut socket).await;
                 assert!(request.starts_with(b"POST /"));
+                requests.push(request);
                 socket
                     .write_all(&utf16_xml_response(body))
                     .await
                     .expect("write reserved read response");
             }
+            requests
         });
         let runtime = TallyRuntime::default();
         let config = TallyConfig {
@@ -3824,19 +3839,51 @@ mod tests {
             .await
             .expect("reservation owner may recheck company tuple");
         assert_eq!(companies.len(), 1);
+        let identity = VerifiedCompanyIdentity::from_observed_companies(
+            "BRIDGE SYNTHETIC BOOK".to_string(),
+            "00000000-0000-4000-8000-000000000001".to_string(),
+            "100001".to_string(),
+            "20260401".to_string(),
+            &[TallyCompany {
+                name: "BRIDGE SYNTHETIC BOOK".to_string(),
+                guid: Some("00000000-0000-4000-8000-000000000001".to_string()),
+                company_number: Some("100001".to_string()),
+                books_from: Some("20260401".to_string()),
+            }],
+        )
+        .expect("synthetic qualification identity is complete");
         let observation = runtime
-            .qualify_selected_ledgers(
-                config,
-                &reservation,
-                &verified_identity(
-                    "BRIDGE SYNTHETIC BOOK",
-                    "00000000-0000-4000-8000-000000000001",
-                ),
-            )
+            .qualify_selected_ledgers(config, &reservation, &identity)
             .await
             .expect("qualification must run after the reserved tuple recheck");
         assert_eq!(observation.result_bucket, "non_empty_observed");
-        server.await.expect("finish reserved qualification server");
+        let requests = server.await.expect("finish reserved qualification server");
+        assert_eq!(requests.len(), 4);
+        let decoded = requests
+            .iter()
+            .map(|request| {
+                let body_start = request
+                    .windows(4)
+                    .position(|bytes| bytes == b"\r\n\r\n")
+                    .expect("request has complete HTTP headers")
+                    + 4;
+                bridge_tally_protocol::decode_tally_text_bytes_limited(
+                    &request[body_start..],
+                    request.len() - body_start,
+                )
+                .expect("decode dispatched Tally request")
+                .text
+            })
+            .collect::<Vec<_>>();
+        for (index, request) in [0, 1, 3].into_iter().map(|index| (index, &decoded[index])) {
+            assert!(
+                request.contains("<TYPE>Collection</TYPE>"),
+                "request {index}"
+            );
+            assert!(request.contains("<TYPE>Company</TYPE>"), "request {index}");
+            assert!(!request.contains("<SVCURRENTCOMPANY>"), "request {index}");
+        }
+        assert!(decoded[2].contains("<SVCURRENTCOMPANY>BRIDGE SYNTHETIC BOOK</SVCURRENTCOMPANY>"));
     }
 
     #[test]

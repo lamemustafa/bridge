@@ -3,7 +3,7 @@
 import React from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, migrateLegacyClientGroupLabels, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
+import { applyClientGroupLabel, ClientGroupLabelSaveSequence, ClientGroupLabels, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel } from "./client-grouping";
 import {
   outstandingsAgeingAnchorLabel,
   outstandingsPartialState,
@@ -128,7 +128,6 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   const [ageingAnchor, setAgeingAnchor] = React.useState<OutstandingsAgeingAnchor>("due_date");
   const [groupLabels, setGroupLabels] = React.useState<ClientGroupLabels>({});
   const [groupLabelError, setGroupLabelError] = React.useState<string | null>(null);
-  const [groupLabelMigrationNotice, setGroupLabelMigrationNotice] = React.useState<string | null>(null);
   const [groupLabelsReady, setGroupLabelsReady] = React.useState(false);
   const persistedGroupLabels = React.useRef<ClientGroupLabels>({});
   // Tracks, per company, the sequence number of the most recently ISSUED
@@ -144,20 +143,6 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
   const currentRequestedAsOf = React.useRef(requestedAsOf);
   currentRequestedAsOf.current = requestedAsOf;
   const entries = asOfBoundValueForAsOf(loadedEntries, requestedAsOf);
-  const migrationBooks = React.useMemo(
-    () => companies.map((company) => ({
-      companyKey: companyIdentityKey({
-        canonical_origin: company.canonical_origin,
-        company_guid: company.guid,
-        company_number: company.company_number,
-        company_name: company.name,
-        books_from_yyyymmdd: company.books_from_yyyymmdd,
-      }),
-      sourceGuid: company.guid,
-    })),
-    [companies.map((company) => `${company.canonical_origin}:${company.guid}:${company.company_number}:${company.books_from_yyyymmdd}:${company.name}`).join("|")],
-  );
-
   React.useEffect(() => {
     // A new effective date makes any previous financial rows ineligible for
     // display. Invalidate issued sweeps too, so a late old-date response is
@@ -181,29 +166,9 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     void invoke<ClientGroupLabels>("load_client_group_labels")
       .then((labels) => {
         if (!active) return;
-        const migration = migrateLegacyClientGroupLabels(labels, migrationBooks);
-        const acceptMigration = () => {
-          if (!active) return;
-          persistedGroupLabels.current = migration.labels;
-          setGroupLabels(migration.labels);
-          if (migration.dropped.length) {
-            setGroupLabelMigrationNotice(migration.dropped.map((dropped) =>
-              `${dropped.key}: multiple current books`,
-            ).join("; "));
-          }
-          setGroupLabelsReady(true);
-        };
-        if (migration.changed) {
-          void invoke("replace_client_group_labels", { request: { labels: migration.labels } })
-            .then(acceptMigration)
-            .catch(() => {
-              if (!active) return;
-              setGroupLabels(migration.labels);
-              setGroupLabelError("Bridge could not persist the one-time group-label migration. Editing is unavailable until the stored labels can be migrated safely.");
-            });
-        } else {
-          acceptMigration();
-        }
+        persistedGroupLabels.current = labels;
+        setGroupLabels(labels);
+        setGroupLabelsReady(true);
       })
       // A label is optional. If its local config cannot be read, continue as
       // ungrouped instead of turning the report into a failed screen.
@@ -217,7 +182,7 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
     return () => {
       active = false;
     };
-  }, [migrationBooks]);
+  }, []);
 
   React.useEffect(() => {
     let active = true;
@@ -527,15 +492,15 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
                     <span>{row.company}</span>
                     <input
                       aria-label={`Group label for ${row.company}`}
-                      value={groupLabels[row.companyGuid] ?? ""}
+                      value={groupLabels[row.sourceGuid] ?? ""}
                       placeholder="No group"
                       disabled={!groupLabelsReady}
                       onChange={(event) => updateGroupLabel(
-                        row.companyGuid,
+                        row.sourceGuid,
                         event.target.value,
                       )}
                       onBlur={(event) => saveGroupLabel(
-                        row.companyGuid,
+                        row.sourceGuid,
                         event.target.value,
                       )}
                     />
@@ -544,7 +509,6 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, asO
               })}
             </div>
             {groupLabelError && <p className="client-group-label-error" role="alert">{groupLabelError}</p>}
-            {groupLabelMigrationNotice && <p className="client-group-label-error" role="status">Dropped legacy labels: {groupLabelMigrationNotice}</p>}
           </section>
 
           <div className="clients-table" role="table" aria-label="Outstandings by client">

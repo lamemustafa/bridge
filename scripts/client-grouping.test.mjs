@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { applyClientGroupLabel, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, migrateLegacyClientGroupLabels, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
+import { applyClientGroupLabel, groupClientRows, isLatestClientGroupLabelSave, issueClientGroupLabelSave, reconcileLoadedSortPreference, rollbackFailedClientGroupLabel, sumExactDecimals } from "../src/client-grouping.ts";
 import { companyIdentityKey } from "../src/company-identity.ts";
 
 // Mirrors AllClientsScreen's saveGroupLabel wiring exactly (issue a stamp,
@@ -178,33 +178,14 @@ test("ungrouped companies remain separate and receive no synthetic total", () =>
   assert.equal(grouped.ungroupedRows.length, 2);
 });
 
-test("legacy GUID labels migrate once and retain closed books before grouping reads", () => {
-  const migration = migrateLegacyClientGroupLabels(
-    {
-      "legacy-one": "One practice",
-      "[composite-one]": "Exact practice",
-      "legacy-split": "Split practice",
-      "legacy-missing": "Old practice",
-    },
-    [
-      { companyKey: "[composite-one]", sourceGuid: "LEGACY-ONE" },
-      { companyKey: "[composite-parent]", sourceGuid: "legacy-split" },
-      { companyKey: "[composite-child]", sourceGuid: "legacy-split" },
-    ],
-  );
-  assert.deepEqual(
-    migration.labels,
-    { "[composite-one]": "Exact practice", "legacy-missing": "Old practice" },
-    "an explicit composite label wins over a legacy raw-GUID label while a closed book's label is retained",
-  );
-  assert.deepEqual(migration.dropped, [
-    { key: "legacy-split", reason: "multiple_matching_books" },
-  ]);
+test("raw GUID labels intentionally group split books", () => {
   const rows = [
-    { companyGuid: "[composite-parent]", exactAmounts: { receivable: "10", overdue: "2", unallocated: "1" } },
-    { companyGuid: "[composite-child]", exactAmounts: { receivable: "20", overdue: "3", unallocated: "4" } },
+    { companyGuid: "[composite-parent]", sourceGuid: "legacy-split", exactAmounts: { receivable: "10", overdue: "2", unallocated: "1" } },
+    { companyGuid: "[composite-child]", sourceGuid: "legacy-split", exactAmounts: { receivable: "20", overdue: "3", unallocated: "4" } },
   ];
-  assert.equal(groupClientRows(rows, migration.labels).groups.length, 0);
+  const grouped = groupClientRows(rows, { "legacy-split": "Split practice" });
+  assert.equal(grouped.groups.length, 1);
+  assert.deepEqual(grouped.groups[0].totals, { receivable: "30", overdue: "5", unallocated: "5" });
 });
 
 test("the shared composite key keeps endpoint, GUID, number, name, and books-from distinct", () => {
@@ -259,13 +240,11 @@ test("all-client responses carry the pinned composite tuple back to the open act
   assert.match(commands, /books_from_yyyymmdd: selected\.books_from_yyyymmdd/);
   assert.match(allClients, /companyGuid: companyIdentityKey\(\{/);
   assert.match(allClients, /company\.company_number === row\.companyNumber/);
-  assert.match(allClients, /migrateLegacyClientGroupLabels/);
   assert.match(allClients, /disabled=\{!groupLabelsReady\}/);
-  assert.match(allClients, /replace_client_group_labels/);
-  assert.match(allClients, /canonical_origin: company\.canonical_origin/);
+  assert.match(allClients, /canonical_origin: entry\.canonical_origin/);
   assert.doesNotMatch(companyIdentity, /canonicalOriginForConfig/);
   assert.match(allClients, /key=\{row\.companyGuid\}/);
-  assert.doesNotMatch(allClients, /groupLabels\[company\.guid\]/);
+  assert.match(allClients, /groupLabels\[row\.sourceGuid\]/);
   assert.doesNotMatch(allClients, /companies\.find\(\(company\) => company\.name === entry\.company\)/);
   assert.match(main, /const completeCurrentProbeCompanies = currentProbeCompanyList\.filter\(/);
   assert.match(main, /companies=\{completeCurrentProbeCompanies/);

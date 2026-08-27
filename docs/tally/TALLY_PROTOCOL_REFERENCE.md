@@ -747,6 +747,11 @@ can rename it, and does not document whether a deleted number can later be reuse
 therefore remain observed provenance within the tuple, not become a Bridge re-key or a claim of
 permanent identity on its own.
 
+**Compatibility rule.** Opening a composite-era mirror with a pre-composite Bridge binary is
+blocked at startup. The older binary attempts its retired GUID-only migration and the database
+rejects it transactionally; operators must restore a compatible binary rather than rolling back
+against a schema that can contain same-GUID books.
+
 **Design rule.** Pin a company only by the complete observation
 `(canonical_origin, COMPANYNUMBER, GUID, NAME, BOOKSFROM)`. Never migrate an older GUID-only
 pin by guessing fields from a current listing: re-observe and review the full tuple. This rule

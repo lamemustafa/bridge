@@ -397,9 +397,13 @@ impl TallyClient {
                 confidence: xml_evidence.confidence,
                 safe_reason_code: Some(empty_company_reason()),
             }
-        } else if unique_company_identities(&companies)
-            && !has_presentation_equivalent_guid_siblings(&companies)
-        {
+        } else if has_presentation_equivalent_guid_siblings(&companies) {
+            CapabilityEvidence {
+                state: CapabilityState::Unknown,
+                confidence: EvidenceConfidence::Observed,
+                safe_reason_code: Some("company_identity_display_scope_ambiguous".to_string()),
+            }
+        } else if unique_company_identities(&companies) {
             CapabilityEvidence {
                 state: CapabilityState::Supported,
                 confidence: EvidenceConfidence::Observed,
@@ -3081,7 +3085,7 @@ mod tests {
             probe.profile.features[&CapabilityFeatureId::StableCompanyIdentity]
                 .safe_reason_code
                 .as_deref(),
-            Some("company_identity_ambiguous")
+            Some("company_identity_display_scope_ambiguous")
         );
         assert_eq!(
             probe.profile.features[&CapabilityFeatureId::StableCompanyIdentity].state,

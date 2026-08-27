@@ -89,3 +89,18 @@ WHEN NOT EXISTS (
 BEGIN
   SELECT RAISE(ABORT, 'fixture enrollment requires observed composite company identity');
 END;
+
+-- Version 7 enforced the retired GUID-only uniqueness contract. Remove its
+-- marker so an older binary attempts its normal upgrade path, then reject
+-- that path in-band once this composite-era schema is marked installed.
+DELETE FROM tally_schema_migrations WHERE version = 7;
+
+CREATE TRIGGER tally_schema_migrations_reject_legacy_company_identity
+BEFORE INSERT ON tally_schema_migrations
+WHEN NEW.version = 7
+  AND EXISTS (
+    SELECT 1 FROM tally_schema_migrations WHERE version = 23
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'composite company identity requires a compatible Bridge binary');
+END;

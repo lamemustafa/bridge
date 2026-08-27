@@ -2144,13 +2144,21 @@ fn verify_observed_company_tuple_from_companies(
             false,
             "Probe again and explicitly select the intended book.",
         ),
-        VerifiedCompanyIdentityError::Ambiguous => tally_command_error(
+        VerifiedCompanyIdentityError::DuplicateTuple => tally_command_error(
             "company_identity_ambiguous",
+            "Tally application",
+            "Tally returned the selected complete company tuple more than once.",
+            "not_recommended",
+            false,
+            "Do not read or enroll this scope. Probe again after resolving the duplicate company tuple.",
+        ),
+        VerifiedCompanyIdentityError::DisplayScopeAmbiguous => tally_command_error(
+            "company_identity_display_scope_ambiguous",
             "Tally application",
             "Tally returned a same-GUID company whose display name cannot safely scope the selected book.",
             "not_recommended",
             false,
-            "Do not read or enroll this scope. Inspect the Tally company list before continuing.",
+            "Do not read or enroll this scope. Rename one of the presentation-equivalent Tally books, then probe again.",
         ),
     })
 }
@@ -2728,7 +2736,7 @@ mod tests {
         )
         .expect_err("presentation-equivalent company sibling must not be saved");
 
-        assert_eq!(error.code, "company_identity_ambiguous");
+        assert_eq!(error.code, "company_identity_display_scope_ambiguous");
     }
 
     #[test]
@@ -2757,6 +2765,29 @@ mod tests {
             ],
         )
         .expect_err("an identically named sibling must not be saved or enrolled");
+
+        assert_eq!(error.code, "company_identity_display_scope_ambiguous");
+    }
+
+    #[test]
+    fn setup_reports_duplicate_complete_tuple_separately() {
+        let selected = SelectedCompanyIdentity {
+            display_name: "Client Book".to_string(),
+            company_guid: "same-guid".to_string(),
+            company_number: "1".to_string(),
+            books_from_yyyymmdd: "20260401".to_string(),
+        };
+        let duplicate = TallyCompany {
+            name: "Client Book".to_string(),
+            guid: Some("same-guid".to_string()),
+            company_number: Some("1".to_string()),
+            books_from: Some("20260401".to_string()),
+        };
+        let error = verify_observed_company_tuple_from_companies(
+            &selected,
+            vec![duplicate.clone(), duplicate],
+        )
+        .expect_err("a duplicate complete tuple must not be saved or enrolled");
 
         assert_eq!(error.code, "company_identity_ambiguous");
     }

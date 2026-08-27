@@ -2156,7 +2156,12 @@ impl TallyMirrorRepository {
         )
         .fetch_one(&mut *transaction)
         .await?;
-        if selected_read_evidence_installed == 0 {
+        let composite_company_identity_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 23",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if selected_read_evidence_installed == 0 && composite_company_identity_installed == 0 {
             let casefold_collisions = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM (\
                    SELECT endpoint_id, company_guid COLLATE NOCASE \
@@ -4609,6 +4614,7 @@ fn validate_export_code(value: &str) -> Result<(), MirrorError> {
                 | "capability_profile_drift_check_unavailable"
                 | "capability_profile_changed_during_run"
                 | "company_identity_ambiguous"
+                | "company_identity_display_scope_ambiguous"
                 | "company_identity_not_found"
                 | "complete_source_count_disagreement"
                 | "duplicate_record_across_windows"
@@ -7902,13 +7908,22 @@ mod tests {
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)",
+             WHERE version IN (2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 21);
+        assert_eq!(migration_count, 22);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 7",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read retired GUID-only migration marker"),
+            0
+        );
         let target_binding_columns = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM pragma_table_info('tally_write_canary_preflight_evidence') \
              WHERE name IN ('canonical_endpoint_sha256', 'company_identity_sha256')",
@@ -7995,7 +8010,7 @@ mod tests {
         assert!(identity_index_sql.contains("books_from_yyyymmdd"));
         let applied_at = sqlx::query_scalar::<_, i64>(
             "SELECT MIN(applied_at_unix_ms) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9)",
+             WHERE version IN (2, 3, 4, 5, 6, 8, 9)",
         )
         .fetch_one(&repository.pool)
         .await
@@ -8755,6 +8770,49 @@ mod tests {
             .expect("canonical migration payload"),
             "immutable migration evidence must use the normal canonical binding"
         );
+    }
+
+    #[tokio::test]
+    async fn composite_identity_schema_rejects_legacy_v7_runner() {
+        let repository = repository_through_v13().await;
+        repository
+            .migrate()
+            .await
+            .expect("upgrade through the composite identity migration");
+        for (version, expected) in [(7, 0_i64), (23, 1_i64)] {
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = ?1",
+                )
+                .bind(version)
+                .fetch_one(&repository.pool)
+                .await
+                .expect("read migration marker"),
+                expected
+            );
+        }
+
+        let mut transaction = repository
+            .pool
+            .begin()
+            .await
+            .expect("begin legacy migration");
+        let error = sqlx::raw_sql(MIRROR_MIGRATION_V7)
+            .execute(&mut *transaction)
+            .await
+            .expect_err("a legacy GUID-only binary must fail closed");
+        assert!(error
+            .to_string()
+            .contains("composite company identity requires a compatible Bridge binary"));
+        transaction
+            .rollback()
+            .await
+            .expect("roll back rejected legacy migration");
+
+        repository
+            .migrate()
+            .await
+            .expect("current binary skips the retired migration marker");
     }
 
     #[tokio::test]

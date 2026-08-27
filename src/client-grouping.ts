@@ -2,56 +2,6 @@
 
 export type ClientGroupLabels = Record<string, string>;
 
-export type ClientGroupLabelMigrationBook = {
-  companyKey: string;
-  sourceGuid: string;
-};
-
-export type DroppedLegacyClientGroupLabel = {
-  key: string;
-  reason: "multiple_matching_books";
-};
-
-export function migrateLegacyClientGroupLabels(
-  labels: ClientGroupLabels,
-  books: readonly ClientGroupLabelMigrationBook[],
-): { labels: ClientGroupLabels; dropped: DroppedLegacyClientGroupLabel[]; changed: boolean } {
-  const next: ClientGroupLabels = {};
-  const dropped: DroppedLegacyClientGroupLabel[] = [];
-  for (const [key, value] of Object.entries(labels)) {
-    const label = value.trim();
-    if (!label) continue;
-    if (key.startsWith("[")) {
-      next[key] = label;
-      continue;
-    }
-    const matchingBooks = books.filter(
-      (book) => book.sourceGuid.trim().toLowerCase() === key.trim().toLowerCase(),
-    );
-    if (matchingBooks.length === 1) {
-      // An explicit composite label wins over a pre-composite raw-GUID one.
-      if (!next[matchingBooks[0].companyKey]) next[matchingBooks[0].companyKey] = label;
-      continue;
-    }
-    if (matchingBooks.length === 0) {
-      // A closed book has no complete tuple in this probe. Keep its legacy
-      // label until a later probe can migrate it, but it cannot group any
-      // active composite row in the meantime.
-      next[key] = label;
-      continue;
-    }
-    dropped.push({
-      key,
-      reason: "multiple_matching_books",
-    });
-  }
-  return {
-    labels: next,
-    dropped,
-    changed: JSON.stringify(labels) !== JSON.stringify(next),
-  };
-}
-
 export function applyClientGroupLabel(
   labels: ClientGroupLabels,
   companyKey: string,
@@ -176,7 +126,10 @@ export function groupClientRows<Row extends GroupableClientRow>(
   const grouped = new Map<string, Row[]>();
   const ungroupedRows: Row[] = [];
   for (const row of rows) {
-    const label = labels[row.companyGuid]?.trim();
+    // Filing labels deliberately retain their pre-composite raw-GUID key.
+    // React still needs the composite key above so split books render as
+    // distinct rows; their optional labels, however, intentionally group.
+    const label = labels[row.sourceGuid ?? row.companyGuid]?.trim();
     if (!label) {
       ungroupedRows.push(row);
       continue;

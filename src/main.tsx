@@ -320,6 +320,7 @@ const CAPABILITY_REASON_LABELS: Record<string, string> = {
   configuration_not_observed: "Bridge did not inspect this optional transport's configuration.",
   company_identity_invalid: "The company result contained an invalid or unsafe identity field.",
   company_identity_ambiguous: "Two or more returned companies shared the same complete observed identity.",
+  company_identity_display_scope_ambiguous: "Two same-GUID books differ only by name casing or surrounding whitespace, so Tally cannot safely scope the selected book. Rename one book, then probe again.",
   direct_company_report_untrusted: "Tally returned a direct company report without the normal success wrapper. Its names remain unverified until separately checked.",
   standard_ledger_identity_profile_observed: "A strict, scoped standard ledger collection observed one local company identity. It does not establish completeness, sync eligibility, or write support.",
   scoped_standard_identity_observed: "A strict, scoped local company identity was observed. Responder authenticity and accounting completeness remain unestablished.",
