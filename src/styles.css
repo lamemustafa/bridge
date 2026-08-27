@@ -241,6 +241,16 @@ nav button:disabled small {
   overflow-wrap: anywhere;
 }
 
+.client-switcher-option-details {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.client-switcher-option-details > small {
+  flex: initial;
+}
+
 .client-switcher-option small {
   flex: 0 0 auto;
   color: #52645b;

@@ -411,7 +411,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "70792ab8b1493163d7f760410097546c32f07f675f21538066d28a8698d8d9a8"
+      "sha256": "52e58a6564be40d1c8bd3eb72245cffc1594f6bd1dfc374388f150df236299e7"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -427,7 +427,7 @@
     },
     {
       "path": "src/styles.css",
-      "sha256": "bdab115bc537b97d406127355f308f257f91b7cbf8d78334ed726820711c3536"
+      "sha256": "334a99cc6623c88b4cfb696396947c103d6de97f4d1b24573f0ff5a112cb4aa4"
     },
     {
       "path": "src/tally-company-selection.ts",
@@ -482,5 +482,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "be5bda1431b36ccdd00d7782e2bbe01b94e27e01814f7abf414979aa000169e5"
+  "manifest_sha256": "89db890d06b93a12f92b098e2f2ad0fb3d6753e1ddd1581cb03e9a0b6feb30f7"
 }

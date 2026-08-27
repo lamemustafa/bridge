@@ -40,12 +40,20 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(switcher, /type="search"/);
   assert.match(switcher, /disabled=\{selectionLocked\}/);
   assert.match(switcher, /if \(!current\) onOpen\(\);/);
+  assert.match(switcher, /client\.searchText\.toLocaleLowerCase\(\)\.includes/);
+  assert.match(switcher, /client\.identityDiscriminator/);
   assert.match(switcher, /\{loadError && <p className="client-switcher-error" role="alert">\{loadError\}<\/p>\}/);
   assert.match(switcher, /filtered\.length === 0 && !loadError/);
   assert.match(switcher, /profilesTruncated[\s\S]*?The fetched saved-profile page contains only the newest \$\{loadedProfileCount\} records/);
   assert.match(switcher, /close\(\);\s*onManageTally\(\);/s);
   assert.match(switcher, /onKeyDown=[\s\S]*?event\.key === "Escape"/);
   assert.match(switcher, /Setup and verification are required before other clients can be read/);
+  assert.match(app, /const identityDiscriminator = clientIdentityDiscriminator\(company\);/);
+  assert.match(app, /searchText: `\$\{company\.name\} \$\{identityDiscriminator\}`/);
+  assert.match(app, /Company no\. \$\{company\.company_number \?\? "not observed"\}/);
+  assert.match(app, /Books from \$\{booksFrom\}/);
+  assert.match(app, /GUID \$\{company\.guid \?\? "not observed"\}/);
+  assert.match(app, /Endpoint \$\{company\.canonical_endpoint \?\? "not observed"\}/);
 });
 
 test("UX1 nav sends unreadable outstandings and client requests to Manage Tally", async () => {

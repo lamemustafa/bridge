@@ -4,6 +4,8 @@ import { Building2, ChevronDown, Search, Settings2 } from "lucide-react";
 export type ClientSwitcherClient = {
   key: string;
   name: string;
+  identityDiscriminator: string;
+  searchText: string;
   state: "ready" | "setup_required" | "verification_required";
 };
 
@@ -45,7 +47,7 @@ export function ClientSwitcher({
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const searchRef = React.useRef<HTMLInputElement>(null);
   const selected = clients.find((client) => client.key === selectedClientKey);
-  const filtered = clients.filter((client) => client.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const filtered = clients.filter((client) => client.searchText.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
 
   React.useEffect(() => {
     if (open) searchRef.current?.focus();
@@ -123,7 +125,10 @@ export function ClientSwitcher({
                   close();
                 }}
               >
-                <span>{client.name}</span>
+                <span className="client-switcher-option-details">
+                  <span>{client.name}</span>
+                  <small>{client.identityDiscriminator}</small>
+                </span>
                 <small>{STATE_LABELS[client.state]}</small>
               </button>
             ))}
