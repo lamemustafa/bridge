@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Building2, Cable, Check, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
+import { Building2, Cable, Check, Cloud, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyProbeCompanySelectionTransition,
@@ -268,11 +268,12 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "companies" | "gst" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
 const MIRROR_PAGE_LIMIT = 25;
+const EVIDENCE_DRAWER_FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";
 // These workflows remain implemented but unavailable until their end-to-end
 // workflow evidence is complete.
 const NON_TALLY_SECTIONS_ENABLED = false;
@@ -283,7 +284,6 @@ const VIEW_TITLES: Record<View, string> = {
   outstandings: "Aged outstandings",
   companies: "Connect Tally",
   gst: "GST return readiness",
-  mirror: "Accounting mirror and proof",
   dsc: "DSC token",
   documents: "Documents",
   axal: "AXAL backend",
@@ -466,6 +466,7 @@ function App() {
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
   const [documentsWorkspace, setDocumentsWorkspace] = React.useState(createDocumentsWorkspaceState);
   const [view, setView] = React.useState<View>("dashboard");
+  const [evidenceDrawerOpen, setEvidenceDrawerOpen] = React.useState(false);
   const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
     () => automaticOutstandingsAsOf(),
   );
@@ -476,6 +477,14 @@ function App() {
   const proofPreviewRequestVersion = React.useRef(0);
   const snapshotSelectionVersion = React.useRef(0);
   const mainContentRef = React.useRef<HTMLElement>(null);
+  const evidenceDrawerCloseRef = React.useRef<HTMLButtonElement>(null);
+
+  const openEvidenceDrawer = React.useCallback(() => {
+    setEvidenceDrawerOpen(true);
+  }, []);
+  const closeEvidenceDrawer = React.useCallback(() => {
+    setEvidenceDrawerOpen(false);
+  }, []);
 
   const refreshRuntime = React.useCallback(async () => {
     try {
@@ -535,12 +544,12 @@ function App() {
     // have kept the boot-time keychain prompt exactly as it was. The dashboard's
     // "latest attempt" line derives from `snapshotJob`, which a user action
     // sets -- it does not need the recent-runs list to render.
-    if (view !== "mirror") return;
+    if (!evidenceDrawerOpen) return;
     void refreshRecentSnapshots();
-  }, [view, refreshRecentSnapshots]);
+  }, [evidenceDrawerOpen, refreshRecentSnapshots]);
 
   React.useEffect(() => {
-    if (view !== "companies" && view !== "outstandings" && view !== "clients" && view !== "mirror") return;
+    if (view !== "companies" && view !== "outstandings" && view !== "clients") return;
     void refreshPersistedCompanyProfiles();
   }, [view, refreshPersistedCompanyProfiles]);
 
@@ -572,8 +581,12 @@ function App() {
   }, []);
 
   React.useEffect(() => {
+    if (evidenceDrawerOpen) {
+      evidenceDrawerCloseRef.current?.focus();
+      return;
+    }
     mainContentRef.current?.focus();
-  }, [view]);
+  }, [evidenceDrawerOpen, view]);
 
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
@@ -741,7 +754,7 @@ function App() {
       const currentAtProbedEndpoint = liveCompanyKeys.includes(key)
         && company.canonical_endpoint === currentProbeCanonicalOrigin;
       selectSavedCompany(key);
-      if (view === "mirror") return;
+      if (evidenceDrawerOpen) return;
       if (currentAtProbedEndpoint) {
         setView("outstandings");
       } else {
@@ -1474,9 +1487,6 @@ function App() {
           <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} onClick={() => setView("companies")}>
             <Cable size={18} /> Manage Tally
           </button>
-          <button aria-current={view === "mirror" ? "page" : undefined} className={view === "mirror" ? "active" : ""} onClick={() => setView("mirror")}>
-            <Database size={18} /> Mirror &amp; Proof
-          </button>
           <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             <ShieldCheck size={18} /> Evidence dashboard
           </button>
@@ -1582,7 +1592,7 @@ function App() {
           </section>
         )}
 
-        {["dashboard", "mirror"].includes(view) && (
+        {view === "dashboard" && (
           <section className="operator-question-grid" aria-label="Tally operator summary">
             <article><span>Verified baseline</span><strong>{verifiedBaseline}</strong></article>
             <article><span>Latest attempt</span><strong>{latestAttemptSummary}</strong></article>
@@ -1779,6 +1789,7 @@ function App() {
               canonical_origin: selectedCompanyRecord.canonical_endpoint,
             } : undefined}
             onChangeSetup={() => setView("companies")}
+            onOpenEvidence={openEvidenceDrawer}
             onViewAllClients={() => setView("clients")}
             liveReadNavigationLocked={childTallyReadCount > 0}
             openBookCount={completeCurrentProbeCompanies.length}
@@ -1924,7 +1935,44 @@ function App() {
           </ErrorBoundary>
         )}
 
-        {view === "mirror" && (
+        {evidenceDrawerOpen && (
+          <div className="evidence-drawer-backdrop">
+            <aside
+              className="evidence-drawer"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="evidence-drawer-title"
+              tabIndex={-1}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") closeEvidenceDrawer();
+                if (event.key !== "Tab") return;
+                const focusable = Array.from(
+                  event.currentTarget.querySelectorAll<HTMLElement>(EVIDENCE_DRAWER_FOCUSABLE),
+                ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+                if (focusable.length === 0) {
+                  event.preventDefault();
+                  return;
+                }
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                  event.preventDefault();
+                  last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                  event.preventDefault();
+                  first.focus();
+                }
+              }}
+            >
+              <header className="evidence-drawer-header">
+                <div>
+                  <p className="eyebrow">Report evidence</p>
+                  <h2 id="evidence-drawer-title">Read history and report limits</h2>
+                  <p>Evidence stays attached to the report that led here.</p>
+                </div>
+                <button className="secondary-action" type="button" ref={evidenceDrawerCloseRef} onClick={closeEvidenceDrawer}>Close</button>
+              </header>
+              <div className="evidence-drawer-content">
           <ErrorBoundary key="mirror" label="Accounting mirror and proof">
           {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
           <MirrorProofScreen
@@ -1984,7 +2032,7 @@ function App() {
                 ) : !reviewId || !reviewCommitmentSha256 || !selectedCompanyLive ? (
                   <div className="toolbar secondary-toolbar">
                     <p className="section-note">Check Tally again with this saved company open before locally enrolling a fixture.</p>
-                    <button className="secondary-action" type="button" onClick={() => setView("companies")} disabled={snapshotActive || tallyAction !== null}>Prepare fixture review</button>
+                    <button className="secondary-action" type="button" onClick={() => { closeEvidenceDrawer(); setView("companies"); }} disabled={snapshotActive || tallyAction !== null}>Prepare fixture review</button>
                   </div>
                 ) : (
                   <>
@@ -2037,6 +2085,9 @@ function App() {
             cancelTallyRequest={cancelTallyRequest}
           />
           </ErrorBoundary>
+              </div>
+            </aside>
+          </div>
         )}
 
         {view === "dsc" && (

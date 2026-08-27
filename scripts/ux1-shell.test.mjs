@@ -31,7 +31,7 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.doesNotMatch(app, /function configuredTallyEndpoint/);
   assert.match(app, /const selectedCompanyReadable = selectedCompanyReady/);
   assert.match(app, /const \[view, setView\] = React\.useState<View>\("dashboard"\)/);
-  assert.match(app, /if \(view !== "companies" && view !== "outstandings" && view !== "clients" && view !== "mirror"\) return;/);
+  assert.match(app, /if \(view !== "companies" && view !== "outstandings" && view !== "clients"\) return;/);
   assert.match(app, /<OutstandingsScreen\s+key=\{selectedCompany \|\| "unselected"\}/);
   assert.match(app, /setOpenCompanyNames\(\[\]\);\s*setUntrustedDiscoveredCompanies\(\[\]\);/);
   assert.match(app, /correlation_key: company\.correlation_key/);
@@ -98,6 +98,31 @@ test("UX1 nav sends unreadable outstandings and client requests to Manage Tally"
   assert.match(nav, /Evidence dashboard/);
   assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "outstandings" : "companies"\)\}/);
   assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "clients" : "companies"\)\}/);
+});
+
+test("UX2 keeps report evidence in a drawer and hides operator tools behind Advanced", async () => {
+  const [app, outstandings, mirrorProof] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url), "utf8"),
+  ]);
+  const nav = app.slice(app.indexOf('<nav aria-label="Bridge operations">'), app.indexOf("</nav>"));
+  const advanced = mirrorProof.slice(
+    mirrorProof.indexOf('<details className="evidence-advanced">'),
+    mirrorProof.lastIndexOf("</details>"),
+  );
+
+  assert.doesNotMatch(nav, /Mirror/);
+  assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{onOpenEvidence\}/);
+  assert.match(app, /\{evidenceDrawerOpen && \(/);
+  assert.match(app, /className="evidence-drawer"/);
+  assert.match(app, /event\.key === "Escape"\) closeEvidenceDrawer\(\)/);
+  assert.match(app, /event\.key !== "Tab"/);
+  assert.match(app, /EVIDENCE_DRAWER_FOCUSABLE/);
+  assert.doesNotMatch(mirrorProof, /What “Verified” will require/);
+  assert.match(advanced, /className="panel wide mirror-explorer"/);
+  assert.match(advanced, /<h2>Pack readiness<\/h2>/);
+  assert.match(advanced, /className="panel wide runtime-panel"/);
 });
 
 test("compatibility surface binds every UX1 Tally read entry control", async () => {
