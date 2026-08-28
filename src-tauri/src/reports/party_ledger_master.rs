@@ -264,12 +264,18 @@ mod tests {
         assert!(source.rows.iter().any(|row| {
             row.name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE"
                 && row.opening_balance.as_str() == "-1250.00"
-                && row.closing_balance.as_str() == "-1250.00"
+                && row
+                    .closing_balance
+                    .as_ref()
+                    .is_some_and(|balance| balance.as_str() == "-1250.00")
         }));
         assert!(source.rows.iter().any(|row| {
             row.name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE"
                 && row.opening_balance.as_str() == "1250.00"
-                && row.closing_balance.as_str() == "1250.00"
+                && row
+                    .closing_balance
+                    .as_ref()
+                    .is_some_and(|balance| balance.as_str() == "1250.00")
         }));
 
         let schedule = super::super::schedule_iii::build_schedule_iii_view(source)
