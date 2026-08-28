@@ -347,17 +347,11 @@ fn set_once(
 /// Parses the `List of Ledgers` collection response, scoping rows strictly
 /// to `ENVELOPE/BODY/DATA/COLLECTION` so the `CMPINFO` bare-counter trap
 /// (`<LEDGER>0</LEDGER>` inside `DESC/CMPINFO`) cannot be misread as rows.
-/// Parses a ledger balance, treating an **empty** element as zero.
+/// Parses a ledger opening balance, treating an **empty** element as zero.
 ///
-/// Tally emits `<CLOSINGBALANCE></CLOSINGBALANCE>` -- entirely empty, not
-/// `"0"` -- for a ledger whose balance is nil. Measured 2026-08-07: 16 of the
-/// 88 ledgers on the bulk demo book do this, while the small bill-wise lab
-/// book has none, so a parser validated only against the latter rejects every
-/// realistic book with `InvalidAmount` and takes the whole read down with it.
-///
-/// Only a genuinely empty value is accepted as zero. Anything else that fails
-/// to parse is still an error: this is a narrow allowance for an observed
-/// encoding of zero, not a lenient number parser.
+/// The shipped Outstandings path has established this narrow interpretation
+/// for opening balances. A closing balance uses the separate parser below so
+/// callers can distinguish an empty element from an established numeric zero.
 fn parse_ledger_amount(text: &str) -> Result<ExactDecimal, NativeOutstandingsError> {
     if text.is_empty() {
         return Ok(ExactDecimal::zero());
@@ -368,11 +362,11 @@ fn parse_ledger_amount(text: &str) -> Result<ExactDecimal, NativeOutstandingsErr
 fn parse_ledger_closing_balance(
     text: &str,
     ledger_name: &str,
-) -> Result<ExactDecimal, NativeOutstandingsError> {
+) -> Result<Option<ExactDecimal>, NativeOutstandingsError> {
     if text.is_empty() {
-        return Ok(ExactDecimal::zero());
+        return Ok(None);
     }
-    ExactDecimal::parse(text).map_err(|_| {
+    ExactDecimal::parse(text).map(Some).map_err(|_| {
         if is_foreign_currency_balance(text) {
             NativeOutstandingsError::ForeignCurrencyLedgerBalance {
                 ledger_name: ledger_name.to_string(),
@@ -789,6 +783,8 @@ fn parse_ledger_row(
         NativeOutstandingsError::InvalidResponse("ledger_name_missing"),
     )?;
     let mut parent = None;
+    // The outer option records whether the element was present; the inner one
+    // retains Tally's observed empty-element state rather than inventing zero.
     let mut closing_balance = None;
     let mut opening_balance = None;
     let mut bill_wise_on = None;
@@ -1233,6 +1229,20 @@ mod currency_tests {
                 ledger_name: "FX USD Debtor 02".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn ledger_snapshot_retains_an_empty_closing_balance_distinct_from_zero() {
+        let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+            <LEDGER NAME=\"Empty\"><PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE></CLOSINGBALANCE>\
+            <OPENINGBALANCE>0</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+            <LEDGER NAME=\"Zero\"><PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>0</CLOSINGBALANCE>\
+            <OPENINGBALANCE>0</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+            </COLLECTION></DATA></BODY></ENVELOPE>";
+        let rows =
+            parse_native_ledger_snapshot(xml).expect("the observed empty element is valid XML");
+        assert_eq!(rows[0].closing_balance, None);
+        assert_eq!(rows[1].closing_balance, Some(ExactDecimal::zero()));
     }
 
     #[test]

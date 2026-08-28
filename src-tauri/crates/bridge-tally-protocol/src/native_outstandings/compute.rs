@@ -371,8 +371,13 @@ fn compute_residuals(
         let zero = ExactDecimal::zero();
         let receivable_sum = receivable_sums.get(ledger.name.as_str()).unwrap_or(&zero);
         let payable_sum = payable_sums.get(ledger.name.as_str()).unwrap_or(&zero);
-        let residual = ledger
-            .closing_balance
+        // Preserve the shipped Outstandings interpretation of Tally's
+        // observed empty ledger closing-balance encoding as zero. Other
+        // consumers (notably the party master workbook) receive the optional
+        // value and can fail closed instead of inheriting this behaviour.
+        let established_zero = ExactDecimal::zero();
+        let closing_balance = ledger.closing_balance.as_ref().unwrap_or(&established_zero);
+        let residual = closing_balance
             .checked_subtract(receivable_sum)
             .and_then(|value| value.checked_subtract(payable_sum))
             .map_err(|_| NativeOutstandingsError::ArithmeticOverflow)?;
@@ -617,7 +622,7 @@ mod tests {
             let ledgers = [LedgerSnapshotEntry {
                 name: "Synthetic Ledger".to_string(),
                 parent: Some("Sundry Debtors".to_string()),
-                closing_balance: ExactDecimal::zero(),
+                closing_balance: Some(ExactDecimal::zero()),
                 opening_balance: ExactDecimal::zero(),
                 bill_wise_on: false,
             }];
@@ -637,7 +642,7 @@ mod tests {
             let ledgers = [LedgerSnapshotEntry {
                 name: "Synthetic Ledger".to_string(),
                 parent: Some(parent),
-                closing_balance: ExactDecimal::zero(),
+                closing_balance: Some(ExactDecimal::zero()),
                 opening_balance: ExactDecimal::zero(),
                 bill_wise_on: false,
             }];

@@ -35,7 +35,8 @@ pub(crate) struct PartyLedgerMasterRow {
     pub(crate) master_id: String,
     pub(crate) alter_id: String,
     pub(crate) opening_balance: ExactDecimal,
-    pub(crate) closing_balance: ExactDecimal,
+    /// `None` is an empty Tally `CLOSINGBALANCE`, not a zero balance.
+    pub(crate) closing_balance: Option<ExactDecimal>,
 }
 
 #[derive(Debug, Clone)]
@@ -127,7 +128,7 @@ mod tests {
                 master_id: "7".to_string(),
                 alter_id: "9".to_string(),
                 opening_balance: ExactDecimal::parse("-100.00".to_string()).unwrap(),
-                closing_balance: ExactDecimal::parse("125.00".to_string()).unwrap(),
+                closing_balance: Some(ExactDecimal::parse("125.00".to_string()).unwrap()),
             }],
             master_response_sha256: "a".repeat(64),
             balance_response_sha256: "b".repeat(64),

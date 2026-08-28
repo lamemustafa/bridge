@@ -450,10 +450,12 @@ No names, identifiers, or values from the response are retained here.
 
 - `PARTYGSTIN` was returned on 40 rows. Its presence is source evidence, not a reason to
   manufacture a value on rows where it is absent.
-- `INCOMETAXNUMBER`, `PINCODE`, `UDYAMREGISTRATIONNUMBER`,
-  `MSMEREGISTRATIONNUMBER`, bank-account number, and IFSC were not returned by this
-  qualified response. Bridge must disclose those columns as withheld rather than display
-  blank-looking data as if the fields were read.
+- An unfiltered object export showed every candidate tag on all 88 ledger objects, empty
+  in this corpus: `INCOMETAXNUMBER`, `NAMEONPAN`, `LEDPINCODE`, `LEDGSTPINCODE`,
+  `MSMEREGNUMBER`, `LEDUDYAMREGNUMBER`, `BANKACCHOLDERNAME`, `BANKDETAILS`, `IFSCODE`,
+  `EMAIL`, `LEDGERPHONE`, `STATENAME`, and `LEDADDRESS.LIST`. A collection `FETCH` emits
+  only values that are set, so absent output is not evidence that a field is unavailable.
+  Bridge requests these verified tags but must not manufacture a value when the master is empty.
 - This is an observation of this request/profile, not a claim that every Tally build or
   configuration lacks those fields. Product release/version was not observed in this probe.
 

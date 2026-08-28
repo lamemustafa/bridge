@@ -38,6 +38,8 @@ pub(crate) struct ScheduleIIIExclusion {
 pub(crate) enum ScheduleIIIError {
     #[error("Schedule III totals exceeded the exact-decimal range")]
     Arithmetic,
+    #[error("an unestablished closing balance reached a Schedule III total")]
+    UnestablishedBalance,
 }
 
 /// Returns only classifications determined by a Tally built-in group identity.
@@ -54,17 +56,24 @@ pub(crate) fn build_schedule_iii_view(
     let mut credit_total = ExactDecimal::zero();
 
     for (index, row) in source.rows.iter().enumerate() {
-        if row.closing_balance.is_negative() {
+        let Some(closing_balance) = row.closing_balance.as_ref() else {
+            exclusions.push(ScheduleIIIExclusion {
+                row_index: index,
+                reason: "Tally returned an empty CLOSINGBALANCE; the balance is not established and was excluded from Schedule III totals.".to_string(),
+            });
+            continue;
+        };
+        if closing_balance.is_negative() {
             debit_total = debit_total
                 .checked_add(
-                    &row.closing_balance
+                    &closing_balance
                         .abs()
                         .map_err(|_| ScheduleIIIError::Arithmetic)?,
                 )
                 .map_err(|_| ScheduleIIIError::Arithmetic)?;
         } else {
             credit_total = credit_total
-                .checked_add(&row.closing_balance)
+                .checked_add(closing_balance)
                 .map_err(|_| ScheduleIIIError::Arithmetic)?;
         }
 
@@ -149,16 +158,34 @@ fn classify(
         }
         match normalize(reserved_name).as_str() {
             "sundry debtors" => {
+                if !row
+                    .closing_balance
+                    .as_ref()
+                    .is_some_and(ExactDecimal::is_negative)
+                    && !row
+                        .closing_balance
+                        .as_ref()
+                        .is_some_and(ExactDecimal::is_zero)
+                {
+                    return Err("A credit-balance Sundry Debtors ledger is a customer advance; its Schedule III head is not determined by the group and was excluded.".to_string());
+                }
                 return Ok(Some((
                     "Assets",
                     "Trade receivables (maturity split not determined)",
-                )))
+                )));
             }
             "sundry creditors" => {
+                if row
+                    .closing_balance
+                    .as_ref()
+                    .is_some_and(ExactDecimal::is_negative)
+                {
+                    return Err("A debit-balance Sundry Creditors ledger is a supplier advance; its Schedule III head is not determined by the group and was excluded.".to_string());
+                }
                 return Ok(Some((
                     "Liabilities",
                     "Trade payables (maturity split not determined)",
-                )))
+                )));
             }
             "cash-in-hand" | "bank accounts" => {
                 return Ok(Some((
@@ -180,7 +207,12 @@ fn sum_rows(
         .iter()
         .try_fold(ExactDecimal::zero(), |total, index| {
             total
-                .checked_add(&source.rows[*index].closing_balance)
+                .checked_add(
+                    source.rows[*index]
+                        .closing_balance
+                        .as_ref()
+                        .ok_or(ScheduleIIIError::UnestablishedBalance)?,
+                )
                 .map_err(|_| ScheduleIIIError::Arithmetic)
         })
 }
@@ -204,7 +236,7 @@ mod tests {
             master_id: format!("id-{name}"),
             alter_id: "1".to_string(),
             opening_balance: ExactDecimal::zero(),
-            closing_balance: ExactDecimal::parse(balance).unwrap(),
+            closing_balance: Some(ExactDecimal::parse(balance).unwrap()),
         }
     }
 
@@ -216,8 +248,8 @@ mod tests {
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260331").unwrap(),
             rows: vec![
-                row("Customer", "Regional customers", "100"),
-                row("Unknown", "Custom", "-100"),
+                row("Customer", "Regional customers", "-100"),
+                row("Unknown", "Custom", "100"),
             ],
             master_response_sha256: "a".repeat(64),
             balance_response_sha256: "b".repeat(64),
@@ -249,5 +281,75 @@ mod tests {
         assert_eq!(view.exclusions.len(), 1);
         assert!(view.exclusions[0].reason.contains("mapping decision"));
         assert!(view.difference.is_zero());
+    }
+
+    #[test]
+    fn contra_signed_party_ledgers_are_excluded_not_net_against_their_group_head() {
+        let source = PartyLedgerMasterSource {
+            company: "Synthetic Books".to_string(),
+            company_guid: "company-guid".to_string(),
+            from: TallyDate::parse("20260401").unwrap(),
+            to: TallyDate::parse("20260731").unwrap(),
+            rows: vec![
+                row("Customer advance", "Sundry Debtors", "100"),
+                row("Supplier advance", "Sundry Creditors", "-200"),
+                row("Receivable", "Sundry Debtors", "-300"),
+            ],
+            master_response_sha256: "a".repeat(64),
+            balance_response_sha256: "b".repeat(64),
+            group_response_sha256: "c".repeat(64),
+            master_response_bytes: 1,
+            balance_response_bytes: 1,
+            group_response_bytes: 1,
+            groups: vec![
+                PartyLedgerMasterGroup {
+                    name: "Sundry Debtors".to_string(),
+                    parent: Some("Primary".to_string()),
+                    reserved_name: Some("Sundry Debtors".to_string()),
+                },
+                PartyLedgerMasterGroup {
+                    name: "Sundry Creditors".to_string(),
+                    parent: Some("Primary".to_string()),
+                    reserved_name: Some("Sundry Creditors".to_string()),
+                },
+            ],
+        };
+
+        let view = build_schedule_iii_view(&source).unwrap();
+        assert_eq!(view.lines.len(), 1);
+        assert_eq!(view.lines[0].row_indices, vec![2]);
+        assert_eq!(view.lines[0].total.as_str(), "-300");
+        assert_eq!(view.exclusions.len(), 2);
+        assert!(view
+            .exclusions
+            .iter()
+            .all(|entry| entry.reason.contains("advance")));
+    }
+
+    #[test]
+    fn empty_closing_balance_is_excluded_not_manufactured_as_zero() {
+        let mut missing = row("Unestablished", "Sundry Debtors", "-1");
+        missing.closing_balance = None;
+        let source = PartyLedgerMasterSource {
+            company: "Synthetic Books".to_string(),
+            company_guid: "company-guid".to_string(),
+            from: TallyDate::parse("20260401").unwrap(),
+            to: TallyDate::parse("20260731").unwrap(),
+            rows: vec![missing],
+            master_response_sha256: "a".repeat(64),
+            balance_response_sha256: "b".repeat(64),
+            group_response_sha256: "c".repeat(64),
+            master_response_bytes: 1,
+            balance_response_bytes: 1,
+            group_response_bytes: 1,
+            groups: vec![],
+        };
+
+        let view = build_schedule_iii_view(&source).unwrap();
+        assert!(view.lines.is_empty());
+        assert!(view.debit_total.is_zero());
+        assert!(view.credit_total.is_zero());
+        assert_eq!(view.exclusions.len(), 1);
+        assert!(view.exclusions[0].reason.contains("not established"));
     }
 }

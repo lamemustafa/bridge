@@ -824,7 +824,7 @@ impl TallyClient {
             opening_extent.last_voucher_date().clone(),
         )
         .map_err(|_| anyhow::anyhow!("Tally master ledger export period is unsupported"))?;
-        let balance_period = NativeLedgerSnapshotPeriod::new(
+        let balance_period = party_ledger_master_balance_period(
             boundary_profile,
             opening_extent.books_from().clone(),
             opening_extent.last_voucher_date().clone(),
@@ -941,7 +941,10 @@ impl TallyClient {
             company: company.to_string(),
             company_guid: expected_company_guid.to_string(),
             from: master_period.from().clone(),
-            to: master_period.to().clone(),
+            // The snapshot period is the balance evidence. Its derived end is
+            // the date Tally was actually asked to honor, not merely the last
+            // voucher date used by the identity/master read.
+            to: balance_period.to().clone(),
             rows,
             master_response_sha256,
             balance_response_sha256,
@@ -1346,6 +1349,26 @@ impl TallyClient {
     }
 }
 
+fn party_ledger_master_balance_period(
+    boundary_profile: DateBoundaryProfile,
+    books_from: bridge_tally_core::TallyDate,
+    last_voucher_date: bridge_tally_core::TallyDate,
+) -> Result<
+    NativeLedgerSnapshotPeriod,
+    bridge_tally_protocol::native_outstandings::NativeLedgerSnapshotPeriodError,
+> {
+    // This workbook must be safe when a capability profile is not cached.
+    // The strict Education boundary set is the known common admissible set;
+    // choosing the next such date includes the final voucher rather than
+    // silently requesting a refused boundary or shrinking the period.
+    let closing_boundary = DateBoundaryProfile::EducationRestricted
+        .earliest_boundary_at_or_after(&last_voucher_date)
+        .ok_or(
+            bridge_tally_protocol::native_outstandings::NativeLedgerSnapshotPeriodError::UnsupportedBoundary,
+        )?;
+    NativeLedgerSnapshotPeriod::new(boundary_profile, books_from, closing_boundary)
+}
+
 fn normalize_discovered_companies(companies: Vec<TallyCompany>) -> Result<Vec<TallyCompany>, ()> {
     companies
         .into_iter()
@@ -1592,8 +1615,9 @@ mod tests {
     use super::LedgerOpeningCoverageRead;
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
-        has_presentation_equivalent_guid_siblings, normalize_discovered_companies, tally_endpoint,
-        unique_company_identities, TallyClient, TallyConfig, TallyProduct,
+        has_presentation_equivalent_guid_siblings, normalize_discovered_companies,
+        party_ledger_master_balance_period, tally_endpoint, unique_company_identities, TallyClient,
+        TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TallyDate,
@@ -1605,6 +1629,18 @@ mod tests {
     use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn party_master_snapshot_uses_the_next_common_admissible_boundary() {
+        let period = party_ledger_master_balance_period(
+            DateBoundaryProfile::ModeAgnostic,
+            TallyDate::parse("20260401").unwrap(),
+            TallyDate::parse("20260415").unwrap(),
+        )
+        .expect("the derived common boundary is valid");
+        assert_eq!(period.to().as_str(), "20260501");
+        assert!(period.to() >= &TallyDate::parse("20260415").unwrap());
+    }
 
     fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
         let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());

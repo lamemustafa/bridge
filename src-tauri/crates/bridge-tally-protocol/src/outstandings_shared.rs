@@ -105,6 +105,23 @@ impl DateBoundaryProfile {
             Self::EducationRestricted => self.accepts_boundary(limit).then(|| limit.clone()),
         }
     }
+
+    /// The earliest calendar date on or after `limit` that this profile
+    /// accepts. A closing snapshot must never be silently moved *before* the
+    /// last voucher it is meant to include.
+    pub fn earliest_boundary_at_or_after(self, limit: &TallyDate) -> Option<TallyDate> {
+        let mut candidate = limit.clone();
+        // An Education-restricted boundary is at most 30 calendar days away.
+        // Keep the bound explicit so an invalid future profile cannot turn an
+        // untrusted date into an unbounded loop.
+        for _ in 0..=30 {
+            if self.accepts_boundary(&candidate) {
+                return Some(candidate);
+            }
+            candidate = candidate.next_day().ok()?;
+        }
+        None
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]

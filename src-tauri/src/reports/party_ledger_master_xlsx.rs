@@ -75,7 +75,7 @@ pub(crate) fn render_party_ledger_master_xlsx(
     worksheet.write_string(
         9,
         1,
-        "PAN/Income Tax number, PIN code, Udyam/MSME registration, bank account, and IFSC: the qualified Tally response did not return them.",
+        "PAN/Income Tax number, PIN code, Udyam/MSME registration, bank account, IFSC, email, phone, state, and address are requested with their verified TDL tags. The captured corpus masters held no values, so this workbook does not manufacture them.",
     )?;
     worksheet.write_string_with_format(10, 0, "Source bytes", &bold)?;
     worksheet.write_string(
@@ -124,16 +124,21 @@ pub(crate) fn render_party_ledger_master_xlsx(
             })?,
             &amount,
         )?;
-        worksheet.write_number_with_format(
-            sheet_row,
-            7,
-            amount_to_f64(row.closing_balance.as_str()).map_err(|_| {
-                PartyLedgerMasterXlsxError::InvalidAmount(row.closing_balance.as_str().to_string())
-            })?,
-            &amount,
-        )?;
+        if let Some(closing_balance) = row.closing_balance.as_ref() {
+            worksheet.write_number_with_format(
+                sheet_row,
+                7,
+                amount_to_f64(closing_balance.as_str()).map_err(|_| {
+                    PartyLedgerMasterXlsxError::InvalidAmount(closing_balance.as_str().to_string())
+                })?,
+                &amount,
+            )?;
+            worksheet.write_string(sheet_row, 9, closing_balance.as_str())?;
+        } else {
+            worksheet.write_string(sheet_row, 7, "Not established")?;
+            worksheet.write_string(sheet_row, 9, "Not established")?;
+        }
         worksheet.write_string(sheet_row, 8, row.opening_balance.as_str())?;
-        worksheet.write_string(sheet_row, 9, row.closing_balance.as_str())?;
     }
     let last_row = header_row + source.rows.len() as u32;
     worksheet.autofilter(header_row, 0, last_row, 9)?;
@@ -237,7 +242,15 @@ fn write_schedule_iii(
             worksheet.write_string(row, 1, &ledger.name)?;
             worksheet.write_string(row, 2, ledger.parent.as_deref().unwrap_or_default())?;
             worksheet.write_string(row, 3, &ledger.guid)?;
-            worksheet.write_string(row, 4, ledger.closing_balance.as_str())?;
+            worksheet.write_string(
+                row,
+                4,
+                ledger
+                    .closing_balance
+                    .as_ref()
+                    .expect("Schedule III includes only established closing balances")
+                    .as_str(),
+            )?;
             row += 1;
         }
     }
@@ -302,7 +315,7 @@ mod tests {
                 master_id: "7".to_string(),
                 alter_id: "9".to_string(),
                 opening_balance: ExactDecimal::parse("-100.00".to_string()).unwrap(),
-                closing_balance: ExactDecimal::parse("125.00".to_string()).unwrap(),
+                closing_balance: Some(ExactDecimal::parse("125.00".to_string()).unwrap()),
             }],
             master_response_sha256: "a".repeat(64),
             balance_response_sha256: "b".repeat(64),
