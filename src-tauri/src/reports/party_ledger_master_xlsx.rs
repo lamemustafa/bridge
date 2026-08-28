@@ -5,9 +5,16 @@ use rust_xlsxwriter::{Format, Workbook, XlsxError};
 use super::party_ledger_master::PartyLedgerMasterWorkbook;
 use super::party_statement_xlsx::amount_to_f64;
 use super::schedule_iii::{build_schedule_iii_view, ScheduleIIIError};
+use crate::tally::OutstandingsCurrencyAssertion;
 
 const AMOUNT_NUM_FORMAT: &str = "##,##,##0.00";
 const EXCEL_MAX_ROWS: usize = 1_048_576;
+
+fn currency_label(assertion: OutstandingsCurrencyAssertion) -> &'static str {
+    match assertion {
+        OutstandingsCurrencyAssertion::Inr => "INR",
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PartyLedgerMasterXlsxError {
@@ -69,17 +76,19 @@ pub(crate) fn render_party_ledger_master_xlsx(
     worksheet.write_string(
         8,
         1,
-        "Ledger identity, parent, Party GSTIN when returned, and opening/closing balances over the named period.",
+        "Ledger identity, parent, Party GSTIN and requested party/master fields when returned, plus opening/closing balances over the named period.",
     )?;
-    worksheet.write_string_with_format(9, 0, "Withheld", &bold)?;
+    worksheet.write_string_with_format(9, 0, "Unavailable fields", &bold)?;
     worksheet.write_string(
         9,
         1,
-        "PAN/Income Tax number, PIN code, Udyam/MSME registration, bank account, IFSC, email, phone, state, and address are requested with their verified TDL tags. The captured corpus masters held no values, so this workbook does not manufacture them.",
+        "A field omitted by Tally was unset in this book and remains blank here; Bridge never manufactures master data.",
     )?;
-    worksheet.write_string_with_format(10, 0, "Source bytes", &bold)?;
+    worksheet.write_string_with_format(10, 0, "Currency", &bold)?;
+    worksheet.write_string(10, 1, currency_label(source.currency_assertion))?;
+    worksheet.write_string_with_format(11, 0, "Source bytes", &bold)?;
     worksheet.write_string(
-        10,
+        11,
         1,
         format!(
             "master={} balance={} groups={}",
@@ -89,11 +98,24 @@ pub(crate) fn render_party_ledger_master_xlsx(
         ),
     )?;
 
-    let header_row = 12u32;
+    let header_row = 13u32;
     for (column, label) in [
         "Ledger / party",
         "Parent",
         "Party GSTIN (as returned)",
+        "Income Tax number (as returned)",
+        "Name on PAN (as returned)",
+        "PIN code (as returned)",
+        "GST PIN code (as returned)",
+        "MSME registration (as returned)",
+        "Udyam registration (as returned)",
+        "Bank account holder (as returned)",
+        "Bank details (as returned)",
+        "IFSC (as returned)",
+        "Email (as returned)",
+        "Phone (as returned)",
+        "State (as returned)",
+        "Address (as returned)",
         "GUID",
         "Master ID",
         "Alter ID",
@@ -113,12 +135,32 @@ pub(crate) fn render_party_ledger_master_xlsx(
         worksheet.write_string(sheet_row, 0, &row.name)?;
         worksheet.write_string(sheet_row, 1, row.parent.as_deref().unwrap_or_default())?;
         worksheet.write_string(sheet_row, 2, row.party_gstin.as_deref().unwrap_or_default())?;
-        worksheet.write_string(sheet_row, 3, &row.guid)?;
-        worksheet.write_string(sheet_row, 4, &row.master_id)?;
-        worksheet.write_string(sheet_row, 5, &row.alter_id)?;
+        for (column, value) in [
+            row.fields.income_tax_number.as_deref(),
+            row.fields.name_on_pan.as_deref(),
+            row.fields.pin_code.as_deref(),
+            row.fields.gst_pin_code.as_deref(),
+            row.fields.msme_registration_number.as_deref(),
+            row.fields.udyam_registration_number.as_deref(),
+            row.fields.bank_account_holder_name.as_deref(),
+            row.fields.bank_details.as_deref(),
+            row.fields.ifsc_code.as_deref(),
+            row.fields.email.as_deref(),
+            row.fields.phone.as_deref(),
+            row.fields.state.as_deref(),
+            row.fields.address.as_deref(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            worksheet.write_string(sheet_row, 3 + column as u16, value.unwrap_or_default())?;
+        }
+        worksheet.write_string(sheet_row, 16, &row.guid)?;
+        worksheet.write_string(sheet_row, 17, &row.master_id)?;
+        worksheet.write_string(sheet_row, 18, &row.alter_id)?;
         worksheet.write_number_with_format(
             sheet_row,
-            6,
+            19,
             amount_to_f64(row.opening_balance.as_str()).map_err(|_| {
                 PartyLedgerMasterXlsxError::InvalidAmount(row.opening_balance.as_str().to_string())
             })?,
@@ -127,31 +169,34 @@ pub(crate) fn render_party_ledger_master_xlsx(
         if let Some(closing_balance) = row.closing_balance.as_ref() {
             worksheet.write_number_with_format(
                 sheet_row,
-                7,
+                20,
                 amount_to_f64(closing_balance.as_str()).map_err(|_| {
                     PartyLedgerMasterXlsxError::InvalidAmount(closing_balance.as_str().to_string())
                 })?,
                 &amount,
             )?;
-            worksheet.write_string(sheet_row, 9, closing_balance.as_str())?;
+            worksheet.write_string(sheet_row, 22, closing_balance.as_str())?;
         } else {
-            worksheet.write_string(sheet_row, 7, "Not established")?;
-            worksheet.write_string(sheet_row, 9, "Not established")?;
+            worksheet.write_string(sheet_row, 20, "Not established")?;
+            worksheet.write_string(sheet_row, 22, "Not established")?;
         }
-        worksheet.write_string(sheet_row, 8, row.opening_balance.as_str())?;
+        worksheet.write_string(sheet_row, 21, row.opening_balance.as_str())?;
     }
     let last_row = header_row + source.rows.len() as u32;
-    worksheet.autofilter(header_row, 0, last_row, 9)?;
+    worksheet.autofilter(header_row, 0, last_row, 22)?;
     worksheet.set_column_width(0, 30)?;
     worksheet.set_column_width(1, 24)?;
     worksheet.set_column_width(2, 24)?;
-    worksheet.set_column_width(3, 38)?;
-    worksheet.set_column_width(4, 14)?;
-    worksheet.set_column_width(5, 14)?;
-    worksheet.set_column_width(6, 18)?;
-    worksheet.set_column_width(7, 18)?;
-    worksheet.set_column_width(8, 22)?;
-    worksheet.set_column_width(9, 22)?;
+    for column in 3..=15 {
+        worksheet.set_column_width(column, 24)?;
+    }
+    worksheet.set_column_width(16, 38)?;
+    worksheet.set_column_width(17, 14)?;
+    worksheet.set_column_width(18, 14)?;
+    worksheet.set_column_width(19, 18)?;
+    worksheet.set_column_width(20, 18)?;
+    worksheet.set_column_width(21, 22)?;
+    worksheet.set_column_width(22, 22)?;
     write_schedule_iii(&mut workbook, workbook_source)?;
     workbook
         .save_to_buffer()
@@ -174,24 +219,26 @@ fn write_schedule_iii(
         1,
         "Traceable group-derived subtotals only; not a replacement for a CA mapping decision.",
     )?;
-    worksheet.write_string_with_format(1, 0, "Comparative", &bold)?;
+    worksheet.write_string_with_format(1, 0, "Currency", &bold)?;
+    worksheet.write_string(1, 1, currency_label(source.currency_assertion))?;
+    worksheet.write_string_with_format(2, 0, "Comparative", &bold)?;
     worksheet.write_string(
-        1,
+        2,
         1,
         "One year read. No prior-year values were requested or inferred.",
     )?;
     for (row, label, value) in [
-        (2, "Debit total", view.debit_total.as_str()),
-        (3, "Credit total", view.credit_total.as_str()),
-        (4, "Dr=Cr difference", view.difference.as_str()),
+        (3, "Debit total", view.debit_total.as_str()),
+        (4, "Credit total", view.credit_total.as_str()),
+        (5, "Dr=Cr difference", view.difference.as_str()),
     ] {
         worksheet.write_string_with_format(row, 0, label, &bold)?;
         worksheet.write_string(row, 1, value)?;
     }
-    worksheet.write_string_with_format(5, 0, "Check interpretation", &bold)?;
-    worksheet.write_string(5, 1, "Difference 0 is the Tally-sign self-check over every captured ledger closing balance; it is evidence, not an assertion of statement completeness.")?;
+    worksheet.write_string_with_format(6, 0, "Check interpretation", &bold)?;
+    worksheet.write_string(6, 1, "Difference 0 is the Tally-sign self-check over every captured ledger closing balance; it is evidence, not an assertion of statement completeness.")?;
 
-    let header_row = 7u32;
+    let header_row = 8u32;
     for (column, label) in [
         "Section",
         "Group-derived subtotal",
@@ -299,18 +346,24 @@ mod tests {
     use crate::reports::party_ledger_master::{
         build_party_ledger_master_workbook, PartyLedgerMasterRow, PartyLedgerMasterSource,
     };
+    use bridge_tally_protocol::PartyLedgerMasterFields;
 
     #[test]
-    fn renders_evidence_and_withheld_fields_in_the_workbook() {
+    fn renders_evidence_currency_and_returned_fields_in_the_workbook() {
         let workbook = build_party_ledger_master_workbook(PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![PartyLedgerMasterRow {
                 name: "Customer".to_string(),
                 parent: Some("Sundry Debtors".to_string()),
                 party_gstin: Some("29ABCDE1234F1Z5".to_string()),
+                fields: PartyLedgerMasterFields {
+                    email: Some("synthetic@example.invalid".to_string()),
+                    ..PartyLedgerMasterFields::default()
+                },
                 guid: "ledger-guid".to_string(),
                 master_id: "7".to_string(),
                 alter_id: "9".to_string(),
@@ -337,8 +390,11 @@ mod tests {
             std::io::Read::read_to_string(&mut archive.by_name(name).unwrap(), &mut text).unwrap();
         }
         assert!(text.contains("Master response SHA-256"));
-        assert!(text.contains("Withheld"));
-        assert!(text.contains("PAN/Income Tax number"));
+        assert!(text.contains("Unavailable fields"));
+        assert!(text.contains("Income Tax number (as returned)"));
+        assert!(text.contains("synthetic@example.invalid"));
+        assert!(text.contains("Currency"));
+        assert!(text.contains("INR"));
         assert!(text.contains("EXCLUSION LIST (loud)"));
     }
 }

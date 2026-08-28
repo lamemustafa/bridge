@@ -18,6 +18,7 @@ use super::{
 use crate::reports::party_ledger_master::{
     PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
 };
+use crate::tally::OutstandingsCurrencyAssertion;
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityProfile, CapabilityState,
     EvidenceConfidence, TransportId,
@@ -35,13 +36,14 @@ use bridge_tally_protocol::{
         parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
         render_native_group_snapshot_request, render_native_ledger_export_request,
         render_native_ledger_snapshot_request, render_native_voucher_export_request,
-        NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod,
+        render_party_ledger_master_request, NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod,
     },
     outstandings_shared::{
         parse_company_book_extent, require_master_witness, CompanyBookExtent, DateBoundaryProfile,
     },
     parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
     parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
+    parse_native_party_ledger_master_records_with_evidence,
     parse_native_voucher_source_records_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
@@ -814,6 +816,7 @@ impl TallyClient {
         company: &str,
         expected_company_guid: &str,
         boundary_profile: DateBoundaryProfile,
+        currency_assertion: OutstandingsCurrencyAssertion,
     ) -> anyhow::Result<PartyLedgerMasterSource> {
         let opening_extent = self
             .fetch_company_book_extent(company, expected_company_guid)
@@ -831,10 +834,7 @@ impl TallyClient {
         )
         .map_err(|_| anyhow::anyhow!("Tally closing-balance period is unsupported"))?;
         let master_pair = self
-            .fetch_native_report_paired(render_native_ledger_export_request(
-                company,
-                &master_period,
-            ))
+            .fetch_native_report_paired(render_party_ledger_master_request(company, &master_period))
             .await?;
         let NativePairedRead::Stable {
             body: master_body,
@@ -844,8 +844,10 @@ impl TallyClient {
         else {
             anyhow::bail!("Tally ledger master changed between paired reads");
         };
-        let master =
-            parse_native_ledger_source_records_with_evidence(&master_body, expected_company_guid)?;
+        let master = parse_native_party_ledger_master_records_with_evidence(
+            &master_body,
+            expected_company_guid,
+        )?;
         if !master.evidence.duplicate_identities.is_empty() {
             anyhow::bail!("Tally ledger master repeated a stable source identity");
         }
@@ -899,7 +901,10 @@ impl TallyClient {
         }
         let mut rows = Vec::with_capacity(master.records.len());
         for source in master.records {
-            let key = ledger_display_key(&source.record.name, source.record.parent.as_deref());
+            let key = ledger_display_key(
+                &source.record.ledger.name,
+                source.record.ledger.parent.as_deref(),
+            );
             let balance = balances_by_key
                 .remove(&key)
                 .ok_or_else(|| anyhow::anyhow!("Tally balance snapshot omitted a ledger master"))?;
@@ -916,6 +921,7 @@ impl TallyClient {
                 .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted ALTERID"))?;
             let master_opening = source
                 .record
+                .ledger
                 .opening_balance
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted OPENINGBALANCE"))?;
@@ -923,9 +929,10 @@ impl TallyClient {
                 anyhow::bail!("Tally ledger opening balances disagreed across the paired sources");
             }
             rows.push(PartyLedgerMasterRow {
-                name: source.record.name,
-                parent: source.record.parent,
-                party_gstin: source.record.party_gstin,
+                name: source.record.ledger.name,
+                parent: source.record.ledger.parent,
+                party_gstin: source.record.ledger.party_gstin,
+                fields: source.record.fields,
                 guid,
                 master_id,
                 alter_id,
@@ -940,6 +947,7 @@ impl TallyClient {
         Ok(PartyLedgerMasterSource {
             company: company.to_string(),
             company_guid: expected_company_guid.to_string(),
+            currency_assertion,
             from: master_period.from().clone(),
             // The snapshot period is the balance evidence. Its derived end is
             // the date Tally was actually asked to honor, not merely the last

@@ -182,11 +182,38 @@ pub fn render_native_ledger_export_request(
     company: &str,
     period: &NativeLedgerExportPeriod,
 ) -> String {
+    render_native_ledger_collection_request(
+        company,
+        period,
+        "NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE",
+    )
+}
+
+/// Renders the dedicated collection used only by the party/ledger master
+/// workbook. Sensitive master values are fetched here because this report
+/// renders them; ordinary ledger readers use `render_native_ledger_export_request`.
+pub fn render_party_ledger_master_request(
+    company: &str,
+    period: &NativeLedgerExportPeriod,
+) -> String {
+    render_native_ledger_collection_request(
+        company,
+        period,
+        "NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST, OPENINGBALANCE",
+    )
+}
+
+fn render_native_ledger_collection_request(
+    company: &str,
+    period: &NativeLedgerExportPeriod,
+    fetch: &str,
+) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST, OPENINGBALANCE</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>{fetch}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
         from = period.from().as_str(),
         to = period.to().as_str(),
+        fetch = fetch,
     )
 }
 
@@ -471,7 +498,9 @@ mod tests {
         .expect("mode-agnostic profile accepts valid calendar dates");
         let export_xml = render_native_ledger_export_request("A & B <Co>", &export_period);
         assert!(export_xml.contains("A &amp; B &lt;Co&gt;"));
-        assert!(export_xml.contains("INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST"));
+        assert!(!export_xml.contains("INCOMETAXNUMBER"));
+        let party_master_xml = render_party_ledger_master_request("A & B <Co>", &export_period);
+        assert!(party_master_xml.contains("INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST"));
         assert!(!export_xml.contains("<REPORT>"));
         assert!(!export_xml.contains("<FORM>"));
         assert!(!export_xml.contains("<PART>"));

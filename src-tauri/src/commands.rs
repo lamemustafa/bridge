@@ -2191,8 +2191,18 @@ pub async fn export_party_ledger_master(
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company)
             .await
             .map_err(|error| error.message)?;
+    let currency = runtime
+        .detect_base_currency(request.config.clone(), &identity)
+        .await
+        .map_err(|error| format!("Bridge withheld the party/ledger master: {error}"))?;
+    let currency_assertion = establish_inr_currency(currency.currency_count, currency.is_inr)
+        .map_err(|reason| {
+            format!(
+                "Bridge withheld the party/ledger master: {reason}. The workbook cannot label the monetary figures safely."
+            )
+        })?;
     let source = runtime
-        .fetch_party_ledger_master_source(request.config, &identity)
+        .fetch_party_ledger_master_source(request.config, &identity, currency_assertion)
         .await
         .map_err(|error| format!("Bridge withheld the party/ledger master: {error}"))?;
     let workbook = build_party_ledger_master_workbook(source)
@@ -2460,16 +2470,26 @@ fn company_sweep_currency_preflight_failure(
     currency_count: usize,
     is_inr: bool,
 ) -> Option<&'static str> {
+    establish_inr_currency(currency_count, is_inr).err()
+}
+
+/// The one INR admission rule used by both the existing outstandings sweep and
+/// the party/ledger workbook boundary. A workbook can obtain this typed value
+/// only after `detect_base_currency` has read Tally's own Currency masters.
+fn establish_inr_currency(
+    currency_count: usize,
+    is_inr: bool,
+) -> Result<OutstandingsCurrencyAssertion, &'static str> {
     if currency_count > 1 {
-        return Some("company_base_currency_undetermined");
+        return Err("company_base_currency_undetermined");
     }
     if currency_count == 1 && !is_inr {
-        return Some("company_base_currency_not_inr");
+        return Err("company_base_currency_not_inr");
     }
     if currency_count == 1 {
-        return None;
+        return Ok(OutstandingsCurrencyAssertion::Inr);
     }
-    Some("company_currency_probe_failed")
+    Err("company_currency_probe_failed")
 }
 
 /// Reads outstandings for several companies in one action.
@@ -2710,7 +2730,7 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 #[cfg(test)]
 mod tests {
     use super::{
-        company_sweep_currency_preflight_failure, company_sweep_result,
+        company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
         first_calendar_day_canary_window, portable_export_file_name, reconcile_review_cleanup,
         reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
         tally_runtime_command_error, validate_dsc_pins,
@@ -2989,6 +3009,11 @@ mod tests {
             "one non-Indian currency identifies an unsupported base currency"
         );
         assert_eq!(company_sweep_currency_preflight_failure(1, true), None);
+        assert_eq!(
+            establish_inr_currency(1, true),
+            Ok(OutstandingsCurrencyAssertion::Inr),
+            "the backend boundary receives a typed INR admission only after the probe established one INR master"
+        );
         assert_eq!(
             company_sweep_currency_preflight_failure(0, false),
             Some("company_currency_probe_failed"),

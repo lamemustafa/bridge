@@ -6,11 +6,17 @@
 use std::collections::BTreeSet;
 
 use bridge_tally_core::{ExactDecimal, TallyDate};
+use bridge_tally_protocol::PartyLedgerMasterFields;
+
+use crate::tally::OutstandingsCurrencyAssertion;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterSource {
     pub(crate) company: String,
     pub(crate) company_guid: String,
+    /// Money in this workbook may be rendered only after the backend's
+    /// existing Tally currency probe established this assertion.
+    pub(crate) currency_assertion: OutstandingsCurrencyAssertion,
     pub(crate) from: TallyDate,
     pub(crate) to: TallyDate,
     pub(crate) rows: Vec<PartyLedgerMasterRow>,
@@ -31,6 +37,7 @@ pub(crate) struct PartyLedgerMasterRow {
     pub(crate) name: String,
     pub(crate) parent: Option<String>,
     pub(crate) party_gstin: Option<String>,
+    pub(crate) fields: PartyLedgerMasterFields,
     pub(crate) guid: String,
     pub(crate) master_id: String,
     pub(crate) alter_id: String,
@@ -113,15 +120,18 @@ fn sha256(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::io::Cursor;
 
     use bridge_tally_protocol::{
         native_outstandings::{
             parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
         },
-        parse_native_ledger_source_records_with_evidence,
+        parse_native_party_ledger_master_records_with_evidence, PartyLedgerMasterFields,
     };
 
     use super::*;
+    use crate::tally::OutstandingsCurrencyAssertion;
+    use zip::ZipArchive;
 
     const MASTER_FIELDS_LAB_COMPANY_GUID: &str = "56359347-3976-4d01-b44e-56fa0f6a422c";
     const MASTER_FIELDS_LAB_LEDGERS: &str = include_str!(
@@ -138,12 +148,14 @@ mod tests {
         PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![PartyLedgerMasterRow {
                 name: "Customer".to_string(),
                 parent: Some("Sundry Debtors".to_string()),
                 party_gstin: None,
+                fields: PartyLedgerMasterFields::default(),
                 guid: "ledger-guid".to_string(),
                 master_id: "7".to_string(),
                 alter_id: "9".to_string(),
@@ -186,7 +198,7 @@ mod tests {
 
     #[test]
     fn captured_master_fields_lab_drives_the_party_export_and_schedule_iii_view() {
-        let master = parse_native_ledger_source_records_with_evidence(
+        let master = parse_native_party_ledger_master_records_with_evidence(
             MASTER_FIELDS_LAB_LEDGERS,
             MASTER_FIELDS_LAB_COMPANY_GUID,
         )
@@ -204,19 +216,23 @@ mod tests {
 
         let mut rows = Vec::new();
         for source in master.records {
-            let key = (source.record.name.clone(), source.record.parent.clone());
+            let key = (
+                source.record.ledger.name.clone(),
+                source.record.ledger.parent.clone(),
+            );
             let balance = balances
                 .remove(&key)
                 .expect("every captured master has a corresponding balance");
             assert_eq!(
-                source.record.opening_balance.as_deref(),
+                source.record.ledger.opening_balance.as_deref(),
                 Some(balance.opening_balance.as_str()),
                 "captured master and balance openings agree"
             );
             rows.push(PartyLedgerMasterRow {
-                name: source.record.name,
-                parent: source.record.parent,
-                party_gstin: source.record.party_gstin,
+                name: source.record.ledger.name,
+                parent: source.record.ledger.parent,
+                party_gstin: source.record.ledger.party_gstin,
+                fields: source.record.fields,
                 guid: source.identities.guid.expect("captured GUID"),
                 master_id: source.identities.master_id.expect("captured MASTERID"),
                 alter_id: source.alter_id.expect("captured ALTERID"),
@@ -244,25 +260,56 @@ mod tests {
         let source = PartyLedgerMasterSource {
             company: "BRIDGE MASTER FIELDS LAB".to_string(),
             company_guid: MASTER_FIELDS_LAB_COMPANY_GUID.to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
             from: TallyDate::parse("20250401").unwrap(),
             to: TallyDate::parse("20260331").unwrap(),
             rows,
             master_response_sha256:
-                "859475b66770917dc87a10d798d9c5ce4c356974ae29cb308623d7819209a79c".to_string(),
+                "def766e42d0e36b4b73d7a176fa0ad08d1a7467e301000650fb5ba9a2ae06f29".to_string(),
             balance_response_sha256:
-                "9ac5c7f2e61fec8864a8601ac146c54ba9a3ffcad22057070c5971acb985b964".to_string(),
+                "7e7af264d7251713d5179c6b6614f47329d860e941587ec9a5245597bf059f77".to_string(),
             group_response_sha256:
-                "89b2051c37251dbb028de698d2220296dabe8847cc778a0a0d4ab530b38780c9".to_string(),
+                "a9839b578ed776b707597e5dad93d155ab443b93c03d5ecb0b70bfd7ac207b1b".to_string(),
             master_response_bytes: MASTER_FIELDS_LAB_LEDGERS.len(),
             balance_response_bytes: MASTER_FIELDS_LAB_BALANCES.len(),
             group_response_bytes: MASTER_FIELDS_LAB_GROUPS.len(),
             groups,
         };
         let workbook = build_party_ledger_master_workbook(source).expect("captured source admits");
+        let xlsx =
+            super::super::party_ledger_master_xlsx::render_party_ledger_master_xlsx(&workbook)
+                .expect("captured source renders a workbook");
+        assert!(
+            xlsx.starts_with(b"PK"),
+            "captured source rendered an XLSX archive"
+        );
+        let mut archive = ZipArchive::new(Cursor::new(xlsx)).expect("valid XLSX archive");
+        let mut xlsx_text = String::new();
+        for name in [
+            "xl/worksheets/sheet1.xml",
+            "xl/worksheets/sheet2.xml",
+            "xl/sharedStrings.xml",
+        ] {
+            std::io::Read::read_to_string(
+                &mut archive.by_name(name).expect("XLSX part"),
+                &mut xlsx_text,
+            )
+            .expect("read XLSX part");
+        }
+        assert!(xlsx_text.contains("ZZZZZ0002Z"));
+        assert!(xlsx_text.contains("INR"));
         let source = workbook.source();
         assert_eq!(source.rows.len(), 17);
         assert!(source.rows.iter().any(|row| {
             row.name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE"
+                && row.opening_balance.as_str() == "1250.00"
+                && row
+                    .closing_balance
+                    .as_ref()
+                    .is_some_and(|balance| balance.as_str() == "1250.00")
+        }));
+        assert!(source.rows.iter().any(|row| {
+            row.name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE"
                 && row.opening_balance.as_str() == "-1250.00"
                 && row
                     .closing_balance
@@ -270,28 +317,25 @@ mod tests {
                     .is_some_and(|balance| balance.as_str() == "-1250.00")
         }));
         assert!(source.rows.iter().any(|row| {
-            row.name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE"
-                && row.opening_balance.as_str() == "1250.00"
-                && row
-                    .closing_balance
-                    .as_ref()
-                    .is_some_and(|balance| balance.as_str() == "1250.00")
+            row.name == "BRIDGE MFLAB DEBTOR BETA"
+                && row.fields.income_tax_number.as_deref() == Some("ZZZZZ0002Z")
+                && row.fields.name_on_pan.as_deref() == Some("BRIDGE MFLAB DEBTOR BETA")
         }));
 
         let schedule = super::super::schedule_iii::build_schedule_iii_view(source)
             .expect("captured Schedule III derivation succeeds");
         assert!(schedule.difference.is_zero());
-        let receivables = schedule
-            .lines
-            .iter()
-            .find(|line| line.label == "Trade receivables (maturity split not determined)")
-            .expect("captured debtors classify");
-        assert_eq!(receivables.total.as_str(), "-1250");
-        let payables = schedule
-            .lines
-            .iter()
-            .find(|line| line.label == "Trade payables (maturity split not determined)")
-            .expect("captured creditors classify");
-        assert_eq!(payables.total.as_str(), "1250");
+        assert!(schedule.lines.iter().all(|line| {
+            line.label != "Trade receivables (maturity split not determined)"
+                && line.label != "Trade payables (maturity split not determined)"
+        }));
+        assert!(schedule.exclusions.iter().any(|entry| {
+            source.rows[entry.row_index].name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE"
+                && entry.reason.contains("customer advance")
+        }));
+        assert!(schedule.exclusions.iter().any(|entry| {
+            source.rows[entry.row_index].name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE"
+                && entry.reason.contains("supplier advance")
+        }));
     }
 }

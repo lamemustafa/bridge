@@ -125,9 +125,10 @@ pub enum CircuitState {
     HalfOpen,
 }
 
-/// An operator assertion, not currency evidence exported from Tally. Unit A
-/// supports only an explicit assertion that the selected company's base
-/// currency is INR; no other currency can reach the INR formatter.
+/// A typed INR admission for a monetary document. Outstandings may receive an
+/// explicit operator assertion, while the party/ledger export constructs this
+/// only after the existing Tally currency probe establishes one INR master.
+/// No other currency can reach an INR formatter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum OutstandingsCurrencyAssertion {
     #[serde(rename = "INR")]
@@ -1392,6 +1393,7 @@ impl TallyRuntime {
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
+        currency_assertion: OutstandingsCurrencyAssertion,
     ) -> anyhow::Result<PartyLedgerMasterSource> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
@@ -1409,6 +1411,7 @@ impl TallyRuntime {
                             identity.display_name(),
                             identity.company_guid(),
                             boundary_profile,
+                            currency_assertion,
                         )
                         .await?;
                     bracket_verified_company_identity(&client, &identity).await?;

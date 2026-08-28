@@ -329,14 +329,17 @@ fn normalize(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use bridge_tally_core::{ExactDecimal, TallyDate};
+    use bridge_tally_protocol::PartyLedgerMasterFields;
 
     use super::*;
+    use crate::tally::OutstandingsCurrencyAssertion;
 
     fn row(name: &str, parent: &str, balance: &str) -> PartyLedgerMasterRow {
         PartyLedgerMasterRow {
             name: name.to_string(),
             parent: Some(parent.to_string()),
             party_gstin: None,
+            fields: PartyLedgerMasterFields::default(),
             guid: format!("guid-{name}"),
             master_id: format!("id-{name}"),
             alter_id: "1".to_string(),
@@ -350,6 +353,7 @@ mod tests {
         let source = PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260331").unwrap(),
             rows: vec![
@@ -393,6 +397,7 @@ mod tests {
         let source = PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![
@@ -427,6 +432,7 @@ mod tests {
         let source = PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![
@@ -461,6 +467,7 @@ mod tests {
         let source = PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![
@@ -504,6 +511,7 @@ mod tests {
         let source = PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![missing],

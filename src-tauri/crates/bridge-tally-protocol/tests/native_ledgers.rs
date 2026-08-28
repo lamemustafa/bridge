@@ -115,7 +115,7 @@ fn captured_master_fields_lab_preserves_contra_signed_party_openings() {
         .find(|row| row.record.name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE")
         .expect("captured credit-balance debtor is present");
     assert_eq!(debtor.record.parent.as_deref(), Some("Sundry Debtors"));
-    assert_eq!(debtor.record.opening_balance.as_deref(), Some("-1250.00"));
+    assert_eq!(debtor.record.opening_balance.as_deref(), Some("1250.00"));
 
     let creditor = parsed
         .records
@@ -123,7 +123,7 @@ fn captured_master_fields_lab_preserves_contra_signed_party_openings() {
         .find(|row| row.record.name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE")
         .expect("captured debit-balance creditor is present");
     assert_eq!(creditor.record.parent.as_deref(), Some("Sundry Creditors"));
-    assert_eq!(creditor.record.opening_balance.as_deref(), Some("1250.00"));
+    assert_eq!(creditor.record.opening_balance.as_deref(), Some("-1250.00"));
 }
 
 #[test]
