@@ -112,7 +112,27 @@ fn sha256(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use bridge_tally_protocol::{
+        native_outstandings::{
+            parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
+        },
+        parse_native_ledger_source_records_with_evidence,
+    };
+
     use super::*;
+
+    const MASTER_FIELDS_LAB_COMPANY_GUID: &str = "56359347-3976-4d01-b44e-56fa0f6a422c";
+    const MASTER_FIELDS_LAB_LEDGERS: &str = include_str!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_master_fields_lab.utf8.xml"
+    );
+    const MASTER_FIELDS_LAB_BALANCES: &str = include_str!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/native/ledger_snapshot_master_fields_lab.utf8.xml"
+    );
+    const MASTER_FIELDS_LAB_GROUPS: &str = include_str!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_master_fields_lab.utf8.xml"
+    );
 
     fn source() -> PartyLedgerMasterSource {
         PartyLedgerMasterSource {
@@ -162,5 +182,110 @@ mod tests {
             build_party_ledger_master_workbook(duplicate_master_id),
             Err(PartyLedgerMasterError::DuplicateMasterId)
         ));
+    }
+
+    #[test]
+    fn captured_master_fields_lab_drives_the_party_export_and_schedule_iii_view() {
+        let master = parse_native_ledger_source_records_with_evidence(
+            MASTER_FIELDS_LAB_LEDGERS,
+            MASTER_FIELDS_LAB_COMPANY_GUID,
+        )
+        .expect("captured ledger-master response parses");
+        let mut balances = BTreeMap::new();
+        for balance in parse_native_ledger_snapshot(MASTER_FIELDS_LAB_BALANCES)
+            .expect("captured balance response parses")
+        {
+            let key = (balance.name.clone(), balance.parent.clone());
+            assert!(
+                balances.insert(key, balance).is_none(),
+                "captured balance response has one row per display key"
+            );
+        }
+
+        let mut rows = Vec::new();
+        for source in master.records {
+            let key = (source.record.name.clone(), source.record.parent.clone());
+            let balance = balances
+                .remove(&key)
+                .expect("every captured master has a corresponding balance");
+            assert_eq!(
+                source.record.opening_balance.as_deref(),
+                Some(balance.opening_balance.as_str()),
+                "captured master and balance openings agree"
+            );
+            rows.push(PartyLedgerMasterRow {
+                name: source.record.name,
+                parent: source.record.parent,
+                party_gstin: source.record.party_gstin,
+                guid: source.identities.guid.expect("captured GUID"),
+                master_id: source.identities.master_id.expect("captured MASTERID"),
+                alter_id: source.alter_id.expect("captured ALTERID"),
+                opening_balance: balance.opening_balance,
+                closing_balance: balance.closing_balance,
+            });
+        }
+        assert!(
+            balances.is_empty(),
+            "the captured balance response has no unmatched ledger"
+        );
+
+        let groups = parse_native_group_snapshot_with_evidence(
+            MASTER_FIELDS_LAB_GROUPS,
+            MASTER_FIELDS_LAB_COMPANY_GUID,
+        )
+        .expect("captured group response parses")
+        .into_iter()
+        .map(|entry| PartyLedgerMasterGroup {
+            name: entry.record.name,
+            parent: entry.record.parent,
+            reserved_name: entry.record.reserved_name,
+        })
+        .collect();
+        let source = PartyLedgerMasterSource {
+            company: "BRIDGE MASTER FIELDS LAB".to_string(),
+            company_guid: MASTER_FIELDS_LAB_COMPANY_GUID.to_string(),
+            from: TallyDate::parse("20250401").unwrap(),
+            to: TallyDate::parse("20260331").unwrap(),
+            rows,
+            master_response_sha256:
+                "859475b66770917dc87a10d798d9c5ce4c356974ae29cb308623d7819209a79c".to_string(),
+            balance_response_sha256:
+                "9ac5c7f2e61fec8864a8601ac146c54ba9a3ffcad22057070c5971acb985b964".to_string(),
+            group_response_sha256:
+                "89b2051c37251dbb028de698d2220296dabe8847cc778a0a0d4ab530b38780c9".to_string(),
+            master_response_bytes: MASTER_FIELDS_LAB_LEDGERS.len(),
+            balance_response_bytes: MASTER_FIELDS_LAB_BALANCES.len(),
+            group_response_bytes: MASTER_FIELDS_LAB_GROUPS.len(),
+            groups,
+        };
+        let workbook = build_party_ledger_master_workbook(source).expect("captured source admits");
+        let source = workbook.source();
+        assert_eq!(source.rows.len(), 17);
+        assert!(source.rows.iter().any(|row| {
+            row.name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE"
+                && row.opening_balance.as_str() == "-1250.00"
+                && row.closing_balance.as_str() == "-1250.00"
+        }));
+        assert!(source.rows.iter().any(|row| {
+            row.name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE"
+                && row.opening_balance.as_str() == "1250.00"
+                && row.closing_balance.as_str() == "1250.00"
+        }));
+
+        let schedule = super::super::schedule_iii::build_schedule_iii_view(source)
+            .expect("captured Schedule III derivation succeeds");
+        assert!(schedule.difference.is_zero());
+        let receivables = schedule
+            .lines
+            .iter()
+            .find(|line| line.label == "Trade receivables (maturity split not determined)")
+            .expect("captured debtors classify");
+        assert_eq!(receivables.total.as_str(), "-1250");
+        let payables = schedule
+            .lines
+            .iter()
+            .find(|line| line.label == "Trade payables (maturity split not determined)")
+            .expect("captured creditors classify");
+        assert_eq!(payables.total.as_str(), "1250");
     }
 }

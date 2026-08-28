@@ -536,6 +536,22 @@ ALTERED=1` with no error — the existing master was **overwritten** with the re
 "No duplicate was made" is not the same as "my create succeeded." Pre-read before creating,
 and persist `CREATED` and `ALTERED` as distinct outcomes.
 
+### 9.4a A partial ledger `Alter` preserves the omitted Party GSTIN
+
+**VERIFIED (2026-08-28; one licensed TallyPrime Silver synthetic lab company).** A ledger was
+created with `INCOMETAXNUMBER=ZZZZZ0000Z` and
+`PARTYGSTIN=27ZZZZZ0000Z1Z5`. A subsequent `ACTION="Alter"` request identified that ledger
+by its `NAME` attribute and carried only
+`<INCOMETAXNUMBER>ZZZZZ0001Z</INCOMETAXNUMBER>`. It returned `ALTERED=1`, `ERRORS=0`,
+`EXCEPTIONS=0`, and no `LINEERROR`. The readback then contained both the updated PAN and the
+original Party GSTIN.
+
+This is evidence for the observed `PARTYGSTIN` preservation behaviour only; it does **not**
+establish that every omitted ledger field is preserved on every Tally version or SKU. The raw
+synthetic read responses and the exact native master/balance/group responses are retained in
+the repository's `master_fields_lab` fixtures; every request in the lab run was bracketed by a
+200 `/status` response and every write was explicitly scoped to the lab company.
+
 ### 9.5 Identity after write
 
 **VERIFIED.** `LASTMID` is **0** on successful master creates — unusable for master identity;

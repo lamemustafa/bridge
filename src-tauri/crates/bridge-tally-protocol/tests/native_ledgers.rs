@@ -6,6 +6,8 @@ use bridge_tally_protocol::{
 const AARAV: &[u8] = include_bytes!("fixtures/native/ledgers_native_aarav.utf16le.xml");
 const WR2: &[u8] = include_bytes!("fixtures/native/ledgers_native_wr2_core_window.utf16le.xml");
 const BVL: &[u8] = include_bytes!("fixtures/native/ledgers_native_bvl.utf16le.xml");
+const MASTER_FIELDS_LAB: &str =
+    include_str!("fixtures/native/ledgers_native_master_fields_lab.utf8.xml");
 
 fn decode_utf16le(bytes: &[u8]) -> String {
     decode_tally_xml_response_bytes_limited(
@@ -92,6 +94,36 @@ fn captured_wr2_native_ledger_preserves_the_discriminating_signed_decimal() {
     assert_eq!(row.identities.master_id.as_deref(), Some("213"));
     assert_eq!(row.alter_id.as_deref(), Some("215"));
     assert_eq!(row.identity_kind, Some(ParsedSourceIdentityKind::Guid));
+}
+
+#[test]
+fn captured_master_fields_lab_preserves_contra_signed_party_openings() {
+    let parsed = parse_native_ledger_source_records_with_evidence(
+        MASTER_FIELDS_LAB,
+        "56359347-3976-4d01-b44e-56fa0f6a422c",
+    )
+    .expect("captured master-fields lab collection parses");
+
+    assert_eq!(parsed.records.len(), 17);
+    assert_eq!(parsed.evidence.company_guid_prefix_match_count, 17);
+    assert_eq!(parsed.evidence.company_guid_prefix_mismatch_count, 0);
+    assert!(parsed.evidence.duplicate_identities.is_empty());
+
+    let debtor = parsed
+        .records
+        .iter()
+        .find(|row| row.record.name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE")
+        .expect("captured credit-balance debtor is present");
+    assert_eq!(debtor.record.parent.as_deref(), Some("Sundry Debtors"));
+    assert_eq!(debtor.record.opening_balance.as_deref(), Some("-1250.00"));
+
+    let creditor = parsed
+        .records
+        .iter()
+        .find(|row| row.record.name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE")
+        .expect("captured debit-balance creditor is present");
+    assert_eq!(creditor.record.parent.as_deref(), Some("Sundry Creditors"));
+    assert_eq!(creditor.record.opening_balance.as_deref(), Some("1250.00"));
 }
 
 #[test]
