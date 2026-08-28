@@ -149,7 +149,7 @@ export function OutstandingsScreen({
     failures?: Array<{ party: string; code: string; reason: string }>;
   } | null>(null);
   const [expandedParty, setExpandedParty] = React.useState<string | null>(null);
-  const [exporting, setExporting] = React.useState<"csv" | "working-paper" | "batch" | "party" | null>(null);
+  const [exporting, setExporting] = React.useState<"csv" | "working-paper" | "batch" | "party" | "ledger-master" | null>(null);
   const [consumedWorkingPaperId, setConsumedWorkingPaperId] = React.useState<string | null>(null);
   const exportLock = React.useRef(false);
   const [partySort, setPartySort] = React.useState<PartySort | null>(null);
@@ -526,6 +526,29 @@ export function OutstandingsScreen({
             >
               <Download size={16} />
               Export
+            </button>
+          )}
+          {company && (
+            <button
+              className="secondary-action"
+              type="button"
+              disabled={exporting !== null || loading}
+              onClick={async () => {
+                if (!beginExport("ledger-master")) return;
+                onTallyReadActivityChange(1);
+                try {
+                  const path = await exportPartyLedgerMaster(config, company);
+                  setExportNotice({ message: fileNameOf(path), path });
+                } catch (cause) {
+                  setExportNotice({ message: operatorMessage(cause) });
+                } finally {
+                  onTallyReadActivityChange(-1);
+                  endExport();
+                }
+              }}
+            >
+              <Download size={16} />
+              {exporting === "ledger-master" ? "Reading ledger master…" : "Ledger master + Schedule III"}
             </button>
           )}
           {workingPaperAvailable && (
@@ -911,6 +934,24 @@ async function exportWorkingPaper(result: InrCompleteResult) {
     throw new Error("This read cannot substantiate a complete working paper.");
   }
   return invoke<string>("export_outstandings_working_paper", argument);
+}
+
+/** Reads the qualified ledger/master source and writes its traceable workbook. */
+async function exportPartyLedgerMaster(
+  config: Props["config"],
+  company: NonNullable<Props["company"]>,
+) {
+  return invoke<string>("export_party_ledger_master", {
+    request: {
+      config,
+      selected_company: {
+        display_name: company.name,
+        company_guid: company.guid,
+        company_number: company.company_number,
+        books_from_yyyymmdd: company.books_from_yyyymmdd,
+      },
+    },
+  });
 }
 
 /// Builds the report as CSV.

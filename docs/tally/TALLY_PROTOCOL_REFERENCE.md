@@ -440,6 +440,28 @@ can be confined to sales and purchase types.
 `ISDEEMEDPOSITIVE`, `ALLLEDGERENTRIES.LIST`, `BILLALLOCATIONS.LIST`,
 `ALLINVENTORYENTRIES.LIST`, `RATEDETAILS.LIST`, `AUDITENTRIES.LIST`, `OLDAUDITENTRYIDS.LIST`.
 
+### 8.1 Ledger-master field availability — **VERIFIED 2026-08-28; field-presence only**
+
+A sequential read-only `List of Ledgers` collection probe against a loaded TallyPrime demo
+book requested `NAME`, stable identifiers, `PARENT`, `OPENINGBALANCE`, and the candidate
+party/master fields. The response reported success, contained 89 ledger rows and 91,746
+encoded bytes, and has recorded SHA-256 `8dd316f8f5fb70c82514bcdec9f1f7e79f876286a7fbc7879633c6714adfb3d0`.
+No names, identifiers, or values from the response are retained here.
+
+- `PARTYGSTIN` was returned on 40 rows. Its presence is source evidence, not a reason to
+  manufacture a value on rows where it is absent.
+- `INCOMETAXNUMBER`, `PINCODE`, `UDYAMREGISTRATIONNUMBER`,
+  `MSMEREGISTRATIONNUMBER`, bank-account number, and IFSC were not returned by this
+  qualified response. Bridge must disclose those columns as withheld rather than display
+  blank-looking data as if the fields were read.
+- This is an observation of this request/profile, not a claim that every Tally build or
+  configuration lacks those fields. Product release/version was not observed in this probe.
+
+The raw response is deliberately not committed: a wire capture carrying party identifiers
+does not meet this repository's public-fixture privacy boundary. The hash, byte count, and
+field-presence observation above preserve the reproducible evidence boundary without copying
+client-like data into source control.
+
 ---
 
 ## 9. Writes (import)
@@ -1559,3 +1581,4 @@ rename behaviour, other releases, and other configurations remain unverified.
 | 2026-07-30 | Recorded the outstandings-only wildcard exception, curated bill-type corruption, and the contextual polarity finding. |
 | 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
 | 2026-08-22 | Updated §5.3 with the observed Education `{1,2,31}` boundary rule and the limited TallyPrime Silver arbitrary-day observations; this settles #115 item 1 for the recorded profile. |
+| 2026-08-28 | Added §8.1's read-only ledger-master field-presence observation and explicit public-fixture privacy boundary. |

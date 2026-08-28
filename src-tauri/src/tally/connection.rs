@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{
     atomic::{AtomicU64, AtomicU8, Ordering},
     Arc,
@@ -14,6 +14,9 @@ use super::{
     tdl_engine,
     validators::{normalize_company_guid, normalize_company_name},
     xml_parser::{self, TallyCompany},
+};
+use crate::reports::party_ledger_master::{
+    PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
 };
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityProfile, CapabilityState,
@@ -29,8 +32,10 @@ use bridge_tally_protocol::outstandings::{
 };
 use bridge_tally_protocol::{
     native_outstandings::{
-        render_native_ledger_export_request, render_native_voucher_export_request,
-        NativeLedgerExportPeriod,
+        parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
+        render_native_group_snapshot_request, render_native_ledger_export_request,
+        render_native_ledger_snapshot_request, render_native_voucher_export_request,
+        NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod,
     },
     outstandings_shared::{
         parse_company_book_extent, require_master_witness, CompanyBookExtent, DateBoundaryProfile,
@@ -49,6 +54,11 @@ use bridge_tally_transport::{
 };
 
 pub type TallyConfig = TallyEndpointConfig;
+
+fn ledger_display_key(name: &str, parent: Option<&str>) -> String {
+    let parent = parent.unwrap_or_default();
+    format!("{}:{name}{}:{parent}", name.len(), parent.len())
+}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DirectCompanyBootstrapError {
@@ -75,7 +85,11 @@ pub(crate) enum LedgerOpeningCoverageRead {
 /// Outcome of a paired native-report read. `Drifted` means the two reads
 /// disagreed, so the book moved between them and no total may be reported.
 pub(crate) enum NativePairedRead {
-    Stable { body: String, encoded_bytes: usize },
+    Stable {
+        body: String,
+        encoded_bytes: usize,
+        encoded_sha256: String,
+    },
     Drifted,
 }
 
@@ -618,15 +632,19 @@ impl TallyClient {
     pub(super) async fn post_xml(&self, xml: String) -> anyhow::Result<String> {
         self.post_xml_with_encoded_bytes(xml)
             .await
-            .map(|(xml, _)| xml)
+            .map(|(xml, _, _)| xml)
     }
 
-    async fn post_xml_with_encoded_bytes(&self, xml: String) -> anyhow::Result<(String, usize)> {
+    async fn post_xml_with_encoded_bytes(
+        &self,
+        xml: String,
+    ) -> anyhow::Result<(String, usize, String)> {
         let response = self.http.post_xml_decoded(xml).await?;
         let encoded_bytes = response.encoded_bytes();
+        let encoded_sha256 = response.encoded_sha256().to_string();
         self.record_observed_body_bytes(encoded_bytes);
         self.record_observed_encoding(response.encoding());
-        Ok((response.into_text(), encoded_bytes))
+        Ok((response.into_text(), encoded_bytes, encoded_sha256))
     }
 
     async fn post_xml_with_request_wire_sha256(
@@ -786,6 +804,155 @@ impl TallyClient {
             .collect())
     }
 
+    /// Reads the identity-bearing ledger master and the existing period-bound
+    /// balance snapshot as one bracketed source for a customer workbook.
+    /// Balances expose no GUID, so a row may be joined only where both reads
+    /// contain one unique exact `(name, parent)` pair; any ambiguity withholds
+    /// the whole export rather than attaching money to the wrong master.
+    pub(crate) async fn fetch_party_ledger_master_source(
+        &self,
+        company: &str,
+        expected_company_guid: &str,
+        boundary_profile: DateBoundaryProfile,
+    ) -> anyhow::Result<PartyLedgerMasterSource> {
+        let opening_extent = self
+            .fetch_company_book_extent(company, expected_company_guid)
+            .await?;
+        let master_period = NativeLedgerExportPeriod::new(
+            boundary_profile,
+            opening_extent.books_from().clone(),
+            opening_extent.last_voucher_date().clone(),
+        )
+        .map_err(|_| anyhow::anyhow!("Tally master ledger export period is unsupported"))?;
+        let balance_period = NativeLedgerSnapshotPeriod::new(
+            boundary_profile,
+            opening_extent.books_from().clone(),
+            opening_extent.last_voucher_date().clone(),
+        )
+        .map_err(|_| anyhow::anyhow!("Tally closing-balance period is unsupported"))?;
+        let master_pair = self
+            .fetch_native_report_paired(render_native_ledger_export_request(
+                company,
+                &master_period,
+            ))
+            .await?;
+        let NativePairedRead::Stable {
+            body: master_body,
+            encoded_bytes: master_response_bytes,
+            encoded_sha256: master_response_sha256,
+        } = master_pair
+        else {
+            anyhow::bail!("Tally ledger master changed between paired reads");
+        };
+        let master =
+            parse_native_ledger_source_records_with_evidence(&master_body, expected_company_guid)?;
+        if !master.evidence.duplicate_identities.is_empty() {
+            anyhow::bail!("Tally ledger master repeated a stable source identity");
+        }
+        let balance_pair = self
+            .fetch_native_report_paired(render_native_ledger_snapshot_request(
+                company,
+                &balance_period,
+            ))
+            .await?;
+        let NativePairedRead::Stable {
+            body: balance_body,
+            encoded_bytes: balance_response_bytes,
+            encoded_sha256: balance_response_sha256,
+        } = balance_pair
+        else {
+            anyhow::bail!("Tally ledger balances changed between paired reads");
+        };
+        let balances = parse_native_ledger_snapshot(&balance_body)?;
+        let group_pair = self
+            .fetch_native_report_paired(render_native_group_snapshot_request(company))
+            .await?;
+        let NativePairedRead::Stable {
+            body: group_body,
+            encoded_bytes: group_response_bytes,
+            encoded_sha256: group_response_sha256,
+        } = group_pair
+        else {
+            anyhow::bail!("Tally group hierarchy changed between paired reads");
+        };
+        let groups = parse_native_group_snapshot_with_evidence(&group_body, expected_company_guid)?
+            .into_iter()
+            .map(|entry| PartyLedgerMasterGroup {
+                name: entry.record.name,
+                parent: entry.record.parent,
+                reserved_name: entry.record.reserved_name,
+            })
+            .collect();
+        let closing_extent = self
+            .fetch_company_book_extent(company, expected_company_guid)
+            .await?;
+        if closing_extent != opening_extent {
+            anyhow::bail!("Tally company book changed during party/ledger master read");
+        }
+
+        let mut balances_by_key = HashMap::new();
+        for balance in balances {
+            let key = ledger_display_key(&balance.name, balance.parent.as_deref());
+            if balances_by_key.insert(key, balance).is_some() {
+                anyhow::bail!("Tally balance snapshot repeated a ledger display key");
+            }
+        }
+        let mut rows = Vec::with_capacity(master.records.len());
+        for source in master.records {
+            let key = ledger_display_key(&source.record.name, source.record.parent.as_deref());
+            let balance = balances_by_key
+                .remove(&key)
+                .ok_or_else(|| anyhow::anyhow!("Tally balance snapshot omitted a ledger master"))?;
+            let guid = source
+                .identities
+                .guid
+                .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted GUID"))?;
+            let master_id = source
+                .identities
+                .master_id
+                .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted MASTERID"))?;
+            let alter_id = source
+                .alter_id
+                .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted ALTERID"))?;
+            let master_opening = source
+                .record
+                .opening_balance
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted OPENINGBALANCE"))?;
+            if master_opening != balance.opening_balance.as_str() {
+                anyhow::bail!("Tally ledger opening balances disagreed across the paired sources");
+            }
+            rows.push(PartyLedgerMasterRow {
+                name: source.record.name,
+                parent: source.record.parent,
+                party_gstin: source.record.party_gstin,
+                guid,
+                master_id,
+                alter_id,
+                opening_balance: balance.opening_balance,
+                closing_balance: balance.closing_balance,
+            });
+        }
+        if !balances_by_key.is_empty() {
+            anyhow::bail!("Tally balance snapshot contained a ledger absent from master evidence");
+        }
+        rows.sort_by(|left, right| left.name.cmp(&right.name).then(left.guid.cmp(&right.guid)));
+        Ok(PartyLedgerMasterSource {
+            company: company.to_string(),
+            company_guid: expected_company_guid.to_string(),
+            from: master_period.from().clone(),
+            to: master_period.to().clone(),
+            rows,
+            master_response_sha256,
+            balance_response_sha256,
+            group_response_sha256,
+            master_response_bytes,
+            balance_response_bytes,
+            group_response_bytes,
+            groups,
+        })
+    }
+
     /// Reads the documented standard ledger collection as an explicitly limited
     /// compatibility catalog. It is not a fallback for Bridge's custom export
     /// and cannot establish snapshot, voucher, or write capability.
@@ -885,24 +1052,26 @@ impl TallyClient {
         &self,
         request_xml: String,
     ) -> anyhow::Result<NativePairedRead> {
-        let (first, first_bytes) = self
+        let (first, first_bytes, first_sha256) = self
             .post_xml_with_encoded_bytes(request_xml.clone())
             .await?;
         self.http
             .get_status_decoded()
             .await
             .context("Tally health check between paired native report reads failed")?;
-        let (second, second_bytes) = self.post_xml_with_encoded_bytes(request_xml).await?;
+        let (second, second_bytes, second_sha256) =
+            self.post_xml_with_encoded_bytes(request_xml).await?;
         self.http
             .get_status_decoded()
             .await
             .context("Tally health check after paired native report reads failed")?;
-        if first != second || first_bytes != second_bytes {
+        if first != second || first_bytes != second_bytes || first_sha256 != second_sha256 {
             return Ok(NativePairedRead::Drifted);
         }
         Ok(NativePairedRead::Stable {
             body: first,
             encoded_bytes: first_bytes,
+            encoded_sha256: first_sha256,
         })
     }
 

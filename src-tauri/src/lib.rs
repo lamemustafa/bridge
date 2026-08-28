@@ -94,6 +94,7 @@ pub fn run() {
             commands::save_report_download,
             commands::reveal_exported_file,
             commands::export_outstandings_working_paper,
+            commands::export_party_ledger_master,
             commands::export_party_statement,
             commands::select_party_statement_destination,
             commands::revoke_party_statement_destination,

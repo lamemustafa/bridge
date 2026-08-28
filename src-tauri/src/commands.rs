@@ -19,6 +19,8 @@ use crate::reports::outstandings_working_paper_store::{
     source_from_complete_result, WorkingPaperExportStore,
 };
 use crate::reports::outstandings_working_paper_xlsx::render_outstandings_working_paper_xlsx;
+use crate::reports::party_ledger_master::build_party_ledger_master_workbook;
+use crate::reports::party_ledger_master_xlsx::render_party_ledger_master_xlsx;
 use crate::reports::party_statement::{
     build_party_statement_with_ageing_anchor, PartyStatementError,
 };
@@ -2174,6 +2176,39 @@ pub async fn fetch_tally_ledgers(
         .fetch_ledgers(request.config, &identity)
         .await
         .map_err(tally_runtime_command_error)
+}
+
+/// Reads and writes one columnar party/ledger master workbook. The workbook
+/// is built only from the runtime's verified, paired source; this command
+/// accepts no ledger row or amount from the webview.
+#[tauri::command]
+pub async fn export_party_ledger_master(
+    app: tauri::AppHandle,
+    request: CompanyRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<String, String> {
+    let identity =
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company)
+            .await
+            .map_err(|error| error.message)?;
+    let source = runtime
+        .fetch_party_ledger_master_source(request.config, &identity)
+        .await
+        .map_err(|error| format!("Bridge withheld the party/ledger master: {error}"))?;
+    let workbook = build_party_ledger_master_workbook(source)
+        .map_err(|error| format!("Bridge withheld the party/ledger master: {error}"))?;
+    let bytes = render_party_ledger_master_xlsx(&workbook)
+        .map_err(|error| format!("Bridge could not build the party/ledger master: {error}"))?;
+    let mut slug = statement_filename_slug(workbook.source().company.as_str());
+    slug.truncate(150);
+    save_report_download_bytes(
+        &app,
+        &format!(
+            "party-ledger-master-{slug}-{}.xlsx",
+            workbook.source().to.as_str()
+        ),
+        &bytes,
+    )
 }
 
 #[tauri::command]

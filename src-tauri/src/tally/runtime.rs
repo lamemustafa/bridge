@@ -3,6 +3,7 @@ use super::{
 };
 use super::{TallyProbeResult, TallyVoucher};
 use crate::observability::BodyBytesObservation;
+use crate::reports::party_ledger_master::PartyLedgerMasterSource;
 use crate::tally::connection::NativePairedRead;
 use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
 #[cfg(feature = "voucher-scan")]
@@ -1387,6 +1388,37 @@ impl TallyRuntime {
         .await
     }
 
+    pub(crate) async fn fetch_party_ledger_master_source(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<PartyLedgerMasterSource> {
+        let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
+        let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
+        self.execute(
+            config,
+            ReadOperation::MasterExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let identity = identity.clone();
+                async move {
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let source = client
+                        .fetch_party_ledger_master_source(
+                            identity.display_name(),
+                            identity.company_guid(),
+                            boundary_profile,
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(source)
+                }
+            },
+        )
+        .await
+    }
+
     /// Fetches the limited, documented standard collection response used for
     /// compatibility diagnostics. This is intentionally separate from the
     /// Bridge ledger export: it returns only ledger names and parents and is
@@ -1550,6 +1582,7 @@ impl TallyRuntime {
                     let NativePairedRead::Stable {
                         body: receivable_body,
                         encoded_bytes,
+                        ..
                     } = receivable
                     else {
                         return Ok(partial_result("native_bills_report_drifted"));
@@ -1566,6 +1599,7 @@ impl TallyRuntime {
                     let NativePairedRead::Stable {
                         body: group_body,
                         encoded_bytes,
+                        ..
                     } = groups
                     else {
                         return Ok(partial_result("native_group_snapshot_drifted"));
@@ -1578,6 +1612,7 @@ impl TallyRuntime {
                     let NativePairedRead::Stable {
                         body: payable_body,
                         encoded_bytes,
+                        ..
                     } = payable
                     else {
                         return Ok(partial_result("native_bills_report_drifted"));
@@ -1593,6 +1628,7 @@ impl TallyRuntime {
                     let NativePairedRead::Stable {
                         body: ledger_body,
                         encoded_bytes,
+                        ..
                     } = ledgers
                     else {
                         return Ok(partial_result("native_ledger_snapshot_drifted"));
