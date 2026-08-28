@@ -27,7 +27,7 @@ type Props = {
     canonical_origin: string;
   };
   onChangeSetup: () => void;
-  onOpenEvidence: (evidence: OutstandingsEvidence | null) => void;
+  onOpenEvidence: (evidence: OutstandingsEvidence | null, opener: HTMLElement) => void;
   /// Switches to the cross-client view. Present only when more than one book
   /// is open, because a scope switch with one option is noise.
   onViewAllClients?: () => void;
@@ -639,7 +639,7 @@ export function OutstandingsScreen({
 
       <p className="outstandings-evidence-caveat" role="note">
         These figures are tied to this read, not a complete-books guarantee or an atomic Tally snapshot.
-        <button className="outstandings-evidence-link" type="button" onClick={() => onOpenEvidence(reportEvidence)}>Review evidence and limits</button>
+        <button className="outstandings-evidence-link" type="button" onClick={(event) => onOpenEvidence(reportEvidence, event.currentTarget)}>Review evidence and limits</button>
       </p>
 
       {exportNotice && (

@@ -115,7 +115,7 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
   );
 
   assert.doesNotMatch(nav, /Mirror/);
-  assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{\(\) => onOpenEvidence\(reportEvidence\)\}/);
+  assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{\(event\) => onOpenEvidence\(reportEvidence, event\.currentTarget\)\}/);
   assert.match(outstandings, /asOfYyyymmdd: result\.report\.as_of_yyyymmdd/);
   assert.match(outstandings, /ageingAnchor: result\.ageing_anchor/);
   assert.match(outstandings, /sourceVoucherCount: result\.report\.source_voucher_count/);
@@ -131,9 +131,12 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
   assert.match(app, /Open local evidence/);
   assert.match(panel, /Report-bound Outstandings read/);
   assert.match(panel, /No Outstandings read attached/);
-  assert.match(focus, /details:not\(\[open\]\)/);
-  assert.match(focus, /window\.getComputedStyle\(element\)/);
+  assert.match(focus, /querySelectorAll<HTMLElement>\("\*"\)/);
+  assert.match(focus, /element\.tabIndex >= 0/);
+  assert.match(focus, /current\.tagName === "DETAILS"/);
+  assert.match(focus, /window\.getComputedStyle\(current\)/);
   assert.match(focus, /getClientRects\(\)\.length > 0/);
+  assert.doesNotMatch(focus, /DRAWER_FOCUSABLE/);
   assert.doesNotMatch(mirrorProof, /What “Verified” will require/);
   assert.match(advanced, /className="panel wide mirror-explorer"/);
   assert.match(advanced, /<h2>Pack readiness<\/h2>/);

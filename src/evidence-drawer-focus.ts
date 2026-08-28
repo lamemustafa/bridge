@@ -1,5 +1,61 @@
-export function collapsedDetailsTabbable(detailsOpen: boolean, isSummary: boolean) {
-  return detailsOpen || isSummary;
+type DrawerFocusTarget = Pick<HTMLElement, "focus" | "isConnected">;
+
+type TabStopCandidate = {
+  element: HTMLElement;
+  index: number;
+};
+
+function isVisibleInDrawer(element: HTMLElement, drawer: HTMLElement) {
+  for (
+    let current: HTMLElement | null = element;
+    current && current !== drawer.parentElement;
+    current = current.parentElement
+  ) {
+    if (
+      current.hidden
+      || current.inert
+      || current.hasAttribute("inert")
+      || current.getAttribute("aria-hidden") === "true"
+      || current.matches(":disabled")
+    ) {
+      return false;
+    }
+
+    const style = window.getComputedStyle(current);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") {
+      return false;
+    }
+
+    if (
+      current.tagName === "DETAILS"
+      && !current.hasAttribute("open")
+      && element !== current
+      && !(element.tagName === "SUMMARY" && element.parentElement === current)
+    ) {
+      return false;
+    }
+  }
+
+  return element.getClientRects().length > 0;
+}
+
+function inBrowserTabOrder(candidates: TabStopCandidate[]) {
+  const positive = candidates
+    .filter(({ element }) => element.tabIndex > 0)
+    .sort((left, right) => left.element.tabIndex - right.element.tabIndex || left.index - right.index);
+  const sequential = candidates.filter(({ element }) => element.tabIndex === 0);
+  return [...positive, ...sequential].map(({ element }) => element);
+}
+
+// `tabIndex` is the browser's own declaration of sequential focusability. It
+// covers native controls and future native tab stops without maintaining a
+// second, inevitably incomplete selector list in application code.
+export function visibleDrawerTabStops(drawer: HTMLElement) {
+  return inBrowserTabOrder(
+    Array.from(drawer.querySelectorAll<HTMLElement>("*")).flatMap((element, index) => (
+      element.tabIndex >= 0 && isVisibleInDrawer(element, drawer) ? [{ element, index }] : []
+    )),
+  );
 }
 
 export function drawerFocusBoundaryIndex(
@@ -13,20 +69,6 @@ export function drawerFocusBoundaryIndex(
   return null;
 }
 
-const DRAWER_FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";
-
-export function visibleDrawerTabStops(drawer: HTMLElement) {
-  return Array.from(drawer.querySelectorAll<HTMLElement>(DRAWER_FOCUSABLE)).filter((element) => {
-    if (element.getAttribute("aria-hidden") === "true" || element.matches(":disabled")) return false;
-    const closedDetails = element.closest("details:not([open])");
-    if (closedDetails && !collapsedDetailsTabbable(false, element.tagName === "SUMMARY" && element.parentElement === closedDetails)) {
-      return false;
-    }
-    const style = window.getComputedStyle(element);
-    return style.visibility !== "hidden" && style.display !== "none" && element.getClientRects().length > 0;
-  });
-}
-
 export function drawerFocusBoundaryTarget(
   activeElement: Element | null,
   candidates: HTMLElement[],
@@ -34,4 +76,19 @@ export function drawerFocusBoundaryTarget(
 ) {
   const targetIndex = drawerFocusBoundaryIndex(candidates.indexOf(activeElement as HTMLElement), candidates.length, backwards);
   return targetIndex === null ? null : candidates[targetIndex];
+}
+
+export function createDrawerFocusLifecycle() {
+  let opener: DrawerFocusTarget | null = null;
+
+  return {
+    captureOpener(target: DrawerFocusTarget | null) {
+      opener = target;
+    },
+    restoreOpener() {
+      const capturedOpener = opener;
+      opener = null;
+      if (capturedOpener?.isConnected) capturedOpener.focus({ preventScroll: true });
+    },
+  };
 }
