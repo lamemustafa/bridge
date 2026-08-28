@@ -838,6 +838,56 @@ h2 {
   grid-column: auto;
 }
 
+.report-evidence-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px 18px;
+  margin: 18px 0 0;
+}
+
+.report-evidence-facts div {
+  display: grid;
+  gap: 3px;
+}
+
+.report-evidence-facts dt {
+  color: #52645b;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.report-evidence-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.report-evidence-partial,
+.evidence-domain-boundary {
+  color: #52645b;
+  line-height: 1.5;
+}
+
+.report-evidence-partial {
+  margin: 18px 0 0;
+}
+
+.evidence-domain-boundary {
+  border-top: 1px solid #dce4de;
+  padding-top: 18px;
+}
+
+.evidence-domain-boundary h2,
+.evidence-domain-boundary p {
+  margin: 0;
+}
+
+.evidence-domain-boundary h2 {
+  color: #172026;
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
 .evidence-advanced {
   display: grid;
   gap: 18px;

@@ -100,11 +100,13 @@ test("UX1 nav sends unreadable outstandings and client requests to Manage Tally"
   assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "clients" : "companies"\)\}/);
 });
 
-test("UX2 keeps report evidence in a drawer and hides operator tools behind Advanced", async () => {
-  const [app, outstandings, mirrorProof] = await Promise.all([
+test("UX2 keeps report evidence distinct from Core Accounting history and hides operator tools behind Advanced", async () => {
+  const [app, outstandings, mirrorProof, panel, focus] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/evidence-drawer-focus.ts", import.meta.url), "utf8"),
   ]);
   const nav = app.slice(app.indexOf('<nav aria-label="Bridge operations">'), app.indexOf("</nav>"));
   const advanced = mirrorProof.slice(
@@ -113,12 +115,25 @@ test("UX2 keeps report evidence in a drawer and hides operator tools behind Adva
   );
 
   assert.doesNotMatch(nav, /Mirror/);
-  assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{onOpenEvidence\}/);
+  assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{\(\) => onOpenEvidence\(reportEvidence\)\}/);
+  assert.match(outstandings, /asOfYyyymmdd: result\.report\.as_of_yyyymmdd/);
+  assert.match(outstandings, /ageingAnchor: result\.ageing_anchor/);
+  assert.match(outstandings, /sourceVoucherCount: result\.report\.source_voucher_count/);
+  assert.match(outstandings, /reasonCode: result\.reason_code/);
+  assert.match(outstandings, /tallyReadAttempted: partialState\?\.tallyReadAttempted/);
   assert.match(app, /\{evidenceDrawerOpen && \(/);
   assert.match(app, /className="evidence-drawer"/);
-  assert.match(app, /event\.key === "Escape"\) closeEvidenceDrawer\(\)/);
-  assert.match(app, /event\.key !== "Tab"/);
-  assert.match(app, /EVIDENCE_DRAWER_FOCUSABLE/);
+  assert.match(app, /event\.key === "Escape"\) \{\s*closeEvidenceDrawer\(\);\s*return;/s);
+  assert.match(app, /visibleDrawerTabStops\(event\.currentTarget\)/);
+  assert.match(app, /<OutstandingsEvidencePanel evidence=\{outstandingsEvidence\} \/>/);
+  assert.match(app, /Separate Core Accounting evidence/);
+  assert.match(app, /!selectedCompanyReadable && selectedCompanyRecord\?\.mirror_company_id/);
+  assert.match(app, /Open local evidence/);
+  assert.match(panel, /Report-bound Outstandings read/);
+  assert.match(panel, /No Outstandings read attached/);
+  assert.match(focus, /details:not\(\[open\]\)/);
+  assert.match(focus, /window\.getComputedStyle\(element\)/);
+  assert.match(focus, /getClientRects\(\)\.length > 0/);
   assert.doesNotMatch(mirrorProof, /What “Verified” will require/);
   assert.match(advanced, /className="panel wide mirror-explorer"/);
   assert.match(advanced, /<h2>Pack readiness<\/h2>/);

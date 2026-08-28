@@ -13,7 +13,8 @@ import {
 } from "./tally-company-selection";
 import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
-import { OutstandingsScreen } from "./OutstandingsScreen";
+import { OutstandingsScreen, type OutstandingsEvidence } from "./OutstandingsScreen";
+import { OutstandingsEvidencePanel } from "./OutstandingsEvidencePanel";
 import { AllClientsScreen } from "./AllClientsScreen";
 import {
   automaticOutstandingsAsOf,
@@ -28,6 +29,7 @@ import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
+import { drawerFocusBoundaryTarget, visibleDrawerTabStops } from "./evidence-drawer-focus";
 import "./styles.css";
 
 type TallyConfig = {
@@ -273,7 +275,6 @@ type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll
 
 const TABLE_PREVIEW_LIMIT = 100;
 const MIRROR_PAGE_LIMIT = 25;
-const EVIDENCE_DRAWER_FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";
 // These workflows remain implemented but unavailable until their end-to-end
 // workflow evidence is complete.
 const NON_TALLY_SECTIONS_ENABLED = false;
@@ -467,6 +468,7 @@ function App() {
   const [documentsWorkspace, setDocumentsWorkspace] = React.useState(createDocumentsWorkspaceState);
   const [view, setView] = React.useState<View>("dashboard");
   const [evidenceDrawerOpen, setEvidenceDrawerOpen] = React.useState(false);
+  const [outstandingsEvidence, setOutstandingsEvidence] = React.useState<OutstandingsEvidence | null>(null);
   const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
     () => automaticOutstandingsAsOf(),
   );
@@ -479,7 +481,8 @@ function App() {
   const mainContentRef = React.useRef<HTMLElement>(null);
   const evidenceDrawerCloseRef = React.useRef<HTMLButtonElement>(null);
 
-  const openEvidenceDrawer = React.useCallback(() => {
+  const openEvidenceDrawer = React.useCallback((evidence: OutstandingsEvidence | null = null) => {
+    setOutstandingsEvidence(evidence);
     setEvidenceDrawerOpen(true);
   }, []);
   const closeEvidenceDrawer = React.useCallback(() => {
@@ -1820,6 +1823,14 @@ function App() {
             {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
             {companyError && !setupConnectionComplete && <TallyErrorNotice message={companyError} />}
 
+            {!selectedCompanyReadable && selectedCompanyRecord?.mirror_company_id && (
+              <section className="panel wide offline-evidence-entry" aria-labelledby="offline-evidence-heading">
+                <h2 id="offline-evidence-heading">Review saved local evidence</h2>
+                <p className="panel-description">{selectedCompanyRecord.name} is not in the current verified endpoint probe. You can still inspect its local proof ledger, durable runs, and redacted proof exports without contacting Tally.</p>
+                <button className="secondary-action" type="button" onClick={() => openEvidenceDrawer()}>Open local evidence</button>
+              </section>
+            )}
+
             {setupConnectionComplete && (
               <section className="setup-company" id="company-profile" aria-labelledby="company-profile-heading">
                 <div>
@@ -1944,35 +1955,37 @@ function App() {
               aria-labelledby="evidence-drawer-title"
               tabIndex={-1}
               onKeyDown={(event) => {
-                if (event.key === "Escape") closeEvidenceDrawer();
+                if (event.key === "Escape") {
+                  closeEvidenceDrawer();
+                  return;
+                }
                 if (event.key !== "Tab") return;
-                const focusable = Array.from(
-                  event.currentTarget.querySelectorAll<HTMLElement>(EVIDENCE_DRAWER_FOCUSABLE),
-                ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+                const focusable = visibleDrawerTabStops(event.currentTarget);
                 if (focusable.length === 0) {
                   event.preventDefault();
                   return;
                 }
-                const first = focusable[0];
-                const last = focusable[focusable.length - 1];
-                if (event.shiftKey && document.activeElement === first) {
+                const target = drawerFocusBoundaryTarget(document.activeElement, focusable, event.shiftKey);
+                if (target) {
                   event.preventDefault();
-                  last.focus();
-                } else if (!event.shiftKey && document.activeElement === last) {
-                  event.preventDefault();
-                  first.focus();
+                  target.focus();
                 }
               }}
             >
               <header className="evidence-drawer-header">
                 <div>
                   <p className="eyebrow">Report evidence</p>
-                  <h2 id="evidence-drawer-title">Read history and report limits</h2>
-                  <p>Evidence stays attached to the report that led here.</p>
+                  <h2 id="evidence-drawer-title">{outstandingsEvidence ? "Report evidence and limits" : "Local evidence and limits"}</h2>
+                  <p>{outstandingsEvidence ? "The report-bound read is shown first. Core Accounting history is separate below." : "This local evidence review is not attached to a current Outstandings report."}</p>
                 </div>
                 <button className="secondary-action" type="button" ref={evidenceDrawerCloseRef} onClick={closeEvidenceDrawer}>Close</button>
               </header>
               <div className="evidence-drawer-content">
+          <OutstandingsEvidencePanel evidence={outstandingsEvidence} />
+          <section className="evidence-domain-boundary" aria-labelledby="core-accounting-evidence-heading">
+            <h2 id="core-accounting-evidence-heading">Separate Core Accounting evidence</h2>
+            <p>This local mirror, proof, and runtime history is not evidence for the Outstandings report above. It has its own pack scope and run history.</p>
+          </section>
           <ErrorBoundary key="mirror" label="Accounting mirror and proof">
           {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
           <MirrorProofScreen

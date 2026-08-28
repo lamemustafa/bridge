@@ -27,7 +27,7 @@ type Props = {
     canonical_origin: string;
   };
   onChangeSetup: () => void;
-  onOpenEvidence: () => void;
+  onOpenEvidence: (evidence: OutstandingsEvidence | null) => void;
   /// Switches to the cross-client view. Present only when more than one book
   /// is open, because a scope switch with one option is noise.
   onViewAllClients?: () => void;
@@ -118,6 +118,31 @@ type LoadResult =
       tally_as_of_yyyymmdd?: string;
       foreign_currency_ledger_name?: string;
       synced_at_unix_ms: number;
+    };
+
+export type OutstandingsEvidence =
+  | {
+      state: "complete";
+      companyName: string;
+      syncedAt: number;
+      asOfYyyymmdd: string;
+      ageingAnchor: OutstandingsAgeingAnchor;
+      currencyAssertion: string;
+      sourceVoucherCount: number;
+      sourceBytes: number;
+      receivableTotal: string;
+      payableTotal: string;
+    }
+  | {
+      state: "partial";
+      companyName: string;
+      syncedAt: number;
+      reasonCode: string;
+      requestedAsOfYyyymmdd?: string;
+      tallyAsOfYyyymmdd?: string;
+      title: string;
+      message: string;
+      tallyReadAttempted: boolean;
     };
 
 type InrCompleteResult = Extract<LoadResult, { state: "complete" }> & { currency_assertion: "INR" };
@@ -218,6 +243,32 @@ export function OutstandingsScreen({
     : null;
   const outstandingsUnavailable = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);
   const tallyReadAttempted = result?.state === "partial" && partialState?.tallyReadAttempted;
+  const reportEvidence: OutstandingsEvidence | null = !result
+    ? null
+    : result.state === "complete"
+      ? {
+          state: "complete",
+          companyName: company?.name ?? result.report.company_name,
+          syncedAt: result.synced_at_unix_ms,
+          asOfYyyymmdd: result.report.as_of_yyyymmdd,
+          ageingAnchor: result.ageing_anchor,
+          currencyAssertion: result.currency_assertion,
+          sourceVoucherCount: result.report.source_voucher_count,
+          sourceBytes: result.report.source_bytes,
+          receivableTotal: result.report.receivable_total,
+          payableTotal: result.report.payable_total,
+        }
+      : {
+          state: "partial",
+          companyName: company?.name ?? "Selected company",
+          syncedAt: result.synced_at_unix_ms,
+          reasonCode: result.reason_code,
+          requestedAsOfYyyymmdd: result.requested_as_of_yyyymmdd,
+          tallyAsOfYyyymmdd: result.tally_as_of_yyyymmdd,
+          title: partialState?.title ?? "Partial result withheld",
+          message: partialState?.message ?? result.reason_code,
+          tallyReadAttempted: partialState?.tallyReadAttempted ?? false,
+        };
 
   const load = React.useCallback(async () => {
     if (!readPermitted || !company || !requestedAsOf) return;
@@ -588,7 +639,7 @@ export function OutstandingsScreen({
 
       <p className="outstandings-evidence-caveat" role="note">
         These figures are tied to this read, not a complete-books guarantee or an atomic Tally snapshot.
-        <button className="outstandings-evidence-link" type="button" onClick={onOpenEvidence}>Review evidence and limits</button>
+        <button className="outstandings-evidence-link" type="button" onClick={() => onOpenEvidence(reportEvidence)}>Review evidence and limits</button>
       </p>
 
       {exportNotice && (
