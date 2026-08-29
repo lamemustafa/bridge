@@ -1407,11 +1407,13 @@ fn parse_standard_ledger_identity_row(
                             anyhow::bail!("standard ledger collection repeated ledger parent");
                         }
                         parent_seen = true;
-                        parent = PartyLedgerMasterFieldObservation::Returned(
-                            read_optional_text(reader, child.name())?
-                                .and_then(|value| safe_standard_ledger_parent(&value))
-                                .unwrap_or_default(),
-                        );
+                        parent = match read_optional_text(reader, child.name())? {
+                            Some(value) => match safe_standard_ledger_parent(&value) {
+                                Some(value) => PartyLedgerMasterFieldObservation::Returned(value),
+                                None => PartyLedgerMasterFieldObservation::NotObserved,
+                            },
+                            None => PartyLedgerMasterFieldObservation::Returned(String::new()),
+                        };
                     }
                     b"PARENT" => {
                         validate_only_attributes(&child, &[b"TYPE"])?;

@@ -947,12 +947,10 @@ fn standard_ledger_identity_ignores_nonessential_ledger_fields() {
 }
 
 #[test]
-fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_checks() {
-    for parent in [
-        "p".repeat(1025),
-        "Primary\u{061c}spoof".to_string(),
-        "Primary\u{206a}spoof".to_string(),
-        "Primary\u{202e}spoof".to_string(),
+fn standard_ledger_catalog_reports_rejected_parent_as_unobserved_on_the_wire() {
+    for (cause, parent) in [
+        ("overlong", "p".repeat(1025)),
+        ("bidi control", "Primary\u{202e}spoof".to_string()),
     ] {
         let document = format!(
             r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">{parent}</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#
@@ -963,7 +961,20 @@ fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_che
         assert_eq!(catalog[0].name, "synthetic-ledger");
         assert_eq!(
             catalog[0].parent,
-            PartyLedgerMasterFieldObservation::Returned(String::new())
+            PartyLedgerMasterFieldObservation::NotObserved,
+            "{cause} parent must not be reported as an empty returned value"
+        );
+        let parent_json = serde_json::to_value(&catalog[0].parent)
+            .expect("parent observation serializes for the command wire");
+        assert_eq!(
+            parent_json,
+            serde_json::Value::Null,
+            "{cause} parent is null on the wire"
+        );
+        assert_ne!(
+            parent_json,
+            serde_json::json!(""),
+            "{cause} parent is never an empty string"
         );
     }
 

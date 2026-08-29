@@ -157,6 +157,27 @@ test("child Tally reads keep client selection locked until every invocation sett
   assert.match(readiness, /onClick=\{onCheck\} disabled=\{busy \|\| settingsLocked\}/);
 });
 
+test("party ledger export disables the concurrent outstandings refresh through the shared read lock", async () => {
+  const [frontend, outstandings] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(frontend, /liveReadNavigationLocked=\{childTallyReadCount > 0\}/);
+  const ledgerMasterExport = outstandings.slice(
+    outstandings.indexOf('beginExport("ledger-master")'),
+    outstandings.indexOf('{workingPaperAvailable && ('),
+  );
+  assert.match(ledgerMasterExport, /onTallyReadActivityChange\(1\);/);
+  assert.match(ledgerMasterExport, /onTallyReadActivityChange\(-1\);/);
+  const headingControls = outstandings.slice(
+    outstandings.indexOf('<div className="outstandings-heading-actions">'),
+    outstandings.indexOf('{exportNotice && ('),
+  );
+  assert.match(headingControls, /disabled=\{loading \|\| liveReadNavigationLocked\}/);
+  assert.match(headingControls, /disabled=\{loading \|\| liveReadNavigationLocked \|\| !requestedAsOf\}/);
+});
+
 test("the shell never treats a truncated profile page or stale unsaved identity as exhaustive", async () => {
   const [frontend, switcher] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),

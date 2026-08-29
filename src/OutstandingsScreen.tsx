@@ -483,7 +483,7 @@ export function OutstandingsScreen({
                 setLoadedResult(null);
                 setError(null);
               }}
-              disabled={loading}
+              disabled={loading || liveReadNavigationLocked}
               aria-describedby="outstandings-as-of-help"
             />
             <small id="outstandings-as-of-help">Choose the exact date, then refresh.</small>
@@ -493,7 +493,7 @@ export function OutstandingsScreen({
             <select
               value={ageingAnchor}
               onChange={(event) => setAgeingAnchor(event.target.value as OutstandingsAgeingAnchor)}
-              disabled={loading}
+              disabled={loading || liveReadNavigationLocked}
               aria-describedby="outstandings-ageing-anchor-help"
             >
               <option value="due_date">Due date</option>
@@ -532,7 +532,7 @@ export function OutstandingsScreen({
             <button
               className="secondary-action"
               type="button"
-              disabled={exporting !== null || loading}
+              disabled={exporting !== null || loading || liveReadNavigationLocked}
               onClick={async () => {
                 if (!beginExport("ledger-master")) return;
                 onTallyReadActivityChange(1);
@@ -599,7 +599,7 @@ export function OutstandingsScreen({
           )}
           <button className="secondary-action" type="button" onClick={onChangeSetup}>Manage Tally</button>
           {!outstandingsUnavailable && (
-            <button type="button" onClick={load} disabled={loading || !requestedAsOf}>
+            <button type="button" onClick={load} disabled={loading || liveReadNavigationLocked || !requestedAsOf}>
               <RefreshCw size={18} className={loading ? "spin" : undefined} />
               {loading ? "Reading…" : result ? "Refresh" : "Load outstandings"}
             </button>
