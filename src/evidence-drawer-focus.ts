@@ -78,6 +78,20 @@ export function drawerFocusBoundaryTarget(
   return targetIndex === null ? null : candidates[targetIndex];
 }
 
+export function shouldFocusMainContentAfterViewTransition({
+  previousView,
+  view,
+  drawerWasOpen,
+  drawerOpen,
+}: {
+  previousView: string;
+  view: string;
+  drawerWasOpen: boolean;
+  drawerOpen: boolean;
+}) {
+  return previousView !== view && !drawerWasOpen && !drawerOpen;
+}
+
 export function createDrawerFocusLifecycle() {
   let opener: DrawerFocusTarget | null = null;
 

@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   createDrawerFocusLifecycle,
   drawerFocusBoundaryIndex,
+  shouldFocusMainContentAfterViewTransition,
   visibleDrawerTabStops,
 } from "../src/evidence-drawer-focus.ts";
 
@@ -111,5 +112,34 @@ test("evidence drawer lifecycle restores the captured opener for Close and Escap
   assert.match(app, /event\.key === "Escape"\) \{\s*closeEvidenceDrawer\(\);\s*return;/s);
   assert.match(app, /ref=\{evidenceDrawerCloseRef\} onClick=\{closeEvidenceDrawer\}/);
   assert.match(app, /captureOpener\(opener \?\? \(document\.activeElement instanceof HTMLElement/);
-  assert.doesNotMatch(app, /mainContentRef\.current\?\.focus\(\)/);
+  assert.match(app, /if \(evidenceDrawerOpen\) \{\s*evidenceDrawerCloseRef\.current\?\.focus\(\);/s);
+});
+
+test("ordinary view transitions focus main content without overriding drawer restoration", async () => {
+  const app = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+
+  assert.equal(
+    shouldFocusMainContentAfterViewTransition({
+      previousView: "clients",
+      view: "outstandings",
+      drawerWasOpen: false,
+      drawerOpen: false,
+    }),
+    true,
+    "a non-drawer view transition moves focus to its new main content",
+  );
+  assert.equal(
+    shouldFocusMainContentAfterViewTransition({
+      previousView: "outstandings",
+      view: "companies",
+      drawerWasOpen: true,
+      drawerOpen: false,
+    }),
+    false,
+    "closing the drawer keeps its captured-opener restoration authoritative",
+  );
+
+  assert.match(app, /shouldFocusMainContentAfterViewTransition\([\s\S]*?mainContentRef\.current\?\.focus\(\)/);
+  assert.match(app, /<main className="content" id="main-content" ref=\{mainContentRef\}/);
+  assert.equal((app.match(/mainContentRef\.current\?\.focus\(\)/g) ?? []).length, 1);
 });

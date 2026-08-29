@@ -118,7 +118,7 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
   assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{\(event\) => onOpenEvidence\(reportEvidence, event\.currentTarget\)\}/);
   assert.match(outstandings, /asOfYyyymmdd: result\.report\.as_of_yyyymmdd/);
   assert.match(outstandings, /ageingAnchor: result\.ageing_anchor/);
-  assert.match(outstandings, /sourceVoucherCount: result\.report\.source_voucher_count/);
+  assert.match(outstandings, /readProvenance: result\.report/);
   assert.match(outstandings, /reasonCode: result\.reason_code/);
   assert.match(outstandings, /tallyReadAttempted: partialState\?\.tallyReadAttempted/);
   assert.match(app, /\{evidenceDrawerOpen && \(/);
@@ -127,7 +127,7 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
   assert.match(app, /visibleDrawerTabStops\(event\.currentTarget\)/);
   assert.match(app, /<OutstandingsEvidencePanel evidence=\{outstandingsEvidence\} \/>/);
   assert.match(app, /Separate Core Accounting evidence/);
-  assert.match(app, /!selectedCompanyReadable && selectedCompanyRecord\?\.mirror_company_id/);
+  assert.match(app, /\{selectedCompanyRecord\?\.mirror_company_id && \(/);
   assert.match(app, /Open local evidence/);
   assert.match(panel, /Report-bound Outstandings read/);
   assert.match(panel, /No Outstandings read attached/);

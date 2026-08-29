@@ -5,6 +5,7 @@ import { isNonRetryableOutstandingsBoundary, outstandingsAgeingAnchorLabel, outs
 import { csvNumericCell, csvRow, csvTextCell, type CsvCell } from "./outstandings-csv";
 import { canStartOutstandingsRead, outstandingsCurrencySymbol } from "./outstandings-currency";
 import { groupOpenBillsByParty, type OpenBill, type PartyBillsState } from "./outstandings-bills";
+import { readProvenance, type OutstandingsReadProvenance } from "./outstandings-provenance";
 import {
   asOfBoundValueForAsOf,
   asOfYyyymmdd,
@@ -15,7 +16,7 @@ import {
   workingPaperInvokeArgument,
   type AsOfBoundValue,
 } from "./outstandings-as-of";
-import { companyIdentityKey } from "./company-identity";
+import { companyIdentityKey, type CompanyIdentityKey } from "./company-identity";
 
 type Props = {
   config: { host: string; port: number };
@@ -123,19 +124,19 @@ type LoadResult =
 export type OutstandingsEvidence =
   | {
       state: "complete";
-      companyName: string;
+      companyIdentity: CompanyIdentityKey;
       syncedAt: number;
       asOfYyyymmdd: string;
       ageingAnchor: OutstandingsAgeingAnchor;
       currencyAssertion: string;
-      sourceVoucherCount: number;
+      readProvenance: OutstandingsReadProvenance;
       sourceBytes: number;
       receivableTotal: string;
       payableTotal: string;
     }
   | {
       state: "partial";
-      companyName: string;
+      companyIdentity: CompanyIdentityKey;
       syncedAt: number;
       reasonCode: string;
       requestedAsOfYyyymmdd?: string;
@@ -243,24 +244,24 @@ export function OutstandingsScreen({
     : null;
   const outstandingsUnavailable = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);
   const tallyReadAttempted = result?.state === "partial" && partialState?.tallyReadAttempted;
-  const reportEvidence: OutstandingsEvidence | null = !result
+  const reportEvidence: OutstandingsEvidence | null = !result || !currentCompanyIdentity
     ? null
     : result.state === "complete"
       ? {
           state: "complete",
-          companyName: company?.name ?? result.report.company_name,
+          companyIdentity: currentCompanyIdentity,
           syncedAt: result.synced_at_unix_ms,
           asOfYyyymmdd: result.report.as_of_yyyymmdd,
           ageingAnchor: result.ageing_anchor,
           currencyAssertion: result.currency_assertion,
-          sourceVoucherCount: result.report.source_voucher_count,
+          readProvenance: result.report,
           sourceBytes: result.report.source_bytes,
           receivableTotal: result.report.receivable_total,
           payableTotal: result.report.payable_total,
         }
       : {
           state: "partial",
-          companyName: company?.name ?? "Selected company",
+          companyIdentity: currentCompanyIdentity,
           syncedAt: result.synced_at_unix_ms,
           reasonCode: result.reason_code,
           requestedAsOfYyyymmdd: result.requested_as_of_yyyymmdd,
@@ -1201,18 +1202,6 @@ function exposureComposition(report: Report, unallocatedTotal: string | undefine
     const share = percent < 1 ? "<1%" : `${Math.round(percent)}%`;
     return { ...slice, share };
   });
-}
-
-// Describes what was actually read. The native bills path reads no vouchers at
-// all, so reporting a voucher count there would be a false provenance claim —
-// and "0 vouchers verified" reads as a failure rather than as a different,
-// cheaper read.
-function readProvenance(report: Report) {
-  if (report.source_voucher_count > 0) {
-    return `${report.source_voucher_count.toLocaleString("en-IN")} vouchers verified`;
-  }
-  const bills = report.open_receivable_bill_count.toLocaleString("en-IN");
-  return `${bills} open ${report.open_receivable_bill_count === 1 ? "bill" : "bills"} read from Tally`;
 }
 
 function formatMoney(value: string, currencyAssertion: "INR") {

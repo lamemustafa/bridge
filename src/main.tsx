@@ -29,7 +29,7 @@ import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
-import { createDrawerFocusLifecycle, drawerFocusBoundaryTarget, visibleDrawerTabStops } from "./evidence-drawer-focus";
+import { createDrawerFocusLifecycle, drawerFocusBoundaryTarget, shouldFocusMainContentAfterViewTransition, visibleDrawerTabStops } from "./evidence-drawer-focus";
 import "./styles.css";
 
 type TallyConfig = {
@@ -478,8 +478,11 @@ function App() {
   const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
   const snapshotSelectionVersion = React.useRef(0);
+  const mainContentRef = React.useRef<HTMLElement>(null);
   const evidenceDrawerCloseRef = React.useRef<HTMLButtonElement>(null);
   const evidenceDrawerFocusLifecycle = React.useRef(createDrawerFocusLifecycle()).current;
+  const previousViewRef = React.useRef(view);
+  const evidenceDrawerWasOpenRef = React.useRef(evidenceDrawerOpen);
 
   const openEvidenceDrawer = React.useCallback((evidence: OutstandingsEvidence | null = null, opener?: HTMLElement) => {
     evidenceDrawerFocusLifecycle.captureOpener(opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null));
@@ -586,8 +589,20 @@ function App() {
   }, []);
 
   React.useEffect(() => {
-    if (evidenceDrawerOpen) evidenceDrawerCloseRef.current?.focus();
-  }, [evidenceDrawerOpen]);
+    const drawerWasOpen = evidenceDrawerWasOpenRef.current;
+    if (evidenceDrawerOpen) {
+      evidenceDrawerCloseRef.current?.focus();
+    } else if (shouldFocusMainContentAfterViewTransition({
+      previousView: previousViewRef.current,
+      view,
+      drawerWasOpen,
+      drawerOpen: evidenceDrawerOpen,
+    })) {
+      mainContentRef.current?.focus();
+    }
+    previousViewRef.current = view;
+    evidenceDrawerWasOpenRef.current = evidenceDrawerOpen;
+  }, [view, evidenceDrawerOpen]);
 
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
@@ -1512,7 +1527,7 @@ function App() {
         )}
       </aside>
 
-      <main className="content" id="main-content" tabIndex={-1} aria-labelledby="active-view-title">
+      <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
         <ClientSwitcher
           clients={clientSwitcherClients}
           selectedClientKey={selectedCompany}
@@ -1821,10 +1836,10 @@ function App() {
             {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
             {companyError && !setupConnectionComplete && <TallyErrorNotice message={companyError} />}
 
-            {!selectedCompanyReadable && selectedCompanyRecord?.mirror_company_id && (
+            {selectedCompanyRecord?.mirror_company_id && (
               <section className="panel wide offline-evidence-entry" aria-labelledby="offline-evidence-heading">
                 <h2 id="offline-evidence-heading">Review saved local evidence</h2>
-                <p className="panel-description">{selectedCompanyRecord.name} is not in the current verified endpoint probe. You can still inspect its local proof ledger, durable runs, and redacted proof exports without contacting Tally.</p>
+                <p className="panel-description">Inspect {selectedCompanyRecord.name}&rsquo;s local proof ledger, durable runs, and redacted proof exports without contacting Tally.</p>
                 <button className="secondary-action" type="button" onClick={(event) => openEvidenceDrawer(null, event.currentTarget)}>Open local evidence</button>
               </section>
             )}

@@ -1,5 +1,7 @@
 import { outstandingsAgeingAnchorLabel } from "./outstandings-copy";
 import type { OutstandingsEvidence } from "./OutstandingsScreen";
+import { companyIdentityLabel } from "./company-identity";
+import { readProvenance } from "./outstandings-provenance";
 
 type Props = {
   evidence: OutstandingsEvidence | null;
@@ -38,14 +40,14 @@ export function OutstandingsEvidencePanel({ evidence }: Props) {
         <span>{evidence.state === "complete" ? "Complete result" : "Partial result"}</span>
       </div>
       <dl className="report-evidence-facts">
-        <div><dt>Company</dt><dd>{evidence.companyName}</dd></div>
+        <div><dt>Company</dt><dd>{companyIdentityLabel(evidence.companyIdentity)}</dd></div>
         <div><dt>Read recorded</dt><dd>{displayTime(evidence.syncedAt)}</dd></div>
         {evidence.state === "complete" ? (
           <>
             <div><dt>As of</dt><dd>{displayDate(evidence.asOfYyyymmdd)}</dd></div>
             <div><dt>Ageing basis</dt><dd>{outstandingsAgeingAnchorLabel(evidence.ageingAnchor)}</dd></div>
             <div><dt>Currency assertion</dt><dd>{evidence.currencyAssertion}</dd></div>
-            <div><dt>Read scope</dt><dd>{evidence.sourceVoucherCount} source voucher{evidence.sourceVoucherCount === 1 ? "" : "s"} · {displayBytes(evidence.sourceBytes)}</dd></div>
+            <div><dt>Read scope</dt><dd>{readProvenance(evidence.readProvenance)} · {displayBytes(evidence.sourceBytes)}</dd></div>
             <div><dt>Receivable</dt><dd>{evidence.receivableTotal}</dd></div>
             <div><dt>Payable</dt><dd>{evidence.payableTotal}</dd></div>
           </>
