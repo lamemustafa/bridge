@@ -187,11 +187,19 @@ fn classify(
                 ),
                 closing_balance,
             ),
-            "cash-in-hand" | "bank accounts" => return admit_group_subtotal(
+            "cash-in-hand" => return admit_group_subtotal(
                 subtotal::Candidate::debit(
                     "Debit-balance group subtotals",
-                    "Cash-in-Hand / Bank Accounts group subtotal",
-                    "A credit-balance Cash-in-Hand or Bank Accounts ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
+                    "Cash-in-Hand group subtotal",
+                    "A credit-balance Cash-in-Hand ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
+                ),
+                closing_balance,
+            ),
+            "bank accounts" => return admit_group_subtotal(
+                subtotal::Candidate::debit(
+                    "Debit-balance group subtotals",
+                    "Bank Accounts group subtotal",
+                    "A credit-balance Bank Accounts ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
                 ),
                 closing_balance,
             ),
@@ -475,6 +483,55 @@ mod tests {
     }
 
     #[test]
+    fn cash_in_hand_and_bank_accounts_keep_separate_group_subtotals_and_totals() {
+        let source = PartyLedgerMasterSource {
+            company: "Synthetic Books".to_string(),
+            company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            from: TallyDate::parse("20260401").unwrap(),
+            to: TallyDate::parse("20260731").unwrap(),
+            rows: vec![
+                row("Bank balance", "Bank Accounts", "-200"),
+                row("Petty cash", "Cash-in-Hand", "-300"),
+            ],
+            master_response_sha256: "a".repeat(64),
+            balance_response_sha256: "b".repeat(64),
+            group_response_sha256: "c".repeat(64),
+            master_response_bytes: 1,
+            balance_response_bytes: 1,
+            group_response_bytes: 1,
+            groups: vec![
+                PartyLedgerMasterGroup {
+                    name: "Bank Accounts".to_string(),
+                    parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+                    reserved_name: Some("Bank Accounts".to_string()),
+                },
+                PartyLedgerMasterGroup {
+                    name: "Cash-in-Hand".to_string(),
+                    parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+                    reserved_name: Some("Cash-in-Hand".to_string()),
+                },
+            ],
+        };
+
+        let view = build_schedule_iii_view(&source).unwrap();
+        assert_eq!(view.lines.len(), 2);
+        assert!(view.lines.iter().any(|line| {
+            line.label == "Bank Accounts group subtotal"
+                && line.total.as_str() == "-200"
+                && line.row_indices == vec![0]
+        }));
+        assert!(view.lines.iter().any(|line| {
+            line.label == "Cash-in-Hand group subtotal"
+                && line.total.as_str() == "-300"
+                && line.row_indices == vec![1]
+        }));
+        assert_eq!(view.debit_total.as_str(), "500");
+        assert!(view.credit_total.is_zero());
+        assert_eq!(view.difference.as_str(), "-500");
+    }
+
+    #[test]
     fn contra_signed_bank_account_is_excluded_not_netted_against_its_group_subtotal() {
         let source = PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
@@ -513,7 +570,7 @@ mod tests {
         assert_eq!(view.exclusions.len(), 1);
         assert!(view.exclusions[0]
             .reason
-            .contains("credit-balance Cash-in-Hand or Bank Accounts"));
+            .contains("credit-balance Bank Accounts"));
     }
 
     #[test]
