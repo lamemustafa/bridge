@@ -36,7 +36,9 @@ use bridge_tally_protocol::outstandings::{
     NarrowDateWindow, PartialScan, ScanResult, SegmentVerification, StrictlyWiderDateCover,
     VoucherAlterIdHighWater, WitnessPairVerification,
 };
-use bridge_tally_protocol::outstandings_shared::{DateBoundaryProfile, OutstandingsReport};
+use bridge_tally_protocol::outstandings_shared::{
+    CompanyBookExtent, DateBoundaryProfile, OutstandingsReport,
+};
 use bridge_tally_transport::TallyTransportError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -133,6 +135,60 @@ pub enum CircuitState {
 pub enum OutstandingsCurrencyAssertion {
     #[serde(rename = "INR")]
     Inr,
+}
+
+/// An INR admission that is inseparable from the company extent observed
+/// during the currency read. Only the party/ledger master path consumes this:
+/// outstandings keeps its existing webview assertion contract.
+#[derive(Debug, Clone)]
+pub(crate) struct PartyLedgerMasterCurrencyAssertion {
+    assertion: OutstandingsCurrencyAssertion,
+    currency_read_extent: CompanyBookExtent,
+}
+
+impl PartyLedgerMasterCurrencyAssertion {
+    /// Releases the INR assertion only when the monetary master read opens on
+    /// the exact company extent that the existing currency probe observed.
+    pub(crate) fn require_opening_extent(
+        &self,
+        opening_extent: &CompanyBookExtent,
+    ) -> anyhow::Result<OutstandingsCurrencyAssertion> {
+        if self.currency_read_extent == *opening_extent {
+            return Ok(self.assertion);
+        }
+
+        anyhow::bail!(
+            "Tally company's base currency changed between the currency read and the master read"
+        );
+    }
+}
+
+/// The result of the existing Tally currency probe, retaining the extent that
+/// bracketed it so a monetary document cannot separate the two facts.
+#[derive(Debug, Clone)]
+pub(crate) struct CompanyCurrencyRead {
+    currency: CompanyCurrency,
+    extent: CompanyBookExtent,
+}
+
+impl CompanyCurrencyRead {
+    pub(crate) fn currency_count(&self) -> usize {
+        self.currency.currency_count
+    }
+
+    pub(crate) fn is_inr(&self) -> bool {
+        self.currency.is_inr
+    }
+
+    pub(crate) fn bind_party_ledger_master_assertion(
+        self,
+        assertion: OutstandingsCurrencyAssertion,
+    ) -> PartyLedgerMasterCurrencyAssertion {
+        PartyLedgerMasterCurrencyAssertion {
+            assertion,
+            currency_read_extent: self.extent,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1393,7 +1449,7 @@ impl TallyRuntime {
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
-        currency_assertion: OutstandingsCurrencyAssertion,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
     ) -> anyhow::Result<PartyLedgerMasterSource> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
@@ -1404,6 +1460,7 @@ impl TallyRuntime {
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
                 let identity = identity.clone();
+                let currency_assertion = currency_assertion.clone();
                 async move {
                     bracket_verified_company_identity(&client, &identity).await?;
                     let source = client
@@ -1717,6 +1774,28 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<CompanyCurrency> {
+        Ok(self
+            .detect_base_currency_with_extent(config, identity)
+            .await?
+            .currency)
+    }
+
+    /// Runs the existing currency probe while retaining its stable company
+    /// extent for the party/ledger master document boundary.
+    pub(crate) async fn detect_party_ledger_master_currency(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<CompanyCurrencyRead> {
+        self.detect_base_currency_with_extent(config, identity)
+            .await
+    }
+
+    async fn detect_base_currency_with_extent(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<CompanyCurrencyRead> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -1747,7 +1826,10 @@ impl TallyRuntime {
                         anyhow::bail!("Tally company book changed during currency detection");
                     }
                     bracket_verified_company_identity(&client, &identity).await?;
-                    Ok(parse_company_currency(&body)?)
+                    Ok(CompanyCurrencyRead {
+                        currency: parse_company_currency(&body)?,
+                        extent,
+                    })
                 }
             },
         )
@@ -2941,6 +3023,58 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["No reference reported", "No reference reported"],
             "client-facing rows must disclose the missing identity",
+        );
+    }
+
+    #[test]
+    fn party_master_currency_assertion_rejects_a_changed_company_extent() {
+        const EXTENT: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        let read_extent_xml = EXTENT.replacen(
+            r#"<GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE=\"Number\">1</ALTMSTID>"#,
+            1,
+        );
+        let changed_extent_xml = read_extent_xml.replace(
+            "<LASTVOUCHERDATE TYPE=\"Date\">20260401</LASTVOUCHERDATE>",
+            "<LASTVOUCHERDATE TYPE=\"Date\">20260402</LASTVOUCHERDATE>",
+        );
+        let read_extent = bridge_tally_protocol::outstandings_shared::parse_company_book_extent(
+            &read_extent_xml,
+            "Aarav Trading Company Demo",
+            "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+        )
+        .expect("captured extent parses");
+        let changed_extent = bridge_tally_protocol::outstandings_shared::parse_company_book_extent(
+            &changed_extent_xml,
+            "Aarav Trading Company Demo",
+            "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+        )
+        .expect("changed synthetic extent parses");
+        let assertion = CompanyCurrencyRead {
+            currency: CompanyCurrency {
+                symbol: "₹".to_string(),
+                mailing_name: "INR".to_string(),
+                currency_count: 1,
+                is_inr: true,
+            },
+            extent: read_extent.clone(),
+        }
+        .bind_party_ledger_master_assertion(OutstandingsCurrencyAssertion::Inr);
+
+        assert_eq!(
+            assertion
+                .require_opening_extent(&read_extent)
+                .expect("the observed extent releases INR"),
+            OutstandingsCurrencyAssertion::Inr
+        );
+        let error = assertion
+            .require_opening_extent(&changed_extent)
+            .expect_err("a changed extent must not release INR");
+        assert_eq!(
+            error.to_string(),
+            "Tally company's base currency changed between the currency read and the master read"
         );
     }
 

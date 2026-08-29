@@ -79,7 +79,7 @@ pub(crate) fn render_party_ledger_master_xlsx(
         1,
         "Ledger identity, parent, Party GSTIN and requested party/master fields when returned, plus opening/closing balances over the named period.",
     )?;
-    worksheet.write_string_with_format(9, 0, "Unavailable fields", &bold)?;
+    worksheet.write_string_with_format(9, 0, "Not observed fields", &bold)?;
     worksheet.write_string(
         9,
         1,
@@ -397,7 +397,8 @@ mod tests {
             std::io::Read::read_to_string(&mut archive.by_name(name).unwrap(), &mut text).unwrap();
         }
         assert!(text.contains("Master response SHA-256"));
-        assert!(text.contains("Unavailable fields"));
+        assert!(text.contains("Not observed fields"));
+        assert!(!text.contains("Unavailable fields"));
         assert!(text.contains(
             "“Not observed” means this Tally response did not return the requested field; it does not establish whether that field is unset in this book or unavailable in this Tally build. Bridge never manufactures master data."
         ));

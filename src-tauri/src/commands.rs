@@ -2191,16 +2191,20 @@ pub async fn export_party_ledger_master(
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company)
             .await
             .map_err(|error| error.message)?;
-    let currency = runtime
-        .detect_base_currency(request.config.clone(), &identity)
+    let currency_read = runtime
+        .detect_party_ledger_master_currency(request.config.clone(), &identity)
         .await
         .map_err(|error| format!("Bridge withheld the party/ledger master: {error}"))?;
-    let currency_assertion = establish_inr_currency(currency.currency_count, currency.is_inr)
+    let currency_assertion = establish_inr_currency(
+        currency_read.currency_count(),
+        currency_read.is_inr(),
+    )
         .map_err(|reason| {
             format!(
                 "Bridge withheld the party/ledger master: {reason}. The workbook cannot label the monetary figures safely."
             )
         })?;
+    let currency_assertion = currency_read.bind_party_ledger_master_assertion(currency_assertion);
     let source = runtime
         .fetch_party_ledger_master_source(request.config, &identity, currency_assertion)
         .await

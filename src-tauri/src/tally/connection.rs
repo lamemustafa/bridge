@@ -18,7 +18,7 @@ use super::{
 use crate::reports::party_ledger_master::{
     PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
 };
-use crate::tally::OutstandingsCurrencyAssertion;
+use crate::tally::runtime::PartyLedgerMasterCurrencyAssertion;
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityProfile, CapabilityState,
     EvidenceConfidence, TransportId,
@@ -816,11 +816,12 @@ impl TallyClient {
         company: &str,
         expected_company_guid: &str,
         boundary_profile: DateBoundaryProfile,
-        currency_assertion: OutstandingsCurrencyAssertion,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
     ) -> anyhow::Result<PartyLedgerMasterSource> {
         let opening_extent = self
             .fetch_company_book_extent(company, expected_company_guid)
             .await?;
+        let currency_assertion = currency_assertion.require_opening_extent(&opening_extent)?;
         let master_period = NativeLedgerExportPeriod::new(
             boundary_profile,
             opening_extent.books_from().clone(),

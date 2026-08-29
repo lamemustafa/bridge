@@ -1,6 +1,7 @@
 use bridge_tally_protocol::{
     decode_tally_xml_response_bytes_limited, parse_native_ledger_source_records_with_evidence,
-    ExpectedTallyTextEncoding, ParsedSourceIdentityKind,
+    parse_native_party_ledger_master_records_with_evidence, ExpectedTallyTextEncoding,
+    ParsedSourceIdentityKind, PartyLedgerMasterFieldObservation,
 };
 
 const AARAV: &[u8] = include_bytes!("fixtures/native/ledgers_native_aarav.utf16le.xml");
@@ -8,6 +9,8 @@ const WR2: &[u8] = include_bytes!("fixtures/native/ledgers_native_wr2_core_windo
 const BVL: &[u8] = include_bytes!("fixtures/native/ledgers_native_bvl.utf16le.xml");
 const MASTER_FIELDS_LAB: &str =
     include_str!("fixtures/native/ledgers_native_master_fields_lab.utf8.xml");
+const MASTER_FIELDS_LAB_PARTIAL_ALTER_BEFORE: &str =
+    include_str!("fixtures/native/master_fields_lab_partial_alter_before.response.xml");
 
 fn decode_utf16le(bytes: &[u8]) -> String {
     decode_tally_xml_response_bytes_limited(
@@ -18,6 +21,20 @@ fn decode_utf16le(bytes: &[u8]) -> String {
     )
     .expect("captured BOM-less UTF-16LE response decodes")
     .text
+}
+
+fn captured_empty_tag<'a>(capture: &'a str, name: &str) -> &'a str {
+    let tag = format!("<{name}/>");
+    let start = capture
+        .find(&tag)
+        .expect("captured partial-master response carries the self-closing field");
+    &capture[start..start + tag.len()]
+}
+
+fn native_party_master_collection(fields: &str) -> String {
+    format!(
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME=\"Bridge self-closing master field\"><GUID>56359347-3976-4d01-b44e-56fa0f6a422c-000000ce</GUID><MASTERID>206</MASTERID><ALTERID>208</ALTERID><PARENT>Sundry Debtors</PARENT><OPENINGBALANCE>0.00</OPENINGBALANCE>{fields}</LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"
+    )
 }
 
 #[test]
@@ -124,6 +141,57 @@ fn captured_master_fields_lab_preserves_contra_signed_party_openings() {
         .expect("captured debit-balance creditor is present");
     assert_eq!(creditor.record.parent.as_deref(), Some("Sundry Creditors"));
     assert_eq!(creditor.record.opening_balance.as_deref(), Some("-1250.00"));
+}
+
+#[test]
+fn captured_self_closing_master_fields_are_returned_empty_and_mixed_duplicates_fail_closed() {
+    // This is the real full-object response from the partial master Alter. Its
+    // object envelope is not the `List of Ledgers` collection profile, so this
+    // test retains its literal field bytes inside the parser's documented
+    // collection envelope rather than treating the object response as a
+    // collection capture.
+    let email = captured_empty_tag(MASTER_FIELDS_LAB_PARTIAL_ALTER_BEFORE, "EMAIL");
+    let state = captured_empty_tag(MASTER_FIELDS_LAB_PARTIAL_ALTER_BEFORE, "STATENAME");
+    let ifsc = captured_empty_tag(MASTER_FIELDS_LAB_PARTIAL_ALTER_BEFORE, "IFSCODE");
+    let pin_code = captured_empty_tag(MASTER_FIELDS_LAB_PARTIAL_ALTER_BEFORE, "LEDPINCODE");
+    let fields = format!("{email}{state}{ifsc}{pin_code}");
+
+    let parsed = parse_native_party_ledger_master_records_with_evidence(
+        &native_party_master_collection(&fields),
+        "56359347-3976-4d01-b44e-56fa0f6a422c",
+    )
+    .expect("captured self-closing master fields parse");
+    assert_eq!(parsed.records.len(), 1, "one wrapped collection row parses");
+    let row = &parsed.records[0].record.fields;
+    assert_eq!(
+        row.email,
+        PartyLedgerMasterFieldObservation::Returned(String::new())
+    );
+    assert_eq!(
+        row.state,
+        PartyLedgerMasterFieldObservation::Returned(String::new())
+    );
+    assert_eq!(
+        row.ifsc_code,
+        PartyLedgerMasterFieldObservation::Returned(String::new())
+    );
+    assert_eq!(
+        row.pin_code,
+        PartyLedgerMasterFieldObservation::Returned(String::new())
+    );
+
+    let duplicate = native_party_master_collection(&format!("<EMAIL>x</EMAIL>{email}"));
+    let error = parse_native_party_ledger_master_records_with_evidence(
+        &duplicate,
+        "56359347-3976-4d01-b44e-56fa0f6a422c",
+    )
+    .expect_err("mixed populated and self-closing EMAIL must not collapse");
+    assert!(
+        error
+            .to_string()
+            .contains("repeated a party/ledger master field"),
+        "unexpected error: {error:#}"
+    );
 }
 
 #[test]
