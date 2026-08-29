@@ -14,7 +14,7 @@ test("evidence scope uses the report's shared bill-or-voucher formatter", async 
   ]);
 
   assert.equal(readProvenance({ source_voucher_count: 0, open_receivable_bill_count: 2 }), "2 open bills read from Tally");
-  assert.equal(readProvenance({ source_voucher_count: 1, open_receivable_bill_count: 2 }), "1 vouchers verified");
+  assert.equal(readProvenance({ source_voucher_count: 1, open_receivable_bill_count: 2 }), "1 voucher verified");
   assert.match(screen, /readProvenance: result\.report/);
   assert.match(panel, /readProvenance\(evidence\.readProvenance\)/);
   assert.doesNotMatch(panel, /sourceVoucherCount/);

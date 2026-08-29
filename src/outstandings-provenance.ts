@@ -11,7 +11,8 @@ export type OutstandingsReadProvenance = {
 // cheaper read.
 export function readProvenance(report: OutstandingsReadProvenance) {
   if (report.source_voucher_count > 0) {
-    return `${report.source_voucher_count.toLocaleString("en-IN")} vouchers verified`;
+    const vouchers = report.source_voucher_count.toLocaleString("en-IN");
+    return `${vouchers} ${report.source_voucher_count === 1 ? "voucher" : "vouchers"} verified`;
   }
   const bills = report.open_receivable_bill_count.toLocaleString("en-IN");
   return `${bills} open ${report.open_receivable_bill_count === 1 ? "bill" : "bills"} read from Tally`;
