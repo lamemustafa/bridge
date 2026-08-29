@@ -70,7 +70,7 @@ pub(super) fn build_core_window(
         let evidence = source_evidence("group", source_id.clone(), &source)?;
         let name = required_foreign_text(&source.record.name, "group_name_missing")?;
         let parent_source_id = resolve_group_parent(
-            source.record.parent.as_deref(),
+            source.record.parent.nonempty_returned_text(),
             &group_ids_by_name,
             "group_parent_missing",
         )?;
@@ -96,7 +96,7 @@ pub(super) fn build_core_window(
         let evidence = source_evidence("ledger", source_id.clone(), &source)?;
         let name = required_foreign_text(&source.record.name, "ledger_name_missing")?;
         let parent_source_id = resolve_optional_reference(
-            source.record.parent.as_deref(),
+            source.record.parent.nonempty_returned_text(),
             &group_ids_by_name,
             "ledger_parent_group_missing",
         )?;

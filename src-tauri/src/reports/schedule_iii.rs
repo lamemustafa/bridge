@@ -129,7 +129,7 @@ fn classify(
     closing_balance: &ExactDecimal,
     groups: &BTreeMap<String, Vec<&PartyLedgerMasterGroup>>,
 ) -> ScheduleIIIClassification {
-    let Some(parent) = row.parent.as_deref() else {
+    let Some(parent) = row.parent.nonempty_returned_text() else {
         return ScheduleIIIClassification::excluded(
             "Ledger has no parent group; its Schedule III head is not determined.",
         );
@@ -163,7 +163,11 @@ fn classify(
             );
         };
         if reserved_name.is_empty() {
-            current = group.parent.as_deref().map(normalize).unwrap_or_default();
+            current = group
+                .parent
+                .nonempty_returned_text()
+                .map(normalize)
+                .unwrap_or_default();
             continue;
         }
         match normalize(reserved_name).as_str() {
@@ -191,7 +195,13 @@ fn classify(
                 ),
                 closing_balance,
             ),
-            _ => current = group.parent.as_deref().map(normalize).unwrap_or_default(),
+            _ => {
+                current = group
+                    .parent
+                    .nonempty_returned_text()
+                    .map(normalize)
+                    .unwrap_or_default()
+            }
         }
     }
     ScheduleIIIClassification::excluded(
@@ -329,7 +339,7 @@ fn normalize(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use bridge_tally_core::{ExactDecimal, TallyDate};
-    use bridge_tally_protocol::PartyLedgerMasterFields;
+    use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMasterFields};
 
     use super::*;
     use crate::tally::OutstandingsCurrencyAssertion;
@@ -337,8 +347,8 @@ mod tests {
     fn row(name: &str, parent: &str, balance: &str) -> PartyLedgerMasterRow {
         PartyLedgerMasterRow {
             name: name.to_string(),
-            parent: Some(parent.to_string()),
-            party_gstin: bridge_tally_protocol::PartyLedgerMasterFieldObservation::NotObserved,
+            parent: PartyLedgerMasterFieldObservation::Returned(parent.to_string()),
+            party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
             fields: PartyLedgerMasterFields::default(),
             guid: format!("guid-{name}"),
             master_id: format!("id-{name}"),
@@ -369,17 +379,19 @@ mod tests {
             groups: vec![
                 PartyLedgerMasterGroup {
                     name: "Regional customers".to_string(),
-                    parent: Some("Renamed debtor root".to_string()),
+                    parent: PartyLedgerMasterFieldObservation::Returned(
+                        "Renamed debtor root".to_string(),
+                    ),
                     reserved_name: Some("".to_string()),
                 },
                 PartyLedgerMasterGroup {
                     name: "Renamed debtor root".to_string(),
-                    parent: Some("Primary".to_string()),
+                    parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("Sundry Debtors".to_string()),
                 },
                 PartyLedgerMasterGroup {
                     name: "Custom".to_string(),
-                    parent: Some("Primary".to_string()),
+                    parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("".to_string()),
                 },
             ],
@@ -412,7 +424,7 @@ mod tests {
             group_response_bytes: 1,
             groups: vec![PartyLedgerMasterGroup {
                 name: "Sundry Debtors".to_string(),
-                parent: Some("Primary".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                 reserved_name: Some("Sundry Debtors".to_string()),
             }],
         };
@@ -447,7 +459,7 @@ mod tests {
             group_response_bytes: 1,
             groups: vec![PartyLedgerMasterGroup {
                 name: "Sundry Creditors".to_string(),
-                parent: Some("Primary".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                 reserved_name: Some("Sundry Creditors".to_string()),
             }],
         };
@@ -483,12 +495,12 @@ mod tests {
             groups: vec![
                 PartyLedgerMasterGroup {
                     name: "Bank Accounts".to_string(),
-                    parent: Some("Primary".to_string()),
+                    parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("Bank Accounts".to_string()),
                 },
                 PartyLedgerMasterGroup {
                     name: "Cash-in-Hand".to_string(),
-                    parent: Some("Primary".to_string()),
+                    parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
                     reserved_name: Some("Cash-in-Hand".to_string()),
                 },
             ],

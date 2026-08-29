@@ -904,7 +904,7 @@ impl TallyClient {
         for source in master.records {
             let key = ledger_display_key(
                 &source.record.ledger.name,
-                source.record.ledger.parent.as_deref(),
+                source.record.ledger.parent.nonempty_returned_text(),
             );
             let balance = balances_by_key
                 .remove(&key)
@@ -1530,12 +1530,15 @@ fn validate_selected_ledgers(
             bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(_)
             | bridge_tally_protocol::PartyLedgerMasterFieldObservation::NotObserved => None,
         };
-        for value in [source.record.parent.as_ref(), party_gstin]
-            .into_iter()
-            .flatten()
-            .filter(|value| !value.trim().is_empty())
+        for value in [
+            source.record.parent.nonempty_returned_text(),
+            party_gstin.map(String::as_str),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|value| !value.trim().is_empty())
         {
-            bridge_tally_core::ForeignText::from_tally(value.clone());
+            bridge_tally_core::ForeignText::from_tally(value);
         }
         if let Some(opening_balance) = source
             .record

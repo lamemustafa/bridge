@@ -59,7 +59,7 @@ fn captured_native_ledgers_preserve_real_identity_book_openings_and_invalid_pare
     }));
     assert!(parsed.records.iter().any(|record| {
         record.record.name == "Profit & Loss A/c"
-            && record.record.parent.as_deref() == Some("\u{fffd}#4; Primary")
+            && record.record.parent.returned_text() == Some("\u{fffd}#4; Primary")
     }));
 
     let non_zero_openings = parsed
@@ -104,7 +104,7 @@ fn captured_wr2_native_ledger_preserves_the_discriminating_signed_decimal() {
         .expect("captured discriminating ledger is present");
 
     assert_eq!(
-        row.record.parent.as_deref(),
+        row.record.parent.returned_text(),
         Some("Bridge Nested Debtors WR4")
     );
     assert_eq!(row.record.opening_balance.as_deref(), Some("-50000.00"));
@@ -131,7 +131,7 @@ fn captured_master_fields_lab_preserves_contra_signed_party_openings() {
         .iter()
         .find(|row| row.record.name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE")
         .expect("captured credit-balance debtor is present");
-    assert_eq!(debtor.record.parent.as_deref(), Some("Sundry Debtors"));
+    assert_eq!(debtor.record.parent.returned_text(), Some("Sundry Debtors"));
     assert_eq!(debtor.record.opening_balance.as_deref(), Some("1250.00"));
 
     let creditor = parsed
@@ -139,7 +139,10 @@ fn captured_master_fields_lab_preserves_contra_signed_party_openings() {
         .iter()
         .find(|row| row.record.name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE")
         .expect("captured debit-balance creditor is present");
-    assert_eq!(creditor.record.parent.as_deref(), Some("Sundry Creditors"));
+    assert_eq!(
+        creditor.record.parent.returned_text(),
+        Some("Sundry Creditors")
+    );
     assert_eq!(creditor.record.opening_balance.as_deref(), Some("-1250.00"));
 }
 
@@ -236,11 +239,9 @@ fn native_ledgers_fail_closed_when_opening_balance_or_company_prefix_is_absent()
     .is_err());
 }
 
-/// `build_core_window` reads `TallyLedger::parent == None` as "this ledger
-/// sits at the tree root". Before the fix, a row that simply omitted PARENT
-/// got that same `None` -- a response quietly dropping the field looked
-/// identical to a genuinely root-parented ledger, silently corrupting the
-/// hierarchy instead of failing. The field must now be observed, not merely
+/// `build_core_window` treats an explicitly empty parent as a root marker.
+/// A response quietly dropping PARENT must not look identical to that
+/// genuinely root-parented ledger, so the field must be observed, not merely
 /// defaulted.
 #[test]
 fn native_ledger_row_omitting_parent_entirely_is_rejected() {
@@ -271,8 +272,8 @@ fn native_ledger_row_omitting_parent_entirely_is_rejected() {
 /// An explicitly EMPTY `PARENT` element is Tally's real shape for a
 /// genuinely root-parented ledger (see `captured_aarav_native_master_parents_resolve_to_the_canonical_tree`
 /// in `connector.rs`, e.g. "Profit & Loss A/c"). It must keep parsing to
-/// `parent: None` and must not be confused with the omitted-field case
-/// above, which is now rejected instead.
+/// `parent: Returned("")` and must not be confused with the omitted-field
+/// case above, which is now rejected instead.
 #[test]
 fn native_ledger_row_with_an_explicitly_empty_parent_is_accepted_and_stays_rooted() {
     let wr2 = decode_utf16le(WR2);
@@ -296,8 +297,9 @@ fn native_ledger_row_with_an_explicitly_empty_parent_is_accepted_and_stays_roote
         .find(|record| record.record.name == "Bridge Nested Debtor WR4")
         .expect("the edited row is still present");
     assert_eq!(
-        row.record.parent, None,
-        "an explicitly empty PARENT must resolve to the same root-marking None as before"
+        row.record.parent,
+        PartyLedgerMasterFieldObservation::Returned(String::new()),
+        "an explicitly empty PARENT must remain a returned empty observation"
     );
     // The rest of the row must be untouched by the PARENT edit.
     assert_eq!(row.record.opening_balance.as_deref(), Some("-50000.00"));

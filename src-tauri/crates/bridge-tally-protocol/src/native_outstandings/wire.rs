@@ -27,7 +27,7 @@ use bridge_tally_primitives::ExactDecimal;
 use crate::tolerant_xml::{
     sanitize_invalid_numeric_references, sanitize_invalid_numeric_references_with_provenance,
 };
-use crate::TallyNamedMaster;
+use crate::{PartyLedgerMasterFieldObservation, TallyNamedMaster};
 
 use super::date::{parse_native_display_date, NativeDisplayDateRole};
 use super::model::{LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError};
@@ -757,7 +757,7 @@ fn parse_group_row(
     Ok((
         TallyNamedMaster {
             name,
-            parent,
+            parent: PartyLedgerMasterFieldObservation::Returned(parent.unwrap_or_default()),
             reserved_name,
         },
         guid,
@@ -1284,8 +1284,11 @@ mod group_tests {
             .expect("native group snapshot parses");
         assert_eq!(groups.len(), 2, "CMPINFO group counter is not a row");
         assert_eq!(groups[0].name, "North Region");
-        assert_eq!(groups[0].parent.as_deref(), Some("Current Assets"));
-        assert_eq!(groups[1].parent.as_deref(), Some("\u{fffd}#4; Primary"));
+        assert_eq!(groups[0].parent.returned_text(), Some("Current Assets"));
+        assert_eq!(
+            groups[1].parent.returned_text(),
+            Some("\u{fffd}#4; Primary")
+        );
 
         let evidence = parse_native_group_snapshot_with_evidence(LIVE_SHAPE, COMPANY_GUID)
             .expect("native group snapshot evidence parses");
@@ -1359,7 +1362,7 @@ mod group_tests {
             .expect("a correctly-prefixed response is accepted");
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].name, "North Region");
-        assert_eq!(groups[0].parent.as_deref(), Some("Current Assets"));
+        assert_eq!(groups[0].parent.returned_text(), Some("Current Assets"));
         assert_eq!(groups[1].name, "Sundry Debtors");
     }
 

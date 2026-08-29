@@ -472,7 +472,7 @@ fn group_parent_map(
             GroupAncestry {
                 parent: group
                     .parent
-                    .as_deref()
+                    .nonempty_returned_text()
                     .map(normalized_group_name)
                     .filter(|parent| !parent.is_empty()),
                 identity: group_identity_key(group, legacy_tolerances)?,
@@ -616,7 +616,7 @@ mod tests {
         ] {
             let groups = [TallyNamedMaster {
                 name: "Sundry Debtors".to_string(),
-                parent: Some(root),
+                parent: crate::PartyLedgerMasterFieldObservation::Returned(root),
                 reserved_name: Some("Sundry Debtors".to_string()),
             }];
             let ledgers = [LedgerSnapshotEntry {
@@ -632,7 +632,7 @@ mod tests {
 
         let groups = [TallyNamedMaster {
             name: "Sundry Debtors".to_string(),
-            parent: Some("Primary".to_string()),
+            parent: crate::PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
             reserved_name: Some("Sundry Debtors".to_string()),
         }];
         for parent in [

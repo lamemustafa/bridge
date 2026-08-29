@@ -35,7 +35,7 @@ pub(crate) struct PartyLedgerMasterSource {
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterRow {
     pub(crate) name: String,
-    pub(crate) parent: Option<String>,
+    pub(crate) parent: PartyLedgerMasterFieldObservation,
     pub(crate) party_gstin: PartyLedgerMasterFieldObservation,
     pub(crate) fields: PartyLedgerMasterFields,
     pub(crate) guid: String,
@@ -49,7 +49,7 @@ pub(crate) struct PartyLedgerMasterRow {
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterGroup {
     pub(crate) name: String,
-    pub(crate) parent: Option<String>,
+    pub(crate) parent: PartyLedgerMasterFieldObservation,
     /// `Some("")` is Tally's explicit user-created-group signal. It must not
     /// be treated as an alias for a built-in Schedule III category.
     pub(crate) reserved_name: Option<String>,
@@ -154,7 +154,7 @@ mod tests {
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![PartyLedgerMasterRow {
                 name: "Customer".to_string(),
-                parent: Some("Sundry Debtors".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
                 party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
                 fields: PartyLedgerMasterFields::default(),
                 guid: "ledger-guid".to_string(),
@@ -219,7 +219,12 @@ mod tests {
         for source in master.records {
             let key = (
                 source.record.ledger.name.clone(),
-                source.record.ledger.parent.clone(),
+                source
+                    .record
+                    .ledger
+                    .parent
+                    .nonempty_returned_text()
+                    .map(str::to_owned),
             );
             let balance = balances
                 .remove(&key)

@@ -134,7 +134,7 @@ pub(crate) fn render_party_ledger_master_xlsx(
     for (offset, row) in source.rows.iter().enumerate() {
         let sheet_row = header_row + 1 + offset as u32;
         worksheet.write_string(sheet_row, 0, &row.name)?;
-        worksheet.write_string(sheet_row, 1, row.parent.as_deref().unwrap_or(""))?;
+        worksheet.write_string(sheet_row, 1, row.parent.workbook_text())?;
         worksheet.write_string(sheet_row, 2, row.party_gstin.workbook_text())?;
         for (column, value) in [
             row.fields.income_tax_number.workbook_text(),
@@ -292,7 +292,7 @@ fn write_schedule_iii(
             let ledger = &source.rows[*index];
             worksheet.write_string(row, 0, line.label)?;
             worksheet.write_string(row, 1, &ledger.name)?;
-            worksheet.write_string(row, 2, ledger.parent.as_deref().unwrap_or(""))?;
+            worksheet.write_string(row, 2, ledger.parent.workbook_text())?;
             worksheet.write_string(row, 3, &ledger.guid)?;
             worksheet.write_string(
                 row,
@@ -325,7 +325,7 @@ fn write_schedule_iii(
     for exclusion in &view.exclusions {
         let ledger = &source.rows[exclusion.row_index];
         worksheet.write_string(row, 0, &ledger.name)?;
-        worksheet.write_string(row, 1, ledger.parent.as_deref().unwrap_or(""))?;
+        worksheet.write_string(row, 1, ledger.parent.workbook_text())?;
         worksheet.write_string(row, 2, &ledger.guid)?;
         worksheet.write_string(row, 3, &exclusion.reason)?;
         row += 1;
@@ -363,7 +363,7 @@ mod tests {
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![PartyLedgerMasterRow {
                 name: "Customer".to_string(),
-                parent: Some("Sundry Debtors".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
                 party_gstin: PartyLedgerMasterFieldObservation::Returned(
                     "29ABCDE1234F1Z5".to_string(),
                 ),
@@ -422,7 +422,7 @@ mod tests {
         let rows = vec![
             PartyLedgerMasterRow {
                 name: "GSTIN not observed".to_string(),
-                parent: Some("Sundry Debtors".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
                 party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
                 fields: PartyLedgerMasterFields::default(),
                 guid: "ledger-guid-1".to_string(),
@@ -433,7 +433,7 @@ mod tests {
             },
             PartyLedgerMasterRow {
                 name: "GSTIN returned empty".to_string(),
-                parent: Some("Sundry Debtors".to_string()),
+                parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
                 party_gstin: PartyLedgerMasterFieldObservation::Returned(String::new()),
                 fields: PartyLedgerMasterFields::default(),
                 guid: "ledger-guid-2".to_string(),
@@ -488,6 +488,91 @@ mod tests {
         assert!(
             !sheet.contains(&explicitly_empty_cell),
             "an explicitly returned empty GSTIN must not be mislabeled as not observed"
+        );
+    }
+
+    fn worksheet_with_parent(parent: PartyLedgerMasterFieldObservation) -> (String, usize) {
+        let workbook = build_party_ledger_master_workbook(PartyLedgerMasterSource {
+            company: "Synthetic Books".to_string(),
+            company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            from: TallyDate::parse("20260401").unwrap(),
+            to: TallyDate::parse("20260731").unwrap(),
+            rows: vec![PartyLedgerMasterRow {
+                name: "Parent observation".to_string(),
+                parent,
+                party_gstin: PartyLedgerMasterFieldObservation::Returned(String::new()),
+                fields: PartyLedgerMasterFields::default(),
+                guid: "ledger-guid-parent".to_string(),
+                master_id: "11".to_string(),
+                alter_id: "12".to_string(),
+                opening_balance: ExactDecimal::parse("-100.00".to_string()).unwrap(),
+                closing_balance: Some(ExactDecimal::parse("125.00".to_string()).unwrap()),
+            }],
+            master_response_sha256: "a".repeat(64),
+            balance_response_sha256: "b".repeat(64),
+            group_response_sha256: "c".repeat(64),
+            master_response_bytes: 100,
+            balance_response_bytes: 200,
+            group_response_bytes: 300,
+            groups: vec![],
+        })
+        .unwrap();
+        let bytes = render_party_ledger_master_xlsx(&workbook).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut sheet = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("xl/worksheets/sheet1.xml").unwrap(),
+            &mut sheet,
+        )
+        .unwrap();
+        let mut shared_strings = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("xl/sharedStrings.xml").unwrap(),
+            &mut shared_strings,
+        )
+        .unwrap();
+        let not_observed_index = shared_strings
+            .split("<si>")
+            .skip(1)
+            .position(|entry| entry.contains("<t>Not observed</t>"))
+            .expect("workbook contains the disclosure label");
+        (sheet, not_observed_index)
+    }
+
+    #[test]
+    fn parent_not_observed_is_labeled_in_the_group_cell() {
+        let (sheet, not_observed_index) =
+            worksheet_with_parent(PartyLedgerMasterFieldObservation::NotObserved);
+        let group_cell = format!(r#"r="B15" t="s"><v>{not_observed_index}</v>"#);
+
+        assert!(
+            sheet.contains(&group_cell),
+            "an omitted parent must render Not observed instead of a blank Group cell"
+        );
+    }
+
+    #[test]
+    fn explicitly_empty_parent_renders_an_empty_group_cell() {
+        let (sheet, not_observed_index) =
+            worksheet_with_parent(PartyLedgerMasterFieldObservation::Returned(String::new()));
+        let group_cell = format!(r#"r="B15" t="s"><v>{not_observed_index}</v>"#);
+
+        assert!(
+            !sheet.contains(&group_cell),
+            "an explicitly empty parent must remain empty rather than being labeled Not observed"
+        );
+        let cell_has_value = sheet
+            .find(r#"<c r="B15""#)
+            .and_then(|start| {
+                sheet[start..]
+                    .find("</c>")
+                    .map(|end| &sheet[start..start + end])
+            })
+            .is_some_and(|cell| cell.contains("<v>"));
+        assert!(
+            !cell_has_value,
+            "an explicitly empty parent must not write a Group-cell value"
         );
     }
 }
