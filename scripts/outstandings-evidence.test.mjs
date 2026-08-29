@@ -8,17 +8,36 @@ import { companyIdentityKey, companyIdentityLabel } from "../src/company-identit
 import { reportEvidenceDrawerEntry } from "../src/evidence-drawer-entry.ts";
 import { readProvenance } from "../src/outstandings-provenance.ts";
 
-test("evidence scope uses the report's shared bill-or-voucher formatter", async () => {
-  const [screen, panel] = await Promise.all([
+test("evidence scope uses the Rust-owned read strategy, not a count inference", async () => {
+  const [screen, panel, runtime] = await Promise.all([
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/src/tally/runtime.rs", import.meta.url), "utf8"),
   ]);
 
-  assert.equal(readProvenance({ source_voucher_count: 0, open_receivable_bill_count: 2 }), "2 open bills read from Tally");
-  assert.equal(readProvenance({ source_voucher_count: 1, open_receivable_bill_count: 2 }), "1 voucher verified");
-  assert.match(screen, /readProvenance: inrCompleteResult\.report/);
+  assert.equal(readProvenance({ read_strategy: "native_bills", source_voucher_count: 0, open_receivable_bill_count: 0 }), "0 open bills read from Tally");
+  assert.equal(readProvenance({ read_strategy: "voucher_scan", source_voucher_count: 0, open_receivable_bill_count: 0 }), "0 vouchers verified");
+  assert.equal(readProvenance({ read_strategy: "voucher_scan", source_voucher_count: 1, open_receivable_bill_count: 2 }), "1 voucher verified");
+  assert.match(screen, /readProvenance: \{\s*read_strategy: inrCompleteResult\.read_strategy,/s);
+  assert.match(screen, /read_strategy: OutstandingsReadProvenance\["read_strategy"\]/);
+  assert.match(screen, /readProvenance: \{\s*read_strategy: inrCompleteResult\.read_strategy,/s);
+  assert.match(runtime, /read_strategy: OutstandingsReadStrategy::NativeBills,/);
+  assert.match(runtime, /read_strategy: OutstandingsReadStrategy::VoucherScan,/);
   assert.match(panel, /readProvenance\(evidence\.readProvenance\)/);
   assert.doesNotMatch(panel, /sourceVoucherCount/);
+});
+
+test("selecting a saved company within local evidence issues no Tally invoke", async () => {
+  const [app, screen] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(app, /liveReadSuppressed=\{evidenceDrawerOpen && evidenceDrawerEntry\.kind === "local-only"\}/);
+  assert.match(screen, /liveReadSuppressed: boolean;/);
+  assert.match(screen, /const readPermitted = !liveReadSuppressed && currencyReadPermitted && requestedAsOf !== null;/);
+  assert.match(screen, /if \(liveReadSuppressed \|\| !company \|\| inrAssertedCompanyIdentity === companyIdentityFor\(company\)\) return;/);
+  assert.match(screen, /\[config\.host, config\.port, company\?\.guid, company\?\.name, company\?\.company_number, company\?\.books_from_yyyymmdd, inrAssertedCompanyIdentity, liveReadSuppressed, onTallyReadActivityChange\]/);
 });
 
 test("unsupported currency evidence is withheld without amounts", async () => {

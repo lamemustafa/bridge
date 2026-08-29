@@ -469,7 +469,7 @@ function App() {
   const [documentsWorkspace, setDocumentsWorkspace] = React.useState(createDocumentsWorkspaceState);
   const [view, setView] = React.useState<View>("dashboard");
   const [evidenceDrawerOpen, setEvidenceDrawerOpen] = React.useState(false);
-  const [evidenceDrawerOpenerRestored, setEvidenceDrawerOpenerRestored] = React.useState(true);
+  const [evidenceDrawerRestorePending, setEvidenceDrawerRestorePending] = React.useState(false);
   const [evidenceDrawerEntry, setEvidenceDrawerEntry] = React.useState<EvidenceDrawerEntry>({ kind: "local-only" });
   const [evidenceDrawerFocusEpoch, setEvidenceDrawerFocusEpoch] = React.useState(0);
   const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
@@ -489,14 +489,14 @@ function App() {
 
   const openEvidenceDrawer = React.useCallback((entry: EvidenceDrawerEntry, opener?: HTMLElement) => {
     evidenceDrawerFocusLifecycle.captureOpener(opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null));
-    setEvidenceDrawerOpenerRestored(false);
+    setEvidenceDrawerRestorePending(false);
     setEvidenceDrawerEntry(entry);
     setEvidenceDrawerOpen(true);
   }, [evidenceDrawerFocusLifecycle]);
   const closeEvidenceDrawer = React.useCallback(() => {
     setEvidenceDrawerOpen(false);
-    setEvidenceDrawerOpenerRestored(evidenceDrawerFocusLifecycle.restoreOpener());
-  }, [evidenceDrawerFocusLifecycle]);
+    setEvidenceDrawerRestorePending(true);
+  }, []);
 
   const refreshRuntime = React.useCallback(async () => {
     try {
@@ -594,21 +594,26 @@ function App() {
 
   React.useEffect(() => {
     const drawerWasOpen = evidenceDrawerWasOpenRef.current;
-    const shouldFocusMainContent = (drawerWasOpen && !evidenceDrawerOpenerRestored)
-      || shouldFocusMainContentAfterViewTransition({
-        previousView: previousViewRef.current,
-        view,
-        drawerWasOpen,
-        drawerOpen: evidenceDrawerOpen,
-      });
+    const shouldFocusMainContent = shouldFocusMainContentAfterViewTransition({
+      previousView: previousViewRef.current,
+      view,
+      drawerWasOpen,
+      drawerOpen: evidenceDrawerOpen,
+    });
+    let focusMainContent = shouldFocusMainContent;
     if (evidenceDrawerOpen) {
       ensureDrawerFocus(evidenceDrawerOpen, evidenceDrawerCloseRef.current);
-    } else if (shouldFocusMainContent) {
+      focusMainContent = false;
+    } else if (evidenceDrawerRestorePending) {
+      focusMainContent = !evidenceDrawerFocusLifecycle.restoreOpener();
+      setEvidenceDrawerRestorePending(false);
+    }
+    if (focusMainContent) {
       mainContentRef.current?.focus();
     }
     previousViewRef.current = view;
     evidenceDrawerWasOpenRef.current = evidenceDrawerOpen;
-  }, [view, evidenceDrawerOpen, evidenceDrawerOpenerRestored, evidenceDrawerFocusEpoch]);
+  }, [view, evidenceDrawerFocusEpoch, evidenceDrawerOpen, evidenceDrawerRestorePending, evidenceDrawerFocusLifecycle]);
 
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
@@ -1815,6 +1820,7 @@ function App() {
             onOpenEvidence={openEvidenceDrawer}
             onViewAllClients={() => setView("clients")}
             liveReadNavigationLocked={childTallyReadCount > 0}
+            liveReadSuppressed={evidenceDrawerOpen && evidenceDrawerEntry.kind === "local-only"}
             openBookCount={completeCurrentProbeCompanies.length}
             asOf={outstandingsAsOfSelection.value}
             onAsOfChange={changeOutstandingsAsOf}

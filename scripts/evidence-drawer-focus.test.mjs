@@ -124,8 +124,21 @@ test("a disconnected drawer opener falls back to the single main-content focus o
   lifecycle.captureOpener(disconnectedOpener);
   assert.equal(lifecycle.restoreOpener(), false);
   assert.equal(disconnectedOpener.focusCalls, undefined);
-  assert.match(app, /setEvidenceDrawerOpenerRestored\(evidenceDrawerFocusLifecycle\.restoreOpener\(\)\);/);
-  assert.match(app, /drawerWasOpen && !evidenceDrawerOpenerRestored\)\s*\|\| shouldFocusMainContentAfterViewTransition/);
+  assert.match(app, /setEvidenceDrawerRestorePending\(true\);/);
+  assert.match(app, /else if \(evidenceDrawerRestorePending\) \{\s*focusMainContent = !evidenceDrawerFocusLifecycle\.restoreOpener\(\);/s);
+});
+
+test("close and navigate decides focus after the opener's old view unmounts", async () => {
+  const app = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const lifecycle = createDrawerFocusLifecycle();
+  const outgoingOutstandingsLink = fakeElement("outgoing Outstandings link");
+
+  lifecycle.captureOpener(outgoingOutstandingsLink);
+  outgoingOutstandingsLink.isConnected = false;
+  assert.equal(lifecycle.restoreOpener(), false, "the post-render decision rejects an opener removed by the new view");
+  assert.match(app, /onClick=\{\(\) => \{ closeEvidenceDrawer\(\); setView\("companies"\); \}\}/);
+  assert.match(app, /else if \(evidenceDrawerRestorePending\) \{\s*focusMainContent = !evidenceDrawerFocusLifecycle\.restoreOpener\(\);/s);
+  assert.equal((app.match(/mainContentRef\.current\?\.focus\(\)/g) ?? []).length, 1);
 });
 
 test("picker replacement while the drawer is open re-runs its focus owner", async () => {
@@ -145,7 +158,7 @@ test("picker replacement while the drawer is open re-runs its focus owner", asyn
   assert.deepEqual(drawerClose.focusCalls, [undefined], "the replacement path returns focus to a connected drawer control");
   assert.equal(ensureDrawerFocus(false, drawerClose), false);
   assert.match(focusOwner, /if \(evidenceDrawerOpen\) \{\s*ensureDrawerFocus\(evidenceDrawerOpen, evidenceDrawerCloseRef\.current\);/s);
-  assert.match(focusOwner, /\[view, evidenceDrawerOpen, evidenceDrawerOpenerRestored, evidenceDrawerFocusEpoch\]/);
+  assert.match(focusOwner, /\[view, evidenceDrawerFocusEpoch, evidenceDrawerOpen, evidenceDrawerRestorePending, evidenceDrawerFocusLifecycle\]/);
   assert.equal((app.match(/mainContentRef\.current\?\.focus\(\)/g) ?? []).length, 1);
 });
 

@@ -113,6 +113,7 @@ pub fn source_from_complete_result(
         unallocated_total,
         statement_unallocated_by_party,
         statement_open_bills,
+        ..
     } = result
     else {
         return Ok(None);
@@ -202,6 +203,7 @@ mod tests {
                 source_voucher_count: 0,
                 source_bytes,
             }),
+            read_strategy: crate::tally::OutstandingsReadStrategy::NativeBills,
             currency_assertion: crate::tally::OutstandingsCurrencyAssertion::Inr,
             ageing_anchor: crate::tally::OutstandingsAgeingAnchor::DueDate,
             synced_at_unix_ms: 1,

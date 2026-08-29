@@ -34,6 +34,7 @@ type Props = {
   /// is open, because a scope switch with one option is noise.
   onViewAllClients?: () => void;
   liveReadNavigationLocked: boolean;
+  liveReadSuppressed: boolean;
   openBookCount?: number;
   asOf: string;
   onAsOfChange: (value: string) => void;
@@ -100,6 +101,7 @@ type LoadResult =
   | {
       state: "complete";
       report: Report;
+      read_strategy: OutstandingsReadProvenance["read_strategy"];
       currency_assertion: string;
       ageing_anchor: OutstandingsAgeingAnchor;
       synced_at_unix_ms: number;
@@ -171,6 +173,7 @@ export function OutstandingsScreen({
   onOpenEvidence,
   onViewAllClients,
   liveReadNavigationLocked,
+  liveReadSuppressed,
   openBookCount = 1,
   asOf,
   onAsOfChange,
@@ -247,7 +250,7 @@ export function OutstandingsScreen({
 
   const currentCompanyIdentity = company ? companyIdentityFor(company) : null;
   const currencyReadPermitted = canStartOutstandingsRead(currentCompanyIdentity, inrAssertedCompanyIdentity);
-  const readPermitted = currencyReadPermitted && requestedAsOf !== null;
+  const readPermitted = !liveReadSuppressed && currencyReadPermitted && requestedAsOf !== null;
   const partialState = result?.state === "partial"
     ? outstandingsPartialState(
       result.reason_code,
@@ -268,7 +271,11 @@ export function OutstandingsScreen({
           asOfYyyymmdd: inrCompleteResult.report.as_of_yyyymmdd,
           ageingAnchor: inrCompleteResult.ageing_anchor,
           currencyAssertion: inrCompleteResult.currency_assertion,
-          readProvenance: inrCompleteResult.report,
+          readProvenance: {
+            read_strategy: inrCompleteResult.read_strategy,
+            source_voucher_count: inrCompleteResult.report.source_voucher_count,
+            open_receivable_bill_count: inrCompleteResult.report.open_receivable_bill_count,
+          },
           sourceBytes: inrCompleteResult.report.source_bytes,
           receivableTotal: inrCompleteResult.report.receivable_total,
           payableTotal: inrCompleteResult.report.payable_total,
@@ -338,7 +345,7 @@ export function OutstandingsScreen({
   // Where Tally cannot settle it (several currencies defined, or a non-Indian
   // one) the manual confirmation below is still shown.
   React.useEffect(() => {
-    if (!company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
+    if (liveReadSuppressed || !company || inrAssertedCompanyIdentity === companyIdentityFor(company)) return;
     let cancelled = false;
     setCurrencyCheck("checking");
     onTallyReadActivityChange(1);
@@ -368,7 +375,7 @@ export function OutstandingsScreen({
     return () => {
       cancelled = true;
     };
-  }, [config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, inrAssertedCompanyIdentity, onTallyReadActivityChange]);
+  }, [config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, inrAssertedCompanyIdentity, liveReadSuppressed, onTallyReadActivityChange]);
 
   // Grouped from the COMPLETE source Bridge received -- the display cap is
   // applied per party inside groupOpenBillsByParty, never to the flattened
@@ -539,7 +546,13 @@ export function OutstandingsScreen({
                   ? `Checked ${relativeTime(result.synced_at_unix_ms)}`
                   : "No Tally data was read"
               : "Not read in this session"}
-            {report ? ` · ${readProvenance(report)}` : ""}
+            {completeResult
+              ? ` · ${readProvenance({
+                  read_strategy: completeResult.read_strategy,
+                  source_voucher_count: completeResult.report.source_voucher_count,
+                  open_receivable_bill_count: completeResult.report.open_receivable_bill_count,
+                })}`
+              : ""}
           </p>
         </div>
         <div className="outstandings-heading-actions">
