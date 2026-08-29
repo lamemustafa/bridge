@@ -337,17 +337,17 @@ mod tests {
         let schedule = super::super::schedule_iii::build_schedule_iii_view(source)
             .expect("captured Schedule III derivation succeeds");
         assert!(schedule.difference.is_zero());
-        assert!(schedule.lines.iter().all(|line| {
-            line.label != "Trade receivables (maturity split not determined)"
-                && line.label != "Trade payables (maturity split not determined)"
-        }));
+        assert!(schedule
+            .lines
+            .iter()
+            .all(|line| line.label.ends_with("group subtotal")));
         assert!(schedule.exclusions.iter().any(|entry| {
             source.rows[entry.row_index].name == "BRIDGE MFLAB DEBTOR CREDIT BALANCE"
-                && entry.reason.contains("customer advance")
+                && entry.reason.contains("opposite polarity")
         }));
         assert!(schedule.exclusions.iter().any(|entry| {
             source.rows[entry.row_index].name == "BRIDGE MFLAB CREDITOR DEBIT BALANCE"
-                && entry.reason.contains("supplier advance")
+                && entry.reason.contains("opposite polarity")
         }));
     }
 }

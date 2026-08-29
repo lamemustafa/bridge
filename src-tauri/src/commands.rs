@@ -32,6 +32,7 @@ use crate::sync::snapshot::{
     capability_profile_sha256, AdaptiveWindowPolicy, PlannedWindow, SnapshotPlan,
     SqliteSnapshotStateStore,
 };
+use crate::tally::connection::PartyLedgerMasterSourceValidationError;
 use crate::tally::runtime::TallyRuntimeControlError;
 use crate::tally::validators::{
     normalize_company_guid, validate_company_name, validate_date_range,
@@ -110,6 +111,19 @@ fn tally_command_error(
 }
 
 fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
+    if error
+        .downcast_ref::<PartyLedgerMasterSourceValidationError>()
+        .is_some()
+    {
+        return tally_command_error(
+            "response_validation_failed",
+            "Response validation",
+            "The paired Tally sources disagreed, so Bridge withheld the unverified result.",
+            "after_change",
+            true,
+            "Keep the result unverified and inspect redacted diagnostics before retrying.",
+        );
+    }
     if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
         return match control {
             TallyRuntimeControlError::Cancelled => tally_command_error(
@@ -3186,6 +3200,17 @@ mod tests {
         ));
         assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
         assert_eq!(discovery_limit.category, "Discovery listing");
+    }
+
+    #[test]
+    fn opening_balance_source_disagreement_is_response_validation_not_endpoint_failure() {
+        let error = tally_runtime_command_error(anyhow::Error::new(
+            crate::tally::connection::PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
+        ));
+
+        assert_eq!(error.code, "response_validation_failed");
+        assert_eq!(error.category, "Response validation");
+        assert_ne!(error.code, "endpoint_unreachable");
     }
 
     #[test]

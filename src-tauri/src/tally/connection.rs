@@ -70,6 +70,18 @@ fn party_ledger_master_openings_agree(
     Ok(master_opening.numeric_eq(balance_opening))
 }
 
+/// The paired sources answered successfully but cannot be reconciled into one
+/// safe workbook source. This is distinct from endpoint or XML failure.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PartyLedgerMasterSourceValidationError {
+    #[error("Tally balance snapshot omitted a ledger master")]
+    BalanceMissingMasterLedger,
+    #[error("Tally ledger opening balances disagreed across the paired sources")]
+    OpeningBalancesDisagreed,
+    #[error("Tally balance snapshot contained a ledger absent from master evidence")]
+    BalanceLedgerAbsentFromMasterEvidence,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DirectCompanyBootstrapError {
     #[error("Tally direct company identity did not match its enumerated candidate")]
@@ -914,9 +926,11 @@ impl TallyClient {
                 &source.record.ledger.name,
                 source.record.ledger.parent.nonempty_returned_text(),
             );
-            let balance = balances_by_key
-                .remove(&key)
-                .ok_or_else(|| anyhow::anyhow!("Tally balance snapshot omitted a ledger master"))?;
+            let balance = balances_by_key.remove(&key).ok_or_else(|| {
+                anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::BalanceMissingMasterLedger,
+                )
+            })?;
             let guid = source
                 .identities
                 .guid
@@ -935,7 +949,9 @@ impl TallyClient {
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted OPENINGBALANCE"))?;
             if !party_ledger_master_openings_agree(master_opening, &balance.opening_balance)? {
-                anyhow::bail!("Tally ledger opening balances disagreed across the paired sources");
+                return Err(anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
+                ));
             }
             rows.push(PartyLedgerMasterRow {
                 name: source.record.ledger.name,
@@ -950,7 +966,9 @@ impl TallyClient {
             });
         }
         if !balances_by_key.is_empty() {
-            anyhow::bail!("Tally balance snapshot contained a ledger absent from master evidence");
+            return Err(anyhow::Error::new(
+                PartyLedgerMasterSourceValidationError::BalanceLedgerAbsentFromMasterEvidence,
+            ));
         }
         rows.sort_by(|left, right| left.name.cmp(&right.name).then(left.guid.cmp(&right.guid)));
         Ok(PartyLedgerMasterSource {

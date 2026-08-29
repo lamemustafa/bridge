@@ -42,10 +42,10 @@ pub(crate) enum ScheduleIIIError {
     UnestablishedBalance,
 }
 
-/// Returns only classifications determined by a Tally built-in group identity.
-/// A total is intentionally labelled as a *group-derived subtotal* whenever
-/// Schedule III requires a client decision (for example, a current/non-current
-/// maturity split). Every other ledger is listed loudly as an exclusion.
+/// Returns only evidence-backed Tally group subtotals. The available reads
+/// establish built-in group identity and balance polarity, but not the
+/// voucher-level commercial purpose or liquidity facts needed for a Schedule
+/// III head. Every other ledger is listed loudly as an exclusion.
 pub(crate) fn build_schedule_iii_view(
     source: &PartyLedgerMasterSource,
 ) -> Result<ScheduleIIIView, ScheduleIIIError> {
@@ -78,8 +78,8 @@ pub(crate) fn build_schedule_iii_view(
         }
 
         match classify(row, closing_balance, &groups) {
-            ScheduleIIIClassification::Head(head) => line_rows
-                .entry((head.section(), head.label()))
+            ScheduleIIIClassification::GroupSubtotal(subtotal) => line_rows
+                .entry((subtotal.section(), subtotal.label()))
                 .or_default()
                 .push(index),
             ScheduleIIIClassification::Excluded(reason) => exclusions.push(ScheduleIIIExclusion {
@@ -171,27 +171,27 @@ fn classify(
             continue;
         }
         match normalize(reserved_name).as_str() {
-            "sundry debtors" => return admit_head(
-                head::Candidate::debit(
-                    "Assets",
-                    "Trade receivables (maturity split not determined)",
-                    "A credit-balance Sundry Debtors ledger is a customer advance; its Schedule III head is not determined by the group and was excluded.",
+            "sundry debtors" => return admit_group_subtotal(
+                subtotal::Candidate::debit(
+                    "Debit-balance group subtotals",
+                    "Sundry Debtors group subtotal",
+                    "A credit-balance Sundry Debtors ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
                 ),
                 closing_balance,
             ),
-            "sundry creditors" => return admit_head(
-                head::Candidate::credit(
-                    "Liabilities",
-                    "Trade payables (maturity split not determined)",
-                    "A debit-balance Sundry Creditors ledger is a supplier advance; its Schedule III head is not determined by the group and was excluded.",
+            "sundry creditors" => return admit_group_subtotal(
+                subtotal::Candidate::credit(
+                    "Credit-balance group subtotals",
+                    "Sundry Creditors group subtotal",
+                    "A debit-balance Sundry Creditors ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
                 ),
                 closing_balance,
             ),
-            "cash-in-hand" | "bank accounts" => return admit_head(
-                head::Candidate::debit(
-                    "Assets",
-                    "Cash and bank balances (Schedule III split not determined)",
-                    "A credit-balance Cash-in-Hand or Bank Accounts ledger may be an overdraft; its Schedule III head is not determined by the group and was excluded.",
+            "cash-in-hand" | "bank accounts" => return admit_group_subtotal(
+                subtotal::Candidate::debit(
+                    "Debit-balance group subtotals",
+                    "Cash-in-Hand / Bank Accounts group subtotal",
+                    "A credit-balance Cash-in-Hand or Bank Accounts ledger has the opposite polarity; its Schedule III head is not determined by the group and was excluded.",
                 ),
                 closing_balance,
             ),
@@ -209,12 +209,12 @@ fn classify(
     )
 }
 
-/// A classifier result is always either an admitted Schedule III head or an
-/// explicit exclusion. `head::ScheduleIIIHead` cannot be constructed outside
+/// A classifier result is always either an evidence-backed group subtotal or
+/// an explicit exclusion. `subtotal::GroupSubtotal` cannot be constructed outside
 /// the polarity gate, so adding another group branch requires selecting and
-/// evaluating its expected balance polarity before it can emit a head.
+/// evaluating its expected balance polarity before it can emit a subtotal.
 enum ScheduleIIIClassification {
-    Head(head::ScheduleIIIHead),
+    GroupSubtotal(subtotal::GroupSubtotal),
     Excluded(String),
 }
 
@@ -224,12 +224,12 @@ impl ScheduleIIIClassification {
     }
 }
 
-fn admit_head(
-    candidate: head::Candidate,
+fn admit_group_subtotal(
+    candidate: subtotal::Candidate,
     closing_balance: &ExactDecimal,
 ) -> ScheduleIIIClassification {
     match candidate.admit(closing_balance) {
-        Ok(head) => ScheduleIIIClassification::Head(head),
+        Ok(subtotal) => ScheduleIIIClassification::GroupSubtotal(subtotal),
         Err(reason) => ScheduleIIIClassification::Excluded(reason.to_string()),
     }
 }
@@ -237,7 +237,7 @@ fn admit_head(
 /// The private head type can only be obtained through `Candidate::admit`.
 /// Keeping that constructor in a child module makes a group branch unable to
 /// create a reportable head directly.
-mod head {
+mod subtotal {
     use bridge_tally_core::ExactDecimal;
 
     #[derive(Clone, Copy)]
@@ -283,14 +283,14 @@ mod head {
         pub(super) fn admit(
             self,
             closing_balance: &ExactDecimal,
-        ) -> Result<ScheduleIIIHead, &'static str> {
+        ) -> Result<GroupSubtotal, &'static str> {
             let admitted = closing_balance.is_zero()
                 || match self.required_polarity {
                     RequiredPolarity::Debit => closing_balance.is_negative(),
                     RequiredPolarity::Credit => !closing_balance.is_negative(),
                 };
             admitted
-                .then_some(ScheduleIIIHead {
+                .then_some(GroupSubtotal {
                     section: self.section,
                     label: self.label,
                 })
@@ -298,12 +298,12 @@ mod head {
         }
     }
 
-    pub(super) struct ScheduleIIIHead {
+    pub(super) struct GroupSubtotal {
         section: &'static str,
         label: &'static str,
     }
 
-    impl ScheduleIIIHead {
+    impl GroupSubtotal {
         pub(super) fn section(&self) -> &'static str {
             self.section
         }
@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn contra_signed_sundry_debtor_is_excluded_not_netted_against_trade_receivables() {
+    fn contra_signed_sundry_debtor_is_excluded_not_netted_against_its_group_subtotal() {
         let source = PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
@@ -440,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn contra_signed_sundry_creditor_is_excluded_not_netted_against_trade_payables() {
+    fn contra_signed_sundry_creditor_is_excluded_not_netted_against_its_group_subtotal() {
         let source = PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
@@ -475,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn contra_signed_bank_account_is_excluded_not_netted_against_cash_and_bank_balances() {
+    fn contra_signed_bank_account_is_excluded_not_netted_against_its_group_subtotal() {
         let source = PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),

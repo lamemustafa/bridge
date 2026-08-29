@@ -211,14 +211,14 @@ fn write_schedule_iii(
     let source = workbook_source.source();
     let view = build_schedule_iii_view(source)?;
     let worksheet = workbook.add_worksheet();
-    worksheet.set_name("Schedule III trace")?;
+    worksheet.set_name("Group subtotal trace")?;
     let bold = Format::new().set_bold();
     let amount = Format::new().set_num_format(AMOUNT_NUM_FORMAT);
-    worksheet.write_string_with_format(0, 0, "Derived Schedule III view", &bold)?;
+    worksheet.write_string_with_format(0, 0, "Derived group subtotal view", &bold)?;
     worksheet.write_string(
         0,
         1,
-        "Traceable group-derived subtotals only; not a replacement for a CA mapping decision.",
+        "Tally group identity and balance polarity only; Schedule III mapping is withheld for a CA decision.",
     )?;
     worksheet.write_string_with_format(1, 0, "Currency", &bold)?;
     worksheet.write_string(1, 1, currency_label(source.currency_assertion))?;
@@ -245,7 +245,7 @@ fn write_schedule_iii(
 
     let header_row = 8u32;
     for (column, label) in [
-        "Section",
+        "Balance side",
         "Group-derived subtotal",
         "Closing balance",
         "Closing balance (exact text)",
@@ -314,7 +314,7 @@ fn write_schedule_iii(
         "Ledger",
         "Parent",
         "GUID",
-        "Why no Schedule III head was emitted",
+        "Why no evidence-backed group subtotal was emitted",
     ]
     .into_iter()
     .enumerate()
@@ -349,7 +349,8 @@ mod tests {
 
     use super::*;
     use crate::reports::party_ledger_master::{
-        build_party_ledger_master_workbook, PartyLedgerMasterRow, PartyLedgerMasterSource,
+        build_party_ledger_master_workbook, PartyLedgerMasterGroup, PartyLedgerMasterRow,
+        PartyLedgerMasterSource,
     };
     use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMasterFields};
 
@@ -415,6 +416,55 @@ mod tests {
         ));
         assert!(!text.contains("One year read"));
         assert!(text.contains("EXCLUSION LIST (loud)"));
+    }
+
+    #[test]
+    fn normally_signed_sundry_debtor_renders_as_a_group_subtotal_not_trade_receivables() {
+        let workbook = build_party_ledger_master_workbook(PartyLedgerMasterSource {
+            company: "Synthetic Books".to_string(),
+            company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            from: TallyDate::parse("20260401").unwrap(),
+            to: TallyDate::parse("20260731").unwrap(),
+            rows: vec![PartyLedgerMasterRow {
+                name: "Customer balance".to_string(),
+                parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
+                party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
+                fields: PartyLedgerMasterFields::default(),
+                guid: "ledger-guid".to_string(),
+                master_id: "7".to_string(),
+                alter_id: "9".to_string(),
+                opening_balance: ExactDecimal::parse("-300.00".to_string()).unwrap(),
+                closing_balance: Some(ExactDecimal::parse("-300.00".to_string()).unwrap()),
+            }],
+            master_response_sha256: "a".repeat(64),
+            balance_response_sha256: "b".repeat(64),
+            group_response_sha256: "c".repeat(64),
+            master_response_bytes: 100,
+            balance_response_bytes: 200,
+            group_response_bytes: 300,
+            groups: vec![PartyLedgerMasterGroup {
+                name: "Sundry Debtors".to_string(),
+                parent: PartyLedgerMasterFieldObservation::Returned("Primary".to_string()),
+                reserved_name: Some("Sundry Debtors".to_string()),
+            }],
+        })
+        .unwrap();
+
+        let bytes = render_party_ledger_master_xlsx(&workbook).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut text = String::new();
+        for name in [
+            "xl/worksheets/sheet1.xml",
+            "xl/worksheets/sheet2.xml",
+            "xl/sharedStrings.xml",
+        ] {
+            std::io::Read::read_to_string(&mut archive.by_name(name).unwrap(), &mut text).unwrap();
+        }
+
+        assert!(text.contains("Sundry Debtors group subtotal"));
+        assert!(text.contains("-300.00"));
+        assert!(!text.contains("Trade receivables"));
     }
 
     #[test]
