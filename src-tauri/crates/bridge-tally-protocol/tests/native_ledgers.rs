@@ -195,6 +195,29 @@ fn captured_self_closing_master_fields_are_returned_empty_and_mixed_duplicates_f
 }
 
 #[test]
+fn party_gstin_distinguishes_an_omitted_field_from_an_explicit_empty_field() {
+    let omitted = parse_native_party_ledger_master_records_with_evidence(
+        &native_party_master_collection(""),
+        "56359347-3976-4d01-b44e-56fa0f6a422c",
+    )
+    .expect("captured-shape ledger without GSTIN parses");
+    assert_eq!(
+        omitted.records[0].record.ledger.party_gstin,
+        PartyLedgerMasterFieldObservation::NotObserved
+    );
+
+    let explicitly_empty = parse_native_party_ledger_master_records_with_evidence(
+        &native_party_master_collection("<PARTYGSTIN/>"),
+        "56359347-3976-4d01-b44e-56fa0f6a422c",
+    )
+    .expect("captured-shape ledger with an empty GSTIN parses");
+    assert_eq!(
+        explicitly_empty.records[0].record.ledger.party_gstin,
+        PartyLedgerMasterFieldObservation::Returned(String::new())
+    );
+}
+
+#[test]
 fn native_ledgers_fail_closed_when_opening_balance_or_company_prefix_is_absent() {
     let wr2 = decode_utf16le(WR2);
     let missing_balance = wr2.replace(

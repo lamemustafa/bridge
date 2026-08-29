@@ -1521,13 +1521,19 @@ fn validate_selected_ledgers(
         if !names.insert(name.as_str().to_string()) {
             anyhow::bail!("Selected ledger response repeated a normalized name");
         }
-        for value in [
-            source.record.parent.as_ref(),
-            source.record.party_gstin.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|value| !value.trim().is_empty())
+        let party_gstin = match &source.record.party_gstin {
+            bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(value)
+                if !value.trim().is_empty() =>
+            {
+                Some(value)
+            }
+            bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(_)
+            | bridge_tally_protocol::PartyLedgerMasterFieldObservation::NotObserved => None,
+        };
+        for value in [source.record.parent.as_ref(), party_gstin]
+            .into_iter()
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
         {
             bridge_tally_core::ForeignText::from_tally(value.clone());
         }

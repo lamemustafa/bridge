@@ -166,6 +166,16 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
             true,
             "Do not retry the unchanged request. Verify Tally gateway health and change the request shape only after reviewing the measured segment.",
         )
+    } else if lower.contains("base currency changed between the currency read and the master read")
+    {
+        (
+            "company_base_currency_changed",
+            "Currency admission",
+            "The selected Tally company changed while Bridge was establishing the workbook currency.",
+            "after_change",
+            true,
+            "Refresh the selected Tally company and retry the export only after its books stop changing.",
+        )
     } else if lower.contains("host")
         || lower.contains("port")
         || lower.contains("loopback")
@@ -252,6 +262,57 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
         tally_state_may_have_changed: false,
         remediation,
     }
+}
+
+/// Adds report context only after the shared runtime mapper has removed
+/// transport and internal details from the operator-facing text.
+fn party_ledger_master_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
+    let mut mapped = tally_runtime_command_error(error);
+    mapped.message = format!(
+        "Bridge withheld the party/ledger master: {}",
+        mapped.message
+    );
+    mapped
+}
+
+fn party_ledger_master_currency_admission_error(reason: &'static str) -> TallyCommandError {
+    let message = match reason {
+        "company_base_currency_undetermined" => {
+            "The selected Tally company has more than one base currency."
+        }
+        "company_base_currency_not_inr" => {
+            "The selected Tally company does not use INR as its base currency."
+        }
+        "company_currency_probe_failed" => {
+            "Bridge could not establish one INR base currency for the selected Tally company."
+        }
+        _ => "Bridge could not establish the selected Tally company's currency.",
+    };
+    tally_command_error(
+        reason,
+        "Currency admission",
+        format!(
+            "Bridge withheld the party/ledger master: {message} The workbook cannot label the monetary figures safely."
+        ),
+        "after_change",
+        true,
+        "Correct the selected Tally company's base-currency setup, then refresh its probe before exporting.",
+    )
+}
+
+fn party_ledger_master_local_export_error(
+    code: &'static str,
+    message: &'static str,
+    remediation: &'static str,
+) -> TallyCommandError {
+    tally_command_error(
+        code,
+        "Operation",
+        message,
+        "after_change",
+        false,
+        remediation,
+    )
 }
 
 /// Produces the typed command error for the encrypted Tally mirror failing to initialise on
@@ -2186,33 +2247,36 @@ pub async fn export_party_ledger_master(
     app: tauri::AppHandle,
     request: CompanyRequest,
     runtime: State<'_, TallyRuntime>,
-) -> Result<String, String> {
+) -> Result<String, TallyCommandError> {
     let identity =
-        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company)
-            .await
-            .map_err(|error| error.message)?;
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     let currency_read = runtime
         .detect_party_ledger_master_currency(request.config.clone(), &identity)
         .await
-        .map_err(|error| format!("Bridge withheld the party/ledger master: {error}"))?;
-    let currency_assertion = establish_inr_currency(
-        currency_read.currency_count(),
-        currency_read.is_inr(),
-    )
-        .map_err(|reason| {
-            format!(
-                "Bridge withheld the party/ledger master: {reason}. The workbook cannot label the monetary figures safely."
-            )
-        })?;
+        .map_err(party_ledger_master_runtime_command_error)?;
+    let currency_assertion =
+        establish_inr_currency(currency_read.currency_count(), currency_read.is_inr())
+            .map_err(party_ledger_master_currency_admission_error)?;
     let currency_assertion = currency_read.bind_party_ledger_master_assertion(currency_assertion);
     let source = runtime
         .fetch_party_ledger_master_source(request.config, &identity, currency_assertion)
         .await
-        .map_err(|error| format!("Bridge withheld the party/ledger master: {error}"))?;
+        .map_err(party_ledger_master_runtime_command_error)?;
     let workbook = build_party_ledger_master_workbook(source)
-        .map_err(|error| format!("Bridge withheld the party/ledger master: {error}"))?;
-    let bytes = render_party_ledger_master_xlsx(&workbook)
-        .map_err(|error| format!("Bridge could not build the party/ledger master: {error}"))?;
+        .map_err(|_| {
+            party_ledger_master_local_export_error(
+                "party_ledger_master_source_invalid",
+                "Bridge withheld the party/ledger master because its verified source could not be represented safely.",
+                "Refresh the selected Tally company and retry the export after reviewing its runtime status.",
+            )
+        })?;
+    let bytes = render_party_ledger_master_xlsx(&workbook).map_err(|_| {
+        party_ledger_master_local_export_error(
+            "party_ledger_master_render_failed",
+            "Bridge could not build the party/ledger master workbook safely.",
+            "Retry the export after reviewing local application status.",
+        )
+    })?;
     let mut slug = statement_filename_slug(workbook.source().company.as_str());
     slug.truncate(150);
     save_report_download_bytes(
@@ -2223,6 +2287,13 @@ pub async fn export_party_ledger_master(
         ),
         &bytes,
     )
+    .map_err(|_| {
+        party_ledger_master_local_export_error(
+            "party_ledger_master_save_failed",
+            "Bridge could not save the party/ledger master workbook.",
+            "Verify local Downloads-folder access, then retry the export.",
+        )
+    })
 }
 
 #[tauri::command]
@@ -2735,12 +2806,12 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 mod tests {
     use super::{
         company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
-        first_calendar_day_canary_window, portable_export_file_name, reconcile_review_cleanup,
-        reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
-        tally_runtime_command_error, validate_dsc_pins,
-        verify_observed_company_tuple_from_companies, write_unique_download, CompanySweepFailure,
-        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity,
-        VerifiedCompanyIdentity,
+        first_calendar_day_canary_window, party_ledger_master_runtime_command_error,
+        portable_export_file_name, reconcile_review_cleanup, reviewed_probe_commitment_sha256,
+        selected_read_observation, tally_command_error, tally_runtime_command_error,
+        validate_dsc_pins, verify_observed_company_tuple_from_companies, write_unique_download,
+        CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
+        SelectedCompanyIdentity, VerifiedCompanyIdentity,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
@@ -3114,6 +3185,21 @@ mod tests {
         ));
         assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
         assert_eq!(discovery_limit.category, "Discovery listing");
+    }
+
+    #[test]
+    fn party_master_export_keeps_runtime_control_error_code_and_hides_runtime_detail() {
+        let error = party_ledger_master_runtime_command_error(anyhow::Error::new(
+            crate::tally::runtime::TallyRuntimeControlError::QueueDeadline,
+        ));
+
+        assert_eq!(error.code, "tally_runtime_temporarily_unavailable");
+        assert_eq!(error.retry, "safe");
+        assert!(error.local_state_changed);
+        assert!(error
+            .message
+            .starts_with("Bridge withheld the party/ledger master:"));
+        assert!(!error.message.contains("QueueDeadline"));
     }
 
     #[test]

@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use bridge_tally_core::{ExactDecimal, TallyDate};
-use bridge_tally_protocol::PartyLedgerMasterFields;
+use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMasterFields};
 
 use crate::tally::OutstandingsCurrencyAssertion;
 
@@ -36,7 +36,7 @@ pub(crate) struct PartyLedgerMasterSource {
 pub(crate) struct PartyLedgerMasterRow {
     pub(crate) name: String,
     pub(crate) parent: Option<String>,
-    pub(crate) party_gstin: Option<String>,
+    pub(crate) party_gstin: PartyLedgerMasterFieldObservation,
     pub(crate) fields: PartyLedgerMasterFields,
     pub(crate) guid: String,
     pub(crate) master_id: String,
@@ -155,7 +155,7 @@ mod tests {
             rows: vec![PartyLedgerMasterRow {
                 name: "Customer".to_string(),
                 parent: Some("Sundry Debtors".to_string()),
-                party_gstin: None,
+                party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
                 fields: PartyLedgerMasterFields::default(),
                 guid: "ledger-guid".to_string(),
                 master_id: "7".to_string(),

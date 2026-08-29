@@ -100,11 +100,13 @@ pub struct StandardLedgerIdentityObservation {
 pub struct TallyLedger {
     pub name: String,
     pub parent: Option<String>,
-    pub party_gstin: Option<String>,
+    /// The shared ledger read requests PARTYGSTIN. Preserve whether Tally
+    /// omitted it instead of collapsing that fact into an empty GSTIN.
+    pub party_gstin: PartyLedgerMasterFieldObservation,
     pub opening_balance: Option<String>,
 }
 
-/// What Tally actually exposed for one requested party/ledger master field.
+/// What Tally actually exposed for one requested party/ledger export field.
 ///
 /// `NotObserved` is deliberately not an empty value: a collection response
 /// cannot distinguish an unset field from one unavailable in this Tally build.
@@ -1272,7 +1274,7 @@ pub fn parse_standard_ledger_catalog(
                 rows.push(TallyLedger {
                     name: ledger_name,
                     parent: observed.parent,
-                    party_gstin: None,
+                    party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
                     opening_balance: None,
                 });
             }
@@ -2429,7 +2431,7 @@ fn parse_native_ledger_collection_row_with_master_fields(
     let mut ledger = TallyLedger {
         name,
         parent: None,
-        party_gstin: None,
+        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
         opening_balance: None,
     };
     let mut identities = ParsedSourceIdentities::default();
@@ -2496,7 +2498,9 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     if std::mem::replace(&mut gstin_seen, true) {
                         anyhow::bail!("native ledger row repeated PARTYGSTIN");
                     }
-                    ledger.party_gstin = read_optional_text(reader, child.name())?;
+                    ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(
+                        read_optional_text(reader, child.name())?.unwrap_or_default(),
+                    );
                 }
                 b"OPENINGBALANCE" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
@@ -2618,6 +2622,7 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     if std::mem::replace(&mut gstin_seen, true) {
                         anyhow::bail!("native ledger row repeated PARTYGSTIN");
                     }
+                    ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(String::new());
                 }
                 b"GUID" | b"MASTERID" | b"ALTERID" | b"OPENINGBALANCE" => {
                     anyhow::bail!("native ledger row omitted a required field");
@@ -3475,7 +3480,7 @@ fn parse_ledger_source_records_for_schema(
                     record: TallyLedger {
                         name: attr_value(&reader, &element, b"NAME").unwrap_or_default(),
                         parent: None,
-                        party_gstin: None,
+                        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
                         opening_balance: None,
                     },
                     identity_kind,
@@ -5113,7 +5118,7 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
     let mut ledger = TallyLedger {
         name: name.unwrap_or_default(),
         parent: None,
-        party_gstin: None,
+        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
         opening_balance: None,
     };
     let mut parent_seen = false;
@@ -5135,7 +5140,9 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
                 if std::mem::replace(&mut gstin_seen, true) {
                     anyhow::bail!("Tally ledger row repeated PARTYGSTIN");
                 }
-                ledger.party_gstin = read_optional_text(reader, element.name())?
+                ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(
+                    read_optional_text(reader, element.name())?.unwrap_or_default(),
+                )
             }
             Event::Start(element)
                 if element
@@ -5148,6 +5155,15 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
                     anyhow::bail!("Tally ledger row repeated OPENINGBALANCE");
                 }
                 ledger.opening_balance = read_optional_text(reader, element.name())?
+            }
+            Event::Empty(element)
+                if element.name().as_ref().eq_ignore_ascii_case(b"PARTYGSTIN") =>
+            {
+                validate_only_attributes(&element, &[])?;
+                if std::mem::replace(&mut gstin_seen, true) {
+                    anyhow::bail!("Tally ledger row repeated PARTYGSTIN");
+                }
+                ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(String::new());
             }
             Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(b"LEDGER") => break,
             Event::Start(_) | Event::Empty(_) => {
@@ -5170,7 +5186,7 @@ fn parse_ledger_write_readback(
     let mut ledger = TallyLedger {
         name: name.ok_or_else(|| anyhow::anyhow!("Tally write readback omitted ledger NAME"))?,
         parent: None,
-        party_gstin: None,
+        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
         opening_balance: None,
     };
     let mut parent_seen = false;
@@ -5192,7 +5208,9 @@ fn parse_ledger_write_readback(
                 if std::mem::replace(&mut gstin_seen, true) {
                     anyhow::bail!("Tally write readback repeated PARTYGSTIN");
                 }
-                ledger.party_gstin = read_optional_text(reader, element.name())?;
+                ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(
+                    read_optional_text(reader, element.name())?.unwrap_or_default(),
+                );
             }
             Event::Start(element)
                 if element
@@ -5219,6 +5237,7 @@ fn parse_ledger_write_readback(
                 if std::mem::replace(&mut gstin_seen, true) {
                     anyhow::bail!("Tally write readback repeated PARTYGSTIN");
                 }
+                ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(String::new());
             }
             Event::Empty(element)
                 if element

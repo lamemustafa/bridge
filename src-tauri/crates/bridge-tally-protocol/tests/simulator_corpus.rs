@@ -7,8 +7,9 @@ use bridge_tally_protocol::{
     parse_standard_ledger_identity_observation, parse_voucher_source_records_with_evidence,
     parse_voucher_type_source_records_with_evidence, parse_vouchers, parse_vouchers_with_evidence,
     validate_exact_selected_export_structure, verify_company_context,
-    verify_selected_voucher_window_context, ParsedSourceIdentityKind, TallyExportStatus,
-    BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
+    verify_selected_voucher_window_context, ParsedSourceIdentityKind,
+    PartyLedgerMasterFieldObservation, TallyExportStatus, BRIDGE_GROUP_EXPORT_SCHEMA,
+    BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
     BRIDGE_VOUCHER_EXPORT_SCHEMA, BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
     MAX_INTERACTIVE_DISCOVERY_COMPANIES,
 };
@@ -860,7 +861,10 @@ fn standard_ledger_catalog_returns_only_context_bound_names_and_parents() {
     assert_eq!(catalog.len(), 1);
     assert_eq!(catalog[0].name, "synthetic-ledger");
     assert_eq!(catalog[0].parent.as_deref(), Some("Primary"));
-    assert_eq!(catalog[0].party_gstin, None);
+    assert_eq!(
+        catalog[0].party_gstin,
+        PartyLedgerMasterFieldObservation::NotObserved
+    );
     assert_eq!(catalog[0].opening_balance, None);
 
     assert!(parse_standard_ledger_catalog(

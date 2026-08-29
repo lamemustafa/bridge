@@ -338,7 +338,7 @@ mod tests {
         PartyLedgerMasterRow {
             name: name.to_string(),
             parent: Some(parent.to_string()),
-            party_gstin: None,
+            party_gstin: bridge_tally_protocol::PartyLedgerMasterFieldObservation::NotObserved,
             fields: PartyLedgerMasterFields::default(),
             guid: format!("guid-{name}"),
             master_id: format!("id-{name}"),

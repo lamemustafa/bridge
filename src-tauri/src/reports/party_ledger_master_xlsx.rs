@@ -134,8 +134,8 @@ pub(crate) fn render_party_ledger_master_xlsx(
     for (offset, row) in source.rows.iter().enumerate() {
         let sheet_row = header_row + 1 + offset as u32;
         worksheet.write_string(sheet_row, 0, &row.name)?;
-        worksheet.write_string(sheet_row, 1, row.parent.as_deref().unwrap_or_default())?;
-        worksheet.write_string(sheet_row, 2, row.party_gstin.as_deref().unwrap_or_default())?;
+        worksheet.write_string(sheet_row, 1, row.parent.as_deref().unwrap_or(""))?;
+        worksheet.write_string(sheet_row, 2, row.party_gstin.workbook_text())?;
         for (column, value) in [
             row.fields.income_tax_number.workbook_text(),
             row.fields.name_on_pan.workbook_text(),
@@ -292,7 +292,7 @@ fn write_schedule_iii(
             let ledger = &source.rows[*index];
             worksheet.write_string(row, 0, line.label)?;
             worksheet.write_string(row, 1, &ledger.name)?;
-            worksheet.write_string(row, 2, ledger.parent.as_deref().unwrap_or_default())?;
+            worksheet.write_string(row, 2, ledger.parent.as_deref().unwrap_or(""))?;
             worksheet.write_string(row, 3, &ledger.guid)?;
             worksheet.write_string(
                 row,
@@ -325,7 +325,7 @@ fn write_schedule_iii(
     for exclusion in &view.exclusions {
         let ledger = &source.rows[exclusion.row_index];
         worksheet.write_string(row, 0, &ledger.name)?;
-        worksheet.write_string(row, 1, ledger.parent.as_deref().unwrap_or_default())?;
+        worksheet.write_string(row, 1, ledger.parent.as_deref().unwrap_or(""))?;
         worksheet.write_string(row, 2, &ledger.guid)?;
         worksheet.write_string(row, 3, &exclusion.reason)?;
         row += 1;
@@ -364,7 +364,9 @@ mod tests {
             rows: vec![PartyLedgerMasterRow {
                 name: "Customer".to_string(),
                 parent: Some("Sundry Debtors".to_string()),
-                party_gstin: Some("29ABCDE1234F1Z5".to_string()),
+                party_gstin: PartyLedgerMasterFieldObservation::Returned(
+                    "29ABCDE1234F1Z5".to_string(),
+                ),
                 fields: PartyLedgerMasterFields {
                     email: PartyLedgerMasterFieldObservation::Returned(
                         "synthetic@example.invalid".to_string(),
@@ -413,5 +415,79 @@ mod tests {
         ));
         assert!(!text.contains("One year read"));
         assert!(text.contains("EXCLUSION LIST (loud)"));
+    }
+
+    #[test]
+    fn gstin_not_observed_is_labeled_while_an_explicit_empty_gstin_is_not() {
+        let rows = vec![
+            PartyLedgerMasterRow {
+                name: "GSTIN not observed".to_string(),
+                parent: Some("Sundry Debtors".to_string()),
+                party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
+                fields: PartyLedgerMasterFields::default(),
+                guid: "ledger-guid-1".to_string(),
+                master_id: "7".to_string(),
+                alter_id: "9".to_string(),
+                opening_balance: ExactDecimal::parse("-100.00".to_string()).unwrap(),
+                closing_balance: Some(ExactDecimal::parse("125.00".to_string()).unwrap()),
+            },
+            PartyLedgerMasterRow {
+                name: "GSTIN returned empty".to_string(),
+                parent: Some("Sundry Debtors".to_string()),
+                party_gstin: PartyLedgerMasterFieldObservation::Returned(String::new()),
+                fields: PartyLedgerMasterFields::default(),
+                guid: "ledger-guid-2".to_string(),
+                master_id: "8".to_string(),
+                alter_id: "10".to_string(),
+                opening_balance: ExactDecimal::parse("-200.00".to_string()).unwrap(),
+                closing_balance: Some(ExactDecimal::parse("250.00".to_string()).unwrap()),
+            },
+        ];
+        let workbook = build_party_ledger_master_workbook(PartyLedgerMasterSource {
+            company: "Synthetic Books".to_string(),
+            company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            from: TallyDate::parse("20260401").unwrap(),
+            to: TallyDate::parse("20260731").unwrap(),
+            rows,
+            master_response_sha256: "a".repeat(64),
+            balance_response_sha256: "b".repeat(64),
+            group_response_sha256: "c".repeat(64),
+            master_response_bytes: 100,
+            balance_response_bytes: 200,
+            group_response_bytes: 300,
+            groups: vec![],
+        })
+        .unwrap();
+        let bytes = render_party_ledger_master_xlsx(&workbook).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut sheet = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("xl/worksheets/sheet1.xml").unwrap(),
+            &mut sheet,
+        )
+        .unwrap();
+        let mut shared_strings = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("xl/sharedStrings.xml").unwrap(),
+            &mut shared_strings,
+        )
+        .unwrap();
+        let not_observed_index = shared_strings
+            .split("<si>")
+            .skip(1)
+            .position(|entry| entry.contains("<t>Not observed</t>"))
+            .expect("workbook contains the disclosure label");
+        let not_observed_cell = format!(r#"r="C15" t="s"><v>{not_observed_index}</v>"#);
+        let explicitly_empty_cell = format!(r#"r="C16" t="s"><v>{not_observed_index}</v>"#);
+
+        assert!(
+            sheet.contains(&not_observed_cell),
+            "an omitted GSTIN must render the observation label"
+        );
+        assert!(
+            !sheet.contains(&explicitly_empty_cell),
+            "an explicitly returned empty GSTIN must not be mislabeled as not observed"
+        );
     }
 }
