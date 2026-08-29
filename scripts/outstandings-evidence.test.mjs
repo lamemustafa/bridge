@@ -15,9 +15,30 @@ test("evidence scope uses the report's shared bill-or-voucher formatter", async 
 
   assert.equal(readProvenance({ source_voucher_count: 0, open_receivable_bill_count: 2 }), "2 open bills read from Tally");
   assert.equal(readProvenance({ source_voucher_count: 1, open_receivable_bill_count: 2 }), "1 voucher verified");
-  assert.match(screen, /readProvenance: result\.report/);
+  assert.match(screen, /readProvenance: inrCompleteResult\.report/);
   assert.match(panel, /readProvenance\(evidence\.readProvenance\)/);
   assert.doesNotMatch(panel, /sourceVoucherCount/);
+});
+
+test("unsupported currency evidence is withheld without amounts", async () => {
+  const [screen, panel] = await Promise.all([
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8"),
+  ]);
+  const reportEvidence = screen.slice(
+    screen.indexOf("const reportEvidence"),
+    screen.indexOf("const load = React.useCallback"),
+  );
+  const withheldEvidence = reportEvidence.slice(
+    reportEvidence.indexOf('state: "withheld"'),
+    reportEvidence.indexOf("};", reportEvidence.indexOf('state: "withheld"')),
+  );
+
+  assert.match(screen, /const inrCompleteResult = isInrCompleteResult\(result\) \? result : null;/);
+  assert.match(reportEvidence, /: inrCompleteResult\s*\? \{[\s\S]*?currencyAssertion: inrCompleteResult\.currency_assertion,[\s\S]*?receivableTotal: inrCompleteResult\.report\.receivable_total,/);
+  assert.match(withheldEvidence, /state: "withheld"/);
+  assert.doesNotMatch(withheldEvidence, /receivableTotal|payableTotal/);
+  assert.match(panel, /evidence\.state === "complete" \? "Complete result" : evidence\.state === "partial" \? "Partial result" : evidence\.title/);
 });
 
 test("evidence identity distinguishes same-named books by the pinned composite key", async () => {

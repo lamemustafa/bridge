@@ -102,7 +102,9 @@ export function createDrawerFocusLifecycle() {
     restoreOpener() {
       const capturedOpener = opener;
       opener = null;
-      if (capturedOpener?.isConnected) capturedOpener.focus({ preventScroll: true });
+      if (!capturedOpener?.isConnected) return false;
+      capturedOpener.focus({ preventScroll: true });
+      return true;
     },
   };
 }

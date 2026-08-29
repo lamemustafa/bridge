@@ -411,7 +411,7 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "d4acb0525be430c66cac41dd3470bac039c7b25490920f263025092f3a27d913"
+      "sha256": "138826bd1ea5c70406ccc915ef191311e502bd23e84388df67d431c3c7311ae0"
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
@@ -419,7 +419,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "6b3290ba801db595fb5eb30316ce336de4eeaa392daa56f626ae51ae233e4e54"
+      "sha256": "ec70f690368a82930b351f460802f3f325f16a87b8eca5d9fba432cc0d394569"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -494,5 +494,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "84b50b0ba45c3dc85281b7bdf1d01d8fbb0172f0e918594a30b2c6996d405958"
+  "manifest_sha256": "f3f0dbd830e141683e3e54f099942dec2440d9ab476445433a6d44eb2bd0673d"
 }

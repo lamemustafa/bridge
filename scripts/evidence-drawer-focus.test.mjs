@@ -105,7 +105,7 @@ test("evidence drawer lifecycle restores the captured opener for Close and Escap
     const lifecycle = createDrawerFocusLifecycle();
     const opener = fakeElement(`${dismissal} opener`);
     lifecycle.captureOpener(opener);
-    lifecycle.restoreOpener();
+    assert.equal(lifecycle.restoreOpener(), true);
     assert.deepEqual(opener.focusCalls, [{ preventScroll: true }], `${dismissal} returns focus to the original opener`);
   }
 
@@ -113,6 +113,18 @@ test("evidence drawer lifecycle restores the captured opener for Close and Escap
   assert.match(app, /ref=\{evidenceDrawerCloseRef\} onClick=\{closeEvidenceDrawer\}/);
   assert.match(app, /captureOpener\(opener \?\? \(document\.activeElement instanceof HTMLElement/);
   assert.match(app, /if \(evidenceDrawerOpen\) \{\s*evidenceDrawerCloseRef\.current\?\.focus\(\);/s);
+});
+
+test("a disconnected drawer opener falls back to the single main-content focus owner", async () => {
+  const app = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const lifecycle = createDrawerFocusLifecycle();
+  const disconnectedOpener = fakeElement("unmounted opener", { isConnected: false });
+
+  lifecycle.captureOpener(disconnectedOpener);
+  assert.equal(lifecycle.restoreOpener(), false);
+  assert.equal(disconnectedOpener.focusCalls, undefined);
+  assert.match(app, /setEvidenceDrawerOpenerRestored\(evidenceDrawerFocusLifecycle\.restoreOpener\(\)\);/);
+  assert.match(app, /drawerWasOpen && !evidenceDrawerOpenerRestored\)\s*\|\| shouldFocusMainContentAfterViewTransition/);
 });
 
 test("ordinary view transitions focus main content without overriding drawer restoration", async () => {

@@ -37,7 +37,7 @@ export function OutstandingsEvidencePanel({ evidence }: Props) {
           <h2 id="report-evidence-heading">Report-bound Outstandings read</h2>
           <p className="panel-description">This is the exact read that produced the report behind this drawer. It is separate from the Core Accounting history below.</p>
         </div>
-        <span>{evidence.state === "complete" ? "Complete result" : "Partial result"}</span>
+        <span>{evidence.state === "complete" ? "Complete result" : evidence.state === "partial" ? "Partial result" : evidence.title}</span>
       </div>
       <dl className="report-evidence-facts">
         <div><dt>Company</dt><dd>{companyIdentityLabel(evidence.companyIdentity)}</dd></div>
@@ -51,13 +51,15 @@ export function OutstandingsEvidencePanel({ evidence }: Props) {
             <div><dt>Receivable</dt><dd>{evidence.receivableTotal}</dd></div>
             <div><dt>Payable</dt><dd>{evidence.payableTotal}</dd></div>
           </>
-        ) : (
+        ) : evidence.state === "partial" ? (
           <>
             <div><dt>Requested as of</dt><dd>{displayDate(evidence.requestedAsOfYyyymmdd)}</dd></div>
             <div><dt>Tally as of</dt><dd>{displayDate(evidence.tallyAsOfYyyymmdd)}</dd></div>
             <div><dt>Read attempted</dt><dd>{evidence.tallyReadAttempted ? "Yes" : "No"}</dd></div>
             <div><dt>Reason code</dt><dd><code>{evidence.reasonCode}</code></dd></div>
           </>
+        ) : (
+          <div><dt>Result</dt><dd>{evidence.message}</dd></div>
         )}
       </dl>
       {evidence.state === "partial" && (

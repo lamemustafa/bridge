@@ -116,9 +116,9 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
 
   assert.doesNotMatch(nav, /Mirror/);
   assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{\(event\) => onOpenEvidence\(reportEvidence, event\.currentTarget\)\}/);
-  assert.match(outstandings, /asOfYyyymmdd: result\.report\.as_of_yyyymmdd/);
-  assert.match(outstandings, /ageingAnchor: result\.ageing_anchor/);
-  assert.match(outstandings, /readProvenance: result\.report/);
+  assert.match(outstandings, /asOfYyyymmdd: inrCompleteResult\.report\.as_of_yyyymmdd/);
+  assert.match(outstandings, /ageingAnchor: inrCompleteResult\.ageing_anchor/);
+  assert.match(outstandings, /readProvenance: inrCompleteResult\.report/);
   assert.match(outstandings, /reasonCode: result\.reason_code/);
   assert.match(outstandings, /tallyReadAttempted: partialState\?\.tallyReadAttempted/);
   assert.match(app, /\{evidenceDrawerOpen && \(/);

@@ -90,6 +90,10 @@ type PartySort = { key: PartySortKey; direction: "asc" | "desc" };
 // party's bill count can never push another party's rows out of view.
 const DISPLAY_OPEN_BILL_ROW_LIMIT = 2_000;
 const DISPLAY_UNALLOCATED_PARTY_LIMIT = 10;
+const UNSUPPORTED_CURRENCY_WITHHELD = {
+  title: "Totals withheld",
+  message: "Bridge received an unsupported currency assertion. Unit A displays totals only for an explicit INR assertion.",
+} as const;
 
 type LoadResult =
   | {
@@ -144,6 +148,13 @@ export type OutstandingsEvidence =
       title: string;
       message: string;
       tallyReadAttempted: boolean;
+    }
+  | {
+      state: "withheld";
+      companyIdentity: CompanyIdentityKey;
+      syncedAt: number;
+      title: string;
+      message: string;
     };
 
 type InrCompleteResult = Extract<LoadResult, { state: "complete" }> & { currency_assertion: "INR" };
@@ -189,6 +200,8 @@ export function OutstandingsScreen({
   const currentRequestedAsOf = React.useRef(requestedAsOf);
   currentRequestedAsOf.current = requestedAsOf;
   const result = asOfBoundValueForAsOf(loadedResult, requestedAsOf);
+  const inrCompleteResult = isInrCompleteResult(result) ? result : null;
+  const unsupportedCurrencyAssertion = result?.state === "complete" && !inrCompleteResult;
   // Settles the initial tab once per loaded report, keyed on the report's own
   // sync timestamp -- not on every render, and never after the operator has
   // clicked a tab, since this effect only fires again when a NEW report
@@ -246,20 +259,21 @@ export function OutstandingsScreen({
   const tallyReadAttempted = result?.state === "partial" && partialState?.tallyReadAttempted;
   const reportEvidence: OutstandingsEvidence | null = !result || !currentCompanyIdentity
     ? null
-    : result.state === "complete"
+    : inrCompleteResult
       ? {
           state: "complete",
           companyIdentity: currentCompanyIdentity,
-          syncedAt: result.synced_at_unix_ms,
-          asOfYyyymmdd: result.report.as_of_yyyymmdd,
-          ageingAnchor: result.ageing_anchor,
-          currencyAssertion: result.currency_assertion,
-          readProvenance: result.report,
-          sourceBytes: result.report.source_bytes,
-          receivableTotal: result.report.receivable_total,
-          payableTotal: result.report.payable_total,
+          syncedAt: inrCompleteResult.synced_at_unix_ms,
+          asOfYyyymmdd: inrCompleteResult.report.as_of_yyyymmdd,
+          ageingAnchor: inrCompleteResult.ageing_anchor,
+          currencyAssertion: inrCompleteResult.currency_assertion,
+          readProvenance: inrCompleteResult.report,
+          sourceBytes: inrCompleteResult.report.source_bytes,
+          receivableTotal: inrCompleteResult.report.receivable_total,
+          payableTotal: inrCompleteResult.report.payable_total,
         }
-      : {
+      : result.state === "partial"
+      ? {
           state: "partial",
           companyIdentity: currentCompanyIdentity,
           syncedAt: result.synced_at_unix_ms,
@@ -269,6 +283,12 @@ export function OutstandingsScreen({
           title: partialState?.title ?? "Partial result withheld",
           message: partialState?.message ?? result.reason_code,
           tallyReadAttempted: partialState?.tallyReadAttempted ?? false,
+        }
+      : {
+          state: "withheld",
+          companyIdentity: currentCompanyIdentity,
+          syncedAt: result.synced_at_unix_ms,
+          ...UNSUPPORTED_CURRENCY_WITHHELD,
         };
 
   const load = React.useCallback(async () => {
@@ -349,10 +369,6 @@ export function OutstandingsScreen({
     };
   }, [config.host, config.port, company?.guid, company?.name, company?.company_number, company?.books_from_yyyymmdd, inrAssertedCompanyIdentity, onTallyReadActivityChange]);
 
-  // Must sit above the early returns below: a hook placed after them runs on
-  // some renders and not others, which React rejects outright with "Rendered
-  // more hooks than during the previous render" -- and the whole screen blanks.
-  const inrCompleteResult = isInrCompleteResult(result) ? result : null;
   // Grouped from the COMPLETE source Bridge received -- the display cap is
   // applied per party inside groupOpenBillsByParty, never to the flattened
   // cross-party list, so one party's bill count can never push another
@@ -458,7 +474,6 @@ export function OutstandingsScreen({
   // NOT known and those two are absent.
   const ageingDisclosure = report && completeResult?.unallocated_total === undefined
     && outstandingsAgeingDisclosure(report.has_unaged_receivable);
-  const unsupportedCurrencyAssertion = result?.state === "complete" && !completeResult;
   const batchStatementRowsAvailable = completeResult !== null
     && (completeResult.statement_open_bills !== undefined
       || completeResult.statement_unallocated_by_party !== undefined);
@@ -688,8 +703,8 @@ export function OutstandingsScreen({
       )}
       {unsupportedCurrencyAssertion && (
         <div className="outstandings-state error" role="alert">
-          <strong>Totals withheld</strong>
-          <span>Bridge received an unsupported currency assertion. Unit A displays totals only for an explicit INR assertion.</span>
+          <strong>{UNSUPPORTED_CURRENCY_WITHHELD.title}</strong>
+          <span>{UNSUPPORTED_CURRENCY_WITHHELD.message}</span>
         </div>
       )}
 

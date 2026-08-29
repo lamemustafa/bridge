@@ -468,6 +468,7 @@ function App() {
   const [documentsWorkspace, setDocumentsWorkspace] = React.useState(createDocumentsWorkspaceState);
   const [view, setView] = React.useState<View>("dashboard");
   const [evidenceDrawerOpen, setEvidenceDrawerOpen] = React.useState(false);
+  const [evidenceDrawerOpenerRestored, setEvidenceDrawerOpenerRestored] = React.useState(true);
   const [outstandingsEvidence, setOutstandingsEvidence] = React.useState<OutstandingsEvidence | null>(null);
   const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
     () => automaticOutstandingsAsOf(),
@@ -486,12 +487,13 @@ function App() {
 
   const openEvidenceDrawer = React.useCallback((evidence: OutstandingsEvidence | null = null, opener?: HTMLElement) => {
     evidenceDrawerFocusLifecycle.captureOpener(opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null));
+    setEvidenceDrawerOpenerRestored(false);
     setOutstandingsEvidence(evidence);
     setEvidenceDrawerOpen(true);
   }, [evidenceDrawerFocusLifecycle]);
   const closeEvidenceDrawer = React.useCallback(() => {
     setEvidenceDrawerOpen(false);
-    evidenceDrawerFocusLifecycle.restoreOpener();
+    setEvidenceDrawerOpenerRestored(evidenceDrawerFocusLifecycle.restoreOpener());
   }, [evidenceDrawerFocusLifecycle]);
 
   const refreshRuntime = React.useCallback(async () => {
@@ -590,19 +592,21 @@ function App() {
 
   React.useEffect(() => {
     const drawerWasOpen = evidenceDrawerWasOpenRef.current;
+    const shouldFocusMainContent = (drawerWasOpen && !evidenceDrawerOpenerRestored)
+      || shouldFocusMainContentAfterViewTransition({
+        previousView: previousViewRef.current,
+        view,
+        drawerWasOpen,
+        drawerOpen: evidenceDrawerOpen,
+      });
     if (evidenceDrawerOpen) {
       evidenceDrawerCloseRef.current?.focus();
-    } else if (shouldFocusMainContentAfterViewTransition({
-      previousView: previousViewRef.current,
-      view,
-      drawerWasOpen,
-      drawerOpen: evidenceDrawerOpen,
-    })) {
+    } else if (shouldFocusMainContent) {
       mainContentRef.current?.focus();
     }
     previousViewRef.current = view;
     evidenceDrawerWasOpenRef.current = evidenceDrawerOpen;
-  }, [view, evidenceDrawerOpen]);
+  }, [view, evidenceDrawerOpen, evidenceDrawerOpenerRestored]);
 
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
