@@ -62,6 +62,14 @@ fn ledger_display_key(name: &str, parent: Option<&str>) -> String {
     format!("{}:{name}{}:{parent}", name.len(), parent.len())
 }
 
+fn party_ledger_master_openings_agree(
+    master_opening: &str,
+    balance_opening: &bridge_tally_core::ExactDecimal,
+) -> anyhow::Result<bool> {
+    let master_opening = bridge_tally_core::ExactDecimal::parse(master_opening.to_owned())?;
+    Ok(master_opening.numeric_eq(balance_opening))
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DirectCompanyBootstrapError {
     #[error("Tally direct company identity did not match its enumerated candidate")]
@@ -926,7 +934,7 @@ impl TallyClient {
                 .opening_balance
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted OPENINGBALANCE"))?;
-            if master_opening != balance.opening_balance.as_str() {
+            if !party_ledger_master_openings_agree(master_opening, &balance.opening_balance)? {
                 anyhow::bail!("Tally ledger opening balances disagreed across the paired sources");
             }
             rows.push(PartyLedgerMasterRow {
@@ -1634,8 +1642,8 @@ mod tests {
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
         has_presentation_equivalent_guid_siblings, normalize_discovered_companies,
-        party_ledger_master_balance_period, tally_endpoint, unique_company_identities, TallyClient,
-        TallyConfig, TallyProduct,
+        party_ledger_master_balance_period, party_ledger_master_openings_agree, tally_endpoint,
+        unique_company_identities, TallyClient, TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TallyDate,
@@ -1658,6 +1666,33 @@ mod tests {
         .expect("the derived common boundary is valid");
         assert_eq!(period.to().as_str(), "20260501");
         assert!(period.to() >= &TallyDate::parse("20260415").unwrap());
+    }
+
+    #[test]
+    fn party_master_opening_balance_comparison_accepts_equivalent_decimal_scale() {
+        assert!(party_ledger_master_openings_agree(
+            "0",
+            &bridge_tally_core::ExactDecimal::parse("0.00").unwrap(),
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn party_master_opening_balance_comparison_withholds_a_real_numeric_mismatch() {
+        assert!(!party_ledger_master_openings_agree(
+            "0.01",
+            &bridge_tally_core::ExactDecimal::parse("0.00").unwrap(),
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn party_master_opening_balance_comparison_rejects_an_unparseable_master_value() {
+        assert!(party_ledger_master_openings_agree(
+            "not-an-amount",
+            &bridge_tally_core::ExactDecimal::parse("0.00").unwrap(),
+        )
+        .is_err());
     }
 
     fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {

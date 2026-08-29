@@ -93,6 +93,12 @@ impl ExactDecimal {
         exact_arithmetic::is_negative_nonzero(self.as_str())
     }
 
+    /// Compares two validated lexemes by numeric value, ignoring scale-only
+    /// differences such as `0` and `0.00`.
+    pub fn numeric_eq(&self, other: &Self) -> bool {
+        exact_arithmetic::numeric_equal(self.as_str(), other.as_str())
+    }
+
     pub fn abs(&self) -> Result<Self, TallyError> {
         if self.is_negative() {
             Self::parse(self.as_str().trim_start_matches('-').to_string())

@@ -2820,9 +2820,10 @@ mod tests {
     use super::require_utf8_destination;
     use crate::tally::{
         ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
-        SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
+        SelectedReadObservation, TallyCompany, TallyLedger, TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
+    use bridge_tally_protocol::PartyLedgerMasterFieldObservation;
     use std::collections::BTreeMap;
 
     #[test]
@@ -3200,6 +3201,56 @@ mod tests {
             .message
             .starts_with("Bridge withheld the party/ledger master:"));
         assert!(!error.message.contains("QueueDeadline"));
+    }
+
+    #[test]
+    fn shared_ledger_command_result_keeps_legacy_nullable_observation_json() {
+        let result = vec![
+            TallyLedger {
+                name: "Returned ledger".to_string(),
+                parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
+                party_gstin: PartyLedgerMasterFieldObservation::Returned(
+                    "29ABCDE1234F1Z5".to_string(),
+                ),
+                opening_balance: Some("0".to_string()),
+            },
+            TallyLedger {
+                name: "Empty ledger".to_string(),
+                parent: PartyLedgerMasterFieldObservation::Returned(String::new()),
+                party_gstin: PartyLedgerMasterFieldObservation::Returned(String::new()),
+                opening_balance: None,
+            },
+            TallyLedger {
+                name: "Unobserved ledger".to_string(),
+                parent: PartyLedgerMasterFieldObservation::NotObserved,
+                party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
+                opening_balance: None,
+            },
+        ];
+
+        assert_eq!(
+            serde_json::to_value(result).expect("command result serializes"),
+            serde_json::json!([
+                {
+                    "name": "Returned ledger",
+                    "parent": "Sundry Debtors",
+                    "party_gstin": "29ABCDE1234F1Z5",
+                    "opening_balance": "0",
+                },
+                {
+                    "name": "Empty ledger",
+                    "parent": "",
+                    "party_gstin": "",
+                    "opening_balance": null,
+                },
+                {
+                    "name": "Unobserved ledger",
+                    "parent": null,
+                    "party_gstin": null,
+                    "opening_balance": null,
+                },
+            ])
+        );
     }
 
     #[test]

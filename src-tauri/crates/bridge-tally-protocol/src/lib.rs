@@ -113,6 +113,7 @@ pub struct TallyLedger {
 /// `NotObserved` is deliberately not an empty value: a collection response
 /// cannot distinguish an unset field from one unavailable in this Tally build.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
 pub enum PartyLedgerMasterFieldObservation {
     Returned(String),
     #[default]
