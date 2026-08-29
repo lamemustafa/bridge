@@ -47,7 +47,7 @@ test("saved pins remain selectable for local proof review without a Tally read",
   assert.match(frontend, /Review local Mirror &amp; Proof evidence without contacting Tally\./);
   assert.match(frontend, /Change saved company/);
   assert.match(frontend, /const savedCompanySelectionLocked = snapshotActive\s*\|\| snapshotStartOutcomeUnknown\s*\|\| tallyAction !== null\s*\|\| childTallyReadCount > 0;/s);
-  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
+  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*if \(evidenceDrawerOpen\) setEvidenceDrawerFocusEpoch\(\(current\) => current \+ 1\);\s*\}/s);
   assert.match(frontend, /selectSavedCompany\(""\)\} disabled=\{savedCompanySelectionLocked\}/);
   assert.match(frontend, /selectSavedCompany\(key\)\} disabled=\{savedCompanySelectionLocked\}/);
 });

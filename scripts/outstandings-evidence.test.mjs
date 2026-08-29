@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { companyIdentityKey, companyIdentityLabel } from "../src/company-identity.ts";
+import { reportEvidenceDrawerEntry } from "../src/evidence-drawer-entry.ts";
 import { readProvenance } from "../src/outstandings-provenance.ts";
 
 test("evidence scope uses the report's shared bill-or-voucher formatter", async () => {
@@ -58,8 +59,12 @@ test("evidence identity distinguishes same-named books by the pinned composite k
   assert.match(panel, /companyIdentityLabel\(evidence\.companyIdentity\)/);
 });
 
-test("saved local evidence opens the drawer without entering a Tally read view", async () => {
-  const app = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+test("local-only and failed report reads have distinct no-evidence drawer entries", async () => {
+  const [app, panel, screen] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+  ]);
   const localEvidenceEntry = app.slice(
     app.indexOf('{selectedCompanyRecord?.mirror_company_id && ('),
     app.indexOf('{setupConnectionComplete && ('),
@@ -70,7 +75,19 @@ test("saved local evidence opens the drawer without entering a Tally read view",
   );
 
   assert.match(localEvidenceEntry, /Open local evidence/);
-  assert.match(localEvidenceEntry, /openEvidenceDrawer\(null, event\.currentTarget\)/);
+  assert.match(localEvidenceEntry, /openEvidenceDrawer\(\{ kind: "local-only" \}, event\.currentTarget\)/);
   assert.doesNotMatch(localEvidenceEntry, /selectedCompanyReadable/);
   assert.doesNotMatch(openDrawer, /invoke\(|setView\("outstandings"\)/);
+  assert.deepEqual(reportEvidenceDrawerEntry(null, null), { kind: "report-not-read" });
+  assert.deepEqual(reportEvidenceDrawerEntry(null, "Tally connection ended"), {
+    kind: "report-read-failed",
+    message: "Tally connection ended",
+  });
+  assert.match(screen, /onOpenEvidence\(reportEvidenceDrawerEntry\(reportEvidence, error\), event\.currentTarget\)/);
+  assert.match(panel, /entry\.kind === "local-only"/);
+  assert.match(panel, /This drawer was opened for local evidence review, not from an Outstandings report\./);
+  assert.match(panel, /entry\.kind === "report-read-failed"/);
+  assert.match(panel, /Outstandings read failed/);
+  assert.match(panel, /Bridge could not complete the report-bound read: \{entry\.message\}/);
+  assert.doesNotMatch(panel.slice(panel.indexOf('entry.kind === "report-read-failed"'), panel.indexOf("const { evidence } = entry")), /local evidence review/);
 });

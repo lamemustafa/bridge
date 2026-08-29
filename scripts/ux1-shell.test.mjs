@@ -115,7 +115,7 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
   );
 
   assert.doesNotMatch(nav, /Mirror/);
-  assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{\(event\) => onOpenEvidence\(reportEvidence, event\.currentTarget\)\}/);
+  assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{\(event\) => onOpenEvidence\(reportEvidenceDrawerEntry\(reportEvidence, error\), event\.currentTarget\)\}/);
   assert.match(outstandings, /asOfYyyymmdd: inrCompleteResult\.report\.as_of_yyyymmdd/);
   assert.match(outstandings, /ageingAnchor: inrCompleteResult\.ageing_anchor/);
   assert.match(outstandings, /readProvenance: inrCompleteResult\.report/);
@@ -125,7 +125,7 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
   assert.match(app, /className="evidence-drawer"/);
   assert.match(app, /event\.key === "Escape"\) \{\s*closeEvidenceDrawer\(\);\s*return;/s);
   assert.match(app, /visibleDrawerTabStops\(event\.currentTarget\)/);
-  assert.match(app, /<OutstandingsEvidencePanel evidence=\{outstandingsEvidence\} \/>/);
+  assert.match(app, /<OutstandingsEvidencePanel entry=\{evidenceDrawerEntry\} \/>/);
   assert.match(app, /Separate Core Accounting evidence/);
   assert.match(app, /\{selectedCompanyRecord\?\.mirror_company_id && \(/);
   assert.match(app, /Open local evidence/);

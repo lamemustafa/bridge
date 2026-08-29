@@ -13,8 +13,9 @@ import {
 } from "./tally-company-selection";
 import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
-import { OutstandingsScreen, type OutstandingsEvidence } from "./OutstandingsScreen";
+import { OutstandingsScreen } from "./OutstandingsScreen";
 import { OutstandingsEvidencePanel } from "./OutstandingsEvidencePanel";
+import type { EvidenceDrawerEntry } from "./evidence-drawer-entry";
 import { AllClientsScreen } from "./AllClientsScreen";
 import {
   automaticOutstandingsAsOf,
@@ -29,7 +30,7 @@ import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
-import { createDrawerFocusLifecycle, drawerFocusBoundaryTarget, shouldFocusMainContentAfterViewTransition, visibleDrawerTabStops } from "./evidence-drawer-focus";
+import { createDrawerFocusLifecycle, drawerFocusBoundaryTarget, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, visibleDrawerTabStops } from "./evidence-drawer-focus";
 import "./styles.css";
 
 type TallyConfig = {
@@ -469,7 +470,8 @@ function App() {
   const [view, setView] = React.useState<View>("dashboard");
   const [evidenceDrawerOpen, setEvidenceDrawerOpen] = React.useState(false);
   const [evidenceDrawerOpenerRestored, setEvidenceDrawerOpenerRestored] = React.useState(true);
-  const [outstandingsEvidence, setOutstandingsEvidence] = React.useState<OutstandingsEvidence | null>(null);
+  const [evidenceDrawerEntry, setEvidenceDrawerEntry] = React.useState<EvidenceDrawerEntry>({ kind: "local-only" });
+  const [evidenceDrawerFocusEpoch, setEvidenceDrawerFocusEpoch] = React.useState(0);
   const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
     () => automaticOutstandingsAsOf(),
   );
@@ -485,10 +487,10 @@ function App() {
   const previousViewRef = React.useRef(view);
   const evidenceDrawerWasOpenRef = React.useRef(evidenceDrawerOpen);
 
-  const openEvidenceDrawer = React.useCallback((evidence: OutstandingsEvidence | null = null, opener?: HTMLElement) => {
+  const openEvidenceDrawer = React.useCallback((entry: EvidenceDrawerEntry, opener?: HTMLElement) => {
     evidenceDrawerFocusLifecycle.captureOpener(opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null));
     setEvidenceDrawerOpenerRestored(false);
-    setOutstandingsEvidence(evidence);
+    setEvidenceDrawerEntry(entry);
     setEvidenceDrawerOpen(true);
   }, [evidenceDrawerFocusLifecycle]);
   const closeEvidenceDrawer = React.useCallback(() => {
@@ -600,13 +602,13 @@ function App() {
         drawerOpen: evidenceDrawerOpen,
       });
     if (evidenceDrawerOpen) {
-      evidenceDrawerCloseRef.current?.focus();
+      ensureDrawerFocus(evidenceDrawerOpen, evidenceDrawerCloseRef.current);
     } else if (shouldFocusMainContent) {
       mainContentRef.current?.focus();
     }
     previousViewRef.current = view;
     evidenceDrawerWasOpenRef.current = evidenceDrawerOpen;
-  }, [view, evidenceDrawerOpen, evidenceDrawerOpenerRestored]);
+  }, [view, evidenceDrawerOpen, evidenceDrawerOpenerRestored, evidenceDrawerFocusEpoch]);
 
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
@@ -755,6 +757,7 @@ function App() {
     if (key === selectedCompany || savedCompanySelectionLocked) return;
     clearSelectedCompanyScope();
     setSelectedCompany(key);
+    if (evidenceDrawerOpen) setEvidenceDrawerFocusEpoch((current) => current + 1);
   }
 
   function selectClientFromShell(key: string) {
@@ -1844,7 +1847,7 @@ function App() {
               <section className="panel wide offline-evidence-entry" aria-labelledby="offline-evidence-heading">
                 <h2 id="offline-evidence-heading">Review saved local evidence</h2>
                 <p className="panel-description">Inspect {selectedCompanyRecord.name}&rsquo;s local proof ledger, durable runs, and redacted proof exports without contacting Tally.</p>
-                <button className="secondary-action" type="button" onClick={(event) => openEvidenceDrawer(null, event.currentTarget)}>Open local evidence</button>
+                <button className="secondary-action" type="button" onClick={(event) => openEvidenceDrawer({ kind: "local-only" }, event.currentTarget)}>Open local evidence</button>
               </section>
             )}
 
@@ -1992,13 +1995,13 @@ function App() {
               <header className="evidence-drawer-header">
                 <div>
                   <p className="eyebrow">Report evidence</p>
-                  <h2 id="evidence-drawer-title">{outstandingsEvidence ? "Report evidence and limits" : "Local evidence and limits"}</h2>
-                  <p>{outstandingsEvidence ? "The report-bound read is shown first. Core Accounting history is separate below." : "This local evidence review is not attached to a current Outstandings report."}</p>
+                  <h2 id="evidence-drawer-title">{evidenceDrawerEntry.kind === "local-only" ? "Local evidence and limits" : "Report evidence and limits"}</h2>
+                  <p>{evidenceDrawerEntry.kind === "local-only" ? "This local evidence review is not attached to a current Outstandings report." : "The report-bound read is shown first. Core Accounting history is separate below."}</p>
                 </div>
                 <button className="secondary-action" type="button" ref={evidenceDrawerCloseRef} onClick={closeEvidenceDrawer}>Close</button>
               </header>
               <div className="evidence-drawer-content">
-          <OutstandingsEvidencePanel evidence={outstandingsEvidence} />
+          <OutstandingsEvidencePanel entry={evidenceDrawerEntry} />
           <section className="evidence-domain-boundary" aria-labelledby="core-accounting-evidence-heading">
             <h2 id="core-accounting-evidence-heading">Separate Core Accounting evidence</h2>
             <p>This local mirror, proof, and runtime history is not evidence for the Outstandings report above. It has its own pack scope and run history.</p>

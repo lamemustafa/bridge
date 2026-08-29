@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   createDrawerFocusLifecycle,
   drawerFocusBoundaryIndex,
+  ensureDrawerFocus,
   shouldFocusMainContentAfterViewTransition,
   visibleDrawerTabStops,
 } from "../src/evidence-drawer-focus.ts";
@@ -112,7 +113,7 @@ test("evidence drawer lifecycle restores the captured opener for Close and Escap
   assert.match(app, /event\.key === "Escape"\) \{\s*closeEvidenceDrawer\(\);\s*return;/s);
   assert.match(app, /ref=\{evidenceDrawerCloseRef\} onClick=\{closeEvidenceDrawer\}/);
   assert.match(app, /captureOpener\(opener \?\? \(document\.activeElement instanceof HTMLElement/);
-  assert.match(app, /if \(evidenceDrawerOpen\) \{\s*evidenceDrawerCloseRef\.current\?\.focus\(\);/s);
+  assert.match(app, /if \(evidenceDrawerOpen\) \{\s*ensureDrawerFocus\(evidenceDrawerOpen, evidenceDrawerCloseRef\.current\);/s);
 });
 
 test("a disconnected drawer opener falls back to the single main-content focus owner", async () => {
@@ -125,6 +126,27 @@ test("a disconnected drawer opener falls back to the single main-content focus o
   assert.equal(disconnectedOpener.focusCalls, undefined);
   assert.match(app, /setEvidenceDrawerOpenerRestored\(evidenceDrawerFocusLifecycle\.restoreOpener\(\)\);/);
   assert.match(app, /drawerWasOpen && !evidenceDrawerOpenerRestored\)\s*\|\| shouldFocusMainContentAfterViewTransition/);
+});
+
+test("picker replacement while the drawer is open re-runs its focus owner", async () => {
+  const app = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const selectSavedCompany = app.slice(
+    app.indexOf("function selectSavedCompany"),
+    app.indexOf("function selectClientFromShell"),
+  );
+  const focusOwner = app.slice(
+    app.indexOf("React.useEffect(() => {\n    const drawerWasOpen"),
+    app.indexOf("const snapshotActive"),
+  );
+
+  assert.match(selectSavedCompany, /if \(evidenceDrawerOpen\) setEvidenceDrawerFocusEpoch\(\(current\) => current \+ 1\);/);
+  const drawerClose = fakeElement("drawer close");
+  assert.equal(ensureDrawerFocus(true, drawerClose), true);
+  assert.deepEqual(drawerClose.focusCalls, [undefined], "the replacement path returns focus to a connected drawer control");
+  assert.equal(ensureDrawerFocus(false, drawerClose), false);
+  assert.match(focusOwner, /if \(evidenceDrawerOpen\) \{\s*ensureDrawerFocus\(evidenceDrawerOpen, evidenceDrawerCloseRef\.current\);/s);
+  assert.match(focusOwner, /\[view, evidenceDrawerOpen, evidenceDrawerOpenerRestored, evidenceDrawerFocusEpoch\]/);
+  assert.equal((app.match(/mainContentRef\.current\?\.focus\(\)/g) ?? []).length, 1);
 });
 
 test("ordinary view transitions focus main content without overriding drawer restoration", async () => {

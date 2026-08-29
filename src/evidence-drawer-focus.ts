@@ -92,6 +92,12 @@ export function shouldFocusMainContentAfterViewTransition({
   return previousView !== view && !drawerWasOpen && !drawerOpen;
 }
 
+export function ensureDrawerFocus(drawerOpen: boolean, target: DrawerFocusTarget | null) {
+  if (!drawerOpen || !target?.isConnected) return false;
+  target.focus();
+  return true;
+}
+
 export function createDrawerFocusLifecycle() {
   let opener: DrawerFocusTarget | null = null;
 

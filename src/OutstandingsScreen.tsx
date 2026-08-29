@@ -17,6 +17,7 @@ import {
   type AsOfBoundValue,
 } from "./outstandings-as-of";
 import { companyIdentityKey, type CompanyIdentityKey } from "./company-identity";
+import { reportEvidenceDrawerEntry, type EvidenceDrawerEntry } from "./evidence-drawer-entry";
 
 type Props = {
   config: { host: string; port: number };
@@ -28,7 +29,7 @@ type Props = {
     canonical_origin: string;
   };
   onChangeSetup: () => void;
-  onOpenEvidence: (evidence: OutstandingsEvidence | null, opener: HTMLElement) => void;
+  onOpenEvidence: (entry: EvidenceDrawerEntry, opener: HTMLElement) => void;
   /// Switches to the cross-client view. Present only when more than one book
   /// is open, because a scope switch with one option is noise.
   onViewAllClients?: () => void;
@@ -655,7 +656,7 @@ export function OutstandingsScreen({
 
       <p className="outstandings-evidence-caveat" role="note">
         These figures are tied to this read, not a complete-books guarantee or an atomic Tally snapshot.
-        <button className="outstandings-evidence-link" type="button" onClick={(event) => onOpenEvidence(reportEvidence, event.currentTarget)}>Review evidence and limits</button>
+        <button className="outstandings-evidence-link" type="button" onClick={(event) => onOpenEvidence(reportEvidenceDrawerEntry(reportEvidence, error), event.currentTarget)}>Review evidence and limits</button>
       </p>
 
       {exportNotice && (

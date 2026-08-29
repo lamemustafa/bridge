@@ -1,10 +1,10 @@
 import { outstandingsAgeingAnchorLabel } from "./outstandings-copy";
-import type { OutstandingsEvidence } from "./OutstandingsScreen";
+import type { EvidenceDrawerEntry } from "./evidence-drawer-entry";
 import { companyIdentityLabel } from "./company-identity";
 import { readProvenance } from "./outstandings-provenance";
 
 type Props = {
-  evidence: OutstandingsEvidence | null;
+  entry: EvidenceDrawerEntry;
 };
 
 function displayDate(value?: string) {
@@ -20,8 +20,8 @@ function displayBytes(value: number) {
   return `${new Intl.NumberFormat().format(value)} bytes`;
 }
 
-export function OutstandingsEvidencePanel({ evidence }: Props) {
-  if (!evidence) {
+export function OutstandingsEvidencePanel({ entry }: Props) {
+  if (entry.kind === "local-only") {
     return (
       <section className="panel wide report-evidence-panel" aria-labelledby="report-evidence-heading">
         <h2 id="report-evidence-heading">No Outstandings read attached</h2>
@@ -29,6 +29,26 @@ export function OutstandingsEvidencePanel({ evidence }: Props) {
       </section>
     );
   }
+
+  if (entry.kind === "report-not-read") {
+    return (
+      <section className="panel wide report-evidence-panel" aria-labelledby="report-evidence-heading">
+        <h2 id="report-evidence-heading">No Outstandings read available</h2>
+        <p className="panel-description">No report-bound Outstandings read has completed for this view. Run or refresh the read before relying on report evidence.</p>
+      </section>
+    );
+  }
+
+  if (entry.kind === "report-read-failed") {
+    return (
+      <section className="panel wide report-evidence-panel" aria-labelledby="report-evidence-heading" role="alert">
+        <h2 id="report-evidence-heading">Outstandings read failed</h2>
+        <p className="panel-description">Bridge could not complete the report-bound read: {entry.message}</p>
+      </section>
+    );
+  }
+
+  const { evidence } = entry;
 
   return (
     <section className="panel wide report-evidence-panel" aria-labelledby="report-evidence-heading">
