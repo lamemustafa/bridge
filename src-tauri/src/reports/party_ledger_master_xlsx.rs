@@ -1,5 +1,6 @@
 //! Renders the exact party and ledger master source as one `.xlsx` workbook.
 
+use bridge_tally_protocol::PartyLedgerMasterFieldObservation;
 use rust_xlsxwriter::{Format, Workbook, XlsxError};
 
 use super::party_ledger_master::PartyLedgerMasterWorkbook;
@@ -82,7 +83,7 @@ pub(crate) fn render_party_ledger_master_xlsx(
     worksheet.write_string(
         9,
         1,
-        "A field omitted by Tally was unset in this book and remains blank here; Bridge never manufactures master data.",
+        PartyLedgerMasterFieldObservation::NOT_OBSERVED_WORKBOOK_DISCLOSURE,
     )?;
     worksheet.write_string_with_format(10, 0, "Currency", &bold)?;
     worksheet.write_string(10, 1, currency_label(source.currency_assertion))?;
@@ -136,24 +137,24 @@ pub(crate) fn render_party_ledger_master_xlsx(
         worksheet.write_string(sheet_row, 1, row.parent.as_deref().unwrap_or_default())?;
         worksheet.write_string(sheet_row, 2, row.party_gstin.as_deref().unwrap_or_default())?;
         for (column, value) in [
-            row.fields.income_tax_number.as_deref(),
-            row.fields.name_on_pan.as_deref(),
-            row.fields.pin_code.as_deref(),
-            row.fields.gst_pin_code.as_deref(),
-            row.fields.msme_registration_number.as_deref(),
-            row.fields.udyam_registration_number.as_deref(),
-            row.fields.bank_account_holder_name.as_deref(),
-            row.fields.bank_details.as_deref(),
-            row.fields.ifsc_code.as_deref(),
-            row.fields.email.as_deref(),
-            row.fields.phone.as_deref(),
-            row.fields.state.as_deref(),
-            row.fields.address.as_deref(),
+            row.fields.income_tax_number.workbook_text(),
+            row.fields.name_on_pan.workbook_text(),
+            row.fields.pin_code.workbook_text(),
+            row.fields.gst_pin_code.workbook_text(),
+            row.fields.msme_registration_number.workbook_text(),
+            row.fields.udyam_registration_number.workbook_text(),
+            row.fields.bank_account_holder_name.workbook_text(),
+            row.fields.bank_details.workbook_text(),
+            row.fields.ifsc_code.workbook_text(),
+            row.fields.email.workbook_text(),
+            row.fields.phone.workbook_text(),
+            row.fields.state.workbook_text(),
+            row.fields.address.workbook_text(),
         ]
         .into_iter()
         .enumerate()
         {
-            worksheet.write_string(sheet_row, 3 + column as u16, value.unwrap_or_default())?;
+            worksheet.write_string(sheet_row, 3 + column as u16, value)?;
         }
         worksheet.write_string(sheet_row, 16, &row.guid)?;
         worksheet.write_string(sheet_row, 17, &row.master_id)?;
@@ -221,11 +222,15 @@ fn write_schedule_iii(
     )?;
     worksheet.write_string_with_format(1, 0, "Currency", &bold)?;
     worksheet.write_string(1, 1, currency_label(source.currency_assertion))?;
-    worksheet.write_string_with_format(2, 0, "Comparative", &bold)?;
+    worksheet.write_string_with_format(2, 0, "Read period", &bold)?;
     worksheet.write_string(
         2,
         1,
-        "One year read. No prior-year values were requested or inferred.",
+        format!(
+            "Read period: {} to {}. No prior-year values were requested or inferred.",
+            source.from.as_str(),
+            source.to.as_str()
+        ),
     )?;
     for (row, label, value) in [
         (3, "Debit total", view.debit_total.as_str()),
@@ -346,7 +351,7 @@ mod tests {
     use crate::reports::party_ledger_master::{
         build_party_ledger_master_workbook, PartyLedgerMasterRow, PartyLedgerMasterSource,
     };
-    use bridge_tally_protocol::PartyLedgerMasterFields;
+    use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMasterFields};
 
     #[test]
     fn renders_evidence_currency_and_returned_fields_in_the_workbook() {
@@ -361,7 +366,9 @@ mod tests {
                 parent: Some("Sundry Debtors".to_string()),
                 party_gstin: Some("29ABCDE1234F1Z5".to_string()),
                 fields: PartyLedgerMasterFields {
-                    email: Some("synthetic@example.invalid".to_string()),
+                    email: PartyLedgerMasterFieldObservation::Returned(
+                        "synthetic@example.invalid".to_string(),
+                    ),
                     ..PartyLedgerMasterFields::default()
                 },
                 guid: "ledger-guid".to_string(),
@@ -391,10 +398,19 @@ mod tests {
         }
         assert!(text.contains("Master response SHA-256"));
         assert!(text.contains("Unavailable fields"));
+        assert!(text.contains(
+            "“Not observed” means this Tally response did not return the requested field; it does not establish whether that field is unset in this book or unavailable in this Tally build. Bridge never manufactures master data."
+        ));
+        assert!(text.contains("Not observed"));
+        assert!(!text.contains("was unset in this book"));
         assert!(text.contains("Income Tax number (as returned)"));
         assert!(text.contains("synthetic@example.invalid"));
         assert!(text.contains("Currency"));
         assert!(text.contains("INR"));
+        assert!(text.contains(
+            "Read period: 20260401 to 20260731. No prior-year values were requested or inferred."
+        ));
+        assert!(!text.contains("One year read"));
         assert!(text.contains("EXCLUSION LIST (loud)"));
     }
 }

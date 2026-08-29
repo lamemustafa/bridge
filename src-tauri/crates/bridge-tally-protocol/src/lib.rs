@@ -104,23 +104,47 @@ pub struct TallyLedger {
     pub opening_balance: Option<String>,
 }
 
-/// Sensitive ledger-master fields read only by the dedicated party/ledger
-/// workbook path. Ordinary ledger reads never request or retain these values.
+/// What Tally actually exposed for one requested party/ledger master field.
+///
+/// `NotObserved` is deliberately not an empty value: a collection response
+/// cannot distinguish an unset field from one unavailable in this Tally build.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum PartyLedgerMasterFieldObservation {
+    Returned(String),
+    #[default]
+    NotObserved,
+}
+
+impl PartyLedgerMasterFieldObservation {
+    pub const NOT_OBSERVED_WORKBOOK_TEXT: &str = "Not observed";
+    pub const NOT_OBSERVED_WORKBOOK_DISCLOSURE: &str = "“Not observed” means this Tally response did not return the requested field; it does not establish whether that field is unset in this book or unavailable in this Tally build. Bridge never manufactures master data.";
+
+    pub fn workbook_text(&self) -> &str {
+        match self {
+            Self::Returned(value) => value,
+            Self::NotObserved => Self::NOT_OBSERVED_WORKBOOK_TEXT,
+        }
+    }
+}
+
+/// Sensitive ledger-master observations read only by the dedicated
+/// party/ledger workbook path. Ordinary ledger reads never request or retain
+/// these values.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PartyLedgerMasterFields {
-    pub income_tax_number: Option<String>,
-    pub name_on_pan: Option<String>,
-    pub pin_code: Option<String>,
-    pub gst_pin_code: Option<String>,
-    pub msme_registration_number: Option<String>,
-    pub udyam_registration_number: Option<String>,
-    pub bank_account_holder_name: Option<String>,
-    pub bank_details: Option<String>,
-    pub ifsc_code: Option<String>,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub state: Option<String>,
-    pub address: Option<String>,
+    pub income_tax_number: PartyLedgerMasterFieldObservation,
+    pub name_on_pan: PartyLedgerMasterFieldObservation,
+    pub pin_code: PartyLedgerMasterFieldObservation,
+    pub gst_pin_code: PartyLedgerMasterFieldObservation,
+    pub msme_registration_number: PartyLedgerMasterFieldObservation,
+    pub udyam_registration_number: PartyLedgerMasterFieldObservation,
+    pub bank_account_holder_name: PartyLedgerMasterFieldObservation,
+    pub bank_details: PartyLedgerMasterFieldObservation,
+    pub ifsc_code: PartyLedgerMasterFieldObservation,
+    pub email: PartyLedgerMasterFieldObservation,
+    pub phone: PartyLedgerMasterFieldObservation,
+    pub state: PartyLedgerMasterFieldObservation,
+    pub address: PartyLedgerMasterFieldObservation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -2604,6 +2628,84 @@ fn parse_native_ledger_collection_row_with_master_fields(
                         anyhow::bail!("native ledger row repeated REMOTEID");
                     }
                 }
+                b"INCOMETAXNUMBER" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.income_tax_number,
+                )?,
+                b"NAMEONPAN" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.name_on_pan,
+                )?,
+                b"LEDPINCODE" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.pin_code,
+                )?,
+                b"LEDGSTPINCODE" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.gst_pin_code,
+                )?,
+                b"MSMEREGNUMBER" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.msme_registration_number,
+                )?,
+                b"LEDUDYAMREGNUMBER" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.udyam_registration_number,
+                )?,
+                b"BANKACCHOLDERNAME" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.bank_account_holder_name,
+                )?,
+                b"BANKDETAILS" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.bank_details,
+                )?,
+                b"IFSCODE" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.ifsc_code,
+                )?,
+                b"EMAIL" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.email,
+                )?,
+                b"LEDGERPHONE" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.phone,
+                )?,
+                b"STATENAME" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.state,
+                )?,
+                b"LEDADDRESS.LIST" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.address,
+                )?,
                 _ => {}
             },
             Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"LEDGER") => break,
@@ -2645,7 +2747,7 @@ fn retain_party_ledger_master_field(
     element: &quick_xml::events::BytesStart<'_>,
     retain: bool,
     seen: &mut HashSet<Vec<u8>>,
-    target: &mut Option<String>,
+    target: &mut PartyLedgerMasterFieldObservation,
 ) -> anyhow::Result<()> {
     validate_only_attributes(element, &[b"TYPE"])?;
     let name = element.name();
@@ -2655,7 +2757,24 @@ fn retain_party_ledger_master_field(
     }
     let value = read_flattened_optional_text(reader, name)?;
     if retain {
-        *target = value;
+        *target = PartyLedgerMasterFieldObservation::Returned(value.unwrap_or_default());
+    }
+    Ok(())
+}
+
+fn retain_empty_party_ledger_master_field(
+    element: &quick_xml::events::BytesStart<'_>,
+    retain: bool,
+    seen: &mut HashSet<Vec<u8>>,
+    target: &mut PartyLedgerMasterFieldObservation,
+) -> anyhow::Result<()> {
+    validate_only_attributes(element, &[b"TYPE"])?;
+    let key = element.name().as_ref().to_ascii_uppercase();
+    if !seen.insert(key) {
+        anyhow::bail!("native ledger row repeated a party/ledger master field");
+    }
+    if retain {
+        *target = PartyLedgerMasterFieldObservation::Returned(String::new());
     }
     Ok(())
 }

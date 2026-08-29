@@ -126,7 +126,8 @@ mod tests {
         native_outstandings::{
             parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
         },
-        parse_native_party_ledger_master_records_with_evidence, PartyLedgerMasterFields,
+        parse_native_party_ledger_master_records_with_evidence, PartyLedgerMasterFieldObservation,
+        PartyLedgerMasterFields,
     };
 
     use super::*;
@@ -318,8 +319,14 @@ mod tests {
         }));
         assert!(source.rows.iter().any(|row| {
             row.name == "BRIDGE MFLAB DEBTOR BETA"
-                && row.fields.income_tax_number.as_deref() == Some("ZZZZZ0002Z")
-                && row.fields.name_on_pan.as_deref() == Some("BRIDGE MFLAB DEBTOR BETA")
+                && row.fields.income_tax_number
+                    == PartyLedgerMasterFieldObservation::Returned("ZZZZZ0002Z".to_string())
+                && row.fields.name_on_pan
+                    == PartyLedgerMasterFieldObservation::Returned(
+                        "BRIDGE MFLAB DEBTOR BETA".to_string(),
+                    )
+                && row.fields.pin_code == PartyLedgerMasterFieldObservation::Returned(String::new())
+                && row.fields.state == PartyLedgerMasterFieldObservation::NotObserved
         }));
 
         let schedule = super::super::schedule_iii::build_schedule_iii_view(source)
