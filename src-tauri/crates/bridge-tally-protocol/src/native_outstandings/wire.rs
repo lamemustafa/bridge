@@ -542,16 +542,13 @@ fn parse_native_ledger_snapshot_rows(
 /// group rows. The native family carries no legacy completeness counter: its
 /// completeness is established by the caller's paired byte-identical reads.
 ///
-/// The collection has no report-envelope company identity either, so -- as
-/// with [`crate::parse_native_group_source_records_with_evidence`] on the
-/// core-window path -- at least one row's `GUID` must carry the requested
-/// company's prefix or the snapshot is rejected outright. Tally is known to
-/// silently substitute a different loaded company rather than erroring, and
-/// this batch's ambient GUID-verified extent reads (see
-/// `fetch_outstandings_native`) bracket the read but do not bind this
-/// specific response. A foreign-prefixed row alongside a matching one is
-/// still accepted and simply not counted as a match: a book can legitimately
-/// hold masters imported with their original GUIDs.
+/// The request computes `BRIDGECOMPANYGUID` from `##SVCurrentCompany` and
+/// this parser requires every returned row to carry that exact selected
+/// company GUID. Tally can silently substitute a different loaded company
+/// rather than erroring; neither the ambient GUID-verified extent reads nor
+/// a row object's own GUID bind this specific response. Imported masters may
+/// retain foreign row GUIDs, so using those row identities for response
+/// identity would reject legitimate data and fail to detect substitution.
 pub fn parse_native_group_snapshot(
     xml: &str,
     expected_company_guid: &str,
@@ -576,13 +573,10 @@ pub struct NativeGroupSnapshotEntry {
 /// Parses the native Group collection while retaining exact row evidence for
 /// callers that persist the collection in a canonical snapshot.
 ///
-/// `expected_company_guid` binds the response the way
-/// [`crate::parse_native_group_source_records_with_evidence`] binds the
-/// core-window read: at least one row's `GUID` must carry that prefix (see
-/// `native_ledger_guid_has_company_prefix`) or the whole snapshot is refused
-/// with [`NativeOutstandingsError::InvalidResponse`]`("group_company_guid_unverified")`.
-/// Other prefixes remain counted, not rejected -- a book can legitimately
-/// hold masters imported with their original GUIDs.
+/// `expected_company_guid` binds every response row through the request's
+/// `BRIDGECOMPANYGUID` computed value. Missing or nonmatching values are
+/// refused with typed `InvalidResponse` codes; a Group row can therefore not
+/// enter a workbook source without response-company identity being considered.
 pub fn parse_native_group_snapshot_with_evidence(
     xml: &str,
     expected_company_guid: &str,
@@ -595,8 +589,6 @@ pub fn parse_native_group_snapshot_with_evidence(
     let mut status_seen = false;
     let mut collection_seen = false;
     let mut entries = Vec::new();
-    let mut company_guid_prefix_match_count = 0_u64;
-    let mut company_guid_prefix_mismatch_count = 0_u64;
     loop {
         let event_start = reader.buffer_position() as usize;
         let event = reader
@@ -624,29 +616,20 @@ pub fn parse_native_group_snapshot_with_evidence(
                 if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"GROUP"
                 {
-                    let (record, guid) = parse_group_row(&mut reader, &element)?;
-                    // A row with no GUID at all is neither a match nor a
-                    // mismatch: it carries no evidence either way. Only a
-                    // present GUID is scored against the expected prefix.
-                    if let Some(guid) = guid.as_deref() {
-                        if crate::native_ledger_guid_has_company_prefix(guid, expected_company_guid)
-                        {
-                            company_guid_prefix_match_count = company_guid_prefix_match_count
-                                .checked_add(1)
-                                .ok_or(NativeOutstandingsError::InvalidResponse(
-                                    "group_company_guid_count_overflow",
-                                ))?;
-                        } else {
-                            company_guid_prefix_mismatch_count = company_guid_prefix_mismatch_count
-                                .checked_add(1)
-                                .ok_or(NativeOutstandingsError::InvalidResponse(
-                                    "group_company_guid_count_overflow",
-                                ))?;
-                        }
+                    let row = parse_group_row(&mut reader, &element)?;
+                    let response_company_guid = row.response_company_guid.as_deref().ok_or(
+                        NativeOutstandingsError::InvalidResponse(
+                            "group_response_company_guid_missing",
+                        ),
+                    )?;
+                    if !response_company_guid.eq_ignore_ascii_case(expected_company_guid) {
+                        return Err(NativeOutstandingsError::InvalidResponse(
+                            "group_response_company_guid_mismatch",
+                        ));
                     }
                     let record_end = reader.buffer_position() as usize;
                     entries.push(NativeGroupSnapshotEntry {
-                        record,
+                        record: row.record,
                         raw_source_sha256: sha256_hex(
                             sanitized
                                 .original_fragment(event_start, record_end)
@@ -699,31 +682,25 @@ pub fn parse_native_group_snapshot_with_evidence(
             "group_collection_missing",
         ));
     }
-    // Tally is known to silently substitute a different loaded company
-    // rather than erroring. This batch's ambient GUID-verified extent reads
-    // bracket the whole read but do not bind this specific response, so at
-    // least one row must carry the expected company's GUID prefix -- the
-    // same policy `parse_native_group_source_records_with_evidence` applies
-    // on the core-window path. A foreign prefix on some rows is legitimate
-    // (imported masters can retain their original GUIDs) and is merely
-    // counted above, never individually rejected; only a snapshot with NO
-    // matching row at all is refused.
-    if company_guid_prefix_match_count == 0 {
+    if entries.is_empty() {
         return Err(NativeOutstandingsError::InvalidResponse(
-            "group_company_guid_unverified",
+            "group_response_company_guid_missing",
         ));
     }
     Ok(entries)
 }
 
-/// Parses one `GROUP` row, returning its name/parent plus its `GUID` when the
-/// row carries one. The row's GUID is optional here (unlike the core-window
-/// reader's mandatory-GUID rows): the caller scores it against the expected
-/// company prefix but never rejects a row for omitting it outright.
+struct ParsedNativeGroupSnapshotRow {
+    record: TallyNamedMaster,
+    response_company_guid: Option<String>,
+}
+
+/// Parses one `GROUP` row and keeps the request-computed responder identity
+/// separate from the Group object's own GUID.
 fn parse_group_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<(TallyNamedMaster, Option<String>), NativeOutstandingsError> {
+) -> Result<ParsedNativeGroupSnapshotRow, NativeOutstandingsError> {
     let name = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("group_name_missing"),
     )?;
@@ -735,8 +712,8 @@ fn parse_group_row(
     let reserved_name = raw_attribute_value(element, b"RESERVEDNAME");
     let mut parent = None;
     let mut parent_seen = false;
-    let mut guid = None;
-    let mut guid_seen = false;
+    let mut response_company_guid = None;
+    let mut response_company_guid_seen = false;
     loop {
         match reader
             .read_event()
@@ -751,14 +728,19 @@ fn parse_group_row(
                 }
                 parent = (!value.is_empty()).then_some(value);
             }
-            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
+            Event::Start(child)
+                if child
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"BRIDGECOMPANYGUID") =>
+            {
                 let value = read_element_text(reader, child.name())?;
-                if std::mem::replace(&mut guid_seen, true) {
+                if std::mem::replace(&mut response_company_guid_seen, true) {
                     return Err(NativeOutstandingsError::InvalidResponse(
-                        "group_duplicate_guid",
+                        "group_duplicate_response_company_guid",
                     ));
                 }
-                guid = (!value.is_empty()).then_some(value);
+                response_company_guid = (!value.is_empty()).then_some(value);
             }
             Event::Start(_) => skip_subtree(reader)?,
             Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"PARENT") => {
@@ -768,10 +750,15 @@ fn parse_group_row(
                     ));
                 }
             }
-            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
-                if std::mem::replace(&mut guid_seen, true) {
+            Event::Empty(child)
+                if child
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"BRIDGECOMPANYGUID") =>
+            {
+                if std::mem::replace(&mut response_company_guid_seen, true) {
                     return Err(NativeOutstandingsError::InvalidResponse(
-                        "group_duplicate_guid",
+                        "group_duplicate_response_company_guid",
                     ));
                 }
             }
@@ -790,14 +777,14 @@ fn parse_group_row(
             "group_parent_missing",
         ));
     }
-    Ok((
-        TallyNamedMaster {
+    Ok(ParsedNativeGroupSnapshotRow {
+        record: TallyNamedMaster {
             name,
             parent: PartyLedgerMasterFieldObservation::Returned(parent.unwrap_or_default()),
             reserved_name,
         },
-        guid,
-    ))
+        response_company_guid,
+    })
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -1476,7 +1463,7 @@ mod group_tests {
     const COMPANY_GUID: &str = "11111111-1111-1111-1111-111111111111";
     const FOREIGN_GUID: &str = "22222222-2222-2222-2222-222222222222";
 
-    const LIVE_SHAPE: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><GROUP>0</GROUP></CMPINFO></DESC><DATA><COLLECTION><GROUP NAME="North Region"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Current Assets</PARENT></GROUP><GROUP NAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>&#4; Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    const LIVE_SHAPE: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><GROUP>0</GROUP></CMPINFO></DESC><DATA><COLLECTION><GROUP NAME="North Region"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Current Assets</PARENT></GROUP><GROUP NAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>&#4; Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
 
     #[test]
     fn reads_group_rows_only_from_the_native_collection() {
@@ -1517,8 +1504,8 @@ mod group_tests {
         let hexadecimal = parse_native_group_snapshot_with_evidence(&hexadecimal_xml, COMPANY_GUID)
             .expect("hexadecimal illegal reference remains parseable");
 
-        let decimal_fragment = b"<GROUP NAME=\"Sundry Debtors\"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>&#4; Primary</PARENT></GROUP>";
-        let hexadecimal_fragment = b"<GROUP NAME=\"Sundry Debtors\"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>&#x4; Primary</PARENT></GROUP>";
+        let decimal_fragment = b"<GROUP NAME=\"Sundry Debtors\"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>&#4; Primary</PARENT></GROUP>";
+        let hexadecimal_fragment = b"<GROUP NAME=\"Sundry Debtors\"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>&#x4; Primary</PARENT></GROUP>";
         assert_eq!(decimal[1].raw_source_sha256, sha256_hex(decimal_fragment));
         assert_eq!(
             hexadecimal[1].raw_source_sha256,
@@ -1530,12 +1517,11 @@ mod group_tests {
         );
     }
 
-    /// CONFIRMED P1 (PR #158 code review): the group parser used to accept
-    /// any response regardless of which company it actually came from. A
-    /// response whose rows all carry a different company's GUID prefix must
-    /// now be rejected outright, not silently trusted.
+    /// A Group object's own GUID can belong to an imported master. The
+    /// response-bound computed company GUID, not that object identity,
+    /// determines whether the response is admissible.
     #[test]
-    fn group_response_carrying_only_a_foreign_company_guid_is_rejected() {
+    fn group_response_retains_imported_foreign_object_guids() {
         let xml = LIVE_SHAPE
             .replace(
                 "11111111-1111-1111-1111-111111111111-00000001",
@@ -1547,19 +1533,79 @@ mod group_tests {
             );
         assert!(xml.contains(FOREIGN_GUID), "sanity: replacement took hold");
         assert_eq!(
-            parse_native_group_snapshot(&xml, COMPANY_GUID),
-            Err(NativeOutstandingsError::InvalidResponse(
-                "group_company_guid_unverified"
-            ))
+            parse_native_group_snapshot(&xml, COMPANY_GUID)
+                .unwrap()
+                .len(),
+            2
         );
     }
 
-    /// A response with the correct prefix continues to parse names and
-    /// parents exactly as before the fix.
+    #[test]
+    fn group_response_requires_its_own_company_identity() {
+        let response = |company_guid: Option<&str>| {
+            let company_guid = company_guid
+                .map(|guid| format!("<BRIDGECOMPANYGUID>{guid}</BRIDGECOMPANYGUID>"))
+                .unwrap_or_default();
+            format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\\
+                <GROUP NAME=\"Imported selected group\"><GUID>{COMPANY_GUID}-00000001</GUID>{company_guid}\\
+                <PARENT>Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+        };
+
+        assert_eq!(
+            parse_native_group_snapshot(&response(Some(FOREIGN_GUID)), COMPANY_GUID),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_response_company_guid_mismatch"
+            )),
+            "a selected-prefix imported group cannot prove which company answered"
+        );
+        assert_eq!(
+            parse_native_group_snapshot(&response(None), COMPANY_GUID),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_response_company_guid_missing"
+            )),
+            "a response without Tally's computed company GUID is withheld"
+        );
+        assert_eq!(
+            parse_native_group_snapshot(&response(Some(COMPANY_GUID)), COMPANY_GUID)
+                .unwrap()
+                .len(),
+            1,
+            "the response-bound company GUID, not a row GUID prefix, admits the snapshot"
+        );
+
+        let second_row_company_mismatch = LIVE_SHAPE.replace(
+            "<GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID>",
+            "<GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>22222222-2222-2222-2222-222222222222</BRIDGECOMPANYGUID>",
+        );
+        assert_eq!(
+            parse_native_group_snapshot(&second_row_company_mismatch, COMPANY_GUID),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_response_company_guid_mismatch"
+            )),
+            "a matching first row cannot admit a later row with a foreign responder"
+        );
+
+        let second_row_company_missing = LIVE_SHAPE.replace(
+            "<GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID>",
+            "<GUID>11111111-1111-1111-1111-111111111111-00000002</GUID>",
+        );
+        assert_eq!(
+            parse_native_group_snapshot(&second_row_company_missing, COMPANY_GUID),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_response_company_guid_missing"
+            )),
+            "a matching first row cannot admit a later row without responder identity"
+        );
+    }
+
+    /// A response with the matching computed company GUID continues to parse
+    /// names and parents exactly as before the fix.
     #[test]
     fn group_response_with_the_correct_prefix_is_accepted_and_still_parses() {
         let groups = parse_native_group_snapshot(LIVE_SHAPE, COMPANY_GUID)
-            .expect("a correctly-prefixed response is accepted");
+            .expect("a response bound to the selected company is accepted");
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].name, "North Region");
         assert_eq!(groups[0].parent.returned_text(), Some("Current Assets"));
@@ -1567,8 +1613,8 @@ mod group_tests {
     }
 
     /// A book can legitimately hold masters imported with their original
-    /// GUIDs. A mostly-correct response with one foreign-prefixed row must
-    /// still be accepted, with that row retained rather than dropped.
+    /// GUIDs. A response with one foreign object GUID stays admissible because
+    /// every row still proves its responder through BRIDGECOMPANYGUID.
     #[test]
     fn mixed_prefix_response_is_accepted_with_the_foreign_row_retained_and_counted() {
         let xml = LIVE_SHAPE.replace(
@@ -1576,7 +1622,7 @@ mod group_tests {
             "22222222-2222-2222-2222-222222222222-00000002",
         );
         let groups = parse_native_group_snapshot(&xml, COMPANY_GUID)
-            .expect("one correctly-prefixed row is enough to accept the whole snapshot");
+            .expect("the response-bound company GUID admits the whole snapshot");
         assert_eq!(
             groups.len(),
             2,
@@ -1585,11 +1631,8 @@ mod group_tests {
         assert_eq!(groups[1].name, "Sundry Debtors");
     }
 
-    /// A row that omits GUID entirely (the pre-fix wire shape, before the
-    /// request asked for GUID/MASTERID/ALTERID) is simply not evidence
-    /// either way -- it is neither a match nor a mismatch. The snapshot is
-    /// still accepted as long as some other row does carry the expected
-    /// prefix.
+    /// A row object's GUID does not establish the responder identity. It can
+    /// be omitted without weakening the row's independent computed binding.
     #[test]
     fn row_omitting_guid_entirely_is_not_scored_but_does_not_block_acceptance() {
         let xml = LIVE_SHAPE.replace(
@@ -1597,24 +1640,15 @@ mod group_tests {
             "",
         );
         let groups = parse_native_group_snapshot(&xml, COMPANY_GUID)
-            .expect("the second row's correct prefix is enough to bind the response");
+            .expect("the row's computed company GUID binds the response");
         assert_eq!(groups.len(), 2);
     }
 
-    /// If every row omits GUID entirely, there is no evidence at all binding
-    /// the response to the expected company, so it is rejected -- the same
-    /// outcome as a response carrying only foreign prefixes.
-    ///
-    /// This mutation-based test is kept alongside
-    /// `a_real_pre_widening_capture_with_no_guid_anywhere_is_rejected` below:
-    /// it shares `LIVE_SHAPE`/`COMPANY_GUID` with the single-row omission
-    /// and mismatch tests in this module, forming a matched family that
-    /// isolates exactly one row-count/GUID variable at a time in a way a
-    /// fixed real capture cannot. The real capture below proves the same
-    /// rejection against actual TallyPrime bytes, not just a hand-mutated
-    /// shape.
+    /// If every object GUID is omitted, the per-row response identity remains
+    /// sufficient. This specifically prevents a future refactor from drifting
+    /// back to a row-GUID-prefix admission rule.
     #[test]
-    fn a_response_where_every_row_omits_guid_is_rejected() {
+    fn a_response_where_every_row_omits_object_guid_is_still_bound() {
         let xml = LIVE_SHAPE
             .replace(
                 "<GUID>11111111-1111-1111-1111-111111111111-00000001</GUID>",
@@ -1625,30 +1659,24 @@ mod group_tests {
                 "",
             );
         assert_eq!(
-            parse_native_group_snapshot(&xml, COMPANY_GUID),
-            Err(NativeOutstandingsError::InvalidResponse(
-                "group_company_guid_unverified"
-            ))
+            parse_native_group_snapshot(&xml, COMPANY_GUID)
+                .unwrap()
+                .len(),
+            2
         );
     }
 
-    /// `group_snapshot_aarav.xml` is a real TallyPrime response, captured
-    /// live before the native Group request was widened to fetch
-    /// `GUID, MASTERID, ALTERID` (see `render_native_group_snapshot_request`).
-    /// All 28 of its rows genuinely omit `GUID` -- not by mutation, but
-    /// because the request never asked for it -- which makes this capture
-    /// the real-bytes instance of exactly the case
-    /// `a_response_where_every_row_omits_guid_is_rejected` constructs
-    /// synthetically above: a group snapshot with no row identity anywhere
-    /// cannot bind to any company and must be rejected outright. Real
-    /// captured bytes are worth more than constructed XML.
+    /// `group_snapshot_aarav.xml` is a real TallyPrime response captured
+    /// before this request computed `BRIDGECOMPANYGUID`. It must now be
+    /// withheld: object GUIDs, whether present or absent, cannot replace the
+    /// response-bound value.
     #[test]
     fn a_real_pre_widening_capture_with_no_guid_anywhere_is_rejected() {
         let xml = include_str!("../../tests/fixtures/native/group_snapshot_aarav.xml");
         assert_eq!(
             parse_native_group_snapshot(xml, "bb8ad19e-6aef-4239-a917-87fec0c6215e"),
             Err(NativeOutstandingsError::InvalidResponse(
-                "group_company_guid_unverified"
+                "group_response_company_guid_missing"
             ))
         );
     }
@@ -1663,7 +1691,7 @@ mod group_tests {
     /// distinction is used.
     #[test]
     fn reserved_name_attribute_parsing_distinguishes_present_empty_and_absent() {
-        let xml = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><GROUP NAME="WR5 Renamed Suspense" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Sundry Debtors" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Old Capture Group"><GUID>11111111-1111-1111-1111-111111111111-00000003</GUID><PARENT>Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let xml = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><GROUP NAME="WR5 Renamed Suspense" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Sundry Debtors" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Old Capture Group"><GUID>11111111-1111-1111-1111-111111111111-00000003</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
         let groups = parse_native_group_snapshot(xml, COMPANY_GUID).expect("parses");
         assert_eq!(
             groups[0].reserved_name.as_deref(),

@@ -172,6 +172,16 @@ mod tests {
         )
     }
 
+    fn group_response_with_computed_company_guid() -> String {
+        // This is the captured Group body. It predates the response-bound
+        // compute added to the request. The test adds only the selected
+        // collection context; it does not invent or alter Group master data.
+        MASTER_FIELDS_LAB_GROUPS.replace(
+            "</GUID>",
+            "</GUID><BRIDGECOMPANYGUID>56359347-3976-4d01-b44e-56fa0f6a422c</BRIDGECOMPANYGUID>",
+        )
+    }
+
     fn source() -> PartyLedgerMasterSource {
         PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
@@ -280,7 +290,7 @@ mod tests {
         );
 
         let groups = parse_native_group_snapshot_with_evidence(
-            MASTER_FIELDS_LAB_GROUPS,
+            &group_response_with_computed_company_guid(),
             MASTER_FIELDS_LAB_COMPANY_GUID,
         )
         .expect("captured group response parses")

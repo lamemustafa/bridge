@@ -3226,6 +3226,7 @@ mod tests {
             Validation::MasterAlterId,
             Validation::MasterOpeningBalance,
             Validation::BalanceCompanyIdentityUnverified,
+            Validation::GroupCompanyIdentityUnverified,
         ] {
             let mapped = tally_runtime_command_error(anyhow::Error::new(error));
             assert_eq!(mapped.code, "response_validation_failed");

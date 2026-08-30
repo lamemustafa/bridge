@@ -74,6 +74,17 @@ fn party_ledger_master_balance_snapshot_error(error: NativeOutstandingsError) ->
     }
 }
 
+fn party_ledger_master_group_snapshot_error(error: NativeOutstandingsError) -> anyhow::Error {
+    match error {
+        NativeOutstandingsError::InvalidResponse(
+            "group_response_company_guid_missing" | "group_response_company_guid_mismatch",
+        ) => anyhow::Error::new(
+            PartyLedgerMasterSourceValidationError::GroupCompanyIdentityUnverified,
+        ),
+        error => anyhow::Error::new(error),
+    }
+}
+
 fn party_ledger_master_openings_agree(
     master_opening: &str,
     balance_opening: &bridge_tally_core::ExactDecimal,
@@ -110,6 +121,8 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
     DuplicateBalanceDisplayKey,
     #[error("Tally balance snapshot did not prove the selected company identity")]
     BalanceCompanyIdentityUnverified,
+    #[error("Tally Group snapshot did not prove the selected company identity")]
+    GroupCompanyIdentityUnverified,
 }
 
 /// A paired or bracketed read observed movement in the endpoint's data. This
@@ -968,7 +981,8 @@ impl TallyClient {
                 PairedReadValidationError::PartyLedgerGroup,
             ));
         };
-        let groups = parse_native_group_snapshot_with_evidence(&group_body, expected_company_guid)?
+        let groups = parse_native_group_snapshot_with_evidence(&group_body, expected_company_guid)
+            .map_err(party_ledger_master_group_snapshot_error)?
             .into_iter()
             .map(|entry| PartyLedgerMasterGroup {
                 name: entry.record.name,

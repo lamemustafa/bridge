@@ -222,9 +222,9 @@ pub(super) fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> 
     let value = text
         .parse::<f64>()
         .map_err(|_| PartyStatementXlsxError::InvalidAmount(text.to_string()))?;
-    if canonical.bytes().filter(u8::is_ascii_digit).count() > 15
+    if canonical.significand.len() > 15
         || !value.is_finite()
-        || canonical_decimal_value(&value.to_string()).as_deref() != Some(canonical.as_str())
+        || canonical_f64_decimal_value(&value.to_string()).as_ref() != Some(&canonical)
     {
         return Err(PartyStatementXlsxError::InvalidAmount(text.to_string()));
     }
@@ -242,13 +242,22 @@ fn exposure_direction_label(direction: ExposureDirection) -> &'static str {
     }
 }
 
+/// A decimal normalized as a nonzero significand and base-10 exponent. This
+/// removes insignificant zeroes on both sides of the decimal point: trailing
+/// integer zeroes shift the exponent, so `1000000000000000` has one meaningful
+/// digit, while `9007199254740992` has sixteen.
+#[derive(Debug, PartialEq, Eq)]
+struct CanonicalDecimalValue {
+    negative: bool,
+    significand: String,
+    exponent: i32,
+}
+
 /// `f64::to_string` emits the shortest decimal that round-trips to the binary
-/// value. Canonical decimal form removes leading zeros and only fractional
-/// trailing zeros, so the Excel limit is 15 meaningful digits rather than the
-/// source's display scale. Comparing those forms keeps harmless source scale
-/// such as `42.00`, while rejecting a value whose Excel number cell would
-/// change the amount.
-fn canonical_decimal_value(value: &str) -> Option<String> {
+/// value, sometimes using scientific notation. Canonical decimal form compares
+/// its mathematical value rather than its display spelling, so harmless source
+/// scale and powers of ten stay renderable while changed amounts fail closed.
+fn canonical_decimal_value(value: &str) -> Option<CanonicalDecimalValue> {
     let (negative, unsigned) = value
         .strip_prefix('-')
         .map_or((false, value), |unsigned| (true, unsigned));
@@ -259,20 +268,38 @@ fn canonical_decimal_value(value: &str) -> Option<String> {
     {
         return None;
     }
-    let whole = whole.trim_start_matches('0');
-    let fraction = fraction.trim_end_matches('0');
-    if whole.is_empty() && fraction.is_empty() {
-        return Some("0".to_string());
-    }
-    let mut canonical = String::with_capacity(value.len());
-    if negative {
-        canonical.push('-');
-    }
-    canonical.push_str(if whole.is_empty() { "0" } else { whole });
-    if !fraction.is_empty() {
-        canonical.push('.');
-        canonical.push_str(fraction);
-    }
+    let digits = format!("{whole}{fraction}");
+    let first_nonzero = digits.bytes().position(|byte| byte != b'0');
+    let Some(first_nonzero) = first_nonzero else {
+        return Some(CanonicalDecimalValue {
+            negative: false,
+            significand: "0".to_string(),
+            exponent: 0,
+        });
+    };
+    let last_nonzero = digits.bytes().rposition(|byte| byte != b'0')?;
+    let significand = digits[first_nonzero..=last_nonzero].to_string();
+    let exponent = i32::try_from(whole.len())
+        .ok()?
+        .checked_sub(i32::try_from(first_nonzero).ok()?)?
+        .checked_sub(i32::try_from(significand.len()).ok()?)?;
+    Some(CanonicalDecimalValue {
+        negative,
+        significand,
+        exponent,
+    })
+}
+
+fn canonical_f64_decimal_value(value: &str) -> Option<CanonicalDecimalValue> {
+    let (significand, scientific_exponent) = match value.split_once(['e', 'E']) {
+        Some((significand, exponent)) if !exponent.is_empty() => {
+            (significand, exponent.parse::<i32>().ok()?)
+        }
+        Some(_) => return None,
+        None => (value, 0),
+    };
+    let mut canonical = canonical_decimal_value(significand)?;
+    canonical.exponent = canonical.exponent.checked_add(scientific_exponent)?;
     Some(canonical)
 }
 
@@ -322,6 +349,14 @@ mod tests {
             Err(PartyStatementXlsxError::InvalidAmount(value)) if value == "9007199254740992"
         ));
         assert_eq!(amount_to_f64("999999999999999").unwrap(), 999999999999999.0);
+        assert_eq!(
+            amount_to_f64("1000000000000000").unwrap(),
+            1_000_000_000_000_000.0
+        );
+        assert_eq!(
+            amount_to_f64("0.000000000000001").unwrap(),
+            0.000000000000001
+        );
         assert_eq!(
             amount_to_f64("10000000000000.00").unwrap(),
             10_000_000_000_000.0

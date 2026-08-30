@@ -312,6 +312,8 @@ pub fn render_native_voucher_export_request(
 /// row), but it is listed here anyway, the same way `NAME` is listed despite
 /// being emitted unconditionally too: this FETCH is the explicit contract of
 /// what the reader depends on, not merely what happens to already arrive.
+/// `BRIDGECOMPANYGUID` is a response-bound value computed from the selected
+/// company, so every consumed Group row can prove which company answered.
 ///
 /// Unlike the legacy export profile, this stays in Tally's native Collection
 /// family: it defines no report/form/part/line/field stack and invokes no TDL
@@ -319,7 +321,7 @@ pub fn render_native_voucher_export_request(
 /// bracket establish completeness for this snapshot.
 pub fn render_native_group_snapshot_request(company: &str) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Groups" ISMODIFY="Yes"><FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Groups" ISMODIFY="Yes"><FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH><COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
     )
 }
@@ -496,6 +498,8 @@ mod tests {
         assert!(group_xml.contains(r#"<ID>List of Groups</ID>"#));
         assert!(group_xml
             .contains(r#"<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH>"#));
+        assert!(group_xml
+            .contains("<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"));
         assert!(!group_xml.contains("<REPORT>"));
         assert!(!group_xml.contains("<FORM>"));
         assert!(!group_xml.contains("<PART>"));

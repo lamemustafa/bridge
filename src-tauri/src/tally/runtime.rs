@@ -2891,7 +2891,14 @@ mod tests {
             .expect("captured receivable rows parse");
         let payable = parse_native_bill_rows(payable_xml, &books_from, &as_of)
             .expect("captured payable rows parse");
-        let groups = parse_native_group_snapshot(groups_xml, COMPANY_GUID)
+        // This captured Group body predates the request's response-bound
+        // compute. Add only that collection context for the parser contract;
+        // source-byte accounting below remains the exact captured response.
+        let groups_with_response_company_guid = groups_xml.replace(
+            "</GUID>",
+            "</GUID><BRIDGECOMPANYGUID>c6afd306-00e1-4f51-802a-babe44daddd3</BRIDGECOMPANYGUID>",
+        );
+        let groups = parse_native_group_snapshot(&groups_with_response_company_guid, COMPANY_GUID)
             .expect("captured group identity and ancestry parse");
         let ledgers =
             parse_native_ledger_snapshot(ledgers_xml).expect("captured ledger controls parse");
@@ -2995,7 +3002,7 @@ mod tests {
     fn zero_bill_rows_with_a_ledger_residual_withhold_native_complete() {
         let groups = parse_native_group_snapshot(
             r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
-            <GROUP NAME="Sundry Debtors" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Primary</PARENT></GROUP>
+            <GROUP NAME="Sundry Debtors" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Primary</PARENT></GROUP>
             </COLLECTION></DATA></BODY></ENVELOPE>"#,
             "11111111-1111-1111-1111-111111111111",
         )
