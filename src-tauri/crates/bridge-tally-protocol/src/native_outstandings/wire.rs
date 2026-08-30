@@ -419,35 +419,40 @@ pub fn parse_native_ledger_snapshot(
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
     Ok(parse_native_ledger_snapshot_rows(xml)?
         .into_iter()
-        .map(|(entry, _)| entry)
+        .map(|row| row.entry)
         .collect())
 }
 
-/// Parses a native ledger snapshot only when at least one row proves that the
-/// response came from the selected company. The request explicitly fetches
-/// `GUID`; an ambient extent bracket cannot bind the response it surrounds.
-/// Imported masters may retain foreign GUIDs, so a foreign row is retained;
-/// only an entire response with no expected-company prefix is refused.
+/// Parses a native ledger snapshot only when Tally's collection-level compute
+/// proves that the response came from the selected company. Row GUIDs identify
+/// ledger objects and can legitimately retain an imported company's prefix;
+/// they are not evidence of which company answered this request.
 pub fn parse_native_ledger_snapshot_for_company(
     xml: &str,
     expected_company_guid: &str,
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
     let entries = parse_native_ledger_snapshot_rows(xml)?;
-    if !entries.iter().any(|(_, guid)| {
-        guid.as_deref().is_some_and(|guid| {
-            crate::native_ledger_guid_has_company_prefix(guid, expected_company_guid)
-        })
-    }) {
+    for row in &entries {
+        let response_company_guid = row.response_company_guid.as_deref().ok_or(
+            NativeOutstandingsError::InvalidResponse("ledger_response_company_guid_missing"),
+        )?;
+        if !response_company_guid.eq_ignore_ascii_case(expected_company_guid) {
+            return Err(NativeOutstandingsError::InvalidResponse(
+                "ledger_response_company_guid_mismatch",
+            ));
+        }
+    }
+    if entries.is_empty() {
         return Err(NativeOutstandingsError::InvalidResponse(
-            "ledger_company_guid_unverified",
+            "ledger_response_company_guid_missing",
         ));
     }
-    Ok(entries.into_iter().map(|(entry, _)| entry).collect())
+    Ok(entries.into_iter().map(|row| row.entry).collect())
 }
 
 fn parse_native_ledger_snapshot_rows(
     xml: &str,
-) -> Result<Vec<(LedgerSnapshotEntry, Option<String>)>, NativeOutstandingsError> {
+) -> Result<Vec<ParsedLedgerSnapshotRow>, NativeOutstandingsError> {
     let sanitized = sanitize_invalid_numeric_references(xml);
     let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(true);
@@ -809,7 +814,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn parse_ledger_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<(LedgerSnapshotEntry, Option<String>), NativeOutstandingsError> {
+) -> Result<ParsedLedgerSnapshotRow, NativeOutstandingsError> {
     let name = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("ledger_name_missing"),
     )?;
@@ -819,8 +824,8 @@ fn parse_ledger_row(
     let mut closing_balance = None;
     let mut opening_balance = None;
     let mut bill_wise_on = None;
-    let mut guid = None;
-    let mut guid_seen = false;
+    let mut response_company_guid = None;
+    let mut response_company_guid_seen = false;
     loop {
         match reader
             .read_event()
@@ -865,22 +870,27 @@ fn parse_ledger_row(
                         }
                         bill_wise_on = Some(parse_tally_boolean(&text)?);
                     }
-                    b"GUID" => {
+                    b"BRIDGECOMPANYGUID" => {
                         let text = read_element_text(reader, child.name())?;
-                        if std::mem::replace(&mut guid_seen, true) {
+                        if std::mem::replace(&mut response_company_guid_seen, true) {
                             return Err(NativeOutstandingsError::InvalidResponse(
-                                "ledger_duplicate_guid",
+                                "ledger_duplicate_response_company_guid",
                             ));
                         }
-                        guid = (!text.is_empty()).then_some(text);
+                        response_company_guid = (!text.is_empty()).then_some(text);
                     }
                     _ => skip_subtree(reader)?,
                 }
             }
-            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
-                if std::mem::replace(&mut guid_seen, true) {
+            Event::Empty(child)
+                if child
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"BRIDGECOMPANYGUID") =>
+            {
+                if std::mem::replace(&mut response_company_guid_seen, true) {
                     return Err(NativeOutstandingsError::InvalidResponse(
-                        "ledger_duplicate_guid",
+                        "ledger_duplicate_response_company_guid",
                     ));
                 }
             }
@@ -894,8 +904,8 @@ fn parse_ledger_row(
             _ => {}
         }
     }
-    Ok((
-        LedgerSnapshotEntry {
+    Ok(ParsedLedgerSnapshotRow {
+        entry: LedgerSnapshotEntry {
             name,
             parent: parent.flatten(),
             closing_balance: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
@@ -908,8 +918,13 @@ fn parse_ledger_row(
                 "ledger_bill_wise_flag_missing",
             ))?,
         },
-        guid,
-    ))
+        response_company_guid,
+    })
+}
+
+struct ParsedLedgerSnapshotRow {
+    entry: LedgerSnapshotEntry,
+    response_company_guid: Option<String>,
 }
 
 fn skip_subtree(reader: &mut Reader<&[u8]>) -> Result<(), NativeOutstandingsError> {
@@ -1363,6 +1378,7 @@ mod currency_tests {
     fn party_ledger_master_balance_response_with_only_foreign_company_guids_is_withheld() {
         let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
             <LEDGER NAME=\"Same ledger name\"><GUID>22222222-2222-2222-2222-222222222222-00000001</GUID>\
+            <BRIDGECOMPANYGUID>22222222-2222-2222-2222-222222222222</BRIDGECOMPANYGUID>\
             <PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>-100.00</CLOSINGBALANCE>\
             <OPENINGBALANCE>-100.00</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
             </COLLECTION></DATA></BODY></ENVELOPE>";
@@ -1370,7 +1386,7 @@ mod currency_tests {
         assert_eq!(
             parse_native_ledger_snapshot_for_company(xml, "11111111-1111-1111-1111-111111111111"),
             Err(NativeOutstandingsError::InvalidResponse(
-                "ledger_company_guid_unverified"
+                "ledger_response_company_guid_mismatch"
             ))
         );
         assert_eq!(
@@ -1384,6 +1400,48 @@ mod currency_tests {
                 .len(),
             1,
             "a matching row GUID binds the export response before it is joined"
+        );
+    }
+
+    #[test]
+    fn party_ledger_master_balance_response_requires_its_own_company_identity() {
+        const EXPECTED: &str = "11111111-1111-1111-1111-111111111111";
+        let response = |company_guid: Option<&str>| {
+            let company_guid = company_guid
+                .map(|guid| format!("<BRIDGECOMPANYGUID>{guid}</BRIDGECOMPANYGUID>"))
+                .unwrap_or_default();
+            format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+                <LEDGER NAME=\"Imported selected ledger\"><GUID>{EXPECTED}-00000001</GUID>{company_guid}\
+                <PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>-100.00</CLOSINGBALANCE>\
+                <OPENINGBALANCE>-100.00</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+                </COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+        };
+
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(
+                &response(Some("22222222-2222-2222-2222-222222222222")),
+                EXPECTED,
+            ),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "ledger_response_company_guid_mismatch"
+            )),
+            "a selected-prefix imported ledger cannot prove which company answered"
+        );
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(&response(None), EXPECTED),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "ledger_response_company_guid_missing"
+            )),
+            "a response without Tally's computed company GUID is withheld"
+        );
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(&response(Some(EXPECTED)), EXPECTED)
+                .unwrap()
+                .len(),
+            1,
+            "the response-bound company GUID, not a row GUID prefix, admits the snapshot"
         );
     }
 

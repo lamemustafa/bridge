@@ -65,11 +65,11 @@ fn ledger_display_key(name: &str, parent: Option<&str>) -> String {
 
 fn party_ledger_master_balance_snapshot_error(error: NativeOutstandingsError) -> anyhow::Error {
     match error {
-        NativeOutstandingsError::InvalidResponse("ledger_company_guid_unverified") => {
-            anyhow::Error::new(
-                PartyLedgerMasterSourceValidationError::BalanceCompanyIdentityUnverified,
-            )
-        }
+        NativeOutstandingsError::InvalidResponse(
+            "ledger_response_company_guid_missing" | "ledger_response_company_guid_mismatch",
+        ) => anyhow::Error::new(
+            PartyLedgerMasterSourceValidationError::BalanceCompanyIdentityUnverified,
+        ),
         error => anyhow::Error::new(error),
     }
 }

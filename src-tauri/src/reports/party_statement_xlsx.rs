@@ -217,17 +217,14 @@ pub fn render_party_statement_xlsx(
 /// Bridge's own arithmetic never touches `f64`; this is the last step before
 /// the cell, and Excel has no exact-decimal cell type to target instead.
 pub(super) fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> {
+    let canonical = canonical_decimal_value(text)
+        .ok_or_else(|| PartyStatementXlsxError::InvalidAmount(text.to_string()))?;
     let value = text
         .parse::<f64>()
         .map_err(|_| PartyStatementXlsxError::InvalidAmount(text.to_string()))?;
-    if text
-        .bytes()
-        .filter(u8::is_ascii_digit)
-        .skip_while(|digit| *digit == b'0')
-        .count()
-        > 15
+    if canonical.bytes().filter(u8::is_ascii_digit).count() > 15
         || !value.is_finite()
-        || !same_decimal_value(text, &value.to_string())
+        || canonical_decimal_value(&value.to_string()).as_deref() != Some(canonical.as_str())
     {
         return Err(PartyStatementXlsxError::InvalidAmount(text.to_string()));
     }
@@ -246,13 +243,11 @@ fn exposure_direction_label(direction: ExposureDirection) -> &'static str {
 }
 
 /// `f64::to_string` emits the shortest decimal that round-trips to the binary
-/// value. Comparing numeric decimal forms (rather than their spellings) keeps
-/// harmless source scale such as `42.00`, while rejecting a value whose Excel
-/// number cell would change the amount.
-fn same_decimal_value(left: &str, right: &str) -> bool {
-    canonical_decimal_value(left) == canonical_decimal_value(right)
-}
-
+/// value. Canonical decimal form removes leading zeros and only fractional
+/// trailing zeros, so the Excel limit is 15 meaningful digits rather than the
+/// source's display scale. Comparing those forms keeps harmless source scale
+/// such as `42.00`, while rejecting a value whose Excel number cell would
+/// change the amount.
 fn canonical_decimal_value(value: &str) -> Option<String> {
     let (negative, unsigned) = value
         .strip_prefix('-')
@@ -327,6 +322,10 @@ mod tests {
             Err(PartyStatementXlsxError::InvalidAmount(value)) if value == "9007199254740992"
         ));
         assert_eq!(amount_to_f64("999999999999999").unwrap(), 999999999999999.0);
+        assert_eq!(
+            amount_to_f64("10000000000000.00").unwrap(),
+            10_000_000_000_000.0
+        );
         assert_eq!(amount_to_f64("42.00").unwrap(), 42.0);
     }
 

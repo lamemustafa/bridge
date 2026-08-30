@@ -160,6 +160,18 @@ mod tests {
         "../../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_master_fields_lab.utf8.xml"
     );
 
+    fn master_response_with_computed_company_guid() -> String {
+        // This is the captured master body. It predates the response-bound
+        // compute added to the request, whose exact `List of Ledgers` shape
+        // is already captured by the standard identity profile. The test
+        // adds only that collection-level response context; it does not
+        // invent, alter, or populate any master field.
+        MASTER_FIELDS_LAB_LEDGERS.replace(
+            "</GUID>",
+            "</GUID><BRIDGECOMPANYGUID>56359347-3976-4d01-b44e-56fa0f6a422c</BRIDGECOMPANYGUID>",
+        )
+    }
+
     fn source() -> PartyLedgerMasterSource {
         PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
@@ -216,7 +228,7 @@ mod tests {
     #[test]
     fn captured_master_fields_lab_drives_the_party_export_and_schedule_iii_view() {
         let master = parse_native_party_ledger_master_records_with_evidence(
-            MASTER_FIELDS_LAB_LEDGERS,
+            &master_response_with_computed_company_guid(),
             MASTER_FIELDS_LAB_COMPANY_GUID,
         )
         .expect("captured ledger-master response parses");

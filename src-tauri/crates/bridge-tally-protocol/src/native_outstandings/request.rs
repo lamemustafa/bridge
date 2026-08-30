@@ -142,8 +142,8 @@ pub fn render_native_bills_request(
 
 /// Renders a request for the `List of Ledgers` collection, overridden to
 /// fetch exactly the fields the on-account residual computation needs, plus
-/// `GUID` so the party/ledger export can bind this specific response to its
-/// selected company: `NAME`, `GUID`, `PARENT`, `CLOSINGBALANCE`,
+/// Tally's computed `BRIDGECOMPANYGUID` so the party/ledger export can bind
+/// this specific response to its selected company: `NAME`, `PARENT`, `CLOSINGBALANCE`,
 /// `OPENINGBALANCE`, `ISBILLWISEON`.
 ///
 /// **`SVFROMDATE`/`SVTODATE` are load-bearing here and must match the bills
@@ -162,7 +162,7 @@ pub fn render_native_ledger_snapshot_request(
     period: &NativeLedgerSnapshotPeriod,
 ) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH><COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
         from = period.from().as_str(),
         to = period.to().as_str(),
@@ -188,6 +188,7 @@ pub fn render_native_ledger_export_request(
         company,
         period,
         "NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE",
+        false,
     )
 }
 
@@ -202,6 +203,7 @@ pub fn render_party_ledger_master_request(
         company,
         period,
         "NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST, OPENINGBALANCE",
+        true,
     )
 }
 
@@ -209,13 +211,20 @@ fn render_native_ledger_collection_request(
     company: &str,
     period: &NativeLedgerExportPeriod,
     fetch: &str,
+    include_response_company_guid: bool,
 ) -> String {
+    let response_company_guid = if include_response_company_guid {
+        "<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"
+    } else {
+        ""
+    };
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>{fetch}</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>{fetch}</FETCH>{response_company_guid}</COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
         from = period.from().as_str(),
         to = period.to().as_str(),
         fetch = fetch,
+        response_company_guid = response_company_guid,
     )
 }
 
@@ -475,9 +484,10 @@ mod tests {
         .expect("mode-agnostic profile accepts valid calendar dates");
         let ledger_xml = render_native_ledger_snapshot_request("A & B <Co>", &snapshot_period);
         assert!(ledger_xml.contains("A &amp; B &lt;Co&gt;"));
-        assert!(ledger_xml.contains(
-            "<FETCH>NAME, GUID, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH>"
-        ));
+        assert!(ledger_xml
+            .contains("<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH>"));
+        assert!(ledger_xml
+            .contains("<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"));
         assert!(ledger_xml.contains(r#"<SVFROMDATE TYPE="Date">20240401</SVFROMDATE>"#));
         assert!(ledger_xml.contains(r#"<SVTODATE TYPE="Date">20260731</SVTODATE>"#));
 
@@ -502,8 +512,14 @@ mod tests {
         let export_xml = render_native_ledger_export_request("A & B <Co>", &export_period);
         assert!(export_xml.contains("A &amp; B &lt;Co&gt;"));
         assert!(!export_xml.contains("INCOMETAXNUMBER"));
+        assert!(
+            !export_xml.contains("BRIDGECOMPANYGUID"),
+            "the ordinary ledger profile retains its existing response shape"
+        );
         let party_master_xml = render_party_ledger_master_request("A & B <Co>", &export_period);
         assert!(party_master_xml.contains("INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST"));
+        assert!(party_master_xml
+            .contains("<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"));
         assert!(!export_xml.contains("<REPORT>"));
         assert!(!export_xml.contains("<FORM>"));
         assert!(!export_xml.contains("<PART>"));

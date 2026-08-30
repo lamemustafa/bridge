@@ -1954,6 +1954,7 @@ pub fn parse_native_ledger_source_records_with_evidence(
     parse_native_ledger_collection_with_evidence(
         xml,
         expected_company_guid,
+        NativeLedgerCollectionCompanyBinding::RowGuidPrefix,
         parse_native_ledger_collection_row,
     )
 }
@@ -1968,6 +1969,7 @@ pub fn parse_native_party_ledger_master_records_with_evidence(
     parse_native_ledger_collection_with_evidence(
         xml,
         expected_company_guid,
+        NativeLedgerCollectionCompanyBinding::ResponseGuid,
         parse_native_party_ledger_master_collection_row,
     )
 }
@@ -1975,10 +1977,11 @@ pub fn parse_native_party_ledger_master_records_with_evidence(
 fn parse_native_ledger_collection_with_evidence<T>(
     xml: &str,
     expected_company_guid: &str,
+    company_binding: NativeLedgerCollectionCompanyBinding,
     parse_row: impl Fn(
         &mut Reader<&[u8]>,
         &quick_xml::events::BytesStart<'_>,
-    ) -> anyhow::Result<(T, ParsedSourceIdentities, Option<String>)>,
+    ) -> anyhow::Result<NativeLedgerCollectionRow<T>>,
 ) -> anyhow::Result<ParsedExport<ParsedSourceRecord<T>>> {
     let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
     let mut reader = configured_reader(sanitized.as_str());
@@ -2011,7 +2014,27 @@ fn parse_native_ledger_collection_with_evidence<T>(
                 if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"LEDGER"
                 {
-                    let (record, identities_for_row, alter_id) = parse_row(&mut reader, &element)?;
+                    let NativeLedgerCollectionRow {
+                        record,
+                        identities: identities_for_row,
+                        alter_id,
+                        response_company_guid,
+                    } = parse_row(&mut reader, &element)?;
+                    if matches!(
+                        company_binding,
+                        NativeLedgerCollectionCompanyBinding::ResponseGuid
+                    ) {
+                        let response_company_guid = response_company_guid.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "native ledger collection omitted response company GUID"
+                            )
+                        })?;
+                        if !response_company_guid.eq_ignore_ascii_case(expected_company_guid) {
+                            anyhow::bail!(
+                                "native ledger collection did not confirm the selected company"
+                            );
+                        }
+                    }
                     let guid = identities_for_row
                         .guid
                         .as_deref()
@@ -2071,7 +2094,11 @@ fn parse_native_ledger_collection_with_evidence<T>(
     if !collection_seen {
         anyhow::bail!("native ledger collection omitted BODY/DATA/COLLECTION");
     }
-    if company_guid_prefix_match_count == 0 {
+    if matches!(
+        company_binding,
+        NativeLedgerCollectionCompanyBinding::RowGuidPrefix
+    ) && company_guid_prefix_match_count == 0
+    {
         anyhow::bail!("native ledger collection did not bind to the requested company");
     }
     let mut duplicate_identities = identities
@@ -2096,6 +2123,76 @@ fn parse_native_ledger_collection_with_evidence<T>(
             ..ExportEvidence::default()
         },
     })
+}
+
+#[derive(Clone, Copy)]
+enum NativeLedgerCollectionCompanyBinding {
+    /// Ordinary collection readers predate the response-bound compute and
+    /// retain their established row-identity contract.
+    RowGuidPrefix,
+    /// The dedicated party/ledger export must prove which selected company
+    /// answered, independently of imported ledger-object GUIDs.
+    ResponseGuid,
+}
+
+struct NativeLedgerCollectionRow<T> {
+    record: T,
+    identities: ParsedSourceIdentities,
+    alter_id: Option<String>,
+    response_company_guid: Option<String>,
+}
+
+#[cfg(test)]
+mod native_party_ledger_master_identity_tests {
+    use super::*;
+
+    const EXPECTED_COMPANY_GUID: &str = "11111111-1111-1111-1111-111111111111";
+
+    fn master_response(response_company_guid: Option<&str>) -> String {
+        let response_company_guid = response_company_guid
+            .map(|guid| format!("<BRIDGECOMPANYGUID>{guid}</BRIDGECOMPANYGUID>"))
+            .unwrap_or_default();
+        format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+            <LEDGER NAME=\"Imported selected ledger\"><GUID>{EXPECTED_COMPANY_GUID}-00000001</GUID>\
+            <MASTERID>1</MASTERID><ALTERID>1</ALTERID>{response_company_guid}\
+            <PARENT>Sundry Debtors</PARENT><OPENINGBALANCE>-100.00</OPENINGBALANCE></LEDGER>\
+            </COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+    }
+
+    #[test]
+    fn party_ledger_master_requires_a_response_bound_company_guid() {
+        let wrong_company = parse_native_party_ledger_master_records_with_evidence(
+            &master_response(Some("22222222-2222-2222-2222-222222222222")),
+            EXPECTED_COMPANY_GUID,
+        );
+        assert!(
+            wrong_company.is_err(),
+            "an imported selected-prefix ledger cannot prove the responding company"
+        );
+
+        let missing_company = parse_native_party_ledger_master_records_with_evidence(
+            &master_response(None),
+            EXPECTED_COMPANY_GUID,
+        );
+        assert!(
+            missing_company.is_err(),
+            "the dedicated master response must carry Tally's computed company GUID"
+        );
+
+        assert_eq!(
+            parse_native_party_ledger_master_records_with_evidence(
+                &master_response(Some(EXPECTED_COMPANY_GUID)),
+                EXPECTED_COMPANY_GUID,
+            )
+            .unwrap()
+            .records
+            .len(),
+            1,
+            "a matching response-bound company GUID admits the master response"
+        );
+    }
 }
 
 /// Parses a native `List of VoucherTypes` collection. Like native ledgers,
@@ -2415,39 +2512,46 @@ fn native_collection_export<T>(
 fn parse_native_ledger_collection_row(
     reader: &mut Reader<&[u8]>,
     element: &quick_xml::events::BytesStart<'_>,
-) -> anyhow::Result<(TallyLedger, ParsedSourceIdentities, Option<String>)> {
-    let (ledger, _, identities, alter_id) =
-        parse_native_ledger_collection_row_with_master_fields(reader, element, false)?;
-    Ok((ledger, identities, alter_id))
+) -> anyhow::Result<NativeLedgerCollectionRow<TallyLedger>> {
+    let ParsedNativeLedgerCollectionRow {
+        ledger,
+        identities,
+        alter_id,
+        response_company_guid,
+        ..
+    } = parse_native_ledger_collection_row_with_master_fields(reader, element, false)?;
+    Ok(NativeLedgerCollectionRow {
+        record: ledger,
+        identities,
+        alter_id,
+        response_company_guid,
+    })
 }
 
 fn parse_native_party_ledger_master_collection_row(
     reader: &mut Reader<&[u8]>,
     element: &quick_xml::events::BytesStart<'_>,
-) -> anyhow::Result<(
-    PartyLedgerMasterRecord,
-    ParsedSourceIdentities,
-    Option<String>,
-)> {
-    let (ledger, fields, identities, alter_id) =
-        parse_native_ledger_collection_row_with_master_fields(reader, element, true)?;
-    Ok((
-        PartyLedgerMasterRecord { ledger, fields },
+) -> anyhow::Result<NativeLedgerCollectionRow<PartyLedgerMasterRecord>> {
+    let ParsedNativeLedgerCollectionRow {
+        ledger,
+        fields,
         identities,
         alter_id,
-    ))
+        response_company_guid,
+    } = parse_native_ledger_collection_row_with_master_fields(reader, element, true)?;
+    Ok(NativeLedgerCollectionRow {
+        record: PartyLedgerMasterRecord { ledger, fields },
+        identities,
+        alter_id,
+        response_company_guid,
+    })
 }
 
 fn parse_native_ledger_collection_row_with_master_fields(
     reader: &mut Reader<&[u8]>,
     element: &quick_xml::events::BytesStart<'_>,
     retain_master_fields: bool,
-) -> anyhow::Result<(
-    TallyLedger,
-    PartyLedgerMasterFields,
-    ParsedSourceIdentities,
-    Option<String>,
-)> {
+) -> anyhow::Result<ParsedNativeLedgerCollectionRow> {
     validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
     let name = attr_value(reader, element, b"NAME")
         .ok_or_else(|| anyhow::anyhow!("native ledger row omitted NAME"))?;
@@ -2466,6 +2570,8 @@ fn parse_native_ledger_collection_row_with_master_fields(
     let mut master_id_seen = false;
     let mut alter_id_seen = false;
     let mut opening_balance_seen = false;
+    let mut response_company_guid = None;
+    let mut response_company_guid_seen = false;
     let mut master_fields = PartyLedgerMasterFields::default();
     let mut master_fields_seen = HashSet::new();
     loop {
@@ -2538,6 +2644,15 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     // a missing debtor/creditor balance into zero.
                     bridge_tally_primitives::ExactDecimal::parse(opening_balance.clone())?;
                     ledger.opening_balance = Some(opening_balance);
+                }
+                b"BRIDGECOMPANYGUID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut response_company_guid_seen, true) {
+                        anyhow::bail!("native ledger row repeated response company GUID");
+                    }
+                    response_company_guid = Some(normalized_standard_company_guid(
+                        &read_required_text(reader, child.name())?,
+                    )?);
                 }
                 b"INCOMETAXNUMBER" => retain_party_ledger_master_field(
                     reader,
@@ -2650,7 +2765,7 @@ fn parse_native_ledger_collection_row_with_master_fields(
                     }
                     ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(String::new());
                 }
-                b"GUID" | b"MASTERID" | b"ALTERID" | b"OPENINGBALANCE" => {
+                b"GUID" | b"MASTERID" | b"ALTERID" | b"OPENINGBALANCE" | b"BRIDGECOMPANYGUID" => {
                     anyhow::bail!("native ledger row omitted a required field");
                 }
                 b"REMOTEID" => {
@@ -2770,7 +2885,21 @@ fn parse_native_ledger_collection_row_with_master_fields(
     if !parent_seen {
         anyhow::bail!("native ledger row omitted PARENT");
     }
-    Ok((ledger, master_fields, identities, alter_id))
+    Ok(ParsedNativeLedgerCollectionRow {
+        ledger,
+        fields: master_fields,
+        identities,
+        alter_id,
+        response_company_guid,
+    })
+}
+
+struct ParsedNativeLedgerCollectionRow {
+    ledger: TallyLedger,
+    fields: PartyLedgerMasterFields,
+    identities: ParsedSourceIdentities,
+    alter_id: Option<String>,
+    response_company_guid: Option<String>,
 }
 
 fn retain_party_ledger_master_field(

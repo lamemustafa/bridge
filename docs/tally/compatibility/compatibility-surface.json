@@ -155,7 +155,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "ad2a2c240ad4efb357e07f608b86cc6349e3b3e77fb55a45938af578c12aba5f"
+      "sha256": "4e28cd3ec66c7956748b3d4fb62200ebf19ce8a1596386b815b55b81ee3cffdd"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/compute.rs",
@@ -171,11 +171,11 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/request.rs",
-      "sha256": "f56b32f0c1b78581c14d603276cc4ba3e8723d448eabb4162f4079e85af3f18a"
+      "sha256": "cc44f0a497d2f4be7e6aa68c1fb8a141fa472f9aa100db460ae4122f96b82d73"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/wire.rs",
-      "sha256": "6423041fa229191b8dcb8be997aba43a267582d0b0bfd15fc63d92b9618b4f05"
+      "sha256": "ebf23a5fa3a51f64ecab9e85a8e2d298223609a289e2c8352c5fe61fbd26bc14"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/completeness.rs",
@@ -355,11 +355,15 @@
     },
     {
       "path": "src-tauri/src/reports/party_ledger_master.rs",
-      "sha256": "c5e1cdc1a5f4aee4e162c61ac13b5cf8e406b4a74516ce190c8da9932b433145"
+      "sha256": "eb48e821ea13f0bc2f3b4b55bc3a1c6376b708519ef7589f22fb7e0f47de71c6"
     },
     {
       "path": "src-tauri/src/reports/party_ledger_master_xlsx.rs",
       "sha256": "f3b13f00051aad0386cb2a6a94613d5b098d435c9ecda21e9207424c7d7a157d"
+    },
+    {
+      "path": "src-tauri/src/reports/party_statement_xlsx.rs",
+      "sha256": "339138d7cf05cdaa71bceed51fd795e6b8ac5caec34b88549d6509b6ff554081"
     },
     {
       "path": "src-tauri/src/reports/schedule_iii.rs",
@@ -387,7 +391,7 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "04f78f13c36e1f4cbea0ee841618e1a31c3388ffce443cf4d0a4604c2e5c6adb"
+      "sha256": "f79de3fd5fddc3ba34f2fc037c45fd1aa537f71cd414c04f0aff64791109c89a"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
@@ -530,5 +534,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "5c00726b4cbbd7f4bf624cfc9b08d494a081e07407c0e42268b0b1e3df260a84"
+  "manifest_sha256": "5bd7e9ac63a9fa4bbcbb90a73782b46f72d503adbe98107b610f74188cbc8865"
 }
