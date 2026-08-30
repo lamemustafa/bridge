@@ -17,6 +17,13 @@ import {
 } from "./outstandings-as-of";
 import { companyIdentityKey } from "./company-identity";
 
+export type OutstandingsExportNotice = {
+  message: string;
+  path?: string;
+  location?: string;
+  failures?: Array<{ party: string; code: string; reason: string }>;
+};
+
 type Props = {
   config: { host: string; port: number };
   company?: {
@@ -35,6 +42,7 @@ type Props = {
   asOf: string;
   onAsOfChange: (value: string) => void;
   onTallyReadActivityChange: (delta: 1 | -1) => void;
+  onExportNoticeChange: (notice: OutstandingsExportNotice | null) => void;
 };
 
 function companyIdentityFor(company: NonNullable<Props["company"]>) {
@@ -125,6 +133,41 @@ type BulkPartyStatementDestinationSelection = {
   approval_id: string;
 };
 
+/// Owned by `App`, not the conditionally mounted outstandings screen, so a
+/// ledger-master export can settle after the operator changes view.
+export function OutstandingsExportNotice({
+  notice,
+  onDismiss,
+}: {
+  notice: OutstandingsExportNotice;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="outstandings-export-notice" role="status">
+      <span>
+        {notice.path
+          ? <>Saved <strong>{notice.message}</strong> to {notice.location ?? "Downloads"}</>
+          : notice.message}
+      </span>
+      <span className="export-notice-actions">
+        {notice.path && (
+          <button type="button" onClick={() => void invoke("reveal_exported_file", { path: notice.path })}>
+            {revealLabel()}
+          </button>
+        )}
+        <button type="button" onClick={onDismiss} aria-label="Dismiss">Dismiss</button>
+      </span>
+      {notice.failures && notice.failures.length > 0 && (
+        <ul className="outstandings-export-failures">
+          {notice.failures.map((failure) => (
+            <li key={failure.party}><strong>{failure.party}</strong>: {failure.reason}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function OutstandingsScreen({
   config,
   company,
@@ -135,6 +178,7 @@ export function OutstandingsScreen({
   asOf,
   onAsOfChange,
   onTallyReadActivityChange,
+  onExportNoticeChange,
 }: Props) {
   const [loadedResult, setLoadedResult] = React.useState<AsOfBoundValue<LoadResult> | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -142,12 +186,6 @@ export function OutstandingsScreen({
   const [inrAssertedCompanyIdentity, setInrAssertedCompanyIdentity] = React.useState<string | null>(null);
   const [ageingAnchor, setAgeingAnchor] = React.useState<OutstandingsAgeingAnchor>("due_date");
   const [view, setView] = React.useState<"ageing" | "unallocated">("ageing");
-  const [exportNotice, setExportNotice] = React.useState<{
-    message: string;
-    path?: string;
-    location?: string;
-    failures?: Array<{ party: string; code: string; reason: string }>;
-  } | null>(null);
   const [expandedParty, setExpandedParty] = React.useState<string | null>(null);
   const [exporting, setExporting] = React.useState<"csv" | "working-paper" | "batch" | "party" | "ledger-master" | null>(null);
   const [consumedWorkingPaperId, setConsumedWorkingPaperId] = React.useState<string | null>(null);
@@ -428,7 +466,7 @@ export function OutstandingsScreen({
       approvalIdToRevoke = selection.approval_id;
       const preview = await previewBulkPartyStatements(completeResult);
       if (preview.party_count === 0) {
-        setExportNotice({ message: "No parties with outstanding balances are available for statements." });
+        onExportNoticeChange({ message: "No parties with outstanding balances are available for statements." });
         return;
       }
       const label = format === "xlsx" ? "Excel" : "PDF";
@@ -437,20 +475,20 @@ export function OutstandingsScreen({
       );
       if (!confirmed) return;
       const batch = await exportBulkPartyStatements(completeResult, selection, format);
-      setExportNotice({
+      onExportNoticeChange({
         message: `${batch.written.length} ${label} statement${batch.written.length === 1 ? "" : "s"} written`,
         path: batch.manifest_path,
         location: batch.destination,
         failures: batch.failures,
       });
     } catch (cause) {
-      setExportNotice({ message: operatorMessage(cause) });
+      onExportNoticeChange({ message: operatorMessage(cause) });
     } finally {
       if (approvalIdToRevoke) {
         try {
           await revokePartyStatementDestination(approvalIdToRevoke);
         } catch (cause) {
-          setExportNotice({ message: operatorMessage(cause) });
+          onExportNoticeChange({ message: operatorMessage(cause) });
         }
       }
       endExport();
@@ -516,9 +554,9 @@ export function OutstandingsScreen({
                 if (!beginExport("csv")) return;
                 try {
                   const path = await exportCsv(completeResult);
-                  setExportNotice({ message: fileNameOf(path), path });
+                  onExportNoticeChange({ message: fileNameOf(path), path });
                 } catch (cause) {
-                  setExportNotice({ message: operatorMessage(cause) });
+                  onExportNoticeChange({ message: operatorMessage(cause) });
                 } finally {
                   endExport();
                 }
@@ -538,9 +576,9 @@ export function OutstandingsScreen({
                 onTallyReadActivityChange(1);
                 try {
                   const path = await exportPartyLedgerMaster(config, company);
-                  setExportNotice({ message: fileNameOf(path), path });
+                  onExportNoticeChange({ message: fileNameOf(path), path });
                 } catch (cause) {
-                  setExportNotice({ message: operatorMessage(cause) });
+                  onExportNoticeChange({ message: operatorMessage(cause) });
                 } finally {
                   onTallyReadActivityChange(-1);
                   endExport();
@@ -561,9 +599,9 @@ export function OutstandingsScreen({
                 setConsumedWorkingPaperId(completeResult.working_paper_export_id ?? null);
                 try {
                   const path = await exportWorkingPaper(completeResult);
-                  setExportNotice({ message: fileNameOf(path), path });
+                  onExportNoticeChange({ message: fileNameOf(path), path });
                 } catch (cause) {
-                  setExportNotice({
+                  onExportNoticeChange({
                     message: `${operatorMessage(cause)} Refresh outstandings before trying another working-paper export.`,
                   });
                 } finally {
@@ -607,30 +645,6 @@ export function OutstandingsScreen({
         </div>
       </div>
 
-      {exportNotice && (
-        <div className="outstandings-export-notice" role="status">
-          <span>
-            {exportNotice.path
-              ? <>Saved <strong>{exportNotice.message}</strong> to {exportNotice.location ?? "Downloads"}</>
-              : exportNotice.message}
-          </span>
-          <span className="export-notice-actions">
-            {exportNotice.path && (
-              <button type="button" onClick={() => void invoke("reveal_exported_file", { path: exportNotice.path })}>
-                {revealLabel()}
-              </button>
-            )}
-            <button type="button" onClick={() => setExportNotice(null)} aria-label="Dismiss">Dismiss</button>
-          </span>
-          {exportNotice.failures && exportNotice.failures.length > 0 && (
-            <ul className="outstandings-export-failures">
-              {exportNotice.failures.map((failure) => (
-                <li key={failure.party}><strong>{failure.party}</strong>: {failure.reason}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
       {workingPaperUnavailable && (
         <div className="outstandings-state" role="status">
           <strong>{workingPaperUnavailable.title}</strong>
@@ -819,9 +833,9 @@ export function OutstandingsScreen({
                                 if (!beginExport("party")) return;
                                 try {
                                   const path = await exportPartyStatement(completeResult, party.party, "xlsx");
-                                  setExportNotice({ message: fileNameOf(path), path });
+                                  onExportNoticeChange({ message: fileNameOf(path), path });
                                 } catch (cause) {
-                                  setExportNotice({ message: operatorMessage(cause) });
+                                  onExportNoticeChange({ message: operatorMessage(cause) });
                                 } finally {
                                   endExport();
                                 }
@@ -838,9 +852,9 @@ export function OutstandingsScreen({
                                 if (!beginExport("party")) return;
                                 try {
                                   const path = await exportPartyStatement(completeResult, party.party, "pdf");
-                                  setExportNotice({ message: fileNameOf(path), path });
+                                  onExportNoticeChange({ message: fileNameOf(path), path });
                                 } catch (cause) {
-                                  setExportNotice({ message: operatorMessage(cause) });
+                                  onExportNoticeChange({ message: operatorMessage(cause) });
                                 } finally {
                                   endExport();
                                 }

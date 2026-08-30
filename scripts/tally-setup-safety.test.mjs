@@ -173,7 +173,7 @@ test("party ledger export disables the concurrent outstandings refresh through t
   assert.match(ledgerMasterExport, /onTallyReadActivityChange\(-1\);/);
   const headingControls = outstandings.slice(
     outstandings.indexOf('<div className="outstandings-heading-actions">'),
-    outstandings.indexOf('{exportNotice && ('),
+    outstandings.indexOf('{workingPaperUnavailable && ('),
   );
   assert.match(headingControls, /disabled=\{loading \|\| liveReadNavigationLocked\}/);
   assert.match(headingControls, /disabled=\{loading \|\| liveReadNavigationLocked \|\| !requestedAsOf\}/);
@@ -182,6 +182,20 @@ test("party ledger export disables the concurrent outstandings refresh through t
   assert.match(switcherManage, /disabled=\{selectionLocked\}/);
   const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge operations">'), frontend.indexOf("</nav>"));
   assert.match(nav, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Manage Tally/);
+});
+
+test("a ledger-master export notice survives unmounting the outstandings screen", async () => {
+  const [frontend, outstandings] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(frontend, /const \[outstandingsExportNotice, setOutstandingsExportNotice\] = React\.useState/);
+  assert.match(frontend, /\{outstandingsExportNotice && \(\s*<OutstandingsExportNotice/s);
+  assert.match(frontend, /onExportNoticeChange=\{setOutstandingsExportNotice\}/);
+  assert.doesNotMatch(outstandings, /const \[exportNotice, setExportNotice\]/);
+  assert.match(outstandings, /onExportNoticeChange\(\{ message: fileNameOf\(path\), path \}\);/);
+  assert.match(outstandings, /onExportNoticeChange\(\{ message: operatorMessage\(cause\) \}\);/);
 });
 
 test("the shell never treats a truncated profile page or stale unsaved identity as exhaustive", async () => {

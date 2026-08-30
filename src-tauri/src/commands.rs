@@ -119,7 +119,7 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
         return tally_command_error(
             "response_validation_failed",
             "Response validation",
-            "The paired Tally sources disagreed, so Bridge withheld the unverified result.",
+            "The Tally response did not meet the party/ledger export validation contract, so Bridge withheld the unverified result.",
             "after_change",
             true,
             "Keep the result unverified and inspect redacted diagnostics before retrying.",
@@ -3212,6 +3212,25 @@ mod tests {
         assert_eq!(error.code, "response_validation_failed");
         assert_eq!(error.category, "Response validation");
         assert_ne!(error.code, "endpoint_unreachable");
+    }
+
+    #[test]
+    fn every_party_master_source_validation_is_not_an_endpoint_failure() {
+        use crate::tally::connection::PartyLedgerMasterSourceValidationError as Validation;
+
+        for error in [
+            Validation::MasterPeriod,
+            Validation::BalancePeriod,
+            Validation::MasterGuid,
+            Validation::MasterId,
+            Validation::MasterAlterId,
+            Validation::MasterOpeningBalance,
+        ] {
+            let mapped = tally_runtime_command_error(anyhow::Error::new(error));
+            assert_eq!(mapped.code, "response_validation_failed");
+            assert_eq!(mapped.category, "Response validation");
+            assert_ne!(mapped.code, "endpoint_unreachable");
+        }
     }
 
     #[test]

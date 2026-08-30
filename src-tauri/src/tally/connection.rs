@@ -74,6 +74,18 @@ fn party_ledger_master_openings_agree(
 /// safe workbook source. This is distinct from endpoint or XML failure.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PartyLedgerMasterSourceValidationError {
+    #[error("Tally master ledger export period is unsupported")]
+    MasterPeriod,
+    #[error("Tally closing-balance period is unsupported")]
+    BalancePeriod,
+    #[error("Tally ledger master omitted GUID")]
+    MasterGuid,
+    #[error("Tally ledger master omitted MASTERID")]
+    MasterId,
+    #[error("Tally ledger master omitted ALTERID")]
+    MasterAlterId,
+    #[error("Tally ledger master omitted OPENINGBALANCE")]
+    MasterOpeningBalance,
     #[error("Tally ledger master repeated a stable source identity")]
     DuplicateMasterIdentity,
     #[error("Tally balance snapshot omitted a ledger master")]
@@ -882,13 +894,13 @@ impl TallyClient {
             opening_extent.books_from().clone(),
             opening_extent.last_voucher_date().clone(),
         )
-        .map_err(|_| anyhow::anyhow!("Tally master ledger export period is unsupported"))?;
+        .map_err(|_| anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterPeriod))?;
         let balance_period = party_ledger_master_balance_period(
             boundary_profile,
             opening_extent.books_from().clone(),
             opening_extent.last_voucher_date().clone(),
         )
-        .map_err(|_| anyhow::anyhow!("Tally closing-balance period is unsupported"))?;
+        .map_err(|_| anyhow::Error::new(PartyLedgerMasterSourceValidationError::BalancePeriod))?;
         let master_pair = self
             .fetch_native_report_paired(render_party_ledger_master_request(company, &master_period))
             .await?;
@@ -978,23 +990,26 @@ impl TallyClient {
                     PartyLedgerMasterSourceValidationError::BalanceMissingMasterLedger,
                 )
             })?;
-            let guid = source
-                .identities
-                .guid
-                .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted GUID"))?;
-            let master_id = source
-                .identities
-                .master_id
-                .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted MASTERID"))?;
-            let alter_id = source
-                .alter_id
-                .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted ALTERID"))?;
-            let master_opening = source
-                .record
-                .ledger
-                .opening_balance
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("Tally ledger master omitted OPENINGBALANCE"))?;
+            let guid = source.identities.guid.ok_or_else(|| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterGuid)
+            })?;
+            let master_id = source.identities.master_id.ok_or_else(|| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterId)
+            })?;
+            let alter_id = source.alter_id.ok_or_else(|| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterAlterId)
+            })?;
+            let master_opening =
+                source
+                    .record
+                    .ledger
+                    .opening_balance
+                    .as_deref()
+                    .ok_or_else(|| {
+                        anyhow::Error::new(
+                            PartyLedgerMasterSourceValidationError::MasterOpeningBalance,
+                        )
+                    })?;
             if !party_ledger_master_openings_agree(master_opening, &balance.opening_balance)? {
                 return Err(anyhow::Error::new(
                     PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
