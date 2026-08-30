@@ -14,5 +14,5 @@ export function readProvenance(report: OutstandingsReadProvenance) {
     return `${vouchers} ${report.source_voucher_count === 1 ? "voucher" : "vouchers"} verified`;
   }
   const bills = report.open_receivable_bill_count.toLocaleString("en-IN");
-  return `${bills} open ${report.open_receivable_bill_count === 1 ? "bill" : "bills"} read from Tally`;
+  return `${bills} open receivable ${report.open_receivable_bill_count === 1 ? "bill" : "bills"} read from Tally`;
 }

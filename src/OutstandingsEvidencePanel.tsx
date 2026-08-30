@@ -70,6 +70,9 @@ export function OutstandingsEvidencePanel({ entry }: Props) {
             <div><dt>Read scope</dt><dd>{readProvenance(evidence.readProvenance)} · {displayBytes(evidence.sourceBytes)}</dd></div>
             <div><dt>Receivable</dt><dd>{evidence.receivableTotal}</dd></div>
             <div><dt>Payable</dt><dd>{evidence.payableTotal}</dd></div>
+            {evidence.unallocatedTotal !== undefined && (
+              <div><dt>Unallocated (no bill reference)</dt><dd>{evidence.unallocatedTotal}</dd></div>
+            )}
           </>
         ) : evidence.state === "partial" ? (
           <>

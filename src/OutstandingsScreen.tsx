@@ -140,6 +140,9 @@ export type OutstandingsEvidence =
       sourceBytes: number;
       receivableTotal: string;
       payableTotal: string;
+      // The native read can establish this residual; voucher scans cannot.
+      // Undefined is intentionally distinct from an exact zero amount.
+      unallocatedTotal?: string;
     }
   | {
       state: "partial";
@@ -279,6 +282,7 @@ export function OutstandingsScreen({
           sourceBytes: inrCompleteResult.report.source_bytes,
           receivableTotal: inrCompleteResult.report.receivable_total,
           payableTotal: inrCompleteResult.report.payable_total,
+          unallocatedTotal: inrCompleteResult.unallocated_total,
         }
       : result.state === "partial"
       ? {

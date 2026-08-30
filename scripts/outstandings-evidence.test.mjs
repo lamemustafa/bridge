@@ -8,14 +8,15 @@ import { companyIdentityKey, companyIdentityLabel } from "../src/company-identit
 import { reportEvidenceDrawerEntry } from "../src/evidence-drawer-entry.ts";
 import { readProvenance } from "../src/outstandings-provenance.ts";
 
-test("evidence scope uses the Rust-owned read strategy, not a count inference", async () => {
+test("native provenance labels its receivable-only count while native rows include both directions", async () => {
   const [screen, panel, runtime] = await Promise.all([
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/src/tally/runtime.rs", import.meta.url), "utf8"),
   ]);
 
-  assert.equal(readProvenance({ read_strategy: "native_bills", source_voucher_count: 0, open_receivable_bill_count: 0 }), "0 open bills read from Tally");
+  assert.equal(readProvenance({ read_strategy: "native_bills", source_voucher_count: 0, open_receivable_bill_count: 1 }), "1 open receivable bill read from Tally");
+  assert.equal(readProvenance({ read_strategy: "native_bills", source_voucher_count: 0, open_receivable_bill_count: 2 }), "2 open receivable bills read from Tally");
   assert.equal(readProvenance({ read_strategy: "voucher_scan", source_voucher_count: 0, open_receivable_bill_count: 0 }), "0 vouchers verified");
   assert.equal(readProvenance({ read_strategy: "voucher_scan", source_voucher_count: 1, open_receivable_bill_count: 2 }), "1 voucher verified");
   assert.match(screen, /readProvenance: \{\s*read_strategy: inrCompleteResult\.read_strategy,/s);
@@ -23,8 +24,31 @@ test("evidence scope uses the Rust-owned read strategy, not a count inference", 
   assert.match(screen, /readProvenance: \{\s*read_strategy: inrCompleteResult\.read_strategy,/s);
   assert.match(runtime, /read_strategy: OutstandingsReadStrategy::NativeBills,/);
   assert.match(runtime, /read_strategy: OutstandingsReadStrategy::VoucherScan,/);
+  assert.match(runtime, /all_open_bill_rows\(&receivable_rows, &payable_rows, ageing_anchor, &as_of\)/);
+  assert.match(runtime, /assert_eq!\(statement_open_bills\.len\(\), 6\);/);
   assert.match(panel, /readProvenance\(evidence\.readProvenance\)/);
   assert.doesNotMatch(panel, /sourceVoucherCount/);
+});
+
+test("evidence carries and renders an unallocated residual only when the read established one", async () => {
+  const [screen, panel] = await Promise.all([
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8"),
+  ]);
+  const reportEvidence = screen.slice(
+    screen.indexOf("const reportEvidence"),
+    screen.indexOf("const load = React.useCallback"),
+  );
+
+  assert.match(screen, /unallocatedTotal\?: string;/);
+  assert.match(reportEvidence, /unallocatedTotal: inrCompleteResult\.unallocated_total,/);
+  assert.match(panel, /evidence\.unallocatedTotal !== undefined/);
+  assert.match(panel, /<dt>Unallocated \(no bill reference\)<\/dt><dd>\{evidence\.unallocatedTotal\}<\/dd>/);
+  const unallocatedFact = panel.slice(
+    panel.indexOf("evidence.unallocatedTotal !== undefined"),
+    panel.indexOf(")}", panel.indexOf("evidence.unallocatedTotal !== undefined")) + 2,
+  );
+  assert.doesNotMatch(unallocatedFact, /"0"|\?\?/);
 });
 
 test("selecting a saved company within local evidence issues no Tally invoke", async () => {
