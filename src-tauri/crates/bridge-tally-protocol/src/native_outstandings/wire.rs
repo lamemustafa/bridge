@@ -27,7 +27,7 @@ use bridge_tally_primitives::ExactDecimal;
 use crate::tolerant_xml::{
     sanitize_invalid_numeric_references, sanitize_invalid_numeric_references_with_provenance,
 };
-use crate::TallyNamedMaster;
+use crate::{PartyLedgerMasterFieldObservation, TallyNamedMaster};
 
 use super::date::{parse_native_display_date, NativeDisplayDateRole};
 use super::model::{LedgerSnapshotEntry, NativeBillRow, NativeOutstandingsError};
@@ -347,17 +347,11 @@ fn set_once(
 /// Parses the `List of Ledgers` collection response, scoping rows strictly
 /// to `ENVELOPE/BODY/DATA/COLLECTION` so the `CMPINFO` bare-counter trap
 /// (`<LEDGER>0</LEDGER>` inside `DESC/CMPINFO`) cannot be misread as rows.
-/// Parses a ledger balance, treating an **empty** element as zero.
+/// Parses a ledger opening balance, treating an **empty** element as zero.
 ///
-/// Tally emits `<CLOSINGBALANCE></CLOSINGBALANCE>` -- entirely empty, not
-/// `"0"` -- for a ledger whose balance is nil. Measured 2026-08-07: 16 of the
-/// 88 ledgers on the bulk demo book do this, while the small bill-wise lab
-/// book has none, so a parser validated only against the latter rejects every
-/// realistic book with `InvalidAmount` and takes the whole read down with it.
-///
-/// Only a genuinely empty value is accepted as zero. Anything else that fails
-/// to parse is still an error: this is a narrow allowance for an observed
-/// encoding of zero, not a lenient number parser.
+/// The shipped Outstandings path has established this narrow interpretation
+/// for opening balances. A closing balance uses the separate parser below so
+/// callers can distinguish an empty element from an established numeric zero.
 fn parse_ledger_amount(text: &str) -> Result<ExactDecimal, NativeOutstandingsError> {
     if text.is_empty() {
         return Ok(ExactDecimal::zero());
@@ -368,11 +362,11 @@ fn parse_ledger_amount(text: &str) -> Result<ExactDecimal, NativeOutstandingsErr
 fn parse_ledger_closing_balance(
     text: &str,
     ledger_name: &str,
-) -> Result<ExactDecimal, NativeOutstandingsError> {
+) -> Result<Option<ExactDecimal>, NativeOutstandingsError> {
     if text.is_empty() {
-        return Ok(ExactDecimal::zero());
+        return Ok(None);
     }
-    ExactDecimal::parse(text).map_err(|_| {
+    ExactDecimal::parse(text).map(Some).map_err(|_| {
         if is_foreign_currency_balance(text) {
             NativeOutstandingsError::ForeignCurrencyLedgerBalance {
                 ledger_name: ledger_name.to_string(),
@@ -423,6 +417,42 @@ fn is_currency_qualified_numeric(value: &str) -> bool {
 pub fn parse_native_ledger_snapshot(
     xml: &str,
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
+    Ok(parse_native_ledger_snapshot_rows(xml)?
+        .into_iter()
+        .map(|row| row.entry)
+        .collect())
+}
+
+/// Parses a native ledger snapshot only when Tally's collection-level compute
+/// proves that the response came from the selected company. Row GUIDs identify
+/// ledger objects and can legitimately retain an imported company's prefix;
+/// they are not evidence of which company answered this request.
+pub fn parse_native_ledger_snapshot_for_company(
+    xml: &str,
+    expected_company_guid: &str,
+) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
+    let entries = parse_native_ledger_snapshot_rows(xml)?;
+    for row in &entries {
+        let response_company_guid = row.response_company_guid.as_deref().ok_or(
+            NativeOutstandingsError::InvalidResponse("ledger_response_company_guid_missing"),
+        )?;
+        if !response_company_guid.eq_ignore_ascii_case(expected_company_guid) {
+            return Err(NativeOutstandingsError::InvalidResponse(
+                "ledger_response_company_guid_mismatch",
+            ));
+        }
+    }
+    if entries.is_empty() {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "ledger_response_company_guid_missing",
+        ));
+    }
+    Ok(entries.into_iter().map(|row| row.entry).collect())
+}
+
+fn parse_native_ledger_snapshot_rows(
+    xml: &str,
+) -> Result<Vec<ParsedLedgerSnapshotRow>, NativeOutstandingsError> {
     let sanitized = sanitize_invalid_numeric_references(xml);
     let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(true);
@@ -512,16 +542,13 @@ pub fn parse_native_ledger_snapshot(
 /// group rows. The native family carries no legacy completeness counter: its
 /// completeness is established by the caller's paired byte-identical reads.
 ///
-/// The collection has no report-envelope company identity either, so -- as
-/// with [`crate::parse_native_group_source_records_with_evidence`] on the
-/// core-window path -- at least one row's `GUID` must carry the requested
-/// company's prefix or the snapshot is rejected outright. Tally is known to
-/// silently substitute a different loaded company rather than erroring, and
-/// this batch's ambient GUID-verified extent reads (see
-/// `fetch_outstandings_native`) bracket the read but do not bind this
-/// specific response. A foreign-prefixed row alongside a matching one is
-/// still accepted and simply not counted as a match: a book can legitimately
-/// hold masters imported with their original GUIDs.
+/// The request computes `BRIDGECOMPANYGUID` from `##SVCurrentCompany` and
+/// this parser requires every returned row to carry that exact selected
+/// company GUID. Tally can silently substitute a different loaded company
+/// rather than erroring; neither the ambient GUID-verified extent reads nor
+/// a row object's own GUID bind this specific response. Imported masters may
+/// retain foreign row GUIDs, so using those row identities for response
+/// identity would reject legitimate data and fail to detect substitution.
 pub fn parse_native_group_snapshot(
     xml: &str,
     expected_company_guid: &str,
@@ -546,13 +573,10 @@ pub struct NativeGroupSnapshotEntry {
 /// Parses the native Group collection while retaining exact row evidence for
 /// callers that persist the collection in a canonical snapshot.
 ///
-/// `expected_company_guid` binds the response the way
-/// [`crate::parse_native_group_source_records_with_evidence`] binds the
-/// core-window read: at least one row's `GUID` must carry that prefix (see
-/// `native_ledger_guid_has_company_prefix`) or the whole snapshot is refused
-/// with [`NativeOutstandingsError::InvalidResponse`]`("group_company_guid_unverified")`.
-/// Other prefixes remain counted, not rejected -- a book can legitimately
-/// hold masters imported with their original GUIDs.
+/// `expected_company_guid` binds every response row through the request's
+/// `BRIDGECOMPANYGUID` computed value. Missing or nonmatching values are
+/// refused with typed `InvalidResponse` codes; a Group row can therefore not
+/// enter a workbook source without response-company identity being considered.
 pub fn parse_native_group_snapshot_with_evidence(
     xml: &str,
     expected_company_guid: &str,
@@ -565,8 +589,6 @@ pub fn parse_native_group_snapshot_with_evidence(
     let mut status_seen = false;
     let mut collection_seen = false;
     let mut entries = Vec::new();
-    let mut company_guid_prefix_match_count = 0_u64;
-    let mut company_guid_prefix_mismatch_count = 0_u64;
     loop {
         let event_start = reader.buffer_position() as usize;
         let event = reader
@@ -594,29 +616,20 @@ pub fn parse_native_group_snapshot_with_evidence(
                 if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"GROUP"
                 {
-                    let (record, guid) = parse_group_row(&mut reader, &element)?;
-                    // A row with no GUID at all is neither a match nor a
-                    // mismatch: it carries no evidence either way. Only a
-                    // present GUID is scored against the expected prefix.
-                    if let Some(guid) = guid.as_deref() {
-                        if crate::native_ledger_guid_has_company_prefix(guid, expected_company_guid)
-                        {
-                            company_guid_prefix_match_count = company_guid_prefix_match_count
-                                .checked_add(1)
-                                .ok_or(NativeOutstandingsError::InvalidResponse(
-                                    "group_company_guid_count_overflow",
-                                ))?;
-                        } else {
-                            company_guid_prefix_mismatch_count = company_guid_prefix_mismatch_count
-                                .checked_add(1)
-                                .ok_or(NativeOutstandingsError::InvalidResponse(
-                                    "group_company_guid_count_overflow",
-                                ))?;
-                        }
+                    let row = parse_group_row(&mut reader, &element)?;
+                    let response_company_guid = row.response_company_guid.as_deref().ok_or(
+                        NativeOutstandingsError::InvalidResponse(
+                            "group_response_company_guid_missing",
+                        ),
+                    )?;
+                    if !response_company_guid.eq_ignore_ascii_case(expected_company_guid) {
+                        return Err(NativeOutstandingsError::InvalidResponse(
+                            "group_response_company_guid_mismatch",
+                        ));
                     }
                     let record_end = reader.buffer_position() as usize;
                     entries.push(NativeGroupSnapshotEntry {
-                        record,
+                        record: row.record,
                         raw_source_sha256: sha256_hex(
                             sanitized
                                 .original_fragment(event_start, record_end)
@@ -669,31 +682,25 @@ pub fn parse_native_group_snapshot_with_evidence(
             "group_collection_missing",
         ));
     }
-    // Tally is known to silently substitute a different loaded company
-    // rather than erroring. This batch's ambient GUID-verified extent reads
-    // bracket the whole read but do not bind this specific response, so at
-    // least one row must carry the expected company's GUID prefix -- the
-    // same policy `parse_native_group_source_records_with_evidence` applies
-    // on the core-window path. A foreign prefix on some rows is legitimate
-    // (imported masters can retain their original GUIDs) and is merely
-    // counted above, never individually rejected; only a snapshot with NO
-    // matching row at all is refused.
-    if company_guid_prefix_match_count == 0 {
+    if entries.is_empty() {
         return Err(NativeOutstandingsError::InvalidResponse(
-            "group_company_guid_unverified",
+            "group_response_company_guid_missing",
         ));
     }
     Ok(entries)
 }
 
-/// Parses one `GROUP` row, returning its name/parent plus its `GUID` when the
-/// row carries one. The row's GUID is optional here (unlike the core-window
-/// reader's mandatory-GUID rows): the caller scores it against the expected
-/// company prefix but never rejects a row for omitting it outright.
+struct ParsedNativeGroupSnapshotRow {
+    record: TallyNamedMaster,
+    response_company_guid: Option<String>,
+}
+
+/// Parses one `GROUP` row and keeps the request-computed responder identity
+/// separate from the Group object's own GUID.
 fn parse_group_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<(TallyNamedMaster, Option<String>), NativeOutstandingsError> {
+) -> Result<ParsedNativeGroupSnapshotRow, NativeOutstandingsError> {
     let name = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("group_name_missing"),
     )?;
@@ -705,8 +712,8 @@ fn parse_group_row(
     let reserved_name = raw_attribute_value(element, b"RESERVEDNAME");
     let mut parent = None;
     let mut parent_seen = false;
-    let mut guid = None;
-    let mut guid_seen = false;
+    let mut response_company_guid = None;
+    let mut response_company_guid_seen = false;
     loop {
         match reader
             .read_event()
@@ -721,14 +728,19 @@ fn parse_group_row(
                 }
                 parent = (!value.is_empty()).then_some(value);
             }
-            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
+            Event::Start(child)
+                if child
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"BRIDGECOMPANYGUID") =>
+            {
                 let value = read_element_text(reader, child.name())?;
-                if std::mem::replace(&mut guid_seen, true) {
+                if std::mem::replace(&mut response_company_guid_seen, true) {
                     return Err(NativeOutstandingsError::InvalidResponse(
-                        "group_duplicate_guid",
+                        "group_duplicate_response_company_guid",
                     ));
                 }
-                guid = (!value.is_empty()).then_some(value);
+                response_company_guid = (!value.is_empty()).then_some(value);
             }
             Event::Start(_) => skip_subtree(reader)?,
             Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"PARENT") => {
@@ -738,10 +750,15 @@ fn parse_group_row(
                     ));
                 }
             }
-            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
-                if std::mem::replace(&mut guid_seen, true) {
+            Event::Empty(child)
+                if child
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"BRIDGECOMPANYGUID") =>
+            {
+                if std::mem::replace(&mut response_company_guid_seen, true) {
                     return Err(NativeOutstandingsError::InvalidResponse(
-                        "group_duplicate_guid",
+                        "group_duplicate_response_company_guid",
                     ));
                 }
             }
@@ -760,14 +777,14 @@ fn parse_group_row(
             "group_parent_missing",
         ));
     }
-    Ok((
-        TallyNamedMaster {
+    Ok(ParsedNativeGroupSnapshotRow {
+        record: TallyNamedMaster {
             name,
-            parent,
+            parent: PartyLedgerMasterFieldObservation::Returned(parent.unwrap_or_default()),
             reserved_name,
         },
-        guid,
-    ))
+        response_company_guid,
+    })
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -784,14 +801,18 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn parse_ledger_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<LedgerSnapshotEntry, NativeOutstandingsError> {
+) -> Result<ParsedLedgerSnapshotRow, NativeOutstandingsError> {
     let name = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("ledger_name_missing"),
     )?;
     let mut parent = None;
+    // The outer option records whether the element was present; the inner one
+    // retains Tally's observed empty-element state rather than inventing zero.
     let mut closing_balance = None;
     let mut opening_balance = None;
     let mut bill_wise_on = None;
+    let mut response_company_guid = None;
+    let mut response_company_guid_seen = false;
     loop {
         match reader
             .read_event()
@@ -836,7 +857,28 @@ fn parse_ledger_row(
                         }
                         bill_wise_on = Some(parse_tally_boolean(&text)?);
                     }
+                    b"BRIDGECOMPANYGUID" => {
+                        let text = read_element_text(reader, child.name())?;
+                        if std::mem::replace(&mut response_company_guid_seen, true) {
+                            return Err(NativeOutstandingsError::InvalidResponse(
+                                "ledger_duplicate_response_company_guid",
+                            ));
+                        }
+                        response_company_guid = (!text.is_empty()).then_some(text);
+                    }
                     _ => skip_subtree(reader)?,
+                }
+            }
+            Event::Empty(child)
+                if child
+                    .name()
+                    .as_ref()
+                    .eq_ignore_ascii_case(b"BRIDGECOMPANYGUID") =>
+            {
+                if std::mem::replace(&mut response_company_guid_seen, true) {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "ledger_duplicate_response_company_guid",
+                    ));
                 }
             }
             Event::Empty(_) => {}
@@ -849,19 +891,27 @@ fn parse_ledger_row(
             _ => {}
         }
     }
-    Ok(LedgerSnapshotEntry {
-        name,
-        parent: parent.flatten(),
-        closing_balance: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
-            "ledger_closing_balance_missing",
-        ))?,
-        opening_balance: opening_balance.ok_or(NativeOutstandingsError::InvalidResponse(
-            "ledger_opening_balance_missing",
-        ))?,
-        bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
-            "ledger_bill_wise_flag_missing",
-        ))?,
+    Ok(ParsedLedgerSnapshotRow {
+        entry: LedgerSnapshotEntry {
+            name,
+            parent: parent.flatten(),
+            closing_balance: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
+                "ledger_closing_balance_missing",
+            ))?,
+            opening_balance: opening_balance.ok_or(NativeOutstandingsError::InvalidResponse(
+                "ledger_opening_balance_missing",
+            ))?,
+            bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
+                "ledger_bill_wise_flag_missing",
+            ))?,
+        },
+        response_company_guid,
     })
+}
+
+struct ParsedLedgerSnapshotRow {
+    entry: LedgerSnapshotEntry,
+    response_company_guid: Option<String>,
 }
 
 fn skip_subtree(reader: &mut Reader<&[u8]>) -> Result<(), NativeOutstandingsError> {
@@ -1048,7 +1098,11 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
     }
 
     let currency_count = rows.len();
-    let (symbol, mailing_name) = rows.into_iter().next().unwrap_or_default();
+    let CurrencyRow {
+        symbol,
+        mailing_name,
+        decimal_places,
+    } = rows.into_iter().next().unwrap_or_default();
     // Only a single defined currency lets this read name the BASE currency.
     // "Rs." is shared by several currencies, so only the observed Indian
     // mailing identity is authoritative enough to put ₹ before real money.
@@ -1060,18 +1114,27 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
         symbol,
         mailing_name,
         currency_count,
+        decimal_places,
         is_inr,
     })
+}
+
+#[derive(Default)]
+struct CurrencyRow {
+    symbol: String,
+    mailing_name: String,
+    decimal_places: u8,
 }
 
 fn parse_currency_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<(String, String), NativeOutstandingsError> {
+) -> Result<CurrencyRow, NativeOutstandingsError> {
     let symbol = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("currency_name_missing"),
     )?;
     let mut mailing_name = None;
+    let mut decimal_places = None;
     loop {
         match reader
             .read_event()
@@ -1085,6 +1148,17 @@ fn parse_currency_row(
                     ));
                 }
             }
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"DECIMALPLACES") => {
+                let text = read_element_text(reader, child.name())?;
+                let parsed = text.parse::<u8>().map_err(|_| {
+                    NativeOutstandingsError::InvalidResponse("currency_decimal_places_invalid")
+                })?;
+                if decimal_places.replace(parsed).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_duplicate_decimal_places",
+                    ));
+                }
+            }
             Event::Start(_) => skip_subtree(reader)?,
             Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"MAILINGNAME") => {
                 if mailing_name.replace(String::new()).is_some() {
@@ -1092,6 +1166,11 @@ fn parse_currency_row(
                         "currency_duplicate_mailing_name",
                     ));
                 }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"DECIMALPLACES") => {
+                return Err(NativeOutstandingsError::InvalidResponse(
+                    "currency_decimal_places_invalid",
+                ));
             }
             Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"CURRENCY") => break,
             Event::Eof => {
@@ -1102,7 +1181,13 @@ fn parse_currency_row(
             _ => {}
         }
     }
-    Ok((symbol, mailing_name.unwrap_or_default()))
+    Ok(CurrencyRow {
+        symbol,
+        mailing_name: mailing_name.unwrap_or_default(),
+        decimal_places: decimal_places.ok_or(NativeOutstandingsError::InvalidResponse(
+            "currency_decimal_places_missing",
+        ))?,
+    })
 }
 
 #[cfg(test)]
@@ -1143,13 +1228,14 @@ mod currency_tests {
 
     #[test]
     fn captured_currency_collections_recognize_both_indian_spellings_without_guessing() {
-        for (bytes, sha256, symbol, mailing_name, count, is_inr) in [
+        for (bytes, sha256, symbol, mailing_name, count, decimal_places, is_inr) in [
             (
                 MODERN_LIVE,
                 "0dc84aa287cab1e1922db7e99a01f9f2b0bacd0d777fdd0b080adedc6622ed22",
                 "I₹",
                 "INR",
                 1,
+                2,
                 true,
             ),
             (
@@ -1158,6 +1244,7 @@ mod currency_tests {
                 "Rs.",
                 "Indian Rupees",
                 1,
+                2,
                 true,
             ),
             (
@@ -1165,6 +1252,7 @@ mod currency_tests {
                 "b64c0d5feb528fa02f81de576de5c766a95e1da1000975b1e2932868ae34118b",
                 "$",
                 "USD",
+                2,
                 2,
                 false,
             ),
@@ -1174,6 +1262,7 @@ mod currency_tests {
             assert_eq!(currency.symbol, symbol);
             assert_eq!(currency.mailing_name, mailing_name);
             assert_eq!(currency.currency_count, count, "CMPINFO is not a row");
+            assert_eq!(currency.decimal_places, decimal_places);
             assert_eq!(currency.is_inr, is_inr);
         }
     }
@@ -1182,7 +1271,7 @@ mod currency_tests {
     fn several_currencies_cannot_name_the_base_currency() {
         let xml = decode_utf16le(LEGACY_LIVE).replace(
             "</COLLECTION>",
-            r#"<CURRENCY NAME="$" RESERVEDNAME=""><MAILINGNAME TYPE="String">US Dollars</MAILINGNAME></CURRENCY></COLLECTION>"#,
+            r#"<CURRENCY NAME="$" RESERVEDNAME=""><MAILINGNAME TYPE="String">US Dollars</MAILINGNAME><DECIMALPLACES TYPE="Number">2</DECIMALPLACES></CURRENCY></COLLECTION>"#,
         );
         let currency = parse_company_currency(&xml).expect("parses");
         assert_eq!(currency.currency_count, 2);
@@ -1211,6 +1300,29 @@ mod currency_tests {
     }
 
     #[test]
+    fn currency_precision_is_required_and_typed_at_the_wire_boundary() {
+        let missing = decode_utf16le(LEGACY_LIVE)
+            .replace(r#"<DECIMALPLACES TYPE="Number"> 2</DECIMALPLACES>"#, "");
+        assert_eq!(
+            parse_company_currency(&missing),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "currency_decimal_places_missing"
+            ))
+        );
+
+        let invalid = decode_utf16le(LEGACY_LIVE).replace(
+            r#"<DECIMALPLACES TYPE="Number"> 2</DECIMALPLACES>"#,
+            r#"<DECIMALPLACES TYPE="Number">fractional</DECIMALPLACES>"#,
+        );
+        assert_eq!(
+            parse_company_currency(&invalid),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "currency_decimal_places_invalid"
+            ))
+        );
+    }
+
+    #[test]
     fn common_rs_symbol_does_not_prove_indian_rupees() {
         let xml = decode_utf16le(LEGACY_LIVE).replace("Indian Rupees", "Pakistani Rupees");
         let currency = parse_company_currency(&xml).expect("shaped collection parses");
@@ -1232,6 +1344,91 @@ mod currency_tests {
             Err(NativeOutstandingsError::ForeignCurrencyLedgerBalance {
                 ledger_name: "FX USD Debtor 02".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn ledger_snapshot_retains_an_empty_closing_balance_distinct_from_zero() {
+        let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+            <LEDGER NAME=\"Empty\"><PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE></CLOSINGBALANCE>\
+            <OPENINGBALANCE>0</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+            <LEDGER NAME=\"Zero\"><PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>0</CLOSINGBALANCE>\
+            <OPENINGBALANCE>0</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+            </COLLECTION></DATA></BODY></ENVELOPE>";
+        let rows =
+            parse_native_ledger_snapshot(xml).expect("the observed empty element is valid XML");
+        assert_eq!(rows[0].closing_balance, None);
+        assert_eq!(rows[1].closing_balance, Some(ExactDecimal::zero()));
+    }
+
+    #[test]
+    fn party_ledger_master_balance_response_with_only_foreign_company_guids_is_withheld() {
+        let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+            <LEDGER NAME=\"Same ledger name\"><GUID>22222222-2222-2222-2222-222222222222-00000001</GUID>\
+            <BRIDGECOMPANYGUID>22222222-2222-2222-2222-222222222222</BRIDGECOMPANYGUID>\
+            <PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>-100.00</CLOSINGBALANCE>\
+            <OPENINGBALANCE>-100.00</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+            </COLLECTION></DATA></BODY></ENVELOPE>";
+
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(xml, "11111111-1111-1111-1111-111111111111"),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "ledger_response_company_guid_mismatch"
+            ))
+        );
+        assert_eq!(
+            parse_native_ledger_snapshot(xml).unwrap().len(),
+            1,
+            "ordinary snapshot consumers retain their documented, identity-neutral parser"
+        );
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(xml, "22222222-2222-2222-2222-222222222222")
+                .unwrap()
+                .len(),
+            1,
+            "a matching row GUID binds the export response before it is joined"
+        );
+    }
+
+    #[test]
+    fn party_ledger_master_balance_response_requires_its_own_company_identity() {
+        const EXPECTED: &str = "11111111-1111-1111-1111-111111111111";
+        let response = |company_guid: Option<&str>| {
+            let company_guid = company_guid
+                .map(|guid| format!("<BRIDGECOMPANYGUID>{guid}</BRIDGECOMPANYGUID>"))
+                .unwrap_or_default();
+            format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+                <LEDGER NAME=\"Imported selected ledger\"><GUID>{EXPECTED}-00000001</GUID>{company_guid}\
+                <PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>-100.00</CLOSINGBALANCE>\
+                <OPENINGBALANCE>-100.00</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+                </COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+        };
+
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(
+                &response(Some("22222222-2222-2222-2222-222222222222")),
+                EXPECTED,
+            ),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "ledger_response_company_guid_mismatch"
+            )),
+            "a selected-prefix imported ledger cannot prove which company answered"
+        );
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(&response(None), EXPECTED),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "ledger_response_company_guid_missing"
+            )),
+            "a response without Tally's computed company GUID is withheld"
+        );
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(&response(Some(EXPECTED)), EXPECTED)
+                .unwrap()
+                .len(),
+            1,
+            "the response-bound company GUID, not a row GUID prefix, admits the snapshot"
         );
     }
 
@@ -1266,7 +1463,7 @@ mod group_tests {
     const COMPANY_GUID: &str = "11111111-1111-1111-1111-111111111111";
     const FOREIGN_GUID: &str = "22222222-2222-2222-2222-222222222222";
 
-    const LIVE_SHAPE: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><GROUP>0</GROUP></CMPINFO></DESC><DATA><COLLECTION><GROUP NAME="North Region"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Current Assets</PARENT></GROUP><GROUP NAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>&#4; Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
+    const LIVE_SHAPE: &str = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO><GROUP>0</GROUP></CMPINFO></DESC><DATA><COLLECTION><GROUP NAME="North Region"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Current Assets</PARENT></GROUP><GROUP NAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>&#4; Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
 
     #[test]
     fn reads_group_rows_only_from_the_native_collection() {
@@ -1274,8 +1471,11 @@ mod group_tests {
             .expect("native group snapshot parses");
         assert_eq!(groups.len(), 2, "CMPINFO group counter is not a row");
         assert_eq!(groups[0].name, "North Region");
-        assert_eq!(groups[0].parent.as_deref(), Some("Current Assets"));
-        assert_eq!(groups[1].parent.as_deref(), Some("\u{fffd}#4; Primary"));
+        assert_eq!(groups[0].parent.returned_text(), Some("Current Assets"));
+        assert_eq!(
+            groups[1].parent.returned_text(),
+            Some("\u{fffd}#4; Primary")
+        );
 
         let evidence = parse_native_group_snapshot_with_evidence(LIVE_SHAPE, COMPANY_GUID)
             .expect("native group snapshot evidence parses");
@@ -1304,8 +1504,8 @@ mod group_tests {
         let hexadecimal = parse_native_group_snapshot_with_evidence(&hexadecimal_xml, COMPANY_GUID)
             .expect("hexadecimal illegal reference remains parseable");
 
-        let decimal_fragment = b"<GROUP NAME=\"Sundry Debtors\"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>&#4; Primary</PARENT></GROUP>";
-        let hexadecimal_fragment = b"<GROUP NAME=\"Sundry Debtors\"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>&#x4; Primary</PARENT></GROUP>";
+        let decimal_fragment = b"<GROUP NAME=\"Sundry Debtors\"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>&#4; Primary</PARENT></GROUP>";
+        let hexadecimal_fragment = b"<GROUP NAME=\"Sundry Debtors\"><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>&#x4; Primary</PARENT></GROUP>";
         assert_eq!(decimal[1].raw_source_sha256, sha256_hex(decimal_fragment));
         assert_eq!(
             hexadecimal[1].raw_source_sha256,
@@ -1317,12 +1517,11 @@ mod group_tests {
         );
     }
 
-    /// CONFIRMED P1 (PR #158 code review): the group parser used to accept
-    /// any response regardless of which company it actually came from. A
-    /// response whose rows all carry a different company's GUID prefix must
-    /// now be rejected outright, not silently trusted.
+    /// A Group object's own GUID can belong to an imported master. The
+    /// response-bound computed company GUID, not that object identity,
+    /// determines whether the response is admissible.
     #[test]
-    fn group_response_carrying_only_a_foreign_company_guid_is_rejected() {
+    fn group_response_retains_imported_foreign_object_guids() {
         let xml = LIVE_SHAPE
             .replace(
                 "11111111-1111-1111-1111-111111111111-00000001",
@@ -1334,28 +1533,88 @@ mod group_tests {
             );
         assert!(xml.contains(FOREIGN_GUID), "sanity: replacement took hold");
         assert_eq!(
-            parse_native_group_snapshot(&xml, COMPANY_GUID),
-            Err(NativeOutstandingsError::InvalidResponse(
-                "group_company_guid_unverified"
-            ))
+            parse_native_group_snapshot(&xml, COMPANY_GUID)
+                .unwrap()
+                .len(),
+            2
         );
     }
 
-    /// A response with the correct prefix continues to parse names and
-    /// parents exactly as before the fix.
+    #[test]
+    fn group_response_requires_its_own_company_identity() {
+        let response = |company_guid: Option<&str>| {
+            let company_guid = company_guid
+                .map(|guid| format!("<BRIDGECOMPANYGUID>{guid}</BRIDGECOMPANYGUID>"))
+                .unwrap_or_default();
+            format!(
+                "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\\
+                <GROUP NAME=\"Imported selected group\"><GUID>{COMPANY_GUID}-00000001</GUID>{company_guid}\\
+                <PARENT>Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"
+            )
+        };
+
+        assert_eq!(
+            parse_native_group_snapshot(&response(Some(FOREIGN_GUID)), COMPANY_GUID),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_response_company_guid_mismatch"
+            )),
+            "a selected-prefix imported group cannot prove which company answered"
+        );
+        assert_eq!(
+            parse_native_group_snapshot(&response(None), COMPANY_GUID),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_response_company_guid_missing"
+            )),
+            "a response without Tally's computed company GUID is withheld"
+        );
+        assert_eq!(
+            parse_native_group_snapshot(&response(Some(COMPANY_GUID)), COMPANY_GUID)
+                .unwrap()
+                .len(),
+            1,
+            "the response-bound company GUID, not a row GUID prefix, admits the snapshot"
+        );
+
+        let second_row_company_mismatch = LIVE_SHAPE.replace(
+            "<GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID>",
+            "<GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>22222222-2222-2222-2222-222222222222</BRIDGECOMPANYGUID>",
+        );
+        assert_eq!(
+            parse_native_group_snapshot(&second_row_company_mismatch, COMPANY_GUID),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_response_company_guid_mismatch"
+            )),
+            "a matching first row cannot admit a later row with a foreign responder"
+        );
+
+        let second_row_company_missing = LIVE_SHAPE.replace(
+            "<GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID>",
+            "<GUID>11111111-1111-1111-1111-111111111111-00000002</GUID>",
+        );
+        assert_eq!(
+            parse_native_group_snapshot(&second_row_company_missing, COMPANY_GUID),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "group_response_company_guid_missing"
+            )),
+            "a matching first row cannot admit a later row without responder identity"
+        );
+    }
+
+    /// A response with the matching computed company GUID continues to parse
+    /// names and parents exactly as before the fix.
     #[test]
     fn group_response_with_the_correct_prefix_is_accepted_and_still_parses() {
         let groups = parse_native_group_snapshot(LIVE_SHAPE, COMPANY_GUID)
-            .expect("a correctly-prefixed response is accepted");
+            .expect("a response bound to the selected company is accepted");
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].name, "North Region");
-        assert_eq!(groups[0].parent.as_deref(), Some("Current Assets"));
+        assert_eq!(groups[0].parent.returned_text(), Some("Current Assets"));
         assert_eq!(groups[1].name, "Sundry Debtors");
     }
 
     /// A book can legitimately hold masters imported with their original
-    /// GUIDs. A mostly-correct response with one foreign-prefixed row must
-    /// still be accepted, with that row retained rather than dropped.
+    /// GUIDs. A response with one foreign object GUID stays admissible because
+    /// every row still proves its responder through BRIDGECOMPANYGUID.
     #[test]
     fn mixed_prefix_response_is_accepted_with_the_foreign_row_retained_and_counted() {
         let xml = LIVE_SHAPE.replace(
@@ -1363,7 +1622,7 @@ mod group_tests {
             "22222222-2222-2222-2222-222222222222-00000002",
         );
         let groups = parse_native_group_snapshot(&xml, COMPANY_GUID)
-            .expect("one correctly-prefixed row is enough to accept the whole snapshot");
+            .expect("the response-bound company GUID admits the whole snapshot");
         assert_eq!(
             groups.len(),
             2,
@@ -1372,11 +1631,8 @@ mod group_tests {
         assert_eq!(groups[1].name, "Sundry Debtors");
     }
 
-    /// A row that omits GUID entirely (the pre-fix wire shape, before the
-    /// request asked for GUID/MASTERID/ALTERID) is simply not evidence
-    /// either way -- it is neither a match nor a mismatch. The snapshot is
-    /// still accepted as long as some other row does carry the expected
-    /// prefix.
+    /// A row object's GUID does not establish the responder identity. It can
+    /// be omitted without weakening the row's independent computed binding.
     #[test]
     fn row_omitting_guid_entirely_is_not_scored_but_does_not_block_acceptance() {
         let xml = LIVE_SHAPE.replace(
@@ -1384,24 +1640,15 @@ mod group_tests {
             "",
         );
         let groups = parse_native_group_snapshot(&xml, COMPANY_GUID)
-            .expect("the second row's correct prefix is enough to bind the response");
+            .expect("the row's computed company GUID binds the response");
         assert_eq!(groups.len(), 2);
     }
 
-    /// If every row omits GUID entirely, there is no evidence at all binding
-    /// the response to the expected company, so it is rejected -- the same
-    /// outcome as a response carrying only foreign prefixes.
-    ///
-    /// This mutation-based test is kept alongside
-    /// `a_real_pre_widening_capture_with_no_guid_anywhere_is_rejected` below:
-    /// it shares `LIVE_SHAPE`/`COMPANY_GUID` with the single-row omission
-    /// and mismatch tests in this module, forming a matched family that
-    /// isolates exactly one row-count/GUID variable at a time in a way a
-    /// fixed real capture cannot. The real capture below proves the same
-    /// rejection against actual TallyPrime bytes, not just a hand-mutated
-    /// shape.
+    /// If every object GUID is omitted, the per-row response identity remains
+    /// sufficient. This specifically prevents a future refactor from drifting
+    /// back to a row-GUID-prefix admission rule.
     #[test]
-    fn a_response_where_every_row_omits_guid_is_rejected() {
+    fn a_response_where_every_row_omits_object_guid_is_still_bound() {
         let xml = LIVE_SHAPE
             .replace(
                 "<GUID>11111111-1111-1111-1111-111111111111-00000001</GUID>",
@@ -1412,30 +1659,24 @@ mod group_tests {
                 "",
             );
         assert_eq!(
-            parse_native_group_snapshot(&xml, COMPANY_GUID),
-            Err(NativeOutstandingsError::InvalidResponse(
-                "group_company_guid_unverified"
-            ))
+            parse_native_group_snapshot(&xml, COMPANY_GUID)
+                .unwrap()
+                .len(),
+            2
         );
     }
 
-    /// `group_snapshot_aarav.xml` is a real TallyPrime response, captured
-    /// live before the native Group request was widened to fetch
-    /// `GUID, MASTERID, ALTERID` (see `render_native_group_snapshot_request`).
-    /// All 28 of its rows genuinely omit `GUID` -- not by mutation, but
-    /// because the request never asked for it -- which makes this capture
-    /// the real-bytes instance of exactly the case
-    /// `a_response_where_every_row_omits_guid_is_rejected` constructs
-    /// synthetically above: a group snapshot with no row identity anywhere
-    /// cannot bind to any company and must be rejected outright. Real
-    /// captured bytes are worth more than constructed XML.
+    /// `group_snapshot_aarav.xml` is a real TallyPrime response captured
+    /// before this request computed `BRIDGECOMPANYGUID`. It must now be
+    /// withheld: object GUIDs, whether present or absent, cannot replace the
+    /// response-bound value.
     #[test]
     fn a_real_pre_widening_capture_with_no_guid_anywhere_is_rejected() {
         let xml = include_str!("../../tests/fixtures/native/group_snapshot_aarav.xml");
         assert_eq!(
             parse_native_group_snapshot(xml, "bb8ad19e-6aef-4239-a917-87fec0c6215e"),
             Err(NativeOutstandingsError::InvalidResponse(
-                "group_company_guid_unverified"
+                "group_response_company_guid_missing"
             ))
         );
     }
@@ -1450,7 +1691,7 @@ mod group_tests {
     /// distinction is used.
     #[test]
     fn reserved_name_attribute_parsing_distinguishes_present_empty_and_absent() {
-        let xml = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><GROUP NAME="WR5 Renamed Suspense" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Sundry Debtors" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Old Capture Group"><GUID>11111111-1111-1111-1111-111111111111-00000003</GUID><PARENT>Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let xml = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><GROUP NAME="WR5 Renamed Suspense" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Sundry Debtors" RESERVEDNAME=""><GUID>11111111-1111-1111-1111-111111111111-00000002</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Primary</PARENT></GROUP><GROUP NAME="Old Capture Group"><GUID>11111111-1111-1111-1111-111111111111-00000003</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Primary</PARENT></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"#;
         let groups = parse_native_group_snapshot(xml, COMPANY_GUID).expect("parses");
         assert_eq!(
             groups[0].reserved_name.as_deref(),

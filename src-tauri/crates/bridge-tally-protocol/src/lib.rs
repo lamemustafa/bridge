@@ -99,9 +99,77 @@ pub struct StandardLedgerIdentityObservation {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct TallyLedger {
     pub name: String,
-    pub parent: Option<String>,
-    pub party_gstin: Option<String>,
+    /// Preserve whether Tally returned the parent group rather than rendering
+    /// an unobserved group as an empty workbook cell.
+    pub parent: PartyLedgerMasterFieldObservation,
+    /// The shared ledger read requests PARTYGSTIN. Preserve whether Tally
+    /// omitted it instead of collapsing that fact into an empty GSTIN.
+    pub party_gstin: PartyLedgerMasterFieldObservation,
     pub opening_balance: Option<String>,
+}
+
+/// What Tally actually exposed for one requested party/ledger export field.
+///
+/// `NotObserved` is deliberately not an empty value: a collection response
+/// cannot distinguish an unset field from one unavailable in this Tally build.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum PartyLedgerMasterFieldObservation {
+    Returned(String),
+    #[default]
+    NotObserved,
+}
+
+impl PartyLedgerMasterFieldObservation {
+    pub const NOT_OBSERVED_WORKBOOK_TEXT: &str = "Not observed";
+    pub const NOT_OBSERVED_WORKBOOK_DISCLOSURE: &str = "“Not observed” means this Tally response did not return the requested field; it does not establish whether that field is unset in this book or unavailable in this Tally build. Bridge never manufactures master data.";
+
+    pub fn workbook_text(&self) -> &str {
+        match self {
+            Self::Returned(value) => value,
+            Self::NotObserved => Self::NOT_OBSERVED_WORKBOOK_TEXT,
+        }
+    }
+
+    /// The observed text, including an explicitly returned empty value.
+    pub fn returned_text(&self) -> Option<&str> {
+        match self {
+            Self::Returned(value) => Some(value),
+            Self::NotObserved => None,
+        }
+    }
+
+    /// The legacy hierarchy value: explicit empty and unobserved values do
+    /// not name a parent. Presentation must use `workbook_text` instead.
+    pub fn nonempty_returned_text(&self) -> Option<&str> {
+        self.returned_text().filter(|value| !value.is_empty())
+    }
+}
+
+/// Sensitive ledger-master observations read only by the dedicated
+/// party/ledger workbook path. Ordinary ledger reads never request or retain
+/// these values.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PartyLedgerMasterFields {
+    pub income_tax_number: PartyLedgerMasterFieldObservation,
+    pub name_on_pan: PartyLedgerMasterFieldObservation,
+    pub pin_code: PartyLedgerMasterFieldObservation,
+    pub gst_pin_code: PartyLedgerMasterFieldObservation,
+    pub msme_registration_number: PartyLedgerMasterFieldObservation,
+    pub udyam_registration_number: PartyLedgerMasterFieldObservation,
+    pub bank_account_holder_name: PartyLedgerMasterFieldObservation,
+    pub bank_details: PartyLedgerMasterFieldObservation,
+    pub ifsc_code: PartyLedgerMasterFieldObservation,
+    pub email: PartyLedgerMasterFieldObservation,
+    pub phone: PartyLedgerMasterFieldObservation,
+    pub state: PartyLedgerMasterFieldObservation,
+    pub address: PartyLedgerMasterFieldObservation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PartyLedgerMasterRecord {
+    pub ledger: TallyLedger,
+    pub fields: PartyLedgerMasterFields,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -130,7 +198,7 @@ pub struct ParsedLedgerPeriodBalanceReport {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct TallyNamedMaster {
     pub name: String,
-    pub parent: Option<String>,
+    pub parent: PartyLedgerMasterFieldObservation,
     /// Tally's `RESERVEDNAME` attribute: the immutable identity of a
     /// predefined group (e.g. `"Sundry Debtors"`), untouched by renaming the
     /// group's `name`. Distinguished three ways by readers that populate it:
@@ -1223,7 +1291,7 @@ pub fn parse_standard_ledger_catalog(
                 rows.push(TallyLedger {
                     name: ledger_name,
                     parent: observed.parent,
-                    party_gstin: None,
+                    party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
                     opening_balance: None,
                 });
             }
@@ -1248,7 +1316,7 @@ struct StandardLedgerIdentityRow {
     company_guid: String,
     ledger_name: Option<String>,
     ledger_guid: Option<String>,
-    parent: Option<String>,
+    parent: PartyLedgerMasterFieldObservation,
 }
 
 fn parse_standard_ledger_identity_row(
@@ -1266,7 +1334,7 @@ fn parse_standard_ledger_identity_row(
     let mut company_name = None;
     let mut company_guid = None;
     let mut ledger_guid = None;
-    let mut parent = None;
+    let mut parent = PartyLedgerMasterFieldObservation::NotObserved;
     let mut parent_seen = false;
     loop {
         match reader.read_event()? {
@@ -1339,8 +1407,13 @@ fn parse_standard_ledger_identity_row(
                             anyhow::bail!("standard ledger collection repeated ledger parent");
                         }
                         parent_seen = true;
-                        parent = read_optional_text(reader, child.name())?
-                            .and_then(|value| safe_standard_ledger_parent(&value));
+                        parent = match read_optional_text(reader, child.name())? {
+                            Some(value) => match safe_standard_ledger_parent(&value) {
+                                Some(value) => PartyLedgerMasterFieldObservation::Returned(value),
+                                None => PartyLedgerMasterFieldObservation::NotObserved,
+                            },
+                            None => PartyLedgerMasterFieldObservation::Returned(String::new()),
+                        };
                     }
                     b"PARENT" => {
                         validate_only_attributes(&child, &[b"TYPE"])?;
@@ -1367,6 +1440,7 @@ fn parse_standard_ledger_identity_row(
                     anyhow::bail!("standard ledger collection repeated ledger parent");
                 }
                 parent_seen = true;
+                parent = PartyLedgerMasterFieldObservation::Returned(String::new());
             }
             Event::Empty(_) => {
                 anyhow::bail!("standard ledger identity collection contained an empty row field")
@@ -1817,7 +1891,7 @@ fn parse_named_master_source_records(
                 records.push(ParsedSourceRecord {
                     record: TallyNamedMaster {
                         name: attr_value(&reader, &element, b"NAME").unwrap_or_default(),
-                        parent: None,
+                        parent: PartyLedgerMasterFieldObservation::NotObserved,
                         reserved_name: None,
                     },
                     source_id,
@@ -1877,6 +1951,38 @@ pub fn parse_native_ledger_source_records_with_evidence(
     xml: &str,
     expected_company_guid: &str,
 ) -> anyhow::Result<ParsedExport<ParsedSourceRecord<TallyLedger>>> {
+    parse_native_ledger_collection_with_evidence(
+        xml,
+        expected_company_guid,
+        NativeLedgerCollectionCompanyBinding::RowGuidPrefix,
+        parse_native_ledger_collection_row,
+    )
+}
+
+/// Parses the dedicated party/ledger master collection. This is deliberately
+/// distinct from ordinary ledger parsing because it retains the sensitive
+/// fields that only the workbook renderer consumes.
+pub fn parse_native_party_ledger_master_records_with_evidence(
+    xml: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<PartyLedgerMasterRecord>>> {
+    parse_native_ledger_collection_with_evidence(
+        xml,
+        expected_company_guid,
+        NativeLedgerCollectionCompanyBinding::ResponseGuid,
+        parse_native_party_ledger_master_collection_row,
+    )
+}
+
+fn parse_native_ledger_collection_with_evidence<T>(
+    xml: &str,
+    expected_company_guid: &str,
+    company_binding: NativeLedgerCollectionCompanyBinding,
+    parse_row: impl Fn(
+        &mut Reader<&[u8]>,
+        &quick_xml::events::BytesStart<'_>,
+    ) -> anyhow::Result<NativeLedgerCollectionRow<T>>,
+) -> anyhow::Result<ParsedExport<ParsedSourceRecord<T>>> {
     let sanitized = tolerant_xml::sanitize_invalid_numeric_references_with_provenance(xml);
     let mut reader = configured_reader(sanitized.as_str());
     let mut path = Vec::<Vec<u8>>::new();
@@ -1908,8 +2014,27 @@ pub fn parse_native_ledger_source_records_with_evidence(
                 if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"LEDGER"
                 {
-                    let (record, identities_for_row, alter_id) =
-                        parse_native_ledger_collection_row(&mut reader, &element)?;
+                    let NativeLedgerCollectionRow {
+                        record,
+                        identities: identities_for_row,
+                        alter_id,
+                        response_company_guid,
+                    } = parse_row(&mut reader, &element)?;
+                    if matches!(
+                        company_binding,
+                        NativeLedgerCollectionCompanyBinding::ResponseGuid
+                    ) {
+                        let response_company_guid = response_company_guid.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "native ledger collection omitted response company GUID"
+                            )
+                        })?;
+                        if !response_company_guid.eq_ignore_ascii_case(expected_company_guid) {
+                            anyhow::bail!(
+                                "native ledger collection did not confirm the selected company"
+                            );
+                        }
+                    }
                     let guid = identities_for_row
                         .guid
                         .as_deref()
@@ -1969,7 +2094,11 @@ pub fn parse_native_ledger_source_records_with_evidence(
     if !collection_seen {
         anyhow::bail!("native ledger collection omitted BODY/DATA/COLLECTION");
     }
-    if company_guid_prefix_match_count == 0 {
+    if matches!(
+        company_binding,
+        NativeLedgerCollectionCompanyBinding::RowGuidPrefix
+    ) && company_guid_prefix_match_count == 0
+    {
         anyhow::bail!("native ledger collection did not bind to the requested company");
     }
     let mut duplicate_identities = identities
@@ -1994,6 +2123,76 @@ pub fn parse_native_ledger_source_records_with_evidence(
             ..ExportEvidence::default()
         },
     })
+}
+
+#[derive(Clone, Copy)]
+enum NativeLedgerCollectionCompanyBinding {
+    /// Ordinary collection readers predate the response-bound compute and
+    /// retain their established row-identity contract.
+    RowGuidPrefix,
+    /// The dedicated party/ledger export must prove which selected company
+    /// answered, independently of imported ledger-object GUIDs.
+    ResponseGuid,
+}
+
+struct NativeLedgerCollectionRow<T> {
+    record: T,
+    identities: ParsedSourceIdentities,
+    alter_id: Option<String>,
+    response_company_guid: Option<String>,
+}
+
+#[cfg(test)]
+mod native_party_ledger_master_identity_tests {
+    use super::*;
+
+    const EXPECTED_COMPANY_GUID: &str = "11111111-1111-1111-1111-111111111111";
+
+    fn master_response(response_company_guid: Option<&str>) -> String {
+        let response_company_guid = response_company_guid
+            .map(|guid| format!("<BRIDGECOMPANYGUID>{guid}</BRIDGECOMPANYGUID>"))
+            .unwrap_or_default();
+        format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+            <LEDGER NAME=\"Imported selected ledger\"><GUID>{EXPECTED_COMPANY_GUID}-00000001</GUID>\
+            <MASTERID>1</MASTERID><ALTERID>1</ALTERID>{response_company_guid}\
+            <PARENT>Sundry Debtors</PARENT><OPENINGBALANCE>-100.00</OPENINGBALANCE></LEDGER>\
+            </COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+    }
+
+    #[test]
+    fn party_ledger_master_requires_a_response_bound_company_guid() {
+        let wrong_company = parse_native_party_ledger_master_records_with_evidence(
+            &master_response(Some("22222222-2222-2222-2222-222222222222")),
+            EXPECTED_COMPANY_GUID,
+        );
+        assert!(
+            wrong_company.is_err(),
+            "an imported selected-prefix ledger cannot prove the responding company"
+        );
+
+        let missing_company = parse_native_party_ledger_master_records_with_evidence(
+            &master_response(None),
+            EXPECTED_COMPANY_GUID,
+        );
+        assert!(
+            missing_company.is_err(),
+            "the dedicated master response must carry Tally's computed company GUID"
+        );
+
+        assert_eq!(
+            parse_native_party_ledger_master_records_with_evidence(
+                &master_response(Some(EXPECTED_COMPANY_GUID)),
+                EXPECTED_COMPANY_GUID,
+            )
+            .unwrap()
+            .records
+            .len(),
+            1,
+            "a matching response-bound company GUID admits the master response"
+        );
+    }
 }
 
 /// Parses a native `List of VoucherTypes` collection. Like native ledgers,
@@ -2313,14 +2512,53 @@ fn native_collection_export<T>(
 fn parse_native_ledger_collection_row(
     reader: &mut Reader<&[u8]>,
     element: &quick_xml::events::BytesStart<'_>,
-) -> anyhow::Result<(TallyLedger, ParsedSourceIdentities, Option<String>)> {
+) -> anyhow::Result<NativeLedgerCollectionRow<TallyLedger>> {
+    let ParsedNativeLedgerCollectionRow {
+        ledger,
+        identities,
+        alter_id,
+        response_company_guid,
+        ..
+    } = parse_native_ledger_collection_row_with_master_fields(reader, element, false)?;
+    Ok(NativeLedgerCollectionRow {
+        record: ledger,
+        identities,
+        alter_id,
+        response_company_guid,
+    })
+}
+
+fn parse_native_party_ledger_master_collection_row(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+) -> anyhow::Result<NativeLedgerCollectionRow<PartyLedgerMasterRecord>> {
+    let ParsedNativeLedgerCollectionRow {
+        ledger,
+        fields,
+        identities,
+        alter_id,
+        response_company_guid,
+    } = parse_native_ledger_collection_row_with_master_fields(reader, element, true)?;
+    Ok(NativeLedgerCollectionRow {
+        record: PartyLedgerMasterRecord { ledger, fields },
+        identities,
+        alter_id,
+        response_company_guid,
+    })
+}
+
+fn parse_native_ledger_collection_row_with_master_fields(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+    retain_master_fields: bool,
+) -> anyhow::Result<ParsedNativeLedgerCollectionRow> {
     validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
     let name = attr_value(reader, element, b"NAME")
         .ok_or_else(|| anyhow::anyhow!("native ledger row omitted NAME"))?;
     let mut ledger = TallyLedger {
         name,
-        parent: None,
-        party_gstin: None,
+        parent: PartyLedgerMasterFieldObservation::NotObserved,
+        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
         opening_balance: None,
     };
     let mut identities = ParsedSourceIdentities::default();
@@ -2332,6 +2570,10 @@ fn parse_native_ledger_collection_row(
     let mut master_id_seen = false;
     let mut alter_id_seen = false;
     let mut opening_balance_seen = false;
+    let mut response_company_guid = None;
+    let mut response_company_guid_seen = false;
+    let mut master_fields = PartyLedgerMasterFields::default();
+    let mut master_fields_seen = HashSet::new();
     loop {
         match reader.read_event()? {
             Event::Start(child) => match child.name().as_ref().to_ascii_uppercase().as_slice() {
@@ -2378,14 +2620,18 @@ fn parse_native_ledger_collection_row(
                     if std::mem::replace(&mut parent_seen, true) {
                         anyhow::bail!("native ledger row repeated PARENT");
                     }
-                    ledger.parent = read_identifier_text(reader, child.name())?;
+                    ledger.parent = PartyLedgerMasterFieldObservation::Returned(
+                        read_identifier_text(reader, child.name())?.unwrap_or_default(),
+                    );
                 }
                 b"PARTYGSTIN" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
                     if std::mem::replace(&mut gstin_seen, true) {
                         anyhow::bail!("native ledger row repeated PARTYGSTIN");
                     }
-                    ledger.party_gstin = read_optional_text(reader, child.name())?;
+                    ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(
+                        read_optional_text(reader, child.name())?.unwrap_or_default(),
+                    );
                 }
                 b"OPENINGBALANCE" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
@@ -2399,6 +2645,106 @@ fn parse_native_ledger_collection_row(
                     bridge_tally_primitives::ExactDecimal::parse(opening_balance.clone())?;
                     ledger.opening_balance = Some(opening_balance);
                 }
+                b"BRIDGECOMPANYGUID" => {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    if std::mem::replace(&mut response_company_guid_seen, true) {
+                        anyhow::bail!("native ledger row repeated response company GUID");
+                    }
+                    response_company_guid = Some(normalized_standard_company_guid(
+                        &read_required_text(reader, child.name())?,
+                    )?);
+                }
+                b"INCOMETAXNUMBER" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.income_tax_number,
+                )?,
+                b"NAMEONPAN" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.name_on_pan,
+                )?,
+                b"LEDPINCODE" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.pin_code,
+                )?,
+                b"LEDGSTPINCODE" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.gst_pin_code,
+                )?,
+                b"MSMEREGNUMBER" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.msme_registration_number,
+                )?,
+                b"LEDUDYAMREGNUMBER" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.udyam_registration_number,
+                )?,
+                b"BANKACCHOLDERNAME" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.bank_account_holder_name,
+                )?,
+                b"BANKDETAILS" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.bank_details,
+                )?,
+                b"IFSCODE" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.ifsc_code,
+                )?,
+                b"EMAIL" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.email,
+                )?,
+                b"LEDGERPHONE" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.phone,
+                )?,
+                b"STATENAME" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.state,
+                )?,
+                b"LEDADDRESS.LIST" => retain_party_ledger_master_field(
+                    reader,
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.address,
+                )?,
                 _ => {
                     let child_name = child.name().as_ref().to_vec();
                     reader.read_to_end(QName(&child_name).to_owned())?;
@@ -2410,14 +2756,16 @@ fn parse_native_ledger_collection_row(
                     if std::mem::replace(&mut parent_seen, true) {
                         anyhow::bail!("native ledger row repeated PARENT");
                     }
+                    ledger.parent = PartyLedgerMasterFieldObservation::Returned(String::new());
                 }
                 b"PARTYGSTIN" => {
                     validate_only_attributes(&child, &[b"TYPE"])?;
                     if std::mem::replace(&mut gstin_seen, true) {
                         anyhow::bail!("native ledger row repeated PARTYGSTIN");
                     }
+                    ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(String::new());
                 }
-                b"GUID" | b"MASTERID" | b"ALTERID" | b"OPENINGBALANCE" => {
+                b"GUID" | b"MASTERID" | b"ALTERID" | b"OPENINGBALANCE" | b"BRIDGECOMPANYGUID" => {
                     anyhow::bail!("native ledger row omitted a required field");
                 }
                 b"REMOTEID" => {
@@ -2426,6 +2774,84 @@ fn parse_native_ledger_collection_row(
                         anyhow::bail!("native ledger row repeated REMOTEID");
                     }
                 }
+                b"INCOMETAXNUMBER" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.income_tax_number,
+                )?,
+                b"NAMEONPAN" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.name_on_pan,
+                )?,
+                b"LEDPINCODE" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.pin_code,
+                )?,
+                b"LEDGSTPINCODE" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.gst_pin_code,
+                )?,
+                b"MSMEREGNUMBER" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.msme_registration_number,
+                )?,
+                b"LEDUDYAMREGNUMBER" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.udyam_registration_number,
+                )?,
+                b"BANKACCHOLDERNAME" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.bank_account_holder_name,
+                )?,
+                b"BANKDETAILS" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.bank_details,
+                )?,
+                b"IFSCODE" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.ifsc_code,
+                )?,
+                b"EMAIL" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.email,
+                )?,
+                b"LEDGERPHONE" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.phone,
+                )?,
+                b"STATENAME" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.state,
+                )?,
+                b"LEDADDRESS.LIST" => retain_empty_party_ledger_master_field(
+                    &child,
+                    retain_master_fields,
+                    &mut master_fields_seen,
+                    &mut master_fields.address,
+                )?,
                 _ => {}
             },
             Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"LEDGER") => break,
@@ -2459,7 +2885,100 @@ fn parse_native_ledger_collection_row(
     if !parent_seen {
         anyhow::bail!("native ledger row omitted PARENT");
     }
-    Ok((ledger, identities, alter_id))
+    Ok(ParsedNativeLedgerCollectionRow {
+        ledger,
+        fields: master_fields,
+        identities,
+        alter_id,
+        response_company_guid,
+    })
+}
+
+struct ParsedNativeLedgerCollectionRow {
+    ledger: TallyLedger,
+    fields: PartyLedgerMasterFields,
+    identities: ParsedSourceIdentities,
+    alter_id: Option<String>,
+    response_company_guid: Option<String>,
+}
+
+fn retain_party_ledger_master_field(
+    reader: &mut Reader<&[u8]>,
+    element: &quick_xml::events::BytesStart<'_>,
+    retain: bool,
+    seen: &mut HashSet<Vec<u8>>,
+    target: &mut PartyLedgerMasterFieldObservation,
+) -> anyhow::Result<()> {
+    validate_only_attributes(element, &[b"TYPE"])?;
+    let name = element.name();
+    let key = name.as_ref().to_ascii_uppercase();
+    if !seen.insert(key) {
+        anyhow::bail!("native ledger row repeated a party/ledger master field");
+    }
+    let value = read_flattened_optional_text(reader, name)?;
+    if retain {
+        *target = PartyLedgerMasterFieldObservation::Returned(value.unwrap_or_default());
+    }
+    Ok(())
+}
+
+fn retain_empty_party_ledger_master_field(
+    element: &quick_xml::events::BytesStart<'_>,
+    retain: bool,
+    seen: &mut HashSet<Vec<u8>>,
+    target: &mut PartyLedgerMasterFieldObservation,
+) -> anyhow::Result<()> {
+    validate_only_attributes(element, &[b"TYPE"])?;
+    let key = element.name().as_ref().to_ascii_uppercase();
+    if !seen.insert(key) {
+        anyhow::bail!("native ledger row repeated a party/ledger master field");
+    }
+    if retain {
+        *target = PartyLedgerMasterFieldObservation::Returned(String::new());
+    }
+    Ok(())
+}
+
+fn read_flattened_optional_text(
+    reader: &mut Reader<&[u8]>,
+    name: QName<'_>,
+) -> anyhow::Result<Option<String>> {
+    let expected = name.as_ref().to_ascii_uppercase();
+    let mut nested_depth = 0_usize;
+    let mut parts = Vec::new();
+    loop {
+        match reader.read_event()? {
+            Event::Start(_) => nested_depth = nested_depth.saturating_add(1),
+            Event::Empty(_) => {}
+            Event::Text(text) => {
+                let decoded = text.decode()?;
+                let value = quick_xml::escape::unescape(&decoded)?;
+                let value = value.trim();
+                if !value.is_empty() {
+                    parts.push(value.to_owned());
+                }
+            }
+            Event::CData(text) => {
+                let value = text.decode()?;
+                let value = value.trim();
+                if !value.is_empty() {
+                    parts.push(value.to_owned());
+                }
+            }
+            Event::End(end) => {
+                if nested_depth == 0 {
+                    if end.name().as_ref().to_ascii_uppercase() != expected {
+                        anyhow::bail!("party/ledger master field closed unexpectedly");
+                    }
+                    break;
+                }
+                nested_depth = nested_depth.saturating_sub(1);
+            }
+            Event::Eof => anyhow::bail!("party/ledger master field ended before it closed"),
+            _ => {}
+        }
+    }
+    Ok((!parts.is_empty()).then(|| parts.join("\n")))
 }
 
 fn parse_native_voucher_type_collection_row(
@@ -2471,7 +2990,7 @@ fn parse_native_voucher_type_collection_row(
         .ok_or_else(|| anyhow::anyhow!("native voucher type row omitted NAME"))?;
     let mut record = TallyNamedMaster {
         name,
-        parent: None,
+        parent: PartyLedgerMasterFieldObservation::NotObserved,
         reserved_name: None,
     };
     let mut identities = ParsedSourceIdentities::default();
@@ -2518,7 +3037,9 @@ fn parse_native_voucher_type_collection_row(
                     if std::mem::replace(&mut parent_seen, true) {
                         anyhow::bail!("native voucher type row repeated PARENT");
                     }
-                    record.parent = read_identifier_text(reader, child.name())?;
+                    record.parent = PartyLedgerMasterFieldObservation::Returned(
+                        read_identifier_text(reader, child.name())?.unwrap_or_default(),
+                    );
                 }
                 _ => {
                     let child_name = child.name().as_ref().to_vec();
@@ -2548,7 +3069,7 @@ fn parse_native_voucher_type_collection_row(
     if !alter_id_seen || alter_id.is_none() {
         anyhow::bail!("native voucher type row omitted ALTERID");
     }
-    if !parent_seen || record.parent.is_none() {
+    if !parent_seen || record.parent.returned_text().is_none() {
         anyhow::bail!("native voucher type row omitted PARENT");
     }
     Ok((record, identities, alter_id))
@@ -2563,7 +3084,7 @@ fn parse_native_group_collection_row(
         .ok_or_else(|| anyhow::anyhow!("native group row omitted NAME"))?;
     let mut record = TallyNamedMaster {
         name,
-        parent: None,
+        parent: PartyLedgerMasterFieldObservation::NotObserved,
         reserved_name: None,
     };
     let mut identities = ParsedSourceIdentities::default();
@@ -2610,7 +3131,9 @@ fn parse_native_group_collection_row(
                     if std::mem::replace(&mut parent_seen, true) {
                         anyhow::bail!("native group row repeated PARENT");
                     }
-                    record.parent = read_identifier_text(reader, child.name())?;
+                    record.parent = PartyLedgerMasterFieldObservation::Returned(
+                        read_identifier_text(reader, child.name())?.unwrap_or_default(),
+                    );
                 }
                 _ => {
                     let child_name = child.name().as_ref().to_vec();
@@ -2640,7 +3163,7 @@ fn parse_native_group_collection_row(
     if !alter_id_seen || alter_id.is_none() {
         anyhow::bail!("native group row omitted ALTERID");
     }
-    if !parent_seen || record.parent.is_none() {
+    if !parent_seen || record.parent.returned_text().is_none() {
         anyhow::bail!("native group row omitted PARENT");
     }
     Ok((record, identities, alter_id))
@@ -3115,8 +3638,8 @@ fn parse_ledger_source_records_for_schema(
                 records.push(ParsedSourceRecord {
                     record: TallyLedger {
                         name: attr_value(&reader, &element, b"NAME").unwrap_or_default(),
-                        parent: None,
-                        party_gstin: None,
+                        parent: PartyLedgerMasterFieldObservation::NotObserved,
+                        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
                         opening_balance: None,
                     },
                     identity_kind,
@@ -4721,7 +5244,7 @@ fn parse_named_master(
 ) -> anyhow::Result<TallyNamedMaster> {
     let mut record = TallyNamedMaster {
         name,
-        parent: None,
+        parent: PartyLedgerMasterFieldObservation::NotObserved,
         reserved_name: None,
     };
     let mut parent_seen = false;
@@ -4732,7 +5255,9 @@ fn parse_named_master(
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally master row repeated PARENT");
                 }
-                record.parent = read_identifier_text(reader, element.name())?;
+                record.parent = PartyLedgerMasterFieldObservation::Returned(
+                    read_identifier_text(reader, element.name())?.unwrap_or_default(),
+                );
             }
             Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(element_name) => {
                 break;
@@ -4753,8 +5278,8 @@ fn parse_named_master(
 fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Result<TallyLedger> {
     let mut ledger = TallyLedger {
         name: name.unwrap_or_default(),
-        parent: None,
-        party_gstin: None,
+        parent: PartyLedgerMasterFieldObservation::NotObserved,
+        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
         opening_balance: None,
     };
     let mut parent_seen = false;
@@ -4767,7 +5292,9 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally ledger row repeated PARENT");
                 }
-                ledger.parent = read_identifier_text(reader, element.name())?
+                ledger.parent = PartyLedgerMasterFieldObservation::Returned(
+                    read_identifier_text(reader, element.name())?.unwrap_or_default(),
+                )
             }
             Event::Start(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"PARTYGSTIN") =>
@@ -4776,7 +5303,9 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
                 if std::mem::replace(&mut gstin_seen, true) {
                     anyhow::bail!("Tally ledger row repeated PARTYGSTIN");
                 }
-                ledger.party_gstin = read_optional_text(reader, element.name())?
+                ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(
+                    read_optional_text(reader, element.name())?.unwrap_or_default(),
+                )
             }
             Event::Start(element)
                 if element
@@ -4789,6 +5318,22 @@ fn parse_ledger(reader: &mut Reader<&[u8]>, name: Option<String>) -> anyhow::Res
                     anyhow::bail!("Tally ledger row repeated OPENINGBALANCE");
                 }
                 ledger.opening_balance = read_optional_text(reader, element.name())?
+            }
+            Event::Empty(element) if element.name().as_ref().eq_ignore_ascii_case(b"PARENT") => {
+                validate_only_attributes(&element, &[])?;
+                if std::mem::replace(&mut parent_seen, true) {
+                    anyhow::bail!("Tally ledger row repeated PARENT");
+                }
+                ledger.parent = PartyLedgerMasterFieldObservation::Returned(String::new());
+            }
+            Event::Empty(element)
+                if element.name().as_ref().eq_ignore_ascii_case(b"PARTYGSTIN") =>
+            {
+                validate_only_attributes(&element, &[])?;
+                if std::mem::replace(&mut gstin_seen, true) {
+                    anyhow::bail!("Tally ledger row repeated PARTYGSTIN");
+                }
+                ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(String::new());
             }
             Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(b"LEDGER") => break,
             Event::Start(_) | Event::Empty(_) => {
@@ -4810,8 +5355,8 @@ fn parse_ledger_write_readback(
 ) -> anyhow::Result<TallyLedger> {
     let mut ledger = TallyLedger {
         name: name.ok_or_else(|| anyhow::anyhow!("Tally write readback omitted ledger NAME"))?,
-        parent: None,
-        party_gstin: None,
+        parent: PartyLedgerMasterFieldObservation::NotObserved,
+        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
         opening_balance: None,
     };
     let mut parent_seen = false;
@@ -4824,7 +5369,9 @@ fn parse_ledger_write_readback(
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally write readback repeated PARENT");
                 }
-                ledger.parent = read_identifier_text(reader, element.name())?;
+                ledger.parent = PartyLedgerMasterFieldObservation::Returned(
+                    read_identifier_text(reader, element.name())?.unwrap_or_default(),
+                );
             }
             Event::Start(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"PARTYGSTIN") =>
@@ -4833,7 +5380,9 @@ fn parse_ledger_write_readback(
                 if std::mem::replace(&mut gstin_seen, true) {
                     anyhow::bail!("Tally write readback repeated PARTYGSTIN");
                 }
-                ledger.party_gstin = read_optional_text(reader, element.name())?;
+                ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(
+                    read_optional_text(reader, element.name())?.unwrap_or_default(),
+                );
             }
             Event::Start(element)
                 if element
@@ -4852,6 +5401,7 @@ fn parse_ledger_write_readback(
                 if std::mem::replace(&mut parent_seen, true) {
                     anyhow::bail!("Tally write readback repeated PARENT");
                 }
+                ledger.parent = PartyLedgerMasterFieldObservation::Returned(String::new());
             }
             Event::Empty(element)
                 if element.name().as_ref().eq_ignore_ascii_case(b"PARTYGSTIN") =>
@@ -4860,6 +5410,7 @@ fn parse_ledger_write_readback(
                 if std::mem::replace(&mut gstin_seen, true) {
                     anyhow::bail!("Tally write readback repeated PARTYGSTIN");
                 }
+                ledger.party_gstin = PartyLedgerMasterFieldObservation::Returned(String::new());
             }
             Event::Empty(element)
                 if element

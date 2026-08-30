@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{
     atomic::{AtomicU64, AtomicU8, Ordering},
     Arc,
@@ -15,6 +15,10 @@ use super::{
     validators::{normalize_company_guid, normalize_company_name},
     xml_parser::{self, TallyCompany},
 };
+use crate::reports::party_ledger_master::{
+    PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
+};
+use crate::tally::runtime::PartyLedgerMasterCurrencyAssertion;
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityProfile, CapabilityState,
     EvidenceConfidence, TransportId,
@@ -29,14 +33,18 @@ use bridge_tally_protocol::outstandings::{
 };
 use bridge_tally_protocol::{
     native_outstandings::{
-        render_native_ledger_export_request, render_native_voucher_export_request,
-        NativeLedgerExportPeriod,
+        parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot_for_company,
+        render_native_group_snapshot_request, render_native_ledger_export_request,
+        render_native_ledger_snapshot_request, render_native_voucher_export_request,
+        render_party_ledger_master_request, NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod,
+        NativeOutstandingsError,
     },
     outstandings_shared::{
         parse_company_book_extent, require_master_witness, CompanyBookExtent, DateBoundaryProfile,
     },
     parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
     parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
+    parse_native_party_ledger_master_records_with_evidence,
     parse_native_voucher_source_records_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
     parse_standard_ledger_identity_observation, verify_selected_voucher_window_context,
@@ -49,6 +57,100 @@ use bridge_tally_transport::{
 };
 
 pub type TallyConfig = TallyEndpointConfig;
+
+fn ledger_display_key(name: &str, parent: Option<&str>) -> String {
+    let parent = parent.unwrap_or_default();
+    format!("{}:{name}{}:{parent}", name.len(), parent.len())
+}
+
+fn party_ledger_master_balance_snapshot_error(error: NativeOutstandingsError) -> anyhow::Error {
+    match error {
+        NativeOutstandingsError::InvalidResponse(
+            "ledger_response_company_guid_missing" | "ledger_response_company_guid_mismatch",
+        ) => anyhow::Error::new(
+            PartyLedgerMasterSourceValidationError::BalanceCompanyIdentityUnverified,
+        ),
+        error => anyhow::Error::new(error),
+    }
+}
+
+fn party_ledger_master_group_snapshot_error(error: NativeOutstandingsError) -> anyhow::Error {
+    match error {
+        NativeOutstandingsError::InvalidResponse(
+            "group_response_company_guid_missing" | "group_response_company_guid_mismatch",
+        ) => anyhow::Error::new(
+            PartyLedgerMasterSourceValidationError::GroupCompanyIdentityUnverified,
+        ),
+        error => anyhow::Error::new(error),
+    }
+}
+
+fn party_ledger_master_openings_agree(
+    master_opening: &str,
+    balance_opening: &bridge_tally_core::ExactDecimal,
+) -> anyhow::Result<bool> {
+    let master_opening = bridge_tally_core::ExactDecimal::parse(master_opening.to_owned())?;
+    Ok(master_opening.numeric_eq(balance_opening))
+}
+
+/// The paired sources answered successfully but cannot be reconciled into one
+/// safe workbook source. This is distinct from endpoint or XML failure.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PartyLedgerMasterSourceValidationError {
+    #[error("Tally master ledger export period is unsupported")]
+    MasterPeriod,
+    #[error("Tally closing-balance period is unsupported")]
+    BalancePeriod,
+    #[error("Tally ledger master omitted GUID")]
+    MasterGuid,
+    #[error("Tally ledger master omitted MASTERID")]
+    MasterId,
+    #[error("Tally ledger master omitted ALTERID")]
+    MasterAlterId,
+    #[error("Tally ledger master omitted OPENINGBALANCE")]
+    MasterOpeningBalance,
+    #[error("Tally ledger master repeated a stable source identity")]
+    DuplicateMasterIdentity,
+    #[error("Tally balance snapshot omitted a ledger master")]
+    BalanceMissingMasterLedger,
+    #[error("Tally ledger opening balances disagreed across the paired sources")]
+    OpeningBalancesDisagreed,
+    #[error("Tally balance snapshot contained a ledger absent from master evidence")]
+    BalanceLedgerAbsentFromMasterEvidence,
+    #[error("Tally balance snapshot repeated a ledger display key")]
+    DuplicateBalanceDisplayKey,
+    #[error("Tally balance snapshot did not prove the selected company identity")]
+    BalanceCompanyIdentityUnverified,
+    #[error("Tally Group snapshot did not prove the selected company identity")]
+    GroupCompanyIdentityUnverified,
+}
+
+/// A paired or bracketed read observed movement in the endpoint's data. This
+/// is response validation, not an endpoint failure: Tally answered, but
+/// Bridge must withhold the unstable result.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PairedReadValidationError {
+    #[error("Tally native ledger collection changed between paired reads")]
+    NativeLedgerCollection,
+    #[error("Tally company book changed during native ledger read")]
+    NativeLedgerExtent,
+    #[error("Tally ledger master changed between paired reads")]
+    PartyLedgerMaster,
+    #[error("Tally ledger balances changed between paired reads")]
+    PartyLedgerBalance,
+    #[error("Tally group hierarchy changed between paired reads")]
+    PartyLedgerGroup,
+    #[error("Tally company book changed during party/ledger master read")]
+    PartyLedgerExtent,
+    #[error("Tally company book extent changed between paired reads")]
+    CompanyBookExtent,
+    #[error("Tally currency masters changed between paired reads")]
+    CurrencyMaster,
+    #[error("Tally company book changed during currency detection")]
+    CurrencyExtent,
+    #[error("Tally company changed between the currency read and the master read")]
+    CurrencyToMasterExtent,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DirectCompanyBootstrapError {
@@ -75,7 +177,11 @@ pub(crate) enum LedgerOpeningCoverageRead {
 /// Outcome of a paired native-report read. `Drifted` means the two reads
 /// disagreed, so the book moved between them and no total may be reported.
 pub(crate) enum NativePairedRead {
-    Stable { body: String, encoded_bytes: usize },
+    Stable {
+        body: String,
+        encoded_bytes: usize,
+        encoded_sha256: String,
+    },
     Drifted,
 }
 
@@ -618,15 +724,19 @@ impl TallyClient {
     pub(super) async fn post_xml(&self, xml: String) -> anyhow::Result<String> {
         self.post_xml_with_encoded_bytes(xml)
             .await
-            .map(|(xml, _)| xml)
+            .map(|(xml, _, _)| xml)
     }
 
-    async fn post_xml_with_encoded_bytes(&self, xml: String) -> anyhow::Result<(String, usize)> {
+    async fn post_xml_with_encoded_bytes(
+        &self,
+        xml: String,
+    ) -> anyhow::Result<(String, usize, String)> {
         let response = self.http.post_xml_decoded(xml).await?;
         let encoded_bytes = response.encoded_bytes();
+        let encoded_sha256 = response.encoded_sha256().to_string();
         self.record_observed_body_bytes(encoded_bytes);
         self.record_observed_encoding(response.encoding());
-        Ok((response.into_text(), encoded_bytes))
+        Ok((response.into_text(), encoded_bytes, encoded_sha256))
     }
 
     async fn post_xml_with_request_wire_sha256(
@@ -769,7 +879,9 @@ impl TallyClient {
             .fetch_native_report_paired(render_native_ledger_export_request(company, &period))
             .await?;
         let NativePairedRead::Stable { body, .. } = paired else {
-            anyhow::bail!("Tally native ledger collection changed between paired reads");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::NativeLedgerCollection,
+            ));
         };
         let parsed =
             parse_native_ledger_source_records_with_evidence(&body, expected_company_guid)?;
@@ -777,13 +889,198 @@ impl TallyClient {
             .fetch_company_book_extent(company, expected_company_guid)
             .await?;
         if closing_extent != opening_extent {
-            anyhow::bail!("Tally company book changed during native ledger read");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::NativeLedgerExtent,
+            ));
         }
         Ok(parsed
             .records
             .into_iter()
             .map(|record| record.record)
             .collect())
+    }
+
+    /// Reads the identity-bearing ledger master and the existing period-bound
+    /// balance snapshot as one bracketed source for a customer workbook. The
+    /// balance parser requires row GUID evidence for the selected company
+    /// before any `(name, parent)` join can attach money to a master.
+    pub(crate) async fn fetch_party_ledger_master_source(
+        &self,
+        company: &str,
+        expected_company_guid: &str,
+        boundary_profile: DateBoundaryProfile,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
+    ) -> anyhow::Result<PartyLedgerMasterSource> {
+        let opening_extent = self
+            .fetch_company_book_extent(company, expected_company_guid)
+            .await?;
+        let currency = currency_assertion.require_opening_extent(&opening_extent)?;
+        let master_period = NativeLedgerExportPeriod::new(
+            boundary_profile,
+            opening_extent.books_from().clone(),
+            opening_extent.last_voucher_date().clone(),
+        )
+        .map_err(|_| anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterPeriod))?;
+        let balance_period = party_ledger_master_balance_period(
+            boundary_profile,
+            opening_extent.books_from().clone(),
+            opening_extent.last_voucher_date().clone(),
+        )
+        .map_err(|_| anyhow::Error::new(PartyLedgerMasterSourceValidationError::BalancePeriod))?;
+        let master_pair = self
+            .fetch_native_report_paired(render_party_ledger_master_request(company, &master_period))
+            .await?;
+        let NativePairedRead::Stable {
+            body: master_body,
+            encoded_bytes: master_response_bytes,
+            encoded_sha256: master_response_sha256,
+        } = master_pair
+        else {
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::PartyLedgerMaster,
+            ));
+        };
+        let master = parse_native_party_ledger_master_records_with_evidence(
+            &master_body,
+            expected_company_guid,
+        )?;
+        if !master.evidence.duplicate_identities.is_empty() {
+            return Err(anyhow::Error::new(
+                PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
+            ));
+        }
+        let balance_pair = self
+            .fetch_native_report_paired(render_native_ledger_snapshot_request(
+                company,
+                &balance_period,
+            ))
+            .await?;
+        let NativePairedRead::Stable {
+            body: balance_body,
+            encoded_bytes: balance_response_bytes,
+            encoded_sha256: balance_response_sha256,
+        } = balance_pair
+        else {
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::PartyLedgerBalance,
+            ));
+        };
+        let balances =
+            parse_native_ledger_snapshot_for_company(&balance_body, expected_company_guid)
+                .map_err(party_ledger_master_balance_snapshot_error)?;
+        let group_pair = self
+            .fetch_native_report_paired(render_native_group_snapshot_request(company))
+            .await?;
+        let NativePairedRead::Stable {
+            body: group_body,
+            encoded_bytes: group_response_bytes,
+            encoded_sha256: group_response_sha256,
+        } = group_pair
+        else {
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::PartyLedgerGroup,
+            ));
+        };
+        let groups = parse_native_group_snapshot_with_evidence(&group_body, expected_company_guid)
+            .map_err(party_ledger_master_group_snapshot_error)?
+            .into_iter()
+            .map(|entry| PartyLedgerMasterGroup {
+                name: entry.record.name,
+                parent: entry.record.parent,
+                reserved_name: entry.record.reserved_name,
+            })
+            .collect();
+        let closing_extent = self
+            .fetch_company_book_extent(company, expected_company_guid)
+            .await?;
+        if closing_extent != opening_extent {
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::PartyLedgerExtent,
+            ));
+        }
+
+        let mut balances_by_key = HashMap::new();
+        for balance in balances {
+            let key = ledger_display_key(&balance.name, balance.parent.as_deref());
+            if balances_by_key.insert(key, balance).is_some() {
+                return Err(anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::DuplicateBalanceDisplayKey,
+                ));
+            }
+        }
+        let mut rows = Vec::with_capacity(master.records.len());
+        for source in master.records {
+            let key = ledger_display_key(
+                &source.record.ledger.name,
+                source.record.ledger.parent.nonempty_returned_text(),
+            );
+            let balance = balances_by_key.remove(&key).ok_or_else(|| {
+                anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::BalanceMissingMasterLedger,
+                )
+            })?;
+            let guid = source.identities.guid.ok_or_else(|| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterGuid)
+            })?;
+            let master_id = source.identities.master_id.ok_or_else(|| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterId)
+            })?;
+            let alter_id = source.alter_id.ok_or_else(|| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterAlterId)
+            })?;
+            let master_opening =
+                source
+                    .record
+                    .ledger
+                    .opening_balance
+                    .as_deref()
+                    .ok_or_else(|| {
+                        anyhow::Error::new(
+                            PartyLedgerMasterSourceValidationError::MasterOpeningBalance,
+                        )
+                    })?;
+            if !party_ledger_master_openings_agree(master_opening, &balance.opening_balance)? {
+                return Err(anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
+                ));
+            }
+            rows.push(PartyLedgerMasterRow {
+                name: source.record.ledger.name,
+                parent: source.record.ledger.parent,
+                party_gstin: source.record.ledger.party_gstin,
+                fields: source.record.fields,
+                guid,
+                master_id,
+                alter_id,
+                opening_balance: balance.opening_balance,
+                closing_balance: balance.closing_balance,
+            });
+        }
+        if !balances_by_key.is_empty() {
+            return Err(anyhow::Error::new(
+                PartyLedgerMasterSourceValidationError::BalanceLedgerAbsentFromMasterEvidence,
+            ));
+        }
+        rows.sort_by(|left, right| left.name.cmp(&right.name).then(left.guid.cmp(&right.guid)));
+        Ok(PartyLedgerMasterSource {
+            company: company.to_string(),
+            company_guid: expected_company_guid.to_string(),
+            currency_assertion: currency.assertion,
+            currency_decimal_places: currency.decimal_places,
+            from: master_period.from().clone(),
+            // The snapshot period is the balance evidence. Its derived end is
+            // the date Tally was actually asked to honor, not merely the last
+            // voucher date used by the identity/master read.
+            to: balance_period.to().clone(),
+            rows,
+            master_response_sha256,
+            balance_response_sha256,
+            group_response_sha256,
+            master_response_bytes,
+            balance_response_bytes,
+            group_response_bytes,
+            groups,
+        })
     }
 
     /// Reads the documented standard ledger collection as an explicitly limited
@@ -858,7 +1155,9 @@ impl TallyClient {
         let first = parse_company_book_extent(&first, company, expected_company_guid)?;
         let second = parse_company_book_extent(&second, company, expected_company_guid)?;
         if first != second {
-            anyhow::bail!("Tally company book extent changed between paired reads");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::CompanyBookExtent,
+            ));
         }
         // The parser stays tolerant of an absent ALTMSTID (older captures still parse), but this
         // is the outstandings bracket itself: fail closed here so a witness-less pair -- which
@@ -885,24 +1184,26 @@ impl TallyClient {
         &self,
         request_xml: String,
     ) -> anyhow::Result<NativePairedRead> {
-        let (first, first_bytes) = self
+        let (first, first_bytes, first_sha256) = self
             .post_xml_with_encoded_bytes(request_xml.clone())
             .await?;
         self.http
             .get_status_decoded()
             .await
             .context("Tally health check between paired native report reads failed")?;
-        let (second, second_bytes) = self.post_xml_with_encoded_bytes(request_xml).await?;
+        let (second, second_bytes, second_sha256) =
+            self.post_xml_with_encoded_bytes(request_xml).await?;
         self.http
             .get_status_decoded()
             .await
             .context("Tally health check after paired native report reads failed")?;
-        if first != second || first_bytes != second_bytes {
+        if first != second || first_bytes != second_bytes || first_sha256 != second_sha256 {
             return Ok(NativePairedRead::Drifted);
         }
         Ok(NativePairedRead::Stable {
             body: first,
             encoded_bytes: first_bytes,
+            encoded_sha256: first_sha256,
         })
     }
 
@@ -1177,6 +1478,26 @@ impl TallyClient {
     }
 }
 
+fn party_ledger_master_balance_period(
+    boundary_profile: DateBoundaryProfile,
+    books_from: bridge_tally_core::TallyDate,
+    last_voucher_date: bridge_tally_core::TallyDate,
+) -> Result<
+    NativeLedgerSnapshotPeriod,
+    bridge_tally_protocol::native_outstandings::NativeLedgerSnapshotPeriodError,
+> {
+    // This workbook must be safe when a capability profile is not cached.
+    // The strict Education boundary set is the known common admissible set;
+    // choosing the next such date includes the final voucher rather than
+    // silently requesting a refused boundary or shrinking the period.
+    let closing_boundary = DateBoundaryProfile::EducationRestricted
+        .earliest_boundary_at_or_after(&last_voucher_date)
+        .ok_or(
+            bridge_tally_protocol::native_outstandings::NativeLedgerSnapshotPeriodError::UnsupportedBoundary,
+        )?;
+    NativeLedgerSnapshotPeriod::new(boundary_profile, books_from, closing_boundary)
+}
+
 fn normalize_discovered_companies(companies: Vec<TallyCompany>) -> Result<Vec<TallyCompany>, ()> {
     companies
         .into_iter()
@@ -1320,15 +1641,24 @@ fn validate_selected_ledgers(
         if !names.insert(name.as_str().to_string()) {
             anyhow::bail!("Selected ledger response repeated a normalized name");
         }
+        let party_gstin = match &source.record.party_gstin {
+            bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(value)
+                if !value.trim().is_empty() =>
+            {
+                Some(value)
+            }
+            bridge_tally_protocol::PartyLedgerMasterFieldObservation::Returned(_)
+            | bridge_tally_protocol::PartyLedgerMasterFieldObservation::NotObserved => None,
+        };
         for value in [
-            source.record.parent.as_ref(),
-            source.record.party_gstin.as_ref(),
+            source.record.parent.nonempty_returned_text(),
+            party_gstin.map(String::as_str),
         ]
         .into_iter()
         .flatten()
         .filter(|value| !value.trim().is_empty())
         {
-            bridge_tally_core::ForeignText::from_tally(value.clone());
+            bridge_tally_core::ForeignText::from_tally(value);
         }
         if let Some(opening_balance) = source
             .record
@@ -1423,7 +1753,8 @@ mod tests {
     use super::LedgerOpeningCoverageRead;
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
-        has_presentation_equivalent_guid_siblings, normalize_discovered_companies, tally_endpoint,
+        has_presentation_equivalent_guid_siblings, normalize_discovered_companies,
+        party_ledger_master_balance_period, party_ledger_master_openings_agree, tally_endpoint,
         unique_company_identities, TallyClient, TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
@@ -1436,6 +1767,45 @@ mod tests {
     use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn party_master_snapshot_uses_the_next_common_admissible_boundary() {
+        let period = party_ledger_master_balance_period(
+            DateBoundaryProfile::ModeAgnostic,
+            TallyDate::parse("20260401").unwrap(),
+            TallyDate::parse("20260415").unwrap(),
+        )
+        .expect("the derived common boundary is valid");
+        assert_eq!(period.to().as_str(), "20260501");
+        assert!(period.to() >= &TallyDate::parse("20260415").unwrap());
+    }
+
+    #[test]
+    fn party_master_opening_balance_comparison_accepts_equivalent_decimal_scale() {
+        assert!(party_ledger_master_openings_agree(
+            "0",
+            &bridge_tally_core::ExactDecimal::parse("0.00").unwrap(),
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn party_master_opening_balance_comparison_withholds_a_real_numeric_mismatch() {
+        assert!(!party_ledger_master_openings_agree(
+            "0.01",
+            &bridge_tally_core::ExactDecimal::parse("0.00").unwrap(),
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn party_master_opening_balance_comparison_rejects_an_unparseable_master_value() {
+        assert!(party_ledger_master_openings_agree(
+            "not-an-amount",
+            &bridge_tally_core::ExactDecimal::parse("0.00").unwrap(),
+        )
+        .is_err());
+    }
 
     fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
         let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
@@ -2731,8 +3101,12 @@ mod tests {
         let server = tokio::spawn(async move {
             let responses = [
                 utf8_status_response("<RESPONSE>TallyPrime Server is Running</RESPONSE>"),
-                utf16_xml_response("<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Capability collection unavailable</LINEERROR></DATA></BODY></ENVELOPE>"),
-                utf16_xml_response("<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>"),
+                utf16_xml_response(
+                    "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Capability collection unavailable</LINEERROR></DATA></BODY></ENVELOPE>",
+                ),
+                utf16_xml_response(
+                    "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
+                ),
             ];
             for response in responses {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");

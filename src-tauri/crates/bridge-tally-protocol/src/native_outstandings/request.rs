@@ -141,8 +141,10 @@ pub fn render_native_bills_request(
 }
 
 /// Renders a request for the `List of Ledgers` collection, overridden to
-/// fetch exactly the fields the on-account residual computation needs:
-/// `NAME`, `PARENT`, `CLOSINGBALANCE`, `OPENINGBALANCE`, `ISBILLWISEON`.
+/// fetch exactly the fields the on-account residual computation needs, plus
+/// Tally's computed `BRIDGECOMPANYGUID` so the party/ledger export can bind
+/// this specific response to its selected company: `NAME`, `PARENT`, `CLOSINGBALANCE`,
+/// `OPENINGBALANCE`, `ISBILLWISEON`.
 ///
 /// **`SVFROMDATE`/`SVTODATE` are load-bearing here and must match the bills
 /// request exactly.** `CLOSINGBALANCE` is as-of scoped; see
@@ -160,7 +162,7 @@ pub fn render_native_ledger_snapshot_request(
     period: &NativeLedgerSnapshotPeriod,
 ) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH><COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
         from = period.from().as_str(),
         to = period.to().as_str(),
@@ -182,11 +184,47 @@ pub fn render_native_ledger_export_request(
     company: &str,
     period: &NativeLedgerExportPeriod,
 ) -> String {
+    render_native_ledger_collection_request(
+        company,
+        period,
+        "NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE",
+        false,
+    )
+}
+
+/// Renders the dedicated collection used only by the party/ledger master
+/// workbook. Sensitive master values are fetched here because this report
+/// renders them; ordinary ledger readers use `render_native_ledger_export_request`.
+pub fn render_party_ledger_master_request(
+    company: &str,
+    period: &NativeLedgerExportPeriod,
+) -> String {
+    render_native_ledger_collection_request(
+        company,
+        period,
+        "NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST, OPENINGBALANCE",
+        true,
+    )
+}
+
+fn render_native_ledger_collection_request(
+    company: &str,
+    period: &NativeLedgerExportPeriod,
+    fetch: &str,
+    include_response_company_guid: bool,
+) -> String {
+    let response_company_guid = if include_response_company_guid {
+        "<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"
+    } else {
+        ""
+    };
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">{from}</SVFROMDATE><SVTODATE TYPE="Date">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Ledgers" ISMODIFY="Yes"><FETCH>{fetch}</FETCH>{response_company_guid}</COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
         from = period.from().as_str(),
         to = period.to().as_str(),
+        fetch = fetch,
+        response_company_guid = response_company_guid,
     )
 }
 
@@ -274,6 +312,8 @@ pub fn render_native_voucher_export_request(
 /// row), but it is listed here anyway, the same way `NAME` is listed despite
 /// being emitted unconditionally too: this FETCH is the explicit contract of
 /// what the reader depends on, not merely what happens to already arrive.
+/// `BRIDGECOMPANYGUID` is a response-bound value computed from the selected
+/// company, so every consumed Group row can prove which company answered.
 ///
 /// Unlike the legacy export profile, this stays in Tally's native Collection
 /// family: it defines no report/form/part/line/field stack and invokes no TDL
@@ -281,7 +321,7 @@ pub fn render_native_voucher_export_request(
 /// bracket establish completeness for this snapshot.
 pub fn render_native_group_snapshot_request(company: &str) -> String {
     format!(
-        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Groups" ISMODIFY="Yes"><FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
+        r#"<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{company}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="List of Groups" ISMODIFY="Yes"><FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH><COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>"#,
         company = xml_escape(company),
     )
 }
@@ -448,6 +488,8 @@ mod tests {
         assert!(ledger_xml.contains("A &amp; B &lt;Co&gt;"));
         assert!(ledger_xml
             .contains("<FETCH>NAME, PARENT, CLOSINGBALANCE, OPENINGBALANCE, ISBILLWISEON</FETCH>"));
+        assert!(ledger_xml
+            .contains("<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"));
         assert!(ledger_xml.contains(r#"<SVFROMDATE TYPE="Date">20240401</SVFROMDATE>"#));
         assert!(ledger_xml.contains(r#"<SVTODATE TYPE="Date">20260731</SVTODATE>"#));
 
@@ -456,6 +498,8 @@ mod tests {
         assert!(group_xml.contains(r#"<ID>List of Groups</ID>"#));
         assert!(group_xml
             .contains(r#"<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH>"#));
+        assert!(group_xml
+            .contains("<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"));
         assert!(!group_xml.contains("<REPORT>"));
         assert!(!group_xml.contains("<FORM>"));
         assert!(!group_xml.contains("<PART>"));
@@ -471,7 +515,15 @@ mod tests {
         .expect("mode-agnostic profile accepts valid calendar dates");
         let export_xml = render_native_ledger_export_request("A & B <Co>", &export_period);
         assert!(export_xml.contains("A &amp; B &lt;Co&gt;"));
-        assert!(export_xml.contains(r#"<FETCH>NAME, GUID, REMOTEID, MASTERID, ALTERID, PARENT, PARTYGSTIN, OPENINGBALANCE</FETCH>"#));
+        assert!(!export_xml.contains("INCOMETAXNUMBER"));
+        assert!(
+            !export_xml.contains("BRIDGECOMPANYGUID"),
+            "the ordinary ledger profile retains its existing response shape"
+        );
+        let party_master_xml = render_party_ledger_master_request("A & B <Co>", &export_period);
+        assert!(party_master_xml.contains("INCOMETAXNUMBER, NAMEONPAN, LEDPINCODE, LEDGSTPINCODE, MSMEREGNUMBER, LEDUDYAMREGNUMBER, BANKACCHOLDERNAME, BANKDETAILS, IFSCODE, EMAIL, LEDGERPHONE, STATENAME, LEDADDRESS.LIST"));
+        assert!(party_master_xml
+            .contains("<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>"));
         assert!(!export_xml.contains("<REPORT>"));
         assert!(!export_xml.contains("<FORM>"));
         assert!(!export_xml.contains("<PART>"));

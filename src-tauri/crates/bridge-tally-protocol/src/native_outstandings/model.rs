@@ -88,7 +88,10 @@ pub struct NativeBillRow {
 pub struct LedgerSnapshotEntry {
     pub name: String,
     pub parent: Option<String>,
-    pub closing_balance: ExactDecimal,
+    /// `None` means Tally returned an empty `<CLOSINGBALANCE>` element. It is
+    /// distinct from an established numeric zero so each consumer can retain
+    /// its own documented treatment of that observed wire shape.
+    pub closing_balance: Option<ExactDecimal>,
     pub opening_balance: ExactDecimal,
     pub bill_wise_on: bool,
 }
@@ -148,5 +151,9 @@ pub struct CompanyCurrency {
     /// currency is not determinable from this read, and guessing would put a
     /// wrong currency symbol in front of a real balance.
     pub currency_count: usize,
+    /// The base currency's display precision reported by Tally. Consumers
+    /// must carry this to their rendering boundary rather than silently
+    /// assuming paise precision.
+    pub decimal_places: u8,
     pub is_inr: bool,
 }

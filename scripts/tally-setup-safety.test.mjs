@@ -157,6 +157,47 @@ test("child Tally reads keep client selection locked until every invocation sett
   assert.match(readiness, /onClick=\{onCheck\} disabled=\{busy \|\| settingsLocked\}/);
 });
 
+test("party ledger export disables the concurrent outstandings refresh through the shared read lock", async () => {
+  const [frontend, outstandings, switcher] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/ClientSwitcher.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(frontend, /liveReadNavigationLocked=\{childTallyReadCount > 0\}/);
+  const ledgerMasterExport = outstandings.slice(
+    outstandings.indexOf('beginExport("ledger-master")'),
+    outstandings.indexOf('{workingPaperAvailable && ('),
+  );
+  assert.match(ledgerMasterExport, /onTallyReadActivityChange\(1\);/);
+  assert.match(ledgerMasterExport, /onTallyReadActivityChange\(-1\);/);
+  const headingControls = outstandings.slice(
+    outstandings.indexOf('<div className="outstandings-heading-actions">'),
+    outstandings.indexOf('{workingPaperUnavailable && ('),
+  );
+  assert.match(headingControls, /disabled=\{loading \|\| liveReadNavigationLocked\}/);
+  assert.match(headingControls, /disabled=\{loading \|\| liveReadNavigationLocked \|\| !requestedAsOf\}/);
+  assert.match(outstandings, /onClick=\{onChangeSetup\} disabled=\{liveReadNavigationLocked\}/);
+  const switcherManage = switcher.slice(switcher.indexOf('onManageTally();') - 180, switcher.indexOf('onManageTally();') + 80);
+  assert.match(switcherManage, /disabled=\{selectionLocked\}/);
+  const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge operations">'), frontend.indexOf("</nav>"));
+  assert.match(nav, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Manage Tally/);
+});
+
+test("a ledger-master export notice survives unmounting the outstandings screen", async () => {
+  const [frontend, outstandings] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(frontend, /const \[outstandingsExportNotice, setOutstandingsExportNotice\] = React\.useState/);
+  assert.match(frontend, /\{outstandingsExportNotice && \(\s*<OutstandingsExportNotice/s);
+  assert.match(frontend, /onExportNoticeChange=\{setOutstandingsExportNotice\}/);
+  assert.doesNotMatch(outstandings, /const \[exportNotice, setExportNotice\]/);
+  assert.match(outstandings, /onExportNoticeChange\(\{ message: fileNameOf\(path\), path \}\);/);
+  assert.match(outstandings, /onExportNoticeChange\(\{ message: operatorMessage\(cause\) \}\);/);
+});
+
 test("the shell never treats a truncated profile page or stale unsaved identity as exhaustive", async () => {
   const [frontend, switcher] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),

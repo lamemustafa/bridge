@@ -1076,7 +1076,7 @@ mod tests {
             .iter()
             .map(|group| {
                 crate::tally::canonical_window::resolve_group_parent(
-                    group.record.parent.as_deref(),
+                    group.record.parent.nonempty_returned_text(),
                     &group_ids_by_name,
                     "group_parent_missing",
                 )
@@ -1101,7 +1101,7 @@ mod tests {
             .iter()
             .map(|ledger| {
                 crate::tally::canonical_window::resolve_optional_reference(
-                    ledger.record.parent.as_deref(),
+                    ledger.record.parent.nonempty_returned_text(),
                     &group_ids_by_name,
                     "ledger_parent_group_missing",
                 )

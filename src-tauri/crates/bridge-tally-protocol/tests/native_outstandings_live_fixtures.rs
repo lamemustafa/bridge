@@ -37,17 +37,16 @@ fn fixture(name: &str) -> String {
 /// `group_snapshot_aarav_with_identity.utf16le.xml`.
 const AARAV_COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
 
-/// `group_snapshot_aarav.xml` predates the request being widened to fetch
-/// `GUID, MASTERID, ALTERID` (see `render_native_group_snapshot_request`)
-/// and so carries no row identity at all -- it can no longer bind to a
-/// company for outstandings acceptance purposes. That is exactly the
-/// company-binding rejection case
-/// (`NativeOutstandingsError::InvalidResponse("group_company_guid_unverified")`)
+/// `group_snapshot_aarav.xml` predates the request's response-bound
+/// `BRIDGECOMPANYGUID` compute (see `render_native_group_snapshot_request`)
+/// and cannot bind to a company for outstandings acceptance purposes. That is
+/// exactly the company-binding rejection case
+/// (`NativeOutstandingsError::InvalidResponse("group_response_company_guid_missing")`)
 /// tested against these real bytes in
 /// `bridge_tally_protocol::native_outstandings::wire::group_tests::a_real_pre_widening_capture_with_no_guid_anywhere_is_rejected`.
 /// Here it instead supplies the historical baseline for
 /// `GROUP_SNAPSHOT_AARAV_WITH_IDENTITY`, the later capture that carries the
-/// same 28 rows plus their GUIDs.
+/// same 28 rows plus their object GUIDs.
 const GROUP_SNAPSHOT_AARAV_WITH_IDENTITY: &[u8] =
     include_bytes!("fixtures/native/group_snapshot_aarav_with_identity.utf16le.xml");
 
@@ -60,6 +59,16 @@ fn decode_utf16le(bytes: &[u8]) -> String {
     )
     .expect("captured BOM-less UTF-16LE response decodes")
     .text
+}
+
+fn aarav_group_response_with_computed_company_guid() -> String {
+    // Preserve the real captured response bytes. This acceptance test adds
+    // only the request-computed response identity that the old capture
+    // predates; it does not manufacture Group master data.
+    decode_utf16le(GROUP_SNAPSHOT_AARAV_WITH_IDENTITY).replace(
+        "</GUID>",
+        "</GUID><BRIDGECOMPANYGUID>bb8ad19e-6aef-4239-a917-87fec0c6215e</BRIDGECOMPANYGUID>",
+    )
 }
 
 fn as_of() -> TallyDate {
@@ -201,7 +210,7 @@ fn aarav_residual_dominates_and_every_bill_carrying_party_reconciles_exactly() {
     let ledgers =
         parse_native_ledger_snapshot(&fixture("ledger_snapshot_aarav.xml")).expect("parse");
     let groups = parse_native_group_snapshot(
-        &decode_utf16le(GROUP_SNAPSHOT_AARAV_WITH_IDENTITY),
+        &aarav_group_response_with_computed_company_guid(),
         AARAV_COMPANY_GUID,
     )
     .expect("parse");
@@ -381,7 +390,7 @@ fn ledger_parser_ignores_the_cmpinfo_counter_elements() {
 fn a_real_group_snapshot_does_not_bind_to_a_different_companys_guid() {
     const WR2_COMPANY_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
     let result = parse_native_group_snapshot(
-        &decode_utf16le(GROUP_SNAPSHOT_AARAV_WITH_IDENTITY),
+        &aarav_group_response_with_computed_company_guid(),
         WR2_COMPANY_GUID,
     );
     assert!(

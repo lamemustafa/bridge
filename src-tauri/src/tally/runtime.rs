@@ -3,10 +3,11 @@ use super::{
 };
 use super::{TallyProbeResult, TallyVoucher};
 use crate::observability::BodyBytesObservation;
-use crate::tally::connection::NativePairedRead;
+use crate::reports::party_ledger_master::PartyLedgerMasterSource;
 use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
 #[cfg(feature = "voucher-scan")]
 use crate::tally::connection::{LedgerOpeningCoverageRead, OutstandingsSegmentObservation};
+use crate::tally::connection::{NativePairedRead, PairedReadValidationError};
 use crate::tally::connector::SealedReadRequest;
 #[cfg(feature = "voucher-scan")]
 use crate::tally::outstandings_runtime::{
@@ -35,7 +36,9 @@ use bridge_tally_protocol::outstandings::{
     NarrowDateWindow, PartialScan, ScanResult, SegmentVerification, StrictlyWiderDateCover,
     VoucherAlterIdHighWater, WitnessPairVerification,
 };
-use bridge_tally_protocol::outstandings_shared::{DateBoundaryProfile, OutstandingsReport};
+use bridge_tally_protocol::outstandings_shared::{
+    CompanyBookExtent, DateBoundaryProfile, OutstandingsReport,
+};
 use bridge_tally_transport::TallyTransportError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -124,13 +127,79 @@ pub enum CircuitState {
     HalfOpen,
 }
 
-/// An operator assertion, not currency evidence exported from Tally. Unit A
-/// supports only an explicit assertion that the selected company's base
-/// currency is INR; no other currency can reach the INR formatter.
+/// A typed INR admission for a monetary document. Outstandings may receive an
+/// explicit operator assertion, while the party/ledger export constructs this
+/// only after the existing Tally currency probe establishes one INR master.
+/// No other currency can reach an INR formatter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum OutstandingsCurrencyAssertion {
     #[serde(rename = "INR")]
     Inr,
+}
+
+/// An INR admission that is inseparable from the company extent observed
+/// during the currency read. Only the party/ledger master path consumes this:
+/// outstandings keeps its existing webview assertion contract.
+#[derive(Debug, Clone)]
+pub(crate) struct PartyLedgerMasterCurrencyAssertion {
+    assertion: OutstandingsCurrencyAssertion,
+    decimal_places: u8,
+    currency_read_extent: CompanyBookExtent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PartyLedgerMasterCurrency {
+    pub(crate) assertion: OutstandingsCurrencyAssertion,
+    pub(crate) decimal_places: u8,
+}
+
+impl PartyLedgerMasterCurrencyAssertion {
+    /// Releases the INR assertion only when the monetary master read opens on
+    /// the exact company extent that the existing currency probe observed.
+    pub(crate) fn require_opening_extent(
+        &self,
+        opening_extent: &CompanyBookExtent,
+    ) -> anyhow::Result<PartyLedgerMasterCurrency> {
+        if self.currency_read_extent == *opening_extent {
+            return Ok(PartyLedgerMasterCurrency {
+                assertion: self.assertion,
+                decimal_places: self.decimal_places,
+            });
+        }
+
+        Err(anyhow::Error::new(
+            PairedReadValidationError::CurrencyToMasterExtent,
+        ))
+    }
+}
+
+/// The result of the existing Tally currency probe, retaining the extent that
+/// bracketed it so a monetary document cannot separate the two facts.
+#[derive(Debug, Clone)]
+pub(crate) struct CompanyCurrencyRead {
+    currency: CompanyCurrency,
+    extent: CompanyBookExtent,
+}
+
+impl CompanyCurrencyRead {
+    pub(crate) fn currency_count(&self) -> usize {
+        self.currency.currency_count
+    }
+
+    pub(crate) fn is_inr(&self) -> bool {
+        self.currency.is_inr
+    }
+
+    pub(crate) fn bind_party_ledger_master_assertion(
+        self,
+        assertion: OutstandingsCurrencyAssertion,
+    ) -> PartyLedgerMasterCurrencyAssertion {
+        PartyLedgerMasterCurrencyAssertion {
+            assertion,
+            decimal_places: self.currency.decimal_places,
+            currency_read_extent: self.extent,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1398,6 +1467,40 @@ impl TallyRuntime {
         .await
     }
 
+    pub(crate) async fn fetch_party_ledger_master_source(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
+    ) -> anyhow::Result<PartyLedgerMasterSource> {
+        let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
+        let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
+        self.execute(
+            config,
+            ReadOperation::MasterExport,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let identity = identity.clone();
+                let currency_assertion = currency_assertion.clone();
+                async move {
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let source = client
+                        .fetch_party_ledger_master_source(
+                            identity.display_name(),
+                            identity.company_guid(),
+                            boundary_profile,
+                            currency_assertion,
+                        )
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(source)
+                }
+            },
+        )
+        .await
+    }
+
     /// Fetches the limited, documented standard collection response used for
     /// compatibility diagnostics. This is intentionally separate from the
     /// Bridge ledger export: it returns only ledger names and parents and is
@@ -1561,6 +1664,7 @@ impl TallyRuntime {
                     let NativePairedRead::Stable {
                         body: receivable_body,
                         encoded_bytes,
+                        ..
                     } = receivable
                     else {
                         return Ok(partial_result("native_bills_report_drifted"));
@@ -1577,6 +1681,7 @@ impl TallyRuntime {
                     let NativePairedRead::Stable {
                         body: group_body,
                         encoded_bytes,
+                        ..
                     } = groups
                     else {
                         return Ok(partial_result("native_group_snapshot_drifted"));
@@ -1589,6 +1694,7 @@ impl TallyRuntime {
                     let NativePairedRead::Stable {
                         body: payable_body,
                         encoded_bytes,
+                        ..
                     } = payable
                     else {
                         return Ok(partial_result("native_bills_report_drifted"));
@@ -1604,6 +1710,7 @@ impl TallyRuntime {
                     let NativePairedRead::Stable {
                         body: ledger_body,
                         encoded_bytes,
+                        ..
                     } = ledgers
                     else {
                         return Ok(partial_result("native_ledger_snapshot_drifted"));
@@ -1690,6 +1797,28 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<CompanyCurrency> {
+        Ok(self
+            .detect_base_currency_with_extent(config, identity)
+            .await?
+            .currency)
+    }
+
+    /// Runs the existing currency probe while retaining its stable company
+    /// extent for the party/ledger master document boundary.
+    pub(crate) async fn detect_party_ledger_master_currency(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<CompanyCurrencyRead> {
+        self.detect_base_currency_with_extent(config, identity)
+            .await
+    }
+
+    async fn detect_base_currency_with_extent(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<CompanyCurrencyRead> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -1711,16 +1840,23 @@ impl TallyRuntime {
                         ))
                         .await?;
                     let NativePairedRead::Stable { body, .. } = body else {
-                        anyhow::bail!("Tally currency masters changed between paired reads");
+                        return Err(anyhow::Error::new(
+                            PairedReadValidationError::CurrencyMaster,
+                        ));
                     };
                     let closing_extent = client
                         .fetch_company_book_extent(identity.display_name(), identity.company_guid())
                         .await?;
                     if closing_extent != extent {
-                        anyhow::bail!("Tally company book changed during currency detection");
+                        return Err(anyhow::Error::new(
+                            PairedReadValidationError::CurrencyExtent,
+                        ));
                     }
                     bracket_verified_company_identity(&client, &identity).await?;
-                    Ok(parse_company_currency(&body)?)
+                    Ok(CompanyCurrencyRead {
+                        currency: parse_company_currency(&body)?,
+                        extent,
+                    })
                 }
             },
         )
@@ -2755,7 +2891,14 @@ mod tests {
             .expect("captured receivable rows parse");
         let payable = parse_native_bill_rows(payable_xml, &books_from, &as_of)
             .expect("captured payable rows parse");
-        let groups = parse_native_group_snapshot(groups_xml, COMPANY_GUID)
+        // This captured Group body predates the request's response-bound
+        // compute. Add only that collection context for the parser contract;
+        // source-byte accounting below remains the exact captured response.
+        let groups_with_response_company_guid = groups_xml.replace(
+            "</GUID>",
+            "</GUID><BRIDGECOMPANYGUID>c6afd306-00e1-4f51-802a-babe44daddd3</BRIDGECOMPANYGUID>",
+        );
+        let groups = parse_native_group_snapshot(&groups_with_response_company_guid, COMPANY_GUID)
             .expect("captured group identity and ancestry parse");
         let ledgers =
             parse_native_ledger_snapshot(ledgers_xml).expect("captured ledger controls parse");
@@ -2859,7 +3002,7 @@ mod tests {
     fn zero_bill_rows_with_a_ledger_residual_withhold_native_complete() {
         let groups = parse_native_group_snapshot(
             r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>
-            <GROUP NAME="Sundry Debtors" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><PARENT>Primary</PARENT></GROUP>
+            <GROUP NAME="Sundry Debtors" RESERVEDNAME="Sundry Debtors"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><PARENT>Primary</PARENT></GROUP>
             </COLLECTION></DATA></BODY></ENVELOPE>"#,
             "11111111-1111-1111-1111-111111111111",
         )
@@ -2929,6 +3072,62 @@ mod tests {
             vec!["No reference reported", "No reference reported"],
             "client-facing rows must disclose the missing identity",
         );
+    }
+
+    #[test]
+    fn party_master_currency_assertion_rejects_a_changed_company_extent() {
+        const EXTENT: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        );
+        let read_extent_xml = EXTENT.replacen(
+            r#"<GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
+            r#"<GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE=\"Number\">1</ALTMSTID>"#,
+            1,
+        );
+        let changed_extent_xml = read_extent_xml.replace(
+            "<LASTVOUCHERDATE TYPE=\"Date\">20260401</LASTVOUCHERDATE>",
+            "<LASTVOUCHERDATE TYPE=\"Date\">20260402</LASTVOUCHERDATE>",
+        );
+        let read_extent = bridge_tally_protocol::outstandings_shared::parse_company_book_extent(
+            &read_extent_xml,
+            "Aarav Trading Company Demo",
+            "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+        )
+        .expect("captured extent parses");
+        let changed_extent = bridge_tally_protocol::outstandings_shared::parse_company_book_extent(
+            &changed_extent_xml,
+            "Aarav Trading Company Demo",
+            "bb8ad19e-6aef-4239-a917-87fec0c6215e",
+        )
+        .expect("changed synthetic extent parses");
+        let assertion = CompanyCurrencyRead {
+            currency: CompanyCurrency {
+                symbol: "₹".to_string(),
+                mailing_name: "INR".to_string(),
+                currency_count: 1,
+                decimal_places: 2,
+                is_inr: true,
+            },
+            extent: read_extent.clone(),
+        }
+        .bind_party_ledger_master_assertion(OutstandingsCurrencyAssertion::Inr);
+
+        assert_eq!(
+            assertion
+                .require_opening_extent(&read_extent)
+                .expect("the observed extent releases INR"),
+            PartyLedgerMasterCurrency {
+                assertion: OutstandingsCurrencyAssertion::Inr,
+                decimal_places: 2,
+            }
+        );
+        let error = assertion
+            .require_opening_extent(&changed_extent)
+            .expect_err("a changed extent must not release INR");
+        assert!(matches!(
+            error.downcast_ref::<PairedReadValidationError>(),
+            Some(PairedReadValidationError::CurrencyToMasterExtent)
+        ));
     }
 
     #[tokio::test]

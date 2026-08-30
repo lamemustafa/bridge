@@ -49,6 +49,16 @@ fn as_of(yyyymmdd: &str) -> TallyDate {
     TallyDate::parse(yyyymmdd).unwrap()
 }
 
+fn group_response_with_computed_company_guid(bytes: &str) -> String {
+    // These fixtures exercise Group classification, and several predate the
+    // request's response-bound compute. Preserve their source bytes and add
+    // only the selected-company context required by the current parser.
+    bytes.replace(
+        "</GUID>",
+        "</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID>",
+    )
+}
+
 /// `ExactDecimal`'s `PartialEq` is literal-lexeme equality, not numeric
 /// equality (TALLY_PROTOCOL_REFERENCE: it deliberately never converts
 /// through floating point, and preserves whatever scale it was constructed
@@ -103,8 +113,11 @@ fn zero_bill_rows_with_nonzero_ledger_residual_are_unconfirmed() {
         <CLOSINGBALANCE>-100.00</CLOSINGBALANCE><OPENINGBALANCE>0.00</OPENINGBALANCE>
         <ISBILLWISEON>No</ISBILLWISEON></LEDGER>
         </COLLECTION></DATA></BODY></ENVELOPE>"#;
-    let groups = parse_native_group_snapshot(group_bytes, RESERVEDNAME_TESTS_COMPANY_GUID)
-        .expect("raw group hierarchy parses");
+    let groups = parse_native_group_snapshot(
+        &group_response_with_computed_company_guid(group_bytes),
+        RESERVEDNAME_TESTS_COMPANY_GUID,
+    )
+    .expect("raw group hierarchy parses");
     let ledgers = parse_native_ledger_snapshot(ledger_bytes).expect("raw ledger snapshot parses");
 
     let result = compute_native_outstandings(
@@ -174,8 +187,11 @@ fn complete_group_snapshot_refuses_empty_or_unresolved_ancestry() {
     ] {
         let groups = group_bytes
             .map(|bytes| {
-                parse_native_group_snapshot(bytes, RESERVEDNAME_TESTS_COMPANY_GUID)
-                    .expect("raw group snapshot parses")
+                parse_native_group_snapshot(
+                    &group_response_with_computed_company_guid(bytes),
+                    RESERVEDNAME_TESTS_COMPANY_GUID,
+                )
+                .expect("raw group snapshot parses")
             })
             .unwrap_or_default();
         let error = compute_native_outstandings(
@@ -207,8 +223,11 @@ fn complete_group_snapshot_requires_reservedname_evidence() {
         </COLLECTION></DATA></BODY></ENVELOPE>"#,
         guid = RESERVEDNAME_TESTS_COMPANY_GUID,
     );
-    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
-        .expect("group snapshot without RESERVEDNAME evidence parses at the XML boundary");
+    let groups = parse_native_group_snapshot(
+        &group_response_with_computed_company_guid(&group_xml),
+        RESERVEDNAME_TESTS_COMPANY_GUID,
+    )
+    .expect("group snapshot without RESERVEDNAME evidence parses at the XML boundary");
     assert_eq!(groups[0].reserved_name, None);
     let ledgers = parse_native_ledger_snapshot(
         "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
@@ -254,8 +273,11 @@ fn renamed_sundry_debtors_group_still_classifies_its_ledgers_by_reservedname() {
         </COLLECTION></DATA></BODY></ENVELOPE>"#,
         guid = RESERVEDNAME_TESTS_COMPANY_GUID,
     );
-    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
-        .expect("renamed predefined group snapshot parses");
+    let groups = parse_native_group_snapshot(
+        &group_response_with_computed_company_guid(&group_xml),
+        RESERVEDNAME_TESTS_COMPANY_GUID,
+    )
+    .expect("renamed predefined group snapshot parses");
     assert_eq!(
         groups[0].name, "WR5 Renamed Suspense",
         "sanity: NAME really did change"
@@ -312,8 +334,11 @@ fn renamed_sundry_creditors_group_still_classifies_its_ledgers_by_reservedname()
         </COLLECTION></DATA></BODY></ENVELOPE>"#,
         guid = RESERVEDNAME_TESTS_COMPANY_GUID,
     );
-    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
-        .expect("renamed predefined group snapshot parses");
+    let groups = parse_native_group_snapshot(
+        &group_response_with_computed_company_guid(&group_xml),
+        RESERVEDNAME_TESTS_COMPANY_GUID,
+    )
+    .expect("renamed predefined group snapshot parses");
 
     let ledgers = parse_native_ledger_snapshot(
         "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
@@ -367,8 +392,11 @@ fn user_created_group_merely_named_sundry_debtors_is_not_treated_as_predefined()
         </COLLECTION></DATA></BODY></ENVELOPE>"#,
         guid = RESERVEDNAME_TESTS_COMPANY_GUID,
     );
-    let groups = parse_native_group_snapshot(&group_xml, RESERVEDNAME_TESTS_COMPANY_GUID)
-        .expect("custom lookalike group snapshot parses");
+    let groups = parse_native_group_snapshot(
+        &group_response_with_computed_company_guid(&group_xml),
+        RESERVEDNAME_TESTS_COMPANY_GUID,
+    )
+    .expect("custom lookalike group snapshot parses");
     assert_eq!(
         groups[0].reserved_name.as_deref(),
         Some(""),

@@ -13,7 +13,11 @@ import {
 } from "./tally-company-selection";
 import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
-import { OutstandingsScreen } from "./OutstandingsScreen";
+import {
+  OutstandingsExportNotice,
+  OutstandingsScreen,
+  type OutstandingsExportNotice as OutstandingsExportNoticeState,
+} from "./OutstandingsScreen";
 import { OutstandingsEvidencePanel } from "./OutstandingsEvidencePanel";
 import type { EvidenceDrawerEntry } from "./evidence-drawer-entry";
 import { AllClientsScreen } from "./AllClientsScreen";
@@ -443,6 +447,7 @@ function App() {
   const [companyError, setCompanyError] = React.useState<OperatorError | null>(null);
   const [persistedCompanyProfileError, setPersistedCompanyProfileError] = React.useState<OperatorError | null>(null);
   const [childTallyReadCount, setChildTallyReadCount] = React.useState(0);
+  const [outstandingsExportNotice, setOutstandingsExportNotice] = React.useState<OutstandingsExportNoticeState | null>(null);
   const [fixtureStatus, setFixtureStatus] = React.useState<TallyWriteFixtureEnrollmentStatus | null>(null);
   const [fixtureStatusError, setFixtureStatusError] = React.useState<string | null>(null);
   const [fixtureDisposableAttested, setFixtureDisposableAttested] = React.useState(false);
@@ -719,6 +724,7 @@ function App() {
 
   function clearSelectedCompanyScope({ preserveCurrentProbeReview = false } = {}) {
     setCompanyError(null);
+    setOutstandingsExportNotice(null);
     setFixtureStatus(null);
     setFixtureStatusError(null);
     setFixtureDisposableAttested(false);
@@ -1512,7 +1518,7 @@ function App() {
           <button aria-current={view === "clients" ? "page" : undefined} className={view === "clients" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView(selectedCompanyReadable ? "clients" : "companies")}>
             <Building2 size={18} /> Compare clients
           </button>
-          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} onClick={() => setView("companies")}>
+          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("companies")}>
             <Cable size={18} /> Manage Tally
           </button>
           <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
@@ -1540,6 +1546,12 @@ function App() {
       </aside>
 
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
+        {outstandingsExportNotice && (
+          <OutstandingsExportNotice
+            notice={outstandingsExportNotice}
+            onDismiss={() => setOutstandingsExportNotice(null)}
+          />
+        )}
         <ClientSwitcher
           clients={clientSwitcherClients}
           selectedClientKey={selectedCompany}
@@ -1598,7 +1610,7 @@ function App() {
               <span>Current probe match</span>
               <strong>{selectedCompanyLive ? "Matched" : selectedCompanyRecord ? "Offline evidence only" : "Not selected"}</strong>
             </div>
-            <button className="secondary-action" type="button" onClick={() => setView("companies")}>Manage Tally</button>
+            <button className="secondary-action" type="button" disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("companies")}>Manage Tally</button>
           </section>
         )}
 
@@ -1825,6 +1837,7 @@ function App() {
             asOf={outstandingsAsOfSelection.value}
             onAsOfChange={changeOutstandingsAsOf}
             onTallyReadActivityChange={changeChildTallyReadActivity}
+            onExportNoticeChange={setOutstandingsExportNotice}
           />
           </ErrorBoundary>
         )}

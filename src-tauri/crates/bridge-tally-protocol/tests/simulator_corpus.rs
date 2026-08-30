@@ -7,8 +7,9 @@ use bridge_tally_protocol::{
     parse_standard_ledger_identity_observation, parse_voucher_source_records_with_evidence,
     parse_voucher_type_source_records_with_evidence, parse_vouchers, parse_vouchers_with_evidence,
     validate_exact_selected_export_structure, verify_company_context,
-    verify_selected_voucher_window_context, ParsedSourceIdentityKind, TallyExportStatus,
-    BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
+    verify_selected_voucher_window_context, ParsedSourceIdentityKind,
+    PartyLedgerMasterFieldObservation, TallyExportStatus, BRIDGE_GROUP_EXPORT_SCHEMA,
+    BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
     BRIDGE_VOUCHER_EXPORT_SCHEMA, BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
     MAX_INTERACTIVE_DISCOVERY_COMPANIES,
 };
@@ -181,7 +182,15 @@ fn parsed_master_semantic_sha256(
                 source.identities.master_id.clone().unwrap_or_default(),
             ),
             ("alter_id", source.alter_id.clone().unwrap_or_default()),
-            ("parent", source.record.parent.clone().unwrap_or_default()),
+            (
+                "parent",
+                source
+                    .record
+                    .parent
+                    .returned_text()
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
             (
                 "opening_balance",
                 source.record.opening_balance.clone().unwrap_or_default(),
@@ -859,8 +868,11 @@ fn standard_ledger_catalog_returns_only_context_bound_names_and_parents() {
     .expect("strict catalog response");
     assert_eq!(catalog.len(), 1);
     assert_eq!(catalog[0].name, "synthetic-ledger");
-    assert_eq!(catalog[0].parent.as_deref(), Some("Primary"));
-    assert_eq!(catalog[0].party_gstin, None);
+    assert_eq!(catalog[0].parent.returned_text(), Some("Primary"));
+    assert_eq!(
+        catalog[0].party_gstin,
+        PartyLedgerMasterFieldObservation::NotObserved
+    );
     assert_eq!(catalog[0].opening_balance, None);
 
     assert!(parse_standard_ledger_catalog(
@@ -935,12 +947,10 @@ fn standard_ledger_identity_ignores_nonessential_ledger_fields() {
 }
 
 #[test]
-fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_checks() {
-    for parent in [
-        "p".repeat(1025),
-        "Primary\u{061c}spoof".to_string(),
-        "Primary\u{206a}spoof".to_string(),
-        "Primary\u{202e}spoof".to_string(),
+fn standard_ledger_catalog_reports_rejected_parent_as_unobserved_on_the_wire() {
+    for (cause, parent) in [
+        ("overlong", "p".repeat(1025)),
+        ("bidi control", "Primary\u{202e}spoof".to_string()),
     ] {
         let document = format!(
             r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String">{parent}</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#
@@ -949,7 +959,23 @@ fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_che
             .expect("catalog retains the context-bound ledger while omitting unsafe parent text");
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].name, "synthetic-ledger");
-        assert_eq!(catalog[0].parent, None);
+        assert_eq!(
+            catalog[0].parent,
+            PartyLedgerMasterFieldObservation::NotObserved,
+            "{cause} parent must not be reported as an empty returned value"
+        );
+        let parent_json = serde_json::to_value(&catalog[0].parent)
+            .expect("parent observation serializes for the command wire");
+        assert_eq!(
+            parent_json,
+            serde_json::Value::Null,
+            "{cause} parent is null on the wire"
+        );
+        assert_ne!(
+            parent_json,
+            serde_json::json!(""),
+            "{cause} parent is never an empty string"
+        );
     }
 
     let self_closing_parent = r#"<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE="Ledger" ISMSTDEPTYPE="Yes"><SyntheticLedger NAME="synthetic-ledger" RESERVEDNAME=""><GUID TYPE="String">ledger-guid</GUID><PARENT TYPE="String"/><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></SyntheticLedger></COLLECTION></DATA></BODY></ENVELOPE>"#;
@@ -957,7 +983,10 @@ fn standard_ledger_catalog_omits_an_unsafe_parent_without_weakening_identity_che
         parse_standard_ledger_catalog(self_closing_parent, "Synthetic Company", "company-guid")
             .expect("a self-closing blank parent is safely omitted");
     assert_eq!(catalog.len(), 1);
-    assert_eq!(catalog[0].parent, None);
+    assert_eq!(
+        catalog[0].parent,
+        PartyLedgerMasterFieldObservation::Returned(String::new())
+    );
     assert!(parse_standard_ledger_catalog(
         &self_closing_parent.replace("synthetic-ledger", "synthetic\u{061c}ledger"),
         "Synthetic Company",

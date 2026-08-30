@@ -19,6 +19,8 @@ use crate::reports::outstandings_working_paper_store::{
     source_from_complete_result, WorkingPaperExportStore,
 };
 use crate::reports::outstandings_working_paper_xlsx::render_outstandings_working_paper_xlsx;
+use crate::reports::party_ledger_master::build_party_ledger_master_workbook;
+use crate::reports::party_ledger_master_xlsx::render_party_ledger_master_xlsx;
 use crate::reports::party_statement::{
     build_party_statement_with_ageing_anchor, PartyStatementError,
 };
@@ -30,6 +32,7 @@ use crate::sync::snapshot::{
     capability_profile_sha256, AdaptiveWindowPolicy, PlannedWindow, SnapshotPlan,
     SqliteSnapshotStateStore,
 };
+use crate::tally::connection::{PairedReadValidationError, PartyLedgerMasterSourceValidationError};
 use crate::tally::runtime::TallyRuntimeControlError;
 use crate::tally::validators::{
     normalize_company_guid, validate_company_name, validate_date_range,
@@ -108,6 +111,20 @@ fn tally_command_error(
 }
 
 fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
+    if error
+        .downcast_ref::<PartyLedgerMasterSourceValidationError>()
+        .is_some()
+        || error.downcast_ref::<PairedReadValidationError>().is_some()
+    {
+        return tally_command_error(
+            "response_validation_failed",
+            "Response validation",
+            "The Tally response did not meet the party/ledger export validation contract, so Bridge withheld the unverified result.",
+            "after_change",
+            true,
+            "Keep the result unverified and inspect redacted diagnostics before retrying.",
+        );
+    }
     if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
         return match control {
             TallyRuntimeControlError::Cancelled => tally_command_error(
@@ -163,6 +180,16 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
             "after_change",
             true,
             "Do not retry the unchanged request. Verify Tally gateway health and change the request shape only after reviewing the measured segment.",
+        )
+    } else if lower.contains("base currency changed between the currency read and the master read")
+    {
+        (
+            "company_base_currency_changed",
+            "Currency admission",
+            "The selected Tally company changed while Bridge was establishing the workbook currency.",
+            "after_change",
+            true,
+            "Refresh the selected Tally company and retry the export only after its books stop changing.",
         )
     } else if lower.contains("host")
         || lower.contains("port")
@@ -250,6 +277,57 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
         tally_state_may_have_changed: false,
         remediation,
     }
+}
+
+/// Adds report context only after the shared runtime mapper has removed
+/// transport and internal details from the operator-facing text.
+fn party_ledger_master_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
+    let mut mapped = tally_runtime_command_error(error);
+    mapped.message = format!(
+        "Bridge withheld the party/ledger master: {}",
+        mapped.message
+    );
+    mapped
+}
+
+fn party_ledger_master_currency_admission_error(reason: &'static str) -> TallyCommandError {
+    let message = match reason {
+        "company_base_currency_undetermined" => {
+            "The selected Tally company has more than one base currency."
+        }
+        "company_base_currency_not_inr" => {
+            "The selected Tally company does not use INR as its base currency."
+        }
+        "company_currency_probe_failed" => {
+            "Bridge could not establish one INR base currency for the selected Tally company."
+        }
+        _ => "Bridge could not establish the selected Tally company's currency.",
+    };
+    tally_command_error(
+        reason,
+        "Currency admission",
+        format!(
+            "Bridge withheld the party/ledger master: {message} The workbook cannot label the monetary figures safely."
+        ),
+        "after_change",
+        true,
+        "Correct the selected Tally company's base-currency setup, then refresh its probe before exporting.",
+    )
+}
+
+fn party_ledger_master_local_export_error(
+    code: &'static str,
+    message: &'static str,
+    remediation: &'static str,
+) -> TallyCommandError {
+    tally_command_error(
+        code,
+        "Operation",
+        message,
+        "after_change",
+        false,
+        remediation,
+    )
 }
 
 /// Produces the typed command error for the encrypted Tally mirror failing to initialise on
@@ -2176,6 +2254,63 @@ pub async fn fetch_tally_ledgers(
         .map_err(tally_runtime_command_error)
 }
 
+/// Reads and writes one columnar party/ledger master workbook. The workbook
+/// is built only from the runtime's verified, paired source; this command
+/// accepts no ledger row or amount from the webview.
+#[tauri::command]
+pub async fn export_party_ledger_master(
+    app: tauri::AppHandle,
+    request: CompanyRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<String, TallyCommandError> {
+    let identity =
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
+    let currency_read = runtime
+        .detect_party_ledger_master_currency(request.config.clone(), &identity)
+        .await
+        .map_err(party_ledger_master_runtime_command_error)?;
+    let currency_assertion =
+        establish_inr_currency(currency_read.currency_count(), currency_read.is_inr())
+            .map_err(party_ledger_master_currency_admission_error)?;
+    let currency_assertion = currency_read.bind_party_ledger_master_assertion(currency_assertion);
+    let source = runtime
+        .fetch_party_ledger_master_source(request.config, &identity, currency_assertion)
+        .await
+        .map_err(party_ledger_master_runtime_command_error)?;
+    let workbook = build_party_ledger_master_workbook(source)
+        .map_err(|_| {
+            party_ledger_master_local_export_error(
+                "party_ledger_master_source_invalid",
+                "Bridge withheld the party/ledger master because its verified source could not be represented safely.",
+                "Refresh the selected Tally company and retry the export after reviewing its runtime status.",
+            )
+        })?;
+    let bytes = render_party_ledger_master_xlsx(&workbook).map_err(|_| {
+        party_ledger_master_local_export_error(
+            "party_ledger_master_render_failed",
+            "Bridge could not build the party/ledger master workbook safely.",
+            "Retry the export after reviewing local application status.",
+        )
+    })?;
+    let mut slug = statement_filename_slug(workbook.source().company.as_str());
+    slug.truncate(150);
+    save_report_download_bytes(
+        &app,
+        &format!(
+            "party-ledger-master-{slug}-{}.xlsx",
+            workbook.source().to.as_str()
+        ),
+        &bytes,
+    )
+    .map_err(|_| {
+        party_ledger_master_local_export_error(
+            "party_ledger_master_save_failed",
+            "Bridge could not save the party/ledger master workbook.",
+            "Verify local Downloads-folder access, then retry the export.",
+        )
+    })
+}
+
 #[tauri::command]
 pub async fn fetch_standard_tally_ledger_catalog(
     request: CompanyRequest,
@@ -2425,16 +2560,26 @@ fn company_sweep_currency_preflight_failure(
     currency_count: usize,
     is_inr: bool,
 ) -> Option<&'static str> {
+    establish_inr_currency(currency_count, is_inr).err()
+}
+
+/// The one INR admission rule used by both the existing outstandings sweep and
+/// the party/ledger workbook boundary. A workbook can obtain this typed value
+/// only after `detect_base_currency` has read Tally's own Currency masters.
+fn establish_inr_currency(
+    currency_count: usize,
+    is_inr: bool,
+) -> Result<OutstandingsCurrencyAssertion, &'static str> {
     if currency_count > 1 {
-        return Some("company_base_currency_undetermined");
+        return Err("company_base_currency_undetermined");
     }
     if currency_count == 1 && !is_inr {
-        return Some("company_base_currency_not_inr");
+        return Err("company_base_currency_not_inr");
     }
     if currency_count == 1 {
-        return None;
+        return Ok(OutstandingsCurrencyAssertion::Inr);
     }
-    Some("company_currency_probe_failed")
+    Err("company_currency_probe_failed")
 }
 
 /// Reads outstandings for several companies in one action.
@@ -2675,13 +2820,13 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 #[cfg(test)]
 mod tests {
     use super::{
-        company_sweep_currency_preflight_failure, company_sweep_result,
-        first_calendar_day_canary_window, portable_export_file_name, reconcile_review_cleanup,
-        reviewed_probe_commitment_sha256, selected_read_observation, tally_command_error,
-        tally_runtime_command_error, validate_dsc_pins,
-        verify_observed_company_tuple_from_companies, write_unique_download, CompanySweepFailure,
-        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity,
-        VerifiedCompanyIdentity,
+        company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
+        first_calendar_day_canary_window, party_ledger_master_runtime_command_error,
+        portable_export_file_name, reconcile_review_cleanup, reviewed_probe_commitment_sha256,
+        selected_read_observation, tally_command_error, tally_runtime_command_error,
+        validate_dsc_pins, verify_observed_company_tuple_from_companies, write_unique_download,
+        CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
+        SelectedCompanyIdentity, VerifiedCompanyIdentity,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
@@ -2690,9 +2835,10 @@ mod tests {
     use super::require_utf8_destination;
     use crate::tally::{
         ConnectionStatus, OutstandingsCurrencyAssertion, OutstandingsLoadResult,
-        SelectedReadObservation, TallyCompany, TallyProbeResult, TallyProduct,
+        SelectedReadObservation, TallyCompany, TallyLedger, TallyProbeResult, TallyProduct,
     };
     use bridge_tally_core::CapabilityProfile;
+    use bridge_tally_protocol::PartyLedgerMasterFieldObservation;
     use std::collections::BTreeMap;
 
     #[test]
@@ -2955,6 +3101,11 @@ mod tests {
         );
         assert_eq!(company_sweep_currency_preflight_failure(1, true), None);
         assert_eq!(
+            establish_inr_currency(1, true),
+            Ok(OutstandingsCurrencyAssertion::Inr),
+            "the backend boundary receives a typed INR admission only after the probe established one INR master"
+        );
+        assert_eq!(
             company_sweep_currency_preflight_failure(0, false),
             Some("company_currency_probe_failed"),
             "an impossible empty collection remains fail-closed"
@@ -3050,6 +3201,114 @@ mod tests {
         ));
         assert_eq!(discovery_limit.code, "untrusted_discovery_limit_exceeded");
         assert_eq!(discovery_limit.category, "Discovery listing");
+    }
+
+    #[test]
+    fn opening_balance_source_disagreement_is_response_validation_not_endpoint_failure() {
+        let error = tally_runtime_command_error(anyhow::Error::new(
+            crate::tally::connection::PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
+        ));
+
+        assert_eq!(error.code, "response_validation_failed");
+        assert_eq!(error.category, "Response validation");
+        assert_ne!(error.code, "endpoint_unreachable");
+    }
+
+    #[test]
+    fn every_party_master_source_validation_is_not_an_endpoint_failure() {
+        use crate::tally::connection::PartyLedgerMasterSourceValidationError as Validation;
+
+        for error in [
+            Validation::MasterPeriod,
+            Validation::BalancePeriod,
+            Validation::MasterGuid,
+            Validation::MasterId,
+            Validation::MasterAlterId,
+            Validation::MasterOpeningBalance,
+            Validation::BalanceCompanyIdentityUnverified,
+            Validation::GroupCompanyIdentityUnverified,
+        ] {
+            let mapped = tally_runtime_command_error(anyhow::Error::new(error));
+            assert_eq!(mapped.code, "response_validation_failed");
+            assert_eq!(mapped.category, "Response validation");
+            assert_ne!(mapped.code, "endpoint_unreachable");
+        }
+    }
+
+    #[test]
+    fn drifted_party_master_read_is_response_validation_not_endpoint_failure() {
+        let error = tally_runtime_command_error(anyhow::Error::new(
+            crate::tally::connection::PairedReadValidationError::PartyLedgerMaster,
+        ));
+
+        assert_eq!(error.code, "response_validation_failed");
+        assert_eq!(error.category, "Response validation");
+        assert_ne!(error.code, "endpoint_unreachable");
+    }
+
+    #[test]
+    fn party_master_export_keeps_runtime_control_error_code_and_hides_runtime_detail() {
+        let error = party_ledger_master_runtime_command_error(anyhow::Error::new(
+            crate::tally::runtime::TallyRuntimeControlError::QueueDeadline,
+        ));
+
+        assert_eq!(error.code, "tally_runtime_temporarily_unavailable");
+        assert_eq!(error.retry, "safe");
+        assert!(error.local_state_changed);
+        assert!(error
+            .message
+            .starts_with("Bridge withheld the party/ledger master:"));
+        assert!(!error.message.contains("QueueDeadline"));
+    }
+
+    #[test]
+    fn shared_ledger_command_result_keeps_legacy_nullable_observation_json() {
+        let result = vec![
+            TallyLedger {
+                name: "Returned ledger".to_string(),
+                parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
+                party_gstin: PartyLedgerMasterFieldObservation::Returned(
+                    "29ABCDE1234F1Z5".to_string(),
+                ),
+                opening_balance: Some("0".to_string()),
+            },
+            TallyLedger {
+                name: "Empty ledger".to_string(),
+                parent: PartyLedgerMasterFieldObservation::Returned(String::new()),
+                party_gstin: PartyLedgerMasterFieldObservation::Returned(String::new()),
+                opening_balance: None,
+            },
+            TallyLedger {
+                name: "Unobserved ledger".to_string(),
+                parent: PartyLedgerMasterFieldObservation::NotObserved,
+                party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
+                opening_balance: None,
+            },
+        ];
+
+        assert_eq!(
+            serde_json::to_value(result).expect("command result serializes"),
+            serde_json::json!([
+                {
+                    "name": "Returned ledger",
+                    "parent": "Sundry Debtors",
+                    "party_gstin": "29ABCDE1234F1Z5",
+                    "opening_balance": "0",
+                },
+                {
+                    "name": "Empty ledger",
+                    "parent": "",
+                    "party_gstin": "",
+                    "opening_balance": null,
+                },
+                {
+                    "name": "Unobserved ledger",
+                    "parent": null,
+                    "party_gstin": null,
+                    "opening_balance": null,
+                },
+            ])
+        );
     }
 
     #[test]
