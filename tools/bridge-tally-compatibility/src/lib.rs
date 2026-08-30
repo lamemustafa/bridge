@@ -21,7 +21,10 @@ pub const ATTESTATION_SCHEMA_VERSION: u16 = 1;
 pub const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 /// Bounded high enough for the additive Tally safety-migration and report
 /// surfaces while still rejecting an unexpectedly broad attestation surface.
-pub const MAX_SURFACE_FILES: usize = 256;
+/// 129 entries are currently sealed. Fifteen deliberate slots cover a small
+/// cohesive feature (source, tests, docs and manifest) but make the sixteenth
+/// unreviewed addition an explicit compatibility-surface decision.
+pub const MAX_SURFACE_FILES: usize = 144;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;

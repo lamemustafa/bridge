@@ -372,6 +372,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260331").unwrap(),
             rows: vec![
@@ -418,6 +419,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![
@@ -453,6 +455,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![
@@ -488,6 +491,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![
@@ -537,6 +541,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![
@@ -581,6 +586,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![missing],

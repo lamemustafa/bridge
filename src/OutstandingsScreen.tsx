@@ -337,7 +337,7 @@ export function OutstandingsScreen({
       <section className="panel wide outstandings-empty">
         <h2>Select a verified Tally company</h2>
         <p>Outstandings require a persisted company name, number, GUID, and book opening date before any voucher read can start.</p>
-        <button type="button" onClick={onChangeSetup}>Manage Tally</button>
+        <button type="button" onClick={onChangeSetup} disabled={liveReadNavigationLocked}>Manage Tally</button>
       </section>
     );
   }
@@ -597,7 +597,7 @@ export function OutstandingsScreen({
               </button>
             </>
           )}
-          <button className="secondary-action" type="button" onClick={onChangeSetup}>Manage Tally</button>
+          <button className="secondary-action" type="button" onClick={onChangeSetup} disabled={liveReadNavigationLocked}>Manage Tally</button>
           {!outstandingsUnavailable && (
             <button type="button" onClick={load} disabled={loading || liveReadNavigationLocked || !requestedAsOf}>
               <RefreshCw size={18} className={loading ? "spin" : undefined} />

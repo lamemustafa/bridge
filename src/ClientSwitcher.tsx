@@ -99,6 +99,7 @@ export function ClientSwitcher({
         <button
           className="secondary-action"
           type="button"
+          disabled={selectionLocked}
           onClick={() => {
             close();
             onManageTally();

@@ -4,10 +4,10 @@ use super::{
 use super::{TallyProbeResult, TallyVoucher};
 use crate::observability::BodyBytesObservation;
 use crate::reports::party_ledger_master::PartyLedgerMasterSource;
-use crate::tally::connection::NativePairedRead;
 use crate::tally::connection::{canonical_loopback_origin, SelectedReadObservation};
 #[cfg(feature = "voucher-scan")]
 use crate::tally::connection::{LedgerOpeningCoverageRead, OutstandingsSegmentObservation};
+use crate::tally::connection::{NativePairedRead, PairedReadValidationError};
 use crate::tally::connector::SealedReadRequest;
 #[cfg(feature = "voucher-scan")]
 use crate::tally::outstandings_runtime::{
@@ -143,7 +143,14 @@ pub enum OutstandingsCurrencyAssertion {
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterCurrencyAssertion {
     assertion: OutstandingsCurrencyAssertion,
+    decimal_places: u8,
     currency_read_extent: CompanyBookExtent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PartyLedgerMasterCurrency {
+    pub(crate) assertion: OutstandingsCurrencyAssertion,
+    pub(crate) decimal_places: u8,
 }
 
 impl PartyLedgerMasterCurrencyAssertion {
@@ -152,14 +159,17 @@ impl PartyLedgerMasterCurrencyAssertion {
     pub(crate) fn require_opening_extent(
         &self,
         opening_extent: &CompanyBookExtent,
-    ) -> anyhow::Result<OutstandingsCurrencyAssertion> {
+    ) -> anyhow::Result<PartyLedgerMasterCurrency> {
         if self.currency_read_extent == *opening_extent {
-            return Ok(self.assertion);
+            return Ok(PartyLedgerMasterCurrency {
+                assertion: self.assertion,
+                decimal_places: self.decimal_places,
+            });
         }
 
-        anyhow::bail!(
-            "Tally company's base currency changed between the currency read and the master read"
-        );
+        Err(anyhow::Error::new(
+            PairedReadValidationError::CurrencyToMasterExtent,
+        ))
     }
 }
 
@@ -186,6 +196,7 @@ impl CompanyCurrencyRead {
     ) -> PartyLedgerMasterCurrencyAssertion {
         PartyLedgerMasterCurrencyAssertion {
             assertion,
+            decimal_places: self.currency.decimal_places,
             currency_read_extent: self.extent,
         }
     }
@@ -1817,13 +1828,17 @@ impl TallyRuntime {
                         ))
                         .await?;
                     let NativePairedRead::Stable { body, .. } = body else {
-                        anyhow::bail!("Tally currency masters changed between paired reads");
+                        return Err(anyhow::Error::new(
+                            PairedReadValidationError::CurrencyMaster,
+                        ));
                     };
                     let closing_extent = client
                         .fetch_company_book_extent(identity.display_name(), identity.company_guid())
                         .await?;
                     if closing_extent != extent {
-                        anyhow::bail!("Tally company book changed during currency detection");
+                        return Err(anyhow::Error::new(
+                            PairedReadValidationError::CurrencyExtent,
+                        ));
                     }
                     bracket_verified_company_identity(&client, &identity).await?;
                     Ok(CompanyCurrencyRead {
@@ -3057,6 +3072,7 @@ mod tests {
                 symbol: "₹".to_string(),
                 mailing_name: "INR".to_string(),
                 currency_count: 1,
+                decimal_places: 2,
                 is_inr: true,
             },
             extent: read_extent.clone(),
@@ -3067,15 +3083,18 @@ mod tests {
             assertion
                 .require_opening_extent(&read_extent)
                 .expect("the observed extent releases INR"),
-            OutstandingsCurrencyAssertion::Inr
+            PartyLedgerMasterCurrency {
+                assertion: OutstandingsCurrencyAssertion::Inr,
+                decimal_places: 2,
+            }
         );
         let error = assertion
             .require_opening_extent(&changed_extent)
             .expect_err("a changed extent must not release INR");
-        assert_eq!(
-            error.to_string(),
-            "Tally company's base currency changed between the currency read and the master read"
-        );
+        assert!(matches!(
+            error.downcast_ref::<PairedReadValidationError>(),
+            Some(PairedReadValidationError::CurrencyToMasterExtent)
+        ));
     }
 
     #[tokio::test]

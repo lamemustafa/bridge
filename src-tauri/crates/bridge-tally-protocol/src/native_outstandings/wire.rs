@@ -1044,7 +1044,11 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
     }
 
     let currency_count = rows.len();
-    let (symbol, mailing_name) = rows.into_iter().next().unwrap_or_default();
+    let CurrencyRow {
+        symbol,
+        mailing_name,
+        decimal_places,
+    } = rows.into_iter().next().unwrap_or_default();
     // Only a single defined currency lets this read name the BASE currency.
     // "Rs." is shared by several currencies, so only the observed Indian
     // mailing identity is authoritative enough to put ₹ before real money.
@@ -1056,18 +1060,27 @@ pub fn parse_company_currency(xml: &str) -> Result<CompanyCurrency, NativeOutsta
         symbol,
         mailing_name,
         currency_count,
+        decimal_places,
         is_inr,
     })
+}
+
+#[derive(Default)]
+struct CurrencyRow {
+    symbol: String,
+    mailing_name: String,
+    decimal_places: u8,
 }
 
 fn parse_currency_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<(String, String), NativeOutstandingsError> {
+) -> Result<CurrencyRow, NativeOutstandingsError> {
     let symbol = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("currency_name_missing"),
     )?;
     let mut mailing_name = None;
+    let mut decimal_places = None;
     loop {
         match reader
             .read_event()
@@ -1081,6 +1094,17 @@ fn parse_currency_row(
                     ));
                 }
             }
+            Event::Start(child) if child.name().as_ref().eq_ignore_ascii_case(b"DECIMALPLACES") => {
+                let text = read_element_text(reader, child.name())?;
+                let parsed = text.parse::<u8>().map_err(|_| {
+                    NativeOutstandingsError::InvalidResponse("currency_decimal_places_invalid")
+                })?;
+                if decimal_places.replace(parsed).is_some() {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "currency_duplicate_decimal_places",
+                    ));
+                }
+            }
             Event::Start(_) => skip_subtree(reader)?,
             Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"MAILINGNAME") => {
                 if mailing_name.replace(String::new()).is_some() {
@@ -1088,6 +1112,11 @@ fn parse_currency_row(
                         "currency_duplicate_mailing_name",
                     ));
                 }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"DECIMALPLACES") => {
+                return Err(NativeOutstandingsError::InvalidResponse(
+                    "currency_decimal_places_invalid",
+                ));
             }
             Event::End(end) if end.name().as_ref().eq_ignore_ascii_case(b"CURRENCY") => break,
             Event::Eof => {
@@ -1098,7 +1127,13 @@ fn parse_currency_row(
             _ => {}
         }
     }
-    Ok((symbol, mailing_name.unwrap_or_default()))
+    Ok(CurrencyRow {
+        symbol,
+        mailing_name: mailing_name.unwrap_or_default(),
+        decimal_places: decimal_places.ok_or(NativeOutstandingsError::InvalidResponse(
+            "currency_decimal_places_missing",
+        ))?,
+    })
 }
 
 #[cfg(test)]
@@ -1139,13 +1174,14 @@ mod currency_tests {
 
     #[test]
     fn captured_currency_collections_recognize_both_indian_spellings_without_guessing() {
-        for (bytes, sha256, symbol, mailing_name, count, is_inr) in [
+        for (bytes, sha256, symbol, mailing_name, count, decimal_places, is_inr) in [
             (
                 MODERN_LIVE,
                 "0dc84aa287cab1e1922db7e99a01f9f2b0bacd0d777fdd0b080adedc6622ed22",
                 "I₹",
                 "INR",
                 1,
+                2,
                 true,
             ),
             (
@@ -1154,6 +1190,7 @@ mod currency_tests {
                 "Rs.",
                 "Indian Rupees",
                 1,
+                2,
                 true,
             ),
             (
@@ -1161,6 +1198,7 @@ mod currency_tests {
                 "b64c0d5feb528fa02f81de576de5c766a95e1da1000975b1e2932868ae34118b",
                 "$",
                 "USD",
+                2,
                 2,
                 false,
             ),
@@ -1170,6 +1208,7 @@ mod currency_tests {
             assert_eq!(currency.symbol, symbol);
             assert_eq!(currency.mailing_name, mailing_name);
             assert_eq!(currency.currency_count, count, "CMPINFO is not a row");
+            assert_eq!(currency.decimal_places, decimal_places);
             assert_eq!(currency.is_inr, is_inr);
         }
     }
@@ -1178,7 +1217,7 @@ mod currency_tests {
     fn several_currencies_cannot_name_the_base_currency() {
         let xml = decode_utf16le(LEGACY_LIVE).replace(
             "</COLLECTION>",
-            r#"<CURRENCY NAME="$" RESERVEDNAME=""><MAILINGNAME TYPE="String">US Dollars</MAILINGNAME></CURRENCY></COLLECTION>"#,
+            r#"<CURRENCY NAME="$" RESERVEDNAME=""><MAILINGNAME TYPE="String">US Dollars</MAILINGNAME><DECIMALPLACES TYPE="Number">2</DECIMALPLACES></CURRENCY></COLLECTION>"#,
         );
         let currency = parse_company_currency(&xml).expect("parses");
         assert_eq!(currency.currency_count, 2);
@@ -1204,6 +1243,29 @@ mod currency_tests {
         ] {
             assert!(parse_company_currency(xml).is_err(), "{xml}");
         }
+    }
+
+    #[test]
+    fn currency_precision_is_required_and_typed_at_the_wire_boundary() {
+        let missing = decode_utf16le(LEGACY_LIVE)
+            .replace(r#"<DECIMALPLACES TYPE="Number"> 2</DECIMALPLACES>"#, "");
+        assert_eq!(
+            parse_company_currency(&missing),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "currency_decimal_places_missing"
+            ))
+        );
+
+        let invalid = decode_utf16le(LEGACY_LIVE).replace(
+            r#"<DECIMALPLACES TYPE="Number"> 2</DECIMALPLACES>"#,
+            r#"<DECIMALPLACES TYPE="Number">fractional</DECIMALPLACES>"#,
+        );
+        assert_eq!(
+            parse_company_currency(&invalid),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "currency_decimal_places_invalid"
+            ))
+        );
     }
 
     #[test]

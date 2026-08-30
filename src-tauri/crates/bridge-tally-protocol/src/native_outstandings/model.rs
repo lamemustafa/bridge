@@ -151,5 +151,9 @@ pub struct CompanyCurrency {
     /// currency is not determinable from this read, and guessing would put a
     /// wrong currency symbol in front of a real balance.
     pub currency_count: usize,
+    /// The base currency's display precision reported by Tally. Consumers
+    /// must carry this to their rendering boundary rather than silently
+    /// assuming paise precision.
+    pub decimal_places: u8,
     pub is_inr: bool,
 }

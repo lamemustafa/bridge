@@ -158,9 +158,10 @@ test("child Tally reads keep client selection locked until every invocation sett
 });
 
 test("party ledger export disables the concurrent outstandings refresh through the shared read lock", async () => {
-  const [frontend, outstandings] = await Promise.all([
+  const [frontend, outstandings, switcher] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/ClientSwitcher.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(frontend, /liveReadNavigationLocked=\{childTallyReadCount > 0\}/);
@@ -176,6 +177,11 @@ test("party ledger export disables the concurrent outstandings refresh through t
   );
   assert.match(headingControls, /disabled=\{loading \|\| liveReadNavigationLocked\}/);
   assert.match(headingControls, /disabled=\{loading \|\| liveReadNavigationLocked \|\| !requestedAsOf\}/);
+  assert.match(outstandings, /onClick=\{onChangeSetup\} disabled=\{liveReadNavigationLocked\}/);
+  const switcherManage = switcher.slice(switcher.indexOf('onManageTally();') - 180, switcher.indexOf('onManageTally();') + 80);
+  assert.match(switcherManage, /disabled=\{selectionLocked\}/);
+  const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge operations">'), frontend.indexOf("</nav>"));
+  assert.match(nav, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Manage Tally/);
 });
 
 test("the shell never treats a truncated profile page or stale unsaved identity as exhaustive", async () => {

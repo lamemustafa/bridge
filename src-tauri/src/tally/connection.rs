@@ -74,12 +74,43 @@ fn party_ledger_master_openings_agree(
 /// safe workbook source. This is distinct from endpoint or XML failure.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PartyLedgerMasterSourceValidationError {
+    #[error("Tally ledger master repeated a stable source identity")]
+    DuplicateMasterIdentity,
     #[error("Tally balance snapshot omitted a ledger master")]
     BalanceMissingMasterLedger,
     #[error("Tally ledger opening balances disagreed across the paired sources")]
     OpeningBalancesDisagreed,
     #[error("Tally balance snapshot contained a ledger absent from master evidence")]
     BalanceLedgerAbsentFromMasterEvidence,
+    #[error("Tally balance snapshot repeated a ledger display key")]
+    DuplicateBalanceDisplayKey,
+}
+
+/// A paired or bracketed read observed movement in the endpoint's data. This
+/// is response validation, not an endpoint failure: Tally answered, but
+/// Bridge must withhold the unstable result.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PairedReadValidationError {
+    #[error("Tally native ledger collection changed between paired reads")]
+    NativeLedgerCollection,
+    #[error("Tally company book changed during native ledger read")]
+    NativeLedgerExtent,
+    #[error("Tally ledger master changed between paired reads")]
+    PartyLedgerMaster,
+    #[error("Tally ledger balances changed between paired reads")]
+    PartyLedgerBalance,
+    #[error("Tally group hierarchy changed between paired reads")]
+    PartyLedgerGroup,
+    #[error("Tally company book changed during party/ledger master read")]
+    PartyLedgerExtent,
+    #[error("Tally company book extent changed between paired reads")]
+    CompanyBookExtent,
+    #[error("Tally currency masters changed between paired reads")]
+    CurrencyMaster,
+    #[error("Tally company book changed during currency detection")]
+    CurrencyExtent,
+    #[error("Tally company changed between the currency read and the master read")]
+    CurrencyToMasterExtent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -809,7 +840,9 @@ impl TallyClient {
             .fetch_native_report_paired(render_native_ledger_export_request(company, &period))
             .await?;
         let NativePairedRead::Stable { body, .. } = paired else {
-            anyhow::bail!("Tally native ledger collection changed between paired reads");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::NativeLedgerCollection,
+            ));
         };
         let parsed =
             parse_native_ledger_source_records_with_evidence(&body, expected_company_guid)?;
@@ -817,7 +850,9 @@ impl TallyClient {
             .fetch_company_book_extent(company, expected_company_guid)
             .await?;
         if closing_extent != opening_extent {
-            anyhow::bail!("Tally company book changed during native ledger read");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::NativeLedgerExtent,
+            ));
         }
         Ok(parsed
             .records
@@ -841,7 +876,7 @@ impl TallyClient {
         let opening_extent = self
             .fetch_company_book_extent(company, expected_company_guid)
             .await?;
-        let currency_assertion = currency_assertion.require_opening_extent(&opening_extent)?;
+        let currency = currency_assertion.require_opening_extent(&opening_extent)?;
         let master_period = NativeLedgerExportPeriod::new(
             boundary_profile,
             opening_extent.books_from().clone(),
@@ -863,14 +898,18 @@ impl TallyClient {
             encoded_sha256: master_response_sha256,
         } = master_pair
         else {
-            anyhow::bail!("Tally ledger master changed between paired reads");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::PartyLedgerMaster,
+            ));
         };
         let master = parse_native_party_ledger_master_records_with_evidence(
             &master_body,
             expected_company_guid,
         )?;
         if !master.evidence.duplicate_identities.is_empty() {
-            anyhow::bail!("Tally ledger master repeated a stable source identity");
+            return Err(anyhow::Error::new(
+                PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
+            ));
         }
         let balance_pair = self
             .fetch_native_report_paired(render_native_ledger_snapshot_request(
@@ -884,7 +923,9 @@ impl TallyClient {
             encoded_sha256: balance_response_sha256,
         } = balance_pair
         else {
-            anyhow::bail!("Tally ledger balances changed between paired reads");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::PartyLedgerBalance,
+            ));
         };
         let balances = parse_native_ledger_snapshot(&balance_body)?;
         let group_pair = self
@@ -896,7 +937,9 @@ impl TallyClient {
             encoded_sha256: group_response_sha256,
         } = group_pair
         else {
-            anyhow::bail!("Tally group hierarchy changed between paired reads");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::PartyLedgerGroup,
+            ));
         };
         let groups = parse_native_group_snapshot_with_evidence(&group_body, expected_company_guid)?
             .into_iter()
@@ -910,14 +953,18 @@ impl TallyClient {
             .fetch_company_book_extent(company, expected_company_guid)
             .await?;
         if closing_extent != opening_extent {
-            anyhow::bail!("Tally company book changed during party/ledger master read");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::PartyLedgerExtent,
+            ));
         }
 
         let mut balances_by_key = HashMap::new();
         for balance in balances {
             let key = ledger_display_key(&balance.name, balance.parent.as_deref());
             if balances_by_key.insert(key, balance).is_some() {
-                anyhow::bail!("Tally balance snapshot repeated a ledger display key");
+                return Err(anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::DuplicateBalanceDisplayKey,
+                ));
             }
         }
         let mut rows = Vec::with_capacity(master.records.len());
@@ -974,7 +1021,8 @@ impl TallyClient {
         Ok(PartyLedgerMasterSource {
             company: company.to_string(),
             company_guid: expected_company_guid.to_string(),
-            currency_assertion,
+            currency_assertion: currency.assertion,
+            currency_decimal_places: currency.decimal_places,
             from: master_period.from().clone(),
             // The snapshot period is the balance evidence. Its derived end is
             // the date Tally was actually asked to honor, not merely the last
@@ -1063,7 +1111,9 @@ impl TallyClient {
         let first = parse_company_book_extent(&first, company, expected_company_guid)?;
         let second = parse_company_book_extent(&second, company, expected_company_guid)?;
         if first != second {
-            anyhow::bail!("Tally company book extent changed between paired reads");
+            return Err(anyhow::Error::new(
+                PairedReadValidationError::CompanyBookExtent,
+            ));
         }
         // The parser stays tolerant of an absent ALTMSTID (older captures still parse), but this
         // is the outstandings bracket itself: fail closed here so a witness-less pair -- which

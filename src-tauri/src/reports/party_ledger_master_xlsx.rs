@@ -8,8 +8,16 @@ use super::party_statement_xlsx::amount_to_f64;
 use super::schedule_iii::{build_schedule_iii_view, ScheduleIIIError};
 use crate::tally::OutstandingsCurrencyAssertion;
 
-const AMOUNT_NUM_FORMAT: &str = "##,##,##0.00";
 const EXCEL_MAX_ROWS: usize = 1_048_576;
+
+fn amount_num_format(decimal_places: u8) -> String {
+    let mut format = "##,##,##0".to_string();
+    if decimal_places > 0 {
+        format.push('.');
+        format.extend(std::iter::repeat_n('0', decimal_places.into()));
+    }
+    format
+}
 
 fn currency_label(assertion: OutstandingsCurrencyAssertion) -> &'static str {
     match assertion {
@@ -41,7 +49,8 @@ pub(crate) fn render_party_ledger_master_xlsx(
     let worksheet = workbook.add_worksheet();
     worksheet.set_name("Ledger master")?;
     let bold = Format::new().set_bold();
-    let amount = Format::new().set_num_format(AMOUNT_NUM_FORMAT);
+    let amount_num_format = amount_num_format(source.currency_decimal_places);
+    let amount = Format::new().set_num_format(&amount_num_format);
 
     for (row, label, value) in [
         (0, "Company", source.company.as_str()),
@@ -87,9 +96,11 @@ pub(crate) fn render_party_ledger_master_xlsx(
     )?;
     worksheet.write_string_with_format(10, 0, "Currency", &bold)?;
     worksheet.write_string(10, 1, currency_label(source.currency_assertion))?;
-    worksheet.write_string_with_format(11, 0, "Source bytes", &bold)?;
+    worksheet.write_string_with_format(11, 0, "Currency decimal places", &bold)?;
+    worksheet.write_number(11, 1, f64::from(source.currency_decimal_places))?;
+    worksheet.write_string_with_format(12, 0, "Source bytes", &bold)?;
     worksheet.write_string(
-        11,
+        12,
         1,
         format!(
             "master={} balance={} groups={}",
@@ -213,7 +224,8 @@ fn write_schedule_iii(
     let worksheet = workbook.add_worksheet();
     worksheet.set_name("Group subtotal trace")?;
     let bold = Format::new().set_bold();
-    let amount = Format::new().set_num_format(AMOUNT_NUM_FORMAT);
+    let amount_num_format = amount_num_format(source.currency_decimal_places);
+    let amount = Format::new().set_num_format(&amount_num_format);
     worksheet.write_string_with_format(0, 0, "Derived group subtotal view", &bold)?;
     worksheet.write_string(
         0,
@@ -222,9 +234,11 @@ fn write_schedule_iii(
     )?;
     worksheet.write_string_with_format(1, 0, "Currency", &bold)?;
     worksheet.write_string(1, 1, currency_label(source.currency_assertion))?;
-    worksheet.write_string_with_format(2, 0, "Read period", &bold)?;
+    worksheet.write_string_with_format(2, 0, "Currency decimal places", &bold)?;
+    worksheet.write_number(2, 1, f64::from(source.currency_decimal_places))?;
+    worksheet.write_string_with_format(3, 0, "Read period", &bold)?;
     worksheet.write_string(
-        2,
+        3,
         1,
         format!(
             "Read period: {} to {}. No prior-year values were requested or inferred.",
@@ -233,17 +247,17 @@ fn write_schedule_iii(
         ),
     )?;
     for (row, label, value) in [
-        (3, "Debit total", view.debit_total.as_str()),
-        (4, "Credit total", view.credit_total.as_str()),
-        (5, "Dr=Cr difference", view.difference.as_str()),
+        (4, "Debit total", view.debit_total.as_str()),
+        (5, "Credit total", view.credit_total.as_str()),
+        (6, "Dr=Cr difference", view.difference.as_str()),
     ] {
         worksheet.write_string_with_format(row, 0, label, &bold)?;
         worksheet.write_string(row, 1, value)?;
     }
-    worksheet.write_string_with_format(6, 0, "Check interpretation", &bold)?;
-    worksheet.write_string(6, 1, "Difference 0 is the Tally-sign self-check over every captured ledger closing balance; it is evidence, not an assertion of statement completeness.")?;
+    worksheet.write_string_with_format(7, 0, "Check interpretation", &bold)?;
+    worksheet.write_string(7, 1, "Difference 0 is the Tally-sign self-check over every captured ledger closing balance; it is evidence, not an assertion of statement completeness.")?;
 
-    let header_row = 8u32;
+    let header_row = 9u32;
     for (column, label) in [
         "Balance side",
         "Group-derived subtotal",
@@ -354,12 +368,71 @@ mod tests {
     };
     use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMasterFields};
 
+    fn source_with_precision(decimal_places: u8) -> PartyLedgerMasterSource {
+        PartyLedgerMasterSource {
+            company: "Synthetic Books".to_string(),
+            company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: decimal_places,
+            from: TallyDate::parse("20260401").unwrap(),
+            to: TallyDate::parse("20260731").unwrap(),
+            rows: vec![PartyLedgerMasterRow {
+                name: "Three decimal customer".to_string(),
+                parent: PartyLedgerMasterFieldObservation::Returned("Sundry Debtors".to_string()),
+                party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
+                fields: PartyLedgerMasterFields::default(),
+                guid: "ledger-guid".to_string(),
+                master_id: "7".to_string(),
+                alter_id: "9".to_string(),
+                opening_balance: ExactDecimal::parse("-1.234".to_string()).unwrap(),
+                closing_balance: Some(ExactDecimal::parse("1.234".to_string()).unwrap()),
+            }],
+            master_response_sha256: "a".repeat(64),
+            balance_response_sha256: "b".repeat(64),
+            group_response_sha256: "c".repeat(64),
+            master_response_bytes: 100,
+            balance_response_bytes: 200,
+            group_response_bytes: 300,
+            groups: vec![],
+        }
+    }
+
+    #[test]
+    fn three_decimal_currency_renders_1234_without_a_two_decimal_format() {
+        let workbook = build_party_ledger_master_workbook(source_with_precision(3)).unwrap();
+        let bytes = render_party_ledger_master_xlsx(&workbook).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut sheet = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("xl/worksheets/sheet1.xml").unwrap(),
+            &mut sheet,
+        )
+        .unwrap();
+        let mut styles = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("xl/styles.xml").unwrap(), &mut styles)
+            .unwrap();
+
+        assert!(sheet.contains(">1.234</v>"));
+        assert!(!sheet.contains(">1.23</v>"));
+        assert!(styles.contains("formatCode=\"##,##,##0.000\""));
+        assert!(!styles.contains("formatCode=\"##,##,##0.00\""));
+    }
+
+    #[test]
+    fn unrenderable_currency_precision_withholds_the_workbook() {
+        assert!(matches!(
+            build_party_ledger_master_workbook(source_with_precision(16)),
+            Err(super::super::party_ledger_master::PartyLedgerMasterError::UnrenderableCurrencyPrecision(16))
+        ));
+    }
+
     #[test]
     fn renders_evidence_currency_and_returned_fields_in_the_workbook() {
         let workbook = build_party_ledger_master_workbook(PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![PartyLedgerMasterRow {
@@ -424,6 +497,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![PartyLedgerMasterRow {
@@ -497,6 +571,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows,
@@ -546,6 +621,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![PartyLedgerMasterRow {

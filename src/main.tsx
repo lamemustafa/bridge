@@ -1471,7 +1471,7 @@ function App() {
           <button aria-current={view === "clients" ? "page" : undefined} className={view === "clients" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView(selectedCompanyReadable ? "clients" : "companies")}>
             <Building2 size={18} /> Compare clients
           </button>
-          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} onClick={() => setView("companies")}>
+          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("companies")}>
             <Cable size={18} /> Manage Tally
           </button>
           <button aria-current={view === "mirror" ? "page" : undefined} className={view === "mirror" ? "active" : ""} onClick={() => setView("mirror")}>
@@ -1560,7 +1560,7 @@ function App() {
               <span>Current probe match</span>
               <strong>{selectedCompanyLive ? "Matched" : selectedCompanyRecord ? "Offline evidence only" : "Not selected"}</strong>
             </div>
-            <button className="secondary-action" type="button" onClick={() => setView("companies")}>Manage Tally</button>
+            <button className="secondary-action" type="button" disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("companies")}>Manage Tally</button>
           </section>
         )}
 

@@ -32,7 +32,7 @@ use crate::sync::snapshot::{
     capability_profile_sha256, AdaptiveWindowPolicy, PlannedWindow, SnapshotPlan,
     SqliteSnapshotStateStore,
 };
-use crate::tally::connection::PartyLedgerMasterSourceValidationError;
+use crate::tally::connection::{PairedReadValidationError, PartyLedgerMasterSourceValidationError};
 use crate::tally::runtime::TallyRuntimeControlError;
 use crate::tally::validators::{
     normalize_company_guid, validate_company_name, validate_date_range,
@@ -114,6 +114,7 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
     if error
         .downcast_ref::<PartyLedgerMasterSourceValidationError>()
         .is_some()
+        || error.downcast_ref::<PairedReadValidationError>().is_some()
     {
         return tally_command_error(
             "response_validation_failed",
@@ -3206,6 +3207,17 @@ mod tests {
     fn opening_balance_source_disagreement_is_response_validation_not_endpoint_failure() {
         let error = tally_runtime_command_error(anyhow::Error::new(
             crate::tally::connection::PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
+        ));
+
+        assert_eq!(error.code, "response_validation_failed");
+        assert_eq!(error.category, "Response validation");
+        assert_ne!(error.code, "endpoint_unreachable");
+    }
+
+    #[test]
+    fn drifted_party_master_read_is_response_validation_not_endpoint_failure() {
+        let error = tally_runtime_command_error(anyhow::Error::new(
+            crate::tally::connection::PairedReadValidationError::PartyLedgerMaster,
         ));
 
         assert_eq!(error.code, "response_validation_failed");

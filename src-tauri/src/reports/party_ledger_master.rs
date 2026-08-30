@@ -10,6 +10,11 @@ use bridge_tally_protocol::{PartyLedgerMasterFieldObservation, PartyLedgerMaster
 
 use crate::tally::OutstandingsCurrencyAssertion;
 
+/// Excel preserves at most 15 significant digits. The workbook refuses a
+/// currency precision beyond that documented representation boundary rather
+/// than quietly selecting a two-decimal format.
+pub(crate) const MAX_RENDERABLE_CURRENCY_DECIMAL_PLACES: u8 = 15;
+
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterSource {
     pub(crate) company: String,
@@ -17,6 +22,9 @@ pub(crate) struct PartyLedgerMasterSource {
     /// Money in this workbook may be rendered only after the backend's
     /// existing Tally currency probe established this assertion.
     pub(crate) currency_assertion: OutstandingsCurrencyAssertion,
+    /// Tally's observed base-currency display precision. This remains data,
+    /// not a renderer default, from the existing currency probe to the XLSX.
+    pub(crate) currency_decimal_places: u8,
     pub(crate) from: TallyDate,
     pub(crate) to: TallyDate,
     pub(crate) rows: Vec<PartyLedgerMasterRow>,
@@ -72,6 +80,8 @@ pub(crate) enum PartyLedgerMasterError {
     DuplicateMasterId,
     #[error("party/ledger master source omitted a source response commitment")]
     MissingResponseCommitment,
+    #[error("party/ledger master currency precision cannot be rendered safely ({0})")]
+    UnrenderableCurrencyPrecision(u8),
 }
 
 pub(crate) fn build_party_ledger_master_workbook(
@@ -85,6 +95,11 @@ pub(crate) fn build_party_ledger_master_workbook(
         || !sha256(&source.group_response_sha256)
     {
         return Err(PartyLedgerMasterError::MissingResponseCommitment);
+    }
+    if source.currency_decimal_places > MAX_RENDERABLE_CURRENCY_DECIMAL_PLACES {
+        return Err(PartyLedgerMasterError::UnrenderableCurrencyPrecision(
+            source.currency_decimal_places,
+        ));
     }
 
     let mut guids = BTreeSet::new();
@@ -150,6 +165,7 @@ mod tests {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20260401").unwrap(),
             to: TallyDate::parse("20260731").unwrap(),
             rows: vec![PartyLedgerMasterRow {
@@ -267,6 +283,7 @@ mod tests {
             company: "BRIDGE MASTER FIELDS LAB".to_string(),
             company_guid: MASTER_FIELDS_LAB_COMPANY_GUID.to_string(),
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
             from: TallyDate::parse("20250401").unwrap(),
             to: TallyDate::parse("20260331").unwrap(),
             rows,
