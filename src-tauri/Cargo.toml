@@ -71,7 +71,7 @@ getrandom = "0.4"
 keyring = { version = "4.1.4", default-features = false, features = ["v1"] }
 libsqlite3-sys = { version = "0.37.0", features = ["bundled-sqlcipher-vendored-openssl"] }
 pkcs11 = "0.5"
-quick-xml = { version = "0.41", features = ["serialize"] }
+quick-xml = { version = "0.42", features = ["serialize"] }
 reqwest = { version = "0.13", features = ["json", "stream"] }
 # Bridge supports Windows and macOS; rfd's defaults add Linux portal/Wayland code.
 rfd = { version = "0.17", default-features = false }
