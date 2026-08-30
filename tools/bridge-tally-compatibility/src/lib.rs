@@ -634,6 +634,26 @@ impl CompatibilitySurfaceManifest {
         Ok(())
     }
 
+    /// Refreshes only existing surface-file digests. The returned manifest intentionally retains
+    /// the old manifest checksum so that `seal-surface` remains the explicit attestation step.
+    pub fn rehash_files(
+        &self,
+        repository_root: &Path,
+    ) -> Result<(Self, usize), CompatibilityError> {
+        self.validate()?;
+        let mut rehashed = self.clone();
+        let mut changed = 0;
+        for file in &mut rehashed.files {
+            let digest = sha256_file(&repository_root.join(&file.path))
+                .map_err(|_| invalid("surface_file_unavailable"))?;
+            if file.sha256 != digest {
+                file.sha256 = digest;
+                changed += 1;
+            }
+        }
+        Ok((rehashed, changed))
+    }
+
     pub fn from_json(bytes: &[u8]) -> Result<Self, CompatibilityError> {
         let value: Self = parse_bounded_json(bytes)?;
         value.validate()?;
@@ -896,6 +916,26 @@ impl SupportClaimsManifest {
         let value: Self = parse_bounded_json(bytes)?;
         value.validate()?;
         Ok(value)
+    }
+
+    pub fn repoint_surface(
+        mut self,
+        surface: &CompatibilitySurfaceManifest,
+    ) -> Result<Self, CompatibilityError> {
+        self.validate()?;
+        surface.validate()?;
+        self.compatibility_surface_sha256 = surface.manifest_sha256.clone();
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn to_pretty_json(&self) -> Result<Vec<u8>, CompatibilityError> {
+        self.validate()?;
+        let bytes = serde_json::to_vec_pretty(self).map_err(|_| invalid("serialization_failed"))?;
+        if bytes.len() > MAX_ARTIFACT_BYTES {
+            return Err(invalid("artifact_too_large"));
+        }
+        Ok(bytes)
     }
 }
 
@@ -2161,6 +2201,94 @@ mod tests {
         assert_eq!(
             surface.validate_files(temp.path()).unwrap_err(),
             invalid("surface_file_changed")
+        );
+    }
+
+    fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {
+        CompatibilitySurfaceManifest {
+            schema_version: SURFACE_SCHEMA_VERSION,
+            files: paths
+                .iter()
+                .map(|path| SurfaceFile {
+                    path: (*path).to_string(),
+                    sha256: sha256_file(&repository_root.join(path)).unwrap(),
+                })
+                .collect(),
+            manifest_sha256: String::new(),
+        }
+        .seal()
+        .unwrap()
+    }
+
+    #[test]
+    fn rehash_of_an_unchanged_surface_reports_zero_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("surface.txt"), b"unchanged").unwrap();
+        let surface = sealed_surface(temp.path(), &["surface.txt"]);
+
+        let (rehashed, changed) = surface.rehash_files(temp.path()).unwrap();
+
+        assert_eq!(changed, 0);
+        assert_eq!(rehashed, surface);
+    }
+
+    #[test]
+    fn rehash_detects_a_modified_pinned_file_without_sealing_it() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("surface.txt"), b"before").unwrap();
+        let surface = sealed_surface(temp.path(), &["surface.txt"]);
+        fs::write(temp.path().join("surface.txt"), b"after").unwrap();
+
+        let (rehashed, changed) = surface.rehash_files(temp.path()).unwrap();
+
+        assert_eq!(changed, 1);
+        assert_ne!(rehashed.files[0].sha256, surface.files[0].sha256);
+        assert_eq!(rehashed.manifest_sha256, surface.manifest_sha256);
+        assert_eq!(
+            rehashed.validate().unwrap_err(),
+            invalid("surface_checksum_mismatch")
+        );
+    }
+
+    #[test]
+    fn rehash_fails_closed_when_a_pinned_file_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("surface.txt");
+        fs::write(&path, b"present").unwrap();
+        let surface = sealed_surface(temp.path(), &["surface.txt"]);
+        fs::remove_file(path).unwrap();
+
+        assert_eq!(
+            surface.rehash_files(temp.path()).unwrap_err(),
+            invalid("surface_file_unavailable")
+        );
+    }
+
+    #[test]
+    fn rehash_preserves_surface_entry_count_and_order() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("alpha.txt"), b"alpha").unwrap();
+        fs::write(temp.path().join("beta.txt"), b"beta").unwrap();
+        let surface = sealed_surface(temp.path(), &["alpha.txt", "beta.txt"]);
+        let paths = surface
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>();
+        fs::write(temp.path().join("alpha.txt"), b"updated alpha").unwrap();
+        fs::write(temp.path().join("beta.txt"), b"updated beta").unwrap();
+
+        let (rehashed, changed) = surface.rehash_files(temp.path()).unwrap();
+
+        assert_eq!(changed, 2);
+        assert_eq!(rehashed.files.len(), surface.files.len());
+        assert_eq!(
+            rehashed
+                .files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>(),
+            paths
         );
     }
 

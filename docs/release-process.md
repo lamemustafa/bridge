@@ -14,6 +14,39 @@ and macOS. A smoke bundle is not a production release.
 
 ## Candidate gates
 
+### Compatibility-surface reseal
+
+Any dependency update that changes a pinned file (including `package.json`,
+`src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, or either workflow) requires a
+deliberate compatibility-surface reseal before the claim gate can pass. From
+`tools`, run these three commands in order, staging each JSON result before
+replacing its input file:
+
+```sh
+surface_tmp="$(mktemp)"
+cargo run --locked -p bridge-tally-compatibility -- rehash-surface \
+  ../docs/tally/compatibility/compatibility-surface.json .. > "$surface_tmp"
+mv "$surface_tmp" ../docs/tally/compatibility/compatibility-surface.json
+
+surface_tmp="$(mktemp)"
+cargo run --locked -p bridge-tally-compatibility -- seal-surface \
+  ../docs/tally/compatibility/compatibility-surface.json > "$surface_tmp"
+mv "$surface_tmp" ../docs/tally/compatibility/compatibility-surface.json
+
+matrix_tmp="$(mktemp)"
+cargo run --locked -p bridge-tally-compatibility -- repoint-matrix \
+  ../docs/tally/compatibility/compatibility-matrix.json \
+  ../docs/tally/compatibility/compatibility-surface.json > "$matrix_tmp"
+mv "$matrix_tmp" ../docs/tally/compatibility/compatibility-matrix.json
+```
+
+`rehash-surface` reads the raw bytes of every existing pin and reports its
+changed-entry count; it neither adds nor removes pins. `seal-surface` then
+attests to the newly hashed manifest, and `repoint-matrix` updates the matrix
+to that sealed digest. Do not run step 2 without step 1: sealing a manifest
+whose file hashes are stale produces a valid-looking digest over stale source
+content. CI intentionally checks the resulting surface but never reseals it.
+
 Before cutting a candidate, regenerate and verify the Rust third-party notice
 with the pinned generator:
 

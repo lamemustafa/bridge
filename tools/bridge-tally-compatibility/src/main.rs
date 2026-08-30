@@ -54,6 +54,22 @@ fn run() -> Result<String, &'static str> {
                 .map_err(|error| safe_error_code(&error))?;
             String::from_utf8(bytes).map_err(|_| "serialization_failed")
         }
+        Some("rehash-surface") => {
+            let surface = next_path(&mut args, "missing_surface_manifest")?;
+            let repository_root = next_path(&mut args, "missing_repository_root")?;
+            if args.next().is_some() {
+                return Err("unexpected_argument");
+            }
+            rehash_surface_command(&surface, &repository_root)
+        }
+        Some("repoint-matrix") => {
+            let matrix = next_path(&mut args, "missing_support_manifest")?;
+            let surface = next_path(&mut args, "missing_surface_manifest")?;
+            if args.next().is_some() {
+                return Err("unexpected_argument");
+            }
+            repoint_matrix_command(&matrix, &surface)
+        }
         Some("check-matrix-markdown") => {
             let manifest_path = next_path(&mut args, "missing_support_manifest")?;
             let markdown_path = next_path(&mut args, "missing_matrix_markdown")?;
@@ -73,8 +89,34 @@ fn run() -> Result<String, &'static str> {
                 .map_err(|error| safe_error_code(&error))?;
             render_claim_matrix(&manifest).map_err(|error| safe_error_code(&error))
         }
-        _ => Err("usage_validate_receipt_seal_surface_render_or_check_matrix_markdown_or_gate"),
+        _ => Err("usage_validate_receipt_rehash_surface_seal_surface_repoint_matrix_render_or_check_matrix_markdown_or_gate"),
     }
+}
+
+fn rehash_surface_command(
+    surface_path: &Path,
+    repository_root: &Path,
+) -> Result<String, &'static str> {
+    let surface = CompatibilitySurfaceManifest::from_json(&read_bounded(surface_path)?)
+        .map_err(|error| safe_error_code(&error))?;
+    let (rehashed, changed) = surface
+        .rehash_files(repository_root)
+        .map_err(|error| safe_error_code(&error))?;
+    let json = serde_json::to_string_pretty(&rehashed).map_err(|_| "serialization_failed")?;
+    eprintln!("rehash_surface_changed:{changed}");
+    Ok(json)
+}
+
+fn repoint_matrix_command(matrix_path: &Path, surface_path: &Path) -> Result<String, &'static str> {
+    let matrix = SupportClaimsManifest::from_json(&read_bounded(matrix_path)?)
+        .map_err(|error| safe_error_code(&error))?;
+    let surface = CompatibilitySurfaceManifest::from_json(&read_bounded(surface_path)?)
+        .map_err(|error| safe_error_code(&error))?;
+    let bytes = matrix
+        .repoint_surface(&surface)
+        .and_then(|repointed| repointed.to_pretty_json())
+        .map_err(|error| safe_error_code(&error))?;
+    String::from_utf8(bytes).map_err(|_| "serialization_failed")
 }
 
 fn gate_command(
