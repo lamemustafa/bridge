@@ -33,10 +33,11 @@ use bridge_tally_protocol::outstandings::{
 };
 use bridge_tally_protocol::{
     native_outstandings::{
-        parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot,
+        parse_native_group_snapshot_with_evidence, parse_native_ledger_snapshot_for_company,
         render_native_group_snapshot_request, render_native_ledger_export_request,
         render_native_ledger_snapshot_request, render_native_voucher_export_request,
         render_party_ledger_master_request, NativeLedgerExportPeriod, NativeLedgerSnapshotPeriod,
+        NativeOutstandingsError,
     },
     outstandings_shared::{
         parse_company_book_extent, require_master_witness, CompanyBookExtent, DateBoundaryProfile,
@@ -60,6 +61,17 @@ pub type TallyConfig = TallyEndpointConfig;
 fn ledger_display_key(name: &str, parent: Option<&str>) -> String {
     let parent = parent.unwrap_or_default();
     format!("{}:{name}{}:{parent}", name.len(), parent.len())
+}
+
+fn party_ledger_master_balance_snapshot_error(error: NativeOutstandingsError) -> anyhow::Error {
+    match error {
+        NativeOutstandingsError::InvalidResponse("ledger_company_guid_unverified") => {
+            anyhow::Error::new(
+                PartyLedgerMasterSourceValidationError::BalanceCompanyIdentityUnverified,
+            )
+        }
+        error => anyhow::Error::new(error),
+    }
 }
 
 fn party_ledger_master_openings_agree(
@@ -96,6 +108,8 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
     BalanceLedgerAbsentFromMasterEvidence,
     #[error("Tally balance snapshot repeated a ledger display key")]
     DuplicateBalanceDisplayKey,
+    #[error("Tally balance snapshot did not prove the selected company identity")]
+    BalanceCompanyIdentityUnverified,
 }
 
 /// A paired or bracketed read observed movement in the endpoint's data. This
@@ -874,10 +888,9 @@ impl TallyClient {
     }
 
     /// Reads the identity-bearing ledger master and the existing period-bound
-    /// balance snapshot as one bracketed source for a customer workbook.
-    /// Balances expose no GUID, so a row may be joined only where both reads
-    /// contain one unique exact `(name, parent)` pair; any ambiguity withholds
-    /// the whole export rather than attaching money to the wrong master.
+    /// balance snapshot as one bracketed source for a customer workbook. The
+    /// balance parser requires row GUID evidence for the selected company
+    /// before any `(name, parent)` join can attach money to a master.
     pub(crate) async fn fetch_party_ledger_master_source(
         &self,
         company: &str,
@@ -939,7 +952,9 @@ impl TallyClient {
                 PairedReadValidationError::PartyLedgerBalance,
             ));
         };
-        let balances = parse_native_ledger_snapshot(&balance_body)?;
+        let balances =
+            parse_native_ledger_snapshot_for_company(&balance_body, expected_company_guid)
+                .map_err(party_ledger_master_balance_snapshot_error)?;
         let group_pair = self
             .fetch_native_report_paired(render_native_group_snapshot_request(company))
             .await?;
@@ -3072,8 +3087,12 @@ mod tests {
         let server = tokio::spawn(async move {
             let responses = [
                 utf8_status_response("<RESPONSE>TallyPrime Server is Running</RESPONSE>"),
-                utf16_xml_response("<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Capability collection unavailable</LINEERROR></DATA></BODY></ENVELOPE>"),
-                utf16_xml_response("<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>"),
+                utf16_xml_response(
+                    "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>0</STATUS></HEADER><BODY><DATA><LINEERROR>Capability collection unavailable</LINEERROR></DATA></BODY></ENVELOPE>",
+                ),
+                utf16_xml_response(
+                    "<ENVELOPE><COMPANYINFO><COMPANYNAMEFIELD>Synthetic Company</COMPANYNAMEFIELD><COMPANYGUIDFIELD>guid-1</COMPANYGUIDFIELD></COMPANYINFO></ENVELOPE>",
+                ),
             ];
             for response in responses {
                 let (mut socket, _) = listener.accept().await.expect("accept Tally request");

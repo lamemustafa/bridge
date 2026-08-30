@@ -417,6 +417,37 @@ fn is_currency_qualified_numeric(value: &str) -> bool {
 pub fn parse_native_ledger_snapshot(
     xml: &str,
 ) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
+    Ok(parse_native_ledger_snapshot_rows(xml)?
+        .into_iter()
+        .map(|(entry, _)| entry)
+        .collect())
+}
+
+/// Parses a native ledger snapshot only when at least one row proves that the
+/// response came from the selected company. The request explicitly fetches
+/// `GUID`; an ambient extent bracket cannot bind the response it surrounds.
+/// Imported masters may retain foreign GUIDs, so a foreign row is retained;
+/// only an entire response with no expected-company prefix is refused.
+pub fn parse_native_ledger_snapshot_for_company(
+    xml: &str,
+    expected_company_guid: &str,
+) -> Result<Vec<LedgerSnapshotEntry>, NativeOutstandingsError> {
+    let entries = parse_native_ledger_snapshot_rows(xml)?;
+    if !entries.iter().any(|(_, guid)| {
+        guid.as_deref().is_some_and(|guid| {
+            crate::native_ledger_guid_has_company_prefix(guid, expected_company_guid)
+        })
+    }) {
+        return Err(NativeOutstandingsError::InvalidResponse(
+            "ledger_company_guid_unverified",
+        ));
+    }
+    Ok(entries.into_iter().map(|(entry, _)| entry).collect())
+}
+
+fn parse_native_ledger_snapshot_rows(
+    xml: &str,
+) -> Result<Vec<(LedgerSnapshotEntry, Option<String>)>, NativeOutstandingsError> {
     let sanitized = sanitize_invalid_numeric_references(xml);
     let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(true);
@@ -778,7 +809,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn parse_ledger_row(
     reader: &mut Reader<&[u8]>,
     element: &BytesStart<'_>,
-) -> Result<LedgerSnapshotEntry, NativeOutstandingsError> {
+) -> Result<(LedgerSnapshotEntry, Option<String>), NativeOutstandingsError> {
     let name = attribute_value(element, b"NAME").ok_or(
         NativeOutstandingsError::InvalidResponse("ledger_name_missing"),
     )?;
@@ -788,6 +819,8 @@ fn parse_ledger_row(
     let mut closing_balance = None;
     let mut opening_balance = None;
     let mut bill_wise_on = None;
+    let mut guid = None;
+    let mut guid_seen = false;
     loop {
         match reader
             .read_event()
@@ -832,7 +865,23 @@ fn parse_ledger_row(
                         }
                         bill_wise_on = Some(parse_tally_boolean(&text)?);
                     }
+                    b"GUID" => {
+                        let text = read_element_text(reader, child.name())?;
+                        if std::mem::replace(&mut guid_seen, true) {
+                            return Err(NativeOutstandingsError::InvalidResponse(
+                                "ledger_duplicate_guid",
+                            ));
+                        }
+                        guid = (!text.is_empty()).then_some(text);
+                    }
                     _ => skip_subtree(reader)?,
+                }
+            }
+            Event::Empty(child) if child.name().as_ref().eq_ignore_ascii_case(b"GUID") => {
+                if std::mem::replace(&mut guid_seen, true) {
+                    return Err(NativeOutstandingsError::InvalidResponse(
+                        "ledger_duplicate_guid",
+                    ));
                 }
             }
             Event::Empty(_) => {}
@@ -845,19 +894,22 @@ fn parse_ledger_row(
             _ => {}
         }
     }
-    Ok(LedgerSnapshotEntry {
-        name,
-        parent: parent.flatten(),
-        closing_balance: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
-            "ledger_closing_balance_missing",
-        ))?,
-        opening_balance: opening_balance.ok_or(NativeOutstandingsError::InvalidResponse(
-            "ledger_opening_balance_missing",
-        ))?,
-        bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
-            "ledger_bill_wise_flag_missing",
-        ))?,
-    })
+    Ok((
+        LedgerSnapshotEntry {
+            name,
+            parent: parent.flatten(),
+            closing_balance: closing_balance.ok_or(NativeOutstandingsError::InvalidResponse(
+                "ledger_closing_balance_missing",
+            ))?,
+            opening_balance: opening_balance.ok_or(NativeOutstandingsError::InvalidResponse(
+                "ledger_opening_balance_missing",
+            ))?,
+            bill_wise_on: bill_wise_on.ok_or(NativeOutstandingsError::InvalidResponse(
+                "ledger_bill_wise_flag_missing",
+            ))?,
+        },
+        guid,
+    ))
 }
 
 fn skip_subtree(reader: &mut Reader<&[u8]>) -> Result<(), NativeOutstandingsError> {
@@ -1305,6 +1357,34 @@ mod currency_tests {
             parse_native_ledger_snapshot(xml).expect("the observed empty element is valid XML");
         assert_eq!(rows[0].closing_balance, None);
         assert_eq!(rows[1].closing_balance, Some(ExactDecimal::zero()));
+    }
+
+    #[test]
+    fn party_ledger_master_balance_response_with_only_foreign_company_guids_is_withheld() {
+        let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>\
+            <LEDGER NAME=\"Same ledger name\"><GUID>22222222-2222-2222-2222-222222222222-00000001</GUID>\
+            <PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>-100.00</CLOSINGBALANCE>\
+            <OPENINGBALANCE>-100.00</OPENINGBALANCE><ISBILLWISEON>Yes</ISBILLWISEON></LEDGER>\
+            </COLLECTION></DATA></BODY></ENVELOPE>";
+
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(xml, "11111111-1111-1111-1111-111111111111"),
+            Err(NativeOutstandingsError::InvalidResponse(
+                "ledger_company_guid_unverified"
+            ))
+        );
+        assert_eq!(
+            parse_native_ledger_snapshot(xml).unwrap().len(),
+            1,
+            "ordinary snapshot consumers retain their documented, identity-neutral parser"
+        );
+        assert_eq!(
+            parse_native_ledger_snapshot_for_company(xml, "22222222-2222-2222-2222-222222222222")
+                .unwrap()
+                .len(),
+            1,
+            "a matching row GUID binds the export response before it is joined"
+        );
     }
 
     #[test]

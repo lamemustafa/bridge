@@ -220,7 +220,15 @@ pub(super) fn amount_to_f64(text: &str) -> Result<f64, PartyStatementXlsxError> 
     let value = text
         .parse::<f64>()
         .map_err(|_| PartyStatementXlsxError::InvalidAmount(text.to_string()))?;
-    if !value.is_finite() || !same_decimal_value(text, &value.to_string()) {
+    if text
+        .bytes()
+        .filter(u8::is_ascii_digit)
+        .skip_while(|digit| *digit == b'0')
+        .count()
+        > 15
+        || !value.is_finite()
+        || !same_decimal_value(text, &value.to_string())
+    {
         return Err(PartyStatementXlsxError::InvalidAmount(text.to_string()));
     }
     Ok(value)
@@ -314,10 +322,11 @@ mod tests {
             Err(PartyStatementXlsxError::InvalidAmount(value)) if value == "9007199254740993"
         ));
 
-        assert_eq!(
-            amount_to_f64("9007199254740992").unwrap(),
-            9007199254740992.0
-        );
+        assert!(matches!(
+            amount_to_f64("9007199254740992"),
+            Err(PartyStatementXlsxError::InvalidAmount(value)) if value == "9007199254740992"
+        ));
+        assert_eq!(amount_to_f64("999999999999999").unwrap(), 999999999999999.0);
         assert_eq!(amount_to_f64("42.00").unwrap(), 42.0);
     }
 
