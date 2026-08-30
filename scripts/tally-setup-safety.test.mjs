@@ -47,7 +47,7 @@ test("saved pins remain selectable for local proof review without a Tally read",
   assert.match(frontend, /Review local Mirror &amp; Proof evidence without contacting Tally\./);
   assert.match(frontend, /Change saved company/);
   assert.match(frontend, /const savedCompanySelectionLocked = snapshotActive\s*\|\| snapshotStartOutcomeUnknown\s*\|\| tallyAction !== null\s*\|\| childTallyReadCount > 0;/s);
-  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*\}/s);
+  assert.match(frontend, /function selectSavedCompany\(key: string\) \{\s*if \(key === selectedCompany \|\| savedCompanySelectionLocked\) return;\s*clearSelectedCompanyScope\(\);\s*setSelectedCompany\(key\);\s*if \(evidenceDrawerOpen\) setEvidenceDrawerFocusEpoch\(\(current\) => current \+ 1\);\s*\}/s);
   assert.match(frontend, /selectSavedCompany\(""\)\} disabled=\{savedCompanySelectionLocked\}/);
   assert.match(frontend, /selectSavedCompany\(key\)\} disabled=\{savedCompanySelectionLocked\}/);
 });
@@ -86,14 +86,14 @@ test("choosing an already-selected setup-required client opens Manage Tally", as
   assert.match(shellSelection, /if \(key === selectedCompany\) \{\s*setView\("companies"\);\s*return;\s*\}/s);
 });
 
-test("saved-profile shell selections stay in local Mirror and Proof review", async () => {
+test("saved-profile shell selections stay in the open evidence drawer", async () => {
   const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
   const shellSelection = frontend.slice(
     frontend.indexOf("function selectClientFromShell"),
     frontend.indexOf("function updateTallyHost"),
   );
 
-  assert.match(shellSelection, /if \(company\.mirror_company_id\) \{[\s\S]*?selectSavedCompany\(key\);\s*if \(view === "mirror"\) return;/);
+  assert.match(shellSelection, /if \(company\.mirror_company_id\) \{[\s\S]*?selectSavedCompany\(key\);\s*if \(evidenceDrawerOpen\) return;/);
   assert.match(shellSelection, /if \(currentAtProbedEndpoint\) \{\s*setView\("outstandings"\);/s);
 });
 
@@ -116,8 +116,8 @@ test("persisted-company load failures remain visible regardless of Tally connect
   assert.match(frontend, /\{persistedCompanyProfileError && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
   assert.doesNotMatch(frontend, /persistedCompanyProfileError && !setupConnectionComplete/);
   assert.match(frontend, /\{companyError && !setupConnectionComplete && <TallyErrorNotice message=\{companyError\} \/>\}/);
-  const mirror = frontend.slice(frontend.indexOf('{view === "mirror" && ('), frontend.indexOf("companyError={companyError}"));
-  assert.match(mirror, /\{persistedCompanyProfileError && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
+  const evidenceDrawer = frontend.slice(frontend.indexOf("{evidenceDrawerOpen && ("), frontend.indexOf("companyError={companyError}"));
+  assert.match(evidenceDrawer, /\{persistedCompanyProfileError && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
 });
 
 test("saved clients absent from the current probe require verification, not setup", async () => {

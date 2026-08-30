@@ -753,6 +753,10 @@ export function MirrorProofScreen({
         )}
       </article>
 
+      <details className="evidence-advanced">
+        <summary>Advanced</summary>
+        <p className="section-note">Operator tools for inspecting endpoint capability, local mirror metadata, and runtime state.</p>
+
       <article className="panel wide mirror-explorer">
         <div className="panel-heading">
           <div>
@@ -876,22 +880,6 @@ export function MirrorProofScreen({
           <CapabilityRows capabilities={passport?.packs} labels={PACK_LABELS} />
         </article>
 
-        <article className="panel">
-          <h2>What “Verified” will require</h2>
-          <ul className="verification-list">
-            <li>Every requested scope and window completes.</li>
-            <li>Tally application status and payload validation pass.</li>
-            <li>The company identity matches the pinned source.</li>
-            <li>A product-supported atomic source cut or equally strong isolation mechanism is evidenced.</li>
-            <li>Declared reconciliation checks pass.</li>
-          </ul>
-          <p className="section-note">
-            Until those results are reported, Bridge will not present previews, counts, or absence of errors as accounting accuracy.
-          </p>
-          {passport?.mode?.toLowerCase().includes("education") && (
-            <p className="section-note">The currently observed Education profile does not provide atomic source-cut evidence, so current Core Accounting runs remain Partial.</p>
-          )}
-        </article>
       </section>
 
       <article className="panel wide runtime-panel">
@@ -950,6 +938,7 @@ export function MirrorProofScreen({
           </div>
         )}
       </article>
+      </details>
     </>
   );
 }

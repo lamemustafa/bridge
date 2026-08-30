@@ -29,3 +29,14 @@ export function companyIdentityKey(input: CompanyIdentityKeyInput): CompanyIdent
     input.books_from_yyyymmdd,
   ]) as CompanyIdentityKey;
 }
+
+export function companyIdentityLabel(identity: CompanyIdentityKey): string {
+  const [canonicalOrigin, companyGuid, companyNumber, companyName, booksFrom] = JSON.parse(identity) as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  return `${companyName} · Company no. ${companyNumber} · Books from ${booksFrom} · GUID ${companyGuid} · Endpoint ${canonicalOrigin}`;
+}
