@@ -31,7 +31,7 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.doesNotMatch(app, /function configuredTallyEndpoint/);
   assert.match(app, /const selectedCompanyReadable = selectedCompanyReady/);
   assert.match(app, /const \[view, setView\] = React\.useState<View>\("dashboard"\)/);
-  assert.match(app, /if \(view !== "companies" && view !== "outstandings" && view !== "clients" && view !== "mirror"\) return;/);
+  assert.match(app, /if \(view !== "companies" && view !== "outstandings" && view !== "clients"\) return;/);
   assert.match(app, /<OutstandingsScreen\s+key=\{selectedCompany \|\| "unselected"\}/);
   assert.match(app, /setOpenCompanyNames\(\[\]\);\s*setUntrustedDiscoveredCompanies\(\[\]\);/);
   assert.match(app, /correlation_key: company\.correlation_key/);
@@ -98,6 +98,49 @@ test("UX1 nav sends unreadable outstandings and client requests to Manage Tally"
   assert.match(nav, /Evidence dashboard/);
   assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "outstandings" : "companies"\)\}/);
   assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "clients" : "companies"\)\}/);
+});
+
+test("UX2 keeps report evidence distinct from Core Accounting history and hides operator tools behind Advanced", async () => {
+  const [app, outstandings, mirrorProof, panel, focus] = await Promise.all([
+    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/evidence-drawer-focus.ts", import.meta.url), "utf8"),
+  ]);
+  const nav = app.slice(app.indexOf('<nav aria-label="Bridge operations">'), app.indexOf("</nav>"));
+  const advanced = mirrorProof.slice(
+    mirrorProof.indexOf('<details className="evidence-advanced">'),
+    mirrorProof.lastIndexOf("</details>"),
+  );
+
+  assert.doesNotMatch(nav, /Mirror/);
+  assert.match(outstandings, /className="outstandings-evidence-link" type="button" onClick=\{\(event\) => onOpenEvidence\(reportEvidenceDrawerEntry\(reportEvidence, error\), event\.currentTarget\)\}/);
+  assert.match(outstandings, /asOfYyyymmdd: inrCompleteResult\.report\.as_of_yyyymmdd/);
+  assert.match(outstandings, /ageingAnchor: inrCompleteResult\.ageing_anchor/);
+  assert.match(outstandings, /readProvenance: \{\s*read_strategy: inrCompleteResult\.read_strategy,/s);
+  assert.match(outstandings, /reasonCode: result\.reason_code/);
+  assert.match(outstandings, /tallyReadAttempted: partialState\?\.tallyReadAttempted/);
+  assert.match(app, /\{evidenceDrawerOpen && \(/);
+  assert.match(app, /className="evidence-drawer"/);
+  assert.match(app, /event\.key === "Escape"\) \{\s*closeEvidenceDrawer\(\);\s*return;/s);
+  assert.match(app, /visibleDrawerTabStops\(event\.currentTarget\)/);
+  assert.match(app, /<OutstandingsEvidencePanel entry=\{evidenceDrawerEntry\} \/>/);
+  assert.match(app, /Separate Core Accounting evidence/);
+  assert.match(app, /\{selectedCompanyRecord\?\.mirror_company_id && \(/);
+  assert.match(app, /Open local evidence/);
+  assert.match(panel, /Report-bound Outstandings read/);
+  assert.match(panel, /No Outstandings read attached/);
+  assert.match(focus, /querySelectorAll<HTMLElement>\("\*"\)/);
+  assert.match(focus, /element\.tabIndex >= 0/);
+  assert.match(focus, /current\.tagName === "DETAILS"/);
+  assert.match(focus, /window\.getComputedStyle\(current\)/);
+  assert.match(focus, /getClientRects\(\)\.length > 0/);
+  assert.doesNotMatch(focus, /DRAWER_FOCUSABLE/);
+  assert.doesNotMatch(mirrorProof, /What “Verified” will require/);
+  assert.match(advanced, /className="panel wide mirror-explorer"/);
+  assert.match(advanced, /<h2>Pack readiness<\/h2>/);
+  assert.match(advanced, /className="panel wide runtime-panel"/);
 });
 
 test("compatibility surface binds every UX1 Tally read entry control", async () => {

@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Building2, Cable, Check, Cloud, Database, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
+import { Building2, Cable, Check, Cloud, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyProbeCompanySelectionTransition,
@@ -14,6 +14,8 @@ import {
 import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
 import { OutstandingsScreen } from "./OutstandingsScreen";
+import { OutstandingsEvidencePanel } from "./OutstandingsEvidencePanel";
+import type { EvidenceDrawerEntry } from "./evidence-drawer-entry";
 import { AllClientsScreen } from "./AllClientsScreen";
 import {
   automaticOutstandingsAsOf,
@@ -28,6 +30,7 @@ import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
+import { createDrawerFocusLifecycle, drawerFocusBoundaryTarget, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, visibleDrawerTabStops } from "./evidence-drawer-focus";
 import "./styles.css";
 
 type TallyConfig = {
@@ -268,7 +271,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "companies" | "gst" | "mirror" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "companies" | "gst" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -283,7 +286,6 @@ const VIEW_TITLES: Record<View, string> = {
   outstandings: "Aged outstandings",
   companies: "Connect Tally",
   gst: "GST return readiness",
-  mirror: "Accounting mirror and proof",
   dsc: "DSC token",
   documents: "Documents",
   axal: "AXAL backend",
@@ -466,6 +468,10 @@ function App() {
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
   const [documentsWorkspace, setDocumentsWorkspace] = React.useState(createDocumentsWorkspaceState);
   const [view, setView] = React.useState<View>("dashboard");
+  const [evidenceDrawerOpen, setEvidenceDrawerOpen] = React.useState(false);
+  const [evidenceDrawerRestorePending, setEvidenceDrawerRestorePending] = React.useState(false);
+  const [evidenceDrawerEntry, setEvidenceDrawerEntry] = React.useState<EvidenceDrawerEntry>({ kind: "local-only" });
+  const [evidenceDrawerFocusEpoch, setEvidenceDrawerFocusEpoch] = React.useState(0);
   const [outstandingsAsOfSelection, setOutstandingsAsOfSelection] = React.useState(
     () => automaticOutstandingsAsOf(),
   );
@@ -476,6 +482,21 @@ function App() {
   const proofPreviewRequestVersion = React.useRef(0);
   const snapshotSelectionVersion = React.useRef(0);
   const mainContentRef = React.useRef<HTMLElement>(null);
+  const evidenceDrawerCloseRef = React.useRef<HTMLButtonElement>(null);
+  const evidenceDrawerFocusLifecycle = React.useRef(createDrawerFocusLifecycle()).current;
+  const previousViewRef = React.useRef(view);
+  const evidenceDrawerWasOpenRef = React.useRef(evidenceDrawerOpen);
+
+  const openEvidenceDrawer = React.useCallback((entry: EvidenceDrawerEntry, opener?: HTMLElement) => {
+    evidenceDrawerFocusLifecycle.captureOpener(opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null));
+    setEvidenceDrawerRestorePending(false);
+    setEvidenceDrawerEntry(entry);
+    setEvidenceDrawerOpen(true);
+  }, [evidenceDrawerFocusLifecycle]);
+  const closeEvidenceDrawer = React.useCallback(() => {
+    setEvidenceDrawerOpen(false);
+    setEvidenceDrawerRestorePending(true);
+  }, []);
 
   const refreshRuntime = React.useCallback(async () => {
     try {
@@ -535,12 +556,12 @@ function App() {
     // have kept the boot-time keychain prompt exactly as it was. The dashboard's
     // "latest attempt" line derives from `snapshotJob`, which a user action
     // sets -- it does not need the recent-runs list to render.
-    if (view !== "mirror") return;
+    if (!evidenceDrawerOpen) return;
     void refreshRecentSnapshots();
-  }, [view, refreshRecentSnapshots]);
+  }, [evidenceDrawerOpen, refreshRecentSnapshots]);
 
   React.useEffect(() => {
-    if (view !== "companies" && view !== "outstandings" && view !== "clients" && view !== "mirror") return;
+    if (view !== "companies" && view !== "outstandings" && view !== "clients") return;
     void refreshPersistedCompanyProfiles();
   }, [view, refreshPersistedCompanyProfiles]);
 
@@ -572,8 +593,27 @@ function App() {
   }, []);
 
   React.useEffect(() => {
-    mainContentRef.current?.focus();
-  }, [view]);
+    const drawerWasOpen = evidenceDrawerWasOpenRef.current;
+    const shouldFocusMainContent = shouldFocusMainContentAfterViewTransition({
+      previousView: previousViewRef.current,
+      view,
+      drawerWasOpen,
+      drawerOpen: evidenceDrawerOpen,
+    });
+    let focusMainContent = shouldFocusMainContent;
+    if (evidenceDrawerOpen) {
+      ensureDrawerFocus(evidenceDrawerOpen, evidenceDrawerCloseRef.current);
+      focusMainContent = false;
+    } else if (evidenceDrawerRestorePending) {
+      focusMainContent = !evidenceDrawerFocusLifecycle.restoreOpener();
+      setEvidenceDrawerRestorePending(false);
+    }
+    if (focusMainContent) {
+      mainContentRef.current?.focus();
+    }
+    previousViewRef.current = view;
+    evidenceDrawerWasOpenRef.current = evidenceDrawerOpen;
+  }, [view, evidenceDrawerFocusEpoch, evidenceDrawerOpen, evidenceDrawerRestorePending, evidenceDrawerFocusLifecycle]);
 
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
@@ -722,6 +762,7 @@ function App() {
     if (key === selectedCompany || savedCompanySelectionLocked) return;
     clearSelectedCompanyScope();
     setSelectedCompany(key);
+    if (evidenceDrawerOpen) setEvidenceDrawerFocusEpoch((current) => current + 1);
   }
 
   function selectClientFromShell(key: string) {
@@ -741,7 +782,7 @@ function App() {
       const currentAtProbedEndpoint = liveCompanyKeys.includes(key)
         && company.canonical_endpoint === currentProbeCanonicalOrigin;
       selectSavedCompany(key);
-      if (view === "mirror") return;
+      if (evidenceDrawerOpen) return;
       if (currentAtProbedEndpoint) {
         setView("outstandings");
       } else {
@@ -1474,9 +1515,6 @@ function App() {
           <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} onClick={() => setView("companies")}>
             <Cable size={18} /> Manage Tally
           </button>
-          <button aria-current={view === "mirror" ? "page" : undefined} className={view === "mirror" ? "active" : ""} onClick={() => setView("mirror")}>
-            <Database size={18} /> Mirror &amp; Proof
-          </button>
           <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             <ShieldCheck size={18} /> Evidence dashboard
           </button>
@@ -1582,7 +1620,7 @@ function App() {
           </section>
         )}
 
-        {["dashboard", "mirror"].includes(view) && (
+        {view === "dashboard" && (
           <section className="operator-question-grid" aria-label="Tally operator summary">
             <article><span>Verified baseline</span><strong>{verifiedBaseline}</strong></article>
             <article><span>Latest attempt</span><strong>{latestAttemptSummary}</strong></article>
@@ -1779,8 +1817,10 @@ function App() {
               canonical_origin: selectedCompanyRecord.canonical_endpoint,
             } : undefined}
             onChangeSetup={() => setView("companies")}
+            onOpenEvidence={openEvidenceDrawer}
             onViewAllClients={() => setView("clients")}
             liveReadNavigationLocked={childTallyReadCount > 0}
+            liveReadSuppressed={evidenceDrawerOpen && evidenceDrawerEntry.kind === "local-only"}
             openBookCount={completeCurrentProbeCompanies.length}
             asOf={outstandingsAsOfSelection.value}
             onAsOfChange={changeOutstandingsAsOf}
@@ -1808,6 +1848,14 @@ function App() {
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
             {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
             {companyError && !setupConnectionComplete && <TallyErrorNotice message={companyError} />}
+
+            {selectedCompanyRecord?.mirror_company_id && (
+              <section className="panel wide offline-evidence-entry" aria-labelledby="offline-evidence-heading">
+                <h2 id="offline-evidence-heading">Review saved local evidence</h2>
+                <p className="panel-description">Inspect {selectedCompanyRecord.name}&rsquo;s local proof ledger, durable runs, and redacted proof exports without contacting Tally.</p>
+                <button className="secondary-action" type="button" onClick={(event) => openEvidenceDrawer({ kind: "local-only" }, event.currentTarget)}>Open local evidence</button>
+              </section>
+            )}
 
             {setupConnectionComplete && (
               <section className="setup-company" id="company-profile" aria-labelledby="company-profile-heading">
@@ -1924,7 +1972,46 @@ function App() {
           </ErrorBoundary>
         )}
 
-        {view === "mirror" && (
+        {evidenceDrawerOpen && (
+          <div className="evidence-drawer-backdrop">
+            <aside
+              className="evidence-drawer"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="evidence-drawer-title"
+              tabIndex={-1}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  closeEvidenceDrawer();
+                  return;
+                }
+                if (event.key !== "Tab") return;
+                const focusable = visibleDrawerTabStops(event.currentTarget);
+                if (focusable.length === 0) {
+                  event.preventDefault();
+                  return;
+                }
+                const target = drawerFocusBoundaryTarget(document.activeElement, focusable, event.shiftKey);
+                if (target) {
+                  event.preventDefault();
+                  target.focus();
+                }
+              }}
+            >
+              <header className="evidence-drawer-header">
+                <div>
+                  <p className="eyebrow">Report evidence</p>
+                  <h2 id="evidence-drawer-title">{evidenceDrawerEntry.kind === "local-only" ? "Local evidence and limits" : "Report evidence and limits"}</h2>
+                  <p>{evidenceDrawerEntry.kind === "local-only" ? "This local evidence review is not attached to a current Outstandings report." : "The report-bound read is shown first. Core Accounting history is separate below."}</p>
+                </div>
+                <button className="secondary-action" type="button" ref={evidenceDrawerCloseRef} onClick={closeEvidenceDrawer}>Close</button>
+              </header>
+              <div className="evidence-drawer-content">
+          <OutstandingsEvidencePanel entry={evidenceDrawerEntry} />
+          <section className="evidence-domain-boundary" aria-labelledby="core-accounting-evidence-heading">
+            <h2 id="core-accounting-evidence-heading">Separate Core Accounting evidence</h2>
+            <p>This local mirror, proof, and runtime history is not evidence for the Outstandings report above. It has its own pack scope and run history.</p>
+          </section>
           <ErrorBoundary key="mirror" label="Accounting mirror and proof">
           {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
           <MirrorProofScreen
@@ -1984,7 +2071,7 @@ function App() {
                 ) : !reviewId || !reviewCommitmentSha256 || !selectedCompanyLive ? (
                   <div className="toolbar secondary-toolbar">
                     <p className="section-note">Check Tally again with this saved company open before locally enrolling a fixture.</p>
-                    <button className="secondary-action" type="button" onClick={() => setView("companies")} disabled={snapshotActive || tallyAction !== null}>Prepare fixture review</button>
+                    <button className="secondary-action" type="button" onClick={() => { closeEvidenceDrawer(); setView("companies"); }} disabled={snapshotActive || tallyAction !== null}>Prepare fixture review</button>
                   </div>
                 ) : (
                   <>
@@ -2037,6 +2124,9 @@ function App() {
             cancelTallyRequest={cancelTallyRequest}
           />
           </ErrorBoundary>
+              </div>
+            </aside>
+          </div>
         )}
 
         {view === "dsc" && (

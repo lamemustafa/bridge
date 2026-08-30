@@ -133,11 +133,22 @@ pub enum OutstandingsCurrencyAssertion {
     Inr,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutstandingsReadStrategy {
+    NativeBills,
+    VoucherScan,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum OutstandingsLoadResult {
     Complete {
         report: Box<OutstandingsReport>,
+        /// The read path that produced `report`, preserved separately from
+        /// every count so an empty result cannot be mislabeled as another
+        /// strategy.
+        read_strategy: OutstandingsReadStrategy,
         currency_assertion: OutstandingsCurrencyAssertion,
         /// The date whose distance from `report.as_of_yyyymmdd` determines
         /// the serialized ageing buckets. Consumers must disclose this rather
@@ -1651,6 +1662,7 @@ impl TallyRuntime {
                     let statement_unallocated_by_party = all_unallocated_parties(&result.residuals);
                     Ok(OutstandingsLoadResult::Complete {
                         report: Box::new(result.report),
+                        read_strategy: OutstandingsReadStrategy::NativeBills,
                         currency_assertion,
                         ageing_anchor,
                         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
@@ -2091,6 +2103,7 @@ impl TallyRuntime {
                                     as_of,
                                     ageing_anchor.legacy_anchor(),
                                 )?),
+                                read_strategy: OutstandingsReadStrategy::VoucherScan,
                                 currency_assertion,
                                 ageing_anchor,
                                 synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
@@ -2524,6 +2537,18 @@ mod tests {
     }
 
     #[test]
+    fn outstandings_read_strategy_serializes_as_an_explicit_wire_contract() {
+        assert_eq!(
+            serde_json::to_value(OutstandingsReadStrategy::NativeBills).unwrap(),
+            serde_json::json!("native_bills")
+        );
+        assert_eq!(
+            serde_json::to_value(OutstandingsReadStrategy::VoucherScan).unwrap(),
+            serde_json::json!("voucher_scan")
+        );
+    }
+
+    #[test]
     fn single_company_forex_ledger_capture_returns_a_typed_partial() {
         const FOREX_LEDGER_CAPTURE: &[u8] = include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/ledgers_forex_composite_live.utf16le.xml"
@@ -2770,6 +2795,7 @@ mod tests {
         let statement_unallocated_by_party = all_unallocated_parties(&computed.residuals);
         let result = OutstandingsLoadResult::Complete {
             report: Box::new(computed.report),
+            read_strategy: OutstandingsReadStrategy::NativeBills,
             currency_assertion: OutstandingsCurrencyAssertion::Inr,
             ageing_anchor: OutstandingsAgeingAnchor::DueDate,
             synced_at_unix_ms: 1_777_000_000_000,
