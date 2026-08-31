@@ -911,7 +911,7 @@ rfd 0.17.2
 License: MIT
 Source: https://github.com/PolyMeilex/rfd
 
-rust_xlsxwriter 0.98.2
+rust_xlsxwriter 0.99.0
 License: MIT OR Apache-2.0
 Source: https://github.com/jmcnamara/rust_xlsxwriter
 
@@ -2892,7 +2892,7 @@ Apache License 2.0
 
 -------------------------------------------------------------------------------
 Apache License 2.0
-- rust_xlsxwriter 0.98.2
+- rust_xlsxwriter 0.99.0
 
                                  Apache License
                            Version 2.0, January 2004
