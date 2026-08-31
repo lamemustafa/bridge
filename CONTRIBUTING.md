@@ -32,6 +32,8 @@ discoverable automatically. Then run from any local clone:
 
 ```text
 corepack pnpm install --frozen-lockfile
+corepack pnpm exec playwright install chromium
+corepack pnpm test
 corepack pnpm run build
 corepack pnpm run cargo:check
 corepack pnpm run tauri:dev

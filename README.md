@@ -40,14 +40,18 @@ POSIX-compatible shell:
 
 ```text
 corepack pnpm install --frozen-lockfile
+corepack pnpm exec playwright install chromium
+corepack pnpm test
 corepack pnpm run build
 corepack pnpm run cargo:check
 corepack pnpm run tauri:dev
 ```
 
-`tauri:dev` starts the Vite development server and desktop application. It does
-not require a fixed checkout location. The first Rust build can take several
-minutes.
+`pnpm test` includes the Chromium evidence-drawer focus suite; installing the
+lock-pinned browser after dependencies is therefore required once for each
+developer environment. `tauri:dev` starts the Vite development server and
+desktop application. It does not require a fixed checkout location. The first
+Rust build can take several minutes.
 
 For a release build, run `corepack pnpm run tauri:build` on each target host.
 CI-produced bundles are unsigned smoke artifacts only. Do not redistribute a

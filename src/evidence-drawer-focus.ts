@@ -43,17 +43,19 @@ function inBrowserTabOrder(candidates: TabStopCandidate[]) {
   const positive = candidates
     .filter(({ element }) => element.tabIndex > 0)
     .sort((left, right) => left.element.tabIndex - right.element.tabIndex || left.index - right.index);
-  const sequential = candidates.filter(({ element }) => element.tabIndex === 0);
+  const sequential = candidates.filter(({ element }) => element.tabIndex === 0 || element.isContentEditable);
   return [...positive, ...sequential].map(({ element }) => element);
 }
 
-// `tabIndex` is the browser's own declaration of sequential focusability. It
-// covers native controls and future native tab stops without maintaining a
-// second, inevitably incomplete selector list in application code.
+// `tabIndex` covers ordinary native controls. Chromium reaches an editable host
+// with Tab even though its reflected tabIndex is -1, so it must be included as
+// a sequential stop too.
 export function visibleDrawerTabStops(drawer: HTMLElement) {
   return inBrowserTabOrder(
     Array.from(drawer.querySelectorAll<HTMLElement>("*")).flatMap((element, index) => (
-      element.tabIndex >= 0 && isVisibleInDrawer(element, drawer) ? [{ element, index }] : []
+      (element.tabIndex >= 0 || element.isContentEditable) && isVisibleInDrawer(element, drawer)
+        ? [{ element, index }]
+        : []
     )),
   );
 }
