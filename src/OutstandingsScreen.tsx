@@ -673,7 +673,7 @@ export function OutstandingsScreen({
               }}
             >
               <Download size={16} />
-              {exporting === "ledger-master" ? "Reading ledger master…" : "Ledger master + Schedule III"}
+              {exporting === "ledger-master" ? "Reading ledger master…" : "Ledger master + group subtotal trace"}
             </button>
           )}
           {workingPaperAvailable && (
