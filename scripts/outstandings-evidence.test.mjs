@@ -134,3 +134,16 @@ test("local-only and failed report reads have distinct no-evidence drawer entrie
   assert.match(panel, /Bridge could not complete the report-bound read: \{entry\.message\}/);
   assert.doesNotMatch(panel.slice(panel.indexOf('entry.kind === "report-read-failed"'), panel.indexOf("const { evidence } = entry")), /local evidence review/);
 });
+
+test("a pending refresh cannot bind the prior report to the evidence drawer", async () => {
+  const screen = await readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8");
+  const reportEvidence = screen.slice(
+    screen.indexOf("const reportEvidence"),
+    screen.indexOf("const load = React.useCallback"),
+  );
+
+  assert.match(reportEvidence, /const reportEvidence: OutstandingsEvidence \| null = loading \|\| !result \|\| !currentCompanyIdentity/);
+  assert.match(screen, /className="outstandings-evidence-link" type="button" onClick=\{\(event\) => onOpenEvidence\(reportEvidenceDrawerEntry\(reportEvidence, error\), event\.currentTarget\)\} disabled=\{loading\}/);
+  assert.match(screen, /loading \? "Evidence updates after this read" : "Review evidence and limits"/);
+  assert.match(screen, /onOpenEvidence\(reportEvidenceDrawerEntry\(reportEvidence, error\), event\.currentTarget\)/);
+});
