@@ -14,6 +14,65 @@ and macOS. A smoke bundle is not a production release.
 
 ## Candidate gates
 
+### Compatibility-surface reseal
+
+Any dependency update that changes a pinned file (including `package.json`,
+`src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, or either workflow) requires a
+deliberate compatibility-surface reseal before the claim gate can pass. From
+`tools`, run these three commands in order. `--output` asks the compatibility
+tool to stage and replace the destination itself:
+
+```bash
+cargo run --locked -p bridge-tally-compatibility -- rehash-surface \
+  ../docs/tally/compatibility/compatibility-surface.json .. \
+  --output ../docs/tally/compatibility/compatibility-surface.json
+
+cargo run --locked -p bridge-tally-compatibility -- seal-surface \
+  ../docs/tally/compatibility/compatibility-surface.json \
+  --output ../docs/tally/compatibility/compatibility-surface.json
+
+cargo run --locked -p bridge-tally-compatibility -- repoint-matrix \
+  ../docs/tally/compatibility/compatibility-matrix.json \
+  ../docs/tally/compatibility/compatibility-surface.json \
+  --output ../docs/tally/compatibility/compatibility-matrix.json
+```
+
+```powershell
+cargo run --locked -p bridge-tally-compatibility -- rehash-surface `
+  ../docs/tally/compatibility/compatibility-surface.json .. `
+  --output ../docs/tally/compatibility/compatibility-surface.json
+
+cargo run --locked -p bridge-tally-compatibility -- seal-surface `
+  ../docs/tally/compatibility/compatibility-surface.json `
+  --output ../docs/tally/compatibility/compatibility-surface.json
+
+cargo run --locked -p bridge-tally-compatibility -- repoint-matrix `
+  ../docs/tally/compatibility/compatibility-matrix.json `
+  ../docs/tally/compatibility/compatibility-surface.json `
+  --output ../docs/tally/compatibility/compatibility-matrix.json
+```
+
+`rehash-surface` reads the raw bytes of every existing pin and reports its
+changed-entry count; it neither adds nor removes pins. `seal-surface` then
+attests to the newly hashed manifest, and `repoint-matrix` updates the matrix
+to that sealed digest. Do not run step 2 without step 1: sealing a manifest
+whose file hashes are stale produces a valid-looking digest over stale source
+content. CI intentionally checks the resulting surface but never reseals it.
+Without `--output`, each command retains its stdout contract. With `--output`,
+the tool writes raw UTF-8 without a BOM to a temporary file in the destination
+directory and replaces the destination only after successful serialization.
+This keeps failure fail-closed without relying on shell redirection or move
+semantics.
+On Unix, replacement preserves an existing destination's mode; a new
+destination uses the normal `0666` mode subject to the process umask. Windows
+uses its normal ACL semantics rather than POSIX mode bits.
+
+The PowerShell commands are intended for Windows PowerShell 5.1 and PowerShell
+7+. They deliberately do not use `>`: Windows PowerShell 5.1 redirection was
+measured to produce UTF-16LE. The output-path procedure is reasoned from the
+tool's byte writer, not host-verified; before relying on it on a Windows host,
+confirm the result with `Format-Hex` and require no UTF-8 BOM (`EF BB BF`).
+
 Before cutting a candidate, regenerate and verify the Rust third-party notice
 with the pinned generator:
 
