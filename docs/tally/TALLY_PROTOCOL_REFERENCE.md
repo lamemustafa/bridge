@@ -464,6 +464,28 @@ does not meet this repository's public-fixture privacy boundary. The hash, byte 
 field-presence observation above preserve the reproducible evidence boundary without copying
 client-like data into source control.
 
+### 8.2 `List of Groups` can return a request-computed company GUID — **VERIFIED 2026-08-31; single captured profile only**
+
+A read-only native `List of Groups` collection request against the synthetic
+`Aarav Trading Company Demo` on licensed TallyPrime 7.1 requested
+`NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME` and added:
+
+```xml
+<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>
+```
+
+The healthy, 27,140-byte `STATUS=1` response had 28 Group rows. All 28 carried
+the selected company's computed GUID; the retained, privacy-screened fixture
+hash is `bb2c20f7d9e11634f9cf1f6429f655dc31d50b60fca72c71a6ce981c47db099c`.
+The request and capture were bracketed by healthy `/status` checks. The raw
+fixture contains no GSTIN, PAN, contact, address, email, phone, website, or
+PIN-code fields and intentionally retains Tally's invalid numeric references.
+
+This establishes only the exact request, licensed 7.1 instance, and synthetic
+company profile described here. It does **not** establish that other releases,
+modes, or Group shapes emit the field; Bridge must continue to fail closed when
+the response lacks or mismatches the selected company GUID.
+
 ---
 
 ## 9. Writes (import)
