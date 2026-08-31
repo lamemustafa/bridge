@@ -293,7 +293,7 @@ fn party_ledger_master_runtime_command_error(error: anyhow::Error) -> TallyComma
 fn party_ledger_master_currency_admission_error(reason: &'static str) -> TallyCommandError {
     let message = match reason {
         "company_base_currency_undetermined" => {
-            "The selected Tally company has more than one base currency."
+            "Tally defines multiple Currency masters, so Bridge could not establish the selected company's base currency from this read."
         }
         "company_base_currency_not_inr" => {
             "The selected Tally company does not use INR as its base currency."
@@ -311,7 +311,7 @@ fn party_ledger_master_currency_admission_error(reason: &'static str) -> TallyCo
         ),
         "after_change",
         true,
-        "Correct the selected Tally company's base-currency setup, then refresh its probe before exporting.",
+        "Confirm that this company uses INR in Bridge before retrying the export; multiple defined Currency masters alone do not mean the Tally company is misconfigured.",
     )
 }
 
@@ -2821,12 +2821,13 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 mod tests {
     use super::{
         company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
-        first_calendar_day_canary_window, party_ledger_master_runtime_command_error,
-        portable_export_file_name, reconcile_review_cleanup, reviewed_probe_commitment_sha256,
-        selected_read_observation, tally_command_error, tally_runtime_command_error,
-        validate_dsc_pins, verify_observed_company_tuple_from_companies, write_unique_download,
-        CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
-        SelectedCompanyIdentity, VerifiedCompanyIdentity,
+        first_calendar_day_canary_window, party_ledger_master_currency_admission_error,
+        party_ledger_master_runtime_command_error, portable_export_file_name,
+        reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
+        tally_command_error, tally_runtime_command_error, validate_dsc_pins,
+        verify_observed_company_tuple_from_companies, write_unique_download, CompanySweepFailure,
+        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity,
+        VerifiedCompanyIdentity,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
@@ -3259,6 +3260,22 @@ mod tests {
             .message
             .starts_with("Bridge withheld the party/ledger master:"));
         assert!(!error.message.contains("QueueDeadline"));
+    }
+
+    #[test]
+    fn party_master_currency_admission_does_not_misdiagnose_multiple_masters() {
+        let error =
+            party_ledger_master_currency_admission_error("company_base_currency_undetermined");
+
+        assert_eq!(error.code, "company_base_currency_undetermined");
+        assert!(error.message.contains("multiple Currency masters"));
+        assert!(error
+            .message
+            .contains("could not establish the selected company's base currency from this read"));
+        assert!(!error.message.contains("more than one base currency"));
+        assert!(error
+            .remediation
+            .contains("do not mean the Tally company is misconfigured"));
     }
 
     #[test]
