@@ -463,7 +463,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "b4b6b5d2537f14237333edcc94b9f666481e7e4815a7278d8d71f49f1fd71de7"
+      "sha256": "a5901041a35c0f14958aadcfdf78aef6c84622178eaf17d98738f9474b804031"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -542,5 +542,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "4179b59e49f339777cedf97bb560d414025c97fee7f8ebaf6f026a240d24a5ac"
+  "manifest_sha256": "d55128a0f5edc1b14852f0aa894d7e83e6d887ae07f6b9290985ebab78515040"
 }

@@ -1496,7 +1496,7 @@ function App() {
                   : "Run a read-only Core Accounting evidence read";
 
   return (
-    <div className="shell" inert={evidenceDrawerOpen || undefined}>
+    <div className="shell" inert={evidenceDrawerOpen || undefined} aria-hidden={evidenceDrawerOpen || undefined}>
       <a className="skip-link" href="#main-content">Skip to active view</a>
       <aside className="sidebar">
         <div className="brand">

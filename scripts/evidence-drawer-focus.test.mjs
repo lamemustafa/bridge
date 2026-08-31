@@ -195,7 +195,7 @@ test("an open evidence drawer leaves the application inert without making the di
   const app = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
 
   assert.match(app, /import \{ createPortal \} from "react-dom";/);
-  assert.match(app, /<div className="shell" inert=\{evidenceDrawerOpen \|\| undefined\}>/);
+  assert.match(app, /<div className="shell" inert=\{evidenceDrawerOpen \|\| undefined\} aria-hidden=\{evidenceDrawerOpen \|\| undefined\}>/);
   assert.match(app, /evidenceDrawerOpen && \(\s*createPortal\(\s*<div className="evidence-drawer-backdrop">[\s\S]*?document\.body,/);
   assert.doesNotMatch(
     app,
