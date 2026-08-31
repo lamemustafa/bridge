@@ -891,6 +891,22 @@ The Company Creation formal name remains a property on a different master. That 
 why the 19 earlier probes, sent as `Company` children, all failed; it does not justify treating
 the fields as form-local or relying on a Company object export to recover them.
 
+#### 9.10a.1 Multiple Currency-master rows do not identify the base currency
+
+**VERIFIED 2026-08-23, with a deliberately narrow conclusion.** The production Currency
+collection request returned two Currency-master rows for the synthetic `BRIDGE CORPUS FOREX`
+book. The captured UTF-16LE response is committed as
+`currency_multi_live.utf16le.xml` (SHA-256
+`b64c0d5feb528fa02f81de576de5c766a95e1da1000975b1e2932868ae34118b`); its provenance records
+the production request, a healthy gateway before and after, and the structural count.
+
+This collection returns Currency masters, not a link from one row to the company's base-currency
+setting. With more than one row, the read therefore cannot establish which currency may label
+monetary figures. Bridge must fail closed rather than infer INR from any individual row. This does
+**not** say that the Tally company is misconfigured or that it has more than one base currency;
+only that this read cannot establish one. The parser's `currency_count == 1` admission rule and
+the party/ledger-master recovery text rely on this boundary.
+
 ### 9.10b `ORIGINALNAME` at `COMPANY` level hangs the gateway — **TRAP**
 
 **VERIFIED 2026-07-30.** A flat combination of
