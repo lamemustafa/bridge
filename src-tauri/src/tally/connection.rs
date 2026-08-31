@@ -85,6 +85,12 @@ fn party_ledger_master_group_snapshot_error(error: NativeOutstandingsError) -> a
     }
 }
 
+/// The paired master request reached Tally successfully. Any parser failure
+/// after that point is response validation, never endpoint reachability.
+fn party_ledger_master_master_snapshot_error(source: anyhow::Error) -> anyhow::Error {
+    anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterResponseInvalid { source })
+}
+
 fn party_ledger_master_openings_agree(
     master_opening: &str,
     balance_opening: &bridge_tally_core::ExactDecimal,
@@ -123,6 +129,11 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
     BalanceCompanyIdentityUnverified,
     #[error("Tally Group snapshot did not prove the selected company identity")]
     GroupCompanyIdentityUnverified,
+    #[error("Tally party/ledger master response failed validation")]
+    MasterResponseInvalid {
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 /// A paired or bracketed read observed movement in the endpoint's data. This
@@ -943,7 +954,8 @@ impl TallyClient {
         let master = parse_native_party_ledger_master_records_with_evidence(
             &master_body,
             expected_company_guid,
-        )?;
+        )
+        .map_err(party_ledger_master_master_snapshot_error)?;
         if !master.evidence.duplicate_identities.is_empty() {
             return Err(anyhow::Error::new(
                 PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
@@ -1754,8 +1766,9 @@ mod tests {
     use super::{
         canonical_loopback_origin, decode_xml_bytes, detect_product,
         has_presentation_equivalent_guid_siblings, normalize_discovered_companies,
-        party_ledger_master_balance_period, party_ledger_master_openings_agree, tally_endpoint,
-        unique_company_identities, TallyClient, TallyConfig, TallyProduct,
+        party_ledger_master_balance_period, party_ledger_master_master_snapshot_error,
+        party_ledger_master_openings_agree, tally_endpoint, unique_company_identities, TallyClient,
+        TallyConfig, TallyProduct,
     };
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TallyDate,
@@ -1805,6 +1818,25 @@ mod tests {
             &bridge_tally_core::ExactDecimal::parse("0.00").unwrap(),
         )
         .is_err());
+    }
+
+    #[test]
+    fn duplicate_party_master_field_is_typed_at_the_master_response_boundary() {
+        let response = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME=\"Synthetic debtor\"><GUID>11111111-1111-1111-1111-111111111111-00000001</GUID><BRIDGECOMPANYGUID>11111111-1111-1111-1111-111111111111</BRIDGECOMPANYGUID><MASTERID>1</MASTERID><ALTERID>1</ALTERID><PARENT>Sundry Debtors</PARENT><OPENINGBALANCE>0.00</OPENINGBALANCE><EMAIL>one@example.invalid</EMAIL><EMAIL>two@example.invalid</EMAIL></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let parser_error =
+            bridge_tally_protocol::parse_native_party_ledger_master_records_with_evidence(
+                response,
+                "11111111-1111-1111-1111-111111111111",
+            )
+            .expect_err("duplicate master field must fail closed");
+        assert!(parser_error
+            .to_string()
+            .contains("repeated a party/ledger master field"));
+
+        let typed = party_ledger_master_master_snapshot_error(parser_error);
+        assert!(typed
+            .downcast_ref::<super::PartyLedgerMasterSourceValidationError>()
+            .is_some());
     }
 
     fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {

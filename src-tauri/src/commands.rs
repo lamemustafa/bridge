@@ -3225,8 +3225,16 @@ mod tests {
             Validation::MasterId,
             Validation::MasterAlterId,
             Validation::MasterOpeningBalance,
+            Validation::DuplicateMasterIdentity,
+            Validation::BalanceMissingMasterLedger,
+            Validation::OpeningBalancesDisagreed,
+            Validation::BalanceLedgerAbsentFromMasterEvidence,
+            Validation::DuplicateBalanceDisplayKey,
             Validation::BalanceCompanyIdentityUnverified,
             Validation::GroupCompanyIdentityUnverified,
+            Validation::MasterResponseInvalid {
+                source: anyhow::anyhow!("synthetic parser failure"),
+            },
         ] {
             let mapped = tally_runtime_command_error(anyhow::Error::new(error));
             assert_eq!(mapped.code, "response_validation_failed");
