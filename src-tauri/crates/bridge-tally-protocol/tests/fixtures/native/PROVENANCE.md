@@ -60,6 +60,10 @@ rows, and contained `BRIDGECOMPANYGUID` in all 28 rows. Every value was the
 selected company's `bb8ad19e-6aef-4239-a917-87fec0c6215e`; the fixture SHA-256
 is `bb2c20f7d9e11634f9cf1f6429f655dc31d50b60fca72c71a6ce981c47db099c`.
 
+**VERIFIED — single captured profile only.** This proves the exact request and
+synthetic company/profile recorded above; it does not establish that every
+Tally release, mode, or Group collection shape emits this computed field.
+
 The capture was screened before commit: it contains no GSTIN, PAN, contact,
 address, email, phone, website, or PIN-code fields. Tally's observed invalid
 XML control characters are intentionally retained so this fixture continues to
