@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 
 import { OutstandingsScreen } from "../src/OutstandingsScreen";
+import { isLocalEvidenceReadSuppressed } from "../src/evidence-read-boundary";
 
 const firstSavedCompany = {
   name: "Synthetic saved company one",
@@ -29,8 +30,11 @@ const secondSavedCompany = {
 
 function LocalEvidenceHarness() {
   const [company, setCompany] = React.useState(firstSavedCompany);
+  const [evidenceDrawerOpen, setEvidenceDrawerOpen] = React.useState(false);
+  const [evidenceDrawerEntry] = React.useState({ kind: "local-only" } as const);
   return (
     <>
+      <button type="button" onClick={() => setEvidenceDrawerOpen(true)}>Open local evidence</button>
       <button type="button" onClick={() => setCompany(secondSavedCompany)}>Change saved company</button>
       <OutstandingsScreen
         config={{ host: "127.0.0.1", port: 9000 }}
@@ -38,7 +42,7 @@ function LocalEvidenceHarness() {
         onChangeSetup={() => {}}
         onOpenEvidence={() => {}}
         liveReadNavigationLocked={false}
-        liveReadSuppressed
+        liveReadSuppressed={isLocalEvidenceReadSuppressed(evidenceDrawerOpen, evidenceDrawerEntry)}
         asOf="20260731"
         onAsOfChange={() => {}}
         onTallyReadActivityChange={() => {}}
@@ -53,7 +57,12 @@ afterEach(() => {
   mocks.invoke.mockReset();
 });
 
-test("selecting a saved company in local evidence issues no live Tally invoke", async () => {
+test("opening local evidence then selecting a saved company issues no live Tally invoke", async () => {
+  mocks.invoke.mockResolvedValue({
+    is_inr: false,
+    mailing_name: "Synthetic saved company one",
+    currency_count: 1,
+  });
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -63,6 +72,10 @@ test("selecting a saved company in local evidence issues no live Tally invoke", 
   });
   await act(async () => {
     host.querySelector<HTMLButtonElement>("button")?.click();
+  });
+  mocks.invoke.mockClear();
+  await act(async () => {
+    host.querySelectorAll<HTMLButtonElement>("button")[1]?.click();
   });
 
   expect(mocks.invoke).not.toHaveBeenCalled();
