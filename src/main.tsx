@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import ReactDOM from "react-dom/client";
 import { Building2, Cable, Check, Cloud, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -1495,7 +1496,7 @@ function App() {
                   : "Run a read-only Core Accounting evidence read";
 
   return (
-    <div className="shell">
+    <div className="shell" inert={evidenceDrawerOpen || undefined}>
       <a className="skip-link" href="#main-content">Skip to active view</a>
       <aside className="sidebar">
         <div className="brand">
@@ -1986,7 +1987,8 @@ function App() {
         )}
 
         {evidenceDrawerOpen && (
-          <div className="evidence-drawer-backdrop">
+          createPortal(
+            <div className="evidence-drawer-backdrop">
             <aside
               className="evidence-drawer"
               role="dialog"
@@ -2139,7 +2141,9 @@ function App() {
           </ErrorBoundary>
               </div>
             </aside>
-          </div>
+            </div>,
+            document.body,
+          )
         )}
 
         {view === "dsc" && (

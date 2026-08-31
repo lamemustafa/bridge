@@ -190,3 +190,16 @@ test("ordinary view transitions focus main content without overriding drawer res
   assert.match(app, /<main className="content" id="main-content" ref=\{mainContentRef\}/);
   assert.equal((app.match(/mainContentRef\.current\?\.focus\(\)/g) ?? []).length, 1);
 });
+
+test("an open evidence drawer leaves the application inert without making the dialog inert", async () => {
+  const app = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+
+  assert.match(app, /import \{ createPortal \} from "react-dom";/);
+  assert.match(app, /<div className="shell" inert=\{evidenceDrawerOpen \|\| undefined\}>/);
+  assert.match(app, /evidenceDrawerOpen && \(\s*createPortal\(\s*<div className="evidence-drawer-backdrop">[\s\S]*?document\.body,/);
+  assert.doesNotMatch(
+    app,
+    /<aside\s+className="evidence-drawer"[\s\S]*?\binert=/,
+    "the portalized dialog itself must remain interactive",
+  );
+});
