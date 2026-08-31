@@ -63,6 +63,9 @@ the tool writes raw UTF-8 without a BOM to a temporary file in the destination
 directory and replaces the destination only after successful serialization.
 This keeps failure fail-closed without relying on shell redirection or move
 semantics.
+On Unix, replacement preserves an existing destination's mode; a new
+destination uses the normal `0666` mode subject to the process umask. Windows
+uses its normal ACL semantics rather than POSIX mode bits.
 
 The PowerShell commands are intended for Windows PowerShell 5.1 and PowerShell
 7+. They deliberately do not use `>`: Windows PowerShell 5.1 redirection was

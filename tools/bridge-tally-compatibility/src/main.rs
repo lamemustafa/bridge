@@ -153,8 +153,7 @@ fn optional_output_path(
 
 fn write_output_atomically(output_path: &Path, contents: &str) -> Result<(), &'static str> {
     let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut temporary =
-        tempfile::NamedTempFile::new_in(parent).map_err(|_| "output_directory_unavailable")?;
+    let mut temporary = create_temporary_output_file(output_path, parent)?;
     temporary
         .write_all(contents.as_bytes())
         .map_err(|_| "output_write_failed")?;
@@ -164,6 +163,34 @@ fn write_output_atomically(output_path: &Path, contents: &str) -> Result<(), &'s
         .map_err(|_| "output_sync_failed")?;
     let temporary_path = temporary.into_temp_path();
     replace_output_file(temporary_path.as_ref(), output_path)
+}
+
+#[cfg(unix)]
+fn create_temporary_output_file(
+    output_path: &Path,
+    parent: &Path,
+) -> Result<tempfile::NamedTempFile, &'static str> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let permissions = match fs::metadata(output_path) {
+        Ok(metadata) => metadata.permissions(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::Permissions::from_mode(0o666)
+        }
+        Err(_) => return Err("output_metadata_unavailable"),
+    };
+    tempfile::Builder::new()
+        .permissions(permissions)
+        .tempfile_in(parent)
+        .map_err(|_| "output_directory_unavailable")
+}
+
+#[cfg(not(unix))]
+fn create_temporary_output_file(
+    _output_path: &Path,
+    parent: &Path,
+) -> Result<tempfile::NamedTempFile, &'static str> {
+    tempfile::NamedTempFile::new_in(parent).map_err(|_| "output_directory_unavailable")
 }
 
 #[cfg(not(windows))]
@@ -357,6 +384,28 @@ mod tests {
         .unwrap();
 
         assert_eq!(fs::read(&output_path).unwrap(), br#"{"a":1}"#);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_file_preserves_existing_destination_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let output_path = directory.path().join("surface.json");
+        fs::write(&output_path, b"previous").unwrap();
+        fs::set_permissions(&output_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        emit_output(CommandOutput::output_file(
+            "{\"a\":1}".to_string(),
+            Some(output_path.clone()),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            fs::metadata(output_path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
     }
 
     #[test]

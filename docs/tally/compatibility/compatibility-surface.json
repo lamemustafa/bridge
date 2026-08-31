@@ -490,6 +490,10 @@
       "sha256": "4db20793f6dafbb99816533ed74fc9a9a98d18a12fe5227d87b35df2150bf5f4"
     },
     {
+      "path": "tools/Cargo.lock",
+      "sha256": "b68a1a0d5c735459b7280657ced1b7d426039266e361ec4d75b17b933bd1e785"
+    },
+    {
       "path": "tools/bridge-tally-compatibility/Cargo.toml",
       "sha256": "c5cb5d580e24e749925cee1798e2a2738d2c38a7df08ace8851cc0908f6b1f76"
     },
@@ -503,7 +507,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
-      "sha256": "fcb43942e3fd65ff69884196f190bef4b86ea4d7d1e24f0e3656d17bfd0d493c"
+      "sha256": "9e24dbb698a349280c7063481c29839eae1e5a51107fb3356050e9b6352e8f10"
     },
     {
       "path": "tools/bridge-tally-live-read/Cargo.toml",
@@ -534,5 +538,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "50ec33f3ecda2a1fcd526c133b80e6850869a90f86ad7a45f9067dafd3544f40"
+  "manifest_sha256": "1a44aeb1f7a5c38776475a84f2af03bcca829e596434e1f3c7adb786f7173a73"
 }
