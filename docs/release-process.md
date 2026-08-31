@@ -22,22 +22,48 @@ deliberate compatibility-surface reseal before the claim gate can pass. From
 `tools`, run these three commands in order, staging each JSON result before
 replacing its input file:
 
-```sh
+```bash
+set -euo pipefail
+
 surface_tmp="$(mktemp)"
 cargo run --locked -p bridge-tally-compatibility -- rehash-surface \
-  ../docs/tally/compatibility/compatibility-surface.json .. > "$surface_tmp"
-mv "$surface_tmp" ../docs/tally/compatibility/compatibility-surface.json
+  ../docs/tally/compatibility/compatibility-surface.json .. > "$surface_tmp" && \
+  mv "$surface_tmp" ../docs/tally/compatibility/compatibility-surface.json || exit $?
 
 surface_tmp="$(mktemp)"
 cargo run --locked -p bridge-tally-compatibility -- seal-surface \
-  ../docs/tally/compatibility/compatibility-surface.json > "$surface_tmp"
-mv "$surface_tmp" ../docs/tally/compatibility/compatibility-surface.json
+  ../docs/tally/compatibility/compatibility-surface.json > "$surface_tmp" && \
+  mv "$surface_tmp" ../docs/tally/compatibility/compatibility-surface.json || exit $?
 
 matrix_tmp="$(mktemp)"
 cargo run --locked -p bridge-tally-compatibility -- repoint-matrix \
   ../docs/tally/compatibility/compatibility-matrix.json \
-  ../docs/tally/compatibility/compatibility-surface.json > "$matrix_tmp"
-mv "$matrix_tmp" ../docs/tally/compatibility/compatibility-matrix.json
+  ../docs/tally/compatibility/compatibility-surface.json > "$matrix_tmp" && \
+  mv "$matrix_tmp" ../docs/tally/compatibility/compatibility-matrix.json || exit $?
+```
+
+```powershell
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$surfaceTemp = [System.IO.Path]::GetTempFileName()
+& cargo run --locked -p bridge-tally-compatibility -- rehash-surface `
+  ../docs/tally/compatibility/compatibility-surface.json .. > $surfaceTemp
+if ($LASTEXITCODE -ne 0) { throw 'rehash-surface failed; compatibility surface was not replaced.' }
+Move-Item -LiteralPath $surfaceTemp -Destination ../docs/tally/compatibility/compatibility-surface.json -Force
+
+$surfaceTemp = [System.IO.Path]::GetTempFileName()
+& cargo run --locked -p bridge-tally-compatibility -- seal-surface `
+  ../docs/tally/compatibility/compatibility-surface.json > $surfaceTemp
+if ($LASTEXITCODE -ne 0) { throw 'seal-surface failed; compatibility surface was not replaced.' }
+Move-Item -LiteralPath $surfaceTemp -Destination ../docs/tally/compatibility/compatibility-surface.json -Force
+
+$matrixTemp = [System.IO.Path]::GetTempFileName()
+& cargo run --locked -p bridge-tally-compatibility -- repoint-matrix `
+  ../docs/tally/compatibility/compatibility-matrix.json `
+  ../docs/tally/compatibility/compatibility-surface.json > $matrixTemp
+if ($LASTEXITCODE -ne 0) { throw 'repoint-matrix failed; compatibility matrix was not replaced.' }
+Move-Item -LiteralPath $matrixTemp -Destination ../docs/tally/compatibility/compatibility-matrix.json -Force
 ```
 
 `rehash-surface` reads the raw bytes of every existing pin and reports its
@@ -46,6 +72,9 @@ attests to the newly hashed manifest, and `repoint-matrix` updates the matrix
 to that sealed digest. Do not run step 2 without step 1: sealing a manifest
 whose file hashes are stale produces a valid-looking digest over stale source
 content. CI intentionally checks the resulting surface but never reseals it.
+Each command writes to a temporary file and replaces its input only after the
+command succeeds. The tools deliberately emit no document on failure; callers
+must preserve that fail-closed contract at the replacement boundary.
 
 Before cutting a candidate, regenerate and verify the Rust third-party notice
 with the pinned generator:
