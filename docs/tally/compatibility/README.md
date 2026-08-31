@@ -21,6 +21,16 @@ support cells. Every cell starts as `unknown`; absence of evidence is never
 success. `compatibility-surface.json` binds evidence freshness to the exact
 Bridge Tally request, parser, transport, runtime, lockfile, and gate sources.
 
+When a pinned source file changes, reseal the surface deliberately before
+running this gate: first run `rehash-surface <surface.json> <repository-root>`
+to refresh every existing raw-byte file digest, then `seal-surface <surface.json>`,
+then `repoint-matrix <matrix.json> <surface.json>`. The exact staged commands
+and why that order matters are in the
+[release process](../../release-process.md#compatibility-surface-reseal).
+`seal-surface` alone never reads the repository, so using it before rehashing
+would preserve stale file pins under a fresh manifest digest. CI validates this
+evidence boundary; it does not reseal changed sources.
+
 An evidenced `observed`, `supported`, or `unsupported` cell requires all of the
 following:
 
