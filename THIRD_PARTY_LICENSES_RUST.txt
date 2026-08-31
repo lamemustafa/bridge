@@ -1375,7 +1375,7 @@ utf8_iter 1.0.4
 License: Apache-2.0 OR MIT
 Source: https://github.com/hsivonen/utf8_iter
 
-uuid 1.24.1
+uuid 1.26.0
 License: Apache-2.0 OR MIT
 Source: https://github.com/uuid-rs/uuid
 
@@ -7358,7 +7358,7 @@ Apache License 2.0
 - thread_local 1.1.10
 - unicode-segmentation 1.13.3
 - url 2.5.8
-- uuid 1.24.1
+- uuid 1.26.0
 - version_check 0.9.5
 - wait-timeout 0.2.1
 - web_atoms 0.2.6
