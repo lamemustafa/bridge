@@ -18,8 +18,8 @@ const firstSavedCompany = {
   guid: "11111111-1111-1111-1111-111111111111",
   company_number: "100001",
   books_from_yyyymmdd: "20250401",
-  canonical_endpoint: "http://127.0.0.1:9000",
-};
+  canonical_origin: "http://127.0.0.1:9000",
+} satisfies NonNullable<React.ComponentProps<typeof OutstandingsScreen>["company"]>;
 
 const secondSavedCompany = {
   ...firstSavedCompany,
@@ -70,10 +70,11 @@ test("opening local evidence then selecting a saved company issues no live Tally
   await act(async () => {
     root.render(<LocalEvidenceHarness />);
   });
+  mocks.invoke.mockClear();
   await act(async () => {
     host.querySelector<HTMLButtonElement>("button")?.click();
   });
-  mocks.invoke.mockClear();
+  expect(mocks.invoke).not.toHaveBeenCalled();
   await act(async () => {
     host.querySelectorAll<HTMLButtonElement>("button")[1]?.click();
   });
