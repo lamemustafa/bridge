@@ -22,8 +22,8 @@ pub enum ClientGroupLabelMigrationDisposition {
         composite_keys: Vec<String>,
     },
     IncompleteHistory {
-        observed_composite_keys: Vec<String>,
-        suppressed_profile_count: usize,
+        identified_composite_keys: Vec<String>,
+        incomplete_profile_count: usize,
     },
     Conflict {
         conflicts: Vec<ClientGroupLabelMigrationConflict>,
@@ -60,6 +60,18 @@ pub struct ClientGroupLabelMigrationPlan {
     pub entries: Vec<ClientGroupLabelMigrationEntry>,
 }
 
+/// The complete identity state of one durable profile for this migration.
+/// `documented` and `observed` rows with a durable key identify a book;
+/// every other confidence/key combination is retained as incomplete history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClientGroupLabelMigrationProfileState {
+    Documented(Option<String>),
+    Observed(Option<String>),
+    Inferred(Option<String>),
+    Unknown(Option<String>),
+    InvalidConfidence(Option<String>),
+}
+
 /// Classifies existing raw-GUID labels against backend-issued, durable
 /// correlation keys. The planner receives its inputs from the caller and does
 /// no I/O, so classification cannot write, discard, or attach a label.
@@ -74,21 +86,34 @@ pub fn classify_client_group_label_migration(
                 .iter()
                 .filter(|profile| profile.guid.eq_ignore_ascii_case(source_key))
                 .collect::<Vec<_>>();
-            let composite_keys = matching_profiles
-                .iter()
-                .filter(|profile| profile.identity_confidence == "observed")
-                .filter_map(|profile| profile.correlation_key.clone())
-                .collect::<BTreeSet<_>>()
+            let mut composite_keys = BTreeSet::new();
+            let mut incomplete_profile_count = 0;
+            for state in matching_profiles
                 .into_iter()
-                .collect::<Vec<_>>();
-            let suppressed_profile_count = matching_profiles
-                .iter()
-                .filter(|profile| profile.identity_confidence != "observed")
-                .count();
-            let disposition = if suppressed_profile_count > 0 {
+                .map(client_group_label_migration_profile_state)
+            {
+                match state {
+                    ClientGroupLabelMigrationProfileState::Documented(Some(composite_key))
+                    | ClientGroupLabelMigrationProfileState::Observed(Some(composite_key)) => {
+                        composite_keys.insert(composite_key);
+                    }
+                    ClientGroupLabelMigrationProfileState::Documented(None)
+                    | ClientGroupLabelMigrationProfileState::Observed(None)
+                    | ClientGroupLabelMigrationProfileState::Inferred(Some(_))
+                    | ClientGroupLabelMigrationProfileState::Inferred(None)
+                    | ClientGroupLabelMigrationProfileState::Unknown(Some(_))
+                    | ClientGroupLabelMigrationProfileState::Unknown(None)
+                    | ClientGroupLabelMigrationProfileState::InvalidConfidence(Some(_))
+                    | ClientGroupLabelMigrationProfileState::InvalidConfidence(None) => {
+                        incomplete_profile_count += 1;
+                    }
+                }
+            }
+            let composite_keys = composite_keys.into_iter().collect::<Vec<_>>();
+            let disposition = if incomplete_profile_count > 0 {
                 ClientGroupLabelMigrationDisposition::IncompleteHistory {
-                    observed_composite_keys: composite_keys,
-                    suppressed_profile_count,
+                    identified_composite_keys: composite_keys,
+                    incomplete_profile_count,
                 }
             } else {
                 match composite_keys.as_slice() {
@@ -108,6 +133,19 @@ pub fn classify_client_group_label_migration(
         .collect::<Vec<_>>();
     apply_destination_conflicts(&mut entries, existing_labels);
     ClientGroupLabelMigrationPlan { entries }
+}
+
+fn client_group_label_migration_profile_state(
+    profile: &ClientGroupLabelMigrationProfile,
+) -> ClientGroupLabelMigrationProfileState {
+    let correlation_key = profile.correlation_key.clone();
+    match profile.identity_confidence.as_str() {
+        "documented" => ClientGroupLabelMigrationProfileState::Documented(correlation_key),
+        "observed" => ClientGroupLabelMigrationProfileState::Observed(correlation_key),
+        "inferred" => ClientGroupLabelMigrationProfileState::Inferred(correlation_key),
+        "unknown" => ClientGroupLabelMigrationProfileState::Unknown(correlation_key),
+        _ => ClientGroupLabelMigrationProfileState::InvalidConfidence(correlation_key),
+    }
 }
 
 fn apply_destination_conflicts(
@@ -224,8 +262,8 @@ mod tests {
         assert_eq!(
             plan.entries[0].disposition,
             ClientGroupLabelMigrationDisposition::IncompleteHistory {
-                observed_composite_keys: vec!["reappeared-book-key".to_string()],
-                suppressed_profile_count: 1,
+                identified_composite_keys: vec!["reappeared-book-key".to_string()],
+                incomplete_profile_count: 1,
             }
         );
     }
@@ -247,13 +285,65 @@ mod tests {
         assert_eq!(
             plan.entries[0].disposition,
             ClientGroupLabelMigrationDisposition::IncompleteHistory {
-                observed_composite_keys: vec![],
-                suppressed_profile_count: 2,
+                identified_composite_keys: vec![],
+                incomplete_profile_count: 2,
             }
         );
         assert_ne!(
             plan.entries[0].disposition,
             ClientGroupLabelMigrationDisposition::Unmatched
+        );
+    }
+
+    #[test]
+    fn observed_profile_without_a_key_prevents_resolution() {
+        let labels = BTreeMap::from([(
+            "synthetic-shared-guid".to_string(),
+            "Legacy practice".to_string(),
+        )]);
+        let plan = classify_client_group_label_migration(
+            &labels,
+            &[
+                persisted_profile("synthetic-shared-guid", Some("identified-book"), "observed"),
+                persisted_profile("synthetic-shared-guid", None, "observed"),
+            ],
+        );
+
+        assert_eq!(
+            plan.entries[0].disposition,
+            ClientGroupLabelMigrationDisposition::IncompleteHistory {
+                identified_composite_keys: vec!["identified-book".to_string()],
+                incomplete_profile_count: 1,
+            }
+        );
+        assert_ne!(
+            plan.entries[0].disposition,
+            ClientGroupLabelMigrationDisposition::Resolved {
+                composite_key: "identified-book".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn documented_profile_with_a_key_can_resolve_a_label() {
+        let labels = BTreeMap::from([(
+            "synthetic-documented-guid".to_string(),
+            "Documented practice".to_string(),
+        )]);
+        let plan = classify_client_group_label_migration(
+            &labels,
+            &[persisted_profile(
+                "synthetic-documented-guid",
+                Some("documented-book"),
+                "documented",
+            )],
+        );
+
+        assert_eq!(
+            plan.entries[0].disposition,
+            ClientGroupLabelMigrationDisposition::Resolved {
+                composite_key: "documented-book".to_string(),
+            }
         );
     }
 
