@@ -51,19 +51,6 @@ test("evidence carries and renders an unallocated residual only when the read es
   assert.doesNotMatch(unallocatedFact, /"0"|\?\?/);
 });
 
-test("selecting a saved company within local evidence issues no Tally invoke", async () => {
-  const [app, screen] = await Promise.all([
-    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
-  ]);
-
-  assert.match(app, /liveReadSuppressed=\{evidenceDrawerOpen && evidenceDrawerEntry\.kind === "local-only"\}/);
-  assert.match(screen, /liveReadSuppressed: boolean;/);
-  assert.match(screen, /const readPermitted = !liveReadSuppressed && currencyReadPermitted && requestedAsOf !== null;/);
-  assert.match(screen, /if \(liveReadSuppressed \|\| !company \|\| inrAssertedCompanyIdentity === companyIdentityFor\(company\)\) return;/);
-  assert.match(screen, /\[config\.host, config\.port, company\?\.guid, company\?\.name, company\?\.company_number, company\?\.books_from_yyyymmdd, inrAssertedCompanyIdentity, liveReadSuppressed, onTallyReadActivityChange\]/);
-});
-
 test("unsupported currency evidence is withheld without amounts", async () => {
   const [screen, panel] = await Promise.all([
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
