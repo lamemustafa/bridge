@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "582dba21656fcbcf3210c9668ba1d6d4cc7396ba342017d124a37608c7dcc365"
+      "sha256": "6b97e4c19a75687c08ef4e0ad8100c0f8f77333d04b5f33be00502dd806657ea"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
@@ -75,11 +75,11 @@
     },
     {
       "path": "package.json",
-      "sha256": "09090bfbb842477d4650f3eb91ece7ca0f8227e3986a5969faa72dadf4c67dd5"
+      "sha256": "561a69d2fb68d089424e2ded2ccb1bb048af08a8a326dd20a93d00e6e1bc013f"
     },
     {
       "path": "pnpm-lock.yaml",
-      "sha256": "607c3b130c9a1012635e4b687bc5d12e3ecffa802acc2057b408cffbb650ac61"
+      "sha256": "d3906d469105142e9942f65fb67cc93b3b5f5f2f8babf210892158af6960bc30"
     },
     {
       "path": "scripts/check-tally-live-read-boundary.mjs",
@@ -467,7 +467,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "1c83494b3ab8182d5625eebcadb7cbc2c82d3107ac35fe9ff582bc16f256e8c2"
+      "sha256": "e0b3ec2aaf101a798f570ae405032c2824154727ea10db240a0abd344b6a7fd2"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -546,5 +546,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "64f61063d756ff7a4ca47b10585f6be2c28e94d1dce2ed4c9e3f69bba4721379"
+  "manifest_sha256": "312e521118675485b733a61dbd58afece346c8730dcde146ca98bc5f2e92b6b5"
 }

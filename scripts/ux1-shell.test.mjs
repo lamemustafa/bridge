@@ -124,7 +124,7 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
   assert.match(app, /\{evidenceDrawerOpen && \(/);
   assert.match(app, /className="evidence-drawer"/);
   assert.match(app, /event\.key === "Escape"\) \{\s*closeEvidenceDrawer\(\);\s*return;/s);
-  assert.match(app, /visibleDrawerTabStops\(event\.currentTarget\)/);
+  assert.match(app, /trapDrawerTabKeydown\(event\)/);
   assert.match(app, /<OutstandingsEvidencePanel entry=\{evidenceDrawerEntry\} \/>/);
   assert.match(app, /Separate Core Accounting evidence/);
   assert.match(app, /\{selectedCompanyRecord\?\.mirror_company_id && \(/);
@@ -132,6 +132,7 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
   assert.match(panel, /Report-bound Outstandings read/);
   assert.match(panel, /No Outstandings read attached/);
   assert.match(focus, /querySelectorAll<HTMLElement>\("\*"\)/);
+  assert.match(focus, /visibleDrawerTabStops\(event\.currentTarget\)/);
   assert.match(focus, /element\.tabIndex >= 0/);
   assert.match(focus, /current\.tagName === "DETAILS"/);
   assert.match(focus, /window\.getComputedStyle\(current\)/);
