@@ -20,6 +20,7 @@ import {
 } from "./OutstandingsScreen";
 import { OutstandingsEvidencePanel } from "./OutstandingsEvidencePanel";
 import type { EvidenceDrawerEntry } from "./evidence-drawer-entry";
+import { isLocalEvidenceReadSuppressed } from "./evidence-read-boundary";
 import { AllClientsScreen } from "./AllClientsScreen";
 import {
   automaticOutstandingsAsOf,
@@ -1832,7 +1833,7 @@ function App() {
             onOpenEvidence={openEvidenceDrawer}
             onViewAllClients={() => setView("clients")}
             liveReadNavigationLocked={childTallyReadCount > 0}
-            liveReadSuppressed={evidenceDrawerOpen && evidenceDrawerEntry.kind === "local-only"}
+            liveReadSuppressed={isLocalEvidenceReadSuppressed(evidenceDrawerOpen, evidenceDrawerEntry)}
             openBookCount={completeCurrentProbeCompanies.length}
             asOf={outstandingsAsOfSelection.value}
             onAsOfChange={changeOutstandingsAsOf}

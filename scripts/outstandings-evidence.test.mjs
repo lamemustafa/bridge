@@ -51,19 +51,6 @@ test("evidence carries and renders an unallocated residual only when the read es
   assert.doesNotMatch(unallocatedFact, /"0"|\?\?/);
 });
 
-test("selecting a saved company within local evidence issues no Tally invoke", async () => {
-  const [app, screen] = await Promise.all([
-    readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
-  ]);
-
-  assert.match(app, /liveReadSuppressed=\{evidenceDrawerOpen && evidenceDrawerEntry\.kind === "local-only"\}/);
-  assert.match(screen, /liveReadSuppressed: boolean;/);
-  assert.match(screen, /const readPermitted = !liveReadSuppressed && currencyReadPermitted && requestedAsOf !== null;/);
-  assert.match(screen, /if \(liveReadSuppressed \|\| !company \|\| inrAssertedCompanyIdentity === companyIdentityFor\(company\)\) return;/);
-  assert.match(screen, /\[config\.host, config\.port, company\?\.guid, company\?\.name, company\?\.company_number, company\?\.books_from_yyyymmdd, inrAssertedCompanyIdentity, liveReadSuppressed, onTallyReadActivityChange\]/);
-});
-
 test("unsupported currency evidence is withheld without amounts", async () => {
   const [screen, panel] = await Promise.all([
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
@@ -83,6 +70,13 @@ test("unsupported currency evidence is withheld without amounts", async () => {
   assert.match(withheldEvidence, /state: "withheld"/);
   assert.doesNotMatch(withheldEvidence, /receivableTotal|payableTotal/);
   assert.match(panel, /evidence\.state === "complete" \? "Complete result" : evidence\.state === "partial" \? "Partial result" : evidence\.title/);
+});
+
+test("ledger master export control names the group-subtotal trace it produces", async () => {
+  const screen = await readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8");
+
+  assert.match(screen, /Ledger master \+ group subtotal trace/);
+  assert.doesNotMatch(screen, /Ledger master \+ Schedule III/);
 });
 
 test("evidence identity distinguishes same-named books by the pinned composite key", async () => {
@@ -133,4 +127,17 @@ test("local-only and failed report reads have distinct no-evidence drawer entrie
   assert.match(panel, /Outstandings read failed/);
   assert.match(panel, /Bridge could not complete the report-bound read: \{entry\.message\}/);
   assert.doesNotMatch(panel.slice(panel.indexOf('entry.kind === "report-read-failed"'), panel.indexOf("const { evidence } = entry")), /local evidence review/);
+});
+
+test("a pending refresh cannot bind the prior report to the evidence drawer", async () => {
+  const screen = await readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8");
+  const reportEvidence = screen.slice(
+    screen.indexOf("const reportEvidence"),
+    screen.indexOf("const load = React.useCallback"),
+  );
+
+  assert.match(reportEvidence, /const reportEvidence: OutstandingsEvidence \| null = loading \|\| !result \|\| !currentCompanyIdentity/);
+  assert.match(screen, /className="outstandings-evidence-link" type="button" onClick=\{\(event\) => onOpenEvidence\(reportEvidenceDrawerEntry\(reportEvidence, error\), event\.currentTarget\)\} disabled=\{loading\}/);
+  assert.match(screen, /loading \? "Evidence updates after this read" : "Review evidence and limits"/);
+  assert.match(screen, /onOpenEvidence\(reportEvidenceDrawerEntry\(reportEvidence, error\), event\.currentTarget\)/);
 });

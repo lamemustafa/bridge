@@ -35,7 +35,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "3ca472e462b7f1174e443436d36369c41692765726d6dddaa2c6d94b6910f7cf"
+      "sha256": "3dde90b534000069b0360ab28f604be91f871036ed5b7ce8157f6175e992a0ec"
     },
     {
       "path": "docs/tally/compatibility/README.md",
@@ -75,7 +75,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "45d885dd31b069ab1a618b00ebef8cf8aff1eaa9cee076eacfe27c5c6effce38"
+      "sha256": "561a69d2fb68d089424e2ded2ccb1bb048af08a8a326dd20a93d00e6e1bc013f"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -267,7 +267,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "4cc073fb2b77053eefe7286822e8a2a5d59e3019ada8789bfdc18e16d78f78c3"
+      "sha256": "4d946d9dfd547d15f883bfe5bd47038fba9cdd9bed58f88c19b2fa8fd0135a31"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -395,7 +395,7 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "908b7b30d1f3e957c0070a803da361462343d34ed6fd2806ea00317ae2e6bb6b"
+      "sha256": "9446d992ccd56397829332ded590bc79b5b9bf591c92c2f821b7d9e3d4bf1ce5"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
@@ -451,7 +451,7 @@
     },
     {
       "path": "src/OutstandingsScreen.tsx",
-      "sha256": "ff6f7f34c8901c093955a6c5aa05f886f14245dd3c2251373ce4d7c3bf89b813"
+      "sha256": "47d1671771720f1ac4dbd0b94415dae6eb3b4c1fe884244d3e1628e36aea809c"
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
@@ -462,8 +462,12 @@
       "sha256": "1f0a1cec44aa5aee1518fb58f8c9a1247b3bccbe8733004401507e54008f7fa4"
     },
     {
+      "path": "src/evidence-read-boundary.ts",
+      "sha256": "7594b47186dcc855bceb6d0056a0f8a59c77e684ff5577343ddf95f2b50803e7"
+    },
+    {
       "path": "src/main.tsx",
-      "sha256": "60f33e1162a0cea8ddb5611f86e470863695db30c6352bbefebed8ff7133c731"
+      "sha256": "e0b3ec2aaf101a798f570ae405032c2824154727ea10db240a0abd344b6a7fd2"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -542,5 +546,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "4448d1766bb32341f15f28cac544ec51e1d7e837e5144621c5dff944f42da63d"
+  "manifest_sha256": "312e521118675485b733a61dbd58afece346c8730dcde146ca98bc5f2e92b6b5"
 }

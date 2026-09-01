@@ -19,7 +19,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "test": "node --experimental-strip-types --test scripts/*.test.mjs && vitest run scripts/evidence-drawer-focus.test.tsx && playwright test",
+    "test": "node --experimental-strip-types --test scripts/*.test.mjs && vitest run scripts/evidence-drawer-focus.test.tsx scripts/local-evidence-no-read.test.tsx && playwright test",
     "build": "tsc && vite build",
     "check": "pnpm run build && pnpm run cargo:check",
     "tauri": "tauri",

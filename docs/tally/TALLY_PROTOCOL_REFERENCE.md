@@ -464,6 +464,28 @@ does not meet this repository's public-fixture privacy boundary. The hash, byte 
 field-presence observation above preserve the reproducible evidence boundary without copying
 client-like data into source control.
 
+### 8.2 `List of Groups` can return a request-computed company GUID — **VERIFIED 2026-08-31; single captured profile only**
+
+A read-only native `List of Groups` collection request against the synthetic
+`Aarav Trading Company Demo` on licensed TallyPrime 7.1 requested
+`NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME` and added:
+
+```xml
+<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>
+```
+
+The healthy, 27,140-byte `STATUS=1` response had 28 Group rows. All 28 carried
+the selected company's computed GUID; the retained, privacy-screened fixture
+hash is `bb2c20f7d9e11634f9cf1f6429f655dc31d50b60fca72c71a6ce981c47db099c`.
+The request and capture were bracketed by healthy `/status` checks. The raw
+fixture contains no GSTIN, PAN, contact, address, email, phone, website, or
+PIN-code fields and intentionally retains Tally's invalid numeric references.
+
+This establishes only the exact request, licensed 7.1 instance, and synthetic
+company profile described here. It does **not** establish that other releases,
+modes, or Group shapes emit the field; Bridge must continue to fail closed when
+the response lacks or mismatches the selected company GUID.
+
 ---
 
 ## 9. Writes (import)
@@ -890,6 +912,22 @@ with `MAILINGNAME` `Indian Rupees`.
 The Company Creation formal name remains a property on a different master. That boundary explains
 why the 19 earlier probes, sent as `Company` children, all failed; it does not justify treating
 the fields as form-local or relying on a Company object export to recover them.
+
+#### 9.10a.1 Multiple Currency-master rows do not identify the base currency
+
+**VERIFIED 2026-08-23, with a deliberately narrow conclusion.** The production Currency
+collection request returned two Currency-master rows for the synthetic `BRIDGE CORPUS FOREX`
+book. The captured UTF-16LE response is committed as
+`currency_multi_live.utf16le.xml` (SHA-256
+`b64c0d5feb528fa02f81de576de5c766a95e1da1000975b1e2932868ae34118b`); its provenance records
+the production request, a healthy gateway before and after, and the structural count.
+
+This collection returns Currency masters, not a link from one row to the company's base-currency
+setting. With more than one row, the read therefore cannot establish which currency may label
+monetary figures. Bridge must fail closed rather than infer INR from any individual row. This does
+**not** say that the Tally company is misconfigured or that it has more than one base currency;
+only that this read cannot establish one. The parser's `currency_count == 1` admission rule and
+the party/ledger-master recovery text rely on this boundary.
 
 ### 9.10b `ORIGINALNAME` at `COMPANY` level hangs the gateway — **TRAP**
 
