@@ -55,6 +55,25 @@ test("a disconnected drawer opener falls back to the main-content focus owner", 
   expect(app).toMatch(/else if \(evidenceDrawerRestorePending\) \{\s*focusMainContent = !evidenceDrawerFocusLifecycle\.restoreOpener\(\);/s);
 });
 
+test("closing the drawer while navigating focuses destination main content after the opener unmounts", async () => {
+  const app = await appSource();
+  const lifecycle = createDrawerFocusLifecycle();
+  const outgoingOpener = connectedButton("outgoing Outstandings link");
+  const destinationMain = document.createElement("main");
+  destinationMain.id = "main-content";
+  destinationMain.tabIndex = -1;
+
+  lifecycle.captureOpener(outgoingOpener);
+  outgoingOpener.remove();
+  document.body.append(destinationMain);
+
+  if (!lifecycle.restoreOpener()) destinationMain.focus();
+
+  expect(document.activeElement).toBe(destinationMain);
+  expect(app).toMatch(/closeEvidenceDrawer\(\);\s*setView\("companies"\)/);
+  expect(app).toMatch(/else if \(evidenceDrawerRestorePending\) \{\s*focusMainContent = !evidenceDrawerFocusLifecycle\.restoreOpener\(\);/s);
+});
+
 test("drawer replacement focuses a connected native control and keeps restoration authoritative", async () => {
   const app = await appSource();
   const drawerClose = connectedButton("drawer close");
@@ -64,6 +83,7 @@ test("drawer replacement focuses a connected native control and keeps restoratio
   expect(ensureDrawerFocus(false, drawerClose)).toBe(false);
   expect(app).toMatch(/if \(evidenceDrawerOpen\) setEvidenceDrawerFocusEpoch\(\(current\) => current \+ 1\);/);
   expect(app).toMatch(/\[view, evidenceDrawerFocusEpoch, evidenceDrawerOpen, evidenceDrawerRestorePending, evidenceDrawerFocusLifecycle\]/);
+  expect(app).toMatch(/onKeyDown=\{\(event\) => \{\s*if \(event\.key === "Escape"\)[\s\S]*?trapDrawerTabKeydown\(event\);\s*\}\}/);
   expect((app.match(/mainContentRef\.current\?\.focus\(\)/g) ?? []).length).toBe(1);
 });
 

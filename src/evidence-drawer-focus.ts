@@ -8,7 +8,11 @@ type TabStopCandidate = {
 
 function isEditingHost(element: HTMLElement) {
   const contentEditable = element.getAttribute("contenteditable");
-  return contentEditable !== null && contentEditable.toLowerCase() !== "false";
+  if (contentEditable === null || contentEditable.toLowerCase() === "false") return false;
+
+  const nearestEditableAncestor = element.parentElement?.closest<HTMLElement>("[contenteditable]");
+  return nearestEditableAncestor?.getAttribute("contenteditable")?.toLowerCase() === "false"
+    || nearestEditableAncestor === null;
 }
 
 function isVisibleInDrawer(element: HTMLElement, drawer: HTMLElement) {
@@ -49,7 +53,7 @@ function inBrowserTabOrder(candidates: TabStopCandidate[]) {
   const positive = candidates
     .filter(({ element }) => element.tabIndex > 0)
     .sort((left, right) => left.element.tabIndex - right.element.tabIndex || left.index - right.index);
-  const sequential = candidates.filter(({ element, isEditingHost }) => element.tabIndex === 0 || isEditingHost);
+  const sequential = candidates.filter(({ element, isEditingHost }) => element.tabIndex === 0 || (isEditingHost && element.tabIndex < 0));
   return [...positive, ...sequential].map(({ element }) => element);
 }
 
@@ -86,6 +90,24 @@ export function drawerFocusBoundaryTarget(
 ) {
   const targetIndex = drawerFocusBoundaryIndex(candidates.indexOf(activeElement as HTMLElement), candidates.length, backwards);
   return targetIndex === null ? null : candidates[targetIndex];
+}
+
+type DrawerTabKeyEvent = Pick<KeyboardEvent, "key" | "shiftKey" | "preventDefault"> & {
+  currentTarget: HTMLElement;
+};
+
+export function trapDrawerTabKeydown(event: DrawerTabKeyEvent) {
+  if (event.key !== "Tab") return;
+  const focusable = visibleDrawerTabStops(event.currentTarget);
+  if (focusable.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const target = drawerFocusBoundaryTarget(document.activeElement, focusable, event.shiftKey);
+  if (target) {
+    event.preventDefault();
+    target.focus();
+  }
 }
 
 export function shouldFocusMainContentAfterViewTransition({

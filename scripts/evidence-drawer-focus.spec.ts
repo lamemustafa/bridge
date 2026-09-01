@@ -8,6 +8,7 @@ declare global {
         candidates: HTMLElement[],
         backwards: boolean,
       ) => HTMLElement | null;
+      trapDrawerTabKeydown: (event: KeyboardEvent) => void;
       visibleDrawerTabStops: (drawer: HTMLElement) => HTMLElement[];
     };
   }
@@ -36,11 +37,15 @@ test("the evidence drawer follows Chromium's native Tab order for collapsed and 
   await page.goto("/scripts/evidence-drawer-focus.fixture.html");
   await expect.poll(() => page.locator("#drawer").evaluate((drawer) => Boolean(window.evidenceDrawerFocus))).toBe(true);
 
+  await page.locator('[data-focus-name="positive tabindex editable"]').focus();
+  await pressUntilNativeFocus(page, "Tab", "positive tabindex editable", "close");
   await page.locator('[data-focus-name="close"]').focus();
   await pressUntilNativeFocus(page, "Tab", "close", "advanced summary");
   await pressUntilNativeFocus(page, "Tab", "advanced summary", "audio controls");
   await pressUntilNativeFocus(page, "Tab", "audio controls", "video controls");
   await pressUntilNativeFocus(page, "Tab", "video controls", "editable");
+  await pressUntilNativeFocus(page, "Tab", "editable", "after drawer");
+  await pressUntilNativeFocus(page, "Shift+Tab", "after drawer", "editable");
   await pressUntilNativeFocus(page, "Shift+Tab", "editable", "video controls");
   await pressUntilNativeFocus(page, "Shift+Tab", "video controls", "audio controls");
   await pressUntilNativeFocus(page, "Shift+Tab", "audio controls", "advanced summary");
@@ -49,7 +54,7 @@ test("the evidence drawer follows Chromium's native Tab order for collapsed and 
     window.evidenceDrawerFocus.visibleDrawerTabStops(drawer as HTMLElement)
       .map((element) => element.dataset.focusName)
   ));
-  expect(collapsed).toEqual(["close", "advanced summary", "audio controls", "video controls", "editable"]);
+  expect(collapsed).toEqual(["positive tabindex editable", "close", "advanced summary", "audio controls", "video controls", "editable"]);
 
   await page.locator("summary").click();
   await pressUntilNativeFocus(page, "Tab", "advanced summary", "advanced button");
@@ -61,7 +66,7 @@ test("the evidence drawer follows Chromium's native Tab order for collapsed and 
     window.evidenceDrawerFocus.visibleDrawerTabStops(drawer as HTMLElement)
       .map((element) => element.dataset.focusName)
   ));
-  expect(expanded).toEqual(["close", "advanced summary", "advanced button", "audio controls", "video controls", "editable"]);
+  expect(expanded).toEqual(["positive tabindex editable", "close", "advanced summary", "advanced button", "audio controls", "video controls", "editable"]);
 
   const boundary = await page.locator("#drawer").evaluate((drawer) => {
     const candidates = window.evidenceDrawerFocus.visibleDrawerTabStops(drawer as HTMLElement);
@@ -70,19 +75,12 @@ test("the evidence drawer follows Chromium's native Tab order for collapsed and 
       backward: window.evidenceDrawerFocus.drawerFocusBoundaryTarget(candidates[0] ?? null, candidates, true)?.dataset.focusName,
     };
   });
-  expect(boundary).toEqual({ forward: "close", backward: "editable" });
+  expect(boundary).toEqual({ forward: "positive tabindex editable", backward: "editable" });
 
   await page.locator("#drawer").evaluate((drawer) => {
-    drawer.addEventListener("keydown", (event) => {
-      if (event.key !== "Tab") return;
-      const candidates = window.evidenceDrawerFocus.visibleDrawerTabStops(drawer as HTMLElement);
-      const target = window.evidenceDrawerFocus.drawerFocusBoundaryTarget(document.activeElement, candidates, event.shiftKey);
-      if (!target) return;
-      event.preventDefault();
-      target.focus();
-    });
+    drawer.addEventListener("keydown", window.evidenceDrawerFocus.trapDrawerTabKeydown);
   });
   await page.locator('[data-focus-name="editable"]').focus();
   await page.keyboard.press("Tab");
-  await expect(page.locator('[data-focus-name="close"]')).toBeFocused();
+  await expect(page.locator('[data-focus-name="positive tabindex editable"]')).toBeFocused();
 });

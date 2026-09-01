@@ -34,7 +34,7 @@ import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
-import { createDrawerFocusLifecycle, drawerFocusBoundaryTarget, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, visibleDrawerTabStops } from "./evidence-drawer-focus";
+import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import "./styles.css";
 
 type TallyConfig = {
@@ -1998,17 +1998,7 @@ function App() {
                   closeEvidenceDrawer();
                   return;
                 }
-                if (event.key !== "Tab") return;
-                const focusable = visibleDrawerTabStops(event.currentTarget);
-                if (focusable.length === 0) {
-                  event.preventDefault();
-                  return;
-                }
-                const target = drawerFocusBoundaryTarget(document.activeElement, focusable, event.shiftKey);
-                if (target) {
-                  event.preventDefault();
-                  target.focus();
-                }
+                trapDrawerTabKeydown(event);
               }}
             >
               <header className="evidence-drawer-header">
