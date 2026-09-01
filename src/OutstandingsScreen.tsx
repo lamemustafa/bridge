@@ -302,7 +302,7 @@ export function OutstandingsScreen({
     : null;
   const outstandingsUnavailable = result?.state === "partial" && isNonRetryableOutstandingsBoundary(result.reason_code);
   const tallyReadAttempted = result?.state === "partial" && partialState?.tallyReadAttempted;
-  const reportEvidence: OutstandingsEvidence | null = !result || !currentCompanyIdentity
+  const reportEvidence: OutstandingsEvidence | null = loading || !result || !currentCompanyIdentity
     ? null
     : inrCompleteResult
       ? {
@@ -734,7 +734,9 @@ export function OutstandingsScreen({
 
       <p className="outstandings-evidence-caveat" role="note">
         These figures are tied to this read, not a complete-books guarantee or an atomic Tally snapshot.
-        <button className="outstandings-evidence-link" type="button" onClick={(event) => onOpenEvidence(reportEvidenceDrawerEntry(reportEvidence, error), event.currentTarget)}>Review evidence and limits</button>
+        <button className="outstandings-evidence-link" type="button" onClick={(event) => onOpenEvidence(reportEvidenceDrawerEntry(reportEvidence, error), event.currentTarget)} disabled={loading}>
+          {loading ? "Evidence updates after this read" : "Review evidence and limits"}
+        </button>
       </p>
       {workingPaperUnavailable && (
         <div className="outstandings-state" role="status">
