@@ -19,7 +19,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "test": "node --experimental-strip-types --test scripts/*.test.mjs",
+    "test": "node --experimental-strip-types --test scripts/*.test.mjs && playwright test",
     "build": "tsc && vite build",
     "check": "pnpm run build && pnpm run cargo:check",
     "tauri": "tauri",
@@ -47,6 +47,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2.11.4",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
