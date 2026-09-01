@@ -78,7 +78,10 @@ pub fn load_sort_preference(directory: &Path) -> Option<ClientSortPreference> {
     (file.version == SORT_SCHEMA_VERSION).then_some(file.sort)
 }
 
-fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsError> {
+/// Strictly loads labels for a workflow which must distinguish absent labels
+/// from labels that could not be read safely. The display path intentionally
+/// continues to use [`load`]'s best-effort behavior.
+pub fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsError> {
     let contents = match std::fs::read_to_string(directory.join(FILE_NAME)) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -338,6 +341,10 @@ mod tests {
             "display remains available"
         );
         assert!(matches!(
+            try_load(directory.path()),
+            Err(ClientGroupLabelsError::CorruptFile(_))
+        ));
+        assert!(matches!(
             save_label(directory.path(), "new-synthetic-guid", "New practice"),
             Err(ClientGroupLabelsError::CorruptFile(_))
         ));
@@ -359,6 +366,13 @@ mod tests {
             "display remains available"
         );
         assert!(matches!(
+            try_load(directory.path()),
+            Err(ClientGroupLabelsError::UnsupportedVersion {
+                found: 2,
+                supported: SCHEMA_VERSION
+            })
+        ));
+        assert!(matches!(
             save_label(directory.path(), "new-synthetic-guid", "New practice"),
             Err(ClientGroupLabelsError::UnsupportedVersion {
                 found: 2,
@@ -378,6 +392,10 @@ mod tests {
         std::fs::write(&empty_path, b" \n").expect("write empty label file");
         assert!(load(empty_directory.path()).is_empty());
         assert!(matches!(
+            try_load(empty_directory.path()),
+            Err(ClientGroupLabelsError::EmptyFile)
+        ));
+        assert!(matches!(
             save_label(empty_directory.path(), "new-synthetic-guid", "New practice"),
             Err(ClientGroupLabelsError::EmptyFile)
         ));
@@ -387,6 +405,10 @@ mod tests {
         let unreadable_path = unreadable_directory.path().join(FILE_NAME);
         std::fs::create_dir(&unreadable_path).expect("create unreadable label path");
         assert!(load(unreadable_directory.path()).is_empty());
+        assert!(matches!(
+            try_load(unreadable_directory.path()),
+            Err(ClientGroupLabelsError::Read(_))
+        ));
         assert!(matches!(
             save_label(
                 unreadable_directory.path(),
