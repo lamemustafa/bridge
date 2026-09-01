@@ -10,9 +10,9 @@ relative to the clone, not to a developer-specific directory.
 
 ## Supported development hosts
 
-Bridge is intended to build and run on Windows and macOS. Run platform checks
-on a native host for each operating system; a successful build on one operating
-system does not verify the other.
+Bridge is intended to build and run on Windows and macOS 12.4 or later. Run
+platform checks on a native host for each operating system; a successful build
+on one operating system does not verify the other.
 
 Shared prerequisites:
 
@@ -31,7 +31,7 @@ executable. Install LLVM as well; if `libclang.dll` is not discoverable, set
 macOS, install Xcode Command Line Tools. DSC workflows
 also require a vendor PKCS#11 library compatible with the host operating
 system; never commit a private key, PIN, certificate dump, or locally installed
-vendor library.
+vendor library. Bridge's macOS bundles require macOS 12.4 or later.
 
 ## Quick start
 
@@ -40,14 +40,18 @@ POSIX-compatible shell:
 
 ```text
 corepack pnpm install --frozen-lockfile
+corepack pnpm exec playwright install chromium
+corepack pnpm test
 corepack pnpm run build
 corepack pnpm run cargo:check
 corepack pnpm run tauri:dev
 ```
 
-`tauri:dev` starts the Vite development server and desktop application. It does
-not require a fixed checkout location. The first Rust build can take several
-minutes.
+`pnpm test` includes the Chromium evidence-drawer focus suite; installing the
+lock-pinned browser after dependencies is therefore required once for each
+developer environment. `tauri:dev` starts the Vite development server and
+desktop application. It does not require a fixed checkout location. The first
+Rust build can take several minutes.
 
 For a release build, run `corepack pnpm run tauri:build` on each target host.
 CI-produced bundles are unsigned smoke artifacts only. Do not redistribute a

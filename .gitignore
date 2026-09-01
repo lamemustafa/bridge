@@ -21,6 +21,8 @@ Desktop.ini
 # Test and coverage output.
 coverage/
 .nyc_output/
+playwright-report/
+test-results/
 
 # Python bytecode from operator scripts
 __pycache__/

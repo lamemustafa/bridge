@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <body>
+    <aside id="drawer" aria-label="Evidence">
+      <button data-focus-name="close">Close</button>
+      <div contenteditable tabindex="1" data-focus-name="positive tabindex editable">Positive editable evidence</div>
+      <details>
+        <summary data-focus-name="advanced summary">Advanced</summary>
+        <button data-focus-name="advanced button">Advanced button</button>
+      </details>
+      <audio controls data-focus-name="audio controls"></audio>
+      <video controls data-focus-name="video controls"></video>
+      <div contenteditable data-focus-name="editable">Editable <span contenteditable data-focus-name="editable child">evidence</span></div>
+      <div contenteditable tabindex="-1" data-focus-name="negative tabindex editable">Excluded editable evidence</div>
+      <div hidden><button data-focus-name="hidden button">Hidden</button></div>
+      <div inert><button data-focus-name="inert button">Inert</button></div>
+      <div style="display: none"><button data-focus-name="display none button">Display none</button></div>
+      <div style="visibility: hidden"><button data-focus-name="visibility hidden button">Visibility hidden</button></div>
+    </aside>
+    <button data-focus-name="after drawer">After drawer</button>
+    <script type="module">
+      import * as focus from "../src/evidence-drawer-focus.ts";
+      window.evidenceDrawerFocus = focus;
+    </script>
+  </body>
+</html>

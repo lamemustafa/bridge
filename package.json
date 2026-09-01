@@ -19,7 +19,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "test": "node --experimental-strip-types --test scripts/*.test.mjs && vitest run scripts/local-evidence-no-read.test.tsx && playwright test",
+    "test": "node --experimental-strip-types --test scripts/*.test.mjs && vitest run scripts/evidence-drawer-focus.test.tsx scripts/local-evidence-no-read.test.tsx && playwright test",
     "build": "tsc && vite build",
     "check": "pnpm run build && pnpm run cargo:check",
     "tauri": "tauri",
@@ -52,7 +52,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
-    "jsdom": "^28.0.0",
+    "jsdom": "^28.1.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"
