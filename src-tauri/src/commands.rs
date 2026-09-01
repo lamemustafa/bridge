@@ -3000,6 +3000,33 @@ mod tests {
     }
 
     #[test]
+    fn upgraded_install_with_only_suppressed_history_requires_review() {
+        let labels = BTreeMap::from([(
+            "synthetic-shared-guid".to_string(),
+            "Legacy practice".to_string(),
+        )]);
+        let plan = classify_client_group_label_migration(
+            &labels,
+            &[
+                persisted_profile("synthetic-shared-guid", None, "unknown"),
+                persisted_profile("synthetic-shared-guid", None, "unknown"),
+            ],
+        );
+
+        assert_eq!(
+            plan.entries[0].disposition,
+            ClientGroupLabelMigrationDisposition::IncompleteHistory {
+                observed_composite_keys: vec![],
+                suppressed_profile_count: 2,
+            }
+        );
+        assert_ne!(
+            plan.entries[0].disposition,
+            ClientGroupLabelMigrationDisposition::Unmatched
+        );
+    }
+
+    #[test]
     fn raw_guid_with_multiple_composite_tuples_is_ambiguous() {
         let labels = BTreeMap::from([("synthetic-guid".to_string(), "Several books".to_string())]);
         let plan = classify_client_group_label_migration(
