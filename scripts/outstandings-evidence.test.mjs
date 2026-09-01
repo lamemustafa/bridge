@@ -85,6 +85,13 @@ test("unsupported currency evidence is withheld without amounts", async () => {
   assert.match(panel, /evidence\.state === "complete" \? "Complete result" : evidence\.state === "partial" \? "Partial result" : evidence\.title/);
 });
 
+test("ledger master export control names the group-subtotal trace it produces", async () => {
+  const screen = await readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8");
+
+  assert.match(screen, /Ledger master \+ group subtotal trace/);
+  assert.doesNotMatch(screen, /Ledger master \+ Schedule III/);
+});
+
 test("evidence identity distinguishes same-named books by the pinned composite key", async () => {
   const panel = await readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8");
   const shared = {
