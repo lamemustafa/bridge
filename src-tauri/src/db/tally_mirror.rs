@@ -5,7 +5,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{sqlite::SqliteRow, Row, Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
 
 use crate::sync::reconciliation::CommitBatchInput;
@@ -974,6 +974,33 @@ impl TallyMirrorRepository {
         self.pool.clone()
     }
 
+    /// Returns the complete durable history of observed, composite company
+    /// identities for the explicitly requested client-label migration plan.
+    /// This intentionally has no UI pagination limit: omitting an older split
+    /// book could turn an ambiguous raw GUID into an unsafe auto-resolution.
+    pub async fn persisted_company_profiles_for_client_group_label_migration(
+        &self,
+    ) -> Result<Vec<PersistedCompanyProfile>, MirrorError> {
+        let rows = sqlx::query(
+            "SELECT c.id, c.display_name, c.company_guid, c.identity_confidence, \
+             c.company_number, c.books_from_yyyymmdd, c.last_observed_at_unix_ms, e.canonical_origin \
+             FROM tally_companies AS c \
+             JOIN tally_endpoints AS e ON e.id = c.endpoint_id \
+             WHERE c.identity_confidence = 'observed' \
+               AND c.company_guid IS NOT NULL AND TRIM(c.company_guid) <> '' \
+               AND c.company_number IS NOT NULL AND TRIM(c.company_number) <> '' \
+               AND c.books_from_yyyymmdd IS NOT NULL AND TRIM(c.books_from_yyyymmdd) <> '' \
+             ORDER BY c.last_observed_at_unix_ms DESC, c.id ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let profiles = rows
+            .into_iter()
+            .map(persisted_company_profile_from_row)
+            .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        Ok(profiles)
+    }
+
     pub async fn persisted_company_profiles(
         &self,
     ) -> Result<PersistedCompanyProfilePage, MirrorError> {
@@ -1005,31 +1032,7 @@ impl TallyMirrorRepository {
         transaction.commit().await?;
         let profiles = rows
             .into_iter()
-            .map(|row| {
-                let canonical_endpoint: String = row.try_get("canonical_origin")?;
-                let company_guid: String = row.try_get("company_guid")?;
-                let company_number: String = row.try_get("company_number")?;
-                let books_from_yyyymmdd: String = row.try_get("books_from_yyyymmdd")?;
-                let name: String = row.try_get("display_name")?;
-                Ok(PersistedCompanyProfile {
-                    name: name.clone(),
-                    guid: company_guid.clone(),
-                    company_number: company_number.clone(),
-                    books_from_yyyymmdd: books_from_yyyymmdd.clone(),
-                    guid_observed: true,
-                    mirror_company_id: row.try_get("id")?,
-                    correlation_key: company_profile_correlation_key(
-                        &canonical_endpoint,
-                        &company_guid,
-                        &company_number,
-                        &name,
-                        &books_from_yyyymmdd,
-                    ),
-                    identity_confidence: row.try_get("identity_confidence")?,
-                    canonical_endpoint,
-                    last_observed_at_unix_ms: row.try_get("last_observed_at_unix_ms")?,
-                })
-            })
+            .map(persisted_company_profile_from_row)
             .collect::<Result<Vec<_>, sqlx::Error>>()?;
         let total_profiles = u64::try_from(total_profiles)
             .map_err(|_| MirrorError::InvalidInput("persisted_company_profile_count"))?;
@@ -4509,6 +4512,34 @@ impl TallyMirrorRepository {
         }
         Ok(result)
     }
+}
+
+fn persisted_company_profile_from_row(
+    row: SqliteRow,
+) -> Result<PersistedCompanyProfile, sqlx::Error> {
+    let canonical_endpoint: String = row.try_get("canonical_origin")?;
+    let company_guid: String = row.try_get("company_guid")?;
+    let company_number: String = row.try_get("company_number")?;
+    let books_from_yyyymmdd: String = row.try_get("books_from_yyyymmdd")?;
+    let name: String = row.try_get("display_name")?;
+    Ok(PersistedCompanyProfile {
+        name: name.clone(),
+        guid: company_guid.clone(),
+        company_number: company_number.clone(),
+        books_from_yyyymmdd: books_from_yyyymmdd.clone(),
+        guid_observed: true,
+        mirror_company_id: row.try_get("id")?,
+        correlation_key: company_profile_correlation_key(
+            &canonical_endpoint,
+            &company_guid,
+            &company_number,
+            &name,
+            &books_from_yyyymmdd,
+        ),
+        identity_confidence: row.try_get("identity_confidence")?,
+        canonical_endpoint,
+        last_observed_at_unix_ms: row.try_get("last_observed_at_unix_ms")?,
+    })
 }
 
 /// Returns an opaque, stable join key for the same observed company at the same endpoint.
@@ -8598,6 +8629,46 @@ mod tests {
         );
         assert_eq!(profiles[0].identity_confidence, "observed");
         assert_eq!(profiles[0].canonical_endpoint, "http://127.0.0.1:9000");
+    }
+
+    #[tokio::test]
+    async fn client_label_migration_profiles_include_history_beyond_the_ui_page_limit() {
+        let (repository, snapshot, _) = seeded_repository().await;
+        for index in 0..=500 {
+            sqlx::query(
+                "INSERT INTO tally_companies(\
+                   id, endpoint_id, display_name, company_guid, remote_id, master_id, \
+                   fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
+                   last_observed_at_unix_ms, company_number, books_from_yyyymmdd\
+                 ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, 'observed', ?5, ?5, ?6, ?7)",
+            )
+            .bind(format!("synthetic-migration-company-{index}"))
+            .bind(&snapshot.endpoint_id)
+            .bind("Synthetic Historical Book")
+            .bind("synthetic-shared-guid")
+            .bind(i64::from(index))
+            .bind(format!("{:06}", 200_000 + index))
+            .bind("20260401")
+            .execute(&repository.pool)
+            .await
+            .expect("seed synthetic historical profile");
+        }
+
+        let page = repository
+            .persisted_company_profiles()
+            .await
+            .expect("load UI page");
+        assert!(page.truncated);
+        assert_eq!(page.profiles.len(), 500);
+
+        let migration_profiles = repository
+            .persisted_company_profiles_for_client_group_label_migration()
+            .await
+            .expect("load complete migration history");
+        assert_eq!(migration_profiles.len(), 501);
+        assert!(migration_profiles
+            .iter()
+            .any(|profile| profile.company_number == "200500"));
     }
 
     #[tokio::test]
