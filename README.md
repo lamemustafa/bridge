@@ -10,9 +10,9 @@ relative to the clone, not to a developer-specific directory.
 
 ## Supported development hosts
 
-Bridge is intended to build and run on Windows and macOS. Run platform checks
-on a native host for each operating system; a successful build on one operating
-system does not verify the other.
+Bridge is intended to build and run on Windows and macOS 12.4 or later. Run
+platform checks on a native host for each operating system; a successful build
+on one operating system does not verify the other.
 
 Shared prerequisites:
 
@@ -31,7 +31,7 @@ executable. Install LLVM as well; if `libclang.dll` is not discoverable, set
 macOS, install Xcode Command Line Tools. DSC workflows
 also require a vendor PKCS#11 library compatible with the host operating
 system; never commit a private key, PIN, certificate dump, or locally installed
-vendor library.
+vendor library. Bridge's macOS bundles require macOS 12.4 or later.
 
 ## Quick start
 

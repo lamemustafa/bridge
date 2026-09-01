@@ -27,6 +27,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "minimumSystemVersion": "12.4"
+    },
     "copyright": "Copyright 2026 ComplyEaze contributors",
     "license": "Apache-2.0",
     "licenseFile": "../LICENSE",
