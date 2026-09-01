@@ -40,6 +40,36 @@ fixture names are limited to the `BVL` test namespace and Tally built-ins.
 The source copies and fixture copies compared byte-for-byte before staging;
 the repository fixture-integrity gate supplies the committed-object check.
 
+## Computed Group company GUID — 2026-08-31
+
+`group_snapshot_aarav_with_computed_company_guid.xml` is the verbatim UTF-8
+response to the exact request rendered by
+`render_native_group_snapshot_request("Aarav Trading Company Demo")` in
+`../../../src/native_outstandings/request.rs` at capture time. That request is a
+read-only native `List of Groups` collection request with:
+
+```xml
+<FETCH>NAME, PARENT, GUID, MASTERID, ALTERID, RESERVEDNAME</FETCH>
+<COMPUTE>BRIDGECOMPANYGUID:$GUID:Company:##SVCurrentCompany</COMPUTE>
+```
+
+It was sent once to the licensed TallyPrime 7.1 instance with the synthetic
+`Aarav Trading Company Demo` selected. `/status` was healthy before and after.
+The returned envelope had `STATUS=1`, was 27,140 bytes, contained 28 Group
+rows, and contained `BRIDGECOMPANYGUID` in all 28 rows. Every value was the
+selected company's `bb8ad19e-6aef-4239-a917-87fec0c6215e`; the fixture SHA-256
+is `bb2c20f7d9e11634f9cf1f6429f655dc31d50b60fca72c71a6ce981c47db099c`.
+
+**VERIFIED — single captured profile only.** This proves the exact request and
+synthetic company/profile recorded above; it does not establish that every
+Tally release, mode, or Group collection shape emits this computed field.
+
+The capture was screened before commit: it contains no GSTIN, PAN, contact,
+address, email, phone, website, or PIN-code fields. Tally's observed invalid
+XML control characters are intentionally retained so this fixture continues to
+exercise the tolerant parser. This provenance pairs the response with the
+request contract; do not regenerate or edit either as a synthetic substitute.
+
 ## Period-pinned native ledger exports — 2026-08-21
 
 These are verbatim BOM-less UTF-16LE response bytes from the production
