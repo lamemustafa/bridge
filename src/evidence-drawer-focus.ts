@@ -3,7 +3,13 @@ type DrawerFocusTarget = Pick<HTMLElement, "focus" | "isConnected">;
 type TabStopCandidate = {
   element: HTMLElement;
   index: number;
+  isEditingHost: boolean;
 };
+
+function isEditingHost(element: HTMLElement) {
+  const contentEditable = element.getAttribute("contenteditable");
+  return contentEditable !== null && contentEditable.toLowerCase() !== "false";
+}
 
 function isVisibleInDrawer(element: HTMLElement, drawer: HTMLElement) {
   for (
@@ -43,20 +49,22 @@ function inBrowserTabOrder(candidates: TabStopCandidate[]) {
   const positive = candidates
     .filter(({ element }) => element.tabIndex > 0)
     .sort((left, right) => left.element.tabIndex - right.element.tabIndex || left.index - right.index);
-  const sequential = candidates.filter(({ element }) => element.tabIndex === 0 || element.isContentEditable);
+  const sequential = candidates.filter(({ element, isEditingHost }) => element.tabIndex === 0 || isEditingHost);
   return [...positive, ...sequential].map(({ element }) => element);
 }
 
-// `tabIndex` covers ordinary native controls. Chromium reaches an editable host
-// with Tab even though its reflected tabIndex is -1, so it must be included as
-// a sequential stop too.
+// Chromium reaches an editable host with Tab even though its reflected tabIndex
+// is -1. `isContentEditable` cannot identify that host because it is inherited
+// by descendants; an explicit negative tabindex still opts the host out.
 export function visibleDrawerTabStops(drawer: HTMLElement) {
   return inBrowserTabOrder(
-    Array.from(drawer.querySelectorAll<HTMLElement>("*")).flatMap((element, index) => (
-      (element.tabIndex >= 0 || element.isContentEditable) && isVisibleInDrawer(element, drawer)
-        ? [{ element, index }]
-        : []
-    )),
+    Array.from(drawer.querySelectorAll<HTMLElement>("*")).flatMap((element, index) => {
+      const editingHost = isEditingHost(element);
+      const explicitlyNegativeTabIndex = element.hasAttribute("tabindex") && element.tabIndex < 0;
+      return (element.tabIndex >= 0 || (editingHost && !explicitlyNegativeTabIndex)) && isVisibleInDrawer(element, drawer)
+        ? [{ element, index, isEditingHost: editingHost }]
+        : [];
+    }),
   );
 }
 

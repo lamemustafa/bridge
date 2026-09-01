@@ -71,4 +71,18 @@ test("the evidence drawer follows Chromium's native Tab order for collapsed and 
     };
   });
   expect(boundary).toEqual({ forward: "close", backward: "editable" });
+
+  await page.locator("#drawer").evaluate((drawer) => {
+    drawer.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab") return;
+      const candidates = window.evidenceDrawerFocus.visibleDrawerTabStops(drawer as HTMLElement);
+      const target = window.evidenceDrawerFocus.drawerFocusBoundaryTarget(document.activeElement, candidates, event.shiftKey);
+      if (!target) return;
+      event.preventDefault();
+      target.focus();
+    });
+  });
+  await page.locator('[data-focus-name="editable"]').focus();
+  await page.keyboard.press("Tab");
+  await expect(page.locator('[data-focus-name="close"]')).toBeFocused();
 });
