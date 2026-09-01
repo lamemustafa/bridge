@@ -7,7 +7,7 @@
     },
     {
       "path": ".github/workflows/dependency-security.yml",
-      "sha256": "4604a5110d3cbbbf6a3e4a0bccdadf7c68d699709377708720abbaa0f38bf4cd"
+      "sha256": "d48f04dbcc7f1add444be6653f0fbcb12853ad2e9583f5a35cd41b3d2dabe6e0"
     },
     {
       "path": "docs/adr/0004-tally-write-safety.md",
@@ -75,11 +75,11 @@
     },
     {
       "path": "package.json",
-      "sha256": "81e2d91c02ebdbe7ef658d40127fc449d3c9caabedcb435b68fda2c953349f9f"
+      "sha256": "45d885dd31b069ab1a618b00ebef8cf8aff1eaa9cee076eacfe27c5c6effce38"
     },
     {
       "path": "pnpm-lock.yaml",
-      "sha256": "688643c1d2ecb352ba4b694695ab35893f48cad0b0798e9d132cd55347a74940"
+      "sha256": "d3906d469105142e9942f65fb67cc93b3b5f5f2f8babf210892158af6960bc30"
     },
     {
       "path": "scripts/check-tally-live-read-boundary.mjs",
@@ -542,5 +542,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "63c8cb872df0a2ed84896a19d421231cf0c0acd79595053b0ddacf5d02da37eb"
+  "manifest_sha256": "8e8467e4849f0b96332c8db571e5399edd6eccbf97e23992eff6b00f6b50b9a7"
 }
