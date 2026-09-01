@@ -85,6 +85,12 @@ fn party_ledger_master_group_snapshot_error(error: NativeOutstandingsError) -> a
     }
 }
 
+/// The paired master request reached Tally successfully. Any parser failure
+/// after that point is response validation, never endpoint reachability.
+fn party_ledger_master_master_snapshot_error(source: anyhow::Error) -> anyhow::Error {
+    anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterResponseInvalid { source })
+}
+
 fn party_ledger_master_openings_agree(
     master_opening: &str,
     balance_opening: &bridge_tally_core::ExactDecimal,
@@ -123,6 +129,11 @@ pub(crate) enum PartyLedgerMasterSourceValidationError {
     BalanceCompanyIdentityUnverified,
     #[error("Tally Group snapshot did not prove the selected company identity")]
     GroupCompanyIdentityUnverified,
+    #[error("Tally party/ledger master response failed validation")]
+    MasterResponseInvalid {
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 /// A paired or bracketed read observed movement in the endpoint's data. This
@@ -943,7 +954,8 @@ impl TallyClient {
         let master = parse_native_party_ledger_master_records_with_evidence(
             &master_body,
             expected_company_guid,
-        )?;
+        )
+        .map_err(party_ledger_master_master_snapshot_error)?;
         if !master.evidence.duplicate_identities.is_empty() {
             return Err(anyhow::Error::new(
                 PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
