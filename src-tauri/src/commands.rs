@@ -2448,8 +2448,16 @@ pub fn load_client_group_labels(app: AppHandle) -> client_groups::ClientGroupLab
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "status")]
 pub enum ClientGroupLabelMigrationDisposition {
-    Resolved { composite_key: String },
-    Ambiguous { composite_keys: Vec<String> },
+    Resolved {
+        composite_key: String,
+    },
+    Ambiguous {
+        composite_keys: Vec<String>,
+    },
+    IncompleteHistory {
+        observed_composite_keys: Vec<String>,
+        suppressed_profile_count: usize,
+    },
     Unmatched,
 }
 
@@ -2473,25 +2481,39 @@ pub struct ClientGroupLabelMigrationPlan {
 /// no I/O, so classification cannot write, discard, or attach a label.
 pub fn classify_client_group_label_migration(
     existing_labels: &client_groups::ClientGroupLabels,
-    persisted_profiles: &[crate::db::tally_mirror::PersistedCompanyProfile],
+    persisted_profiles: &[crate::db::tally_mirror::ClientGroupLabelMigrationProfile],
 ) -> ClientGroupLabelMigrationPlan {
     let entries = existing_labels
         .iter()
         .map(|(source_key, label)| {
-            let composite_keys = persisted_profiles
+            let matching_profiles = persisted_profiles
                 .iter()
                 .filter(|profile| profile.guid.eq_ignore_ascii_case(source_key))
-                .map(|profile| profile.correlation_key.clone())
-                .filter(|key| !key.trim().is_empty())
+                .collect::<Vec<_>>();
+            let composite_keys = matching_profiles
+                .iter()
+                .filter(|profile| profile.identity_confidence == "observed")
+                .filter_map(|profile| profile.correlation_key.clone())
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>();
-            let disposition = match composite_keys.as_slice() {
-                [composite_key] => ClientGroupLabelMigrationDisposition::Resolved {
-                    composite_key: composite_key.clone(),
-                },
-                [] => ClientGroupLabelMigrationDisposition::Unmatched,
-                _ => ClientGroupLabelMigrationDisposition::Ambiguous { composite_keys },
+            let suppressed_profile_count = matching_profiles
+                .iter()
+                .filter(|profile| profile.identity_confidence != "observed")
+                .count();
+            let disposition = if suppressed_profile_count > 0 {
+                ClientGroupLabelMigrationDisposition::IncompleteHistory {
+                    observed_composite_keys: composite_keys,
+                    suppressed_profile_count,
+                }
+            } else {
+                match composite_keys.as_slice() {
+                    [composite_key] => ClientGroupLabelMigrationDisposition::Resolved {
+                        composite_key: composite_key.clone(),
+                    },
+                    [] => ClientGroupLabelMigrationDisposition::Unmatched,
+                    _ => ClientGroupLabelMigrationDisposition::Ambiguous { composite_keys },
+                }
             };
             ClientGroupLabelMigrationEntry {
                 source_key: source_key.clone(),
@@ -2517,12 +2539,13 @@ pub async fn prepare_client_group_label_migration(
         .app_config_dir()
         .map(|directory| client_groups::load(&directory))
         .unwrap_or_default();
+    let raw_guids = labels.keys().cloned().collect::<Vec<_>>();
     let mirror = mirror
         .get()
         .await
         .map_err(mirror_unavailable_string_error)?;
     let profiles = mirror
-        .persisted_company_profiles_for_client_group_label_migration()
+        .persisted_company_profiles_for_client_group_label_migration(&raw_guids)
         .await
         .map_err(|_| "persisted_tally_company_profiles_unavailable".to_string())?;
     Ok(classify_client_group_label_migration(&labels, &profiles))
@@ -2923,7 +2946,7 @@ mod tests {
         ClientGroupLabelMigrationDisposition, CompanySweepFailure, OutstandingsRequest,
         PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity, VerifiedCompanyIdentity,
     };
-    use crate::db::tally_mirror::PersistedCompanyProfile;
+    use crate::db::tally_mirror::ClientGroupLabelMigrationProfile;
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
     // the test, or Windows fails on an unused import under `-D warnings`.
@@ -2937,23 +2960,20 @@ mod tests {
     use bridge_tally_protocol::PartyLedgerMasterFieldObservation;
     use std::collections::BTreeMap;
 
-    fn persisted_profile(guid: &str, correlation_key: &str) -> PersistedCompanyProfile {
-        PersistedCompanyProfile {
-            name: "Synthetic Company".to_string(),
+    fn persisted_profile(
+        guid: &str,
+        correlation_key: Option<&str>,
+        identity_confidence: &str,
+    ) -> ClientGroupLabelMigrationProfile {
+        ClientGroupLabelMigrationProfile {
             guid: guid.to_string(),
-            company_number: "100001".to_string(),
-            books_from_yyyymmdd: "20260401".to_string(),
-            guid_observed: true,
-            mirror_company_id: "synthetic-company".to_string(),
-            correlation_key: correlation_key.to_string(),
-            identity_confidence: "observed".to_string(),
-            canonical_endpoint: "http://127.0.0.1:9000".to_string(),
-            last_observed_at_unix_ms: 1,
+            correlation_key: correlation_key.map(str::to_string),
+            identity_confidence: identity_confidence.to_string(),
         }
     }
 
     #[test]
-    fn closed_split_book_that_reappears_later_remains_ambiguous() {
+    fn closed_split_book_with_suppressed_history_requires_review() {
         let labels = BTreeMap::from([(
             "synthetic-shared-guid".to_string(),
             "Legacy practice".to_string(),
@@ -2961,16 +2981,22 @@ mod tests {
         let plan = classify_client_group_label_migration(
             &labels,
             &[
-                persisted_profile("synthetic-shared-guid", "closed-book-key"),
-                persisted_profile("synthetic-shared-guid", "reappeared-book-key"),
+                persisted_profile(
+                    "synthetic-shared-guid",
+                    Some("reappeared-book-key"),
+                    "observed",
+                ),
+                persisted_profile("synthetic-shared-guid", None, "unknown"),
             ],
         );
 
-        assert!(matches!(
-            &plan.entries[0].disposition,
-            ClientGroupLabelMigrationDisposition::Ambiguous { composite_keys }
-                if composite_keys == &["closed-book-key", "reappeared-book-key"]
-        ));
+        assert_eq!(
+            plan.entries[0].disposition,
+            ClientGroupLabelMigrationDisposition::IncompleteHistory {
+                observed_composite_keys: vec!["reappeared-book-key".to_string()],
+                suppressed_profile_count: 1,
+            }
+        );
     }
 
     #[test]
@@ -2979,9 +3005,9 @@ mod tests {
         let plan = classify_client_group_label_migration(
             &labels,
             &[
-                persisted_profile("SYNTHETIC-GUID", "candidate-a"),
-                persisted_profile("synthetic-guid", "candidate-b"),
-                persisted_profile("synthetic-guid", "candidate-c"),
+                persisted_profile("SYNTHETIC-GUID", Some("candidate-a"), "observed"),
+                persisted_profile("synthetic-guid", Some("candidate-b"), "observed"),
+                persisted_profile("synthetic-guid", Some("candidate-c"), "observed"),
             ],
         );
 
@@ -3021,7 +3047,8 @@ mod tests {
             &labels,
             &[persisted_profile(
                 "synthetic-raw-guid",
-                "composite-correlation-key",
+                Some("composite-correlation-key"),
+                "observed",
             )],
         );
 
