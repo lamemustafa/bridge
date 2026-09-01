@@ -291,17 +291,25 @@ fn party_ledger_master_runtime_command_error(error: anyhow::Error) -> TallyComma
 }
 
 fn party_ledger_master_currency_admission_error(reason: &'static str) -> TallyCommandError {
-    let message = match reason {
-        "company_base_currency_undetermined" => {
-            "The selected Tally company has more than one base currency."
-        }
-        "company_base_currency_not_inr" => {
-            "The selected Tally company does not use INR as its base currency."
-        }
-        "company_currency_probe_failed" => {
-            "Bridge could not establish one INR base currency for the selected Tally company."
-        }
-        _ => "Bridge could not establish the selected Tally company's currency.",
+    // Several Currency-master rows do not identify which row is the company's base
+    // currency. See TALLY_PROTOCOL_REFERENCE.md §9.10a.1.
+    let (message, remediation) = match reason {
+        "company_base_currency_undetermined" => (
+            "Tally defines multiple Currency masters, so Bridge could not establish the selected company's base currency from this read.",
+            "Do not retry the unchanged export: no operator confirmation can make this read safe. Bridge needs a read that establishes one INR base currency before it can label the workbook.",
+        ),
+        "company_base_currency_not_inr" => (
+            "The selected Tally company does not use INR as its base currency.",
+            "Do not retry the unchanged export: select a company whose established base currency is INR. A confirmation cannot change an unsupported base currency.",
+        ),
+        "company_currency_probe_failed" => (
+            "Bridge could not establish one INR base currency for the selected Tally company.",
+            "Do not retry until Tally can return a valid base-currency read for this selected company.",
+        ),
+        _ => (
+            "Bridge could not establish the selected Tally company's currency.",
+            "Do not retry until Bridge can establish the selected company's base currency from Tally.",
+        ),
     };
     tally_command_error(
         reason,
@@ -311,7 +319,7 @@ fn party_ledger_master_currency_admission_error(reason: &'static str) -> TallyCo
         ),
         "after_change",
         true,
-        "Correct the selected Tally company's base-currency setup, then refresh its probe before exporting.",
+        remediation,
     )
 }
 
@@ -2821,12 +2829,13 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 mod tests {
     use super::{
         company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
-        first_calendar_day_canary_window, party_ledger_master_runtime_command_error,
-        portable_export_file_name, reconcile_review_cleanup, reviewed_probe_commitment_sha256,
-        selected_read_observation, tally_command_error, tally_runtime_command_error,
-        validate_dsc_pins, verify_observed_company_tuple_from_companies, write_unique_download,
-        CompanySweepFailure, OutstandingsRequest, PersistedTallyCompany, SavedTallySetup,
-        SelectedCompanyIdentity, VerifiedCompanyIdentity,
+        first_calendar_day_canary_window, party_ledger_master_currency_admission_error,
+        party_ledger_master_runtime_command_error, portable_export_file_name,
+        reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
+        tally_command_error, tally_runtime_command_error, validate_dsc_pins,
+        verify_observed_company_tuple_from_companies, write_unique_download, CompanySweepFailure,
+        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity,
+        VerifiedCompanyIdentity,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
@@ -3267,6 +3276,36 @@ mod tests {
             .message
             .starts_with("Bridge withheld the party/ledger master:"));
         assert!(!error.message.contains("QueueDeadline"));
+    }
+
+    #[test]
+    fn party_master_currency_admission_does_not_misdiagnose_multiple_masters() {
+        let error =
+            party_ledger_master_currency_admission_error("company_base_currency_undetermined");
+
+        assert_eq!(error.code, "company_base_currency_undetermined");
+        assert!(error.message.contains("multiple Currency masters"));
+        assert!(error
+            .message
+            .contains("could not establish the selected company's base currency from this read"));
+        assert!(!error.message.contains("more than one base currency"));
+        assert!(error
+            .remediation
+            .contains("no operator confirmation can make this read safe"));
+        assert!(error
+            .remediation
+            .contains("Do not retry the unchanged export"));
+    }
+
+    #[test]
+    fn party_master_currency_admission_does_not_direct_an_inr_retry_for_non_inr_company() {
+        let error = party_ledger_master_currency_admission_error("company_base_currency_not_inr");
+
+        assert_eq!(error.code, "company_base_currency_not_inr");
+        assert!(error.remediation.contains("select a company"));
+        assert!(error
+            .remediation
+            .contains("A confirmation cannot change an unsupported base currency"));
     }
 
     #[test]
