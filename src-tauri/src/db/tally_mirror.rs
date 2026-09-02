@@ -2573,22 +2573,32 @@ impl TallyMirrorRepository {
         let id = match unique_match(matches)? {
             Some(existing) => {
                 ensure_no_silent_identity_change(&existing, &input.identity)?;
-                sqlx::query(
-                    "UPDATE tally_companies SET display_name = ?1, last_observed_at_unix_ms = ?2, \
-                     identity_confidence = CASE \
-                       WHEN identity_confidence = 'observed' THEN identity_confidence \
-                       WHEN ?3 = 'documented' THEN 'documented' \
-                       WHEN ?3 = 'inferred' AND identity_confidence = 'unknown' THEN 'inferred' \
-                       ELSE identity_confidence END WHERE id = ?4",
+                let observed_row_refreshed = sqlx::query(
+                    "UPDATE tally_companies SET last_observed_at_unix_ms = ?1 \
+                     WHERE id = ?2 AND identity_confidence = 'observed'",
                 )
-                .bind(&input.display_name)
                 .bind(input.observed_at_unix_ms)
-                // The generic identity helper has no complete company tuple, so it
-                // can document metadata but must never manufacture an observed pin.
-                .bind("documented")
                 .bind(&existing.id)
                 .execute(&mut **transaction)
                 .await?;
+                if observed_row_refreshed.rows_affected() == 0 {
+                    sqlx::query(
+                        "UPDATE tally_companies SET display_name = ?1, last_observed_at_unix_ms = ?2, \
+                         identity_confidence = CASE \
+                           WHEN ?3 = 'documented' THEN 'documented' \
+                           WHEN ?3 = 'inferred' AND identity_confidence = 'unknown' THEN 'inferred' \
+                           ELSE identity_confidence END \
+                         WHERE id = ?4 AND identity_confidence <> 'observed'",
+                    )
+                    .bind(&input.display_name)
+                    .bind(input.observed_at_unix_ms)
+                    // The generic identity helper has no complete company tuple, so it
+                    // can document metadata but must never manufacture an observed pin.
+                    .bind("documented")
+                    .bind(&existing.id)
+                    .execute(&mut **transaction)
+                    .await?;
+                }
                 existing.id
             }
             None => {
@@ -8433,6 +8443,14 @@ mod tests {
             .snapshot_source_pin(&reviewed.company.id)
             .await
             .expect("reviewed company supplies a durable source pin");
+        let profile_before_refresh = repository
+            .persisted_company_profiles()
+            .await
+            .expect("load reviewed company profile before generic refresh")
+            .profiles
+            .into_iter()
+            .find(|profile| profile.mirror_company_id == reviewed.company.id)
+            .expect("find reviewed company profile before generic refresh");
         let refreshed = repository
             .upsert_company(CompanyInput {
                 endpoint_id: reviewed.snapshot.endpoint_id,
@@ -8453,6 +8471,10 @@ mod tests {
             .expect("generic metadata refresh preserves the observed source pin");
         assert_eq!(pin_after_refresh.company_id, pin_before_refresh.company_id);
         assert_eq!(
+            pin_after_refresh.display_name,
+            pin_before_refresh.display_name
+        );
+        assert_eq!(
             pin_after_refresh.endpoint_id,
             pin_before_refresh.endpoint_id
         );
@@ -8467,6 +8489,19 @@ mod tests {
         assert_eq!(
             pin_after_refresh.books_from_yyyymmdd,
             pin_before_refresh.books_from_yyyymmdd
+        );
+        let profile_after_refresh = repository
+            .persisted_company_profiles()
+            .await
+            .expect("load reviewed company profile after generic refresh")
+            .profiles
+            .into_iter()
+            .find(|profile| profile.mirror_company_id == reviewed.company.id)
+            .expect("find reviewed company profile after generic refresh");
+        assert_eq!(profile_after_refresh.name, profile_before_refresh.name);
+        assert_eq!(
+            profile_after_refresh.correlation_key,
+            profile_before_refresh.correlation_key
         );
     }
 
