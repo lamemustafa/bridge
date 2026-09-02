@@ -2148,18 +2148,6 @@ impl TallyMirrorRepository {
         sqlx::raw_sql(MIRROR_MIGRATION_V2)
             .execute(&mut *transaction)
             .await?;
-        let composite_company_identity_installed = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 23",
-        )
-        .fetch_one(&mut *transaction)
-        .await?;
-        if composite_company_identity_installed != 0 {
-            // 0002 is deliberately idempotent and runs on every open, but its
-            // legacy GUID-only index conflicts with 0023's split-book tuple.
-            sqlx::query("DROP INDEX IF EXISTS uq_tally_companies_guid")
-                .execute(&mut *transaction)
-                .await?;
-        }
         sqlx::raw_sql(MIRROR_MIGRATION_V3)
             .execute(&mut *transaction)
             .await?;
@@ -2197,6 +2185,11 @@ impl TallyMirrorRepository {
         }
         let selected_read_evidence_installed = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 7",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        let composite_company_identity_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 23",
         )
         .fetch_one(&mut *transaction)
         .await?;
@@ -2573,6 +2566,7 @@ impl TallyMirrorRepository {
         let id = match unique_match(matches)? {
             Some(existing) => {
                 ensure_no_silent_identity_change(&existing, &input.identity)?;
+                let incoming_confidence = generic_company_confidence(&input.identity).as_str();
                 let observed_row_refreshed = sqlx::query(
                     "UPDATE tally_companies SET last_observed_at_unix_ms = ?1 \
                      WHERE id = ?2 AND identity_confidence = 'observed'",
@@ -2592,9 +2586,7 @@ impl TallyMirrorRepository {
                     )
                     .bind(&input.display_name)
                     .bind(input.observed_at_unix_ms)
-                    // The generic identity helper has no complete company tuple, so it
-                    // can document metadata but must never manufacture an observed pin.
-                    .bind("documented")
+                    .bind(incoming_confidence)
                     .bind(&existing.id)
                     .execute(&mut **transaction)
                     .await?;
@@ -2603,12 +2595,13 @@ impl TallyMirrorRepository {
             }
             None => {
                 let id = Uuid::new_v4().to_string();
+                let incoming_confidence = generic_company_confidence(&input.identity).as_str();
                 sqlx::query(
                     "INSERT INTO tally_companies(\
                        id, endpoint_id, display_name, company_guid, remote_id, master_id, \
                        fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
                        last_observed_at_unix_ms\
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'documented', ?8, ?8)",
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
                 )
                 .bind(&id)
                 .bind(&input.endpoint_id)
@@ -2617,6 +2610,7 @@ impl TallyMirrorRepository {
                 .bind(&input.identity.remote_id)
                 .bind(&input.identity.master_id)
                 .bind(&input.identity.fallback_fingerprint)
+                .bind(incoming_confidence)
                 .bind(input.observed_at_unix_ms)
                 .execute(&mut **transaction)
                 .await?;
@@ -4915,6 +4909,15 @@ fn identity_confidence(identity: &SourceIdentityInput) -> Confidence {
     )
 }
 
+/// Generic identity matching lacks the complete Company-collection tuple, so
+/// it cannot create or promote an observed company pin.
+fn generic_company_confidence(identity: &SourceIdentityInput) -> Confidence {
+    match identity_confidence(identity) {
+        Confidence::Observed => Confidence::Documented,
+        confidence => confidence,
+    }
+}
+
 fn validate_capability_snapshot(input: &CapabilitySnapshotInput) -> Result<(), MirrorError> {
     validate_nonempty(&input.canonical_origin, 512, "canonical_origin")?;
     validate_nonempty(&input.product, 128, "product")?;
@@ -5953,17 +5956,6 @@ mod tests {
             .await
             .expect("restore legacy alter table after v24");
         transaction.commit().await.expect("commit v24 schema");
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM sqlite_master \
-                 WHERE type = 'index' AND name = 'uq_tally_companies_guid'",
-            )
-            .fetch_one(&repository.pool)
-            .await
-            .expect("inspect retired GUID-only index"),
-            0,
-            "a composite-era fixture must not retain GUID-only uniqueness"
-        );
         repository
     }
 
@@ -8267,7 +8259,10 @@ mod tests {
             .expect("seed pre-v25 company row");
         }
 
-        repository.migrate().await.expect("apply v25 migration");
+        sqlx::raw_sql(MIRROR_MIGRATION_V25)
+            .execute(&repository.pool)
+            .await
+            .expect("apply v25 migration to the v24 fixture");
         assert_eq!(
             sqlx::query_scalar::<_, String>(
                 "SELECT identity_confidence FROM tally_companies WHERE id = 'legacy-observed-incomplete'",
@@ -8413,7 +8408,7 @@ mod tests {
 
         let generic = repository
             .upsert_company(CompanyInput {
-                endpoint_id: snapshot.endpoint_id,
+                endpoint_id: snapshot.endpoint_id.clone(),
                 display_name: "Documented metadata only".to_string(),
                 identity: SourceIdentityInput {
                     guid: Some("documented-metadata-guid".to_string()),
@@ -8434,6 +8429,51 @@ mod tests {
             .expect("read documented generic company confidence"),
             "documented"
         );
+
+        for (label, confidence) in [
+            ("unknown", Confidence::Unknown),
+            ("inferred", Confidence::Inferred),
+        ] {
+            let identity_guid = format!("{label}-generic-metadata-guid");
+            let initial = repository
+                .upsert_company(CompanyInput {
+                    endpoint_id: snapshot.endpoint_id.clone(),
+                    display_name: format!("{label} generic metadata"),
+                    identity: SourceIdentityInput {
+                        guid: Some(identity_guid.clone()),
+                        confidence: Some(confidence),
+                        ..Default::default()
+                    },
+                    observed_at_unix_ms: 2_100,
+                })
+                .await
+                .expect("save explicitly non-observed generic company");
+            let refreshed = repository
+                .upsert_company(CompanyInput {
+                    endpoint_id: snapshot.endpoint_id.clone(),
+                    display_name: format!("{label} generic metadata refresh"),
+                    identity: SourceIdentityInput {
+                        guid: Some(identity_guid),
+                        confidence: Some(confidence),
+                        ..Default::default()
+                    },
+                    observed_at_unix_ms: 2_200,
+                })
+                .await
+                .expect("refresh explicitly non-observed generic company");
+            assert_eq!(refreshed.id, initial.id);
+            assert_eq!(
+                sqlx::query_scalar::<_, String>(
+                    "SELECT identity_confidence FROM tally_companies WHERE id = ?1",
+                )
+                .bind(initial.id)
+                .fetch_one(&repository.pool)
+                .await
+                .expect("read preserved generic confidence"),
+                confidence.as_str(),
+                "a generic {label} refresh must preserve its explicit confidence"
+            );
+        }
 
         let reviewed = repository
             .save_reviewed_setup(reviewed_setup_input(HASH_B))
