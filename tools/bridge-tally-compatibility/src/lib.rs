@@ -19,14 +19,16 @@ pub const SUPPORT_MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub const TRUST_MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub const ATTESTATION_SCHEMA_VERSION: u16 = 1;
 pub const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
+/// Capacity deliberately reserved for one small cohesive surface change.
+pub const RESERVED_SURFACE_FILES: usize = 15;
 /// Bounded high enough for the additive Tally safety-migration and report
 /// surfaces while still rejecting an unexpectedly broad attestation surface.
-/// 162 entries are currently sealed. Every file under the Tally migration and
-/// report directories is required by a directory rule; `src/` and the protocol
-/// crates remain judgment-pinned because their mixed-purpose directories do
-/// not have that invariant. Fifteen deliberate slots measured from 162 cover
-/// a small cohesive feature (source, tests, docs and manifest) but make the
-/// sixteenth unreviewed addition an explicit compatibility-surface decision.
+/// Every file under the Tally migration and report directories is required by a
+/// directory rule; `src/` and the protocol crates remain judgment-pinned
+/// because their mixed-purpose directories do not have that invariant. The
+/// reserved capacity covers a small cohesive feature (source, tests, docs
+/// and manifest) but makes further unreviewed additions an explicit
+/// compatibility-surface decision.
 pub const MAX_SURFACE_FILES: usize = 177;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
@@ -2426,7 +2428,10 @@ mod tests {
         )
         .unwrap();
         surface.validate_files(&repository_root).unwrap();
-        assert_eq!(MAX_SURFACE_FILES - surface.files.len(), 15);
+        assert_eq!(
+            MAX_SURFACE_FILES - surface.files.len(),
+            RESERVED_SURFACE_FILES
+        );
     }
 
     fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {
