@@ -61,12 +61,21 @@ pub enum ClientGroupLabelsError {
     CorruptFile(#[source] serde_json::Error),
     #[error("client group label schema version {found} is unsupported; expected {supported}")]
     UnsupportedVersion { found: u8, supported: u8 },
+    #[error("client group label file contains colliding normalized key {normalized_key:?}")]
+    NormalizedKeyCollision { normalized_key: String },
     #[error("client group label file could not be written")]
     Write(#[source] std::io::Error),
 }
 
 pub fn load(directory: &Path) -> ClientGroupLabels {
-    try_load(directory).unwrap_or_default()
+    let Ok(file) = read_client_group_labels_file(directory) else {
+        return ClientGroupLabels::new();
+    };
+    if file.version == SCHEMA_VERSION {
+        normalize(file.labels)
+    } else {
+        ClientGroupLabels::new()
+    }
 }
 
 pub fn load_sort_preference(directory: &Path) -> Option<ClientSortPreference> {
@@ -78,11 +87,31 @@ pub fn load_sort_preference(directory: &Path) -> Option<ClientSortPreference> {
     (file.version == SORT_SCHEMA_VERSION).then_some(file.sort)
 }
 
-fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsError> {
+/// Strictly loads labels for a workflow which must distinguish absent labels
+/// from labels that could not be read safely. The display path intentionally
+/// continues to use [`load`]'s best-effort behavior.
+pub fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsError> {
+    let file = read_client_group_labels_file(directory)?;
+    if file.version != SCHEMA_VERSION {
+        return Err(ClientGroupLabelsError::UnsupportedVersion {
+            found: file.version,
+            supported: SCHEMA_VERSION,
+        });
+    }
+
+    normalize_strict(file.labels)
+}
+
+fn read_client_group_labels_file(
+    directory: &Path,
+) -> Result<ClientGroupLabelsFile, ClientGroupLabelsError> {
     let contents = match std::fs::read_to_string(directory.join(FILE_NAME)) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ClientGroupLabels::new())
+            return Ok(ClientGroupLabelsFile {
+                version: SCHEMA_VERSION,
+                labels: ClientGroupLabels::new(),
+            })
         }
         Err(error) => return Err(ClientGroupLabelsError::Read(error)),
     };
@@ -92,14 +121,7 @@ fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabelsErro
 
     let file = serde_json::from_str::<ClientGroupLabelsFile>(&contents)
         .map_err(ClientGroupLabelsError::CorruptFile)?;
-    if file.version != SCHEMA_VERSION {
-        return Err(ClientGroupLabelsError::UnsupportedVersion {
-            found: file.version,
-            supported: SCHEMA_VERSION,
-        });
-    }
-
-    Ok(normalize(file.labels))
+    Ok(file)
 }
 
 pub fn save_label(
@@ -254,6 +276,26 @@ fn normalize(labels: ClientGroupLabels) -> ClientGroupLabels {
         .collect()
 }
 
+fn normalize_strict(
+    labels: ClientGroupLabels,
+) -> Result<ClientGroupLabels, ClientGroupLabelsError> {
+    let mut normalized_labels = ClientGroupLabels::new();
+    for (company_guid, label) in labels {
+        let company_guid = company_guid.trim();
+        let label = label.trim();
+        if company_guid.is_empty() || label.is_empty() {
+            continue;
+        }
+        if normalized_labels.contains_key(company_guid) {
+            return Err(ClientGroupLabelsError::NormalizedKeyCollision {
+                normalized_key: company_guid.to_string(),
+            });
+        }
+        normalized_labels.insert(company_guid.to_string(), label.to_string());
+    }
+    Ok(normalized_labels)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +310,33 @@ mod tests {
 
         std::fs::write(directory.path().join(FILE_NAME), "not json").expect("write corrupt file");
         assert!(load(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn strict_load_refuses_colliding_normalized_keys_without_changing_display_load() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        std::fs::write(
+            directory.path().join(FILE_NAME),
+            r#"{
+  "version": 1,
+  "labels": {
+    " guid ": "Spaced practice",
+    "guid": "Plain practice"
+  }
+}"#,
+        )
+        .expect("write colliding label file");
+
+        assert!(matches!(
+            try_load(directory.path()),
+            Err(ClientGroupLabelsError::NormalizedKeyCollision { normalized_key })
+                if normalized_key == "guid"
+        ));
+        assert_eq!(
+            load(directory.path()),
+            BTreeMap::from([("guid".to_string(), "Plain practice".to_string())]),
+            "display loading retains its historical best-effort normalization"
+        );
     }
 
     #[test]
@@ -338,6 +407,10 @@ mod tests {
             "display remains available"
         );
         assert!(matches!(
+            try_load(directory.path()),
+            Err(ClientGroupLabelsError::CorruptFile(_))
+        ));
+        assert!(matches!(
             save_label(directory.path(), "new-synthetic-guid", "New practice"),
             Err(ClientGroupLabelsError::CorruptFile(_))
         ));
@@ -359,6 +432,13 @@ mod tests {
             "display remains available"
         );
         assert!(matches!(
+            try_load(directory.path()),
+            Err(ClientGroupLabelsError::UnsupportedVersion {
+                found: 2,
+                supported: SCHEMA_VERSION
+            })
+        ));
+        assert!(matches!(
             save_label(directory.path(), "new-synthetic-guid", "New practice"),
             Err(ClientGroupLabelsError::UnsupportedVersion {
                 found: 2,
@@ -378,6 +458,10 @@ mod tests {
         std::fs::write(&empty_path, b" \n").expect("write empty label file");
         assert!(load(empty_directory.path()).is_empty());
         assert!(matches!(
+            try_load(empty_directory.path()),
+            Err(ClientGroupLabelsError::EmptyFile)
+        ));
+        assert!(matches!(
             save_label(empty_directory.path(), "new-synthetic-guid", "New practice"),
             Err(ClientGroupLabelsError::EmptyFile)
         ));
@@ -387,6 +471,10 @@ mod tests {
         let unreadable_path = unreadable_directory.path().join(FILE_NAME);
         std::fs::create_dir(&unreadable_path).expect("create unreadable label path");
         assert!(load(unreadable_directory.path()).is_empty());
+        assert!(matches!(
+            try_load(unreadable_directory.path()),
+            Err(ClientGroupLabelsError::Read(_))
+        ));
         assert!(matches!(
             save_label(
                 unreadable_directory.path(),

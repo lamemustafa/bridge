@@ -1,4 +1,5 @@
 pub mod axal;
+pub mod client_group_label_migration;
 pub mod client_groups;
 pub mod commands;
 pub mod db;
@@ -104,6 +105,7 @@ pub fn run() {
             commands::load_client_group_labels,
             commands::save_client_group_label,
             commands::replace_client_group_labels,
+            commands::prepare_client_group_label_migration,
             commands::load_client_sort_preference,
             commands::save_client_sort_preference,
             commands::detect_tally_base_currency,
@@ -252,11 +254,22 @@ mod client_preference_mount_tests {
             .find("pub fn load_client_group_labels")
             .expect("group-label load command");
         let end = commands[start..]
-            .find("pub struct AllCompaniesOutstandingsRequest")
+            .find("pub async fn prepare_client_group_label_migration")
             .map(|offset| start + offset)
             .expect("end of group-label commands");
-        let client_preference_commands = &commands[start..end];
+        let group_label_load_command = &commands[start..end];
+        let sort_start = commands
+            .find("pub fn load_client_sort_preference")
+            .expect("client-sort load command");
+        let sort_end = commands[sort_start..]
+            .find("pub struct AllCompaniesOutstandingsRequest")
+            .map(|offset| sort_start + offset)
+            .expect("end of client-preference commands");
+        let client_preference_commands = &commands[sort_start..sort_end];
 
+        assert!(group_label_load_command.contains("app_config_dir"));
+        assert!(!group_label_load_command.contains("LazyTallyMirror"));
+        assert!(!group_label_load_command.contains("keyring"));
         assert!(client_preference_commands.contains("load_client_sort_preference"));
         assert!(client_preference_commands.contains("save_client_sort_preference"));
         assert!(client_preference_commands.contains("app_config_dir"));

@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bridge_tally_core::{ExactDecimal, PackSchemaVersion, TallyDate};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
 
 use crate::sync::reconciliation::CommitBatchInput;
@@ -404,6 +404,15 @@ pub struct PersistedCompanyProfilePage {
     pub total_profiles: u64,
     pub limit: u32,
     pub truncated: bool,
+}
+
+/// One durable profile that shares a v1 client-label raw GUID. A missing
+/// correlation key means the historical row cannot identify a composite book.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientGroupLabelMigrationProfile {
+    pub guid: String,
+    pub correlation_key: Option<String>,
+    pub identity_confidence: String,
 }
 
 #[derive(Debug, Clone)]
@@ -974,6 +983,51 @@ impl TallyMirrorRepository {
         self.pool.clone()
     }
 
+    /// Returns the complete durable history sharing an existing client-label
+    /// raw GUID. It intentionally includes every confidence state and has no
+    /// UI pagination limit: suppressing an older split book here could turn an
+    /// unsafe migration into an apparently resolved one.
+    pub async fn persisted_company_profiles_for_client_group_label_migration(
+        &self,
+        raw_guids: &[String],
+    ) -> Result<Vec<ClientGroupLabelMigrationProfile>, MirrorError> {
+        let raw_guids = raw_guids
+            .iter()
+            .filter_map(|raw_guid| {
+                let raw_guid = raw_guid.trim();
+                (!raw_guid.is_empty()).then(|| raw_guid.to_ascii_lowercase())
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let mut profiles = Vec::new();
+        for raw_guid_chunk in raw_guids.chunks(500) {
+            let mut query = QueryBuilder::<Sqlite>::new(
+                "SELECT c.display_name, c.company_guid, c.identity_confidence, \
+                 c.company_number, c.books_from_yyyymmdd, e.canonical_origin \
+                 FROM tally_companies AS c \
+                 JOIN tally_endpoints AS e ON e.id = c.endpoint_id \
+                 WHERE c.company_guid IS NOT NULL AND TRIM(c.company_guid) <> '' \
+                   AND (",
+            );
+            {
+                let mut conditions = query.separated(" OR ");
+                for raw_guid in raw_guid_chunk {
+                    conditions.push("c.company_guid COLLATE NOCASE = ");
+                    conditions.push_bind_unseparated(raw_guid);
+                }
+            }
+            query.push(") ORDER BY c.last_observed_at_unix_ms DESC, c.id ASC");
+            let rows = query.build().fetch_all(&self.pool).await?;
+            profiles.extend(
+                rows.into_iter()
+                    .map(client_group_label_migration_profile_from_row)
+                    .collect::<Result<Vec<_>, sqlx::Error>>()?,
+            );
+        }
+        Ok(profiles)
+    }
+
     pub async fn persisted_company_profiles(
         &self,
     ) -> Result<PersistedCompanyProfilePage, MirrorError> {
@@ -1005,31 +1059,7 @@ impl TallyMirrorRepository {
         transaction.commit().await?;
         let profiles = rows
             .into_iter()
-            .map(|row| {
-                let canonical_endpoint: String = row.try_get("canonical_origin")?;
-                let company_guid: String = row.try_get("company_guid")?;
-                let company_number: String = row.try_get("company_number")?;
-                let books_from_yyyymmdd: String = row.try_get("books_from_yyyymmdd")?;
-                let name: String = row.try_get("display_name")?;
-                Ok(PersistedCompanyProfile {
-                    name: name.clone(),
-                    guid: company_guid.clone(),
-                    company_number: company_number.clone(),
-                    books_from_yyyymmdd: books_from_yyyymmdd.clone(),
-                    guid_observed: true,
-                    mirror_company_id: row.try_get("id")?,
-                    correlation_key: company_profile_correlation_key(
-                        &canonical_endpoint,
-                        &company_guid,
-                        &company_number,
-                        &name,
-                        &books_from_yyyymmdd,
-                    ),
-                    identity_confidence: row.try_get("identity_confidence")?,
-                    canonical_endpoint,
-                    last_observed_at_unix_ms: row.try_get("last_observed_at_unix_ms")?,
-                })
-            })
+            .map(persisted_company_profile_from_row)
             .collect::<Result<Vec<_>, sqlx::Error>>()?;
         let total_profiles = u64::try_from(total_profiles)
             .map_err(|_| MirrorError::InvalidInput("persisted_company_profile_count"))?;
@@ -4509,6 +4539,66 @@ impl TallyMirrorRepository {
         }
         Ok(result)
     }
+}
+
+fn persisted_company_profile_from_row(
+    row: SqliteRow,
+) -> Result<PersistedCompanyProfile, sqlx::Error> {
+    let canonical_endpoint: String = row.try_get("canonical_origin")?;
+    let company_guid: String = row.try_get("company_guid")?;
+    let company_number: String = row.try_get("company_number")?;
+    let books_from_yyyymmdd: String = row.try_get("books_from_yyyymmdd")?;
+    let name: String = row.try_get("display_name")?;
+    Ok(PersistedCompanyProfile {
+        name: name.clone(),
+        guid: company_guid.clone(),
+        company_number: company_number.clone(),
+        books_from_yyyymmdd: books_from_yyyymmdd.clone(),
+        guid_observed: true,
+        mirror_company_id: row.try_get("id")?,
+        correlation_key: company_profile_correlation_key(
+            &canonical_endpoint,
+            &company_guid,
+            &company_number,
+            &name,
+            &books_from_yyyymmdd,
+        ),
+        identity_confidence: row.try_get("identity_confidence")?,
+        canonical_endpoint,
+        last_observed_at_unix_ms: row.try_get("last_observed_at_unix_ms")?,
+    })
+}
+
+fn client_group_label_migration_profile_from_row(
+    row: SqliteRow,
+) -> Result<ClientGroupLabelMigrationProfile, sqlx::Error> {
+    let canonical_endpoint: String = row.try_get("canonical_origin")?;
+    let guid: String = row.try_get("company_guid")?;
+    let company_number: Option<String> = row.try_get("company_number")?;
+    let books_from_yyyymmdd: Option<String> = row.try_get("books_from_yyyymmdd")?;
+    let name: String = row.try_get("display_name")?;
+    let correlation_key = company_number
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .zip(
+            books_from_yyyymmdd
+                .as_deref()
+                .filter(|value| !value.trim().is_empty()),
+        )
+        .map(|(company_number, books_from_yyyymmdd)| {
+            company_profile_correlation_key(
+                &canonical_endpoint,
+                &guid,
+                company_number,
+                &name,
+                books_from_yyyymmdd,
+            )
+        });
+    Ok(ClientGroupLabelMigrationProfile {
+        guid,
+        correlation_key,
+        identity_confidence: row.try_get("identity_confidence")?,
+    })
 }
 
 /// Returns an opaque, stable join key for the same observed company at the same endpoint.
@@ -8598,6 +8688,66 @@ mod tests {
         );
         assert_eq!(profiles[0].identity_confidence, "observed");
         assert_eq!(profiles[0].canonical_endpoint, "http://127.0.0.1:9000");
+    }
+
+    #[tokio::test]
+    async fn client_label_migration_profiles_include_unpaged_and_suppressed_history() {
+        let (repository, snapshot, _) = seeded_repository().await;
+        for index in 0..=500 {
+            sqlx::query(
+                "INSERT INTO tally_companies(\
+                   id, endpoint_id, display_name, company_guid, remote_id, master_id, \
+                   fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
+                   last_observed_at_unix_ms, company_number, books_from_yyyymmdd\
+                 ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, 'observed', ?5, ?5, ?6, ?7)",
+            )
+            .bind(format!("synthetic-migration-company-{index}"))
+            .bind(&snapshot.endpoint_id)
+            .bind("Synthetic Historical Book")
+            .bind("synthetic-shared-guid")
+            .bind(i64::from(index))
+            .bind(format!("{:06}", 200_000 + index))
+            .bind("20260401")
+            .execute(&repository.pool)
+            .await
+            .expect("seed synthetic historical profile");
+        }
+        sqlx::query(
+            "INSERT INTO tally_companies(\
+               id, endpoint_id, display_name, company_guid, remote_id, master_id, \
+               fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
+               last_observed_at_unix_ms, company_number, books_from_yyyymmdd\
+             ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, 'unknown', ?5, ?5, NULL, NULL)",
+        )
+        .bind("synthetic-suppressed-migration-company")
+        .bind(&snapshot.endpoint_id)
+        .bind("Synthetic Suppressed Book")
+        .bind("synthetic-shared-guid")
+        .bind(1_i64)
+        .execute(&repository.pool)
+        .await
+        .expect("seed synthetic suppressed profile");
+
+        let page = repository
+            .persisted_company_profiles()
+            .await
+            .expect("load UI page");
+        assert!(page.truncated);
+        assert_eq!(page.profiles.len(), 500);
+
+        let migration_profiles = repository
+            .persisted_company_profiles_for_client_group_label_migration(&[
+                "synthetic-shared-guid".to_string()
+            ])
+            .await
+            .expect("load complete migration history");
+        assert_eq!(migration_profiles.len(), 502);
+        assert!(migration_profiles
+            .iter()
+            .any(|profile| profile.correlation_key.is_some()));
+        assert!(migration_profiles.iter().any(|profile| {
+            profile.identity_confidence == "unknown" && profile.correlation_key.is_none()
+        }));
     }
 
     #[tokio::test]

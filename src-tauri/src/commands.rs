@@ -1,3 +1,6 @@
+use crate::client_group_label_migration::{
+    classify_client_group_label_migration, ClientGroupLabelMigrationPlan,
+};
 use crate::client_groups;
 use crate::db::tally_incremental::IncrementalFoundationEvidence;
 use crate::db::tally_mirror::{
@@ -2442,6 +2445,74 @@ pub fn load_client_group_labels(app: AppHandle) -> client_groups::ClientGroupLab
     client_groups::load(&directory)
 }
 
+/// A safe, typed failure returned by the read-only label-migration planner.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "code")]
+pub enum ClientGroupLabelMigrationPreparationError {
+    ConfigurationUnavailable,
+    LabelsUnavailable,
+    MirrorUnavailable,
+    PersistedProfilesUnavailable,
+}
+
+fn load_client_group_labels_for_migration(
+    directory: &std::path::Path,
+) -> Result<client_groups::ClientGroupLabels, ClientGroupLabelMigrationPreparationError> {
+    client_groups::try_load(directory)
+        .map_err(|_| ClientGroupLabelMigrationPreparationError::LabelsUnavailable)
+}
+
+async fn prepare_client_group_label_migration_from_labels<F, Fut>(
+    labels: client_groups::ClientGroupLabels,
+    open_mirror_and_load_profiles: F,
+) -> Result<ClientGroupLabelMigrationPlan, ClientGroupLabelMigrationPreparationError>
+where
+    F: FnOnce(Vec<String>) -> Fut,
+    Fut: std::future::Future<
+        Output = Result<
+            Vec<crate::db::tally_mirror::ClientGroupLabelMigrationProfile>,
+            ClientGroupLabelMigrationPreparationError,
+        >,
+    >,
+{
+    if labels.is_empty() {
+        return Ok(classify_client_group_label_migration(&labels, &[]));
+    }
+
+    let raw_guids = labels.keys().cloned().collect::<Vec<_>>();
+    let profiles = open_mirror_and_load_profiles(raw_guids).await?;
+    Ok(classify_client_group_label_migration(&labels, &profiles))
+}
+
+/// Explicitly prepares a read-only migration plan. Unlike ordinary label
+/// reads and saves, this operator-requested command may initialise the mirror
+/// to inspect durable observed-company history; it never calls the label
+/// writer. It fails closed if the v1 label file cannot be read, so a phase-2
+/// consumer can never treat unread local input as an empty migration. An
+/// absent v1 label file returns an empty plan before the mirror/keychain path.
+#[tauri::command]
+pub async fn prepare_client_group_label_migration(
+    app: AppHandle,
+    mirror: State<'_, crate::LazyTallyMirror>,
+) -> Result<ClientGroupLabelMigrationPlan, ClientGroupLabelMigrationPreparationError> {
+    let labels = app
+        .path()
+        .app_config_dir()
+        .map_err(|_| ClientGroupLabelMigrationPreparationError::ConfigurationUnavailable)
+        .and_then(|directory| load_client_group_labels_for_migration(&directory))?;
+    prepare_client_group_label_migration_from_labels(labels, |raw_guids| async move {
+        let mirror = mirror
+            .get()
+            .await
+            .map_err(|_| ClientGroupLabelMigrationPreparationError::MirrorUnavailable)?;
+        mirror
+            .persisted_company_profiles_for_client_group_label_migration(&raw_guids)
+            .await
+            .map_err(|_| ClientGroupLabelMigrationPreparationError::PersistedProfilesUnavailable)
+    })
+    .await
+}
+
 /// Reads the optional all-client sort preference from ordinary application
 /// configuration. Like group labels, it never initialises the Tally mirror.
 #[tauri::command]
@@ -2829,13 +2900,14 @@ pub async fn select_document_folder() -> Result<Vec<crate::documents::SelectedDo
 mod tests {
     use super::{
         company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
-        first_calendar_day_canary_window, party_ledger_master_currency_admission_error,
-        party_ledger_master_runtime_command_error, portable_export_file_name,
+        first_calendar_day_canary_window, load_client_group_labels_for_migration,
+        party_ledger_master_currency_admission_error, party_ledger_master_runtime_command_error,
+        portable_export_file_name, prepare_client_group_label_migration_from_labels,
         reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
         tally_command_error, tally_runtime_command_error, validate_dsc_pins,
-        verify_observed_company_tuple_from_companies, write_unique_download, CompanySweepFailure,
-        OutstandingsRequest, PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity,
-        VerifiedCompanyIdentity,
+        verify_observed_company_tuple_from_companies, write_unique_download,
+        ClientGroupLabelMigrationPreparationError, CompanySweepFailure, OutstandingsRequest,
+        PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity, VerifiedCompanyIdentity,
     };
     // Used only by the `#[cfg(unix)]` non-UTF-8 destination test — an invalid-byte
     // path cannot be constructed portably. The import must carry the same gate as
@@ -2849,6 +2921,33 @@ mod tests {
     use bridge_tally_core::CapabilityProfile;
     use bridge_tally_protocol::PartyLedgerMasterFieldObservation;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn migration_loader_returns_a_typed_error_for_unreadable_labels() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        std::fs::create_dir(directory.path().join("client-group-labels-v1.json"))
+            .expect("unreadable label path");
+
+        assert!(matches!(
+            load_client_group_labels_for_migration(directory.path()),
+            Err(ClientGroupLabelMigrationPreparationError::LabelsUnavailable)
+        ));
+    }
+
+    #[tokio::test]
+    async fn empty_label_migration_plan_never_opens_the_mirror() {
+        let mirror_opened = std::sync::atomic::AtomicBool::new(false);
+
+        let plan = prepare_client_group_label_migration_from_labels(BTreeMap::new(), |_| async {
+            mirror_opened.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err(ClientGroupLabelMigrationPreparationError::MirrorUnavailable)
+        })
+        .await
+        .expect("empty labels require no mirror");
+
+        assert!(plan.entries.is_empty());
+        assert!(!mirror_opened.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     #[test]
     fn same_guid_case_or_whitespace_sibling_is_not_a_safe_scope() {
