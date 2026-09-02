@@ -2462,11 +2462,34 @@ fn load_client_group_labels_for_migration(
         .map_err(|_| ClientGroupLabelMigrationPreparationError::LabelsUnavailable)
 }
 
+async fn prepare_client_group_label_migration_from_labels<F, Fut>(
+    labels: client_groups::ClientGroupLabels,
+    open_mirror_and_load_profiles: F,
+) -> Result<ClientGroupLabelMigrationPlan, ClientGroupLabelMigrationPreparationError>
+where
+    F: FnOnce(Vec<String>) -> Fut,
+    Fut: std::future::Future<
+        Output = Result<
+            Vec<crate::db::tally_mirror::ClientGroupLabelMigrationProfile>,
+            ClientGroupLabelMigrationPreparationError,
+        >,
+    >,
+{
+    if labels.is_empty() {
+        return Ok(classify_client_group_label_migration(&labels, &[]));
+    }
+
+    let raw_guids = labels.keys().cloned().collect::<Vec<_>>();
+    let profiles = open_mirror_and_load_profiles(raw_guids).await?;
+    Ok(classify_client_group_label_migration(&labels, &profiles))
+}
+
 /// Explicitly prepares a read-only migration plan. Unlike ordinary label
 /// reads and saves, this operator-requested command may initialise the mirror
 /// to inspect durable observed-company history; it never calls the label
 /// writer. It fails closed if the v1 label file cannot be read, so a phase-2
-/// consumer can never treat unread local input as an empty migration.
+/// consumer can never treat unread local input as an empty migration. An
+/// absent v1 label file returns an empty plan before the mirror/keychain path.
 #[tauri::command]
 pub async fn prepare_client_group_label_migration(
     app: AppHandle,
@@ -2477,16 +2500,17 @@ pub async fn prepare_client_group_label_migration(
         .app_config_dir()
         .map_err(|_| ClientGroupLabelMigrationPreparationError::ConfigurationUnavailable)
         .and_then(|directory| load_client_group_labels_for_migration(&directory))?;
-    let raw_guids = labels.keys().cloned().collect::<Vec<_>>();
-    let mirror = mirror
-        .get()
-        .await
-        .map_err(|_| ClientGroupLabelMigrationPreparationError::MirrorUnavailable)?;
-    let profiles = mirror
-        .persisted_company_profiles_for_client_group_label_migration(&raw_guids)
-        .await
-        .map_err(|_| ClientGroupLabelMigrationPreparationError::PersistedProfilesUnavailable)?;
-    Ok(classify_client_group_label_migration(&labels, &profiles))
+    prepare_client_group_label_migration_from_labels(labels, |raw_guids| async move {
+        let mirror = mirror
+            .get()
+            .await
+            .map_err(|_| ClientGroupLabelMigrationPreparationError::MirrorUnavailable)?;
+        mirror
+            .persisted_company_profiles_for_client_group_label_migration(&raw_guids)
+            .await
+            .map_err(|_| ClientGroupLabelMigrationPreparationError::PersistedProfilesUnavailable)
+    })
+    .await
 }
 
 /// Reads the optional all-client sort preference from ordinary application
@@ -2878,9 +2902,10 @@ mod tests {
         company_sweep_currency_preflight_failure, company_sweep_result, establish_inr_currency,
         first_calendar_day_canary_window, load_client_group_labels_for_migration,
         party_ledger_master_currency_admission_error, party_ledger_master_runtime_command_error,
-        portable_export_file_name, reconcile_review_cleanup, reviewed_probe_commitment_sha256,
-        selected_read_observation, tally_command_error, tally_runtime_command_error,
-        validate_dsc_pins, verify_observed_company_tuple_from_companies, write_unique_download,
+        portable_export_file_name, prepare_client_group_label_migration_from_labels,
+        reconcile_review_cleanup, reviewed_probe_commitment_sha256, selected_read_observation,
+        tally_command_error, tally_runtime_command_error, validate_dsc_pins,
+        verify_observed_company_tuple_from_companies, write_unique_download,
         ClientGroupLabelMigrationPreparationError, CompanySweepFailure, OutstandingsRequest,
         PersistedTallyCompany, SavedTallySetup, SelectedCompanyIdentity, VerifiedCompanyIdentity,
     };
@@ -2907,6 +2932,21 @@ mod tests {
             load_client_group_labels_for_migration(directory.path()),
             Err(ClientGroupLabelMigrationPreparationError::LabelsUnavailable)
         ));
+    }
+
+    #[tokio::test]
+    async fn empty_label_migration_plan_never_opens_the_mirror() {
+        let mirror_opened = std::sync::atomic::AtomicBool::new(false);
+
+        let plan = prepare_client_group_label_migration_from_labels(BTreeMap::new(), |_| async {
+            mirror_opened.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err(ClientGroupLabelMigrationPreparationError::MirrorUnavailable)
+        })
+        .await
+        .expect("empty labels require no mirror");
+
+        assert!(plan.entries.is_empty());
+        assert!(!mirror_opened.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]
