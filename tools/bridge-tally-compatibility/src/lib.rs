@@ -725,16 +725,21 @@ fn collect_required_surface_files(
                 paths,
             )?;
         } else if entry_type.is_file() {
-            paths.insert(
-                path.strip_prefix(repository_root)
-                    .map_err(|_| invalid("surface_required_directory_unavailable"))?
-                    .to_str()
-                    .ok_or_else(|| invalid("surface_required_directory_unavailable"))?
-                    .replace(std::path::MAIN_SEPARATOR, "/"),
-            );
+            let relative_path = path
+                .strip_prefix(repository_root)
+                .map_err(|_| invalid("surface_required_directory_unavailable"))?
+                .to_str()
+                .ok_or_else(|| invalid("surface_required_directory_unavailable"))?;
+            paths.insert(normalise_surface_path(relative_path));
+        } else {
+            return Err(invalid("surface_required_directory_entry_unsupported"));
         }
     }
     Ok(())
+}
+
+fn normalise_surface_path(path: &str) -> String {
+    path.replace('\\', "/")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2288,6 +2293,40 @@ mod tests {
                     .validate_files(temp.path())
                     .unwrap_err(),
                 invalid("surface_required_directory_file_unpinned")
+            );
+        }
+    }
+
+    #[test]
+    fn normalise_surface_path_uses_forward_slashes() {
+        assert_eq!(
+            normalise_surface_path("src-tauri\\src\\reports\\party_statement.rs"),
+            "src-tauri/src/reports/party_statement.rs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gate_rejects_symlinked_required_directory_entries() {
+        use std::os::unix::fs::symlink;
+
+        for directory in REQUIRED_SURFACE_DIRECTORIES {
+            let temp = tempfile::tempdir().unwrap();
+            for required_directory in REQUIRED_SURFACE_DIRECTORIES {
+                fs::create_dir_all(temp.path().join(required_directory)).unwrap();
+            }
+            symlink(
+                temp.path().join("outside-the-repository"),
+                temp.path().join(directory).join("linked-entry"),
+            )
+            .unwrap();
+            fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+
+            assert_eq!(
+                sealed_surface(temp.path(), &["surface.txt"])
+                    .validate_files(temp.path())
+                    .unwrap_err(),
+                invalid("surface_required_directory_entry_unsupported")
             );
         }
     }
