@@ -61,8 +61,8 @@ pub struct ClientGroupLabelMigrationPlan {
 }
 
 /// The complete identity state of one durable profile for this migration.
-/// `documented` and `observed` rows with a durable key identify a book;
-/// every other confidence/key combination is retained as incomplete history.
+/// Only an `observed` row with a durable key identifies a book; every other
+/// confidence/key combination is retained as incomplete history.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ClientGroupLabelMigrationProfileState {
     Documented(Option<String>),
@@ -93,11 +93,14 @@ pub fn classify_client_group_label_migration(
                 .map(client_group_label_migration_profile_state)
             {
                 match state {
-                    ClientGroupLabelMigrationProfileState::Documented(Some(composite_key))
-                    | ClientGroupLabelMigrationProfileState::Observed(Some(composite_key)) => {
+                    ClientGroupLabelMigrationProfileState::Observed(Some(composite_key)) => {
                         composite_keys.insert(composite_key);
                     }
-                    ClientGroupLabelMigrationProfileState::Documented(None)
+                    // Migration 0023: the Company collection's observed tuple is
+                    // the only accepted company identity. Documented evidence may
+                    // describe a key, but must not become a migration target.
+                    ClientGroupLabelMigrationProfileState::Documented(Some(_))
+                    | ClientGroupLabelMigrationProfileState::Documented(None)
                     | ClientGroupLabelMigrationProfileState::Observed(None)
                     | ClientGroupLabelMigrationProfileState::Inferred(Some(_))
                     | ClientGroupLabelMigrationProfileState::Inferred(None)
@@ -325,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn documented_profile_with_a_key_can_resolve_a_label() {
+    fn documented_profile_with_a_key_requires_review() {
         let labels = BTreeMap::from([(
             "synthetic-documented-guid".to_string(),
             "Documented practice".to_string(),
@@ -340,6 +343,13 @@ mod tests {
         );
 
         assert_eq!(
+            plan.entries[0].disposition,
+            ClientGroupLabelMigrationDisposition::IncompleteHistory {
+                identified_composite_keys: vec![],
+                incomplete_profile_count: 1,
+            }
+        );
+        assert_ne!(
             plan.entries[0].disposition,
             ClientGroupLabelMigrationDisposition::Resolved {
                 composite_key: "documented-book".to_string(),
