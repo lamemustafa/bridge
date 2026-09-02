@@ -20,10 +20,12 @@ pub enum ClientGroupLabelMigrationDisposition {
     },
     Ambiguous {
         composite_keys: Vec<String>,
+        contested_destinations: Vec<ClientGroupLabelMigrationConflict>,
     },
     IncompleteHistory {
         identified_composite_keys: Vec<String>,
         incomplete_profile_count: usize,
+        contested_destinations: Vec<ClientGroupLabelMigrationConflict>,
     },
     Conflict {
         conflicts: Vec<ClientGroupLabelMigrationConflict>,
@@ -117,6 +119,7 @@ pub fn classify_client_group_label_migration(
                 ClientGroupLabelMigrationDisposition::IncompleteHistory {
                     identified_composite_keys: composite_keys,
                     incomplete_profile_count,
+                    contested_destinations: vec![],
                 }
             } else {
                 match composite_keys.as_slice() {
@@ -124,7 +127,10 @@ pub fn classify_client_group_label_migration(
                         composite_key: composite_key.clone(),
                     },
                     [] => ClientGroupLabelMigrationDisposition::Unmatched,
-                    _ => ClientGroupLabelMigrationDisposition::Ambiguous { composite_keys },
+                    _ => ClientGroupLabelMigrationDisposition::Ambiguous {
+                        composite_keys,
+                        contested_destinations: vec![],
+                    },
                 }
             };
             ClientGroupLabelMigrationEntry {
@@ -157,20 +163,32 @@ fn apply_destination_conflicts(
 ) {
     let mut claims = BTreeMap::<String, DestinationClaims>::new();
     for entry in entries.iter() {
-        let ClientGroupLabelMigrationDisposition::Resolved { composite_key } = &entry.disposition
-        else {
-            continue;
+        let (candidate_destinations, is_resolved) = match &entry.disposition {
+            ClientGroupLabelMigrationDisposition::Resolved { composite_key } => {
+                (std::slice::from_ref(composite_key), true)
+            }
+            ClientGroupLabelMigrationDisposition::Ambiguous { composite_keys, .. } => {
+                (composite_keys.as_slice(), false)
+            }
+            ClientGroupLabelMigrationDisposition::IncompleteHistory {
+                identified_composite_keys,
+                ..
+            } => (identified_composite_keys.as_slice(), false),
+            ClientGroupLabelMigrationDisposition::Conflict { .. }
+            | ClientGroupLabelMigrationDisposition::Unmatched => continue,
         };
-        let canonical_destination = composite_key.to_ascii_lowercase();
-        let claim = claims
-            .entry(canonical_destination)
-            .or_insert_with(|| DestinationClaims::new(composite_key));
-        claim.insert(&entry.source_key, &entry.label);
-        for (source_key, label) in existing_labels
-            .iter()
-            .filter(|(source_key, _)| source_key.eq_ignore_ascii_case(composite_key))
-        {
-            claim.insert(source_key, label);
+        for composite_key in candidate_destinations {
+            let canonical_destination = composite_key.to_ascii_lowercase();
+            let claim = claims
+                .entry(canonical_destination)
+                .or_insert_with(|| DestinationClaims::new(composite_key));
+            claim.insert_candidate(&entry.source_key, &entry.label, is_resolved);
+            for (source_key, label) in existing_labels
+                .iter()
+                .filter(|(source_key, _)| source_key.eq_ignore_ascii_case(composite_key))
+            {
+                claim.insert_existing_label(source_key, label);
+            }
         }
     }
 
@@ -189,9 +207,18 @@ fn apply_destination_conflicts(
                 )
                 .collect(),
         };
-        for competing_entry in &conflict.competing_entries {
+        let affected_sources = if claim.has_resolved_candidate {
+            conflict
+                .competing_entries
+                .iter()
+                .map(|entry| entry.source_key.clone())
+                .collect::<Vec<_>>()
+        } else {
+            claim.candidate_sources.into_iter().collect::<Vec<_>>()
+        };
+        for source_key in affected_sources {
             conflicts_by_source
-                .entry(competing_entry.source_key.clone())
+                .entry(source_key)
                 .or_default()
                 .push(conflict.clone());
         }
@@ -199,7 +226,24 @@ fn apply_destination_conflicts(
 
     for entry in entries {
         if let Some(conflicts) = conflicts_by_source.remove(&entry.source_key) {
-            entry.disposition = ClientGroupLabelMigrationDisposition::Conflict { conflicts };
+            match &mut entry.disposition {
+                ClientGroupLabelMigrationDisposition::Resolved { .. }
+                | ClientGroupLabelMigrationDisposition::Unmatched => {
+                    entry.disposition =
+                        ClientGroupLabelMigrationDisposition::Conflict { conflicts };
+                }
+                ClientGroupLabelMigrationDisposition::Ambiguous {
+                    contested_destinations,
+                    ..
+                }
+                | ClientGroupLabelMigrationDisposition::IncompleteHistory {
+                    contested_destinations,
+                    ..
+                } => *contested_destinations = conflicts,
+                ClientGroupLabelMigrationDisposition::Conflict {
+                    conflicts: existing_conflicts,
+                } => existing_conflicts.extend(conflicts),
+            }
         }
     }
 }
@@ -207,6 +251,8 @@ fn apply_destination_conflicts(
 struct DestinationClaims {
     destination_key: String,
     entries: BTreeMap<String, String>,
+    candidate_sources: BTreeSet<String>,
+    has_resolved_candidate: bool,
 }
 
 impl DestinationClaims {
@@ -214,10 +260,19 @@ impl DestinationClaims {
         Self {
             destination_key: destination_key.to_string(),
             entries: BTreeMap::new(),
+            candidate_sources: BTreeSet::new(),
+            has_resolved_candidate: false,
         }
     }
 
-    fn insert(&mut self, source_key: &str, label: &str) {
+    fn insert_candidate(&mut self, source_key: &str, label: &str, is_resolved: bool) {
+        self.entries
+            .insert(source_key.to_string(), label.to_string());
+        self.candidate_sources.insert(source_key.to_string());
+        self.has_resolved_candidate |= is_resolved;
+    }
+
+    fn insert_existing_label(&mut self, source_key: &str, label: &str) {
         self.entries
             .insert(source_key.to_string(), label.to_string());
     }
@@ -267,6 +322,7 @@ mod tests {
             ClientGroupLabelMigrationDisposition::IncompleteHistory {
                 identified_composite_keys: vec!["reappeared-book-key".to_string()],
                 incomplete_profile_count: 1,
+                contested_destinations: vec![],
             }
         );
     }
@@ -290,6 +346,7 @@ mod tests {
             ClientGroupLabelMigrationDisposition::IncompleteHistory {
                 identified_composite_keys: vec![],
                 incomplete_profile_count: 2,
+                contested_destinations: vec![],
             }
         );
         assert_ne!(
@@ -317,6 +374,7 @@ mod tests {
             ClientGroupLabelMigrationDisposition::IncompleteHistory {
                 identified_composite_keys: vec!["identified-book".to_string()],
                 incomplete_profile_count: 1,
+                contested_destinations: vec![],
             }
         );
         assert_ne!(
@@ -347,6 +405,7 @@ mod tests {
             ClientGroupLabelMigrationDisposition::IncompleteHistory {
                 identified_composite_keys: vec![],
                 incomplete_profile_count: 1,
+                contested_destinations: vec![],
             }
         );
         assert_ne!(
@@ -371,9 +430,83 @@ mod tests {
 
         assert!(matches!(
             &plan.entries[0].disposition,
-            ClientGroupLabelMigrationDisposition::Ambiguous { composite_keys }
-                if composite_keys == &["candidate-a", "candidate-b", "candidate-c"]
+            ClientGroupLabelMigrationDisposition::Ambiguous {
+                composite_keys,
+                contested_destinations,
+            } if composite_keys == &["candidate-a", "candidate-b", "candidate-c"]
+                && contested_destinations.is_empty()
         ));
+    }
+
+    #[test]
+    fn ambiguous_candidates_disclose_an_occupied_destination() {
+        let labels = BTreeMap::from([
+            ("synthetic-guid".to_string(), "Legacy practice".to_string()),
+            ("candidate-a".to_string(), "Occupied practice".to_string()),
+        ]);
+        let plan = classify_client_group_label_migration(
+            &labels,
+            &[
+                persisted_profile("synthetic-guid", Some("candidate-a"), "observed"),
+                persisted_profile("synthetic-guid", Some("candidate-b"), "observed"),
+            ],
+        );
+
+        assert_eq!(
+            plan.entries[1].disposition,
+            ClientGroupLabelMigrationDisposition::Ambiguous {
+                composite_keys: vec!["candidate-a".to_string(), "candidate-b".to_string()],
+                contested_destinations: vec![ClientGroupLabelMigrationConflict {
+                    destination_key: "candidate-a".to_string(),
+                    competing_entries: vec![
+                        ClientGroupLabelMigrationConflictEntry {
+                            source_key: "candidate-a".to_string(),
+                            label: "Occupied practice".to_string(),
+                        },
+                        ClientGroupLabelMigrationConflictEntry {
+                            source_key: "synthetic-guid".to_string(),
+                            label: "Legacy practice".to_string(),
+                        },
+                    ],
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn incomplete_history_discloses_an_occupied_identified_destination() {
+        let labels = BTreeMap::from([
+            ("synthetic-guid".to_string(), "Legacy practice".to_string()),
+            ("candidate-a".to_string(), "Occupied practice".to_string()),
+        ]);
+        let plan = classify_client_group_label_migration(
+            &labels,
+            &[
+                persisted_profile("synthetic-guid", Some("candidate-a"), "observed"),
+                persisted_profile("synthetic-guid", None, "unknown"),
+            ],
+        );
+
+        assert_eq!(
+            plan.entries[1].disposition,
+            ClientGroupLabelMigrationDisposition::IncompleteHistory {
+                identified_composite_keys: vec!["candidate-a".to_string()],
+                incomplete_profile_count: 1,
+                contested_destinations: vec![ClientGroupLabelMigrationConflict {
+                    destination_key: "candidate-a".to_string(),
+                    competing_entries: vec![
+                        ClientGroupLabelMigrationConflictEntry {
+                            source_key: "candidate-a".to_string(),
+                            label: "Occupied practice".to_string(),
+                        },
+                        ClientGroupLabelMigrationConflictEntry {
+                            source_key: "synthetic-guid".to_string(),
+                            label: "Legacy practice".to_string(),
+                        },
+                    ],
+                }],
+            }
+        );
     }
 
     #[test]
