@@ -651,13 +651,18 @@ impl CompatibilitySurfaceManifest {
             .collect::<BTreeSet<_>>();
         let mut required_paths = BTreeSet::new();
         for directory in REQUIRED_SURFACE_DIRECTORIES {
-            if repository_root.join(directory).is_dir() {
-                collect_required_surface_files(
-                    repository_root,
-                    Path::new(directory),
-                    &mut required_paths,
-                )?;
+            let directory_path = repository_root.join(directory);
+            let directory_type = fs::symlink_metadata(&directory_path)
+                .map_err(|_| invalid("surface_required_directory_unavailable"))?
+                .file_type();
+            if !directory_type.is_dir() {
+                return Err(invalid("surface_required_directory_not_directory"));
             }
+            collect_required_surface_files(
+                repository_root,
+                Path::new(directory),
+                &mut required_paths,
+            )?;
         }
         if required_paths
             .iter()
@@ -1843,6 +1848,7 @@ mod tests {
     #[test]
     fn unknown_claims_pass_without_live_or_trusted_evidence() {
         let temp = tempfile::tempdir().unwrap();
+        create_required_surface_directories(temp.path());
         fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
         let file_sha = sha256_file(&temp.path().join("surface.txt")).unwrap();
         let surface = CompatibilitySurfaceManifest {
@@ -1901,6 +1907,7 @@ mod tests {
     #[test]
     fn positive_claim_requires_fresh_signed_exact_scope_evidence() {
         let temp = tempfile::tempdir().unwrap();
+        create_required_surface_directories(temp.path());
         fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
         let surface = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
@@ -2030,6 +2037,7 @@ mod tests {
     #[test]
     fn unsupported_claims_remain_disabled_without_a_profile_specific_signature() {
         let temp = tempfile::tempdir().unwrap();
+        create_required_surface_directories(temp.path());
         fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
         let surface = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
@@ -2257,6 +2265,7 @@ mod tests {
     #[test]
     fn surface_manifest_detects_compatibility_drift() {
         let temp = tempfile::tempdir().unwrap();
+        create_required_surface_directories(temp.path());
         fs::write(temp.path().join("surface.txt"), b"before").unwrap();
         let surface = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
@@ -2332,6 +2341,38 @@ mod tests {
     }
 
     #[test]
+    fn gate_rejects_a_missing_required_directory() {
+        for missing_directory in REQUIRED_SURFACE_DIRECTORIES {
+            let temp = tempfile::tempdir().unwrap();
+            fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+            let surface = sealed_surface(temp.path(), &["surface.txt"]);
+            fs::remove_dir(temp.path().join(missing_directory)).unwrap();
+
+            assert_eq!(
+                surface.validate_files(temp.path()).unwrap_err(),
+                invalid("surface_required_directory_unavailable")
+            );
+        }
+    }
+
+    #[test]
+    fn gate_rejects_a_required_path_that_is_not_a_directory() {
+        for file_path in REQUIRED_SURFACE_DIRECTORIES {
+            let temp = tempfile::tempdir().unwrap();
+            fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+            let surface = sealed_surface(temp.path(), &["surface.txt"]);
+            let path = temp.path().join(file_path);
+            fs::remove_dir(&path).unwrap();
+            fs::write(path, b"not a directory").unwrap();
+
+            assert_eq!(
+                surface.validate_files(temp.path()).unwrap_err(),
+                invalid("surface_required_directory_not_directory")
+            );
+        }
+    }
+
+    #[test]
     fn real_tree_has_complete_migration_and_report_surface_coverage() {
         let repository_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let surface = CompatibilitySurfaceManifest::from_json(
@@ -2343,6 +2384,7 @@ mod tests {
     }
 
     fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {
+        create_required_surface_directories(repository_root);
         CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
             files: paths
@@ -2356,6 +2398,12 @@ mod tests {
         }
         .seal()
         .unwrap()
+    }
+
+    fn create_required_surface_directories(repository_root: &Path) {
+        for directory in REQUIRED_SURFACE_DIRECTORIES {
+            fs::create_dir_all(repository_root.join(directory)).unwrap();
+        }
     }
 
     #[test]
