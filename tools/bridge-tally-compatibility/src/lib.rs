@@ -2428,10 +2428,11 @@ mod tests {
         )
         .unwrap();
         surface.validate_files(&repository_root).unwrap();
-        assert_eq!(
-            MAX_SURFACE_FILES - surface.files.len(),
-            RESERVED_SURFACE_FILES
-        );
+        // `<=` lets pinned files consume the deliberate reserve without raising
+        // the cap: `validate_shape` protects the upper bound by rejecting a
+        // surface above `MAX_SURFACE_FILES`, while this assertion protects the
+        // policy bound by rejecting an inflated cap with excess headroom.
+        assert!(MAX_SURFACE_FILES - surface.files.len() <= RESERVED_SURFACE_FILES);
     }
 
     fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {
