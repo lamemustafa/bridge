@@ -21,13 +21,13 @@ pub const ATTESTATION_SCHEMA_VERSION: u16 = 1;
 pub const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 /// Bounded high enough for the additive Tally safety-migration and report
 /// surfaces while still rejecting an unexpectedly broad attestation surface.
-/// 161 entries are currently sealed. Every file under the Tally migration and
+/// 162 entries are currently sealed. Every file under the Tally migration and
 /// report directories is required by a directory rule; `src/` and the protocol
 /// crates remain judgment-pinned because their mixed-purpose directories do
-/// not have that invariant. Fifteen deliberate slots measured from 161 cover
+/// not have that invariant. Fifteen deliberate slots measured from 162 cover
 /// a small cohesive feature (source, tests, docs and manifest) but make the
 /// sixteenth unreviewed addition an explicit compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 176;
+pub const MAX_SURFACE_FILES: usize = 177;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -732,10 +732,8 @@ fn collect_required_surface_files(
         } else if entry_type.is_file() {
             let relative_path = path
                 .strip_prefix(repository_root)
-                .map_err(|_| invalid("surface_required_directory_unavailable"))?
-                .to_str()
-                .ok_or_else(|| invalid("surface_required_directory_unavailable"))?;
-            paths.insert(normalise_surface_path(relative_path));
+                .map_err(|_| invalid("surface_required_directory_unavailable"))?;
+            paths.insert(normalise_surface_path(relative_path)?);
         } else {
             return Err(invalid("surface_required_directory_entry_unsupported"));
         }
@@ -743,8 +741,27 @@ fn collect_required_surface_files(
     Ok(())
 }
 
-fn normalise_surface_path(path: &str) -> String {
-    path.replace('\\', "/")
+fn normalise_surface_path(path: &Path) -> Result<String, CompatibilityError> {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(component) => components.push(
+                component
+                    .to_str()
+                    .ok_or_else(|| invalid("surface_required_directory_unavailable"))?,
+            ),
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                return Err(invalid("surface_required_directory_unavailable"));
+            }
+        }
+    }
+    if components.is_empty() {
+        return Err(invalid("surface_required_directory_unavailable"));
+    }
+    Ok(components.join("/"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2306,11 +2323,39 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn normalise_surface_path_uses_forward_slashes() {
         assert_eq!(
-            normalise_surface_path("src-tauri\\src\\reports\\party_statement.rs"),
+            normalise_surface_path(Path::new("src-tauri\\src\\reports\\party_statement.rs"))
+                .unwrap(),
             "src-tauri/src/reports/party_statement.rs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gate_rejects_literal_backslash_filename_alongside_slash_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let reports_directory = temp.path().join("src-tauri/src/reports");
+        let slash_path = reports_directory.join("nested/file.rs");
+        let literal_backslash_path = reports_directory.join(r"nested\file.rs");
+        fs::create_dir_all(slash_path.parent().unwrap()).unwrap();
+        fs::write(&slash_path, b"sealed source").unwrap();
+        fs::write(&literal_backslash_path, b"unsealed source").unwrap();
+
+        let slash_surface_path = "src-tauri/src/reports/nested/file.rs";
+        let literal_backslash_surface_path = r"src-tauri/src/reports/nested\file.rs";
+        assert_ne!(
+            normalise_surface_path(Path::new(slash_surface_path)).unwrap(),
+            normalise_surface_path(Path::new(literal_backslash_surface_path)).unwrap()
+        );
+
+        assert_eq!(
+            sealed_surface(temp.path(), &[slash_surface_path])
+                .validate_files(temp.path())
+                .unwrap_err(),
+            invalid("surface_required_directory_file_unpinned")
         );
     }
 
@@ -2381,6 +2426,7 @@ mod tests {
         )
         .unwrap();
         surface.validate_files(&repository_root).unwrap();
+        assert_eq!(MAX_SURFACE_FILES - surface.files.len(), 15);
     }
 
     fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {
