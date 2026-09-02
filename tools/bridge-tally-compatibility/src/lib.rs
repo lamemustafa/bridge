@@ -21,15 +21,20 @@ pub const ATTESTATION_SCHEMA_VERSION: u16 = 1;
 pub const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 /// Bounded high enough for the additive Tally safety-migration and report
 /// surfaces while still rejecting an unexpectedly broad attestation surface.
-/// 129 entries are currently sealed. Fifteen deliberate slots cover a small
-/// cohesive feature (source, tests, docs and manifest) but make the sixteenth
-/// unreviewed addition an explicit compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 144;
+/// 161 entries are currently sealed. Every file under the Tally migration and
+/// report directories is required by a directory rule; `src/` and the protocol
+/// crates remain judgment-pinned because their mixed-purpose directories do
+/// not have that invariant. Fifteen deliberate slots measured from 161 cover
+/// a small cohesive feature (source, tests, docs and manifest) but make the
+/// sixteenth unreviewed addition an explicit compatibility-surface decision.
+pub const MAX_SURFACE_FILES: usize = 176;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
 pub const MAX_MATRIX_MARKDOWN_BYTES: usize = 1024 * 1024;
 const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1000;
+const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
+    ["src-tauri/src/db/migrations", "src-tauri/src/reports"];
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CompatibilityError {
@@ -624,12 +629,41 @@ impl CompatibilitySurfaceManifest {
 
     pub fn validate_files(&self, repository_root: &Path) -> Result<(), CompatibilityError> {
         self.validate()?;
+        self.validate_required_directory_coverage(repository_root)?;
         for file in &self.files {
             let bytes = fs::read(repository_root.join(&file.path))
                 .map_err(|_| invalid("surface_file_unavailable"))?;
             if sha256_bytes(&bytes) != file.sha256 {
                 return Err(invalid("surface_file_changed"));
             }
+        }
+        Ok(())
+    }
+
+    fn validate_required_directory_coverage(
+        &self,
+        repository_root: &Path,
+    ) -> Result<(), CompatibilityError> {
+        let sealed_paths = self
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut required_paths = BTreeSet::new();
+        for directory in REQUIRED_SURFACE_DIRECTORIES {
+            if repository_root.join(directory).is_dir() {
+                collect_required_surface_files(
+                    repository_root,
+                    Path::new(directory),
+                    &mut required_paths,
+                )?;
+            }
+        }
+        if required_paths
+            .iter()
+            .any(|path| !sealed_paths.contains(path.as_str()))
+        {
+            return Err(invalid("surface_required_directory_file_unpinned"));
         }
         Ok(())
     }
@@ -668,6 +702,39 @@ impl CompatibilitySurfaceManifest {
         }
         Ok(bytes)
     }
+}
+
+fn collect_required_surface_files(
+    repository_root: &Path,
+    relative_directory: &Path,
+    paths: &mut BTreeSet<String>,
+) -> Result<(), CompatibilityError> {
+    for entry in fs::read_dir(repository_root.join(relative_directory))
+        .map_err(|_| invalid("surface_required_directory_unavailable"))?
+    {
+        let entry = entry.map_err(|_| invalid("surface_required_directory_unavailable"))?;
+        let entry_type = entry
+            .file_type()
+            .map_err(|_| invalid("surface_required_directory_unavailable"))?;
+        let path = entry.path();
+        if entry_type.is_dir() {
+            collect_required_surface_files(
+                repository_root,
+                path.strip_prefix(repository_root)
+                    .map_err(|_| invalid("surface_required_directory_unavailable"))?,
+                paths,
+            )?;
+        } else if entry_type.is_file() {
+            paths.insert(
+                path.strip_prefix(repository_root)
+                    .map_err(|_| invalid("surface_required_directory_unavailable"))?
+                    .to_str()
+                    .ok_or_else(|| invalid("surface_required_directory_unavailable"))?
+                    .replace(std::path::MAIN_SEPARATOR, "/"),
+            );
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2202,6 +2269,38 @@ mod tests {
             surface.validate_files(temp.path()).unwrap_err(),
             invalid("surface_file_changed")
         );
+    }
+
+    #[test]
+    fn gate_rejects_an_unpinned_migration_or_report_file() {
+        for unpinned_path in [
+            "src-tauri/src/db/migrations/9999_unpinned.sql",
+            "src-tauri/src/reports/unpinned.rs",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            for directory in REQUIRED_SURFACE_DIRECTORIES {
+                fs::create_dir_all(temp.path().join(directory)).unwrap();
+            }
+            fs::write(temp.path().join(unpinned_path), b"unsealed source").unwrap();
+            fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+            assert_eq!(
+                sealed_surface(temp.path(), &["surface.txt"])
+                    .validate_files(temp.path())
+                    .unwrap_err(),
+                invalid("surface_required_directory_file_unpinned")
+            );
+        }
+    }
+
+    #[test]
+    fn real_tree_has_complete_migration_and_report_surface_coverage() {
+        let repository_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let surface = CompatibilitySurfaceManifest::from_json(
+            &fs::read(repository_root.join("docs/tally/compatibility/compatibility-surface.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        surface.validate_files(&repository_root).unwrap();
     }
 
     fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {

@@ -130,6 +130,14 @@
       "sha256": "7579b5bfcf7aca89dd688043d3b3d8995a42403fac3ee8bd2c66ec0380b79aa4"
     },
     {
+      "path": "src-tauri/crates/bridge-tally-core/src/reconciliation.rs",
+      "sha256": "8320d0479b7bfa6f068fd08daa661551a1e0dec4d2304a784aa42c0da3e57db4"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-core/src/report_tie_out.rs",
+      "sha256": "0ac5da5f3ea40a823bb25cd067ec9c118131845a3a6b9391ef1b0b3b6ec1553d"
+    },
+    {
       "path": "src-tauri/crates/bridge-tally-core/src/transport_qualification.rs",
       "sha256": "0d7075ec900ad5f33564c878942d43ed242cc63713011688042a1233c5efb258"
     },
@@ -166,6 +174,10 @@
       "sha256": "f7d680194bf1483b3dfcc8be4c7c7c9579299a9a7a77e72c0ad3116b5b617fd4"
     },
     {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/date.rs",
+      "sha256": "3af1a52bd7f3e9eee868a448fce81b0eddde3a4af1f970225c02fe9752d0d059"
+    },
+    {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/mod.rs",
       "sha256": "7310e4a7d4e51d46fbc0f93368e1a913ad52265cb7810941f693459705072358"
     },
@@ -184,6 +196,10 @@
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/completeness.rs",
       "sha256": "c04fc5c6acae87f12f8578405a6870c4d765c283f88be5009d26632ddcd965bc"
+    },
+    {
+      "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/compute.rs",
+      "sha256": "331594627db1f882ce695d8908762f35914a74b40347acd8021367b8e5d51352"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/model.rs",
@@ -274,6 +290,26 @@
       "sha256": "4b9e92b3afcc4b6694901387bd4fd040595c1c040e7713bb76817ddfdecdb791"
     },
     {
+      "path": "src-tauri/src/db/migrations/0002_tally_mirror.sql",
+      "sha256": "03f4533dfec27d03deb6a402cff28bc1027ce4df2d66467bd120ef70b14b366a"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0003_tally_safe_writes.sql",
+      "sha256": "e84c77d5333a895b414f4f156e8acde216ea7c6bdd962b0f2350412a0afcb0fe"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0004_tally_snapshot_state.sql",
+      "sha256": "e23f7bcf1851c044754ae543ffadb7af7dd44e88f77961766f170a25842eec23"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0005_tally_snapshot_recovery.sql",
+      "sha256": "0a7d6299d5e3298a0520ccd55752e79018b5c353ebf8a495db261f0b6bb5f1a4"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0006_tally_incremental_foundation.sql",
+      "sha256": "d3a0feaf76b2faa97af73502d485d77c2353679f5dcdb6c7dd6010d8bae7864d"
+    },
+    {
       "path": "src-tauri/src/db/migrations/0007_tally_selected_read_evidence.sql",
       "sha256": "619fcdc8931f21fdfb6df8eaa1b1c30a5251f9f2f3032d948a894a23e8365e8b"
     },
@@ -338,6 +374,22 @@
       "sha256": "b27a3576795def376c46b7cd003244065ebe60f76eeb10b50bf8eb7c744cbe7a"
     },
     {
+      "path": "src-tauri/src/db/migrations/0022_tally_bomless_utf16_read_evidence.sql",
+      "sha256": "0328d9f642d10267a00b71493d0538d3bdadd328a5dd524f958e1ea14f59d9d2"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0023_tally_composite_company_identity.sql",
+      "sha256": "8607a8b479f49e5f22a59d6ef6b6324a949d0cfa9ff834e8b93e11eceae9268e"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/0024_tally_selected_read_scope_v2.sql",
+      "sha256": "db0dc0020aae8a51d077a0986bb4d5afec8c4dd68fe1763497ad35844bb76653"
+    },
+    {
+      "path": "src-tauri/src/db/migrations/mod.rs",
+      "sha256": "409843abef918f3a497048cea95ec1f7a6ddd6d75b2f177474335fdc890f479a"
+    },
+    {
       "path": "src-tauri/src/db/tally_incremental.rs",
       "sha256": "ebd981e558a99084138d46bf83bee54e28b640d60b49be9e546e793e523db2bf"
     },
@@ -354,8 +406,24 @@
       "sha256": "87046d7ff340e76a9a409e96f5417b88e5d0ab37cc014551b745fd9885f64a9a"
     },
     {
+      "path": "src-tauri/src/reports/bulk_party_statement.rs",
+      "sha256": "9eb188545a68d1463ec73a165dc70abef1faba8d4afc66e5a8f744f971223b9b"
+    },
+    {
       "path": "src-tauri/src/reports/mod.rs",
       "sha256": "47a833e48fb0d65fd1243b7ae35d1ff24125fbd9e76be45105c58e31bef3785a"
+    },
+    {
+      "path": "src-tauri/src/reports/outstandings_working_paper.rs",
+      "sha256": "29e942c4bf19cfa5d8f2b5f01deeb72cb781c33dae07688a5e1b78752a48d05c"
+    },
+    {
+      "path": "src-tauri/src/reports/outstandings_working_paper_store.rs",
+      "sha256": "f4ce474669101c966085c87b0d600d7e7b19d6f91429969d94230bcb5e7c67a4"
+    },
+    {
+      "path": "src-tauri/src/reports/outstandings_working_paper_xlsx.rs",
+      "sha256": "a2608c4aed75de517e6948f90f29ccd2886ae2c1e5243c0eae0074a8836aee5b"
     },
     {
       "path": "src-tauri/src/reports/party_ledger_master.rs",
@@ -364,6 +432,14 @@
     {
       "path": "src-tauri/src/reports/party_ledger_master_xlsx.rs",
       "sha256": "f3b13f00051aad0386cb2a6a94613d5b098d435c9ecda21e9207424c7d7a157d"
+    },
+    {
+      "path": "src-tauri/src/reports/party_statement.rs",
+      "sha256": "c51129735af57681cea163f1331593139f0b9620080f7a50965503032513e4a3"
+    },
+    {
+      "path": "src-tauri/src/reports/party_statement_pdf.rs",
+      "sha256": "4c9a7fe14297ba2f9a55b3e9d20eb05943756eda9e9586894ecc143472fbda49"
     },
     {
       "path": "src-tauri/src/reports/party_statement_xlsx.rs",
@@ -426,6 +502,10 @@
       "sha256": "40976622598bdbfe2567f3fd70adee9ff78f5cd9c7fbc43e1fbac0640ef1523f"
     },
     {
+      "path": "src-tauri/src/tally/xml_builder.rs",
+      "sha256": "2ed10d690c60a448f5c016778976c41f6de29dd4d339930fabe0b2e28fb5fd39"
+    },
+    {
       "path": "src-tauri/src/tally/xml_parser.rs",
       "sha256": "654938f3207822cd9889b8d81cd53684ca43c856b727fbabc09aadde6f9e82eb"
     },
@@ -442,6 +522,10 @@
       "sha256": "6b230089e65154ff229f5d073a77037870c6b335aa2d4eff20452b9f8b6577a1"
     },
     {
+      "path": "src/GstScreen.tsx",
+      "sha256": "52b784448067bc6bbe89fea64cf509668ad196e686316c72823262bde04c9ec1"
+    },
+    {
       "path": "src/MirrorProofScreen.tsx",
       "sha256": "90866e50bdfdee7f2d36a28238d1ad13725321d32dd1c3083bb040f348aae021"
     },
@@ -456,6 +540,10 @@
     {
       "path": "src/TallyReadinessFlow.tsx",
       "sha256": "5c5329778e7c0fbe2285c8fe8f2334c7aaaf45b31457c02560cc2e9ba5089704"
+    },
+    {
+      "path": "src/client-grouping.ts",
+      "sha256": "584c7f9c23d89981fad781ea1557563358256edfef94c19c1210d5c2acc38286"
     },
     {
       "path": "src/company-identity.ts",
@@ -478,12 +566,20 @@
       "sha256": "edbc7f66362c991a37249d20bb45d3e26752739c506856b1467d57be21792edb"
     },
     {
+      "path": "src/outstandings-bills.ts",
+      "sha256": "ff7cc29e1944b4f7b8ff4fb3556d014dd9be921cc16cba7dcdd28b689b4b8f7c"
+    },
+    {
       "path": "src/outstandings-copy.ts",
       "sha256": "794ebfc882a1fda8ad39f6837ee9d4af8336a315361e482f7d69ea22483fd4da"
     },
     {
       "path": "src/outstandings-csv.ts",
       "sha256": "3c836edf03c6d71e26e726e4b31f2c4ae9c98acb703629b2e24b578b33145796"
+    },
+    {
+      "path": "src/outstandings-currency.ts",
+      "sha256": "28e5e9ac7bd14edd7ff8a675b1b5e11df7c568874ecfc73135b588298e0d198e"
     },
     {
       "path": "src/outstandings-provenance.ts",
@@ -515,7 +611,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "89afdf7228c5e54f7da4187f9989a310c160e15b909fac9943b039b83fe096f7"
+      "sha256": "248238e8ab0aff4e15ac6b9c6249f47ac37bbb46048328e457a263fbbda56a31"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -550,5 +646,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "b45043612a94dfacb2d3fc6df8bc43be76a456273e77330d7dad826963a66d91"
+  "manifest_sha256": "ee11754f1bb7ddbd54b1e193ef98dc00347c912bc81cd9c52d2fc87e34f0a854"
 }
