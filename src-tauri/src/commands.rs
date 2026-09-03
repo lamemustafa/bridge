@@ -2434,15 +2434,19 @@ pub async fn fetch_tally_outstandings(
 
 /// Reads operator-owned filing labels from ordinary application configuration.
 ///
-/// The helper deliberately degrades to no labels for a missing, empty, corrupt,
-/// or unavailable file. It receives no mirror state, so this command cannot
-/// initialise SQLCipher or resolve a keychain key.
+/// The helper deliberately remains display-safe for a missing, empty, corrupt,
+/// or unavailable file, while returning a typed degradation reason when one
+/// exists. It receives no mirror state, so this command cannot initialise
+/// SQLCipher or resolve a keychain key.
 #[tauri::command]
-pub fn load_client_group_labels(app: AppHandle) -> client_groups::ClientGroupLabels {
+pub fn load_client_group_labels(app: AppHandle) -> client_groups::ClientGroupLabelsLoad {
     let Ok(directory) = app.path().app_config_dir() else {
-        return client_groups::ClientGroupLabels::new();
+        return client_groups::ClientGroupLabelsLoad {
+            labels: client_groups::ClientGroupLabels::new(),
+            degradation_reason: Some(client_groups::ClientGroupLabelsDegradationReason::Read),
+        };
     };
-    client_groups::load(&directory)
+    client_groups::load_with_degradation(&directory)
 }
 
 /// A safe, typed failure returned by the read-only label-migration planner.
