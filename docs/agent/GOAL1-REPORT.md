@@ -15,7 +15,7 @@
 ## Verification
 
 ```text
-cargo test --lib agent::tests
+cargo test --bin bridge_mcp
 running 2 tests
 ... literal FILTERS + redaction ... ok
 ... simulator company read + down endpoint receipt ... ok
@@ -49,7 +49,7 @@ dedicated profile is qualified.
 Run locally:
 
 ```sh
-rustup run 1.96.0-aarch64-apple-darwin cargo test --manifest-path src-tauri/Cargo.toml --lib agent::tests
+rustup run 1.96.0-aarch64-apple-darwin cargo test --manifest-path src-tauri/Cargo.toml --bin bridge_mcp
 rustup run 1.96.0-aarch64-apple-darwin cargo clippy --manifest-path src-tauri/Cargo.toml --bin bridge_mcp -- -D warnings
 rustup run 1.96.0-aarch64-apple-darwin cargo run --manifest-path src-tauri/Cargo.toml --bin bridge_mcp
 ```

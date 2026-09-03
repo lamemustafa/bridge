@@ -1,4 +1,3 @@
-pub mod agent;
 pub mod axal;
 pub mod client_group_label_migration;
 pub mod client_groups;
