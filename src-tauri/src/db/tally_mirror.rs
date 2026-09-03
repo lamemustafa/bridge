@@ -2566,32 +2566,42 @@ impl TallyMirrorRepository {
         let id = match unique_match(matches)? {
             Some(existing) => {
                 ensure_no_silent_identity_change(&existing, &input.identity)?;
-                let incoming_confidence = identity_confidence(&input.identity).as_str();
-                sqlx::query(
-                    "UPDATE tally_companies SET display_name = ?1, last_observed_at_unix_ms = ?2, \
-                     identity_confidence = CASE \
-                       WHEN ?3 = 'documented' THEN 'documented' \
-                       WHEN ?3 = 'observed' AND identity_confidence IN ('inferred', 'unknown') \
-                         THEN 'observed' \
-                       WHEN ?3 = 'inferred' AND identity_confidence = 'unknown' THEN 'inferred' \
-                       ELSE identity_confidence END WHERE id = ?4",
+                let incoming_confidence = generic_company_confidence(&input.identity).as_str();
+                let observed_row_refreshed = sqlx::query(
+                    "UPDATE tally_companies SET last_observed_at_unix_ms = ?1 \
+                     WHERE id = ?2 AND identity_confidence = 'observed'",
                 )
-                .bind(&input.display_name)
                 .bind(input.observed_at_unix_ms)
-                .bind(incoming_confidence)
                 .bind(&existing.id)
                 .execute(&mut **transaction)
                 .await?;
+                if observed_row_refreshed.rows_affected() == 0 {
+                    sqlx::query(
+                        "UPDATE tally_companies SET display_name = ?1, last_observed_at_unix_ms = ?2, \
+                         identity_confidence = CASE \
+                           WHEN ?3 = 'documented' THEN 'documented' \
+                           WHEN ?3 = 'inferred' AND identity_confidence = 'unknown' THEN 'inferred' \
+                           ELSE identity_confidence END \
+                         WHERE id = ?4 AND identity_confidence <> 'observed'",
+                    )
+                    .bind(&input.display_name)
+                    .bind(input.observed_at_unix_ms)
+                    .bind(incoming_confidence)
+                    .bind(&existing.id)
+                    .execute(&mut **transaction)
+                    .await?;
+                }
                 existing.id
             }
             None => {
                 let id = Uuid::new_v4().to_string();
+                let incoming_confidence = generic_company_confidence(&input.identity).as_str();
                 sqlx::query(
                     "INSERT INTO tally_companies(\
                        id, endpoint_id, display_name, company_guid, remote_id, master_id, \
                        fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
                        last_observed_at_unix_ms\
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'documented', ?8, ?8)",
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
                 )
                 .bind(&id)
                 .bind(&input.endpoint_id)
@@ -2600,7 +2610,7 @@ impl TallyMirrorRepository {
                 .bind(&input.identity.remote_id)
                 .bind(&input.identity.master_id)
                 .bind(&input.identity.fallback_fingerprint)
-                .bind(identity_confidence(&input.identity).as_str())
+                .bind(incoming_confidence)
                 .bind(input.observed_at_unix_ms)
                 .execute(&mut **transaction)
                 .await?;
@@ -2654,61 +2664,29 @@ impl TallyMirrorRepository {
             .await?;
             id
         } else {
-            let legacy_unknowns = sqlx::query(
-                "SELECT id FROM tally_companies WHERE endpoint_id = ?1 \
-                 AND company_guid = ?2 COLLATE NOCASE AND display_name = ?3 \
-                 AND identity_confidence = 'unknown' AND (\
-                   company_number IS NULL \
-                   OR length(trim(company_number, char(9) || char(10) || char(13) || ' ')) = 0 \
-                   OR books_from_yyyymmdd IS NULL \
-                   OR length(trim(books_from_yyyymmdd, char(9) || char(10) || char(13) || ' ')) = 0\
-                 )",
+            let id = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO tally_companies(\
+                   id, endpoint_id, display_name, company_guid, remote_id, master_id, \
+                   fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
+                   last_observed_at_unix_ms, company_number, books_from_yyyymmdd\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'observed', ?8, ?8, ?9, ?10)",
             )
+            .bind(&id)
             .bind(endpoint_id)
-            .bind(guid)
             .bind(display_name)
-            .fetch_all(&mut **transaction)
+            .bind(guid)
+            // These legacy alternate identifiers are not part of the
+            // observed company tuple and can themselves collide across books.
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(observed_at_unix_ms)
+            .bind(company_number)
+            .bind(books_from_yyyymmdd)
+            .execute(&mut **transaction)
             .await?;
-            if legacy_unknowns.len() == 1 {
-                let id: String = legacy_unknowns[0].try_get("id")?;
-                sqlx::query(
-                    "UPDATE tally_companies SET company_guid = ?1, company_number = ?2, \
-                     books_from_yyyymmdd = ?3, last_observed_at_unix_ms = ?4, \
-                     identity_confidence = 'observed' WHERE id = ?5",
-                )
-                .bind(guid)
-                .bind(company_number)
-                .bind(books_from_yyyymmdd)
-                .bind(observed_at_unix_ms)
-                .bind(&id)
-                .execute(&mut **transaction)
-                .await?;
-                id
-            } else {
-                let id = Uuid::new_v4().to_string();
-                sqlx::query(
-                    "INSERT INTO tally_companies(\
-                       id, endpoint_id, display_name, company_guid, remote_id, master_id, \
-                       fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
-                       last_observed_at_unix_ms, company_number, books_from_yyyymmdd\
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'observed', ?8, ?8, ?9, ?10)",
-                )
-                .bind(&id)
-                .bind(endpoint_id)
-                .bind(display_name)
-                .bind(guid)
-                // These legacy alternate identifiers are not part of the
-                // observed company tuple and can themselves collide across books.
-                .bind(Option::<String>::None)
-                .bind(Option::<String>::None)
-                .bind(Option::<String>::None)
-                .bind(observed_at_unix_ms)
-                .bind(company_number)
-                .bind(books_from_yyyymmdd)
-                .execute(&mut **transaction)
-                .await?;
-                id
-            }
+            id
         };
         Ok(CompanyRef {
             id,
@@ -4931,6 +4909,15 @@ fn identity_confidence(identity: &SourceIdentityInput) -> Confidence {
     )
 }
 
+/// Generic identity matching lacks the complete Company-collection tuple, so
+/// it cannot create or promote an observed company pin.
+fn generic_company_confidence(identity: &SourceIdentityInput) -> Confidence {
+    match identity_confidence(identity) {
+        Confidence::Observed => Confidence::Documented,
+        confidence => confidence,
+    }
+}
+
 fn validate_capability_snapshot(input: &CapabilitySnapshotInput) -> Result<(), MirrorError> {
     validate_nonempty(&input.canonical_origin, 512, "canonical_origin")?;
     validate_nonempty(&input.product, 128, "product")?;
@@ -6024,13 +6011,29 @@ mod tests {
                 display_name: "Synthetic Bridge Test".to_string(),
                 identity: SourceIdentityInput {
                     guid: Some("company-guid-1".to_string()),
-                    confidence: Some(Confidence::Documented),
+                    confidence: Some(Confidence::Observed),
                     ..Default::default()
                 },
                 observed_at_unix_ms: 1_000,
             })
             .await
             .expect("save company");
+        let composite_tuple_columns = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pragma_table_info('tally_companies') \
+             WHERE name IN ('company_number', 'books_from_yyyymmdd')",
+        )
+        .fetch_one(&repository.pool)
+        .await
+        .expect("inspect legacy company schema");
+        if composite_tuple_columns == 0 {
+            sqlx::query(
+                "UPDATE tally_companies SET identity_confidence = 'observed' WHERE id = ?1",
+            )
+            .bind(&company.id)
+            .execute(&repository.pool)
+            .await
+            .expect("seed legacy GUID-only observed company identity");
+        }
         (repository, snapshot, company)
     }
 
@@ -8205,7 +8208,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn observed_company_identity_constraint_rejects_incomplete_tuples() {
+    async fn observed_company_identity_constraint_rejects_incomplete_tuples_and_preserves_reobservation(
+    ) {
         let repository = repository_through_v24().await;
         let snapshot = repository
             .save_capability_snapshot(CapabilitySnapshotInput {
@@ -8359,6 +8363,186 @@ mod tests {
         .await
         .expect_err("updates cannot weaken an observed tuple");
         assert_observed_identity_constraint(update_error);
+
+        let mut reobservation = reviewed_setup_input(HASH_A);
+        reobservation.company_display_name = "legacy-observed-incomplete".to_string();
+        reobservation.company_identity.guid = Some("legacy-observed-guid".to_string());
+        reobservation.company_number = "100011".to_string();
+        let saved = repository
+            .save_reviewed_setup(reobservation)
+            .await
+            .expect("complete re-observation creates a distinct observed company row");
+        assert_ne!(saved.company.id, "legacy-observed-incomplete");
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT identity_confidence FROM tally_companies WHERE id = ?1",
+            )
+            .bind(&saved.company.id)
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read re-observed confidence"),
+            "observed"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT identity_confidence FROM tally_companies \
+                 WHERE id = 'legacy-observed-incomplete'",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read preserved legacy company confidence"),
+            "unknown",
+            "a later observed tuple must not reclassify the legacy pin"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT company_number FROM tally_companies \
+                 WHERE id = 'legacy-observed-incomplete'",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read preserved legacy company tuple"),
+            " \t\r\n",
+            "a later observed tuple must not overwrite a legacy pin's identity"
+        );
+
+        let generic = repository
+            .upsert_company(CompanyInput {
+                endpoint_id: snapshot.endpoint_id.clone(),
+                display_name: "Documented metadata only".to_string(),
+                identity: SourceIdentityInput {
+                    guid: Some("documented-metadata-guid".to_string()),
+                    confidence: Some(Confidence::Observed),
+                    ..Default::default()
+                },
+                observed_at_unix_ms: 2_000,
+            })
+            .await
+            .expect("generic metadata writer remains valid without an observed tuple");
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT identity_confidence FROM tally_companies WHERE id = ?1",
+            )
+            .bind(generic.id)
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read documented generic company confidence"),
+            "documented"
+        );
+
+        for (label, confidence) in [
+            ("unknown", Confidence::Unknown),
+            ("inferred", Confidence::Inferred),
+        ] {
+            let identity_guid = format!("{label}-generic-metadata-guid");
+            let initial = repository
+                .upsert_company(CompanyInput {
+                    endpoint_id: snapshot.endpoint_id.clone(),
+                    display_name: format!("{label} generic metadata"),
+                    identity: SourceIdentityInput {
+                        guid: Some(identity_guid.clone()),
+                        confidence: Some(confidence),
+                        ..Default::default()
+                    },
+                    observed_at_unix_ms: 2_100,
+                })
+                .await
+                .expect("save explicitly non-observed generic company");
+            let refreshed = repository
+                .upsert_company(CompanyInput {
+                    endpoint_id: snapshot.endpoint_id.clone(),
+                    display_name: format!("{label} generic metadata refresh"),
+                    identity: SourceIdentityInput {
+                        guid: Some(identity_guid),
+                        confidence: Some(confidence),
+                        ..Default::default()
+                    },
+                    observed_at_unix_ms: 2_200,
+                })
+                .await
+                .expect("refresh explicitly non-observed generic company");
+            assert_eq!(refreshed.id, initial.id);
+            assert_eq!(
+                sqlx::query_scalar::<_, String>(
+                    "SELECT identity_confidence FROM tally_companies WHERE id = ?1",
+                )
+                .bind(initial.id)
+                .fetch_one(&repository.pool)
+                .await
+                .expect("read preserved generic confidence"),
+                confidence.as_str(),
+                "a generic {label} refresh must preserve its explicit confidence"
+            );
+        }
+
+        let reviewed = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_B))
+            .await
+            .expect("save independently reviewed observed company");
+        let pin_before_refresh = repository
+            .snapshot_source_pin(&reviewed.company.id)
+            .await
+            .expect("reviewed company supplies a durable source pin");
+        let profile_before_refresh = repository
+            .persisted_company_profiles()
+            .await
+            .expect("load reviewed company profile before generic refresh")
+            .profiles
+            .into_iter()
+            .find(|profile| profile.mirror_company_id == reviewed.company.id)
+            .expect("find reviewed company profile before generic refresh");
+        let refreshed = repository
+            .upsert_company(CompanyInput {
+                endpoint_id: reviewed.snapshot.endpoint_id,
+                display_name: "Synthetic reviewed metadata refresh".to_string(),
+                identity: SourceIdentityInput {
+                    guid: Some("reviewed-company-guid".to_string()),
+                    confidence: Some(Confidence::Observed),
+                    ..Default::default()
+                },
+                observed_at_unix_ms: 3_000,
+            })
+            .await
+            .expect("generic metadata refresh remains valid");
+        assert_eq!(refreshed.id, reviewed.company.id);
+        let pin_after_refresh = repository
+            .snapshot_source_pin(&reviewed.company.id)
+            .await
+            .expect("generic metadata refresh preserves the observed source pin");
+        assert_eq!(pin_after_refresh.company_id, pin_before_refresh.company_id);
+        assert_eq!(
+            pin_after_refresh.display_name,
+            pin_before_refresh.display_name
+        );
+        assert_eq!(
+            pin_after_refresh.endpoint_id,
+            pin_before_refresh.endpoint_id
+        );
+        assert_eq!(
+            pin_after_refresh.company_guid,
+            pin_before_refresh.company_guid
+        );
+        assert_eq!(
+            pin_after_refresh.company_number,
+            pin_before_refresh.company_number
+        );
+        assert_eq!(
+            pin_after_refresh.books_from_yyyymmdd,
+            pin_before_refresh.books_from_yyyymmdd
+        );
+        let profile_after_refresh = repository
+            .persisted_company_profiles()
+            .await
+            .expect("load reviewed company profile after generic refresh")
+            .profiles
+            .into_iter()
+            .find(|profile| profile.mirror_company_id == reviewed.company.id)
+            .expect("find reviewed company profile after generic refresh");
+        assert_eq!(profile_after_refresh.name, profile_before_refresh.name);
+        assert_eq!(
+            profile_after_refresh.correlation_key,
+            profile_before_refresh.correlation_key
+        );
     }
 
     #[tokio::test]
