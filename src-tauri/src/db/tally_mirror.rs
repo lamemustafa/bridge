@@ -2418,7 +2418,14 @@ impl TallyMirrorRepository {
         )
         .fetch_one(&mut *transaction)
         .await?;
-        if selected_read_scope_v2_installed == 0 {
+        let observed_company_identity_constraint_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 25",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if selected_read_scope_v2_installed == 0
+            && observed_company_identity_constraint_installed == 0
+        {
             sqlx::query("PRAGMA legacy_alter_table = ON")
                 .execute(&mut *transaction)
                 .await?;
@@ -2432,11 +2439,6 @@ impl TallyMirrorRepository {
             reset_result?;
             validate_legacy_v1_selected_read_scope_layouts(&mut transaction).await?;
         }
-        let observed_company_identity_constraint_installed = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 25",
-        )
-        .fetch_one(&mut *transaction)
-        .await?;
         if observed_company_identity_constraint_installed == 0 {
             sqlx::raw_sql(MIRROR_MIGRATION_V25)
                 .execute(&mut *transaction)
@@ -8093,7 +8095,7 @@ mod tests {
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 23);
+        assert_eq!(migration_count, 22);
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 7",
@@ -8102,6 +8104,28 @@ mod tests {
             .await
             .expect("read retired GUID-only migration marker"),
             0
+        );
+        for (version, expected) in [(24, 0_i64), (25, 1_i64)] {
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = ?1",
+                )
+                .bind(version)
+                .fetch_one(&repository.pool)
+                .await
+                .expect("read v24/v25 compatibility marker"),
+                expected
+            );
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' \
+                 AND name = 'tally_schema_migrations_reject_legacy_v24_after_observed_identity'",
+            )
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read v24 compatibility trigger"),
+            1
         );
         let target_binding_columns = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM pragma_table_info('tally_write_canary_preflight_evidence') \
@@ -8363,6 +8387,58 @@ mod tests {
         .await
         .expect_err("updates cannot weaken an observed tuple");
         assert_observed_identity_constraint(update_error);
+
+        for (id, display_name) in [
+            ("null-name", None),
+            ("empty-name", Some("")),
+            ("blank-name", Some(" \t\r\n")),
+        ] {
+            let error = sqlx::query(
+                "INSERT INTO tally_companies(\
+                   id, endpoint_id, display_name, company_guid, remote_id, master_id, \
+                   fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
+                   last_observed_at_unix_ms, company_number, books_from_yyyymmdd\
+                 ) VALUES (?1, ?2, ?3, 'complete-name-guid', NULL, NULL, NULL, \
+                           'observed', 1, 1, '100011', '20260401')",
+            )
+            .bind(id)
+            .bind(&snapshot.endpoint_id)
+            .bind(display_name)
+            .execute(&repository.pool)
+            .await
+            .expect_err("observed company name must be nonblank");
+            assert_observed_identity_constraint(error);
+        }
+        let update_name_error = sqlx::query(
+            "UPDATE tally_companies SET display_name = ' \t\r\n' \
+             WHERE id = 'complete-observed'",
+        )
+        .execute(&repository.pool)
+        .await
+        .expect_err("updates cannot blank an observed company name");
+        assert_observed_identity_constraint(update_name_error);
+
+        let mut legacy_v24_transaction = repository
+            .pool
+            .begin()
+            .await
+            .expect("begin v24 rollback migration");
+        sqlx::query("PRAGMA legacy_alter_table = ON")
+            .execute(&mut *legacy_v24_transaction)
+            .await
+            .expect("enable legacy alter table for v24 rollback");
+        let legacy_v24_error = sqlx::raw_sql(MIRROR_MIGRATION_V24)
+            .execute(&mut *legacy_v24_transaction)
+            .await
+            .expect_err("v24 binary must fail before generic GUID-only writes");
+        assert_eq!(
+            legacy_v24_error.to_string(),
+            "error returned from database: (code: 1811) observed company identity requires a compatible Bridge binary"
+        );
+        legacy_v24_transaction
+            .rollback()
+            .await
+            .expect("roll back rejected v24 migration");
 
         let mut reobservation = reviewed_setup_input(HASH_A);
         reobservation.company_display_name = "legacy-observed-incomplete".to_string();
