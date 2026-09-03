@@ -20,6 +20,30 @@ const SORT_SCHEMA_VERSION: u8 = 1;
 
 pub type ClientGroupLabels = BTreeMap<String, String>;
 
+/// Labels suitable for an optional display, plus the reason any persisted
+/// labels could not be used. The display path stays infallible: callers can
+/// always render `labels`, and may choose how to present `degradation_reason`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ClientGroupLabelsLoad {
+    pub labels: ClientGroupLabels,
+    pub degradation_reason: Option<ClientGroupLabelsDegradationReason>,
+}
+
+/// A serializable, operator-safe form of a label-file read failure.
+///
+/// This deliberately carries no I/O or JSON error text. Those errors can
+/// contain host-specific paths or implementation detail, while the structured
+/// reason is enough for the display to explain what happened safely.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "code")]
+pub enum ClientGroupLabelsDegradationReason {
+    Read,
+    EmptyFile,
+    CorruptFile,
+    UnsupportedVersion { found: u8, supported: u8 },
+    NormalizedKeyCollision { normalized_key: String },
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ClientSortKey {
@@ -68,13 +92,44 @@ pub enum ClientGroupLabelsError {
 }
 
 pub fn load(directory: &Path) -> ClientGroupLabels {
-    let Ok(file) = read_client_group_labels_file(directory) else {
-        return ClientGroupLabels::new();
+    load_with_degradation(directory).labels
+}
+
+/// Best-effort display load which also retains why persisted labels degraded.
+///
+/// Unlike [`try_load`], this never makes a caller handle an error merely to
+/// show a list. It intentionally preserves [`load`]'s historical normalization
+/// for colliding keys while making that collision observable to the caller.
+pub fn load_with_degradation(directory: &Path) -> ClientGroupLabelsLoad {
+    let file = match read_client_group_labels_file(directory) {
+        Ok(file) => file,
+        Err(error) => {
+            return ClientGroupLabelsLoad {
+                labels: ClientGroupLabels::new(),
+                degradation_reason: Some(degradation_reason(&error)),
+            }
+        }
     };
-    if file.version == SCHEMA_VERSION {
-        normalize(file.labels)
-    } else {
-        ClientGroupLabels::new()
+
+    if file.version != SCHEMA_VERSION {
+        return ClientGroupLabelsLoad {
+            labels: ClientGroupLabels::new(),
+            degradation_reason: Some(ClientGroupLabelsDegradationReason::UnsupportedVersion {
+                found: file.version,
+                supported: SCHEMA_VERSION,
+            }),
+        };
+    }
+
+    match normalize_strict(file.labels.clone()) {
+        Ok(labels) => ClientGroupLabelsLoad {
+            labels,
+            degradation_reason: None,
+        },
+        Err(error) => ClientGroupLabelsLoad {
+            labels: normalize(file.labels),
+            degradation_reason: Some(degradation_reason(&error)),
+        },
     }
 }
 
@@ -100,6 +155,28 @@ pub fn try_load(directory: &Path) -> Result<ClientGroupLabels, ClientGroupLabels
     }
 
     normalize_strict(file.labels)
+}
+
+fn degradation_reason(error: &ClientGroupLabelsError) -> ClientGroupLabelsDegradationReason {
+    match error {
+        ClientGroupLabelsError::Read(_) => ClientGroupLabelsDegradationReason::Read,
+        ClientGroupLabelsError::EmptyFile => ClientGroupLabelsDegradationReason::EmptyFile,
+        ClientGroupLabelsError::CorruptFile(_) => ClientGroupLabelsDegradationReason::CorruptFile,
+        ClientGroupLabelsError::UnsupportedVersion { found, supported } => {
+            ClientGroupLabelsDegradationReason::UnsupportedVersion {
+                found: *found,
+                supported: *supported,
+            }
+        }
+        ClientGroupLabelsError::NormalizedKeyCollision { normalized_key } => {
+            ClientGroupLabelsDegradationReason::NormalizedKeyCollision {
+                normalized_key: normalized_key.clone(),
+            }
+        }
+        ClientGroupLabelsError::Write(_) => {
+            unreachable!("write failures do not occur while loading client-group labels")
+        }
+    }
 }
 
 fn read_client_group_labels_file(
@@ -304,12 +381,29 @@ mod tests {
     fn missing_empty_and_corrupt_files_mean_no_groups() {
         let directory = tempfile::tempdir().expect("temporary config directory");
         assert!(load(directory.path()).is_empty());
+        assert_eq!(
+            load_with_degradation(directory.path()),
+            ClientGroupLabelsLoad {
+                labels: ClientGroupLabels::new(),
+                degradation_reason: None,
+            },
+            "a missing optional label file is not an error"
+        );
 
         std::fs::write(directory.path().join(FILE_NAME), "  \n").expect("write empty file");
         assert!(load(directory.path()).is_empty());
+        assert_eq!(
+            load_with_degradation(directory.path()).degradation_reason,
+            Some(ClientGroupLabelsDegradationReason::EmptyFile),
+            "the display can preserve an empty-file explanation without making loading fallible"
+        );
 
         std::fs::write(directory.path().join(FILE_NAME), "not json").expect("write corrupt file");
         assert!(load(directory.path()).is_empty());
+        assert!(matches!(
+            load_with_degradation(directory.path()).degradation_reason,
+            Some(ClientGroupLabelsDegradationReason::CorruptFile)
+        ));
     }
 
     #[test]
@@ -332,8 +426,14 @@ mod tests {
             Err(ClientGroupLabelsError::NormalizedKeyCollision { normalized_key })
                 if normalized_key == "guid"
         ));
+        let display_load = load_with_degradation(directory.path());
+        assert!(matches!(
+            display_load.degradation_reason,
+            Some(ClientGroupLabelsDegradationReason::NormalizedKeyCollision { normalized_key })
+                if normalized_key == "guid"
+        ));
         assert_eq!(
-            load(directory.path()),
+            display_load.labels,
             BTreeMap::from([("guid".to_string(), "Plain practice".to_string())]),
             "display loading retains its historical best-effort normalization"
         );
@@ -407,6 +507,10 @@ mod tests {
             "display remains available"
         );
         assert!(matches!(
+            load_with_degradation(directory.path()).degradation_reason,
+            Some(ClientGroupLabelsDegradationReason::CorruptFile)
+        ));
+        assert!(matches!(
             try_load(directory.path()),
             Err(ClientGroupLabelsError::CorruptFile(_))
         ));
@@ -430,6 +534,16 @@ mod tests {
         assert!(
             load(directory.path()).is_empty(),
             "display remains available"
+        );
+        assert_eq!(
+            load_with_degradation(directory.path()),
+            ClientGroupLabelsLoad {
+                labels: ClientGroupLabels::new(),
+                degradation_reason: Some(ClientGroupLabelsDegradationReason::UnsupportedVersion {
+                    found: 2,
+                    supported: SCHEMA_VERSION,
+                }),
+            }
         );
         assert!(matches!(
             try_load(directory.path()),
@@ -471,6 +585,10 @@ mod tests {
         let unreadable_path = unreadable_directory.path().join(FILE_NAME);
         std::fs::create_dir(&unreadable_path).expect("create unreadable label path");
         assert!(load(unreadable_directory.path()).is_empty());
+        assert!(matches!(
+            load_with_degradation(unreadable_directory.path()).degradation_reason,
+            Some(ClientGroupLabelsDegradationReason::Read)
+        ));
         assert!(matches!(
             try_load(unreadable_directory.path()),
             Err(ClientGroupLabelsError::Read(_))

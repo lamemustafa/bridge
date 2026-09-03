@@ -99,6 +99,16 @@ function formatCompact(value: string | undefined, currencyAssertion: "INR") {
 
 type SortKey = "client" | "receivable" | "overdue" | "unallocated" | "oldest";
 type SortPreference = { key: SortKey; desc: boolean };
+type ClientGroupLabelsLoad = {
+  labels: ClientGroupLabels;
+  degradation_reason: ClientGroupLabelsDegradationReason | null;
+};
+type ClientGroupLabelsDegradationReason =
+  | { code: "read" }
+  | { code: "empty_file" }
+  | { code: "corrupt_file" }
+  | { code: "unsupported_version"; found: number; supported: number }
+  | { code: "normalized_key_collision"; normalized_key: string };
 
 const defaultSort: SortPreference = { key: "overdue", desc: true };
 
@@ -111,6 +121,23 @@ function isSortPreference(value: unknown): value is SortPreference {
       && ["client", "receivable", "overdue", "unallocated", "oldest"].includes(String(value.key))
       && typeof value.desc === "boolean",
   );
+}
+
+function clientGroupLabelDegradationMessage(
+  reason: ClientGroupLabelsDegradationReason | null,
+): string | null {
+  if (!reason || reason.code === "empty_file") return null;
+
+  switch (reason.code) {
+    case "read":
+      return "Bridge could not read the saved client-group labels. No labels are shown; the file has not been changed.";
+    case "corrupt_file":
+      return "Saved client-group labels could not be understood. No labels are shown; the file has not been changed.";
+    case "unsupported_version":
+      return `These client-group labels were written by a newer Bridge (found v${reason.found}; this build reads v${reason.supported}). No labels are shown; the file has not been changed.`;
+    case "normalized_key_collision":
+      return "Saved client-group labels contain duplicate keys after normalisation. No labels are shown; the file has not been changed.";
+  }
 }
 
 /// Severity tiers reuse the ageing ramp used on the single-client screen, so a
@@ -166,11 +193,12 @@ export function AllClientsScreen({ config, companies, onOpenCompany, onBack, liv
   React.useEffect(() => {
     let active = true;
     setGroupLabelsReady(false);
-    void invoke<ClientGroupLabels>("load_client_group_labels")
-      .then((labels) => {
+    void invoke<ClientGroupLabelsLoad>("load_client_group_labels")
+      .then(({ labels, degradation_reason }) => {
         if (!active) return;
         persistedGroupLabels.current = labels;
         setGroupLabels(labels);
+        setGroupLabelError(clientGroupLabelDegradationMessage(degradation_reason));
         setGroupLabelsReady(true);
       })
       // A label is optional. If its local config cannot be read, continue as
