@@ -8546,6 +8546,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generic_guid_upsert_maps_observed_to_documented_before_tuple_constraint() {
+        let (repository, snapshot, _) = seeded_repository().await;
+        sqlx::query(
+            "INSERT INTO tally_companies(\
+               id, endpoint_id, display_name, company_guid, remote_id, master_id, \
+               fallback_fingerprint, identity_confidence, first_observed_at_unix_ms, \
+               last_observed_at_unix_ms, company_number, books_from_yyyymmdd\
+             ) VALUES ('legacy-incomplete-generic', ?1, 'Legacy generic metadata', \
+                       'generic-constraint-guid', NULL, NULL, NULL, 'unknown', 1, 1, NULL, NULL)",
+        )
+        .bind(&snapshot.endpoint_id)
+        .execute(&repository.pool)
+        .await
+        .expect("seed incomplete non-observed legacy company");
+
+        let saved = repository
+            .upsert_company(CompanyInput {
+                endpoint_id: snapshot.endpoint_id,
+                display_name: "Generic metadata refresh".to_string(),
+                identity: SourceIdentityInput {
+                    guid: Some("generic-constraint-guid".to_string()),
+                    confidence: Some(Confidence::Observed),
+                    ..Default::default()
+                },
+                observed_at_unix_ms: 2_000,
+            })
+            .await
+            .expect("generic GUID metadata must not claim observed without a tuple");
+
+        assert_eq!(saved.id, "legacy-incomplete-generic");
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT identity_confidence FROM tally_companies WHERE id = ?1",
+            )
+            .bind(saved.id)
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read generic confidence after refresh"),
+            "documented"
+        );
+    }
+
+    #[tokio::test]
     async fn bomless_utf16_migration_preserves_existing_selected_read_evidence() {
         let repository = repository_through_v21().await;
         let legacy_scope_commitment =
