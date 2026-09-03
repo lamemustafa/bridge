@@ -2563,7 +2563,7 @@ impl TallyMirrorRepository {
         )
         .await?;
 
-        let id = match unique_match(matches)? {
+        let (id, display_name) = match unique_match(matches)? {
             Some(existing) => {
                 ensure_no_silent_identity_change(&existing, &input.identity)?;
                 let incoming_confidence = generic_company_confidence(&input.identity).as_str();
@@ -2591,7 +2591,12 @@ impl TallyMirrorRepository {
                     .execute(&mut **transaction)
                     .await?;
                 }
-                existing.id
+                let display_name = if observed_row_refreshed.rows_affected() == 0 {
+                    input.display_name
+                } else {
+                    existing.display_name
+                };
+                (existing.id, display_name)
             }
             None => {
                 let id = Uuid::new_v4().to_string();
@@ -2614,13 +2619,10 @@ impl TallyMirrorRepository {
                 .bind(input.observed_at_unix_ms)
                 .execute(&mut **transaction)
                 .await?;
-                id
+                (id, input.display_name)
             }
         };
-        Ok(CompanyRef {
-            id,
-            display_name: input.display_name,
-        })
+        Ok(CompanyRef { id, display_name })
     }
 
     /// Persists only a complete, directly observed company tuple. This path is
@@ -4788,6 +4790,7 @@ fn validate_export_warning_code(value: &str) -> Result<(), MirrorError> {
 #[derive(Debug)]
 struct IdentityRow {
     id: String,
+    display_name: String,
     guid: Option<String>,
     remote_id: Option<String>,
     master_id: Option<String>,
@@ -4805,7 +4808,7 @@ async fn find_identity_matches(
     let rows = match (table, owner_column) {
         ("tally_companies", "endpoint_id") => {
             sqlx::query(
-                "SELECT id, company_guid AS guid, remote_id, master_id, fallback_fingerprint \
+                "SELECT id, display_name, company_guid AS guid, remote_id, master_id, fallback_fingerprint \
              FROM tally_companies WHERE endpoint_id = ?1 AND (\
                (?2 IS NOT NULL AND company_guid = ?2 COLLATE NOCASE) OR \
                (?3 IS NOT NULL AND remote_id = ?3) OR \
@@ -4823,7 +4826,7 @@ async fn find_identity_matches(
         }
         ("tally_source_records", "company_id") => {
             sqlx::query(
-                "SELECT id, source_guid AS guid, remote_id, master_id, fallback_fingerprint \
+                "SELECT id, display_name, source_guid AS guid, remote_id, master_id, fallback_fingerprint \
              FROM tally_source_records WHERE company_id = ?1 AND object_type = ?2 AND (\
                (?3 IS NOT NULL AND source_guid = ?3) OR \
                (?4 IS NOT NULL AND remote_id = ?4) OR \
@@ -4847,6 +4850,7 @@ async fn find_identity_matches(
         .map(|row| {
             Ok(IdentityRow {
                 id: row.try_get("id")?,
+                display_name: row.try_get("display_name")?,
                 guid: row.try_get("guid")?,
                 remote_id: row.try_get("remote_id")?,
                 master_id: row.try_get("master_id")?,
@@ -8505,6 +8509,10 @@ mod tests {
             .await
             .expect("generic metadata refresh remains valid");
         assert_eq!(refreshed.id, reviewed.company.id);
+        assert_eq!(
+            refreshed.display_name, pin_before_refresh.display_name,
+            "an observed refresh must return the stored reviewed name"
+        );
         let pin_after_refresh = repository
             .snapshot_source_pin(&reviewed.company.id)
             .await
