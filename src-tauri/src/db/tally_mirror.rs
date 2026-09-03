@@ -2440,9 +2440,17 @@ impl TallyMirrorRepository {
             validate_legacy_v1_selected_read_scope_layouts(&mut transaction).await?;
         }
         if observed_company_identity_constraint_installed == 0 {
+            let demoted_fixture_enrollments =
+                fixture_enrollments_for_v25_observed_identity_demotions(&mut transaction).await?;
             sqlx::raw_sql(MIRROR_MIGRATION_V25)
                 .execute(&mut *transaction)
                 .await?;
+            write_fixture_identity_reverification_revocations(
+                &mut transaction,
+                demoted_fixture_enrollments,
+                Utc::now().timestamp_millis(),
+            )
+            .await?;
         }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
@@ -5657,14 +5665,67 @@ async fn retire_precomposite_fixture_enrollments(
     )
     .fetch_all(&mut **transaction)
     .await?;
+    let enrollments = rows
+        .into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("id")?,
+                row.try_get("enrollment_payload_sha256")?,
+            ))
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+    write_fixture_identity_reverification_revocations(transaction, enrollments, revoked_at_unix_ms)
+        .await
+}
+
+async fn fixture_enrollments_for_v25_observed_identity_demotions(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<Vec<(String, String)>, MirrorError> {
+    let rows = sqlx::query(
+        "SELECT enrollment.id, enrollment.enrollment_payload_sha256 \
+         FROM tally_write_fixture_enrollments AS enrollment \
+         JOIN tally_companies AS company ON company.id = enrollment.company_id \
+         LEFT JOIN tally_write_fixture_revocations AS revocation \
+           ON revocation.enrollment_id = enrollment.id \
+         WHERE company.identity_confidence = 'observed' \
+           AND ( \
+             company.display_name IS NULL \
+             OR length(trim(company.display_name, char(9) || char(10) || char(13) || ' ')) = 0 \
+             OR company.company_guid IS NULL \
+             OR length(trim(company.company_guid, char(9) || char(10) || char(13) || ' ')) = 0 \
+             OR company.company_number IS NULL \
+             OR length(trim(company.company_number, char(9) || char(10) || char(13) || ' ')) = 0 \
+             OR company.books_from_yyyymmdd IS NULL \
+             OR length(trim(company.books_from_yyyymmdd, char(9) || char(10) || char(13) || ' ')) = 0 \
+           ) \
+           AND revocation.enrollment_id IS NULL \
+         ORDER BY enrollment.id",
+    )
+    .fetch_all(&mut **transaction)
+    .await?;
+    rows.into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get("id")?,
+                row.try_get("enrollment_payload_sha256")?,
+            ))
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(MirrorError::from)
+}
+
+async fn write_fixture_identity_reverification_revocations(
+    transaction: &mut Transaction<'_, Sqlite>,
+    enrollments: Vec<(String, String)>,
+    revoked_at_unix_ms: i64,
+) -> Result<(), MirrorError> {
     let next_sequence = sqlx::query_scalar::<_, i64>(
         "SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM tally_write_fixture_revocations",
     )
     .fetch_one(&mut **transaction)
     .await?;
-    for (offset, row) in rows.into_iter().enumerate() {
-        let enrollment_id: String = row.try_get("id")?;
-        let enrollment_payload_sha256: String = row.try_get("enrollment_payload_sha256")?;
+    for (offset, (enrollment_id, enrollment_payload_sha256)) in enrollments.into_iter().enumerate()
+    {
         let payload_sha256 = fixture_revocation_payload_sha256(
             &enrollment_id,
             &enrollment_payload_sha256,
@@ -8231,6 +8292,16 @@ mod tests {
         );
     }
 
+    fn assert_legacy_v24_rollback_barrier(error: sqlx::Error) {
+        let sqlx::Error::Database(database_error) = error else {
+            panic!("v24 rollback must fail with a database error");
+        };
+        assert_eq!(
+            database_error.message(),
+            "observed company identity requires a compatible Bridge binary"
+        );
+    }
+
     #[tokio::test]
     async fn observed_company_identity_constraint_rejects_incomplete_tuples_and_preserves_reobservation(
     ) {
@@ -8431,10 +8502,7 @@ mod tests {
             .execute(&mut *legacy_v24_transaction)
             .await
             .expect_err("v24 binary must fail before generic GUID-only writes");
-        assert_eq!(
-            legacy_v24_error.to_string(),
-            "error returned from database: (code: 1811) observed company identity requires a compatible Bridge binary"
-        );
+        assert_legacy_v24_rollback_barrier(legacy_v24_error);
         legacy_v24_transaction
             .rollback()
             .await
@@ -8619,6 +8687,180 @@ mod tests {
             profile_after_refresh.correlation_key,
             profile_before_refresh.correlation_key
         );
+    }
+
+    #[tokio::test]
+    async fn observed_identity_migration_revokes_demoted_fixture_before_preflight_gate() {
+        let repository = repository_through_v24().await;
+        let saved = repository
+            .save_reviewed_setup(reviewed_setup_input(HASH_A))
+            .await
+            .expect("seed complete observed company before v25");
+        repository
+            .enroll_write_fixture(WriteFixtureEnrollmentInput {
+                company_id: saved.company.id.clone(),
+                review_commitment_sha256: HASH_B.to_string(),
+                disposable_company_attested: true,
+                no_customer_data_attested: true,
+                backup_guidance_acknowledged: true,
+                enrolled_at_unix_ms: 3_000,
+            })
+            .await
+            .expect("enroll active fixture before v25");
+        let reservation = repository
+            .reserve_write_canary(WriteCanaryReservationInput {
+                company_id: saved.company.id.clone(),
+                review_commitment_sha256: HASH_B.to_string(),
+                reserved_at_unix_ms: 4_000,
+            })
+            .await
+            .expect("reserve active fixture before v25");
+        let binding_input = WriteCanaryPayloadBindingInput {
+            company_id: saved.company.id.clone(),
+            review_commitment_sha256: HASH_B.to_string(),
+            reservation_id: reservation.id.clone(),
+            reservation_payload_sha256: reservation.reservation_payload_sha256.clone(),
+            wire_sha256: HASH_A.to_string(),
+            intended_state_sha256: HASH_B.to_string(),
+            identity_query_sha256: HASH_A.to_string(),
+            bound_at_unix_ms: 5_000,
+        };
+        let binding = repository
+            .bind_write_canary_payload(binding_input.clone())
+            .await
+            .expect("bind active fixture before v25");
+        let active_binding = ActiveWriteCanaryPayloadBindingInput {
+            company_id: binding_input.company_id.clone(),
+            review_commitment_sha256: binding_input.review_commitment_sha256.clone(),
+            reservation_id: binding_input.reservation_id.clone(),
+            reservation_payload_sha256: binding_input.reservation_payload_sha256.clone(),
+            wire_sha256: binding_input.wire_sha256.clone(),
+            intended_state_sha256: binding_input.intended_state_sha256.clone(),
+            identity_query_sha256: binding_input.identity_query_sha256.clone(),
+        };
+        let preflight = repository
+            .begin_write_canary_preflight(BeginWriteCanaryPreflightInput {
+                binding: active_binding.clone(),
+                started_at_unix_ms: 5_500,
+            })
+            .await
+            .expect("start active preflight before v25");
+        assert_eq!(preflight.payload_binding_id, binding.id);
+        let evidence = repository
+            .record_write_canary_preflight_evidence(WriteCanaryPreflightEvidenceInput {
+                attempt_id: preflight.id.clone(),
+                readback_state_sha256: HASH_A.to_string(),
+                identity_coverage_sha256: HASH_B.to_string(),
+                canonical_endpoint_sha256: HASH_A.to_string(),
+                company_identity_sha256: HASH_B.to_string(),
+                verified_at_unix_ms: 5_750,
+            })
+            .await
+            .expect("record active preflight before v25");
+        let preflight_gate = ActiveWriteCanaryPreflightEvidenceInput {
+            binding: active_binding,
+            attempt_id: preflight.id,
+            evidence_id: evidence.id,
+            readback_state_sha256: HASH_A.to_string(),
+            identity_coverage_sha256: HASH_B.to_string(),
+            canonical_endpoint_sha256: HASH_A.to_string(),
+            company_identity_sha256: HASH_B.to_string(),
+        };
+        repository
+            .active_write_canary_preflight_evidence(preflight_gate.clone())
+            .await
+            .expect("fixture preflight is active before v25 demotion");
+
+        sqlx::query(
+            "UPDATE tally_companies \
+             SET display_name = char(9) || char(10) || char(13) || ' ' \
+             WHERE id = ?1",
+        )
+        .bind(&saved.company.id)
+        .execute(&repository.pool)
+        .await
+        .expect("seed v25-incomplete observed company");
+        repository
+            .migrate()
+            .await
+            .expect("v25 demotes and revokes the fixture enrollment atomically");
+
+        assert_eq!(
+            repository
+                .write_fixture_enrollment_status(&saved.company.id)
+                .await
+                .expect("read v25 migration enrollment status")
+                .fixture_state,
+            "revoked"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_write_fixture_revocations AS revocation \
+                 JOIN tally_write_fixture_enrollments AS enrollment \
+                   ON enrollment.id = revocation.enrollment_id \
+                 WHERE enrollment.company_id = ?1",
+            )
+            .bind(&saved.company.id)
+            .fetch_one(&repository.pool)
+            .await
+            .expect("count v25 migration revocations"),
+            1,
+            "the active enrollment for the demoted company must be revoked"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT identity_confidence FROM tally_companies WHERE id = ?1",
+            )
+            .bind(&saved.company.id)
+            .fetch_one(&repository.pool)
+            .await
+            .expect("read v25-demoted company confidence"),
+            "unknown"
+        );
+        let revocation = sqlx::query(
+            "SELECT revocation.safe_reason_code, revocation.revocation_payload_sha256, \
+                    revocation.revoked_at_unix_ms, enrollment.id, enrollment.enrollment_payload_sha256 \
+             FROM tally_write_fixture_revocations AS revocation \
+             JOIN tally_write_fixture_enrollments AS enrollment \
+               ON enrollment.id = revocation.enrollment_id \
+             WHERE enrollment.company_id = ?1",
+        )
+        .bind(&saved.company.id)
+        .fetch_one(&repository.pool)
+        .await
+        .expect("read v25 migration revocation");
+        assert_eq!(
+            revocation
+                .try_get::<String, _>("safe_reason_code")
+                .expect("read v25 migration reason"),
+            "company_identity_reverification_required"
+        );
+        assert_eq!(
+            revocation
+                .try_get::<String, _>("revocation_payload_sha256")
+                .expect("read v25 migration payload"),
+            fixture_revocation_payload_sha256(
+                &revocation
+                    .try_get::<String, _>("id")
+                    .expect("read v25 enrollment id"),
+                &revocation
+                    .try_get::<String, _>("enrollment_payload_sha256")
+                    .expect("read v25 enrollment payload"),
+                "company_identity_reverification_required",
+                revocation
+                    .try_get("revoked_at_unix_ms")
+                    .expect("read v25 migration revocation timestamp"),
+            )
+            .expect("compute canonical v25 migration revocation payload")
+        );
+        assert!(matches!(
+            repository
+                .active_write_canary_preflight_evidence(preflight_gate)
+                .await,
+            Err(MirrorError::InvalidInput(
+                "canary_preflight_evidence_not_active"
+            ))
+        ));
     }
 
     #[tokio::test]
