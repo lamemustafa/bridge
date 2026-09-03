@@ -139,6 +139,8 @@ struct Server {
     evidence: Arc<Mutex<Vec<Evidence>>>,
 }
 
+type ToolOutcome = (Value, Evidence, Option<String>, usize, Vec<String>, bool);
+
 impl Server {
     fn new(settings: Settings) -> Self {
         Self {
@@ -148,8 +150,10 @@ impl Server {
     }
 
     fn transport(&self) -> Result<TallyHttpTransport, String> {
-        let mut policy = TransportPolicy::default();
-        policy.xml_response_max_bytes = self.settings.max_bytes;
+        let policy = TransportPolicy {
+            xml_response_max_bytes: self.settings.max_bytes,
+            ..TransportPolicy::default()
+        };
         TallyHttpTransport::with_policy(self.settings.endpoint.clone(), policy)
             .map_err(|error| format!("endpoint_configuration_invalid:{error}"))
     }
@@ -351,11 +355,7 @@ impl Server {
         }
     }
 
-    async fn tool_payload(
-        &self,
-        name: &str,
-        args: &Value,
-    ) -> Result<(Value, Evidence, Option<String>, usize, Vec<String>, bool), String> {
+    async fn tool_payload(&self, name: &str, args: &Value) -> Result<ToolOutcome, String> {
         match name {
             "tally_status" => {
                 let (result, evidence) = self.status().await?;
@@ -392,10 +392,7 @@ impl Server {
         }
     }
 
-    async fn ledger_masters(
-        &self,
-        args: &Value,
-    ) -> Result<(Value, Evidence, Option<String>, usize, Vec<String>, bool), String> {
+    async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, String> {
         let guid = required_string(args, "company_guid")?;
         let (company, company_evidence) = self.verified_company(guid).await?;
         let company_name = bridge_tally_protocol::xml_read_profiles::ValidatedCompanyName::new(
@@ -428,7 +425,7 @@ impl Server {
         let truncated = offset.saturating_add(page.len()) < total;
         let result = json!({"items": page, "offset": offset, "total": total, "fields": args.get("fields").and_then(Value::as_str).unwrap_or("basic"), "compliance": if args.get("fields").and_then(Value::as_str) == Some("compliance") {"unsupported_in_ordinary_profile"} else {"not_requested"}});
         Ok((
-            json!({"company": company_json(&company, &[company.clone()]), "result": result}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
             combine_evidence(company_evidence, evidence),
             Some(guid.to_string()),
             total.min(limit),
@@ -437,10 +434,7 @@ impl Server {
         ))
     }
 
-    async fn vouchers(
-        &self,
-        args: &Value,
-    ) -> Result<(Value, Evidence, Option<String>, usize, Vec<String>, bool), String> {
+    async fn vouchers(&self, args: &Value) -> Result<ToolOutcome, String> {
         let guid = required_string(args, "company_guid")?;
         let from = normalized_date(required_string(args, "from")?)?;
         let to = normalized_date(required_string(args, "to")?)?;
@@ -472,7 +466,7 @@ impl Server {
             .collect::<Vec<_>>();
         let truncated = offset.saturating_add(items.len()) < total;
         Ok((
-            json!({"company": company_json(&company, &[company.clone()]), "result": {"items": items, "offset": offset, "total": total, "profile": "agent_vouchers_v1_filters"}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"items": items, "offset": offset, "total": total, "profile": "agent_vouchers_v1_filters"}}),
             combine_evidence(identity_evidence, evidence),
             Some(guid.to_string()),
             items.len(),
@@ -491,10 +485,7 @@ impl Server {
         ))
     }
 
-    async fn changed_since(
-        &self,
-        args: &Value,
-    ) -> Result<(Value, Evidence, Option<String>, usize, Vec<String>, bool), String> {
+    async fn changed_since(&self, args: &Value) -> Result<ToolOutcome, String> {
         let guid = required_string(args, "company_guid")?;
         let alter_id = args
             .get("alter_id")
@@ -520,7 +511,7 @@ impl Server {
             .take(self.settings.max_rows)
             .collect::<Vec<_>>();
         Ok((
-            json!({"company": company_json(&company, &[company.clone()]), "result": {"vouchers": rows, "masters": [], "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": {"altvchid": "not_observed", "altmstid": "not_observed"}}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": [], "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": {"altvchid": "not_observed", "altmstid": "not_observed"}}}),
             combine_evidence(identity_evidence, evidence),
             Some(guid.to_string()),
             0,
@@ -529,10 +520,7 @@ impl Server {
         ))
     }
 
-    async fn outstandings(
-        &self,
-        args: &Value,
-    ) -> Result<(Value, Evidence, Option<String>, usize, Vec<String>, bool), String> {
+    async fn outstandings(&self, args: &Value) -> Result<ToolOutcome, String> {
         let guid = required_string(args, "company_guid")?;
         let (company, identity_evidence) = self.verified_company(guid).await?;
         let books_from = normalized_date(
@@ -581,7 +569,7 @@ impl Server {
         let top = arg_usize(args, "top", 25).min(self.settings.max_rows);
         let rows = all.len();
         Ok((
-            json!({"company": company_json(&company, &[company.clone()]), "result": {"open_bills": all.into_iter().take(top).collect::<Vec<_>>(), "totals": "computed by native report; exact aggregation withheld until native ledger residual pairing completes", "ageing_buckets": "unsupported_without_complete_native_pair", "unallocated_count": "unsupported_without_complete_native_pair", "partial_reason": "agent_native_pair_not_completed"}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"open_bills": all.into_iter().take(top).collect::<Vec<_>>(), "totals": "computed by native report; exact aggregation withheld until native ledger residual pairing completes", "ageing_buckets": "unsupported_without_complete_native_pair", "unallocated_count": "unsupported_without_complete_native_pair", "partial_reason": "agent_native_pair_not_completed"}}),
             combine_evidence(
                 identity_evidence,
                 evidence.ok_or_else(|| "invalid_direction".to_string())?,
@@ -593,10 +581,7 @@ impl Server {
         ))
     }
 
-    async fn ledger_movement(
-        &self,
-        args: &Value,
-    ) -> Result<(Value, Evidence, Option<String>, usize, Vec<String>, bool), String> {
+    async fn ledger_movement(&self, args: &Value) -> Result<ToolOutcome, String> {
         let (payload, evidence, company_guid, rows, fields, truncated) =
             self.vouchers(args).await?;
         let items = payload["result"]["items"]
@@ -613,10 +598,7 @@ impl Server {
         ))
     }
 
-    fn read_evidence(
-        &self,
-        args: &Value,
-    ) -> Result<(Value, Evidence, Option<String>, usize, Vec<String>, bool), String> {
+    fn read_evidence(&self, args: &Value) -> Result<ToolOutcome, String> {
         let take = arg_usize(args, "limit", 20).min(MAX_EVIDENCE_RECORDS);
         let records = self
             .evidence
@@ -645,10 +627,7 @@ impl Server {
         ))
     }
 
-    fn egress_log(
-        &self,
-        args: &Value,
-    ) -> Result<(Value, Evidence, Option<String>, usize, Vec<String>, bool), String> {
+    fn egress_log(&self, args: &Value) -> Result<ToolOutcome, String> {
         let take = arg_usize(args, "limit", 20).min(MAX_EVIDENCE_RECORDS);
         let path = self.settings.data_dir.join("agent-egress.jsonl");
         let lines = fs::read_to_string(path)
@@ -740,7 +719,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn sha256_json<T: Serialize>(value: &T) -> String {
     sha256_hex(serde_json::to_vec(value).unwrap_or_default().as_slice())
 }
-fn arg_string<'a>(args: &'a Value, key: &str) -> Option<String> {
+fn arg_string(args: &Value, key: &str) -> Option<String> {
     args.get(key).and_then(Value::as_str).map(str::to_string)
 }
 fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -944,4 +923,92 @@ pub async fn run_stdio() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tally_protocol_simulator::{
+        Fixture, ResponseFraming, ScenarioPlan, SequenceSimulator, WireEncoding,
+    };
+
+    fn company_collection_xml() -> String {
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SYNTHETIC BOOK\"><GUID>00000000-0000-4000-8000-000000000001</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>".to_string()
+    }
+
+    fn settings(address: std::net::SocketAddr, data_dir: PathBuf) -> Settings {
+        Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: address.port(),
+            },
+            data_dir,
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: Redaction::MaskParties,
+        }
+    }
+
+    #[test]
+    fn agent_voucher_profile_uses_literal_filters_and_redaction_never_reveals_party() {
+        let request = render_agent_vouchers(
+            "BRIDGE SYNTHETIC BOOK",
+            "20260401",
+            "20260430",
+            None,
+            None,
+            Some(99),
+        );
+        assert!(request.contains("<FILTERS>BridgeAgentWindow</FILTERS>"));
+        assert!(request.contains("$AlterID > 99"));
+        assert_eq!(
+            redact_value(
+                json!({"party":"Acme Party", "narration":"private"}),
+                Redaction::MaskParties
+            )["party"],
+            "Ac…ty"
+        );
+        assert!(tool_definitions()
+            .as_array()
+            .is_some_and(|tools| tools.len() == 9));
+    }
+
+    #[tokio::test]
+    async fn simulator_company_read_records_evidence_and_egress_while_down_endpoint_is_typed() {
+        let plan = ScenarioPlan::new(Fixture::SyntheticXml(company_collection_xml()))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength);
+        let simulator = SequenceSimulator::spawn(vec![plan]).expect("synthetic loopback server");
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let server = Server::new(settings(
+            simulator.address(),
+            directory.path().to_path_buf(),
+        ));
+        let response = server.call_tool("list_companies", json!({})).await;
+        assert_eq!(
+            response["structuredContent"]["result"]["companies"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert!(response["structuredContent"]["evidence"]["request_sha256"].is_string());
+        assert!(directory.path().join("agent-egress.jsonl").exists());
+        assert_eq!(simulator.finish().expect("simulator result").len(), 1);
+
+        let down = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+        });
+        let down_response = down.call_tool("tally_status", json!({})).await;
+        assert!(down_response["structuredContent"]["result"]["error"]["code"].is_string());
+        let receipts = fs::read_to_string(directory.path().join("agent-egress.jsonl"))
+            .expect("egress receipts");
+        assert_eq!(receipts.lines().count(), 2);
+    }
 }
