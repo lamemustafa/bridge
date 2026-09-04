@@ -547,7 +547,6 @@ impl Server {
                         "name": ledger.name,
                         "parent": ledger.parent.returned_text(),
                         "opening_balance": ledger.opening_balance,
-                        "party_gstin": ledger.party_gstin.returned_text(),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -572,16 +571,7 @@ impl Server {
             company_evidence,
             Some(guid.to_string()),
             page_len,
-            if compliance {
-                vec![
-                    "name".into(),
-                    "parent".into(),
-                    "opening_balance".into(),
-                    "compliance".into(),
-                ]
-            } else {
-                vec!["name".into(), "parent".into(), "opening_balance".into()]
-            },
+            ledger_fields_returned(compliance),
             truncated,
         ))
     }
@@ -1126,6 +1116,20 @@ fn page_length_after_offset(total: usize, offset: usize, limit: usize) -> usize 
 
 fn page_is_truncated(total: usize, offset: usize, page_len: usize) -> bool {
     offset.saturating_add(page_len) < total
+}
+
+fn ledger_fields_returned(compliance: bool) -> Vec<String> {
+    if compliance {
+        vec![
+            "name".into(),
+            "parent".into(),
+            "opening_balance".into(),
+            "party_gstin".into(),
+            "compliance".into(),
+        ]
+    } else {
+        vec!["name".into(), "parent".into(), "opening_balance".into()]
+    }
 }
 
 fn read_egress_tail(path: &Path, take: usize) -> Result<Vec<String>, String> {
@@ -1996,6 +2000,24 @@ mod tests {
         assert_eq!(tail.len(), 2);
         assert!(tail[0].contains("11999"));
         assert!(tail[1].contains("11998"));
+    }
+
+    #[test]
+    fn ledger_master_release_shapes_keep_gstin_compliance_only() {
+        assert_eq!(
+            ledger_fields_returned(false),
+            vec!["name", "parent", "opening_balance"]
+        );
+        assert_eq!(
+            ledger_fields_returned(true),
+            vec![
+                "name",
+                "parent",
+                "opening_balance",
+                "party_gstin",
+                "compliance"
+            ]
+        );
     }
 
     #[tokio::test]
