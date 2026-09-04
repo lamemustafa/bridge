@@ -588,15 +588,11 @@ impl Server {
 
     async fn changed_since(&self, args: &Value) -> Result<ToolOutcome, String> {
         let guid = required_string(args, "company_guid")?;
-        let voucher_alter_id = args
-            .get("voucher_alter_id")
-            .or_else(|| args.get("alter_id"))
-            .and_then(Value::as_u64)
+        let voucher_alter_id = checkpoint_arg(args, "voucher_alter_id")?
+            .or(checkpoint_arg(args, "alter_id")?)
             .unwrap_or(0);
-        let master_alter_id = args
-            .get("master_alter_id")
-            .or_else(|| args.get("alter_id"))
-            .and_then(Value::as_u64)
+        let master_alter_id = checkpoint_arg(args, "master_alter_id")?
+            .or(checkpoint_arg(args, "alter_id")?)
             .unwrap_or(0);
         let offset = arg_usize(args, "offset", 0);
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
@@ -1261,9 +1257,31 @@ fn parse_company_high_water(xml: &str, expected_guid: &str) -> Result<Value, Str
         })
         .ok_or_else(|| "company_high_water_identity_absent".to_string())?;
     Ok(json!({
-        "altvchid": row.get("ALTVCHID").cloned().unwrap_or_else(|| "not_observed".to_string()),
-        "altmstid": row.get("ALTMSTID").cloned().unwrap_or_else(|| "not_observed".to_string()),
+        "altvchid": observed_checkpoint(row.get("ALTVCHID"), "voucher")?,
+        "altmstid": observed_checkpoint(row.get("ALTMSTID"), "master")?,
     }))
+}
+
+fn checkpoint_arg(args: &Value, field: &str) -> Result<Option<u64>, String> {
+    match args.get(field) {
+        None => Ok(None),
+        Some(Value::Number(value)) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| "checkpoint_invalid".to_string()),
+        Some(Value::String(value)) => value
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| "checkpoint_invalid".to_string()),
+        Some(_) => Err("checkpoint_invalid".to_string()),
+    }
+}
+
+fn observed_checkpoint(value: Option<&String>, axis: &str) -> Result<u64, String> {
+    value
+        .ok_or_else(|| format!("{axis}_checkpoint_not_observed"))?
+        .parse::<u64>()
+        .map_err(|_| format!("{axis}_checkpoint_invalid"))
 }
 
 fn parse_agent_changed_masters(xml: &str) -> Result<Vec<Value>, String> {
@@ -1649,6 +1667,25 @@ mod tests {
     fn paginated_egress_rows_returned_is_the_final_page_length() {
         assert_eq!(page_length_after_offset(11, 10, 500), 1);
         assert_eq!(page_length_after_offset(11, 11, 500), 0);
+    }
+
+    #[test]
+    fn changed_since_checkpoints_round_trip_as_numbers_with_numeric_string_compatibility() {
+        let observed =
+            observed_checkpoint(Some(&"42".to_string()), "voucher").expect("numeric high water");
+        let response = json!({"next_voucher_alter_id": observed});
+        assert_eq!(
+            checkpoint_arg(&response, "next_voucher_alter_id"),
+            Ok(Some(42))
+        );
+        assert_eq!(
+            checkpoint_arg(&json!({"voucher_alter_id":"42"}), "voucher_alter_id"),
+            Ok(Some(42))
+        );
+        assert_eq!(
+            checkpoint_arg(&json!({"voucher_alter_id":"bad"}), "voucher_alter_id"),
+            Err("checkpoint_invalid".to_string())
+        );
     }
 
     #[tokio::test]
