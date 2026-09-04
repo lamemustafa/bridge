@@ -687,9 +687,30 @@ impl Server {
             .post_read(&identity, render_agent_company_high_water(&company.name))
             .await?;
         let high_water = parse_company_high_water(&extent_xml, guid)?;
+        let voucher_checkpoint_advanceable = checkpoint_advanceable(
+            rows.iter().filter_map(|row| row["alter_id"].as_u64()).max(),
+            voucher_alter_id,
+            high_water["altvchid"]
+                .as_u64()
+                .ok_or_else(|| "voucher_checkpoint_invalid".to_string())?,
+            voucher_truncated,
+        );
+        let master_checkpoint_advanceable = checkpoint_advanceable(
+            masters
+                .iter()
+                .filter_map(|row| row["alter_id"].as_u64())
+                .max(),
+            master_alter_id,
+            high_water["altmstid"]
+                .as_u64()
+                .ok_or_else(|| "master_checkpoint_invalid".to_string())?,
+            master_truncated,
+        );
+        let checkpoint_advanceable =
+            voucher_checkpoint_advanceable && master_checkpoint_advanceable;
         let returned_rows = rows.len() + masters.len();
         Ok((
-            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": masters, "voucher_alter_id": voucher_alter_id, "master_alter_id": master_alter_id, "offset": offset, "next_offset": (voucher_truncated || master_truncated).then_some(offset + self.settings.max_rows), "next_voucher_alter_id": high_water["altvchid"], "next_master_alter_id": high_water["altmstid"], "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": high_water}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": masters, "voucher_alter_id": voucher_alter_id, "master_alter_id": master_alter_id, "offset": offset, "next_offset": (voucher_truncated || master_truncated).then_some(offset + self.settings.max_rows), "next_voucher_alter_id": high_water["altvchid"], "next_master_alter_id": high_water["altmstid"], "checkpoint_advanceable": checkpoint_advanceable, "checkpoint_reason": (!checkpoint_advanceable).then_some("scan_not_correlated_to_company_high_water"), "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": high_water}}),
             combine_evidence(
                 combine_evidence(identity_evidence, evidence),
                 combine_evidence(master_evidence, extent_evidence),
@@ -1382,6 +1403,15 @@ fn checkpoint_arg(args: &Value, field: &str) -> Result<Option<u64>, String> {
     }
 }
 
+fn checkpoint_advanceable(
+    returned_max: Option<u64>,
+    requested_checkpoint: u64,
+    company_high_water: u64,
+    truncated: bool,
+) -> bool {
+    !truncated && returned_max.unwrap_or(requested_checkpoint) >= company_high_water
+}
+
 fn observed_checkpoint(value: Option<&String>, axis: &str) -> Result<u64, String> {
     value
         .ok_or_else(|| format!("{axis}_checkpoint_not_observed"))?
@@ -1792,6 +1822,13 @@ mod tests {
             checkpoint_arg(&json!({"voucher_alter_id":"bad"}), "voucher_alter_id"),
             Err("checkpoint_invalid".to_string())
         );
+    }
+
+    #[test]
+    fn truncated_change_feed_never_advances_the_checkpoint() {
+        assert!(!checkpoint_advanceable(Some(12), 0, 12, true));
+        assert!(!checkpoint_advanceable(Some(11), 0, 12, false));
+        assert!(checkpoint_advanceable(Some(12), 0, 12, false));
     }
 
     #[test]
