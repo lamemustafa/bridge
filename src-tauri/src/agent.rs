@@ -1,6 +1,8 @@
-//! The read-only stdio MCP surface.  This module deliberately uses the same
-//! loopback-only `bridge-tally-transport` as Bridge itself; it owns no HTTP
-//! client and has no import/write request shapes.
+//! The local stdio MCP surface. It uses Bridge's loopback-only Tally XML
+//! transport. Import XML is only rendered to a local file: this server never
+//! dispatches an import or another write request to Tally.
+
+mod agent_import;
 
 use bridge_tally_protocol::native_outstandings::{
     parse_native_bill_rows, render_native_bills_request, NativeBillsReportKind,
@@ -158,7 +160,16 @@ impl Server {
             .map_err(|error| format!("endpoint_configuration_invalid:{error}"))
     }
 
-    async fn post(&self, request: String) -> Result<(String, Evidence), String> {
+    async fn post_read(&self, request: String) -> Result<(String, Evidence), String> {
+        // This is the final in-process boundary: all Tally traffic emitted by
+        // bridge-mcp must be a read. Keeping it here makes an accidental future
+        // call site fail closed before bytes leave the loopback transport.
+        if request
+            .to_ascii_lowercase()
+            .contains("<tallyrequest>import")
+        {
+            return Err("agent_write_dispatch_forbidden".to_string());
+        }
         let transport = self.transport()?;
         let response = transport
             .post_xml_decoded(request)
@@ -211,7 +222,9 @@ impl Server {
     }
 
     async fn companies(&self) -> Result<(Vec<TallyCompany>, Evidence), String> {
-        let (xml, evidence) = self.post(ReadOnlyProfile::CompanyListV2.render()).await?;
+        let (xml, evidence) = self
+            .post_read(ReadOnlyProfile::CompanyListV2.render())
+            .await?;
         let companies = parse_companies_from_collection(&xml)
             .map_err(|_| "company_collection_invalid".to_string())?;
         Ok((companies, evidence))
@@ -381,6 +394,10 @@ impl Server {
                     false,
                 ))
             }
+            "voucher_schema" => self.voucher_schema(),
+            "validate_masters" => self.validate_masters(args).await,
+            "build_import_xml" => self.build_import_xml(args).await,
+            "verify_import" => self.verify_import(args).await,
             "ledger_masters" => self.ledger_masters(args).await,
             "vouchers" => self.vouchers(args).await,
             "changed_since" => self.changed_since(args).await,
@@ -400,7 +417,7 @@ impl Server {
         )
         .map_err(|_| "company_name_invalid".to_string())?;
         let (xml, evidence) = self
-            .post(
+            .post_read(
                 ReadOnlyProfile::LedgersV1 {
                     company: &company_name,
                 }
@@ -450,7 +467,7 @@ impl Server {
             arg_string(args, "ledger"),
             None,
         );
-        let (xml, evidence) = self.post(request).await?;
+        let (xml, evidence) = self.post_read(request).await?;
         let mut rows = parse_agent_rows(&xml);
         if let Some(kind) = arg_string(args, "voucher_type") {
             rows.retain(|row| row.get("voucher_type") == Some(&Value::String(kind.clone())));
@@ -500,7 +517,7 @@ impl Server {
             None,
             Some(alter_id),
         );
-        let (xml, evidence) = self.post(request).await?;
+        let (xml, evidence) = self.post_read(request).await?;
         let rows = parse_agent_rows(&xml)
             .into_iter()
             .filter(|row| {
@@ -554,7 +571,7 @@ impl Server {
                 continue;
             }
             let (xml, next) = self
-                .post(render_native_bills_request(kind, &company.name, &from, &to))
+                .post_read(render_native_bills_request(kind, &company.name, &from, &to))
                 .await?;
             total_bytes += next.bytes;
             evidence = Some(
@@ -846,6 +863,10 @@ fn tool_definitions() -> Value {
     let names = [
         "tally_status",
         "list_companies",
+        "voucher_schema",
+        "validate_masters",
+        "build_import_xml",
+        "verify_import",
         "outstandings",
         "ledger_masters",
         "ledger_movement",
@@ -854,7 +875,36 @@ fn tool_definitions() -> Value {
         "read_evidence",
         "egress_log",
     ];
-    Value::Array(names.into_iter().map(|name| json!({"name": name, "description": "Bridge read-only Tally tool", "inputSchema": {"type":"object", "additionalProperties": false}})).collect())
+    Value::Array(
+        names
+            .into_iter()
+            .map(|name| {
+                let (description, input_schema) = match name {
+                    "voucher_schema" => (
+                        "Return the fail-closed local voucher-file schema; no Tally request is sent.",
+                        json!({"type":"object", "additionalProperties":false}),
+                    ),
+                    "validate_masters" => (
+                        "Read the selected company's live ledger catalogue and report exact, near-miss, or missing names.",
+                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","ledgers"], "properties":{"company_guid":{"type":"string"},"ledgers":{"type":"array","items":{"type":"string"}}}}),
+                    ),
+                    "build_import_xml" => (
+                        "Validate and write a local Tally voucher import file. This never dispatches import XML to Tally.",
+                        agent_import::voucher_input_schema(),
+                    ),
+                    "verify_import" => (
+                        "Read back a manually imported local batch and write Proof-of-Post files. This never dispatches import XML to Tally.",
+                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string"}}}),
+                    ),
+                    _ => (
+                        "Bridge read-only Tally tool",
+                        json!({"type":"object", "additionalProperties": false}),
+                    ),
+                };
+                json!({"name": name, "description": description, "inputSchema": input_schema})
+            })
+            .collect(),
+    )
 }
 
 pub async fn run_stdio() -> Result<(), String> {
@@ -970,7 +1020,7 @@ mod tests {
         );
         assert!(tool_definitions()
             .as_array()
-            .is_some_and(|tools| tools.len() == 9));
+            .is_some_and(|tools| tools.len() == 13));
     }
 
     #[tokio::test]
