@@ -149,7 +149,7 @@ impl Server {
             .collect::<Option<Vec<_>>>()
             .filter(|names| !names.is_empty())
             .ok_or_else(|| "ledgers_required".to_string())?;
-        let (company, identity) = self.verified_company(guid).await?;
+        let (company, _verified_identity, identity_evidence) = self.verified_company(guid).await?;
         let (catalogue, evidence) = self.read_ledger_catalogue(&company.name).await?;
         let report = ledgers
             .into_iter()
@@ -158,7 +158,7 @@ impl Server {
         let hash = sha256_json(&catalogue);
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"masters": report, "catalogue_evidence_sha256": hash}}),
-            combine_evidence(identity, evidence),
+            combine_evidence(identity_evidence, evidence),
             Some(guid.to_string()),
             catalogue.len(),
             vec![
@@ -173,7 +173,8 @@ impl Server {
     pub(super) async fn build_import_xml(&self, args: &Value) -> Result<ToolOutcome, String> {
         let payload = parse_payload(args)?;
         validate_payload(&payload)?;
-        let (company, identity) = self.verified_company(&payload.company_guid).await?;
+        let (company, _verified_identity, identity_evidence) =
+            self.verified_company(&payload.company_guid).await?;
         let (catalogue, catalogue_evidence) = self.read_ledger_catalogue(&company.name).await?;
         let report = masters_for_payload(&payload, &catalogue);
         if report.iter().any(|value| value["match_state"] != "exact") {
@@ -183,7 +184,7 @@ impl Server {
                     "catalogue_evidence_sha256":sha256_json(&catalogue),
                     "next_step":"Use the exact live spelling from validate_masters, then build a new batch. No file was written."
                 }}),
-                combine_evidence(identity, catalogue_evidence),
+                combine_evidence(identity_evidence, catalogue_evidence),
                 Some(payload.company_guid),
                 0,
                 vec!["match_state".into(), "catalogue_evidence_sha256".into()],
@@ -237,7 +238,7 @@ impl Server {
                 "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
             }}),
             combine_evidence(
-                combine_evidence(identity, catalogue_evidence),
+                combine_evidence(identity_evidence, catalogue_evidence),
                 mark_evidence,
             ),
             Some(line.company_guid.clone()),
@@ -256,7 +257,7 @@ impl Server {
         if line.company_guid != guid {
             return Err("import_batch_company_mismatch".to_string());
         }
-        let (company, identity) = self.verified_company(guid).await?;
+        let (company, _verified_identity, identity_evidence) = self.verified_company(guid).await?;
         let request =
             render_import_verification_read(&company.name, &line.date_from, &line.date_to);
         let (xml, evidence) = self.post_read(request).await?;
@@ -268,7 +269,7 @@ impl Server {
             "built_at": line.built_at, "verified_at": now(),
             "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed),
             "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
-            "evidence": {"company": identity, "voucher_read": evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
+            "evidence": {"company": identity_evidence, "voucher_read": evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
         });
         let imports = self.imports_dir()?;
         write_private(
@@ -294,7 +295,7 @@ impl Server {
         self.append_import_ledger(&update)?;
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof}),
-            combine_evidence(identity, evidence),
+            combine_evidence(identity_evidence, evidence),
             Some(guid.to_string()),
             line.vouchers.len(),
             vec!["remote_id".into(), "alter_id".into(), "entries".into()],

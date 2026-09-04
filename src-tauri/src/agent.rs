@@ -2,13 +2,15 @@
 //! transport. Import XML is only rendered to a local file: this server never
 //! dispatches an import or another write request to Tally.
 
+#[path = "agent_import.rs"]
 mod agent_import;
 
-use bridge_tally_protocol::native_outstandings::{
-    parse_native_bill_rows, render_native_bills_request, NativeBillsReportKind,
+use crate::tally::{
+    OutstandingsAgeingAnchor, OutstandingsCurrencyAssertion, OutstandingsLoadResult, TallyConfig,
+    TallyRuntime, VerifiedCompanyIdentity,
 };
 use bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile;
-use bridge_tally_protocol::{parse_companies_from_collection, parse_ledgers, TallyCompany};
+use bridge_tally_protocol::{parse_companies_from_collection, TallyCompany};
 use bridge_tally_transport::{TallyEndpointConfig, TallyHttpTransport, TransportPolicy};
 use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
@@ -138,6 +140,7 @@ struct EgressReceipt<'a> {
 
 struct Server {
     settings: Settings,
+    runtime: TallyRuntime,
     evidence: Arc<Mutex<Vec<Evidence>>>,
 }
 
@@ -147,8 +150,13 @@ impl Server {
     fn new(settings: Settings) -> Self {
         Self {
             settings,
+            runtime: TallyRuntime::default(),
             evidence: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    fn tally_config(&self) -> TallyConfig {
+        self.settings.endpoint.clone()
     }
 
     fn transport(&self) -> Result<TallyHttpTransport, String> {
@@ -230,11 +238,15 @@ impl Server {
         Ok((companies, evidence))
     }
 
-    async fn verified_company(&self, guid: &str) -> Result<(TallyCompany, Evidence), String> {
+    async fn verified_company(
+        &self,
+        guid: &str,
+    ) -> Result<(TallyCompany, VerifiedCompanyIdentity, Evidence), String> {
         if guid.trim().is_empty() {
             return Err("company_guid_required".to_string());
         }
         let (companies, evidence) = self.companies().await?;
+        let observed_companies = companies.clone();
         let matches = companies
             .into_iter()
             .filter(|company| {
@@ -252,12 +264,36 @@ impl Server {
             });
         }
         let company = matches.into_iter().next().expect("one checked above");
-        if company.company_number.as_deref().is_none_or(str::is_empty)
-            || company.books_from.as_deref().is_none_or(str::is_empty)
-        {
-            return Err("company_identity_incomplete".to_string());
-        }
-        Ok((company, evidence))
+        let company_number = company
+            .company_number
+            .clone()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "company_identity_incomplete".to_string())?;
+        let books_from = company
+            .books_from
+            .clone()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "company_identity_incomplete".to_string())?;
+        let identity = VerifiedCompanyIdentity::from_observed_companies(
+            company.name.clone(),
+            guid.to_string(),
+            company_number,
+            books_from,
+            &observed_companies,
+        )
+        .map_err(|error| {
+            match error {
+                crate::tally::VerifiedCompanyIdentityError::Missing => "company_identity_not_found",
+                crate::tally::VerifiedCompanyIdentityError::DuplicateTuple => {
+                    "company_identity_ambiguous"
+                }
+                crate::tally::VerifiedCompanyIdentityError::DisplayScopeAmbiguous => {
+                    "company_display_scope_ambiguous"
+                }
+            }
+            .to_string()
+        })?;
+        Ok((company, identity, evidence))
     }
 
     async fn call_tool(&self, name: &str, args: Value) -> Value {
@@ -411,42 +447,69 @@ impl Server {
 
     async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, String> {
         let guid = required_string(args, "company_guid")?;
-        let (company, company_evidence) = self.verified_company(guid).await?;
-        let company_name = bridge_tally_protocol::xml_read_profiles::ValidatedCompanyName::new(
-            company.name.clone(),
-        )
-        .map_err(|_| "company_name_invalid".to_string())?;
-        let (xml, evidence) = self
-            .post_read(
-                ReadOnlyProfile::LedgersV1 {
-                    company: &company_name,
-                }
-                .render(),
-            )
-            .await?;
-        let mut ledgers = parse_ledgers(&xml).map_err(|_| "ledger_export_invalid".to_string())?;
+        let (company, identity, company_evidence) = self.verified_company(guid).await?;
+        let compliance = args.get("fields").and_then(Value::as_str) == Some("compliance");
+        let mut ledgers = if compliance {
+            self.runtime
+                .fetch_agent_party_ledger_masters(self.tally_config(), &identity)
+                .await
+                .map_err(|_| "party_ledger_master_read_failed".to_string())?
+                .into_iter()
+                .map(|record| {
+                    json!({
+                        "name": record.ledger.name,
+                        "parent": record.ledger.parent.returned_text(),
+                        "opening_balance": record.ledger.opening_balance,
+                        "party_gstin": record.ledger.party_gstin.returned_text(),
+                        "compliance": record.fields,
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            self.runtime
+                .fetch_ledgers(self.tally_config(), &identity)
+                .await
+                .map_err(|_| "ledger_export_invalid".to_string())?
+                .into_iter()
+                .map(|ledger| {
+                    json!({
+                        "name": ledger.name,
+                        "parent": ledger.parent.returned_text(),
+                        "opening_balance": ledger.opening_balance,
+                        "party_gstin": ledger.party_gstin.returned_text(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
         if let Some(group) = arg_string(args, "group") {
-            ledgers.retain(|ledger| {
-                ledger
-                    .parent
-                    .returned_text()
-                    .is_some_and(|parent| parent == group)
-            });
+            ledgers.retain(|ledger| ledger["parent"].as_str() == Some(group.as_str()));
         }
         let offset = arg_usize(args, "offset", 0);
         let limit = arg_usize(args, "limit", self.settings.max_rows).min(self.settings.max_rows);
         let total = ledgers.len();
-        let page = ledgers.into_iter().skip(offset).take(limit).map(|ledger| {
-            json!({"name": ledger.name, "parent": ledger.parent.returned_text(), "opening_balance": ledger.opening_balance, "party_gstin": ledger.party_gstin.returned_text()})
-        }).collect::<Vec<_>>();
+        let page = ledgers
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|ledger| redact_value(ledger, self.settings.redaction))
+            .collect::<Vec<_>>();
         let truncated = offset.saturating_add(page.len()) < total;
-        let result = json!({"items": page, "offset": offset, "total": total, "fields": args.get("fields").and_then(Value::as_str).unwrap_or("basic"), "compliance": if args.get("fields").and_then(Value::as_str) == Some("compliance") {"unsupported_in_ordinary_profile"} else {"not_requested"}});
+        let result = json!({"items": page, "offset": offset, "total": total, "fields": args.get("fields").and_then(Value::as_str).unwrap_or("basic"), "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
-            combine_evidence(company_evidence, evidence),
+            company_evidence,
             Some(guid.to_string()),
             total.min(limit),
-            vec!["name".into(), "parent".into(), "opening_balance".into()],
+            if compliance {
+                vec![
+                    "name".into(),
+                    "parent".into(),
+                    "opening_balance".into(),
+                    "compliance".into(),
+                ]
+            } else {
+                vec!["name".into(), "parent".into(), "opening_balance".into()]
+            },
             truncated,
         ))
     }
@@ -458,7 +521,7 @@ impl Server {
         if from > to {
             return Err("invalid_date_range".to_string());
         }
-        let (company, identity_evidence) = self.verified_company(guid).await?;
+        let (company, _identity, identity_evidence) = self.verified_company(guid).await?;
         let request = render_agent_vouchers(
             &company.name,
             &from,
@@ -508,7 +571,7 @@ impl Server {
             .get("alter_id")
             .and_then(Value::as_u64)
             .ok_or_else(|| "alter_id_required".to_string())?;
-        let (company, identity_evidence) = self.verified_company(guid).await?;
+        let (company, _identity, identity_evidence) = self.verified_company(guid).await?;
         let request = render_agent_vouchers(
             &company.name,
             "19000101",
@@ -527,91 +590,219 @@ impl Server {
             })
             .take(self.settings.max_rows)
             .collect::<Vec<_>>();
+        let (master_xml, master_evidence) = self
+            .post_read(render_agent_changed_masters(&company.name, alter_id))
+            .await?;
+        let masters = parse_agent_changed_masters(&master_xml)
+            .into_iter()
+            .filter(|master| master["alter_id"].as_u64().is_some_and(|id| id > alter_id))
+            .take(self.settings.max_rows)
+            .collect::<Vec<_>>();
+        let (extent_xml, extent_evidence) = self
+            .post_read(render_agent_company_high_water(&company.name))
+            .await?;
+        let high_water = json!({
+            "altvchid": xml_scalar(&extent_xml, "ALTVCHID"),
+            "altmstid": xml_scalar(&extent_xml, "ALTMSTID"),
+        });
+        let returned_rows = rows.len() + masters.len();
         Ok((
-            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": [], "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": {"altvchid": "not_observed", "altmstid": "not_observed"}}}),
-            combine_evidence(identity_evidence, evidence),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": masters, "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": high_water}}),
+            combine_evidence(
+                combine_evidence(identity_evidence, evidence),
+                combine_evidence(master_evidence, extent_evidence),
+            ),
             Some(guid.to_string()),
-            0,
-            vec!["alter_id".into()],
+            returned_rows,
+            vec!["alter_id".into(), "name".into(), "kind".into()],
             false,
         ))
     }
 
     async fn outstandings(&self, args: &Value) -> Result<ToolOutcome, String> {
         let guid = required_string(args, "company_guid")?;
-        let (company, identity_evidence) = self.verified_company(guid).await?;
-        let books_from = normalized_date(
-            company
-                .books_from
-                .as_deref()
-                .ok_or_else(|| "company_identity_incomplete".to_string())?,
-        )?;
+        let (company, identity, identity_evidence) = self.verified_company(guid).await?;
         let as_of = args
             .get("as_of")
             .and_then(Value::as_str)
             .map(normalized_date)
             .transpose()?
             .unwrap_or_else(|| Utc::now().format("%Y%m%d").to_string());
-        let from = bridge_tally_core::TallyDate::parse(books_from)
-            .map_err(|_| "invalid_books_from".to_string())?;
         let to =
             bridge_tally_core::TallyDate::parse(as_of).map_err(|_| "invalid_as_of".to_string())?;
-        let direction = args
-            .get("direction")
+        let ageing_anchor = match args
+            .get("ageing_basis")
             .and_then(Value::as_str)
-            .unwrap_or("both");
-        let mut all = Vec::new();
-        let mut total_bytes = 0;
-        let mut evidence: Option<Evidence> = None;
-        for (wanted, kind) in [
-            ("receivable", NativeBillsReportKind::Receivable),
-            ("payable", NativeBillsReportKind::Payable),
-        ] {
-            if direction != "both" && direction != wanted {
-                continue;
-            }
-            let (xml, next) = self
-                .post_read(render_native_bills_request(kind, &company.name, &from, &to))
-                .await?;
-            total_bytes += next.bytes;
-            evidence = Some(
-                evidence
-                    .map(|previous| combine_evidence(previous, next.clone()))
-                    .unwrap_or(next),
-            );
-            let rows = parse_native_bill_rows(&xml, &from, &to)
-                .map_err(|_| "native_outstandings_invalid".to_string())?;
-            all.extend(rows.into_iter().map(|row| json!({"party": row.party, "reference": row.reference, "bill_date": row.bill_date.as_str(), "due_date": row.due_date.as_str(), "amount": row.closing_balance.as_str(), "direction": wanted})));
-        }
+            .unwrap_or("due_date")
+        {
+            "bill_date" => OutstandingsAgeingAnchor::BillDate,
+            "due_date" => OutstandingsAgeingAnchor::DueDate,
+            _ => return Err("invalid_ageing_basis".to_string()),
+        };
+        let currency = self
+            .runtime
+            .detect_base_currency(self.tally_config(), &identity)
+            .await
+            .map_err(|_| "company_currency_probe_failed".to_string())?;
+        let assertion = match (currency.currency_count, currency.is_inr) {
+            (1, true) => OutstandingsCurrencyAssertion::Inr,
+            (0, _) => return Err("company_currency_probe_failed".to_string()),
+            (1, false) => return Err("company_base_currency_not_inr".to_string()),
+            _ => return Err("company_base_currency_undetermined".to_string()),
+        };
+        let load = self
+            .runtime
+            .fetch_outstandings(self.tally_config(), &identity, to, assertion, ageing_anchor)
+            .await
+            .map_err(|_| "native_outstandings_read_failed".to_string())?;
         let top = arg_usize(args, "top", 25).min(self.settings.max_rows);
-        let rows = all.len();
+        let result = match load {
+            OutstandingsLoadResult::Complete {
+                report,
+                statement_open_bills,
+                statement_unallocated_by_party,
+                unallocated_total,
+                ..
+            } => {
+                let direction = args
+                    .get("direction")
+                    .and_then(Value::as_str)
+                    .unwrap_or("both");
+                if !matches!(direction, "receivable" | "payable" | "both") {
+                    return Err("invalid_direction".to_string());
+                }
+                let bills = statement_open_bills
+                    .into_iter()
+                    .filter(|bill| {
+                        direction == "both" || bill.kind.label().eq_ignore_ascii_case(direction)
+                    })
+                    .take(top)
+                    .map(|bill| {
+                        redact_value(
+                            serde_json::to_value(bill).unwrap_or_default(),
+                            self.settings.redaction,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let parties = report
+                    .top_parties
+                    .into_iter()
+                    .take(top)
+                    .map(|party| {
+                        redact_value(
+                            serde_json::to_value(party).unwrap_or_default(),
+                            self.settings.redaction,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "unallocated":{"count": statement_unallocated_by_party.len(), "amount": unallocated_total, "parties": statement_unallocated_by_party}})
+            }
+            OutstandingsLoadResult::Partial { reason, .. } => {
+                json!({"state":"partial", "partial_reason": reason.reason_code})
+            }
+        };
+        let rows = result["open_bills"].as_array().map_or(0, Vec::len);
         Ok((
-            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"open_bills": all.into_iter().take(top).collect::<Vec<_>>(), "totals": "computed by native report; exact aggregation withheld until native ledger residual pairing completes", "ageing_buckets": "unsupported_without_complete_native_pair", "unallocated_count": "unsupported_without_complete_native_pair", "partial_reason": "agent_native_pair_not_completed"}}),
-            combine_evidence(
-                identity_evidence,
-                evidence.ok_or_else(|| "invalid_direction".to_string())?,
-            ),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
+            identity_evidence,
             Some(guid.to_string()),
             rows.min(top),
             vec!["party".into(), "reference".into(), "amount".into()],
-            rows > top || total_bytes > self.settings.max_bytes,
+            false,
         ))
     }
 
     async fn ledger_movement(&self, args: &Value) -> Result<ToolOutcome, String> {
-        let (payload, evidence, company_guid, rows, fields, truncated) =
-            self.vouchers(args).await?;
-        let items = payload["result"]["items"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let guid = required_string(args, "company_guid")?;
+        let from = normalized_date(required_string(args, "from")?)?;
+        let to = normalized_date(required_string(args, "to")?)?;
+        if from > to {
+            return Err("invalid_date_range".to_string());
+        }
+        let (company, identity, evidence) = self.verified_company(guid).await?;
+        let ledgers = self
+            .runtime
+            .fetch_ledgers(self.tally_config(), &identity)
+            .await
+            .map_err(|_| "ledger_movement_read_failed".to_string())?;
+        let vouchers = self
+            .runtime
+            .fetch_vouchers(self.tally_config(), &identity, from, to)
+            .await
+            .map_err(|_| "ledger_movement_read_failed".to_string())?;
+        let selected = arg_string(args, "ledger");
+        let mut movement = BTreeMap::<
+            String,
+            (
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                String,
+                usize,
+            ),
+        >::new();
+        for ledger in ledgers {
+            if selected.as_deref().is_none_or(|name| name == ledger.name) {
+                movement.insert(
+                    ledger.name,
+                    (
+                        ledger.parent.returned_text().map(str::to_string),
+                        ledger.opening_balance,
+                        "0".into(),
+                        "0".into(),
+                        "0".into(),
+                        0,
+                    ),
+                );
+            }
+        }
+        for voucher in &vouchers {
+            let mut touched = std::collections::BTreeSet::new();
+            for entry in &voucher.ledger_entries {
+                let Some(record) = movement.get_mut(&entry.ledger_name) else {
+                    continue;
+                };
+                let amount = bridge_tally_core::ExactDecimal::parse(entry.amount.clone())
+                    .map_err(|_| "voucher_amount_invalid".to_string())?;
+                let magnitude = amount
+                    .abs()
+                    .map_err(|_| "voucher_amount_invalid".to_string())?
+                    .as_str()
+                    .to_string();
+                if entry.is_deemed_positive {
+                    record.2 = add_decimal(&record.2, &magnitude)?;
+                } else {
+                    record.3 = add_decimal(&record.3, &magnitude)?;
+                }
+                touched.insert(entry.ledger_name.clone());
+            }
+            for ledger in touched {
+                if let Some(record) = movement.get_mut(&ledger) {
+                    record.5 += 1;
+                }
+            }
+        }
+        let rows = movement.into_iter().map(|(name, (parent, opening, debit, credit, _, vouchers_touching))| -> Result<Value, String> {
+            let closing = opening.as_deref().map(|opening| {
+                let debited = add_decimal(opening, &debit)?;
+                add_decimal(&debited, &format!("-{credit}"))
+            }).transpose()?;
+            Ok(json!({"ledger": name, "parent": parent, "opening": opening, "debit": debit, "credit": credit, "closing": closing, "vouchers_touching": vouchers_touching}))
+        }).collect::<Result<Vec<_>, _>>()?;
         Ok((
-            json!({"company": payload["company"].clone(), "result": {"ledgers": [], "voucher_rows_observed": items.len(), "evidence_method": "windowed_vouchers_with_literal_filters; per-ledger balances unsupported because the current curated response does not expose enough normalized posting detail"}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"ledgers": rows, "voucher_rows_observed": vouchers.len(), "evidence_method": "paired_runtime_ledger_openings_plus_literal_window_voucher_entries"}}),
             evidence,
-            company_guid,
-            rows,
-            fields,
-            truncated,
+            Some(guid.to_string()),
+            vouchers.len(),
+            vec![
+                "ledger".into(),
+                "opening".into(),
+                "debit".into(),
+                "credit".into(),
+                "closing".into(),
+            ],
+            false,
         ))
     }
 
@@ -757,6 +948,16 @@ fn normalized_date(value: &str) -> Result<String, String> {
     Ok(value)
 }
 
+fn add_decimal(left: &str, right: &str) -> Result<String, String> {
+    let left = bridge_tally_core::ExactDecimal::parse(left.to_string())
+        .map_err(|_| "voucher_amount_invalid".to_string())?;
+    let right = bridge_tally_core::ExactDecimal::parse(right.to_string())
+        .map_err(|_| "voucher_amount_invalid".to_string())?;
+    left.checked_add(&right)
+        .map(|value| value.as_str().to_string())
+        .map_err(|_| "voucher_amount_invalid".to_string())
+}
+
 fn redact_value(mut value: Value, redaction: Redaction) -> Value {
     if redaction == Redaction::MaskParties {
         for key in ["party", "ledger"] {
@@ -808,6 +1009,74 @@ fn render_agent_vouchers(
         .map(|value| format!(" AND $AlterID > {value}"))
         .unwrap_or_default();
     format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{type_filter}{ledger_filter}{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
+}
+
+fn render_agent_changed_masters(company: &str, alter_id: u64) -> String {
+    format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Changed Masters</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentChangedMaster\">$AlterID &gt; {alter_id}</SYSTEM><COLLECTION NAME=\"Bridge Agent Changed Ledgers\" TYPE=\"Ledger\"><FETCH>NAME,PARENT,ALTERID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS></COLLECTION><COLLECTION NAME=\"Bridge Agent Changed Groups\" TYPE=\"Group\"><FETCH>NAME,PARENT,ALTERID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        xml_escape(company)
+    )
+}
+
+fn render_agent_company_high_water(company: &str) -> String {
+    format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Company High Water</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME=\"Bridge Agent Company High Water\" TYPE=\"Company\"><FETCH>GUID,ALTVCHID,ALTMSTID</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        xml_escape(company)
+    )
+}
+
+fn xml_scalar(xml: &str, tag: &str) -> Value {
+    let open = format!("<{tag}");
+    let Some(start) = xml.find(&open) else {
+        return Value::String("not_observed".to_string());
+    };
+    let Some(value_start) = xml[start..].find('>') else {
+        return Value::String("not_observed".to_string());
+    };
+    let value_start = start + value_start + 1;
+    let close = format!("</{tag}>");
+    let Some(value_end) = xml[value_start..].find(&close) else {
+        return Value::String("not_observed".to_string());
+    };
+    Value::String(xml[value_start..value_start + value_end].trim().to_string())
+}
+
+fn parse_agent_changed_masters(xml: &str) -> Vec<Value> {
+    let mut reader = quick_xml::Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut rows = Vec::new();
+    let mut current: Option<(String, BTreeMap<String, String>)> = None;
+    let mut tag = String::new();
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(event)) => {
+                let next = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                if matches!(next.as_str(), "LEDGER" | "GROUP") {
+                    current = Some((next.clone(), BTreeMap::new()));
+                }
+                tag = next;
+            }
+            Ok(quick_xml::events::Event::Text(text)) => {
+                if let Some((_, fields)) = current.as_mut() {
+                    if let Ok(value) = text.decode() {
+                        fields.insert(tag.clone(), value.into_owned());
+                    }
+                }
+            }
+            Ok(quick_xml::events::Event::End(event)) => {
+                let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                if matches!(end.as_str(), "LEDGER" | "GROUP") {
+                    if let Some((kind, fields)) = current.take() {
+                        rows.push(json!({"kind": kind.to_ascii_lowercase(), "name": fields.get("NAME"), "parent": fields.get("PARENT"), "alter_id": fields.get("ALTERID").and_then(|value| value.parse::<u64>().ok()), "master_id": fields.get("MASTERID")}));
+                    }
+                }
+                tag.clear();
+            }
+            Ok(quick_xml::events::Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    rows
 }
 
 fn xml_escape(value: &str) -> String {
@@ -895,6 +1164,38 @@ fn tool_definitions() -> Value {
                     "verify_import" => (
                         "Read back a manually imported local batch and write Proof-of-Post files. This never dispatches import XML to Tally.",
                         json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string"}}}),
+                    ),
+                    "tally_status" => (
+                        "Return loopback endpoint status and observed loaded-company identity tuples.",
+                        json!({"type":"object","additionalProperties":false}),
+                    ),
+                    "list_companies" => (
+                        "Return observed company tuples and identity ambiguity flags.",
+                        json!({"type":"object","additionalProperties":false}),
+                    ),
+                    "outstandings" => (
+                        "Return paired native receivable/payable totals, ageing, top exposure, and any exact partial reason.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"direction":{"type":"string","enum":["receivable","payable","both"],"default":"both"},"as_of":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ageing_basis":{"type":"string","enum":["bill_date","due_date"],"default":"due_date"},"top":{"type":"integer","minimum":1,"default":25}}}),
+                    ),
+                    "ledger_masters" => (
+                        "Return verified ledger masters; compliance includes paired party-master observations.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"group":{"type":"string"},"fields":{"type":"string","enum":["basic","compliance"],"default":"basic"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
+                    ),
+                    "ledger_movement" => (
+                        "Return literal-window ledger opening, exact debit/credit movement, closing, and touched-voucher count.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ledger":{"type":"string"}}}),
+                    ),
+                    "vouchers" => (
+                        "Return bounded, literal-window voucher evidence with curated metadata and redaction applied.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"voucher_type":{"type":"string"},"ledger":{"type":"string"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
+                    ),
+                    "changed_since" => (
+                        "Return AlterID-filtered voucher and master evidence; deletion detection remains unsupported.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid","alter_id"],"properties":{"company_guid":{"type":"string","minLength":1},"alter_id":{"type":"integer","minimum":0}}}),
+                    ),
+                    "read_evidence" | "egress_log" => (
+                        "Return bounded local metadata-only read evidence or egress receipts.",
+                        json!({"type":"object","additionalProperties":false,"properties":{"limit":{"type":"integer","minimum":1,"default":20}}}),
                     ),
                     _ => (
                         "Bridge read-only Tally tool",

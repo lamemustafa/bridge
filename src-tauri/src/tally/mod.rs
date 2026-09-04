@@ -45,7 +45,7 @@ pub struct VerifiedCompanyIdentity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VerifiedCompanyIdentityError {
+pub enum VerifiedCompanyIdentityError {
     Missing,
     DuplicateTuple,
     DisplayScopeAmbiguous,
@@ -54,7 +54,10 @@ pub(crate) enum VerifiedCompanyIdentityError {
 impl VerifiedCompanyIdentity {
     /// Produces an identity only after the exact observed tuple is unique and
     /// no same-GUID book can collide with Tally's display-name scope.
-    pub(crate) fn from_observed_companies(
+    /// Constructs a library-facing read identity from a complete observed
+    /// tuple. The exact tuple must occur once and no same-GUID book may share
+    /// its display scope; callers cannot turn a bare GUID into a capability.
+    pub fn from_observed_companies(
         display_name: String,
         company_guid: String,
         company_number: String,

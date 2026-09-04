@@ -1501,6 +1501,43 @@ impl TallyRuntime {
         .await
     }
 
+    /// Returns the existing paired, identity-bracketed party ledger source in
+    /// a library-safe record form for local read adapters. Currency admission
+    /// remains inside the runtime so callers cannot label an unverified
+    /// currency as INR or bypass the paired master read.
+    pub async fn fetch_agent_party_ledger_masters(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<Vec<bridge_tally_protocol::PartyLedgerMasterRecord>> {
+        let currency_read = self
+            .detect_base_currency_with_extent(config.clone(), identity)
+            .await?;
+        let assertion = match (currency_read.currency_count(), currency_read.is_inr()) {
+            (1, true) => OutstandingsCurrencyAssertion::Inr,
+            (0, _) => anyhow::bail!("company_currency_probe_failed"),
+            (1, false) => anyhow::bail!("company_base_currency_not_inr"),
+            _ => anyhow::bail!("company_base_currency_undetermined"),
+        };
+        let assertion = currency_read.bind_party_ledger_master_assertion(assertion);
+        let source = self
+            .fetch_party_ledger_master_source(config, identity, assertion)
+            .await?;
+        Ok(source
+            .rows
+            .into_iter()
+            .map(|row| bridge_tally_protocol::PartyLedgerMasterRecord {
+                ledger: TallyLedger {
+                    name: row.name,
+                    parent: row.parent,
+                    party_gstin: row.party_gstin,
+                    opening_balance: Some(row.opening_balance.as_str().to_string()),
+                },
+                fields: row.fields,
+            })
+            .collect())
+    }
+
     /// Fetches the limited, documented standard collection response used for
     /// compatibility diagnostics. This is intentionally separate from the
     /// Bridge ledger export: it returns only ledger names and parents and is
