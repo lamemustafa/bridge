@@ -812,6 +812,8 @@ impl Server {
             .fetch_vouchers(self.tally_config(), &identity, from.clone(), to)
             .await
             .map_err(|_| "ledger_movement_read_failed".to_string())?;
+        let pre_window = balance_affecting_vouchers(pre_window)?;
+        let vouchers = balance_affecting_vouchers(vouchers)?;
         let selected = arg_string(args, "ledger");
         let mut movement = BTreeMap::<
             String,
@@ -1000,6 +1002,23 @@ fn product_name(status: &str) -> &'static str {
     } else {
         "Unknown"
     }
+}
+
+/// A balance must never be derived from a voucher whose accounting effect is
+/// cancelled or optional. Missing flags are equally unsafe: the agent has no
+/// evidence that the row belongs in a financial aggregation.
+fn balance_affecting_vouchers(
+    vouchers: Vec<bridge_tally_protocol::TallyVoucher>,
+) -> Result<Vec<bridge_tally_protocol::TallyVoucher>, String> {
+    vouchers
+        .into_iter()
+        .map(|voucher| match (voucher.cancelled, voucher.optional) {
+            (Some(false), Some(false)) => Ok(Some(voucher)),
+            (Some(true), _) | (_, Some(true)) => Ok(None),
+            _ => Err("voucher_accounting_state_not_observed".to_string()),
+        })
+        .filter_map(Result::transpose)
+        .collect()
 }
 
 fn combine_evidence(left: Evidence, right: Evidence) -> Evidence {
@@ -1589,6 +1608,35 @@ mod tests {
         );
         assert!(
             parse_agent_rows("<ENVELOPE><BODY><RESPONSE>bad</RESPONSE></BODY></ENVELOPE>").is_err()
+        );
+    }
+
+    #[test]
+    fn ledger_movement_excludes_cancelled_and_optional_vouchers_and_rejects_unknown_flags() {
+        let voucher = |cancelled, optional| bridge_tally_protocol::TallyVoucher {
+            id: None,
+            date: Some("20260901".to_string()),
+            voucher_type: Some("Payment".to_string()),
+            voucher_number: None,
+            party_ledger_name: None,
+            cancelled,
+            optional,
+            ledger_entry_count: Some(0),
+            ledger_entries: Vec::new(),
+        };
+        assert!(
+            balance_affecting_vouchers(vec![voucher(Some(true), Some(false))])
+                .expect("cancelled is excluded")
+                .is_empty()
+        );
+        assert!(
+            balance_affecting_vouchers(vec![voucher(Some(false), Some(true))])
+                .expect("optional is excluded")
+                .is_empty()
+        );
+        assert_eq!(
+            balance_affecting_vouchers(vec![voucher(None, Some(false))]),
+            Err("voucher_accounting_state_not_observed".to_string())
         );
     }
 
