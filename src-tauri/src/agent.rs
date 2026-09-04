@@ -997,11 +997,12 @@ impl Server {
             }).transpose()?;
             Ok(redact_value(json!({"ledger": name, "parent": parent, "opening": opening, "debit": debit, "credit": credit, "closing": closing, "vouchers_touching": vouchers_touching}), self.settings.redaction))
         }).collect::<Result<Vec<_>, _>>()?;
+        let (rows_returned, voucher_rows_observed) = ledger_movement_counts(&rows, &vouchers);
         Ok((
-            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"ledgers": rows, "voucher_rows_observed": vouchers.len(), "evidence_method": if books_from < from {"runtime_ledger_opening_plus_pre_window_entries_to_from"} else {"runtime_ledger_opening_at_books_from_plus_literal_window_entries"}}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"ledgers": rows, "voucher_rows_observed": voucher_rows_observed, "evidence_method": if books_from < from {"runtime_ledger_opening_plus_pre_window_entries_to_from"} else {"runtime_ledger_opening_at_books_from_plus_literal_window_entries"}}}),
             evidence,
             Some(guid.to_string()),
-            vouchers.len(),
+            rows_returned,
             vec![
                 "ledger".into(),
                 "opening".into(),
@@ -1153,6 +1154,10 @@ fn matching_ledger_name<'a>(
     ledger_names
         .find(|name| ledger_lookup_key(name) == requested)
         .map(str::to_string)
+}
+
+fn ledger_movement_counts<T>(rows: &[Value], vouchers: &[T]) -> (usize, usize) {
+    (rows.len(), vouchers.len())
 }
 
 fn read_egress_tail(path: &Path, take: usize) -> Result<Vec<String>, String> {
@@ -2054,6 +2059,17 @@ mod tests {
             matching_ledger_name(names.into_iter(), "missing ledger"),
             None
         );
+    }
+
+    #[test]
+    fn ledger_movement_receipt_counts_three_ledgers_from_two_vouchers() {
+        let rows = vec![
+            json!({"ledger":"Bank"}),
+            json!({"ledger":"Expense"}),
+            json!({"ledger":"Income"}),
+        ];
+        let vouchers = [(), ()];
+        assert_eq!(ledger_movement_counts(&rows, &vouchers), (3, 2));
     }
 
     #[tokio::test]
