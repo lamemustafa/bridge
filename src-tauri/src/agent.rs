@@ -60,6 +60,7 @@ struct Settings {
     endpoint: TallyEndpointConfig,
     data_dir: PathBuf,
     max_rows: usize,
+    max_bytes: usize,
     redaction: Redaction,
 }
 
@@ -71,6 +72,7 @@ impl Settings {
             .and_then(|value| value.parse().ok())
             .unwrap_or(9000);
         let max_rows = bounded_env("BRIDGE_AGENT_MAX_ROWS", 500, 1, 10_000);
+        let max_bytes = bounded_env("BRIDGE_AGENT_MAX_BYTES", 200_000, 256, 5_000_000);
         // The transport remains the authoritative hard cap.  The agent cap only
         // narrows it and is applied to the response before parsing/returning.
         let data_dir = env::var_os("BRIDGE_AGENT_DATA_DIR")
@@ -87,6 +89,7 @@ impl Settings {
             endpoint: TallyEndpointConfig { host, port },
             data_dir,
             max_rows,
+            max_bytes,
             redaction: Redaction::from_env(),
         })
     }
@@ -142,6 +145,7 @@ struct EgressReceipt<'a> {
     rows_returned: usize,
     fields_returned: Vec<String>,
     bytes_returned: usize,
+    enforced_bytes: usize,
     response_sha256: String,
     truncated: bool,
     redaction_preset: &'a str,
@@ -331,6 +335,20 @@ impl Server {
             }),
             self.settings.redaction,
         );
+        let (response_value, bytes_truncated) = match enforce_response_byte_cap(
+            response_value,
+            self.settings.max_bytes,
+        ) {
+            Ok(value) => value,
+            Err(code) => {
+                return json!({
+                    "content": [{"type":"text", "text": format!("{name}: read withheld\\n{code}")}],
+                    "structuredContent": {"error": {"code": code, "message": "Bridge response exceeds the configured byte cap."}},
+                    "isError": true,
+                });
+            }
+        };
+        let truncated = truncated || bytes_truncated;
         let response_sha256 = sha256_json(&response_value);
         self.record_evidence(response_value["evidence"].clone());
         if let Err(code) = self.append_egress(EgressReceipt {
@@ -341,6 +359,7 @@ impl Server {
             rows_returned: rows,
             fields_returned: fields,
             bytes_returned: response_value.to_string().len(),
+            enforced_bytes: self.settings.max_bytes,
             response_sha256,
             truncated,
             redaction_preset: self.settings.redaction.label(),
@@ -1022,6 +1041,45 @@ fn page_length_after_offset(total: usize, offset: usize, limit: usize) -> usize 
     total.saturating_sub(offset).min(limit)
 }
 
+fn enforce_response_byte_cap(
+    mut response: Value,
+    max_bytes: usize,
+) -> Result<(Value, bool), String> {
+    if response.to_string().len() <= max_bytes {
+        return Ok((response, false));
+    }
+    let offset = response["result"]["offset"].as_u64().unwrap_or(0);
+    let Some(items) = response["result"]["items"].as_array() else {
+        return Err("agent_response_too_large".to_string());
+    };
+    if items.is_empty() {
+        return Err("agent_response_too_large".to_string());
+    }
+    response["truncated"] = Value::Bool(true);
+    while response["result"]["items"]
+        .as_array()
+        .is_some_and(|items| !items.is_empty())
+        && response.to_string().len() > max_bytes
+    {
+        let remaining = {
+            let items = response["result"]["items"]
+                .as_array_mut()
+                .expect("items checked above");
+            items.pop();
+            items.len()
+        };
+        response["result"]["next_offset"] = json!(offset + remaining as u64);
+    }
+    if response["result"]["items"]
+        .as_array()
+        .is_none_or(Vec::is_empty)
+        || response.to_string().len() > max_bytes
+    {
+        return Err("agent_response_too_large".to_string());
+    }
+    Ok((response, true))
+}
+
 fn combine_evidence(left: Evidence, right: Evidence) -> Evidence {
     Evidence {
         request_sha256: sha256_hex(
@@ -1572,6 +1630,7 @@ mod tests {
             },
             data_dir,
             max_rows: 10,
+            max_bytes: 200_000,
             redaction: Redaction::MaskParties,
         }
     }
@@ -1688,6 +1747,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn response_byte_cap_truncates_trailing_rows_and_refuses_a_single_oversized_row() {
+        let input = json!({"truncated":false,"result":{"offset":0,"items":[{"name":"first"},{"name":"second"}]}});
+        let cap = json!({"truncated":true,"result":{"offset":0,"items":[{"name":"first"}],"next_offset":1}}).to_string().len();
+        let (bounded, truncated) = enforce_response_byte_cap(input, cap).expect("one row fits");
+        assert!(truncated);
+        assert_eq!(bounded["result"]["items"].as_array().map(Vec::len), Some(1));
+        assert_eq!(bounded["result"]["next_offset"], 1);
+        assert_eq!(
+            enforce_response_byte_cap(json!({"result":{"items":[{"name":"x".repeat(500)}]}}), 32),
+            Err("agent_response_too_large".to_string())
+        );
+    }
+
     #[tokio::test]
     async fn simulator_company_read_records_evidence_and_egress_while_down_endpoint_is_typed() {
         let plan = ScenarioPlan::new(Fixture::SyntheticXml(company_collection_xml()))
@@ -1717,6 +1790,7 @@ mod tests {
             },
             data_dir: directory.path().to_path_buf(),
             max_rows: 10,
+            max_bytes: 200_000,
             redaction: Redaction::None,
         });
         let down_response = down.call_tool("tally_status", json!({})).await;

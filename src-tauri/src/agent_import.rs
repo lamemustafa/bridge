@@ -1064,6 +1064,7 @@ mod tests {
             },
             data_dir: directory.path().to_path_buf(),
             max_rows: 10,
+            max_bytes: 200_000,
             redaction: super::super::Redaction::None,
         });
         let line = ImportLedgerLine {
@@ -1215,6 +1216,7 @@ mod tests {
             },
             data_dir: directory.path().to_path_buf(),
             max_rows: 10,
+            max_bytes: 200_000,
             redaction: super::super::Redaction::None,
         });
         let built = server
