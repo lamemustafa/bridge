@@ -19,15 +19,17 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const SERVER_NAME: &str = "bridge-tally";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_EVIDENCE_RECORDS: usize = 256;
+const EGRESS_TAIL_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_EGRESS_TAIL_BYTES: usize = 256 * 1024;
 const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2024-11-05"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1048,17 +1050,7 @@ impl Server {
     fn egress_log(&self, args: &Value) -> Result<ToolOutcome, String> {
         let take = arg_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
         let path = self.settings.data_dir.join("agent-egress.jsonl");
-        let text = match fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(_) => return Err("egress_log_unreadable".to_string()),
-        };
-        let lines = text
-            .lines()
-            .rev()
-            .take(take)
-            .map(str::to_string)
-            .collect::<Vec<_>>();
+        let lines = read_egress_tail(&path, take)?;
         let evidence = Evidence {
             request_sha256: sha256_hex(b"egress_log"),
             response_sha256: sha256_json(&lines),
@@ -1134,6 +1126,45 @@ fn page_length_after_offset(total: usize, offset: usize, limit: usize) -> usize 
 
 fn page_is_truncated(total: usize, offset: usize, page_len: usize) -> bool {
     offset.saturating_add(page_len) < total
+}
+
+fn read_egress_tail(path: &Path, take: usize) -> Result<Vec<String>, String> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => return Err("egress_log_unreadable".to_string()),
+    };
+    let file_len = file
+        .metadata()
+        .map_err(|_| "egress_log_unreadable".to_string())?
+        .len();
+    let mut position = file_len;
+    let mut scanned = 0_usize;
+    let mut newlines = 0_usize;
+    let mut chunks = Vec::new();
+    while position > 0 && scanned < MAX_EGRESS_TAIL_BYTES && newlines < take.saturating_add(1) {
+        let chunk_size = EGRESS_TAIL_CHUNK_BYTES
+            .min(MAX_EGRESS_TAIL_BYTES - scanned)
+            .min(position as usize);
+        position -= chunk_size as u64;
+        file.seek(SeekFrom::Start(position))
+            .map_err(|_| "egress_log_unreadable".to_string())?;
+        let mut chunk = vec![0_u8; chunk_size];
+        file.read_exact(&mut chunk)
+            .map_err(|_| "egress_log_unreadable".to_string())?;
+        newlines += chunk.iter().filter(|byte| **byte == b'\n').count();
+        scanned += chunk_size;
+        chunks.push(chunk);
+    }
+    chunks.reverse();
+    let bytes = chunks.concat();
+    let text = std::str::from_utf8(&bytes).map_err(|_| "egress_log_unreadable".to_string())?;
+    let text = if position > 0 {
+        text.split_once('\n').map_or("", |(_, tail)| tail)
+    } else {
+        text
+    };
+    Ok(text.lines().rev().take(take).map(str::to_string).collect())
 }
 
 fn paginate_open_bills<T>(
@@ -1947,6 +1978,24 @@ mod tests {
             response["structuredContent"]["result"]["error"]["code"],
             "pagination_invalid"
         );
+    }
+
+    #[test]
+    fn egress_log_tail_reads_only_the_last_bounded_chunks() {
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let path = directory.path().join("agent-egress.jsonl");
+        let mut body = String::new();
+        for index in 0..12_000 {
+            body.push_str(&format!(
+                "{{\"index\":{index},\"padding\":\"xxxxxxxxxxxxxxxxxxxxxxxx\"}}\n"
+            ));
+        }
+        assert!(body.len() > EGRESS_TAIL_CHUNK_BYTES);
+        fs::write(&path, body).expect("large egress fixture");
+        let tail = read_egress_tail(&path, 2).expect("bounded tail");
+        assert_eq!(tail.len(), 2);
+        assert!(tail[0].contains("11999"));
+        assert!(tail[1].contains("11998"));
     }
 
     #[tokio::test]

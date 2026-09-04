@@ -44,6 +44,8 @@ company identity where scoped, a read timestamp, request/response commitments,
 byte count, completeness reason, and truncation state. Every call appends a
 metadata-only receipt to `agent-egress.jsonl`; receipt lines never contain
 voucher bodies. Redaction happens before a result reaches the client.
+`egress_log` reads only the final 256 KiB, in 64 KiB reverse-seek chunks, so a
+larger receipt file still yields its bounded tail without loading the head.
 
 ## Voucher-file loop (manual Tally import only; disabled by default)
 
