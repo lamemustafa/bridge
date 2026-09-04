@@ -647,7 +647,10 @@ fn xml_escape(value: &str) -> String {
 fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
     validate_verification_envelope(xml)?;
     let mut reader = quick_xml::Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
+    // Keep text fragments intact: quick-xml emits entity references separately,
+    // and trimming the neighbouring fragments would turn `Party & Co` into
+    // `Party&Co` before the fingerprint is built.
+    reader.config_mut().trim_text(false);
     let mut vouchers = Vec::new();
     let mut voucher: Option<ReadVoucher> = None;
     let mut entry: Option<ReadEntry> = None;
@@ -691,27 +694,15 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
                 tag = name;
             }
             Ok(Event::Text(text)) => {
-                if let (Some(current), Ok(value)) = (voucher.as_mut(), text.decode()) {
-                    let value = value.into_owned();
-                    if let Some(item) = entry.as_mut() {
-                        match tag.as_str() {
-                            "LEDGERNAME" => item.ledger = value,
-                            "AMOUNT" => item.amount = value,
-                            "ISDEEMEDPOSITIVE" => item.is_deemed_positive = value,
-                            _ => {}
-                        }
-                    } else {
-                        match tag.as_str() {
-                            "DATE" => current.date = Some(value),
-                            "VOUCHERTYPENAME" => current.voucher_type = Some(value),
-                            "GUID" => current.guid = Some(value),
-                            "MASTERID" => current.master_id = Some(value),
-                            "VOUCHERNUMBER" => current.voucher_number = Some(value),
-                            "ALTERID" => current.alter_id = value.parse().ok(),
-                            "NARRATION" => current.narration = Some(value),
-                            _ => {}
-                        }
-                    }
+                if let (Some(current), Ok(value)) = (voucher.as_mut(), decoded_tally_text(text)) {
+                    append_import_text(current, entry.as_mut(), &tag, value);
+                }
+            }
+            Ok(Event::GeneralRef(reference)) => {
+                if let (Some(current), Ok(value)) =
+                    (voucher.as_mut(), decoded_tally_reference(reference))
+                {
+                    append_import_text(current, entry.as_mut(), &tag, value);
                 }
             }
             Ok(Event::End(end)) => {
@@ -738,6 +729,58 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
         }
     }
     Ok(vouchers)
+}
+
+/// Tally exports XML-escaped names. Decode entities before a name becomes part
+/// of the accounting fingerprint or a proof response, otherwise a successful
+/// import with names such as `R&D` is falsely reported as divergent.
+fn decoded_tally_text(text: quick_xml::events::BytesText<'_>) -> Result<String, String> {
+    let decoded = text
+        .decode()
+        .map_err(|_| "import_verification_export_invalid".to_string())?;
+    quick_xml::escape::unescape(&decoded)
+        .map(|value| value.into_owned())
+        .map_err(|_| "import_verification_export_invalid".to_string())
+}
+
+fn append_read_text(slot: &mut Option<String>, value: String) {
+    slot.get_or_insert_with(String::new).push_str(&value);
+}
+
+fn decoded_tally_reference(reference: quick_xml::events::BytesRef<'_>) -> Result<String, String> {
+    let reference = reference
+        .decode()
+        .map_err(|_| "import_verification_export_invalid".to_string())?;
+    quick_xml::escape::unescape(&format!("&{reference};"))
+        .map(|value| value.into_owned())
+        .map_err(|_| "import_verification_export_invalid".to_string())
+}
+
+fn append_import_text(
+    current: &mut ReadVoucher,
+    entry: Option<&mut ReadEntry>,
+    tag: &str,
+    value: String,
+) {
+    if let Some(item) = entry {
+        match tag {
+            "LEDGERNAME" => item.ledger.push_str(&value),
+            "AMOUNT" => item.amount.push_str(&value),
+            "ISDEEMEDPOSITIVE" => item.is_deemed_positive.push_str(&value),
+            _ => {}
+        }
+        return;
+    }
+    match tag {
+        "DATE" => append_read_text(&mut current.date, value),
+        "VOUCHERTYPENAME" => append_read_text(&mut current.voucher_type, value),
+        "GUID" => append_read_text(&mut current.guid, value),
+        "MASTERID" => append_read_text(&mut current.master_id, value),
+        "VOUCHERNUMBER" => append_read_text(&mut current.voucher_number, value),
+        "ALTERID" => current.alter_id = value.parse().ok(),
+        "NARRATION" => append_read_text(&mut current.narration, value),
+        _ => {}
+    }
 }
 
 fn validate_verification_envelope(xml: &str) -> Result<(), String> {
@@ -1122,6 +1165,17 @@ mod tests {
             parse_import_vouchers("<ENVELOPE><BODY><RESPONSE>error</RESPONSE></BODY></ENVELOPE>"),
             Err("import_verification_protocol_invalid".to_string())
         );
+    }
+
+    #[test]
+    fn verification_unescapes_every_record_text_node_before_fingerprinting() {
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><NARRATION>Party &amp; Co &lt;quoted&gt; &quot;name&quot; &#x26;</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D &lt;Lab&gt; &quot;A&quot; &#38;</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let observed = parse_import_vouchers(xml).expect("escaped export parses");
+        assert_eq!(
+            observed[0].narration.as_deref(),
+            Some("Party & Co <quoted> \"name\" &")
+        );
+        assert_eq!(observed[0].entries[0].ledger, "R&D <Lab> \"A\" &");
     }
 
     #[tokio::test]
