@@ -784,8 +784,11 @@ impl Server {
             .await
             .map_err(|_| "native_outstandings_read_failed".to_string())?;
         let top = arg_usize(args, "top", 25).min(self.settings.max_rows);
+        let bill_offset = arg_usize(args, "offset", 0);
+        let bill_limit =
+            arg_usize(args, "limit", self.settings.max_rows).min(self.settings.max_rows);
         let mut result_evidence = identity_evidence;
-        let result = match load {
+        let (result, bills_truncated) = match load {
             OutstandingsLoadResult::Complete {
                 report,
                 statement_open_bills,
@@ -800,12 +803,17 @@ impl Server {
                 if !matches!(direction, "receivable" | "payable" | "both") {
                     return Err("invalid_direction".to_string());
                 }
-                let bills = statement_open_bills
+                let all_bills = statement_open_bills
                     .into_iter()
                     .filter(|bill| {
                         direction == "both" || bill.kind.label().eq_ignore_ascii_case(direction)
                     })
-                    .take(top)
+                    .collect::<Vec<_>>();
+                let bill_total = all_bills.len();
+                let bills = all_bills
+                    .into_iter()
+                    .skip(bill_offset)
+                    .take(bill_limit)
                     .map(|bill| {
                         redact_value(
                             serde_json::to_value(bill).unwrap_or_default(),
@@ -833,12 +841,19 @@ impl Server {
                         )
                     })
                     .collect::<Vec<_>>();
-                json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "unallocated":{"count": unallocated.len(), "amount": unallocated_total, "parties": unallocated}})
+                let bills_truncated = page_is_truncated(bill_total, bill_offset, bills.len());
+                (
+                    json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": bills_truncated.then_some(bill_offset + bills.len()), "unallocated":{"count": unallocated.len(), "amount": unallocated_total, "parties": unallocated}}),
+                    bills_truncated,
+                )
             }
             OutstandingsLoadResult::Partial { reason, .. } => {
                 result_evidence.state = "partial";
                 result_evidence.reason_code = Some(reason.reason_code.clone());
-                json!({"state":"partial", "partial_reason": reason.reason_code})
+                (
+                    json!({"state":"partial", "partial_reason": reason.reason_code}),
+                    false,
+                )
             }
         };
         let rows = result["open_bills"].as_array().map_or(0, Vec::len);
@@ -846,9 +861,9 @@ impl Server {
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
             result_evidence,
             Some(guid.to_string()),
-            rows.min(top),
+            rows,
             vec!["party".into(), "reference".into(), "amount".into()],
-            false,
+            bills_truncated,
         ))
     }
 
@@ -1096,6 +1111,10 @@ fn balance_affecting_vouchers(
 
 fn page_length_after_offset(total: usize, offset: usize, limit: usize) -> usize {
     total.saturating_sub(offset).min(limit)
+}
+
+fn page_is_truncated(total: usize, offset: usize, page_len: usize) -> bool {
+    offset.saturating_add(page_len) < total
 }
 
 fn window_honoured(rows: &[Value], from: &str, to: &str) -> bool {
@@ -1624,8 +1643,8 @@ fn tool_definitions(import_enabled: bool) -> Value {
                         json!({"type":"object","additionalProperties":false}),
                     ),
                     "outstandings" => (
-                        "Return paired native receivable/payable totals, ageing, top exposure, and any exact partial reason.",
-                        json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"direction":{"type":"string","enum":["receivable","payable","both"],"default":"both"},"as_of":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ageing_basis":{"type":"string","enum":["bill_date","due_date"],"default":"due_date"},"top":{"type":"integer","minimum":1,"default":25}}}),
+                        "Return paired native receivable/payable totals, ageing, top-party ranking, and paginated open bills. `top` applies only to party ranking; use offset and limit for bills.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"direction":{"type":"string","enum":["receivable","payable","both"],"default":"both"},"as_of":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ageing_basis":{"type":"string","enum":["bill_date","due_date"],"default":"due_date"},"top":{"type":"integer","minimum":1,"default":25},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "ledger_masters" => (
                         "Return verified ledger masters; compliance includes paired party-master observations.",
@@ -1893,6 +1912,13 @@ mod tests {
     fn paginated_egress_rows_returned_is_the_final_page_length() {
         assert_eq!(page_length_after_offset(11, 10, 500), 1);
         assert_eq!(page_length_after_offset(11, 11, 500), 0);
+    }
+
+    #[test]
+    fn open_bill_paging_marks_remaining_rows_and_returns_a_cursor() {
+        assert!(page_is_truncated(3, 0, 2));
+        assert_eq!(0 + 2, 2);
+        assert!(!page_is_truncated(3, 2, 1));
     }
 
     #[test]
