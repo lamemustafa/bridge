@@ -203,27 +203,29 @@ impl Server {
     }
 
     async fn status(&self) -> Result<(Value, Evidence), String> {
-        let (companies, company_evidence) = self.companies().await?;
-        let text = "not_observed".to_string();
+        let probe = self
+            .runtime
+            .probe(self.tally_config())
+            .await
+            .map_err(|_| "status_probe_unavailable".to_string())?;
+        let observed = serde_json::to_value(&probe)
+            .map_err(|_| "status_probe_observation_invalid".to_string())?;
         Ok((
             json!({
-                "product": product_name(&text),
-                "release": "not_observed",
-                "education_mode": "not_observed",
+                "product": serde_json::to_value(&probe.connection.product).unwrap_or_else(|_| json!("not_observed")),
+                "release": probe.profile.release,
+                "education_mode": probe.profile.mode,
                 "endpoint": format!("http://{}:{}", self.settings.endpoint.host, self.settings.endpoint.port),
-                "loaded_companies": companies,
+                "loaded_companies": probe.companies,
                 "refusal_reason": Value::Null,
             }),
-            combine_evidence(
-                Evidence {
-                    request_sha256: sha256_hex(b"GET /status"),
-                    response_sha256: sha256_json(&companies),
-                    bytes: 0,
-                    state: "complete",
-                    reason_code: None,
-                },
-                company_evidence,
-            ),
+            Evidence {
+                request_sha256: sha256_hex(b"runtime.probe"),
+                response_sha256: sha256_json(&observed),
+                bytes: observed.to_string().len(),
+                state: "complete",
+                reason_code: None,
+            },
         ))
     }
 
@@ -1008,16 +1010,6 @@ fn company_json(company: &TallyCompany, all: &[TallyCompany]) -> Value {
             .then_some(field)
     });
     json!({"name": company.name, "guid": guid, "company_number": company.company_number, "books_from": company.books_from, "identity_state": if duplicate_guid {"ambiguous_duplicate_guid"} else if missing.is_some() {"incomplete_tuple"} else {"verified_tuple"}, "missing_field": missing})
-}
-
-fn product_name(status: &str) -> &'static str {
-    if status.contains("TallyPrime") {
-        "TallyPrime"
-    } else if status.contains("Tally ERP 9") {
-        "Tally ERP 9"
-    } else {
-        "Unknown"
-    }
 }
 
 /// A balance must never be derived from a voucher whose accounting effect is
@@ -1821,5 +1813,33 @@ mod tests {
         let receipts = fs::read_to_string(directory.path().join("agent-egress.jsonl"))
             .expect("egress receipts");
         assert_eq!(receipts.lines().count(), 2);
+    }
+
+    #[tokio::test]
+    async fn tally_status_uses_the_runtime_probe_observation() {
+        let simulator = SequenceSimulator::spawn(vec![
+            ScenarioPlan::new(Fixture::ProductStatus(
+                tally_protocol_simulator::ProductStatus::TallyPrime,
+            )),
+            ScenarioPlan::new(Fixture::SyntheticXml(company_collection_xml()))
+                .with_encoding(WireEncoding::Utf16Le)
+                .with_framing(ResponseFraming::ContentLength),
+        ])
+        .expect("synthetic loopback server");
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let server = Server::new(settings(
+            simulator.address(),
+            directory.path().to_path_buf(),
+        ));
+        let response = server.call_tool("tally_status", json!({})).await;
+        assert_eq!(
+            response["structuredContent"]["result"]["product"],
+            "TallyPrime"
+        );
+        assert_eq!(
+            response["structuredContent"]["evidence"]["state"],
+            "complete"
+        );
+        assert_eq!(simulator.finish().expect("simulator result").len(), 2);
     }
 }
