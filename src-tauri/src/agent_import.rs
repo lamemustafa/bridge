@@ -367,23 +367,16 @@ impl Server {
             .into_iter()
             .filter_map(|voucher| voucher.alter_id)
             .max();
-        let (master_xml, master_evidence) = self
-            .post_read(
-                identity,
-                super::render_agent_changed_masters(&company.name, 0),
-            )
-            .await?;
-        let master_value = super::parse_agent_changed_masters(&master_xml)?
-            .iter()
-            .filter_map(|master| master["alter_id"].as_u64())
-            .max();
         Ok((
             PreImportMark {
                 kind: "latest_voucher_alterid_seen".to_string(),
                 value: latest,
-                master_value,
+                // This importer has no master-mutating operation. Persist the
+                // master axis explicitly as unobserved rather than inventing a
+                // high-water value from a voucher scan.
+                master_value: None,
             },
-            combine_evidence(evidence, master_evidence),
+            evidence,
         ))
     }
 
