@@ -28,6 +28,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 const SERVER_NAME: &str = "bridge-tally";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_EVIDENCE_RECORDS: usize = 256;
+const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2024-11-05"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Redaction {
@@ -590,12 +591,13 @@ impl Server {
             .get("voucher_alter_id")
             .or_else(|| args.get("alter_id"))
             .and_then(Value::as_u64)
-            .ok_or_else(|| "voucher_alter_id_required".to_string())?;
+            .unwrap_or(0);
         let master_alter_id = args
             .get("master_alter_id")
             .or_else(|| args.get("alter_id"))
             .and_then(Value::as_u64)
-            .ok_or_else(|| "master_alter_id_required".to_string())?;
+            .unwrap_or(0);
+        let offset = arg_usize(args, "offset", 0);
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
         let request = render_agent_vouchers(
             &company.name,
@@ -607,14 +609,18 @@ impl Server {
         )?;
         let (xml, evidence) = self.post_read(&identity, request).await?;
         let all_rows = parse_agent_rows(&xml)?;
-        let voucher_truncated = all_rows.len() > self.settings.max_rows;
-        let rows = all_rows
+        let matching_rows = all_rows
             .into_iter()
             .filter(|row| {
                 row.get("alter_id")
                     .and_then(Value::as_u64)
                     .is_some_and(|id| id > voucher_alter_id)
             })
+            .collect::<Vec<_>>();
+        let voucher_truncated = offset.saturating_add(self.settings.max_rows) < matching_rows.len();
+        let rows = matching_rows
+            .into_iter()
+            .skip(offset)
             .take(self.settings.max_rows)
             .collect::<Vec<_>>();
         let (master_xml, master_evidence) = self
@@ -624,14 +630,19 @@ impl Server {
             )
             .await?;
         let all_masters = parse_agent_changed_masters(&master_xml)?;
-        let master_truncated = all_masters.len() > self.settings.max_rows;
-        let masters = all_masters
+        let matching_masters = all_masters
             .into_iter()
             .filter(|master| {
                 master["alter_id"]
                     .as_u64()
                     .is_some_and(|id| id > master_alter_id)
             })
+            .collect::<Vec<_>>();
+        let master_truncated =
+            offset.saturating_add(self.settings.max_rows) < matching_masters.len();
+        let masters = matching_masters
+            .into_iter()
+            .skip(offset)
             .take(self.settings.max_rows)
             .map(|master| redact_value(master, self.settings.redaction))
             .collect::<Vec<_>>();
@@ -641,7 +652,7 @@ impl Server {
         let high_water = parse_company_high_water(&extent_xml, guid)?;
         let returned_rows = rows.len() + masters.len();
         Ok((
-            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": masters, "voucher_alter_id": voucher_alter_id, "master_alter_id": master_alter_id, "next_voucher_alter_id": high_water["altvchid"], "next_master_alter_id": high_water["altmstid"], "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": high_water}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": masters, "voucher_alter_id": voucher_alter_id, "master_alter_id": master_alter_id, "offset": offset, "next_offset": (voucher_truncated || master_truncated).then_some(offset + self.settings.max_rows), "next_voucher_alter_id": high_water["altvchid"], "next_master_alter_id": high_water["altmstid"], "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": high_water}}),
             combine_evidence(
                 combine_evidence(identity_evidence, evidence),
                 combine_evidence(master_evidence, extent_evidence),
@@ -1017,6 +1028,14 @@ fn sha256_hex(bytes: &[u8]) -> String {
     }
     output
 }
+
+fn negotiate_protocol(requested: &str) -> Result<&'static str, String> {
+    SUPPORTED_PROTOCOL_VERSIONS
+        .into_iter()
+        .find(|version| *version == requested)
+        .ok_or_else(|| "unsupported_protocol_version".to_string())
+}
+
 fn sha256_json<T: Serialize>(value: &T) -> String {
     sha256_hex(serde_json::to_vec(value).unwrap_or_default().as_slice())
 }
@@ -1327,7 +1346,7 @@ fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
                     }
                 } else if end == "VOUCHER" {
                     if let Some(row) = current.take() {
-                        let amounts = row.get("AMOUNTS").map(|items| items.split('|').collect::<Vec<_>>().chunks(3).filter_map(|chunk| (chunk.len() == 3).then(|| json!({"ledger":chunk[0],"amount":chunk[1],"is_deemed_positive":chunk[2]}))).collect::<Vec<_>>()).unwrap_or_default();
+                        let amounts = row.get("AMOUNTS").map(|items| items.split('|').collect::<Vec<_>>().chunks(3).filter(|chunk| chunk.len() == 3).map(|chunk| json!({"ledger":chunk[0],"amount":chunk[1],"is_deemed_positive":chunk[2]})).collect::<Vec<_>>()).unwrap_or_default();
                         rows.push(json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": row.get("ALTERID").and_then(|v| v.parse::<u64>().ok()), "master_id": row.get("MASTERID"), "amounts": amounts}));
                     }
                 }
@@ -1404,7 +1423,7 @@ fn tool_definitions() -> Value {
                     ),
                     "changed_since" => (
                         "Return AlterID-filtered voucher and master evidence; deletion detection remains unsupported.",
-                        json!({"type":"object","additionalProperties":false,"required":["company_guid","alter_id"],"properties":{"company_guid":{"type":"string","minLength":1},"alter_id":{"type":"integer","minimum":0}}}),
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"voucher_alter_id":{"type":"integer","minimum":0,"default":0},"master_alter_id":{"type":"integer","minimum":0,"default":0},"offset":{"type":"integer","minimum":0,"default":0}}}),
                     ),
                     "read_evidence" | "egress_log" => (
                         "Return bounded local metadata-only read evidence or egress receipts.",
@@ -1445,9 +1464,12 @@ pub async fn run_stdio() -> Result<(), String> {
         let method = request.get("method").and_then(Value::as_str).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
         let result = match method {
-            "initialize" => Ok(
-                json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION}}),
-            ),
+            "initialize" => params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "initialize_protocol_version_required".to_string())
+                .and_then(negotiate_protocol)
+                .map(|protocol_version| json!({"protocolVersion": protocol_version, "capabilities": {"tools": {}}, "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION}})),
             "notifications/initialized" => {
                 if id.is_none() {
                     continue;
@@ -1547,6 +1569,26 @@ mod tests {
         assert_eq!(
             outstandings["inputSchema"]["properties"]["direction"]["enum"],
             json!(["receivable", "payable", "both"])
+        );
+        for attack in ["Party \" Name", "$$SysName:XML", "Party:Name"] {
+            assert_eq!(
+                TdlStringValue::new(attack.to_string()),
+                Err("tdl_string_value_invalid".to_string())
+            );
+        }
+        let recursively_redacted = redact_value(
+            json!({"proof":{"name":"Acme Party"},"changed":{"ledger":"Cash Ledger"}}),
+            Redaction::MaskParties,
+        );
+        assert_eq!(recursively_redacted["proof"]["name"], "Ac…ty");
+        assert_eq!(recursively_redacted["changed"]["ledger"], "Ca…er");
+        assert_eq!(negotiate_protocol("2024-11-05"), Ok("2024-11-05"));
+        assert_eq!(
+            negotiate_protocol("2023-01-01"),
+            Err("unsupported_protocol_version".to_string())
+        );
+        assert!(
+            parse_agent_rows("<ENVELOPE><BODY><RESPONSE>bad</RESPONSE></BODY></ENVELOPE>").is_err()
         );
     }
 

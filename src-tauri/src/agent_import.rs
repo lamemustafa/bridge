@@ -373,6 +373,7 @@ impl Server {
             .create(true)
             .read(true)
             .write(true)
+            .truncate(false)
             .open(path)
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
         file.lock_exclusive()
@@ -609,13 +610,12 @@ fn render_voucher_xml(voucher: &ImportVoucher) -> String {
     let narration = format!(
         "<NARRATION>{}</NARRATION>",
         xml_escape(
-            &format!(
+            format!(
                 "{} [BRIDGE:{}]",
                 voucher.narration.as_deref().unwrap_or("").trim(),
                 voucher.bridge_txn_id
             )
-            .trim()
-            .to_string()
+            .trim(),
         )
     );
     // REFERENCE is retained because it is part of the agent input contract. Its effect is not used as posting evidence; verify_import compares the accounting entries, not this annotation.
@@ -1114,6 +1114,14 @@ mod tests {
         assert_eq!(result["counts"]["posted_divergent"], 1);
         assert_eq!(result["counts"]["not_found"], 1);
         assert_eq!(result["duplicates"].as_array().map(Vec::len), Some(1));
+        assert_eq!(
+            parse_import_vouchers(""),
+            Err("import_verification_protocol_invalid".to_string())
+        );
+        assert_eq!(
+            parse_import_vouchers("<ENVELOPE><BODY><RESPONSE>error</RESPONSE></BODY></ENVELOPE>"),
+            Err("import_verification_protocol_invalid".to_string())
+        );
     }
 
     #[tokio::test]
