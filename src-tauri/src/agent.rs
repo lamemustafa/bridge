@@ -658,66 +658,71 @@ impl Server {
         let master_alter_id = checkpoint_arg(args, "master_alter_id")?
             .or(checkpoint_arg(args, "alter_id")?)
             .unwrap_or(0);
-        let offset = arg_usize(args, "offset", 0);
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
-        let request = render_agent_vouchers(
-            &company.name,
-            "19000101",
-            "29991231",
-            None,
-            None,
-            Some(voucher_alter_id),
-        )?;
+        let supplied_voucher_snapshot = checkpoint_arg(args, "voucher_snapshot_alter_id")?;
+        let supplied_master_snapshot = checkpoint_arg(args, "master_snapshot_alter_id")?;
+        let (snapshot, snapshot_evidence) =
+            match (supplied_voucher_snapshot, supplied_master_snapshot) {
+                (Some(voucher), Some(master)) => (
+                    json!({"altvchid": voucher, "altmstid": master}),
+                    Evidence {
+                        request_sha256: sha256_hex(b"agent_change_snapshot_from_cursor"),
+                        response_sha256: sha256_json(
+                            &json!({"altvchid": voucher, "altmstid": master}),
+                        ),
+                        bytes: 0,
+                        state: "complete",
+                        reason_code: None,
+                    },
+                ),
+                (None, None) => {
+                    let (xml, evidence) = self
+                        .post_read(&identity, render_agent_company_high_water(&company.name))
+                        .await?;
+                    (parse_company_high_water(&xml, guid)?, evidence)
+                }
+                _ => return Err("change_snapshot_incomplete".to_string()),
+            };
+        let voucher_snapshot = snapshot["altvchid"]
+            .as_u64()
+            .ok_or_else(|| "voucher_checkpoint_invalid".to_string())?;
+        let master_snapshot = snapshot["altmstid"]
+            .as_u64()
+            .ok_or_else(|| "master_checkpoint_invalid".to_string())?;
+        if voucher_alter_id > voucher_snapshot || master_alter_id > master_snapshot {
+            return Err("change_checkpoint_exceeds_snapshot".to_string());
+        }
+        let request =
+            render_agent_changed_vouchers(&company.name, voucher_alter_id, voucher_snapshot);
         let (xml, evidence) = self.post_read(&identity, request).await?;
         let all_rows = parse_agent_rows(&xml)?;
-        validate_change_row_alter_ids(&all_rows)?;
-        let matching_rows = all_rows
-            .into_iter()
-            .filter(|row| {
-                row.get("alter_id")
-                    .and_then(Value::as_u64)
-                    .is_some_and(|id| id > voucher_alter_id)
-            })
-            .collect::<Vec<_>>();
-        let voucher_truncated = offset.saturating_add(self.settings.max_rows) < matching_rows.len();
-        let rows = matching_rows
-            .into_iter()
-            .skip(offset)
-            .take(self.settings.max_rows)
-            .collect::<Vec<_>>();
+        let (rows, voucher_truncated, truncated_voucher_cursor) = stable_change_page(
+            all_rows,
+            voucher_alter_id,
+            voucher_snapshot,
+            self.settings.max_rows,
+        )?;
         let (master_xml, master_evidence) = self
             .post_read(
                 &identity,
-                render_agent_changed_masters(&company.name, master_alter_id),
+                render_agent_changed_masters(&company.name, master_alter_id, master_snapshot),
             )
             .await?;
         let all_masters = parse_agent_changed_masters(&master_xml)?;
-        let matching_masters = all_masters
+        let (masters, master_truncated, truncated_master_cursor) = stable_change_page(
+            all_masters,
+            master_alter_id,
+            master_snapshot,
+            self.settings.max_rows,
+        )?;
+        let masters = masters
             .into_iter()
-            .filter(|master| {
-                master["alter_id"]
-                    .as_u64()
-                    .is_some_and(|id| id > master_alter_id)
-            })
-            .collect::<Vec<_>>();
-        let master_truncated =
-            offset.saturating_add(self.settings.max_rows) < matching_masters.len();
-        let masters = matching_masters
-            .into_iter()
-            .skip(offset)
-            .take(self.settings.max_rows)
             .map(|master| redact_value(master, self.settings.redaction))
             .collect::<Vec<_>>();
-        let (extent_xml, extent_evidence) = self
-            .post_read(&identity, render_agent_company_high_water(&company.name))
-            .await?;
-        let high_water = parse_company_high_water(&extent_xml, guid)?;
         let voucher_checkpoint_advanceable = checkpoint_advanceable(
             rows.iter().filter_map(|row| row["alter_id"].as_u64()).max(),
             voucher_alter_id,
-            high_water["altvchid"]
-                .as_u64()
-                .ok_or_else(|| "voucher_checkpoint_invalid".to_string())?,
+            voucher_snapshot,
             voucher_truncated,
         );
         let master_checkpoint_advanceable = checkpoint_advanceable(
@@ -726,19 +731,31 @@ impl Server {
                 .filter_map(|row| row["alter_id"].as_u64())
                 .max(),
             master_alter_id,
-            high_water["altmstid"]
-                .as_u64()
-                .ok_or_else(|| "master_checkpoint_invalid".to_string())?,
+            master_snapshot,
             master_truncated,
         );
         let checkpoint_advanceable =
             voucher_checkpoint_advanceable && master_checkpoint_advanceable;
+        let next_voucher_alter_id = if voucher_truncated {
+            truncated_voucher_cursor
+        } else if voucher_checkpoint_advanceable {
+            voucher_snapshot
+        } else {
+            voucher_alter_id
+        };
+        let next_master_alter_id = if master_truncated {
+            truncated_master_cursor
+        } else if master_checkpoint_advanceable {
+            master_snapshot
+        } else {
+            master_alter_id
+        };
         let returned_rows = rows.len() + masters.len();
         Ok((
-            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": masters, "voucher_alter_id": voucher_alter_id, "master_alter_id": master_alter_id, "offset": offset, "next_offset": (voucher_truncated || master_truncated).then_some(offset + self.settings.max_rows), "next_voucher_alter_id": high_water["altvchid"], "next_master_alter_id": high_water["altmstid"], "checkpoint_advanceable": checkpoint_advanceable, "checkpoint_reason": (!checkpoint_advanceable).then_some("scan_not_correlated_to_company_high_water"), "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": high_water}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": masters, "voucher_alter_id": voucher_alter_id, "master_alter_id": master_alter_id, "voucher_snapshot_alter_id": voucher_snapshot, "master_snapshot_alter_id": master_snapshot, "next_voucher_alter_id": next_voucher_alter_id, "next_master_alter_id": next_master_alter_id, "checkpoint_advanceable": checkpoint_advanceable, "checkpoint_reason": (!checkpoint_advanceable).then_some("scan_not_correlated_to_company_high_water"), "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": snapshot}}),
             combine_evidence(
                 combine_evidence(identity_evidence, evidence),
-                combine_evidence(master_evidence, extent_evidence),
+                combine_evidence(master_evidence, snapshot_evidence),
             ),
             Some(guid.to_string()),
             returned_rows,
@@ -1357,9 +1374,16 @@ fn render_agent_vouchers(
     Ok(format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{type_filter}{ledger_filter}{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company)))
 }
 
-fn render_agent_changed_masters(company: &str, alter_id: u64) -> String {
+fn render_agent_changed_vouchers(company: &str, checkpoint: u64, snapshot: u64) -> String {
     format!(
-        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Changed Masters</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentChangedMaster\">$AlterID &gt; {alter_id}</SYSTEM><COLLECTION NAME=\"Bridge Agent Changed Ledgers\" TYPE=\"Ledger\"><FETCH>NAME,PARENT,ALTERID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS></COLLECTION><COLLECTION NAME=\"Bridge Agent Changed Groups\" TYPE=\"Group\"><FETCH>NAME,PARENT,ALTERID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Changed Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentChangedVoucher\">$AlterID &gt; {checkpoint} AND $AlterID &lt;= {snapshot}</SYSTEM><COLLECTION NAME=\"Bridge Agent Changed Vouchers\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeAgentChangedVoucher</FILTERS><SORT>Default: $AlterID</SORT></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        xml_escape(company)
+    )
+}
+
+fn render_agent_changed_masters(company: &str, checkpoint: u64, snapshot: u64) -> String {
+    format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Changed Masters</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentChangedMaster\">$AlterID &gt; {checkpoint} AND $AlterID &lt;= {snapshot}</SYSTEM><COLLECTION NAME=\"Bridge Agent Changed Ledgers\" TYPE=\"Ledger\"><FETCH>NAME,PARENT,ALTERID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS><SORT>Default: $AlterID</SORT></COLLECTION><COLLECTION NAME=\"Bridge Agent Changed Groups\" TYPE=\"Group\"><FETCH>NAME,PARENT,ALTERID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS><SORT>Default: $AlterID</SORT></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
         xml_escape(company)
     )
 }
@@ -1518,6 +1542,34 @@ fn validate_change_row_alter_ids(rows: &[Value]) -> Result<(), String> {
     }
 }
 
+fn stable_change_page(
+    mut rows: Vec<Value>,
+    checkpoint: u64,
+    snapshot: u64,
+    max_rows: usize,
+) -> Result<(Vec<Value>, bool, u64), String> {
+    if checkpoint > snapshot {
+        return Err("change_checkpoint_exceeds_snapshot".to_string());
+    }
+    validate_change_row_alter_ids(&rows)?;
+    rows.retain(|row| {
+        row["alter_id"]
+            .as_u64()
+            .is_some_and(|alter_id| alter_id > checkpoint && alter_id <= snapshot)
+    });
+    rows.sort_by_key(|row| row["alter_id"].as_u64());
+    let truncated = rows.len() > max_rows;
+    rows.truncate(max_rows);
+    let next_cursor = if truncated {
+        rows.last()
+            .and_then(|row| row["alter_id"].as_u64())
+            .ok_or_else(|| "change_page_cursor_invalid".to_string())?
+    } else {
+        snapshot
+    };
+    Ok((rows, truncated, next_cursor))
+}
+
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -1659,8 +1711,8 @@ fn tool_definitions(import_enabled: bool) -> Value {
                         json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"voucher_type":{"type":"string"},"ledger":{"type":"string"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "changed_since" => (
-                        "Return AlterID-filtered voucher and master evidence; deletion detection remains unsupported.",
-                        json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"voucher_alter_id":{"type":"integer","minimum":0,"default":0},"master_alter_id":{"type":"integer","minimum":0,"default":0},"offset":{"type":"integer","minimum":0,"default":0}}}),
+                        "Return snapshot-pinned AlterID voucher and master evidence. Continue a truncated scan with both returned AlterID cursors and snapshot values; deletion detection remains unsupported.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"voucher_alter_id":{"type":"integer","minimum":0,"default":0},"master_alter_id":{"type":"integer","minimum":0,"default":0},"voucher_snapshot_alter_id":{"type":"integer","minimum":0},"master_snapshot_alter_id":{"type":"integer","minimum":0}}}),
                     ),
                     "read_evidence" | "egress_log" => (
                         "Return bounded local metadata-only read evidence or egress receipts.",
@@ -1938,6 +1990,44 @@ mod tests {
             checkpoint_arg(&json!({"voucher_alter_id":"bad"}), "voucher_alter_id"),
             Err("checkpoint_invalid".to_string())
         );
+    }
+
+    #[test]
+    fn change_feed_snapshot_cursor_excludes_rows_inserted_after_first_page() {
+        let row = |alter_id| json!({"alter_id": alter_id});
+        let (first_page, first_truncated, first_cursor) =
+            stable_change_page(vec![row(3), row(1), row(2)], 0, 3, 2).expect("first page");
+        assert!(first_truncated);
+        assert_eq!(
+            first_page
+                .iter()
+                .map(|row| row["alter_id"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
+        assert_eq!(first_cursor, 2);
+
+        // ALTERID 4 is inserted after page one. The original high-water 3 pins
+        // page two, so ID 3 is still returned and the new row cannot shift it.
+        let (second_page, second_truncated, second_cursor) =
+            stable_change_page(vec![row(4), row(3)], first_cursor, 3, 2)
+                .expect("snapshot-pinned second page");
+        assert!(!second_truncated);
+        assert_eq!(second_page, vec![row(3)]);
+        assert_eq!(second_cursor, 3);
+
+        let voucher_request = render_agent_changed_vouchers("BRIDGE SYNTHETIC BOOK", 2, 3);
+        let master_request = render_agent_changed_masters("BRIDGE SYNTHETIC BOOK", 2, 3);
+        for request in [voucher_request, master_request] {
+            assert!(request.contains("$AlterID &gt; 2 AND $AlterID &lt;= 3"));
+            assert!(request.contains("<SORT>Default: $AlterID</SORT>"));
+        }
+        let definitions = tool_definitions(false);
+        let changed_since = definitions
+            .as_array()
+            .and_then(|tools| tools.iter().find(|tool| tool["name"] == "changed_since"))
+            .expect("changed-since schema");
+        assert!(changed_since["inputSchema"]["properties"]["offset"].is_null());
     }
 
     #[test]
