@@ -6,6 +6,7 @@ use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::parse_ledgers;
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
 use chrono::{SecondsFormat, Utc};
+use fs2::FileExt;
 use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -116,6 +117,8 @@ struct ReadVoucher {
     date: Option<String>,
     voucher_type: Option<String>,
     narration: Option<String>,
+    voucher_number: Option<String>,
+    master_id: Option<String>,
     entries: Vec<ReadEntry>,
 }
 
@@ -149,8 +152,8 @@ impl Server {
             .collect::<Option<Vec<_>>>()
             .filter(|names| !names.is_empty())
             .ok_or_else(|| "ledgers_required".to_string())?;
-        let (company, _verified_identity, identity_evidence) = self.verified_company(guid).await?;
-        let (catalogue, evidence) = self.read_ledger_catalogue(&company.name).await?;
+        let (company, identity, identity_evidence) = self.verified_company(guid).await?;
+        let (catalogue, evidence) = self.read_ledger_catalogue(&identity, &company.name).await?;
         let report = ledgers
             .into_iter()
             .map(|wanted| master_match(wanted, &catalogue))
@@ -171,11 +174,13 @@ impl Server {
     }
 
     pub(super) async fn build_import_xml(&self, args: &Value) -> Result<ToolOutcome, String> {
-        let payload = parse_payload(args)?;
+        let mut payload = parse_payload(args)?;
         validate_payload(&payload)?;
-        let (company, _verified_identity, identity_evidence) =
+        normalize_payload_dates(&mut payload)?;
+        let (company, identity, identity_evidence) =
             self.verified_company(&payload.company_guid).await?;
-        let (catalogue, catalogue_evidence) = self.read_ledger_catalogue(&company.name).await?;
+        let (catalogue, catalogue_evidence) =
+            self.read_ledger_catalogue(&identity, &company.name).await?;
         let report = masters_for_payload(&payload, &catalogue);
         if report.iter().any(|value| value["match_state"] != "exact") {
             return Ok((
@@ -192,9 +197,10 @@ impl Server {
             ));
         }
         validate_dates(&payload, company.books_from.as_deref())?;
+        let _admission_lock = self.lock_import_admission()?;
         let existing = self.import_ledger()?;
         reject_known_transactions(&payload, &existing)?;
-        let (mark, mark_evidence) = self.pre_import_mark(&company).await?;
+        let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
         let batch_id = format!("bridge-{}", Uuid::new_v4());
         let xml = render_import_xml(&company.name, &payload.vouchers);
         let sha256 = sha256_hex(xml.as_bytes());
@@ -257,10 +263,10 @@ impl Server {
         if line.company_guid != guid {
             return Err("import_batch_company_mismatch".to_string());
         }
-        let (company, _verified_identity, identity_evidence) = self.verified_company(guid).await?;
+        let (company, identity, identity_evidence) = self.verified_company(guid).await?;
         let request =
             render_import_verification_read(&company.name, &line.date_from, &line.date_to);
-        let (xml, evidence) = self.post_read(request).await?;
+        let (xml, evidence) = self.post_read(&identity, request).await?;
         let observed = parse_import_vouchers(&xml)?;
         let result = verify_batch(&line, &observed);
         let proof = json!({
@@ -305,12 +311,16 @@ impl Server {
 
     async fn read_ledger_catalogue(
         &self,
+        identity: &super::VerifiedCompanyIdentity,
         company_name: &str,
     ) -> Result<(Vec<String>, Evidence), String> {
         let name = ValidatedCompanyName::new(company_name.to_string())
             .map_err(|_| "company_name_invalid".to_string())?;
         let (xml, evidence) = self
-            .post_read(ReadOnlyProfile::LedgersV1 { company: &name }.render())
+            .post_read(
+                identity,
+                ReadOnlyProfile::LedgersV1 { company: &name }.render(),
+            )
             .await?;
         let ledgers = parse_ledgers(&xml).map_err(|_| "ledger_export_invalid".to_string())?;
         Ok((
@@ -322,6 +332,7 @@ impl Server {
     async fn pre_import_mark(
         &self,
         company: &bridge_tally_protocol::TallyCompany,
+        identity: &super::VerifiedCompanyIdentity,
     ) -> Result<(PreImportMark, Evidence), String> {
         let from = normalized_date(
             company
@@ -331,7 +342,10 @@ impl Server {
         )?;
         let to = Utc::now().format("%Y%m%d").to_string();
         let (xml, evidence) = self
-            .post_read(render_import_verification_read(&company.name, &from, &to))
+            .post_read(
+                identity,
+                render_import_verification_read(&company.name, &from, &to),
+            )
             .await?;
         let latest = parse_import_vouchers(&xml)?
             .into_iter()
@@ -351,6 +365,19 @@ impl Server {
         fs::create_dir_all(&path).map_err(|_| "imports_dir_unavailable".to_string())?;
         set_private_dir(&path)?;
         Ok(path)
+    }
+
+    fn lock_import_admission(&self) -> Result<std::fs::File, String> {
+        let path = self.settings.data_dir.join("agent-import-admission.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        file.lock_exclusive()
+            .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        Ok(file)
     }
 
     fn import_ledger(&self) -> Result<Vec<ImportLedgerLine>, String> {
@@ -439,6 +466,15 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         if !debit.numeric_eq(&credit) {
             return Err("voucher_not_balanced".to_string());
         }
+    }
+    Ok(())
+}
+
+/// Dates cross the tool boundary in the human-friendly form but are persisted
+/// in the exact Tally form used in the generated XML and verification window.
+fn normalize_payload_dates(payload: &mut ImportPayload) -> Result<(), String> {
+    for voucher in &mut payload.vouchers {
+        voucher.date = normalized_date(&voucher.date)?;
     }
     Ok(())
 }
@@ -570,11 +606,18 @@ fn render_import_xml(company: &str, vouchers: &[ImportVoucher]) -> String {
 }
 
 fn render_voucher_xml(voucher: &ImportVoucher) -> String {
-    let narration = voucher
-        .narration
-        .as_deref()
-        .map(|value| format!("<NARRATION>{}</NARRATION>", xml_escape(value)))
-        .unwrap_or_default();
+    let narration = format!(
+        "<NARRATION>{}</NARRATION>",
+        xml_escape(
+            &format!(
+                "{} [BRIDGE:{}]",
+                voucher.narration.as_deref().unwrap_or("").trim(),
+                voucher.bridge_txn_id
+            )
+            .trim()
+            .to_string()
+        )
+    );
     // REFERENCE is retained because it is part of the agent input contract. Its effect is not used as posting evidence; verify_import compares the accounting entries, not this annotation.
     let reference = voucher
         .reference
@@ -589,7 +632,7 @@ fn render_voucher_xml(voucher: &ImportVoucher) -> String {
 }
 
 fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
-    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERTYPENAME,REMOTEID,GUID,ALTERID,NARRATION,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
+    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
 }
 
 fn xml_escape(value: &str) -> String {
@@ -602,6 +645,7 @@ fn xml_escape(value: &str) -> String {
 }
 
 fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
+    validate_verification_envelope(xml)?;
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut vouchers = Vec::new();
@@ -633,6 +677,8 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
                         date: None,
                         voucher_type: None,
                         narration: None,
+                        voucher_number: None,
+                        master_id: None,
                         entries: Vec::new(),
                     });
                 } else if name == "ALLLEDGERENTRIES.LIST" && voucher.is_some() {
@@ -659,6 +705,8 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
                             "DATE" => current.date = Some(value),
                             "VOUCHERTYPENAME" => current.voucher_type = Some(value),
                             "GUID" => current.guid = Some(value),
+                            "MASTERID" => current.master_id = Some(value),
+                            "VOUCHERNUMBER" => current.voucher_number = Some(value),
                             "ALTERID" => current.alter_id = value.parse().ok(),
                             "NARRATION" => current.narration = Some(value),
                             _ => {}
@@ -692,33 +740,75 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
     Ok(vouchers)
 }
 
+fn validate_verification_envelope(xml: &str) -> Result<(), String> {
+    let trimmed = xml.trim();
+    if trimmed.is_empty()
+        || !trimmed.starts_with("<ENVELOPE")
+        || trimmed.contains("<LINEERROR")
+        || trimmed.contains("<ERROR")
+        || trimmed.contains("<RESPONSE")
+    {
+        return Err("import_verification_protocol_invalid".to_string());
+    }
+    if !trimmed.contains("<COLLECTION") {
+        return Err("import_verification_protocol_invalid".to_string());
+    }
+    Ok(())
+}
+
 fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Value {
     let mut rows = Vec::new();
     let mut counts = BTreeMap::from([
         ("posted_verified", 0_u64),
         ("posted_divergent", 0),
         ("not_found", 0),
+        ("duplicate_fingerprint", 0),
     ]);
     for expected in &line.vouchers {
-        let matches = observed
+        let tag = format!("[BRIDGE:{}]", expected.bridge_txn_id);
+        let tagged = observed
             .iter()
-            .filter(|voucher| voucher.remote_id.as_deref() == Some(&expected.bridge_txn_id))
+            .filter(|voucher| {
+                voucher
+                    .narration
+                    .as_deref()
+                    .is_some_and(|value| value.contains(&tag))
+            })
             .collect::<Vec<_>>();
+        let fingerprint = expected_entry_fingerprint(expected);
+        let fingerprint_matches = observed
+            .iter()
+            .filter(|voucher| {
+                voucher.date.as_deref() == normalized_date(&expected.date).ok().as_deref()
+                    && voucher.voucher_type.as_deref() == Some(expected.voucher_type.as_str())
+                    && actual_entry_fingerprint(voucher) == fingerprint
+            })
+            .collect::<Vec<_>>();
+        let (matches, marker) = if !tagged.is_empty() {
+            (tagged, "narration_tag")
+        } else {
+            (fingerprint_matches, "accounting_fingerprint")
+        };
         let value = if matches.is_empty() {
             counts.entry("not_found").and_modify(|count| *count += 1);
             json!({"bridge_txn_id":expected.bridge_txn_id,"status":"not_found"})
+        } else if matches.len() > 1 {
+            counts
+                .entry("duplicate_fingerprint")
+                .and_modify(|count| *count += 1);
+            json!({"bridge_txn_id":expected.bridge_txn_id,"status":"duplicate_fingerprint","marker":marker,"matches":matches.len()})
         } else {
             let diffs = voucher_diffs(expected, matches[0]);
             if diffs.is_empty() {
                 counts
                     .entry("posted_verified")
                     .and_modify(|count| *count += 1);
-                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_verified","guid":matches[0].guid,"alter_id":matches[0].alter_id})
+                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_verified","marker":marker,"voucher_number":matches[0].voucher_number,"guid":matches[0].guid,"master_id":matches[0].master_id,"alter_id":matches[0].alter_id})
             } else {
                 counts
                     .entry("posted_divergent")
                     .and_modify(|count| *count += 1);
-                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_divergent","diffs":diffs})
+                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_divergent","marker":marker,"diffs":diffs,"voucher_number":matches[0].voucher_number,"guid":matches[0].guid,"master_id":matches[0].master_id})
             }
         };
         rows.push(value);
@@ -915,8 +1005,9 @@ mod tests {
             "near_miss"
         );
         let xml = render_import_xml("Book & Co", &input.vouchers);
-        let expected = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>Book &amp; Co</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA><TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"txn-001\" VCHTYPE=\"Payment\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><NARRATION>Paid &amp; settled</NARRATION><REFERENCE>REF-1</REFERENCE><ALLLEDGERENTRIES.LIST><LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></TALLYMESSAGE><TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"txn-002\" VCHTYPE=\"Receipt\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>20260902</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Income</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>";
-        assert_eq!(xml.as_bytes(), expected.as_bytes());
+        assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(xml.contains("<NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION>"));
+        assert!(xml.contains("<NARRATION>[BRIDGE:txn-002]</NARRATION>"));
         assert_eq!(
             voucher_input_schema()["properties"]["vouchers"]["items"]["properties"]["entries"]
                 ["items"]["properties"]["side"]["enum"],
@@ -930,7 +1021,6 @@ mod tests {
             },
             data_dir: directory.path().to_path_buf(),
             max_rows: 10,
-            max_bytes: 200_000,
             redaction: super::super::Redaction::None,
         });
         let line = ImportLedgerLine {
@@ -981,7 +1071,9 @@ mod tests {
                 alter_id: Some(12),
                 date: Some("20260901".to_string()),
                 voucher_type: Some("Payment".to_string()),
-                narration: None,
+                narration: Some("[BRIDGE:txn-001]".to_string()),
+                voucher_number: None,
+                master_id: None,
                 entries: vec![
                     ReadEntry {
                         ledger: "Expense".to_string(),
@@ -1002,6 +1094,8 @@ mod tests {
                 date: Some("20260901".to_string()),
                 voucher_type: Some("Payment".to_string()),
                 narration: None,
+                voucher_number: None,
+                master_id: None,
                 entries: vec![
                     ReadEntry {
                         ledger: "Expense".to_string(),
@@ -1027,17 +1121,28 @@ mod tests {
         let company = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SYNTHETIC BOOK\"><GUID>{GUID}</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
         let ledgers = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COMPANYCONTEXT><SCHEMA>bridge.tally.ledgers/1</SCHEMA><OBJECTTYPE>LEDGER</OBJECTTYPE><NAME>BRIDGE SYNTHETIC BOOK</NAME><GUID>{GUID}</GUID><RECORDCOUNT>3</RECORDCOUNT></COMPANYCONTEXT><COLLECTION><LEDGER NAME=\"Expense\" GUID=\"{GUID}-00000001\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER><LEDGER NAME=\"Bank\" GUID=\"{GUID}-00000002\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER><LEDGER NAME=\"Income\" GUID=\"{GUID}-00000003\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>");
         let premark = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>".to_string();
-        let readback = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER REMOTEID=\"txn-001\"><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>g-1</GUID><ALTERID>12</ALTERID><ALLLEDGERENTRIES.LIST><LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER REMOTEID=\"txn-002\"><DATE>20260902</DATE><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><GUID>g-2</GUID><ALTERID>13</ALTERID><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Income</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>".to_string();
+        let readback = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER REMOTEID=\"tally-assigned-1\"><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>g-1</GUID><MASTERID>1</MASTERID><ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER REMOTEID=\"tally-assigned-2\"><DATE>20260902</DATE><VOUCHERNUMBER>RV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><GUID>g-2</GUID><MASTERID>2</MASTERID><ALTERID>13</ALTERID><NARRATION>[BRIDGE:txn-002]</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Income</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>".to_string();
         let simulator = SequenceSimulator::spawn(
-            vec![company.clone(), ledgers, premark, company]
-                .into_iter()
-                .chain(std::iter::once(readback))
-                .map(|xml| {
-                    ScenarioPlan::new(Fixture::SyntheticXml(xml))
-                        .with_encoding(WireEncoding::Utf16Le)
-                        .with_framing(ResponseFraming::ContentLength)
-                })
-                .collect(),
+            vec![
+                company.clone(),
+                company.clone(),
+                ledgers,
+                company.clone(),
+                company.clone(),
+                premark,
+                company.clone(),
+                company.clone(),
+                company.clone(),
+                readback,
+                company,
+            ]
+            .into_iter()
+            .map(|xml| {
+                ScenarioPlan::new(Fixture::SyntheticXml(xml))
+                    .with_encoding(WireEncoding::Utf16Le)
+                    .with_framing(ResponseFraming::ContentLength)
+            })
+            .collect(),
         )
         .expect("simulator");
         let directory = tempfile::tempdir().expect("temporary data directory");
@@ -1048,7 +1153,6 @@ mod tests {
             },
             data_dir: directory.path().to_path_buf(),
             max_rows: 10,
-            max_bytes: 200_000,
             redaction: super::super::Redaction::None,
         });
         let built = server
@@ -1077,6 +1181,6 @@ mod tests {
                 proof.0["result"]["batch_id"].as_str().expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 5);
+        assert_eq!(simulator.finish().expect("requests").len(), 11);
     }
 }

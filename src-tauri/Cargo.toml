@@ -66,6 +66,7 @@ bridge-tally-core = { path = "crates/bridge-tally-core" }
 bridge-tally-protocol = { path = "crates/bridge-tally-protocol" }
 bridge-tally-transport = { path = "crates/bridge-tally-transport" }
 chrono = { version = "0.4", features = ["serde"] }
+fs2 = "0.4"
 cryptoki = "0.12"
 getrandom = "0.4"
 keyring = { version = "4.1.4", default-features = false, features = ["v1"] }

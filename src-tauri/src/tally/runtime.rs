@@ -1633,6 +1633,36 @@ impl TallyRuntime {
         .await
     }
 
+    /// Dispatches a read-only adapter request through the same serialized,
+    /// identity-bracketed runtime used by the product read paths.  The caller
+    /// owns parsing the documented response shape; it cannot bypass the
+    /// loopback policy, queue, or complete company-tuple witness.
+    pub async fn fetch_agent_read(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        request: String,
+    ) -> anyhow::Result<String> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
+        self.execute(
+            config,
+            ReadOperation::OtherRead,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            move |client| {
+                let identity = identity.clone();
+                let request = request.clone();
+                async move {
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    let response = client.post_xml(request).await?;
+                    bracket_verified_company_identity(&client, &identity).await?;
+                    Ok(response)
+                }
+            },
+        )
+        .await
+    }
+
     /// Outstandings via Tally's own `TYPE=Data` bills reports plus one ledger
     /// snapshot.
     ///
