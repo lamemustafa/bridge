@@ -62,4 +62,8 @@ compatibility_gate_passed:unknown_claims=11:evidenced_claims=0
 Remaining evidence gap: no live Tally or Windows/macOS host validation was
 performed. The simulator covers the MCP envelope, typed-down endpoint, egress,
 and redaction; it cannot qualify a Tally release or a compatibility-matrix
-cell.
+cell. The full `cargo test --manifest-path src-tauri/Cargo.toml --no-fail-fast`
+invocation was started twice but did not complete before this execution
+environment terminated the command; it is therefore unverified. The focused
+MCP and command suites above are not represented as a substitute for that full
+gate.
