@@ -655,6 +655,7 @@ impl Server {
         )?;
         let (xml, evidence) = self.post_read(&identity, request).await?;
         let all_rows = parse_agent_rows(&xml)?;
+        validate_change_row_alter_ids(&all_rows)?;
         let matching_rows = all_rows
             .into_iter()
             .filter(|row| {
@@ -1455,7 +1456,11 @@ fn parse_agent_changed_masters(xml: &str) -> Result<Vec<Value>, String> {
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
                 if matches!(end.as_str(), "LEDGER" | "GROUP") {
                     if let Some((kind, fields)) = current.take() {
-                        rows.push(json!({"kind": kind.to_ascii_lowercase(), "name": fields.get("NAME"), "parent": fields.get("PARENT"), "alter_id": fields.get("ALTERID").and_then(|value| value.parse::<u64>().ok()), "master_id": fields.get("MASTERID")}));
+                        let alter_id = fields
+                            .get("ALTERID")
+                            .and_then(|value| value.parse::<u64>().ok())
+                            .ok_or_else(|| "change_row_alterid_invalid".to_string())?;
+                        rows.push(json!({"kind": kind.to_ascii_lowercase(), "name": fields.get("NAME"), "parent": fields.get("PARENT"), "alter_id": alter_id, "master_id": fields.get("MASTERID")}));
                     }
                 }
                 tag.clear();
@@ -1466,6 +1471,17 @@ fn parse_agent_changed_masters(xml: &str) -> Result<Vec<Value>, String> {
         }
     }
     Ok(rows)
+}
+
+fn validate_change_row_alter_ids(rows: &[Value]) -> Result<(), String> {
+    if rows
+        .iter()
+        .any(|row| row.get("alter_id").and_then(Value::as_u64).is_none())
+    {
+        Err("change_row_alterid_invalid".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn xml_escape(value: &str) -> String {
@@ -1852,6 +1868,18 @@ mod tests {
         assert!(!checkpoint_advanceable(Some(12), 0, 12, true));
         assert!(!checkpoint_advanceable(Some(11), 0, 12, false));
         assert!(checkpoint_advanceable(Some(12), 0, 12, false));
+    }
+
+    #[test]
+    fn change_scan_rejects_any_missing_or_malformed_row_alter_id() {
+        assert_eq!(
+            validate_change_row_alter_ids(&[json!({"alter_id":null})]),
+            Err("change_row_alterid_invalid".to_string())
+        );
+        assert_eq!(
+            parse_agent_changed_masters("<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><NAME>Bad</NAME><ALTERID>nope</ALTERID></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"),
+            Err("change_row_alterid_invalid".to_string())
+        );
     }
 
     #[test]
