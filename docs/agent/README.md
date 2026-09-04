@@ -74,3 +74,31 @@ Tally Cloud Access and every non-loopback Tally host. `changed_since` also
 explicitly does not claim deletion detection from AlterID alone. A
 `posted_verified` result is a readback comparison of the selected date window,
 not a claim that every Tally configuration or licence mode has been qualified.
+
+## Evidence-shaped outputs
+
+Every tool response carries the same outer evidence envelope. This is an
+illustrative response shape from the synthetic simulator test; it is not a
+live-Tally compatibility claim:
+
+```json
+{
+  "company": {"name":"BRIDGE SYNTHETIC BOOK","guid":"00000000-0000-4000-8000-000000000001","identity_state":"verified_tuple"},
+  "read_at":"2026-09-04T00:00:00.000Z",
+  "evidence":{"request_sha256":"…","response_sha256":"…","bytes":123,"state":"complete"},
+  "truncated":false,
+  "result":{"companies":[{"name":"BRIDGE SYNTHETIC BOOK","guid":"00000000-0000-4000-8000-000000000001"}]}
+}
+```
+
+`outstandings` returns the runtime's paired native result. A complete read has
+exact totals, four ageing buckets, top parties, open bills, and unallocated
+amount/count; a refused runtime read instead has `state: "partial"` and its
+exact `partial_reason`. `ledger_movement` returns literal-window voucher
+movement with exact decimal `opening`, `debit`, `credit`, `closing`, parent,
+and `vouchers_touching`. `ledger_masters` accepts `fields: "compliance"` to
+return the paired party-master GSTIN/PAN/MSME/bank/IFSC/email/phone/state and
+address observations; `mask_parties` redacts the ledger name before it leaves
+the server. `changed_since` returns changed voucher/master records, the
+observed company `ALTVCHID`/`ALTMSTID` when exposed, and always states that
+deletion detection is unsupported.

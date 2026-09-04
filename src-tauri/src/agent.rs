@@ -597,6 +597,7 @@ impl Server {
             .into_iter()
             .filter(|master| master["alter_id"].as_u64().is_some_and(|id| id > alter_id))
             .take(self.settings.max_rows)
+            .map(|master| redact_value(master, self.settings.redaction))
             .collect::<Vec<_>>();
         let (extent_xml, extent_evidence) = self
             .post_read(render_agent_company_high_water(&company.name))
@@ -656,6 +657,7 @@ impl Server {
             .await
             .map_err(|_| "native_outstandings_read_failed".to_string())?;
         let top = arg_usize(args, "top", 25).min(self.settings.max_rows);
+        let mut result_evidence = identity_evidence;
         let result = match load {
             OutstandingsLoadResult::Complete {
                 report,
@@ -695,16 +697,27 @@ impl Server {
                         )
                     })
                     .collect::<Vec<_>>();
-                json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "unallocated":{"count": statement_unallocated_by_party.len(), "amount": unallocated_total, "parties": statement_unallocated_by_party}})
+                let unallocated = statement_unallocated_by_party
+                    .into_iter()
+                    .map(|party| {
+                        redact_value(
+                            serde_json::to_value(party).unwrap_or_default(),
+                            self.settings.redaction,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "unallocated":{"count": unallocated.len(), "amount": unallocated_total, "parties": unallocated}})
             }
             OutstandingsLoadResult::Partial { reason, .. } => {
+                result_evidence.state = "partial";
+                result_evidence.reason_code = Some(reason.reason_code.clone());
                 json!({"state":"partial", "partial_reason": reason.reason_code})
             }
         };
         let rows = result["open_bills"].as_array().map_or(0, Vec::len);
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
-            identity_evidence,
+            result_evidence,
             Some(guid.to_string()),
             rows.min(top),
             vec!["party".into(), "reference".into(), "amount".into()],
@@ -788,7 +801,7 @@ impl Server {
                 let debited = add_decimal(opening, &debit)?;
                 add_decimal(&debited, &format!("-{credit}"))
             }).transpose()?;
-            Ok(json!({"ledger": name, "parent": parent, "opening": opening, "debit": debit, "credit": credit, "closing": closing, "vouchers_touching": vouchers_touching}))
+            Ok(redact_value(json!({"ledger": name, "parent": parent, "opening": opening, "debit": debit, "credit": credit, "closing": closing, "vouchers_touching": vouchers_touching}), self.settings.redaction))
         }).collect::<Result<Vec<_>, _>>()?;
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"ledgers": rows, "voucher_rows_observed": vouchers.len(), "evidence_method": "paired_runtime_ledger_openings_plus_literal_window_voucher_entries"}}),
@@ -1322,6 +1335,19 @@ mod tests {
         assert!(tool_definitions()
             .as_array()
             .is_some_and(|tools| tools.len() == 13));
+        let definitions = tool_definitions();
+        let outstandings = definitions
+            .as_array()
+            .and_then(|tools| tools.iter().find(|tool| tool["name"] == "outstandings"))
+            .expect("outstandings tool definition");
+        assert_eq!(
+            outstandings["inputSchema"]["required"],
+            json!(["company_guid"])
+        );
+        assert_eq!(
+            outstandings["inputSchema"]["properties"]["direction"]["enum"],
+            json!(["receivable", "payable", "both"])
+        );
     }
 
     #[tokio::test]
