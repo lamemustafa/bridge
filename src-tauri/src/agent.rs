@@ -513,13 +513,14 @@ impl Server {
             .take(limit)
             .map(|ledger| redact_value(ledger, self.settings.redaction))
             .collect::<Vec<_>>();
+        let page_len = page_length_after_offset(total, offset, limit);
         let truncated = offset.saturating_add(page.len()) < total;
         let result = json!({"items": page, "offset": offset, "total": total, "fields": args.get("fields").and_then(Value::as_str).unwrap_or("basic"), "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
             company_evidence,
             Some(guid.to_string()),
-            total.min(limit),
+            page_len,
             if compliance {
                 vec![
                     "name".into(),
@@ -1019,6 +1020,10 @@ fn balance_affecting_vouchers(
         })
         .filter_map(Result::transpose)
         .collect()
+}
+
+fn page_length_after_offset(total: usize, offset: usize, limit: usize) -> usize {
+    total.saturating_sub(offset).min(limit)
 }
 
 fn combine_evidence(left: Evidence, right: Evidence) -> Evidence {
@@ -1638,6 +1643,12 @@ mod tests {
             balance_affecting_vouchers(vec![voucher(None, Some(false))]),
             Err("voucher_accounting_state_not_observed".to_string())
         );
+    }
+
+    #[test]
+    fn paginated_egress_rows_returned_is_the_final_page_length() {
+        assert_eq!(page_length_after_offset(11, 10, 500), 1);
+        assert_eq!(page_length_after_offset(11, 11, 500), 0);
     }
 
     #[tokio::test]
