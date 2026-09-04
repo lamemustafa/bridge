@@ -71,6 +71,7 @@ struct Settings {
     max_rows: usize,
     max_bytes: usize,
     redaction: Redaction,
+    import_enabled: bool,
 }
 
 impl Settings {
@@ -100,6 +101,7 @@ impl Settings {
             max_rows,
             max_bytes,
             redaction: Redaction::from_env()?,
+            import_enabled: env::var("BRIDGE_AGENT_ENABLE_IMPORT").as_deref() == Ok("1"),
         })
     }
 }
@@ -482,8 +484,14 @@ impl Server {
             }
             "voucher_schema" => self.voucher_schema(),
             "validate_masters" => self.validate_masters(args).await,
-            "build_import_xml" => self.build_import_xml(args).await,
-            "verify_import" => self.verify_import(args).await,
+            "build_import_xml" => {
+                self.import_enabled()?;
+                self.build_import_xml(args).await
+            }
+            "verify_import" => {
+                self.import_enabled()?;
+                self.verify_import(args).await
+            }
             "ledger_masters" => self.ledger_masters(args).await,
             "vouchers" => self.vouchers(args).await,
             "changed_since" => self.changed_since(args).await,
@@ -493,6 +501,13 @@ impl Server {
             "egress_log" => self.egress_log(args),
             _ => Err("tool_not_found".to_string()),
         }
+    }
+
+    fn import_enabled(&self) -> Result<(), String> {
+        self.settings
+            .import_enabled
+            .then_some(())
+            .ok_or_else(|| "import_unverified_on_live_tally".to_string())
     }
 
     async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, String> {
@@ -1562,7 +1577,7 @@ fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
     Ok(rows)
 }
 
-fn tool_definitions() -> Value {
+fn tool_definitions(import_enabled: bool) -> Value {
     let names = [
         "tally_status",
         "list_companies",
@@ -1581,6 +1596,7 @@ fn tool_definitions() -> Value {
     Value::Array(
         names
             .into_iter()
+            .filter(|name| import_enabled || !matches!(*name, "build_import_xml" | "verify_import"))
             .map(|name| {
                 let (description, input_schema) = match name {
                     "voucher_schema" => (
@@ -1679,7 +1695,7 @@ pub async fn run_stdio() -> Result<(), String> {
                 Ok(json!({}))
             }
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({"tools": tool_definitions()})),
+            "tools/list" => Ok(json!({"tools": tool_definitions(server.settings.import_enabled)})),
             "tools/call" => {
                 let name = params
                     .get("name")
@@ -1734,6 +1750,7 @@ mod tests {
             max_rows: 10,
             max_bytes: 200_000,
             redaction: Redaction::MaskParties,
+            import_enabled: false,
         }
     }
 
@@ -1757,10 +1774,10 @@ mod tests {
             )["party"],
             "Ac…ty"
         );
-        assert!(tool_definitions()
+        assert!(tool_definitions(true)
             .as_array()
             .is_some_and(|tools| tools.len() == 13));
-        let definitions = tool_definitions();
+        let definitions = tool_definitions(true);
         let outstandings = definitions
             .as_array()
             .and_then(|tools| tools.iter().find(|tool| tool["name"] == "outstandings"))
@@ -1806,6 +1823,40 @@ mod tests {
         assert_eq!(
             Redaction::parse("mask_everything"),
             Err("redaction_setting_invalid".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn imports_are_hidden_and_refused_without_explicit_live_evidence_opt_in() {
+        let disabled_tools = tool_definitions(false);
+        let names = disabled_tools
+            .as_array()
+            .expect("tool list")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+        assert!(!names.contains(&"build_import_xml"));
+        assert!(tool_definitions(true)
+            .as_array()
+            .expect("tool list")
+            .iter()
+            .any(|tool| tool["name"] == "build_import_xml"));
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+        });
+        let response = server.call_tool("build_import_xml", json!({})).await;
+        assert_eq!(
+            response["structuredContent"]["result"]["error"]["code"],
+            "import_unverified_on_live_tally"
         );
     }
 
@@ -1951,6 +2002,7 @@ mod tests {
             max_rows: 10,
             max_bytes: 200_000,
             redaction: Redaction::None,
+            import_enabled: false,
         });
         let down_response = down.call_tool("tally_status", json!({})).await;
         assert!(down_response["structuredContent"]["result"]["error"]["code"].is_string());

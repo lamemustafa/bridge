@@ -45,7 +45,13 @@ byte count, completeness reason, and truncation state. Every call appends a
 metadata-only receipt to `agent-egress.jsonl`; receipt lines never contain
 voucher bodies. Redaction happens before a result reaches the client.
 
-## Voucher-file loop (manual Tally import only)
+## Voucher-file loop (manual Tally import only; disabled by default)
+
+`build_import_xml` and `verify_import` are hidden unless the operator sets
+`BRIDGE_AGENT_ENABLE_IMPORT=1`. No live-Tally import/read-back evidence is
+recorded yet, so enabling this local planning path returns
+`live_evidence: "none_recorded"` and links to `docs/agent/GOAL2-REPORT.md`.
+It must not be described as live-verified.
 
 1. Call `voucher_schema` and produce a payload matching its schema. Transaction
    IDs are client-supplied, unique, and retained in the local import ledger.
@@ -54,7 +60,9 @@ voucher bodies. Redaction happens before a result reaches the client.
 3. Call `build_import_xml` with the payload. It checks exact decimal balance,
    company date extent, live masters, and previously built transaction IDs,
    then writes `<data_dir>/imports/<batch_id>.xml` and records an append-only
-   `agent-import-ledger.jsonl` line.
+   `agent-import-ledger.jsonl` line. `voucher_number` is optional: when absent,
+   Tally applies the voucher type's own numbering configuration; when supplied,
+   it is validated and sent so a Manual-type duplicate policy can reject it.
 4. In Tally, with the intended company open, use **Gateway of Tally → Import →
    Vouchers** to import the file. Bridge does not dispatch this step.
 5. Call `verify_import` with the company GUID and batch ID. It reads the date
@@ -73,7 +81,8 @@ selection, append-only receipts, and no agent import dispatch. Unsupported:
 Tally Cloud Access and every non-loopback Tally host. `changed_since` also
 explicitly does not claim deletion detection from AlterID alone. A
 `posted_verified` result is a readback comparison of the selected date window,
-not a claim that every Tally configuration or licence mode has been qualified.
+not live-Tally qualification or a claim that every Tally configuration or
+licence mode has been qualified.
 
 ## Evidence-shaped outputs
 

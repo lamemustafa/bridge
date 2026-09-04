@@ -3,7 +3,7 @@
   "name": "bridge-tally",
   "display_name": "Bridge Tally",
   "version": "0.2.0",
-  "description": "Read-only, loopback-only Bridge connector for Tally.",
+  "description": "Read-only, loopback-only Bridge connector for Tally; optional local import-file planning is disabled by default and is not live-verified.",
   "server": {
     "type": "binary",
     "entry_point": {

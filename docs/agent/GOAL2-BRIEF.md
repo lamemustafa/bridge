@@ -1,4 +1,7 @@
-# Goal 2 — Verified import, file path (no dispatch to Tally), simulator-tested
+# Goal 2 — Import-file planning path (no dispatch to Tally), simulator-tested
+
+> Historical planning brief: its simulator read-back is not live-Tally import
+> evidence. The connector now hides this path unless `BRIDGE_AGENT_ENABLE_IMPORT=1`.
 
 Same worktree and rules as `docs/agent/GOAL1-BRIEF.md`, branch `feat/agent-connector`. Read `docs/agent/GOAL1-REPORT.md` and `src-tauri/src/agent.rs` first — extend that MCP server. Never edit files listed in `docs/tally/compatibility/compatibility-surface.json`. Never send `<TALLYREQUEST>Import` to any endpoint in this goal; the accountant imports the file manually in Tally (Gateway → Import). Commit as you go; do not push.
 

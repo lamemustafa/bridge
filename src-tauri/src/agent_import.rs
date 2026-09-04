@@ -255,6 +255,8 @@ impl Server {
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                 "batch_id": batch_id, "path": path, "sha256": sha256,
                 "voucher_count": line.vouchers.len(), "total_debit": debit.as_str(), "total_credit": credit.as_str(),
+                "live_evidence": "none_recorded",
+                "live_evidence_report": "docs/agent/GOAL2-REPORT.md",
                 "warnings": ["No XML was sent to Tally. Import the written file manually, then use verify_import."],
                 "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
             }}),
@@ -1160,6 +1162,7 @@ mod tests {
             max_rows: 10,
             max_bytes: 200_000,
             redaction: super::super::Redaction::None,
+            import_enabled: true,
         });
         let line = ImportLedgerLine {
             batch_id: "batch-a".to_string(),
@@ -1395,6 +1398,7 @@ mod tests {
             max_rows: 10,
             max_bytes: 200_000,
             redaction: super::super::Redaction::None,
+            import_enabled: true,
         });
         let built = server
             .build_import_xml(&serde_json::to_value(payload()).expect("json"))
@@ -1404,6 +1408,7 @@ mod tests {
             .as_str()
             .expect("batch id")
             .to_string();
+        assert_eq!(built.0["result"]["live_evidence"], "none_recorded");
         assert!(directory
             .path()
             .join("imports")
