@@ -830,11 +830,10 @@ impl Server {
                         direction == "both" || bill.kind.label().eq_ignore_ascii_case(direction)
                     })
                     .collect::<Vec<_>>();
-                let bill_total = all_bills.len();
-                let bills = all_bills
+                let (bills, bills_truncated, next_bill_offset) =
+                    paginate_open_bills(all_bills, bill_offset, bill_limit);
+                let bills = bills
                     .into_iter()
-                    .skip(bill_offset)
-                    .take(bill_limit)
                     .map(|bill| {
                         redact_value(
                             serde_json::to_value(bill).unwrap_or_default(),
@@ -862,9 +861,8 @@ impl Server {
                         )
                     })
                     .collect::<Vec<_>>();
-                let bills_truncated = page_is_truncated(bill_total, bill_offset, bills.len());
                 (
-                    json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": bills_truncated.then_some(bill_offset + bills.len()), "unallocated":{"count": unallocated.len(), "amount": unallocated_total, "parties": unallocated}}),
+                    json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": next_bill_offset, "unallocated":{"count": unallocated.len(), "amount": unallocated_total, "parties": unallocated}}),
                     bills_truncated,
                 )
             }
@@ -1136,6 +1134,22 @@ fn page_length_after_offset(total: usize, offset: usize, limit: usize) -> usize 
 
 fn page_is_truncated(total: usize, offset: usize, page_len: usize) -> bool {
     offset.saturating_add(page_len) < total
+}
+
+fn paginate_open_bills<T>(
+    bills: Vec<T>,
+    offset: usize,
+    limit: usize,
+) -> (Vec<T>, bool, Option<usize>) {
+    let total = bills.len();
+    let page = bills
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect::<Vec<_>>();
+    let truncated = page_is_truncated(total, offset, page.len());
+    let next_offset = truncated.then_some(offset + page.len());
+    (page, truncated, next_offset)
 }
 
 fn window_honoured(rows: &[Value], from: &str, to: &str) -> bool {
@@ -1973,9 +1987,16 @@ mod tests {
 
     #[test]
     fn open_bill_paging_marks_remaining_rows_and_returns_a_cursor() {
-        assert!(page_is_truncated(3, 0, 2));
-        assert_eq!(0 + 2, 2);
-        assert!(!page_is_truncated(3, 2, 1));
+        let (page, truncated, next_offset) = paginate_open_bills(vec!["a", "b", "c"], 0, 2);
+        assert_eq!(page, vec!["a", "b"]);
+        assert!(truncated);
+        assert_eq!(next_offset, Some(2));
+
+        let (last_page, last_truncated, last_next_offset) =
+            paginate_open_bills(vec!["a", "b", "c"], 2, 2);
+        assert_eq!(last_page, vec!["c"]);
+        assert!(!last_truncated);
+        assert_eq!(last_next_offset, None);
     }
 
     #[test]
