@@ -37,6 +37,8 @@ struct ImportVoucher {
     narration: Option<String>,
     #[serde(default)]
     reference: Option<String>,
+    #[serde(default)]
+    voucher_number: Option<String>,
     entries: Vec<ImportEntry>,
 }
 
@@ -443,7 +445,7 @@ impl Server {
 pub(super) fn voucher_input_schema() -> Value {
     json!({"type":"object", "additionalProperties":false, "required":["company_guid","vouchers"], "properties": {
         "company_guid":{"type":"string","minLength":1}, "vouchers":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["bridge_txn_id","date","voucher_type","entries"],"properties": {
-        "bridge_txn_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}, "date":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}, "voucher_type":{"enum":["Payment","Receipt","Journal","Contra"]}, "narration":{"type":"string"}, "reference":{"type":"string"}, "entries":{"type":"array","minItems":2,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount","side"],"properties":{"ledger":{"type":"string","minLength":1},"amount":{"type":"string","pattern":"^\\d+\\.\\d{2}$"},"side":{"enum":["Dr","Cr"]}}}} }}} }})
+        "bridge_txn_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}, "date":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}, "voucher_type":{"enum":["Payment","Receipt","Journal","Contra"]}, "narration":{"type":"string"}, "reference":{"type":"string"}, "voucher_number":{"type":"string","minLength":1,"maxLength":32}, "entries":{"type":"array","minItems":2,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount","side"],"properties":{"ledger":{"type":"string","minLength":1},"amount":{"type":"string","pattern":"^\\d+\\.\\d{2}$"},"side":{"enum":["Dr","Cr"]}}}} }}} }})
 }
 
 fn parse_payload(args: &Value) -> Result<ImportPayload, String> {
@@ -498,14 +500,25 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         if voucher.entries.len() < 2 {
             return Err("voucher_entries_too_few".to_string());
         }
-        for text in [voucher.narration.as_deref(), voucher.reference.as_deref()]
-            .into_iter()
-            .flatten()
+        for text in [
+            voucher.narration.as_deref(),
+            voucher.reference.as_deref(),
+            voucher.voucher_number.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             if text.is_empty() || text.len() > MAX_TEXT_BYTES || text.chars().any(char::is_control)
             {
                 return Err("voucher_text_invalid".to_string());
             }
+        }
+        if voucher
+            .voucher_number
+            .as_deref()
+            .is_some_and(|number| number.len() > 32 || number.contains('$'))
+        {
+            return Err("voucher_number_invalid".to_string());
         }
         for entry in &voucher.entries {
             if entry.ledger.trim().is_empty()
@@ -676,11 +689,16 @@ fn render_voucher_xml(voucher: &ImportVoucher) -> String {
         .as_deref()
         .map(|value| format!("<REFERENCE>{}</REFERENCE>", xml_escape(value)))
         .unwrap_or_default();
+    let voucher_number = voucher
+        .voucher_number
+        .as_deref()
+        .map(|value| format!("<VOUCHERNUMBER>{}</VOUCHERNUMBER>", xml_escape(value)))
+        .unwrap_or_default();
     let entries = voucher.entries.iter().map(|entry| {
         let amount = match entry.side { EntrySide::Dr => format!("-{}", entry.amount), EntrySide::Cr => entry.amount.clone() };
         format!("<ALLLEDGERENTRIES.LIST><LEDGERNAME>{}</LEDGERNAME><ISDEEMEDPOSITIVE>{}</ISDEEMEDPOSITIVE><AMOUNT>{}</AMOUNT></ALLLEDGERENTRIES.LIST>", xml_escape(&entry.ledger), entry.side.tally_positive(), amount)
     }).collect::<String>();
-    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{}</DATE><VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", xml_escape(&voucher.bridge_txn_id), voucher.voucher_type.as_str(), normalized_date(&voucher.date).unwrap_or_default(), voucher.voucher_type.as_str())
+    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{}</DATE><VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", xml_escape(&voucher.bridge_txn_id), voucher.voucher_type.as_str(), normalized_date(&voucher.date).unwrap_or_default(), voucher.voucher_type.as_str())
 }
 
 fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
@@ -937,6 +955,11 @@ fn voucher_diffs(expected: &ImportVoucher, actual: &ReadVoucher) -> Vec<Value> {
     }
     if actual.voucher_type.as_deref() != Some(expected.voucher_type.as_str()) {
         diffs.push(json!("voucher_type"));
+    }
+    if expected.voucher_number.is_some()
+        && actual.voucher_number.as_deref() != expected.voucher_number.as_deref()
+    {
+        diffs.push(json!("voucher_number"));
     }
     let expected_entries = expected_entry_fingerprint(expected);
     let actual_entries = actual_entry_fingerprint(actual);
@@ -1304,6 +1327,20 @@ mod tests {
             Some("Party & Co <quoted> \"name\" &")
         );
         assert_eq!(observed[0].entries[0].ledger, "R&D <Lab> \"A\" &");
+    }
+
+    #[test]
+    fn optional_voucher_number_is_rendered_only_when_valid_and_supplied() {
+        let mut input = payload();
+        input.vouchers[0].voucher_number = Some("PV-0001".to_string());
+        let rendered = render_import_xml("Book", &input.vouchers);
+        assert!(rendered.contains("<VOUCHERNUMBER>PV-0001</VOUCHERNUMBER>"));
+        assert_eq!(rendered.matches("<VOUCHERNUMBER>").count(), 1);
+        input.vouchers[0].voucher_number = Some("bad$number".to_string());
+        assert_eq!(
+            validate_payload(&input),
+            Err("voucher_number_invalid".to_string())
+        );
     }
 
     #[test]
