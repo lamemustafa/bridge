@@ -923,7 +923,12 @@ impl Server {
             .map_err(|_| "ledger_movement_read_failed".to_string())?;
         let pre_window = balance_affecting_vouchers(pre_window)?;
         let vouchers = balance_affecting_vouchers(vouchers)?;
-        let selected = arg_string(args, "ledger");
+        let selected = arg_string(args, "ledger")
+            .map(|name| {
+                matching_ledger_name(ledgers.iter().map(|ledger| ledger.name.as_str()), &name)
+                    .ok_or_else(|| "ledger_not_found".to_string())
+            })
+            .transpose()?;
         let mut movement = BTreeMap::<
             String,
             (
@@ -1130,6 +1135,24 @@ fn ledger_fields_returned(compliance: bool) -> Vec<String> {
     } else {
         vec!["name".into(), "parent".into(), "opening_balance".into()]
     }
+}
+
+fn ledger_lookup_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn matching_ledger_name<'a>(
+    mut ledger_names: impl Iterator<Item = &'a str>,
+    requested: &str,
+) -> Option<String> {
+    let requested = ledger_lookup_key(requested);
+    ledger_names
+        .find(|name| ledger_lookup_key(name) == requested)
+        .map(str::to_string)
 }
 
 fn read_egress_tail(path: &Path, take: usize) -> Result<Vec<String>, String> {
@@ -2017,6 +2040,19 @@ mod tests {
                 "party_gstin",
                 "compliance"
             ]
+        );
+    }
+
+    #[test]
+    fn ledger_lookup_normalizes_separators_and_refuses_absent_ledgers() {
+        let names = ["Bank Charges", "Sales-Ledger"];
+        assert_eq!(
+            matching_ledger_name(names.into_iter(), "bank_charges"),
+            Some("Bank Charges".to_string())
+        );
+        assert_eq!(
+            matching_ledger_name(names.into_iter(), "missing ledger"),
+            None
         );
     }
 
