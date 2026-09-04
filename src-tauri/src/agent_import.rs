@@ -86,6 +86,8 @@ struct ImportEntry {
 struct ImportLedgerLine {
     batch_id: String,
     company_guid: String,
+    #[serde(default)]
+    company: Option<ImportCompanyTuple>,
     txn_ids: Vec<String>,
     date_from: String,
     date_to: String,
@@ -94,6 +96,14 @@ struct ImportLedgerLine {
     status: String,
     pre_import_mark: PreImportMark,
     vouchers: Vec<ImportVoucher>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct ImportCompanyTuple {
+    name: String,
+    guid: String,
+    company_number: String,
+    books_from: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -219,6 +229,7 @@ impl Server {
         let line = ImportLedgerLine {
             batch_id: batch_id.clone(),
             company_guid: payload.company_guid.clone(),
+            company: Some(import_company_tuple(&company)?),
             txn_ids: payload
                 .vouchers
                 .iter()
@@ -264,6 +275,9 @@ impl Server {
             return Err("import_batch_company_mismatch".to_string());
         }
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
+        if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
+            return Err("company_identity_mismatch".to_string());
+        }
         let request =
             render_import_verification_read(&company.name, &line.date_from, &line.date_to);
         let (xml, evidence) = self.post_read(&identity, request).await?;
@@ -428,6 +442,38 @@ pub(super) fn voucher_input_schema() -> Value {
 
 fn parse_payload(args: &Value) -> Result<ImportPayload, String> {
     serde_json::from_value(args.clone()).map_err(|_| "voucher_schema_invalid".to_string())
+}
+
+fn import_company_tuple(
+    company: &bridge_tally_protocol::TallyCompany,
+) -> Result<ImportCompanyTuple, String> {
+    Ok(ImportCompanyTuple {
+        name: nonempty_company_field(&company.name)?,
+        guid: nonempty_company_field(
+            company
+                .guid
+                .as_deref()
+                .ok_or_else(|| "company_identity_incomplete".to_string())?,
+        )?,
+        company_number: nonempty_company_field(
+            company
+                .company_number
+                .as_deref()
+                .ok_or_else(|| "company_identity_incomplete".to_string())?,
+        )?,
+        books_from: normalized_date(
+            company
+                .books_from
+                .as_deref()
+                .ok_or_else(|| "company_identity_incomplete".to_string())?,
+        )?,
+    })
+}
+
+fn nonempty_company_field(value: &str) -> Result<String, String> {
+    (!value.trim().is_empty())
+        .then(|| value.to_string())
+        .ok_or_else(|| "company_identity_incomplete".to_string())
 }
 
 fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
@@ -1070,6 +1116,7 @@ mod tests {
         let line = ImportLedgerLine {
             batch_id: "batch-a".to_string(),
             company_guid: GUID.to_string(),
+            company: None,
             txn_ids: vec!["txn-001".to_string()],
             date_from: "2026-09-01".to_string(),
             date_to: "2026-09-01".to_string(),
@@ -1092,6 +1139,7 @@ mod tests {
         let line = ImportLedgerLine {
             batch_id: "batch-b".to_string(),
             company_guid: GUID.to_string(),
+            company: None,
             txn_ids: input
                 .vouchers
                 .iter()
@@ -1177,6 +1225,19 @@ mod tests {
             Some("Party & Co <quoted> \"name\" &")
         );
         assert_eq!(observed[0].entries[0].ledger, "R&D <Lab> \"A\" &");
+    }
+
+    #[test]
+    fn batch_company_tuple_rejects_a_same_guid_different_book() {
+        let company = |books_from: &str| bridge_tally_protocol::TallyCompany {
+            name: "Bridge Book".to_string(),
+            guid: Some(GUID.to_string()),
+            company_number: Some("1".to_string()),
+            books_from: Some(books_from.to_string()),
+        };
+        let original = import_company_tuple(&company("20260401")).expect("complete tuple");
+        let different_book = import_company_tuple(&company("20270401")).expect("complete tuple");
+        assert_ne!(original, different_book);
     }
 
     #[tokio::test]
