@@ -553,8 +553,8 @@ impl Server {
         if let Some(group) = arg_string(args, "group") {
             ledgers.retain(|ledger| ledger["parent"].as_str() == Some(group.as_str()));
         }
-        let offset = arg_usize(args, "offset", 0);
-        let limit = arg_usize(args, "limit", self.settings.max_rows).min(self.settings.max_rows);
+        let offset = arg_usize(args, "offset", 0)?;
+        let limit = arg_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
         let total = ledgers.len();
         let page = ledgers
             .into_iter()
@@ -624,8 +624,8 @@ impl Server {
         if let Some(kind) = arg_string(args, "voucher_type") {
             rows.retain(|row| row.get("voucher_type") == Some(&Value::String(kind.clone())));
         }
-        let offset = arg_usize(args, "offset", 0);
-        let limit = arg_usize(args, "limit", self.settings.max_rows).min(self.settings.max_rows);
+        let offset = arg_usize(args, "offset", 0)?;
+        let limit = arg_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
         let total = rows.len();
         let items = rows
             .into_iter()
@@ -804,10 +804,10 @@ impl Server {
             .fetch_outstandings(self.tally_config(), &identity, to, assertion, ageing_anchor)
             .await
             .map_err(|_| "native_outstandings_read_failed".to_string())?;
-        let top = arg_usize(args, "top", 25).min(self.settings.max_rows);
-        let bill_offset = arg_usize(args, "offset", 0);
+        let top = arg_usize(args, "top", 25)?.min(self.settings.max_rows);
+        let bill_offset = arg_usize(args, "offset", 0)?;
         let bill_limit =
-            arg_usize(args, "limit", self.settings.max_rows).min(self.settings.max_rows);
+            arg_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
         let mut result_evidence = identity_evidence;
         let (result, bills_truncated) = match load {
             OutstandingsLoadResult::Complete {
@@ -1017,7 +1017,7 @@ impl Server {
     }
 
     fn read_evidence(&self, args: &Value) -> Result<ToolOutcome, String> {
-        let take = arg_usize(args, "limit", 20).min(MAX_EVIDENCE_RECORDS);
+        let take = arg_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
         let records = self
             .evidence
             .lock()
@@ -1046,7 +1046,7 @@ impl Server {
     }
 
     fn egress_log(&self, args: &Value) -> Result<ToolOutcome, String> {
-        let take = arg_usize(args, "limit", 20).min(MAX_EVIDENCE_RECORDS);
+        let take = arg_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
         let path = self.settings.data_dir.join("agent-egress.jsonl");
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
@@ -1273,11 +1273,15 @@ fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| format!("{key}_required"))
 }
-fn arg_usize(args: &Value, key: &str, default: usize) -> usize {
-    args.get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(default)
+fn arg_usize(args: &Value, key: &str, default: usize) -> Result<usize, String> {
+    match args.get(key) {
+        None => Ok(default),
+        Some(Value::Number(value)) => value
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| "pagination_invalid".to_string()),
+        Some(_) => Err("pagination_invalid".to_string()),
+    }
 }
 fn normalized_date(value: &str) -> Result<String, String> {
     let value = value.replace('-', "");
@@ -1913,6 +1917,35 @@ mod tests {
         assert_eq!(
             Redaction::parse("mask_everything"),
             Err("redaction_setting_invalid".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn pagination_rejects_present_invalid_values_in_helpers_and_row_tools() {
+        assert_eq!(arg_usize(&json!({}), "limit", 20), Ok(20));
+        for value in [json!(-1), json!(1.5), json!("10")] {
+            assert_eq!(
+                arg_usize(&json!({"limit": value}), "limit", 20),
+                Err("pagination_invalid".to_string())
+            );
+        }
+
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+        });
+        let response = server.call_tool("egress_log", json!({"limit": "10"})).await;
+        assert_eq!(
+            response["structuredContent"]["result"]["error"]["code"],
+            "pagination_invalid"
         );
     }
 
