@@ -296,6 +296,7 @@ impl Server {
             "built_at": line.built_at, "verified_at": now(),
             "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed),
             "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
+            "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
             "evidence": {"company": identity_evidence, "voucher_read": evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
         });
         let imports = self.imports_dir()?;
@@ -309,14 +310,7 @@ impl Server {
             &imports.join(format!("{batch_id}.proof.md")),
             render_proof_markdown(&proof).as_bytes(),
         )?;
-        let status = if result["counts"]["posted_verified"].as_u64()
-            == Some(line.vouchers.len() as u64)
-            && result["duplicates"].as_array().is_some_and(Vec::is_empty)
-        {
-            "posted_verified"
-        } else {
-            "verification_incomplete"
-        };
+        let status = verification_status(&result, line.vouchers.len());
         let mut update = line.clone();
         update.status = status.to_string();
         self.append_import_ledger(&update)?;
@@ -930,7 +924,46 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Value {
         };
         rows.push(value);
     }
-    json!({"counts":counts,"vouchers":rows,"duplicates":duplicates(observed)})
+    let (batch_duplicates, unrelated_duplicates_in_window) = batch_duplicate_sets(line, observed);
+    json!({"counts":counts,"vouchers":rows,"duplicates":batch_duplicates,"unrelated_duplicates_in_window":unrelated_duplicates_in_window})
+}
+
+fn verification_status(result: &Value, expected_voucher_count: usize) -> &'static str {
+    if result["counts"]["posted_verified"].as_u64() == Some(expected_voucher_count as u64)
+        && result["duplicates"].as_array().is_some_and(Vec::is_empty)
+    {
+        "posted_verified"
+    } else {
+        "verification_incomplete"
+    }
+}
+
+fn batch_duplicate_sets(
+    line: &ImportLedgerLine,
+    observed: &[ReadVoucher],
+) -> (Vec<Value>, Vec<Value>) {
+    let all_duplicates = duplicates(observed);
+    let batch_vouchers = observed
+        .iter()
+        .filter(|voucher| voucher_belongs_to_batch(line, voucher))
+        .cloned()
+        .collect::<Vec<_>>();
+    let batch_duplicates = duplicates(&batch_vouchers);
+    let unrelated = all_duplicates
+        .into_iter()
+        .filter(|duplicate| !batch_duplicates.contains(duplicate))
+        .collect();
+    (batch_duplicates, unrelated)
+}
+
+fn voucher_belongs_to_batch(line: &ImportLedgerLine, voucher: &ReadVoucher) -> bool {
+    line.vouchers.iter().any(|expected| {
+        voucher.narration.as_deref().is_some_and(|narration| {
+            narration.contains(&format!("[BRIDGE:{}]", expected.bridge_txn_id))
+        }) || (voucher.date.as_deref() == normalized_date(&expected.date).ok().as_deref()
+            && voucher.voucher_type.as_deref() == Some(expected.voucher_type.as_str())
+            && actual_entry_fingerprint(voucher) == expected_entry_fingerprint(expected))
+    })
 }
 
 fn voucher_diffs(expected: &ImportVoucher, actual: &ReadVoucher) -> Vec<Value> {
@@ -1036,7 +1069,7 @@ fn alter_id_delta(mark: &PreImportMark, observed: &[ReadVoucher]) -> Value {
 }
 
 fn render_proof_markdown(proof: &Value) -> String {
-    let mut output = format!("# Proof-of-Post — {}\n\n- Company: `{}`\n- Batch SHA-256: `{}`\n- Verified: `{}`\n- Counts: verified {}, divergent {}, not found {}\n- AlterID delta: `{}`\n\n| Transaction | Status |\n| --- | --- |\n", proof["batch_id"].as_str().unwrap_or("unknown"), proof["company"]["name"].as_str().unwrap_or("unknown"), proof["batch_sha256"].as_str().unwrap_or("unknown"), proof["verified_at"].as_str().unwrap_or("unknown"), proof["counts"]["posted_verified"], proof["counts"]["posted_divergent"], proof["counts"]["not_found"], proof["alter_id_delta"]);
+    let mut output = format!("# Proof-of-Post — {}\n\n- Company: `{}`\n- Batch SHA-256: `{}`\n- Verified: `{}`\n- Counts: verified {}, divergent {}, not found {}\n- AlterID delta: `{}`\n- Unrelated duplicates in window: {}\n\n| Transaction | Status |\n| --- | --- |\n", proof["batch_id"].as_str().unwrap_or("unknown"), proof["company"]["name"].as_str().unwrap_or("unknown"), proof["batch_sha256"].as_str().unwrap_or("unknown"), proof["verified_at"].as_str().unwrap_or("unknown"), proof["counts"]["posted_verified"], proof["counts"]["posted_divergent"], proof["counts"]["not_found"], proof["alter_id_delta"], proof["unrelated_duplicates_in_window"].as_array().map_or(0, Vec::len));
     for row in proof["vouchers"].as_array().into_iter().flatten() {
         output.push_str(&format!(
             "| {} | {} |\n",
@@ -1264,6 +1297,80 @@ mod tests {
         assert_eq!(
             parse_import_vouchers("<ENVELOPE><BODY><RESPONSE>error</RESPONSE></BODY></ENVELOPE>"),
             Err("import_verification_protocol_invalid".to_string())
+        );
+    }
+
+    #[test]
+    fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
+        let input = payload();
+        let line = ImportLedgerLine {
+            batch_id: "batch-unrelated".to_string(),
+            company_guid: GUID.to_string(),
+            company: None,
+            txn_ids: vec!["txn-001".to_string()],
+            date_from: "20260901".to_string(),
+            date_to: "20260901".to_string(),
+            sha256: "hash".to_string(),
+            built_at: now(),
+            status: "built".to_string(),
+            pre_import_mark: PreImportMark {
+                kind: "company_high_water".to_string(),
+                value: Some(10),
+                master_value: Some(7),
+            },
+            vouchers: vec![input.vouchers[0].clone()],
+        };
+        let expected = &line.vouchers[0];
+        let posted = ReadVoucher {
+            remote_id: Some("posted-1".to_string()),
+            guid: Some("posted-guid".to_string()),
+            alter_id: Some(11),
+            date: Some("20260901".to_string()),
+            voucher_type: Some("Payment".to_string()),
+            narration: Some("[BRIDGE:txn-001]".to_string()),
+            voucher_number: None,
+            master_id: None,
+            entries: vec![
+                ReadEntry {
+                    ledger: "Expense".to_string(),
+                    amount: "-12.50".to_string(),
+                    is_deemed_positive: "Yes".to_string(),
+                },
+                ReadEntry {
+                    ledger: "Bank".to_string(),
+                    amount: "12.50".to_string(),
+                    is_deemed_positive: "No".to_string(),
+                },
+            ],
+        };
+        assert_eq!(expected.bridge_txn_id, "txn-001");
+        let unrelated = |guid: &str| ReadVoucher {
+            remote_id: Some("unrelated-duplicate".to_string()),
+            guid: Some(guid.to_string()),
+            alter_id: Some(3),
+            date: Some("20260901".to_string()),
+            voucher_type: Some("Journal".to_string()),
+            narration: None,
+            voucher_number: None,
+            master_id: None,
+            entries: vec![ReadEntry {
+                ledger: "Unrelated".to_string(),
+                amount: "1.00".to_string(),
+                is_deemed_positive: "No".to_string(),
+            }],
+        };
+        let result = verify_batch(&line, &[posted, unrelated("u-1"), unrelated("u-2")]);
+        assert_eq!(result["counts"]["posted_verified"], 1);
+        assert!(result["duplicates"].as_array().is_some_and(Vec::is_empty));
+        assert_eq!(
+            result["unrelated_duplicates_in_window"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            verification_status(&result, line.vouchers.len()),
+            "posted_verified"
         );
     }
 
