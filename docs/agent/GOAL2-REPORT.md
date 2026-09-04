@@ -1,4 +1,8 @@
-# Goal 2 report — verified voucher-file import
+# Goal 2 report — historical voucher-file import work (not live-verified)
+
+> Status superseded by Goal 6: this report describes synthetic/local
+> voucher-file generation and readback behavior. It records no live-Tally
+> import/read-back evidence and must not be used to claim live verification.
 
 ## Delivered
 
