@@ -1,6 +1,7 @@
 use super::{
-    combine_evidence, company_json, normalized_date, required_string, sha256_hex, sha256_json,
-    Evidence, Server, ToolOutcome,
+    combine_evidence, company_json, normalized_date, parse_company_high_water,
+    render_agent_company_high_water, required_string, sha256_hex, sha256_json, Evidence, Server,
+    ToolOutcome,
 };
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::parse_ledgers;
@@ -108,7 +109,7 @@ struct ImportCompanyTuple {
     books_from: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct PreImportMark {
     kind: String,
     value: Option<u64>,
@@ -354,34 +355,16 @@ impl Server {
         company: &bridge_tally_protocol::TallyCompany,
         identity: &super::VerifiedCompanyIdentity,
     ) -> Result<(PreImportMark, Evidence), String> {
-        let from = normalized_date(
-            company
-                .books_from
-                .as_deref()
-                .ok_or_else(|| "company_identity_incomplete".to_string())?,
-        )?;
-        let to = super::tally_host_today();
+        let guid = company
+            .guid
+            .as_deref()
+            .ok_or_else(|| "pre_import_mark_unobserved".to_string())?;
         let (xml, evidence) = self
-            .post_read(
-                identity,
-                render_import_verification_read(&company.name, &from, &to),
-            )
+            .post_read(identity, render_agent_company_high_water(&company.name))
             .await?;
-        let latest = parse_import_vouchers(&xml)?
-            .into_iter()
-            .filter_map(|voucher| voucher.alter_id)
-            .max();
-        Ok((
-            PreImportMark {
-                kind: "latest_voucher_alterid_seen".to_string(),
-                value: latest,
-                // This importer has no master-mutating operation. Persist the
-                // master axis explicitly as unobserved rather than inventing a
-                // high-water value from a voucher scan.
-                master_value: None,
-            },
-            evidence,
-        ))
+        let high_water = parse_company_high_water(&xml, guid)
+            .map_err(|_| "pre_import_mark_unobserved".to_string())?;
+        Ok((company_high_water_mark(&high_water)?, evidence))
     }
 
     fn imports_dir(&self) -> Result<PathBuf, String> {
@@ -1027,6 +1010,21 @@ fn duplicates(observed: &[ReadVoucher]) -> Vec<Value> {
     result.extend(fingerprints.into_iter().filter(|(_, ids)| ids.len() > 1).map(|(fingerprint, ids)| json!({"kind":"accounting_fingerprint","fingerprint":fingerprint,"remote_ids":ids})));
     result
 }
+
+fn company_high_water_mark(high_water: &Value) -> Result<PreImportMark, String> {
+    let voucher = high_water["altvchid"]
+        .as_u64()
+        .ok_or_else(|| "pre_import_mark_unobserved".to_string())?;
+    let master = high_water["altmstid"]
+        .as_u64()
+        .ok_or_else(|| "pre_import_mark_unobserved".to_string())?;
+    Ok(PreImportMark {
+        kind: "company_high_water".to_string(),
+        value: Some(voucher),
+        master_value: Some(master),
+    })
+}
+
 fn alter_id_delta(mark: &PreImportMark, observed: &[ReadVoucher]) -> Value {
     let latest = observed.iter().filter_map(|voucher| voucher.alter_id).max();
     match (mark.value, latest) {
@@ -1283,7 +1281,7 @@ mod tests {
             built_at: now(),
             status: "built".to_string(),
             pre_import_mark: PreImportMark {
-                kind: "latest_voucher_alterid_seen".to_string(),
+                kind: "company_high_water".to_string(),
                 value: Some(10),
                 master_value: Some(10),
             },
@@ -1319,6 +1317,19 @@ mod tests {
             verify_batch(&line, &[observed(11)])["vouchers"][0]["status"],
             "posted_verified"
         );
+    }
+
+    #[test]
+    fn company_high_water_mark_refuses_voucher_scan_shapes_and_preserves_attribution_boundary() {
+        assert_eq!(
+            company_high_water_mark(&json!({"vouchers":[{"alter_id":999}]})),
+            Err("pre_import_mark_unobserved".to_string())
+        );
+        let mark = company_high_water_mark(&json!({"altvchid":10,"altmstid":7}))
+            .expect("company high water");
+        assert_eq!(mark.kind, "company_high_water");
+        assert_eq!(mark.value, Some(10));
+        assert_eq!(mark.master_value, Some(7));
     }
 
     #[test]
@@ -1363,7 +1374,7 @@ mod tests {
     async fn simulator_build_then_manual_import_readback_verifies_every_voucher() {
         let company = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SYNTHETIC BOOK\"><GUID>{GUID}</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
         let ledgers = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COMPANYCONTEXT><SCHEMA>bridge.tally.ledgers/1</SCHEMA><OBJECTTYPE>LEDGER</OBJECTTYPE><NAME>BRIDGE SYNTHETIC BOOK</NAME><GUID>{GUID}</GUID><RECORDCOUNT>3</RECORDCOUNT></COMPANYCONTEXT><COLLECTION><LEDGER NAME=\"Expense\" GUID=\"{GUID}-00000001\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER><LEDGER NAME=\"Bank\" GUID=\"{GUID}-00000002\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER><LEDGER NAME=\"Income\" GUID=\"{GUID}-00000003\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>");
-        let premark = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>".to_string();
+        let premark = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>{GUID}</GUID><ALTVCHID>10</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
         let readback = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER REMOTEID=\"tally-assigned-1\"><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>g-1</GUID><MASTERID>1</MASTERID><ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER REMOTEID=\"tally-assigned-2\"><DATE>20260902</DATE><VOUCHERNUMBER>RV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><GUID>g-2</GUID><MASTERID>2</MASTERID><ALTERID>13</ALTERID><NARRATION>[BRIDGE:txn-002]</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Income</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>".to_string();
         let simulator = SequenceSimulator::spawn(
             vec![
