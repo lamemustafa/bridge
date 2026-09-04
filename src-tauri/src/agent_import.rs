@@ -110,6 +110,8 @@ struct ImportCompanyTuple {
 struct PreImportMark {
     kind: String,
     value: Option<u64>,
+    #[serde(default)]
+    master_value: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -365,12 +367,23 @@ impl Server {
             .into_iter()
             .filter_map(|voucher| voucher.alter_id)
             .max();
+        let (master_xml, master_evidence) = self
+            .post_read(
+                identity,
+                super::render_agent_changed_masters(&company.name, 0),
+            )
+            .await?;
+        let master_value = super::parse_agent_changed_masters(&master_xml)?
+            .iter()
+            .filter_map(|master| master["alter_id"].as_u64())
+            .max();
         Ok((
             PreImportMark {
                 kind: "latest_voucher_alterid_seen".to_string(),
                 value: latest,
+                master_value,
             },
-            evidence,
+            combine_evidence(evidence, master_evidence),
         ))
     }
 
@@ -1145,6 +1158,7 @@ mod tests {
             pre_import_mark: PreImportMark {
                 kind: "latest_voucher_alterid_seen".to_string(),
                 value: Some(4),
+                master_value: Some(4),
             },
             vouchers: vec![input.vouchers[0].clone()],
         };
@@ -1172,6 +1186,7 @@ mod tests {
             pre_import_mark: PreImportMark {
                 kind: "latest_voucher_alterid_seen".to_string(),
                 value: Some(10),
+                master_value: Some(10),
             },
             vouchers: input.vouchers,
         };
@@ -1251,6 +1266,7 @@ mod tests {
             pre_import_mark: PreImportMark {
                 kind: "latest_voucher_alterid_seen".to_string(),
                 value: Some(10),
+                master_value: Some(10),
             },
             vouchers: vec![input.vouchers[0].clone()],
         };
