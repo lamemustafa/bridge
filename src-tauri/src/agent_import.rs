@@ -946,9 +946,28 @@ fn batch_duplicate_sets(
     let batch_vouchers = observed
         .iter()
         .filter(|voucher| voucher_belongs_to_batch(line, voucher))
+        .collect::<Vec<_>>();
+    let batch_remote_ids = batch_vouchers
+        .iter()
+        .filter_map(|voucher| voucher.remote_id.as_deref())
+        .collect::<BTreeSet<_>>();
+    let batch_fingerprints = batch_vouchers
+        .iter()
+        .map(|voucher| voucher_fingerprint_key(voucher))
+        .collect::<BTreeSet<_>>();
+    let batch_duplicates = all_duplicates
+        .iter()
+        .filter(|duplicate| match duplicate["kind"].as_str() {
+            Some("remote_id") => duplicate["remote_id"]
+                .as_str()
+                .is_some_and(|id| batch_remote_ids.contains(id)),
+            Some("accounting_fingerprint") => duplicate["fingerprint"]
+                .as_str()
+                .is_some_and(|fingerprint| batch_fingerprints.contains(fingerprint)),
+            _ => false,
+        })
         .cloned()
         .collect::<Vec<_>>();
-    let batch_duplicates = duplicates(&batch_vouchers);
     let unrelated = all_duplicates
         .into_iter()
         .filter(|duplicate| !batch_duplicates.contains(duplicate))
@@ -1020,18 +1039,23 @@ fn actual_entry_fingerprint(voucher: &ReadVoucher) -> Vec<String> {
     result.sort();
     result
 }
+
+fn voucher_fingerprint_key(voucher: &ReadVoucher) -> String {
+    format!(
+        "{}|{}|{}",
+        voucher.date.as_deref().unwrap_or(""),
+        voucher.voucher_type.as_deref().unwrap_or(""),
+        actual_entry_fingerprint(voucher).join(",")
+    )
+}
+
 fn duplicates(observed: &[ReadVoucher]) -> Vec<Value> {
     let mut remote = BTreeMap::<String, usize>::new();
     let mut fingerprints = BTreeMap::<String, BTreeSet<String>>::new();
     for voucher in observed {
         if let Some(id) = &voucher.remote_id {
             *remote.entry(id.clone()).or_default() += 1;
-            let key = format!(
-                "{}|{}|{}",
-                voucher.date.as_deref().unwrap_or(""),
-                voucher.voucher_type.as_deref().unwrap_or(""),
-                actual_entry_fingerprint(voucher).join(",")
-            );
+            let key = voucher_fingerprint_key(voucher);
             fingerprints.entry(key).or_default().insert(id.clone());
         }
     }
