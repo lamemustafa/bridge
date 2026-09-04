@@ -574,6 +574,25 @@ impl Server {
         )?;
         let (xml, evidence) = self.post_read(&identity, request).await?;
         let mut rows = parse_agent_rows(&xml)?;
+        if !window_honoured(&rows, &from, &to) {
+            return Err("window_not_honoured".to_string());
+        }
+        if rows.is_empty() {
+            let (wider_from, wider_to) = widened_window(&from, &to)?;
+            let wider_request = render_agent_vouchers(
+                &company.name,
+                &wider_from,
+                &wider_to,
+                arg_string(args, "voucher_type"),
+                arg_string(args, "ledger"),
+                None,
+            )?;
+            let (wider_xml, _) = self.post_read(&identity, wider_request).await?;
+            let wider_rows = parse_agent_rows(&wider_xml)?;
+            if !window_honoured(&wider_rows, &wider_from, &wider_to) {
+                return Err("empty_uncorroborated".to_string());
+            }
+        }
         if let Some(kind) = arg_string(args, "voucher_type") {
             rows.retain(|row| row.get("voucher_type") == Some(&Value::String(kind.clone())));
         }
@@ -1031,6 +1050,29 @@ fn balance_affecting_vouchers(
 
 fn page_length_after_offset(total: usize, offset: usize, limit: usize) -> usize {
     total.saturating_sub(offset).min(limit)
+}
+
+fn window_honoured(rows: &[Value], from: &str, to: &str) -> bool {
+    rows.iter().all(|row| {
+        row.get("date")
+            .and_then(Value::as_str)
+            .is_some_and(|date| date >= from && date <= to)
+    })
+}
+
+fn widened_window(from: &str, to: &str) -> Result<(String, String), String> {
+    let from = NaiveDate::parse_from_str(from, "%Y%m%d").map_err(|_| "invalid_date".to_string())?;
+    let to = NaiveDate::parse_from_str(to, "%Y%m%d").map_err(|_| "invalid_date".to_string())?;
+    Ok((
+        from.checked_sub_signed(Duration::days(1))
+            .ok_or_else(|| "empty_uncorroborated".to_string())?
+            .format("%Y%m%d")
+            .to_string(),
+        to.checked_add_signed(Duration::days(1))
+            .ok_or_else(|| "empty_uncorroborated".to_string())?
+            .format("%Y%m%d")
+            .to_string(),
+    ))
 }
 
 /// Tally is local to the Bridge host; accounting-day defaults therefore use
@@ -1774,6 +1816,20 @@ mod tests {
             .single()
             .expect("local timestamp");
         assert_eq!(format_tally_date(local), "20260905");
+    }
+
+    #[test]
+    fn voucher_window_rejects_out_of_range_rows_and_requires_a_wider_empty_check() {
+        assert!(!window_honoured(
+            &[json!({"date":"20260915"})],
+            "20260901",
+            "20260902"
+        ));
+        assert!(window_honoured(&[], "20260901", "20260902"));
+        assert_eq!(
+            widened_window("20260901", "20260902"),
+            Ok(("20260831".to_string(), "20260903".to_string()))
+        );
     }
 
     #[tokio::test]
