@@ -40,10 +40,14 @@ enum Redaction {
 impl Redaction {
     fn from_env() -> Result<Self, String> {
         match env::var("BRIDGE_AGENT_REDACTION") {
-            Ok(value) => Self::parse(&value),
-            Err(env::VarError::NotPresent) => Ok(Self::None),
+            Ok(value) => Self::from_setting(Some(&value)),
+            Err(env::VarError::NotPresent) => Self::from_setting(None),
             Err(_) => Err("redaction_setting_invalid".to_string()),
         }
+    }
+
+    fn from_setting(value: Option<&str>) -> Result<Self, String> {
+        value.map_or(Ok(Self::None), Self::parse)
     }
 
     fn parse(value: &str) -> Result<Self, String> {
@@ -1885,6 +1889,7 @@ mod tests {
 
     #[test]
     fn redaction_setting_defaults_only_when_unset_and_rejects_unknown_values() {
+        assert_eq!(Redaction::from_setting(None), Ok(Redaction::None));
         assert_eq!(Redaction::parse("none"), Ok(Redaction::None));
         assert_eq!(Redaction::parse("mask_parties"), Ok(Redaction::MaskParties));
         assert_eq!(
