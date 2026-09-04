@@ -368,6 +368,23 @@ impl Server {
             }
         };
         let truncated = truncated || bytes_truncated;
+        let mut mcp_response = json!({
+            "content": [{"type":"text", "text": ""}],
+            "structuredContent": response_value,
+            "isError": response_value["result"].get("error").is_some(),
+        });
+        if let Err(code) =
+            enforce_mcp_result_byte_cap(&mut mcp_response, self.settings.max_bytes, name, rows)
+        {
+            return json!({
+                "content": [{"type":"text", "text": format!("{name}: read withheld\n{code}")}],
+                "structuredContent": {"error": {"code": code, "message": "Bridge response exceeds the configured byte cap."}},
+                "isError": true,
+            });
+        }
+        let response_value = mcp_response["structuredContent"].clone();
+        let rows = response_row_count(&response_value).unwrap_or(rows);
+        let truncated = truncated || response_value["truncated"].as_bool().unwrap_or(false);
         let response_sha256 = sha256_json(&response_value);
         self.record_evidence(response_value["evidence"].clone());
         if let Err(code) = self.append_egress(EgressReceipt {
@@ -377,7 +394,7 @@ impl Server {
             company_guid,
             rows_returned: rows,
             fields_returned: fields,
-            bytes_returned: response_value.to_string().len(),
+            bytes_returned: mcp_response.to_string().len(),
             enforced_bytes: self.settings.max_bytes,
             response_sha256,
             truncated,
@@ -389,18 +406,7 @@ impl Server {
                 "isError": true,
             });
         }
-        let summary = if response_value.get("result").is_some()
-            && response_value["result"].get("error").is_none()
-        {
-            format!("{name}: read completed")
-        } else {
-            format!("{name}: read withheld")
-        };
-        json!({
-            "content": [{"type":"text", "text": format!("{summary}\n{}", response_value)}],
-            "structuredContent": response_value,
-            "isError": response_value["result"].get("error").is_some(),
-        })
+        mcp_response
     }
 
     fn record_evidence(&self, value: Value) {
@@ -1258,36 +1264,81 @@ fn enforce_response_byte_cap(
     if response.to_string().len() <= max_bytes {
         return Ok((response, false));
     }
-    let offset = response["result"]["offset"].as_u64().unwrap_or(0);
-    let Some(items) = response["result"]["items"].as_array() else {
-        return Err("agent_response_too_large".to_string());
-    };
-    if items.is_empty() {
-        return Err("agent_response_too_large".to_string());
-    }
-    response["truncated"] = Value::Bool(true);
-    while response["result"]["items"]
-        .as_array()
-        .is_some_and(|items| !items.is_empty())
-        && response.to_string().len() > max_bytes
-    {
-        let remaining = {
-            let items = response["result"]["items"]
-                .as_array_mut()
-                .expect("items checked above");
-            items.pop();
-            items.len()
-        };
-        response["result"]["next_offset"] = json!(offset + remaining as u64);
-    }
-    if response["result"]["items"]
-        .as_array()
-        .is_none_or(Vec::is_empty)
-        || response.to_string().len() > max_bytes
-    {
-        return Err("agent_response_too_large".to_string());
+    while response.to_string().len() > max_bytes {
+        if !truncate_response_items(&mut response)? {
+            return Err("agent_response_too_large".to_string());
+        }
     }
     Ok((response, true))
+}
+
+fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
+    let offset = response["result"]["offset"].as_u64().unwrap_or(0);
+    let Some(items) = response["result"]["items"].as_array_mut() else {
+        return Ok(false);
+    };
+    if items.is_empty() {
+        return Ok(false);
+    }
+    items.pop();
+    let remaining = items.len();
+    response["truncated"] = Value::Bool(true);
+    response["result"]["next_offset"] = json!(offset + remaining as u64);
+    Ok(true)
+}
+
+fn response_row_count(response: &Value) -> Option<usize> {
+    ["items", "ledgers", "records", "companies"]
+        .into_iter()
+        .find_map(|key| response["result"][key].as_array().map(Vec::len))
+}
+
+fn set_mcp_content_summary(mcp_response: &mut Value, name: &str, fallback_rows: usize) {
+    let structured = &mcp_response["structuredContent"];
+    let company = structured["company"]["name"].as_str().unwrap_or("none");
+    let rows = response_row_count(structured).unwrap_or(fallback_rows);
+    let truncated = structured["truncated"].as_bool().unwrap_or(false);
+    let evidence = structured["evidence"]["state"]
+        .as_str()
+        .unwrap_or("partial");
+    mcp_response["content"][0]["text"] = Value::String(format!(
+        "{name}: company={company}; rows={rows}; truncated={truncated}; evidence={evidence}"
+    ));
+}
+
+fn enforce_mcp_result_byte_cap(
+    mcp_response: &mut Value,
+    max_bytes: usize,
+    name: &str,
+    fallback_rows: usize,
+) -> Result<(), String> {
+    set_mcp_content_summary(mcp_response, name, fallback_rows);
+    while mcp_response.to_string().len() > max_bytes {
+        let structured = mcp_response
+            .get_mut("structuredContent")
+            .ok_or_else(|| "agent_response_too_large".to_string())?;
+        if !truncate_response_items(structured)? {
+            return Err("agent_response_too_large".to_string());
+        }
+        set_mcp_content_summary(mcp_response, name, fallback_rows);
+    }
+    Ok(())
+}
+
+fn enforce_jsonrpc_response_byte_cap(response: &mut Value, max_bytes: usize) -> Result<(), String> {
+    while response.to_string().len() > max_bytes {
+        let result = response
+            .get_mut("result")
+            .ok_or_else(|| "agent_response_too_large".to_string())?;
+        let structured = result
+            .get_mut("structuredContent")
+            .ok_or_else(|| "agent_response_too_large".to_string())?;
+        if !truncate_response_items(structured)? {
+            return Err("agent_response_too_large".to_string());
+        }
+        set_mcp_content_summary(result, "mcp", 0);
+    }
+    Ok(())
 }
 
 fn combine_evidence(left: Evidence, right: Evidence) -> Evidence {
@@ -1866,12 +1917,18 @@ pub async fn run_stdio() -> Result<(), String> {
             _ => Err("method_not_found".to_string()),
         };
         if let Some(id) = id {
-            let response = match result {
-                Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
+            let mut response = match result {
+                Ok(result) => json!({"jsonrpc":"2.0","id":id.clone(),"result":result}),
                 Err(code) => {
-                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":code}})
+                    json!({"jsonrpc":"2.0","id":id.clone(),"error":{"code":-32601,"message":code}})
                 }
             };
+            if method == "tools/call"
+                && enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes)
+                    .is_err()
+            {
+                response = json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"agent_response_too_large"}});
+            }
             stdout
                 .write_all(format!("{response}\n").as_bytes())
                 .await
@@ -2232,7 +2289,7 @@ mod tests {
     }
 
     #[test]
-    fn response_byte_cap_truncates_trailing_rows_and_refuses_a_single_oversized_row() {
+    fn response_byte_cap_covers_the_serialized_jsonrpc_result_and_keeps_content_short() {
         let input = json!({"truncated":false,"result":{"offset":0,"items":[{"name":"first"},{"name":"second"}]}});
         let cap = json!({"truncated":true,"result":{"offset":0,"items":[{"name":"first"}],"next_offset":1}}).to_string().len();
         let (bounded, truncated) = enforce_response_byte_cap(input, cap).expect("one row fits");
@@ -2243,6 +2300,40 @@ mod tests {
             enforce_response_byte_cap(json!({"result":{"items":[{"name":"x".repeat(500)}]}}), 32),
             Err("agent_response_too_large".to_string())
         );
+
+        let one_item = json!({
+            "content":[{"type":"text","text":""}],
+            "structuredContent":{"company":{"name":"Book"},"evidence":{"state":"complete"},"truncated":true,"result":{"offset":0,"items":[{"name":"first"}],"next_offset":1}},
+            "isError":false,
+        });
+        let mut one_item = one_item;
+        enforce_mcp_result_byte_cap(&mut one_item, 10_000, "vouchers", 1).expect("summary");
+        let cap = json!({"jsonrpc":"2.0","id":1,"result":one_item})
+            .to_string()
+            .len();
+        let mut response = json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "result":{
+                "content":[{"type":"text","text":""}],
+                "structuredContent":{"company":{"name":"Book"},"evidence":{"state":"complete"},"truncated":false,"result":{"offset":0,"items":[{"name":"first"},{"name":"second"}]}},
+                "isError":false,
+            }
+        });
+        enforce_mcp_result_byte_cap(&mut response["result"], 10_000, "vouchers", 2)
+            .expect("summary");
+        enforce_jsonrpc_response_byte_cap(&mut response, cap).expect("one page row fits");
+        assert!(response.to_string().len() <= cap);
+        assert_eq!(
+            response["result"]["structuredContent"]["result"]["items"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert!(!response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("structuredContent"));
     }
 
     #[test]
