@@ -11,7 +11,7 @@ required. Nothing was pushed.
 | `src-tauri/src/agent.rs:1534` | A malformed voucher/ledger/group `ALTERID` could be silently omitted from a change scan. | `ddbe16f` | `change_scan_rejects_any_missing_or_malformed_row_alter_id` | Every change row now fails closed with `change_row_alterid_invalid`, before a checkpoint can be returned. |
 | `src-tauri/src/agent_import.rs:41` | Import inputs could not optionally carry a Tally voucher number. | `148b7b9` | `optional_voucher_number_is_rendered_only_when_valid_and_supplied` | Optional numbers are bounded and safe, render only when supplied, participate in readback proof, and README documents voucher-type numbering when absent. |
 | `src-tauri/src/agent.rs:508` | Import planning appeared available without live-Tally import/readback evidence. | `a4a0bf7`, `03e10a6` | `imports_are_hidden_and_refused_without_explicit_live_evidence_opt_in` | Import tools are hidden and refuse by default; an enabled build says `live_evidence: none_recorded`. README, connector brief, MCPB description, and the historical Goal 2 report avoid a live-verified claim. |
-| `src-tauri/src/agent.rs:803` | Open bills could be silently cut by the party-ranking limit. | `9696c37` | `open_bill_paging_marks_remaining_rows_and_returns_a_cursor` | `top` applies only to ranking; `open_bills` now uses bounded offset/limit and reports `truncated` with `next_offset`. |
+| `src-tauri/src/agent.rs:803` | Open bills could be silently cut by the party-ranking limit. | `9696c37`, `e167069` | `open_bill_paging_marks_remaining_rows_and_returns_a_cursor` | `top` applies only to ranking; `open_bills` now uses bounded offset/limit and reports `truncated` with `next_offset`. |
 
 ## Thread replies
 
@@ -50,10 +50,10 @@ truncation flag and `next_offset`, so callers can retrieve the remaining rows.
 
 ```text
 $ cargo test --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast
-test result: ok. 447 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 114.96s
+test result: ok. 447 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 118.67s
 
 $ cargo clippy --manifest-path src-tauri/Cargo.toml --bin bridge_mcp -- -D warnings
-Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.28s
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.48s
 
 $ (cd tools && cargo run --locked -p bridge-tally-compatibility -- gate ../docs/tally/compatibility/compatibility-matrix.json ../docs/tally/compatibility/compatibility-surface.json ../docs/tally/compatibility/trusted-evidence-keys.json ../docs/tally/compatibility/evidence ..)
 compatibility_gate_passed:unknown_claims=11:evidenced_claims=0
