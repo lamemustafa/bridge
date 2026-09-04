@@ -851,6 +851,7 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Value {
         ("posted_verified", 0_u64),
         ("posted_divergent", 0),
         ("not_found", 0),
+        ("not_attributable", 0),
         ("duplicate_fingerprint", 0),
     ]);
     for expected in &line.vouchers {
@@ -873,12 +874,30 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Value {
                     && actual_entry_fingerprint(voucher) == fingerprint
             })
             .collect::<Vec<_>>();
-        let (matches, marker) = if !tagged.is_empty() {
-            (tagged, "narration_tag")
+        let (matches, marker, not_attributable) = if !tagged.is_empty() {
+            (tagged, "narration_tag", false)
         } else {
-            (fingerprint_matches, "accounting_fingerprint")
+            let attributable = fingerprint_matches
+                .iter()
+                .copied()
+                .filter(|voucher| {
+                    line.pre_import_mark
+                        .value
+                        .is_some_and(|mark| voucher.alter_id.is_some_and(|id| id > mark))
+                })
+                .collect::<Vec<_>>();
+            (
+                attributable,
+                "accounting_fingerprint",
+                !fingerprint_matches.is_empty() && line.pre_import_mark.value.is_some(),
+            )
         };
-        let value = if matches.is_empty() {
+        let value = if not_attributable && matches.is_empty() {
+            counts
+                .entry("not_attributable")
+                .and_modify(|count| *count += 1);
+            json!({"bridge_txn_id":expected.bridge_txn_id,"status":"not_attributable","marker":marker,"reason":"fingerprint_precedes_pre_import_voucher_mark"})
+        } else if matches.is_empty() {
             counts.entry("not_found").and_modify(|count| *count += 1);
             json!({"bridge_txn_id":expected.bridge_txn_id,"status":"not_found"})
         } else if matches.len() > 1 {
@@ -1213,6 +1232,57 @@ mod tests {
         assert_eq!(
             parse_import_vouchers("<ENVELOPE><BODY><RESPONSE>error</RESPONSE></BODY></ENVELOPE>"),
             Err("import_verification_protocol_invalid".to_string())
+        );
+    }
+
+    #[test]
+    fn fingerprint_only_verification_requires_a_post_mark_voucher() {
+        let input = payload();
+        let line = ImportLedgerLine {
+            batch_id: "batch-mark".to_string(),
+            company_guid: GUID.to_string(),
+            company: None,
+            txn_ids: vec!["txn-001".to_string()],
+            date_from: "20260901".to_string(),
+            date_to: "20260901".to_string(),
+            sha256: "hash".to_string(),
+            built_at: now(),
+            status: "built".to_string(),
+            pre_import_mark: PreImportMark {
+                kind: "latest_voucher_alterid_seen".to_string(),
+                value: Some(10),
+            },
+            vouchers: vec![input.vouchers[0].clone()],
+        };
+        let observed = |alter_id| ReadVoucher {
+            remote_id: None,
+            guid: None,
+            alter_id: Some(alter_id),
+            date: Some("20260901".to_string()),
+            voucher_type: Some("Payment".to_string()),
+            narration: None,
+            voucher_number: None,
+            master_id: None,
+            entries: vec![
+                ReadEntry {
+                    ledger: "Expense".to_string(),
+                    amount: "-12.50".to_string(),
+                    is_deemed_positive: "Yes".to_string(),
+                },
+                ReadEntry {
+                    ledger: "Bank".to_string(),
+                    amount: "12.50".to_string(),
+                    is_deemed_positive: "No".to_string(),
+                },
+            ],
+        };
+        assert_eq!(
+            verify_batch(&line, &[observed(10)])["vouchers"][0]["status"],
+            "not_attributable"
+        );
+        assert_eq!(
+            verify_batch(&line, &[observed(11)])["vouchers"][0]["status"],
+            "posted_verified"
         );
     }
 
