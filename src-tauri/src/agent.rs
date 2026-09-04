@@ -38,11 +38,20 @@ enum Redaction {
 }
 
 impl Redaction {
-    fn from_env() -> Self {
-        match env::var("BRIDGE_AGENT_REDACTION").as_deref() {
-            Ok("mask_parties") => Self::MaskParties,
-            Ok("drop_narration") => Self::DropNarration,
-            _ => Self::None,
+    fn from_env() -> Result<Self, String> {
+        match env::var("BRIDGE_AGENT_REDACTION") {
+            Ok(value) => Self::parse(&value),
+            Err(env::VarError::NotPresent) => Ok(Self::None),
+            Err(_) => Err("redaction_setting_invalid".to_string()),
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "none" => Ok(Self::None),
+            "mask_parties" => Ok(Self::MaskParties),
+            "drop_narration" => Ok(Self::DropNarration),
+            _ => Err("redaction_setting_invalid".to_string()),
         }
     }
 
@@ -90,7 +99,7 @@ impl Settings {
             data_dir,
             max_rows,
             max_bytes,
-            redaction: Redaction::from_env(),
+            redaction: Redaction::from_env()?,
         })
     }
 }
@@ -1767,6 +1776,20 @@ mod tests {
         );
         assert!(
             parse_agent_rows("<ENVELOPE><BODY><RESPONSE>bad</RESPONSE></BODY></ENVELOPE>").is_err()
+        );
+    }
+
+    #[test]
+    fn redaction_setting_defaults_only_when_unset_and_rejects_unknown_values() {
+        assert_eq!(Redaction::parse("none"), Ok(Redaction::None));
+        assert_eq!(Redaction::parse("mask_parties"), Ok(Redaction::MaskParties));
+        assert_eq!(
+            Redaction::parse("drop_narration"),
+            Ok(Redaction::DropNarration)
+        );
+        assert_eq!(
+            Redaction::parse("mask_everything"),
+            Err("redaction_setting_invalid".to_string())
         );
     }
 
