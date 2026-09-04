@@ -340,7 +340,7 @@ impl Server {
                 .as_deref()
                 .ok_or_else(|| "company_identity_incomplete".to_string())?,
         )?;
-        let to = Utc::now().format("%Y%m%d").to_string();
+        let to = super::tally_host_today();
         let (xml, evidence) = self
             .post_read(
                 identity,
@@ -483,7 +483,7 @@ fn normalize_payload_dates(payload: &mut ImportPayload) -> Result<(), String> {
 fn validate_dates(payload: &ImportPayload, books_from: Option<&str>) -> Result<(), String> {
     let from =
         normalized_date(books_from.ok_or_else(|| "company_identity_incomplete".to_string())?)?;
-    let today = Utc::now().format("%Y%m%d").to_string();
+    let today = super::tally_host_today();
     for voucher in &payload.vouchers {
         let date = normalized_date(&voucher.date)?;
         if date < from || date > today {

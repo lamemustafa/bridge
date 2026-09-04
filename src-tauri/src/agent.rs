@@ -12,7 +12,7 @@ use crate::tally::{
 use bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile;
 use bridge_tally_protocol::TallyCompany;
 use bridge_tally_transport::TallyEndpointConfig;
-use chrono::{Duration, NaiveDate};
+use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -688,7 +688,7 @@ impl Server {
             .and_then(Value::as_str)
             .map(normalized_date)
             .transpose()?
-            .unwrap_or_else(|| Utc::now().format("%Y%m%d").to_string());
+            .unwrap_or_else(tally_host_today);
         let to =
             bridge_tally_core::TallyDate::parse(as_of).map_err(|_| "invalid_as_of".to_string())?;
         let ageing_anchor = match args
@@ -1039,6 +1039,19 @@ fn balance_affecting_vouchers(
 
 fn page_length_after_offset(total: usize, offset: usize, limit: usize) -> usize {
     total.saturating_sub(offset).min(limit)
+}
+
+/// Tally is local to the Bridge host; accounting-day defaults therefore use
+/// that host's calendar rather than UTC's potentially different calendar day.
+pub(super) fn tally_host_today() -> String {
+    format_tally_date(Local::now())
+}
+
+fn format_tally_date<Tz: TimeZone>(now: DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    now.format("%Y%m%d").to_string()
 }
 
 fn enforce_response_byte_cap(
@@ -1759,6 +1772,16 @@ mod tests {
             enforce_response_byte_cap(json!({"result":{"items":[{"name":"x".repeat(500)}]}}), 32),
             Err("agent_response_too_large".to_string())
         );
+    }
+
+    #[test]
+    fn accounting_day_uses_tally_host_local_calendar_at_utc_midnight() {
+        let east = chrono::FixedOffset::east_opt(5 * 3600 + 30 * 60).expect("offset");
+        let local = east
+            .with_ymd_and_hms(2026, 9, 5, 0, 15, 0)
+            .single()
+            .expect("local timestamp");
+        assert_eq!(format_tally_date(local), "20260905");
     }
 
     #[tokio::test]
