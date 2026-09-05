@@ -696,21 +696,50 @@ impl Server {
             return Err("invalid_date_range".to_string());
         }
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
+        let requested_ledger = optional_string(args, "ledger")?;
+        let resolved_ledger = if let Some(requested) = requested_ledger {
+            let ledgers = self
+                .runtime
+                .fetch_ledgers(self.tally_config(), &identity)
+                .await
+                .map_err(|_| "ledger_export_invalid".to_string())?;
+            Some(
+                matching_ledger_name(
+                    ledgers.iter().map(|ledger| ledger.name.as_str()),
+                    &requested,
+                )
+                .ok_or_else(|| "ledger_not_found".to_string())?,
+            )
+        } else {
+            None
+        };
         let request = render_agent_vouchers(
             &company.name,
             &from,
             &to,
             optional_string(args, "voucher_type")?,
-            optional_string(args, "ledger")?,
+            resolved_ledger.clone(),
             None,
         )?;
         let (xml, mut evidence) = self.post_read(&identity, request).await?;
         let mut rows = parse_agent_rows(&xml)?;
+        let mut filter_not_honoured = false;
+        if let Some(ledger) = resolved_ledger.as_deref() {
+            let (filtered_rows, dropped) = filter_voucher_rows_for_ledger(rows, ledger);
+            rows = filtered_rows;
+            filter_not_honoured = dropped;
+        }
         if !window_honoured(&rows, &from, &to) {
             return Err("window_not_honoured".to_string());
         }
-        let mut result_state = "complete";
-        let mut corroboration_reason = None;
+        let mut result_state = if filter_not_honoured {
+            evidence.state = "partial";
+            evidence.reason_code = Some("filter_not_honoured".to_string());
+            "partial"
+        } else {
+            "complete"
+        };
+        let mut corroboration_reason = filter_not_honoured.then_some("filter_not_honoured");
         if rows.is_empty() {
             let (wider_from, wider_to) = widened_window(&from, &to)?;
             let wider_request = render_agent_vouchers(
@@ -718,12 +747,24 @@ impl Server {
                 &wider_from,
                 &wider_to,
                 optional_string(args, "voucher_type")?,
-                optional_string(args, "ledger")?,
+                resolved_ledger.clone(),
                 None,
             )?;
             let (wider_xml, wider_evidence) = self.post_read(&identity, wider_request).await?;
             evidence = combine_evidence(evidence, wider_evidence);
             let wider_rows = parse_agent_rows(&wider_xml)?;
+            let (wider_rows, wider_filter_not_honoured) =
+                if let Some(ledger) = resolved_ledger.as_deref() {
+                    filter_voucher_rows_for_ledger(wider_rows, ledger)
+                } else {
+                    (wider_rows, false)
+                };
+            if wider_filter_not_honoured {
+                result_state = "partial";
+                corroboration_reason = Some("filter_not_honoured");
+                evidence.state = "partial";
+                evidence.reason_code = Some("filter_not_honoured".to_string());
+            }
             if !window_honoured(&wider_rows, &wider_from, &wider_to) {
                 return Err("empty_uncorroborated".to_string());
             }
@@ -746,8 +787,10 @@ impl Server {
                 result_state = "partial";
                 evidence.state = "partial";
             }
-            corroboration_reason = reason;
-            evidence.reason_code = reason.map(str::to_string);
+            if corroboration_reason.is_none() {
+                corroboration_reason = reason;
+                evidence.reason_code = reason.map(str::to_string);
+            }
         }
         if let Some(kind) = optional_string(args, "voucher_type")? {
             rows.retain(|row| row.get("voucher_type") == Some(&Value::String(kind.clone())));
@@ -1353,6 +1396,28 @@ fn matching_ledger_name<'a>(
     ledger_names
         .find(|name| ledger_lookup_key(name) == requested)
         .map(str::to_string)
+}
+
+fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> (Vec<Value>, bool) {
+    let key = ledger_lookup_key(ledger);
+    let total = rows.len();
+    let rows = rows
+        .into_iter()
+        .filter(|row| {
+            row.get("amounts")
+                .and_then(Value::as_array)
+                .is_some_and(|entries| {
+                    entries.iter().any(|entry| {
+                        entry
+                            .get("ledger")
+                            .and_then(Value::as_str)
+                            .is_some_and(|name| ledger_lookup_key(name) == key)
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    let dropped = rows.len() != total;
+    (rows, dropped)
 }
 
 fn ledger_movement_counts<T>(rows: &[Value], vouchers: &[T]) -> (usize, usize) {
@@ -2664,6 +2729,16 @@ mod tests {
         let rows = parse_agent_rows(xml).expect("voucher rows");
         assert_eq!(rows[0]["amounts"][0]["ledger"], "A|B");
         assert_eq!(rows[0]["amounts"][0]["amount"], "-10");
+    }
+
+    #[test]
+    fn voucher_ledger_filter_drops_mixed_response_rows_that_do_not_match_live_spelling() {
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><VOUCHERNUMBER>keep</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>R and D</LEDGERNAME><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER><VOUCHERNUMBER>drop</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales</LEDGERNAME><AMOUNT>10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let rows = parse_agent_rows(xml).expect("mixed voucher rows");
+        let (rows, filter_not_honoured) = filter_voucher_rows_for_ledger(rows, "R-and_D");
+        assert!(filter_not_honoured);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["voucher_number"], "keep");
     }
 
     #[tokio::test]
