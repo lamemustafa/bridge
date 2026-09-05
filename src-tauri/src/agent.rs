@@ -1777,6 +1777,42 @@ fn enforce_response_byte_cap(
 }
 
 fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
+    let change_axis = ["vouchers", "masters"]
+        .into_iter()
+        .filter_map(|key| {
+            response["result"][key]
+                .as_array()
+                .map(|rows| (key, rows.len()))
+        })
+        .max_by_key(|(_, length)| *length)
+        .filter(|(_, length)| *length > 0)
+        .map(|(key, _)| key);
+    if let Some(key) = change_axis {
+        let cursor_key = if key == "vouchers" {
+            "next_voucher_alter_id"
+        } else {
+            "next_master_alter_id"
+        };
+        let fallback_key = if key == "vouchers" {
+            "voucher_alter_id"
+        } else {
+            "master_alter_id"
+        };
+        let rows = response["result"][key]
+            .as_array_mut()
+            .expect("non-empty change axis");
+        rows.pop();
+        let cursor = rows
+            .iter()
+            .filter_map(|row| row["alter_id"].as_u64())
+            .max()
+            .or_else(|| response["result"][fallback_key].as_u64())
+            .ok_or_else(|| "change_page_cursor_invalid".to_string())?;
+        response["truncated"] = Value::Bool(true);
+        response["result"][cursor_key] = json!(cursor);
+        response["result"]["checkpoint_advanceable"] = Value::Bool(false);
+        return Ok(true);
+    }
     let requested_offset = response["result"]["offset"].as_u64().unwrap_or(0);
     for key in ["items", "open_bills", "ledgers"] {
         if let Some(items) = response["result"][key]
@@ -3205,6 +3241,25 @@ mod tests {
             Some(100)
         );
         assert_eq!(response["result"]["unallocated"]["next_offset"], 600);
+    }
+
+    #[test]
+    fn byte_trimming_change_feed_rows_stops_checkpoint_advancement() {
+        let mut response = json!({"result": {
+            "voucher_alter_id": 10, "master_alter_id": 20,
+            "next_voucher_alter_id": 12, "next_master_alter_id": 22,
+            "checkpoint_advanceable": true,
+            "vouchers": [{"alter_id": 11}, {"alter_id": 12}],
+            "masters": [{"alter_id": 21}]
+        }});
+        assert!(truncate_response_items(&mut response).expect("trims vouchers"));
+        assert_eq!(
+            response["result"]["vouchers"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(response["result"]["next_voucher_alter_id"], 11);
+        assert_eq!(response["result"]["checkpoint_advanceable"], false);
+        assert!(response["truncated"].as_bool().expect("truncated"));
     }
 
     #[tokio::test]
