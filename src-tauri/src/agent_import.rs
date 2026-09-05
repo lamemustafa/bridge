@@ -1536,12 +1536,46 @@ mod tests {
     }
 
     #[test]
-    fn failed_ledger_append_removes_the_written_import_file() {
+    fn unwritable_ledger_path_removes_the_written_import_file() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("batch.xml");
         fs::write(&path, "xml").expect("import file");
+        fs::create_dir(directory.path().join("agent-import-ledger.jsonl"))
+            .expect("directory makes the ledger path unwritable");
+        let server = Server::new(super::super::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: super::super::Redaction::None,
+            import_enabled: true,
+        });
+        let input = payload();
+        let line = ImportLedgerLine {
+            batch_id: "batch-unwritable".to_string(),
+            company_guid: GUID.to_string(),
+            company: None,
+            txn_ids: vec!["txn-001".to_string()],
+            date_from: "20260901".to_string(),
+            date_to: "20260901".to_string(),
+            sha256: "hash".to_string(),
+            built_at: now(),
+            status: "built".to_string(),
+            pre_import_mark: PreImportMark {
+                kind: "company_high_water".to_string(),
+                value: Some(10),
+                master_value: Some(7),
+            },
+            vouchers: vec![input.vouchers[0].clone()],
+        };
+        let append_error = server
+            .append_import_ledger_while_admitted(&line)
+            .expect_err("a directory cannot be opened as the JSONL ledger");
         assert_eq!(
-            remove_orphaned_import_file(&path, "import_ledger_unavailable".to_string()),
+            remove_orphaned_import_file(&path, append_error),
             "import_ledger_unavailable"
         );
         assert!(!path.exists());
