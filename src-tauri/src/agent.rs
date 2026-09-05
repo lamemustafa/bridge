@@ -2853,9 +2853,17 @@ where
             {
                 response = json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"agent_response_too_large"}});
             }
-            let serialized_response = format!("{response}\n");
+            let mut serialized_response = format!("{response}\n");
             if let Some(egress) = egress {
-                server.append_framed_egress(egress, &response, &serialized_response)?;
+                if server
+                    .append_framed_egress(egress, &response, &serialized_response)
+                    .is_err()
+                {
+                    if !attach_build_egress_failure(&mut response) {
+                        return Err("egress_record_write_failed".to_string());
+                    }
+                    serialized_response = format!("{response}\n");
+                }
             }
             stdout
                 .write_all(serialized_response.as_bytes())
@@ -2868,6 +2876,24 @@ where
         }
     }
     Ok(())
+}
+
+fn attach_build_egress_failure(response: &mut Value) -> bool {
+    let batch_id = response["result"]["structuredContent"]["result"]["batch_id"].clone();
+    if !batch_id.is_string() {
+        return false;
+    }
+    response["result"]["structuredContent"]["result"] = json!({
+        "batch_id": batch_id,
+        "egress_recorded": false,
+        "error": {"code": "egress_record_write_failed", "message": "The local batch was built, but its egress receipt was not recorded."}
+    });
+    response["result"]["structuredContent"]["evidence"]["state"] = json!("partial");
+    response["result"]["structuredContent"]["evidence"]["reason_code"] =
+        json!("egress_record_write_failed");
+    response["result"]["content"][0]["text"] = json!("build_import_xml: batch built; egress_recorded=false");
+    response["result"]["isError"] = Value::Bool(true);
+    true
 }
 
 #[cfg(test)]
@@ -2950,6 +2976,27 @@ mod tests {
         assert!(
             parse_agent_rows("<ENVELOPE><BODY><RESPONSE>bad</RESPONSE></BODY></ENVELOPE>").is_err()
         );
+    }
+
+    #[test]
+    fn built_batch_stays_in_band_when_its_egress_receipt_fails() {
+        let mut response = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [{"type": "text", "text": ""}],
+                "structuredContent": {
+                    "evidence": {"state": "complete"},
+                    "result": {"batch_id": "bridge-built"}
+                },
+                "isError": false
+            }
+        });
+        assert!(attach_build_egress_failure(&mut response));
+        assert_eq!(response["result"]["structuredContent"]["result"]["batch_id"], "bridge-built");
+        assert_eq!(response["result"]["structuredContent"]["result"]["egress_recorded"], false);
+        assert_eq!(response["result"]["isError"], true);
+        assert!(!attach_build_egress_failure(&mut json!({"result": {}})));
     }
 
     #[test]
