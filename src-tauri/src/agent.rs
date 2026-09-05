@@ -1329,17 +1329,23 @@ impl Server {
         let (xml, evidence) = self
             .post_read(
                 identity,
-                ReadOnlyProfile::VouchersV2 {
-                    company: &company,
-                    range: &range,
-                }
-                .render(),
+                render_agent_vouchers(
+                    company.as_str(),
+                    range.from_yyyymmdd(),
+                    range.to_yyyymmdd(),
+                    None,
+                    None,
+                    None,
+                )?,
             )
             .await?;
-        Ok((
-            parse_vouchers(&xml).map_err(|_| "ledger_movement_read_failed".to_string())?,
-            evidence,
-        ))
+        let vouchers =
+            parse_vouchers(&xml).map_err(|_| "ledger_movement_read_failed".to_string())?;
+        if !movement_voucher_window_honoured(&vouchers, range.from_yyyymmdd(), range.to_yyyymmdd())
+        {
+            return Err("window_not_honoured".to_string());
+        }
+        Ok((vouchers, evidence))
     }
 
     fn read_evidence(&self, args: &Value) -> Result<ToolOutcome, String> {
@@ -1812,6 +1818,15 @@ fn window_honoured(rows: &[Value], from: &str, to: &str) -> bool {
         row.get("date")
             .and_then(Value::as_str)
             .is_some_and(|date| date >= from && date <= to)
+    })
+}
+
+fn movement_voucher_window_honoured(rows: &[TallyVoucher], from: &str, to: &str) -> bool {
+    rows.iter().all(|row| {
+        row.date
+            .as_deref()
+            .and_then(|date| normalized_date(date).ok())
+            .is_some_and(|date| date.as_str() >= from && date.as_str() <= to)
     })
 }
 
@@ -3894,6 +3909,26 @@ mod tests {
             widened_window("20260901", "20260902"),
             Ok(("20260831".to_string(), "20260903".to_string()))
         );
+    }
+
+    #[test]
+    fn ledger_movement_rejects_an_out_of_range_voucher_before_aggregation() {
+        let voucher = bridge_tally_protocol::TallyVoucher {
+            id: None,
+            date: Some("20260915".to_string()),
+            voucher_type: Some("Payment".to_string()),
+            voucher_number: None,
+            party_ledger_name: None,
+            cancelled: Some(false),
+            optional: Some(false),
+            ledger_entry_count: Some(0),
+            ledger_entries: Vec::new(),
+        };
+        assert!(!movement_voucher_window_honoured(
+            &[voucher],
+            "20260901",
+            "20260902"
+        ));
     }
 
     #[test]
