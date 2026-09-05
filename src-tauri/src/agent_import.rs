@@ -290,8 +290,20 @@ impl Server {
         }
         let request =
             render_import_verification_read(&company.name, &line.date_from, &line.date_to);
-        let (xml, evidence) = self.post_read(&identity, request).await?;
+        let (xml, evidence) = self.post_read(&identity, request.clone()).await?;
         let observed = parse_import_vouchers(&xml)?;
+        let (corroboration_xml, corroboration_evidence) =
+            self.post_read(&identity, request).await?;
+        let corroboration = parse_import_vouchers(&corroboration_xml)?;
+        corroborate_verification_window(
+            &observed,
+            &corroboration,
+            &line.date_from,
+            &line.date_to,
+            self.settings.max_rows,
+            verification_read_possibly_truncated(&xml)
+                || verification_read_possibly_truncated(&corroboration_xml),
+        )?;
         let result = verify_batch(&line, &observed)?;
         let proof = json!({
             "company": company_json(&company, std::slice::from_ref(&company)),
@@ -300,7 +312,7 @@ impl Server {
             "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed),
             "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
             "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
-            "evidence": {"company": identity_evidence, "voucher_read": evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
+            "evidence": {"company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
         });
         let imports = self.imports_dir()?;
         write_private(
@@ -319,7 +331,10 @@ impl Server {
         self.append_import_ledger(&update)?;
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof}),
-            combine_evidence(identity_evidence, evidence),
+            combine_evidence(
+                combine_evidence(identity_evidence, evidence),
+                corroboration_evidence,
+            ),
             Some(guid.to_string()),
             line.vouchers.len(),
             vec!["remote_id".into(), "alter_id".into(), "entries".into()],
@@ -867,6 +882,49 @@ fn validate_verification_envelope(xml: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn verification_read_possibly_truncated(xml: &str) -> bool {
+    xml.to_ascii_uppercase().contains("TRUNCAT")
+}
+
+fn corroborate_verification_window(
+    observed: &[ReadVoucher],
+    corroboration: &[ReadVoucher],
+    from: &str,
+    to: &str,
+    max_rows: usize,
+    truncated_signal: bool,
+) -> Result<(), String> {
+    if observed.iter().any(|voucher| {
+        voucher
+            .date
+            .as_deref()
+            .is_none_or(|date| date < from || date > to)
+    }) {
+        return Err("window_not_honoured".to_string());
+    }
+    if observed.len() >= max_rows || truncated_signal {
+        return Err("verification_incomplete:window_possibly_truncated".to_string());
+    }
+    let pairs = |rows: &[ReadVoucher]| {
+        rows.iter()
+            .map(|voucher| {
+                Ok((
+                    voucher.guid.clone().ok_or_else(|| {
+                        "verification_incomplete:window_not_corroborated".to_string()
+                    })?,
+                    voucher.alter_id.ok_or_else(|| {
+                        "verification_incomplete:window_not_corroborated".to_string()
+                    })?,
+                ))
+            })
+            .collect::<Result<BTreeSet<_>, String>>()
+    };
+    if pairs(observed)? != pairs(corroboration)? {
+        return Err("verification_incomplete:window_not_corroborated".to_string());
+    }
+    Ok(())
+}
+
 fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Value, String> {
     let mut rows = Vec::new();
     let mut counts = BTreeMap::from([
@@ -1399,6 +1457,57 @@ mod tests {
         assert_eq!(
             parse_import_vouchers("<ENVELOPE><BODY><RESPONSE>error</RESPONSE></BODY></ENVELOPE>"),
             Err("import_verification_protocol_invalid".to_string())
+        );
+    }
+
+    #[test]
+    fn verification_window_corroboration_rejects_each_unsafe_branch() {
+        let voucher = |guid: &str, alter_id, date: &str| ReadVoucher {
+            remote_id: None,
+            guid: Some(guid.to_string()),
+            alter_id: Some(alter_id),
+            date: Some(date.to_string()),
+            voucher_type: None,
+            narration: None,
+            voucher_number: None,
+            master_id: None,
+            cancelled: Some(false),
+            optional: Some(false),
+            entries: vec![],
+        };
+        let inside = voucher("guid-1", 3, "20260901");
+        assert_eq!(
+            corroborate_verification_window(
+                &[voucher("guid-1", 3, "20260903")],
+                &[inside.clone()],
+                "20260901",
+                "20260902",
+                10,
+                false
+            ),
+            Err("window_not_honoured".to_string())
+        );
+        assert_eq!(
+            corroborate_verification_window(
+                &[inside.clone()],
+                &[voucher("guid-2", 3, "20260901")],
+                "20260901",
+                "20260902",
+                10,
+                false
+            ),
+            Err("verification_incomplete:window_not_corroborated".to_string())
+        );
+        assert_eq!(
+            corroborate_verification_window(
+                &[inside.clone()],
+                &[inside],
+                "20260901",
+                "20260902",
+                1,
+                false
+            ),
+            Err("verification_incomplete:window_possibly_truncated".to_string())
         );
     }
 
