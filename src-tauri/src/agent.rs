@@ -677,7 +677,8 @@ impl Server {
             ledgers.retain(|ledger| ledger["parent"].as_str() == Some(group.as_str()));
         }
         let offset = arg_usize(args, "offset", 0)?;
-        let limit = arg_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+        let limit =
+            arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
         let total = ledgers.len();
         let page = ledgers
             .into_iter()
@@ -803,7 +804,8 @@ impl Server {
             rows.retain(|row| row.get("voucher_type") == Some(&Value::String(kind.clone())));
         }
         let offset = arg_usize(args, "offset", 0)?;
-        let limit = arg_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+        let limit =
+            arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
         let total = rows.len();
         let items = rows
             .into_iter()
@@ -990,10 +992,10 @@ impl Server {
             .fetch_outstandings(self.tally_config(), &identity, to, assertion, ageing_anchor)
             .await
             .map_err(|_| "native_outstandings_read_failed".to_string())?;
-        let top = arg_usize(args, "top", 25)?.min(self.settings.max_rows);
+        let top = arg_positive_usize(args, "top", 25)?.min(self.settings.max_rows);
         let bill_offset = arg_usize(args, "offset", 0)?;
         let bill_limit =
-            arg_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+            arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
         let mut result_evidence = identity_evidence;
         let (result, bills_truncated) = match load {
             OutstandingsLoadResult::Complete {
@@ -1200,7 +1202,8 @@ impl Server {
             evidence.reason_code = Some("opening_balance_not_observed".to_string());
         }
         let offset = arg_usize(args, "offset", 0)?;
-        let limit = arg_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+        let limit =
+            arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
         let total = rows.len();
         let rows = rows
             .into_iter()
@@ -1273,7 +1276,7 @@ impl Server {
     }
 
     fn read_evidence(&self, args: &Value) -> Result<ToolOutcome, String> {
-        let take = arg_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
+        let take = arg_positive_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
         let records = self
             .evidence
             .lock()
@@ -1304,7 +1307,7 @@ impl Server {
     }
 
     fn egress_log(&self, args: &Value) -> Result<ToolOutcome, String> {
-        let take = arg_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
+        let take = arg_positive_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
         let path = self.settings.data_dir.join("agent-egress.jsonl");
         let lines = read_egress_tail(&path, take)?;
         let evidence = Evidence {
@@ -1961,6 +1964,12 @@ fn arg_usize(args: &Value, key: &str, default: usize) -> Result<usize, String> {
             .ok_or_else(|| "pagination_invalid".to_string()),
         Some(_) => Err("pagination_invalid".to_string()),
     }
+}
+fn arg_positive_usize(args: &Value, key: &str, default: usize) -> Result<usize, String> {
+    let value = arg_usize(args, key, default)?;
+    (value > 0)
+        .then_some(value)
+        .ok_or_else(|| "pagination_invalid".to_string())
 }
 fn normalized_date(value: &str) -> Result<String, String> {
     let value = value.replace('-', "");
@@ -2803,6 +2812,14 @@ mod tests {
         for value in [json!(-1), json!(1.5), json!("10")] {
             assert_eq!(
                 arg_usize(&json!({"limit": value}), "limit", 20),
+                Err("pagination_invalid".to_string())
+            );
+        }
+        for key in ["limit", "top"] {
+            let mut args = json!({});
+            args[key] = json!(0);
+            assert_eq!(
+                arg_positive_usize(&args, key, 20),
                 Err("pagination_invalid".to_string())
             );
         }
