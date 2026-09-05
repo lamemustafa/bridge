@@ -268,21 +268,21 @@ impl Server {
     }
 
     async fn companies(&self) -> Result<(Vec<TallyCompany>, Evidence), String> {
-        let companies = self
+        let company_list = self
             .runtime
-            .fetch_companies(self.tally_config())
+            .fetch_agent_companies(self.tally_config())
             .await
             .map_err(|_| "company_collection_invalid".to_string())?;
         let evidence = Evidence {
             request_sha256: sha256_hex(ReadOnlyProfile::CompanyListV2.render().as_bytes()),
-            response_sha256: sha256_json(&companies),
-            bytes: 0,
+            response_sha256: company_list.response_sha256,
+            bytes: company_list.response_bytes,
             state: "complete",
             read_at: None,
             duration_ms: None,
             reason_code: None,
         };
-        Ok((companies, evidence))
+        Ok((company_list.companies, evidence))
     }
 
     async fn verified_company(

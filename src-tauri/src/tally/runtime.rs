@@ -39,8 +39,10 @@ use bridge_tally_protocol::outstandings::{
 use bridge_tally_protocol::outstandings_shared::{
     CompanyBookExtent, DateBoundaryProfile, OutstandingsReport,
 };
+use bridge_tally_protocol::{parse_companies_from_collection, xml_read_profiles::ReadOnlyProfile};
 use bridge_tally_transport::TallyTransportError;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -49,6 +51,27 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const MAX_ENDPOINT_SESSIONS: usize = 32;
+
+/// A company-list response bound to the exact transport bytes that produced
+/// it. The MCP adapter uses this rather than reserializing parsed companies.
+#[derive(Debug, Clone)]
+pub struct AgentCompanyList {
+    pub companies: Vec<TallyCompany>,
+    pub response_bytes: usize,
+    pub response_sha256: String,
+}
+
+fn agent_company_list_from_response(response: String) -> anyhow::Result<AgentCompanyList> {
+    let companies = parse_companies_from_collection(&response)?;
+    Ok(AgentCompanyList {
+        response_bytes: response.len(),
+        response_sha256: Sha256::digest(response.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        companies,
+    })
+}
 
 /// Re-enumerate the complete identity immediately before or after a scoped
 /// read. Tally accepts a company name as the scope selector, so the GUID alone
@@ -1416,6 +1439,27 @@ impl TallyRuntime {
         .await
     }
 
+    /// Reads the documented company collection and retains evidence for the
+    /// exact raw response bytes used to produce the parsed company list.
+    pub async fn fetch_agent_companies(
+        &self,
+        config: TallyConfig,
+    ) -> anyhow::Result<AgentCompanyList> {
+        let _lease = self.begin_ordinary_read(&config)?;
+        self.execute(
+            config,
+            ReadOperation::CompanyList,
+            ReadRetryPolicy::transient_default(),
+            |client| async move {
+                let response = client
+                    .post_xml(ReadOnlyProfile::CompanyListV2.render())
+                    .await?;
+                agent_company_list_from_response(response)
+            },
+        )
+        .await
+    }
+
     /// Re-enumerates companies while one reviewed setup operation holds the
     /// exclusive cached-probe reservation. This is deliberately separate from
     /// `fetch_companies`: an ordinary read must remain forbidden while setup
@@ -2668,6 +2712,20 @@ mod tests {
 
     fn verified_identity(name: &str, guid: &str) -> VerifiedCompanyIdentity {
         VerifiedCompanyIdentity::test_fixture(name, guid)
+    }
+
+    #[test]
+    fn agent_company_list_evidence_hashes_the_exact_raw_response_bytes() {
+        let response = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Book\"><GUID>g-1</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>".to_string();
+        let expected_bytes = response.len();
+        let expected_sha = Sha256::digest(response.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let listed = agent_company_list_from_response(response).expect("company list");
+        assert_eq!(listed.response_bytes, expected_bytes);
+        assert_eq!(listed.response_sha256, expected_sha);
+        assert_eq!(listed.companies.len(), 1);
     }
 
     fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
