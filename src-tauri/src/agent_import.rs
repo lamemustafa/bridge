@@ -1876,6 +1876,9 @@ mod tests {
                 company.clone(),
                 company.clone(),
                 company.clone(),
+                readback.clone(),
+                company.clone(),
+                company.clone(),
                 readback,
                 company,
             ]
@@ -1927,6 +1930,6 @@ mod tests {
                 proof.0["result"]["batch_id"].as_str().expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 11);
+        assert_eq!(simulator.finish().expect("requests").len(), 14);
     }
 }
