@@ -620,6 +620,7 @@ impl Server {
     }
 
     async fn tool_payload(&self, name: &str, args: &Value) -> Result<ToolOutcome, String> {
+        validate_tool_arguments(name, args)?;
         match name {
             "tally_status" => {
                 let (result, evidence) = self.status().await?;
@@ -1406,6 +1407,51 @@ impl Server {
             false,
         ))
     }
+}
+
+fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
+    let arguments = args
+        .as_object()
+        .ok_or_else(|| "argument_schema_invalid".to_string())?;
+    let allowed: &[&str] = match name {
+        "tally_status" | "list_companies" | "voucher_schema" => &[],
+        "validate_masters" => &["company_guid", "ledgers"],
+        "build_import_xml" => &["company_guid", "vouchers"],
+        "verify_import" => &["company_guid", "batch_id"],
+        "outstandings" => &[
+            "company_guid",
+            "direction",
+            "as_of",
+            "ageing_basis",
+            "top",
+            "offset",
+            "limit",
+        ],
+        "ledger_masters" => &["company_guid", "group", "fields", "offset", "limit"],
+        "ledger_movement" => &["company_guid", "from", "to", "ledger"],
+        "vouchers" => &[
+            "company_guid",
+            "from",
+            "to",
+            "voucher_type",
+            "ledger",
+            "offset",
+            "limit",
+        ],
+        "changed_since" => &[
+            "company_guid",
+            "voucher_alter_id",
+            "master_alter_id",
+            "voucher_snapshot_alter_id",
+            "master_snapshot_alter_id",
+        ],
+        "read_evidence" | "egress_log" => &["limit"],
+        _ => return Err("tool_not_found".to_string()),
+    };
+    if let Some(unknown) = arguments.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(format!("argument_unknown:{unknown}"));
+    }
+    Ok(())
 }
 
 fn append_egress_line(path: &Path, line: &str) -> Result<(), String> {
@@ -2867,6 +2913,17 @@ mod tests {
         );
         assert!(
             parse_agent_rows("<ENVELOPE><BODY><RESPONSE>bad</RESPONSE></BODY></ENVELOPE>").is_err()
+        );
+    }
+
+    #[test]
+    fn tool_arguments_reject_unknown_keys_before_tool_dispatch() {
+        assert_eq!(
+            validate_tool_arguments(
+                "vouchers",
+                &json!({"company_guid":"company", "from":"2026-09-01", "to":"2026-09-02", "ledgre":"Cash"}),
+            ),
+            Err("argument_unknown:ledgre".to_string())
         );
     }
 
