@@ -4325,7 +4325,7 @@ mod tests {
             company_plan(),
             status_plan(),
         ])
-            .expect("synthetic loopback server");
+        .expect("synthetic loopback server");
         let directory = tempfile::tempdir().expect("temporary agent directory");
         let server = Server::new(settings(
             simulator.address(),
