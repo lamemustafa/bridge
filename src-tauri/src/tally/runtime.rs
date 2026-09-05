@@ -1652,14 +1652,18 @@ impl TallyRuntime {
     }
 
     /// Returns the existing paired, identity-bracketed party ledger source in
-    /// a library-safe record form for local read adapters. Currency admission
-    /// remains inside the runtime so callers cannot label an unverified
-    /// currency as INR or bypass the paired master read.
-    pub async fn fetch_agent_party_ledger_masters(
+    /// a library-safe record form together with its retained response
+    /// commitments. Currency admission remains inside the runtime so callers
+    /// cannot label an unverified currency as INR or bypass the paired master
+    /// read.
+    pub async fn fetch_agent_party_ledger_masters_with_evidence(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
-    ) -> anyhow::Result<Vec<bridge_tally_protocol::PartyLedgerMasterRecord>> {
+    ) -> anyhow::Result<(
+        Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
+        RuntimeReadEvidence,
+    )> {
         let currency_read = self
             .detect_base_currency_with_extent(config.clone(), identity)
             .await?;
@@ -1673,7 +1677,8 @@ impl TallyRuntime {
         let source = self
             .fetch_party_ledger_master_source(config, identity, assertion)
             .await?;
-        Ok(source
+        let evidence = Self::party_ledger_master_source_evidence(&source);
+        let records = source
             .rows
             .into_iter()
             .map(|row| bridge_tally_protocol::PartyLedgerMasterRecord {
@@ -1685,7 +1690,42 @@ impl TallyRuntime {
                 },
                 fields: row.fields,
             })
-            .collect())
+            .collect();
+        Ok((records, evidence))
+    }
+
+    /// The party-ledger source owns three paired native responses (master,
+    /// balance, and group). Its source model deliberately retains their raw
+    /// response commitments and byte counts but not the private request bodies;
+    /// bind the resulting evidence to the verified company and established
+    /// period rather than issuing a second, unrelated ordinary-ledger read.
+    fn party_ledger_master_source_evidence(
+        source: &PartyLedgerMasterSource,
+    ) -> RuntimeReadEvidence {
+        let request_scope = format!(
+            "party-ledger-master-source:{}:{}:{}:{}",
+            source.company,
+            source.company_guid,
+            source.from.as_str(),
+            source.to.as_str(),
+        );
+        RuntimeReadEvidence {
+            request_sha256: sha256_hex(request_scope.as_bytes()),
+            response_sha256: sha256_hex(
+                format!(
+                    "{}:{}:{}",
+                    source.master_response_sha256,
+                    source.balance_response_sha256,
+                    source.group_response_sha256,
+                )
+                .as_bytes(),
+            ),
+            bytes: source
+                .master_response_bytes
+                .saturating_add(source.balance_response_bytes)
+                .saturating_add(source.group_response_bytes)
+                .saturating_mul(2),
+        }
     }
 
     /// Fetches the limited, documented standard collection response used for
@@ -2928,6 +2968,32 @@ mod tests {
         assert_eq!(listed.response_bytes, expected_bytes);
         assert_eq!(listed.response_sha256, expected_sha);
         assert_eq!(listed.companies.len(), 1);
+    }
+
+    #[test]
+    fn party_ledger_master_evidence_tracks_source_responses_without_plain_ledger_read() {
+        let source = |master_response_sha256: &str| PartyLedgerMasterSource {
+            company: "Synthetic Books".to_string(),
+            company_guid: "company-guid".to_string(),
+            currency_assertion: OutstandingsCurrencyAssertion::Inr,
+            currency_decimal_places: 2,
+            from: TallyDate::parse("20260401").expect("source from"),
+            to: TallyDate::parse("20260731").expect("source to"),
+            rows: Vec::new(),
+            master_response_sha256: master_response_sha256.to_string(),
+            balance_response_sha256: "b".repeat(64),
+            group_response_sha256: "c".repeat(64),
+            master_response_bytes: 11,
+            balance_response_bytes: 13,
+            group_response_bytes: 17,
+            groups: Vec::new(),
+        };
+        let baseline = TallyRuntime::party_ledger_master_source_evidence(&source(&"a".repeat(64)));
+        let changed = TallyRuntime::party_ledger_master_source_evidence(&source(&"d".repeat(64)));
+
+        assert_eq!(baseline.request_sha256, changed.request_sha256);
+        assert_ne!(baseline.response_sha256, changed.response_sha256);
+        assert_eq!(baseline.bytes, (11 + 13 + 17) * 2);
     }
 
     #[test]

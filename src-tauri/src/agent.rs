@@ -679,16 +679,11 @@ impl Server {
         let fields = optional_string(args, "fields")?.unwrap_or_else(|| "basic".to_string());
         let compliance = fields == "compliance";
         let (mut ledgers, ledger_evidence) = if compliance {
-            let records = self
+            let (records, evidence) = self
                 .runtime
-                .fetch_agent_party_ledger_masters(self.tally_config(), &identity)
+                .fetch_agent_party_ledger_masters_with_evidence(self.tally_config(), &identity)
                 .await
                 .map_err(|_| "party_ledger_master_read_failed".to_string())?;
-            let (_, evidence) = self
-                .runtime
-                .fetch_ledgers_with_evidence(self.tally_config(), &identity)
-                .await
-                .map_err(|_| "ledger_export_invalid".to_string())?;
             (
                 records
                     .into_iter()
