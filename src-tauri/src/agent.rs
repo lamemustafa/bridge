@@ -1021,7 +1021,7 @@ impl Server {
             ),
             Some(guid.to_string()),
             returned_rows,
-            vec!["alter_id".into(), "name".into(), "kind".into()],
+            changed_since_fields_returned(),
             voucher_truncated || master_truncated,
         ))
     }
@@ -1577,6 +1577,31 @@ fn ledger_fields_returned(compliance: bool) -> Vec<String> {
     } else {
         vec!["name".into(), "parent".into(), "opening_balance".into()]
     }
+}
+
+fn changed_since_fields_returned() -> Vec<String> {
+    [
+        "voucher.date",
+        "voucher.voucher_number",
+        "voucher.voucher_type",
+        "voucher.party",
+        "voucher.narration",
+        "voucher.amounts",
+        "voucher.guid",
+        "voucher.master_id",
+        "voucher.alter_id",
+        "voucher.cancelled",
+        "voucher.optional",
+        "master.kind",
+        "master.name",
+        "master.parent",
+        "master.alter_id",
+        "master.guid",
+        "master.master_id",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 fn ledger_lookup_key(value: &str) -> String {
@@ -3538,6 +3563,32 @@ mod tests {
                 "opening_balance",
                 "party_gstin",
                 "compliance"
+            ]
+        );
+    }
+
+    #[test]
+    fn changed_since_egress_fields_cover_every_released_voucher_and_master_field() {
+        assert_eq!(
+            changed_since_fields_returned(),
+            vec![
+                "voucher.date",
+                "voucher.voucher_number",
+                "voucher.voucher_type",
+                "voucher.party",
+                "voucher.narration",
+                "voucher.amounts",
+                "voucher.guid",
+                "voucher.master_id",
+                "voucher.alter_id",
+                "voucher.cancelled",
+                "voucher.optional",
+                "master.kind",
+                "master.name",
+                "master.parent",
+                "master.alter_id",
+                "master.guid",
+                "master.master_id",
             ]
         );
     }
