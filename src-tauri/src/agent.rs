@@ -6,8 +6,8 @@
 mod agent_import;
 
 use crate::tally::{
-    OutstandingsAgeingAnchor, OutstandingsCurrencyAssertion, OutstandingsLoadResult, TallyConfig,
-    TallyRuntime, VerifiedCompanyIdentity,
+    ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, OutstandingsCurrencyAssertion,
+    OutstandingsLoadResult, TallyConfig, TallyRuntime, VerifiedCompanyIdentity,
 };
 use bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile;
 use bridge_tally_protocol::TallyCompany;
@@ -825,6 +825,10 @@ impl Server {
                 if !matches!(direction, "receivable" | "payable" | "both") {
                     return Err("invalid_direction".to_string());
                 }
+                let parties = ranked_parties_from_open_bills(&statement_open_bills, top)?
+                    .into_iter()
+                    .map(|party| redact_value(party, self.settings.redaction))
+                    .collect::<Vec<_>>();
                 let all_bills = statement_open_bills
                     .into_iter()
                     .filter(|bill| {
@@ -838,17 +842,6 @@ impl Server {
                     .map(|bill| {
                         redact_value(
                             serde_json::to_value(bill).unwrap_or_default(),
-                            self.settings.redaction,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let parties = report
-                    .top_parties
-                    .into_iter()
-                    .take(top)
-                    .map(|party| {
-                        redact_value(
-                            serde_json::to_value(party).unwrap_or_default(),
                             self.settings.redaction,
                         )
                     })
@@ -1174,6 +1167,61 @@ fn matching_ledger_name<'a>(
 
 fn ledger_movement_counts<T>(rows: &[Value], vouchers: &[T]) -> (usize, usize) {
     (rows.len(), vouchers.len())
+}
+
+fn ranked_parties_from_open_bills(bills: &[OpenBillRow], top: usize) -> Result<Vec<Value>, String> {
+    let mut totals = BTreeMap::<String, (String, String, Option<u32>)>::new();
+    for bill in bills {
+        let entry = totals
+            .entry(bill.party.clone())
+            .or_insert_with(|| ("0".to_string(), "0".to_string(), None));
+        match bill.kind {
+            ExposureDirection::Receivable => entry.0 = add_decimal(&entry.0, bill.amount.as_str())?,
+            ExposureDirection::Payable => entry.1 = add_decimal(&entry.1, bill.amount.as_str())?,
+        }
+        entry.2 = match (entry.2, bill.age_days) {
+            (Some(current), Some(age)) => Some(current.max(age)),
+            (current, None) => current,
+            (None, Some(age)) => Some(age),
+        };
+    }
+    let mut ranked = totals
+        .into_iter()
+        .map(|(party, (receivable, payable, oldest_bill_age_days))| {
+            let outstanding_total = add_decimal(&receivable, &payable)?;
+            let magnitude = bridge_tally_core::ExactDecimal::parse(outstanding_total.clone())
+                .map_err(|_| "outstandings_amount_invalid".to_string())?;
+            Ok((
+                party,
+                receivable,
+                payable,
+                outstanding_total,
+                oldest_bill_age_days,
+                magnitude,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    ranked.sort_by(|left, right| {
+        right
+            .5
+            .cmp_magnitude(&left.5)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    Ok(ranked
+        .into_iter()
+        .take(top)
+        .map(
+            |(party, receivable, payable, outstanding_total, oldest_bill_age_days, _)| {
+                json!({
+                    "party": party,
+                    "receivable": receivable,
+                    "payable": payable,
+                    "outstanding_total": outstanding_total,
+                    "oldest_bill_age_days": oldest_bill_age_days,
+                })
+            },
+        )
+        .collect())
 }
 
 fn read_egress_tail(path: &Path, take: usize) -> Result<Vec<String>, String> {
@@ -2158,6 +2206,26 @@ mod tests {
             ensure_movement_window_within_books("20260401", "20260401"),
             Ok(())
         );
+    }
+
+    #[test]
+    fn outstandings_top_ranking_uses_all_open_bills_not_the_report_cap() {
+        let bills = (1..=12)
+            .map(|index| OpenBillRow {
+                party: format!("Party {index:02}"),
+                reference: format!("REF-{index}"),
+                bill_date: "20260901".to_string(),
+                due_date: "20260901".to_string(),
+                amount: bridge_tally_core::ExactDecimal::parse(index.to_string())
+                    .expect("synthetic amount"),
+                age_days: Some(index),
+                kind: ExposureDirection::Receivable,
+            })
+            .collect::<Vec<_>>();
+        let ranked = ranked_parties_from_open_bills(&bills, 12).expect("ranked parties");
+        assert_eq!(ranked.len(), 12);
+        assert_eq!(ranked[0]["party"], "Party 12");
+        assert_eq!(ranked[11]["party"], "Party 01");
     }
 
     #[tokio::test]
