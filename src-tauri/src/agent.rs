@@ -2526,19 +2526,23 @@ fn parse_agent_rows_with_accounting_state(
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
                 if end == "ALLLEDGERENTRIES.LIST" {
                     if let (Some(_), Some(entry_row)) = (current.as_mut(), entry.take()) {
-                        if let (Some(ledger), Some(amount)) =
-                            (entry_row.get("LEDGERNAME"), entry_row.get("AMOUNT"))
-                        {
-                            let polarity = entry_row
-                                .get("ISDEEMEDPOSITIVE")
-                                .map(String::as_str)
-                                .unwrap_or("not_observed");
-                            entries.push(json!({
-                                "ledger": ledger,
-                                "amount": amount,
-                                "is_deemed_positive": polarity,
-                            }));
-                        }
+                        let ledger = entry_row
+                            .get("LEDGERNAME")
+                            .filter(|value| !value.trim().is_empty())
+                            .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
+                        let amount = entry_row
+                            .get("AMOUNT")
+                            .filter(|value| !value.trim().is_empty())
+                            .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
+                        let polarity = entry_row
+                            .get("ISDEEMEDPOSITIVE")
+                            .filter(|value| !value.trim().is_empty())
+                            .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
+                        entries.push(json!({
+                            "ledger": ledger,
+                            "amount": amount,
+                            "is_deemed_positive": polarity,
+                        }));
                     }
                 } else if end == "VOUCHER" {
                     if let Some(row) = current.take() {
@@ -3177,8 +3181,29 @@ mod tests {
     }
 
     #[test]
+    fn voucher_and_changed_parsers_reject_incomplete_ledger_entries() {
+        for entry in [
+            "<AMOUNT>-10</AMOUNT><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>",
+            "<LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>",
+            "<LEDGERNAME>Expense</LEDGERNAME><AMOUNT>-10</AMOUNT>",
+        ] {
+            let xml = format!(
+                "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-guid</GUID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST>{entry}</ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+            );
+            assert_eq!(
+                parse_agent_rows(&xml),
+                Err("agent_read_protocol_invalid".to_string())
+            );
+            assert_eq!(
+                parse_agent_changed_rows(&xml),
+                Err("agent_read_protocol_invalid".to_string())
+            );
+        }
+    }
+
+    #[test]
     fn voucher_parsers_decode_entities_in_vouchers_and_change_feeds() {
-        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-guid</GUID><VOUCHERNUMBER>R&amp;D</VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D</LEDGERNAME><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-guid</GUID><VOUCHERNUMBER>R&amp;D</VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
         let vouchers = parse_agent_rows(xml).expect("voucher rows");
         assert_eq!(vouchers[0]["voucher_number"], "R&D");
         assert_eq!(vouchers[0]["amounts"][0]["ledger"], "R&D");
@@ -3189,7 +3214,7 @@ mod tests {
 
     #[test]
     fn voucher_ledger_filter_drops_mixed_response_rows_that_do_not_match_live_spelling() {
-        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><VOUCHERNUMBER>keep</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>R and D</LEDGERNAME><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER><VOUCHERNUMBER>drop</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales</LEDGERNAME><AMOUNT>10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><VOUCHERNUMBER>keep</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>R and D</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER><VOUCHERNUMBER>drop</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
         let rows = parse_agent_rows(xml).expect("mixed voucher rows");
         let (rows, filter_not_honoured) = filter_voucher_rows_for_ledger(rows, "R-and_D");
         assert!(filter_not_honoured);
