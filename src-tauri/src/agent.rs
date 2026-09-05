@@ -4308,10 +4308,24 @@ mod tests {
 
     #[tokio::test]
     async fn simulator_company_read_records_evidence_while_down_endpoint_is_typed() {
-        let plan = ScenarioPlan::new(Fixture::SyntheticXml(company_collection_xml()))
-            .with_encoding(WireEncoding::Utf16Le)
-            .with_framing(ResponseFraming::ContentLength);
-        let simulator = SequenceSimulator::spawn(vec![plan]).expect("synthetic loopback server");
+        let company_plan = || {
+            ScenarioPlan::new(Fixture::SyntheticXml(company_collection_xml()))
+                .with_encoding(WireEncoding::Utf16Le)
+                .with_framing(ResponseFraming::ContentLength)
+        };
+        let status_plan = || {
+            ScenarioPlan::new(Fixture::ProductStatus(
+                tally_protocol_simulator::ProductStatus::TallyPrime,
+            ))
+            .with_framing(ResponseFraming::ContentLength)
+        };
+        let simulator = SequenceSimulator::spawn(vec![
+            company_plan(),
+            status_plan(),
+            company_plan(),
+            status_plan(),
+        ])
+            .expect("synthetic loopback server");
         let directory = tempfile::tempdir().expect("temporary agent directory");
         let server = Server::new(settings(
             simulator.address(),
@@ -4325,7 +4339,7 @@ mod tests {
             Some(1)
         );
         assert!(response["structuredContent"]["evidence"]["request_sha256"].is_string());
-        assert_eq!(simulator.finish().expect("simulator result").len(), 1);
+        assert_eq!(simulator.finish().expect("simulator result").len(), 4);
 
         let down = Server::new(Settings {
             endpoint: TallyEndpointConfig {

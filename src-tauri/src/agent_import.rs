@@ -2093,6 +2093,7 @@ mod tests {
         let company = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SYNTHETIC BOOK\"><GUID>{GUID}</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
         let ledgers = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COMPANYCONTEXT><SCHEMA>bridge.tally.ledgers/1</SCHEMA><OBJECTTYPE>LEDGER</OBJECTTYPE><NAME>BRIDGE SYNTHETIC BOOK</NAME><GUID>{GUID}</GUID><RECORDCOUNT>3</RECORDCOUNT></COMPANYCONTEXT><COLLECTION><LEDGER NAME=\"Expense\" GUID=\"{GUID}-00000001\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER><LEDGER NAME=\"Bank\" GUID=\"{GUID}-00000002\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER><LEDGER NAME=\"Income\" GUID=\"{GUID}-00000003\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>");
         let premark = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>{GUID}</GUID><ALTVCHID>10</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
+        let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>".to_string();
         let readback = concat!(
             "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
             "<VOUCHER REMOTEID=\"tally-assigned-1\"><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>g-1</GUID><MASTERID>1</MASTERID><ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER>",
@@ -2102,6 +2103,9 @@ mod tests {
         let simulator = SequenceSimulator::spawn(
             vec![
                 company.clone(),
+                status.clone(),
+                company.clone(),
+                status.clone(),
                 company.clone(),
                 ledgers,
                 company.clone(),
@@ -2109,6 +2113,9 @@ mod tests {
                 premark,
                 company.clone(),
                 company.clone(),
+                status.clone(),
+                company.clone(),
+                status.clone(),
                 company.clone(),
                 readback.clone(),
                 company.clone(),
@@ -2117,10 +2124,18 @@ mod tests {
                 company,
             ]
             .into_iter()
-            .map(|xml| {
-                ScenarioPlan::new(Fixture::SyntheticXml(xml))
-                    .with_encoding(WireEncoding::Utf16Le)
+            .enumerate()
+            .map(|(index, xml)| {
+                if matches!(index, 1 | 3 | 11 | 13) {
+                    ScenarioPlan::new(Fixture::ProductStatus(
+                        tally_protocol_simulator::ProductStatus::TallyPrime,
+                    ))
                     .with_framing(ResponseFraming::ContentLength)
+                } else {
+                    ScenarioPlan::new(Fixture::SyntheticXml(xml))
+                        .with_encoding(WireEncoding::Utf16Le)
+                        .with_framing(ResponseFraming::ContentLength)
+                }
             })
             .collect(),
         )
@@ -2164,6 +2179,6 @@ mod tests {
                 proof.0["result"]["batch_id"].as_str().expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 14);
+        assert_eq!(simulator.finish().expect("requests").len(), 20);
     }
 }
