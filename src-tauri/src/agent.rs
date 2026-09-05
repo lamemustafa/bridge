@@ -908,7 +908,7 @@ impl Server {
         if from > to {
             return Err("invalid_date_range".to_string());
         }
-        let (company, identity, evidence) = self.verified_company(guid).await?;
+        let (company, identity, mut evidence) = self.verified_company(guid).await?;
         let ledgers = self
             .runtime
             .fetch_ledgers(self.tally_config(), &identity)
@@ -984,8 +984,9 @@ impl Server {
                 let Some(record) = movement.get_mut(&entry.ledger_name) else {
                     continue;
                 };
-                let opening = record.1.as_deref().unwrap_or("0");
-                record.1 = Some(add_decimal(opening, &entry.amount)?);
+                if let Some(opening) = record.1.as_deref() {
+                    record.1 = Some(add_decimal(opening, &entry.amount)?);
+                }
             }
         }
         for voucher in &vouchers {
@@ -1014,16 +1015,40 @@ impl Server {
                 }
             }
         }
-        let rows = movement.into_iter().map(|(name, (parent, opening, debit, credit, _, vouchers_touching))| -> Result<Value, String> {
-            let closing = opening.as_deref().map(|opening| {
-                let debited = add_decimal(opening, &debit)?;
-                add_decimal(&debited, &credit)
-            }).transpose()?;
-            Ok(redact_value(json!({"ledger": name, "parent": parent, "opening": opening, "debit": debit, "credit": credit, "closing": closing, "vouchers_touching": vouchers_touching}), self.settings.redaction))
-        }).collect::<Result<Vec<_>, _>>()?;
+        let (rows, opening_unobserved) = movement
+            .into_iter()
+            .map(
+                |(name, (parent, opening, debit, credit, _, vouchers_touching))| {
+                    ledger_movement_row(
+                        LedgerMovementRow {
+                            name,
+                            parent,
+                            opening,
+                            debit,
+                            credit,
+                            vouchers_touching,
+                        },
+                        books_from < from,
+                        self.settings.redaction,
+                    )
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .fold(
+                (Vec::new(), false),
+                |(mut rows, any_partial), (row, partial)| {
+                    rows.push(row);
+                    (rows, any_partial || partial)
+                },
+            );
+        if opening_unobserved {
+            evidence.state = "partial";
+            evidence.reason_code = Some("opening_balance_not_observed".to_string());
+        }
         let (rows_returned, voucher_rows_observed) = ledger_movement_counts(&rows, &vouchers);
         Ok((
-            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"ledgers": rows, "voucher_rows_observed": voucher_rows_observed, "evidence_method": if books_from < from {"runtime_ledger_opening_plus_pre_window_entries_to_from"} else {"runtime_ledger_opening_at_books_from_plus_literal_window_entries"}}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": if opening_unobserved {"partial"} else {"complete"}, "partial_reason": opening_unobserved.then_some("opening_balance_not_observed"), "ledgers": rows, "voucher_rows_observed": voucher_rows_observed, "evidence_method": if books_from < from {"runtime_ledger_opening_plus_pre_window_entries_to_from"} else {"runtime_ledger_opening_at_books_from_plus_literal_window_entries"}}}),
             evidence,
             Some(guid.to_string()),
             rows_returned,
@@ -1221,6 +1246,59 @@ fn matching_ledger_name<'a>(
 
 fn ledger_movement_counts<T>(rows: &[Value], vouchers: &[T]) -> (usize, usize) {
     (rows.len(), vouchers.len())
+}
+
+struct LedgerMovementRow {
+    name: String,
+    parent: Option<String>,
+    opening: Option<String>,
+    debit: String,
+    credit: String,
+    vouchers_touching: usize,
+}
+
+fn ledger_movement_row(
+    row: LedgerMovementRow,
+    starts_after_books_from: bool,
+    redaction: Redaction,
+) -> Result<(Value, bool), String> {
+    let LedgerMovementRow {
+        name,
+        parent,
+        opening,
+        debit,
+        credit,
+        vouchers_touching,
+    } = row;
+    let opening_unobserved = starts_after_books_from && opening.is_none();
+    let closing = if opening_unobserved {
+        None
+    } else {
+        opening
+            .as_deref()
+            .map(|opening| {
+                let debited = add_decimal(opening, &debit)?;
+                add_decimal(&debited, &credit)
+            })
+            .transpose()?
+    };
+    Ok((
+        redact_value(
+            json!({
+                "ledger": name,
+                "parent": parent,
+                "opening": opening,
+                "debit": debit,
+                "credit": credit,
+                "closing": closing,
+                "vouchers_touching": vouchers_touching,
+                "state": if opening_unobserved {"partial"} else {"complete"},
+                "reason": opening_unobserved.then_some("opening_balance_not_observed"),
+            }),
+            redaction,
+        ),
+        opening_unobserved,
+    ))
 }
 
 fn ranked_parties_from_open_bills(bills: &[OpenBillRow], top: usize) -> Result<Vec<Value>, String> {
@@ -2379,6 +2457,28 @@ mod tests {
             ensure_movement_window_within_books("20260401", "20260401"),
             Ok(())
         );
+    }
+
+    #[test]
+    fn ledger_movement_marks_an_unobserved_post_books_opening_partial() {
+        let (row, partial) = ledger_movement_row(
+            LedgerMovementRow {
+                name: "Customer A".to_string(),
+                parent: Some("Sundry Debtors".to_string()),
+                opening: None,
+                debit: "10".to_string(),
+                credit: "0".to_string(),
+                vouchers_touching: 1,
+            },
+            true,
+            Redaction::None,
+        )
+        .expect("partial movement row");
+        assert!(partial);
+        assert_eq!(row["opening"], Value::Null);
+        assert_eq!(row["closing"], Value::Null);
+        assert_eq!(row["state"], "partial");
+        assert_eq!(row["reason"], "opening_balance_not_observed");
     }
 
     #[test]
