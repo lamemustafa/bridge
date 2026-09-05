@@ -46,6 +46,8 @@ metadata-only receipt to `agent-egress.jsonl`; receipt lines never contain
 voucher bodies. Redaction happens before a result reaches the client.
 `egress_log` reads only the final 256 KiB, in 64 KiB reverse-seek chunks, so a
 larger receipt file still yields its bounded tail without loading the head.
+`changed_since` detects changes only for Ledger and Group masters; other Tally
+master types are deliberately out of scope and cannot advance its master cursor.
 
 ## Voucher-file loop (manual Tally import only; disabled by default)
 

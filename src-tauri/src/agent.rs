@@ -845,30 +845,42 @@ impl Server {
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
         let supplied_voucher_snapshot = checkpoint_arg(args, "voucher_snapshot_alter_id")?;
         let supplied_master_snapshot = checkpoint_arg(args, "master_snapshot_alter_id")?;
-        let (snapshot, snapshot_evidence) =
-            match (supplied_voucher_snapshot, supplied_master_snapshot) {
-                (Some(voucher), Some(master)) => (
-                    json!({"altvchid": voucher, "altmstid": master}),
-                    Evidence {
-                        request_sha256: sha256_hex(b"agent_change_snapshot_from_cursor"),
-                        response_sha256: sha256_json(
-                            &json!({"altvchid": voucher, "altmstid": master}),
-                        ),
-                        bytes: 0,
-                        state: "complete",
-                        read_at: None,
-                        duration_ms: None,
-                        reason_code: None,
-                    },
-                ),
-                (None, None) => {
-                    let (xml, evidence) = self
-                        .post_read(&identity, render_agent_company_high_water(&company.name))
-                        .await?;
-                    (parse_company_high_water(&xml, guid)?, evidence)
-                }
-                _ => return Err("change_snapshot_incomplete".to_string()),
-            };
+        let (snapshot, snapshot_evidence) = match (
+            supplied_voucher_snapshot,
+            supplied_master_snapshot,
+        ) {
+            (Some(voucher), Some(master)) => (
+                json!({"altvchid": voucher, "altmstid": master}),
+                Evidence {
+                    request_sha256: sha256_hex(b"agent_change_snapshot_from_cursor"),
+                    response_sha256: sha256_json(&json!({"altvchid": voucher, "altmstid": master})),
+                    bytes: 0,
+                    state: "complete",
+                    read_at: None,
+                    duration_ms: None,
+                    reason_code: None,
+                },
+            ),
+            (None, None) => {
+                let (xml, evidence) = self
+                    .post_read(&identity, render_agent_company_high_water(&company.name))
+                    .await?;
+                let voucher_snapshot = parse_company_high_water(&xml, guid)?["altvchid"]
+                    .as_u64()
+                    .ok_or_else(|| "voucher_checkpoint_invalid".to_string())?;
+                let (master_xml, master_evidence) = self
+                    .post_read(
+                        &identity,
+                        render_agent_master_domain_high_water(&company.name),
+                    )
+                    .await?;
+                (
+                    json!({"altvchid": voucher_snapshot, "altmstid": parse_master_domain_high_water(&master_xml)?}),
+                    combine_evidence(evidence, master_evidence),
+                )
+            }
+            _ => return Err("change_snapshot_incomplete".to_string()),
+        };
         let voucher_snapshot = snapshot["altvchid"]
             .as_u64()
             .ok_or_else(|| "voucher_checkpoint_invalid".to_string())?;
@@ -2102,6 +2114,10 @@ fn render_agent_changed_masters(company: &str, checkpoint: u64, snapshot: u64) -
     )
 }
 
+fn render_agent_master_domain_high_water(company: &str) -> String {
+    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Master Domain High Water</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME=\"Bridge Agent Ledger High Water\" TYPE=\"Ledger\"><FETCH>ALTERID</FETCH></COLLECTION><COLLECTION NAME=\"Bridge Agent Group High Water\" TYPE=\"Group\"><FETCH>ALTERID</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
+}
+
 fn render_agent_company_high_water(company: &str) -> String {
     format!(
         "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Company High Water</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME=\"Bridge Agent Company High Water\" TYPE=\"Company\"><FETCH>GUID,ALTVCHID,ALTMSTID</FETCH></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
@@ -2168,6 +2184,46 @@ fn parse_company_high_water(xml: &str, expected_guid: &str) -> Result<Value, Str
         "altvchid": observed_checkpoint(row.get("ALTVCHID"), "voucher")?,
         "altmstid": observed_checkpoint(row.get("ALTMSTID"), "master")?,
     }))
+}
+
+fn parse_master_domain_high_water(xml: &str) -> Result<u64, String> {
+    validate_agent_envelope(xml, "LEDGER")?;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut in_domain_row = false;
+    let mut tag = String::new();
+    let mut high_water = 0_u64;
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(event)) => {
+                tag = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                if matches!(tag.as_str(), "LEDGER" | "GROUP") {
+                    in_domain_row = true;
+                }
+            }
+            Ok(quick_xml::events::Event::Text(text)) if in_domain_row && tag == "ALTERID" => {
+                let value = text
+                    .decode()
+                    .map_err(|_| "master_checkpoint_invalid".to_string())?;
+                high_water = high_water.max(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_| "master_checkpoint_invalid".to_string())?,
+                );
+            }
+            Ok(quick_xml::events::Event::End(event)) => {
+                let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                if matches!(end.as_str(), "LEDGER" | "GROUP") {
+                    in_domain_row = false;
+                }
+                tag.clear();
+            }
+            Ok(quick_xml::events::Event::Eof) => break,
+            Err(_) => return Err("agent_read_protocol_invalid".to_string()),
+            _ => {}
+        }
+    }
+    Ok(high_water)
 }
 
 fn checkpoint_arg(args: &Value, field: &str) -> Result<Option<u64>, String> {
@@ -3482,6 +3538,16 @@ mod tests {
         let rows = parse_agent_changed_masters("<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><NAME>R&amp;D</NAME><PARENT>Income &amp; Expense</PARENT><ALTERID>3</ALTERID></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>").expect("changed master");
         assert_eq!(rows[0]["name"], "R&D");
         assert_eq!(rows[0]["parent"], "Income&Expense");
+    }
+
+    #[test]
+    fn master_domain_high_water_ignores_unsupported_master_types() {
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><ALTERID>4</ALTERID></LEDGER><GROUP><ALTERID>7</ALTERID></GROUP><STOCKITEM><ALTERID>99</ALTERID></STOCKITEM></COLLECTION></DATA></BODY></ENVELOPE>";
+        assert_eq!(parse_master_domain_high_water(xml), Ok(7));
+        let request = render_agent_master_domain_high_water("Book");
+        assert!(request.contains("TYPE=\"Ledger\""));
+        assert!(request.contains("TYPE=\"Group\""));
+        assert!(!request.contains("ALTMSTID"));
     }
 
     #[test]
