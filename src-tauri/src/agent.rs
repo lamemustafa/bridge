@@ -800,54 +800,34 @@ impl Server {
             &company.name,
             &from,
             &to,
-            optional_string(args, "voucher_type")?,
-            resolved_ledger.clone(),
             None,
         )?;
         let (xml, mut evidence) = self.post_read(&identity, request).await?;
         let mut rows = parse_agent_rows(&xml)?;
-        let mut filter_not_honoured = false;
         if let Some(ledger) = resolved_ledger.as_deref() {
-            let (filtered_rows, dropped) = filter_voucher_rows_for_ledger(rows, ledger);
-            rows = filtered_rows;
-            filter_not_honoured = dropped;
+            rows = filter_voucher_rows_for_ledger(rows, ledger);
         }
         if !window_honoured(&rows, &from, &to) {
             return Err("window_not_honoured".to_string());
         }
-        let mut result_state = if filter_not_honoured {
-            evidence.state = "partial";
-            evidence.reason_code = Some("filter_not_honoured".to_string());
-            "partial"
-        } else {
-            "complete"
-        };
-        let mut corroboration_reason = filter_not_honoured.then_some("filter_not_honoured");
+        let mut result_state = "complete";
+        let mut corroboration_reason = None;
         if rows.is_empty() {
             let (wider_from, wider_to) = widened_window(&from, &to)?;
             let wider_request = render_agent_vouchers(
                 &company.name,
                 &wider_from,
                 &wider_to,
-                optional_string(args, "voucher_type")?,
-                resolved_ledger.clone(),
                 None,
             )?;
             let (wider_xml, wider_evidence) = self.post_read(&identity, wider_request).await?;
             evidence = combine_evidence(evidence, wider_evidence);
             let wider_rows = parse_agent_rows(&wider_xml)?;
-            let (wider_rows, wider_filter_not_honoured) =
-                if let Some(ledger) = resolved_ledger.as_deref() {
-                    filter_voucher_rows_for_ledger(wider_rows, ledger)
-                } else {
-                    (wider_rows, false)
-                };
-            if wider_filter_not_honoured {
-                result_state = "partial";
-                corroboration_reason = Some("filter_not_honoured");
-                evidence.state = "partial";
-                evidence.reason_code = Some("filter_not_honoured".to_string());
-            }
+            let wider_rows = if let Some(ledger) = resolved_ledger.as_deref() {
+                filter_voucher_rows_for_ledger(wider_rows, ledger)
+            } else {
+                wider_rows
+            };
             if !window_honoured(&wider_rows, &wider_from, &wider_to) {
                 return Err("empty_uncorroborated".to_string());
             }
@@ -1360,8 +1340,6 @@ impl Server {
                     range.from_yyyymmdd(),
                     range.to_yyyymmdd(),
                     None,
-                    None,
-                    None,
                 )?,
             )
             .await?;
@@ -1626,10 +1604,9 @@ fn resolve_ledger_name<'a>(
     }
 }
 
-fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> (Vec<Value>, bool) {
+fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> Vec<Value> {
     let key = ledger_lookup_key(ledger);
-    let total = rows.len();
-    let rows = rows
+    rows
         .into_iter()
         .filter(|row| {
             row.get("amounts")
@@ -1643,9 +1620,7 @@ fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> (Vec<Value>
                     })
                 })
         })
-        .collect::<Vec<_>>();
-    let dropped = rows.len() != total;
-    (rows, dropped)
+        .collect()
 }
 
 fn ledger_movement_counts<T>(rows: &[Value], vouchers: &[T]) -> (usize, usize) {
@@ -2300,24 +2275,13 @@ fn render_agent_vouchers(
     company: &str,
     from: &str,
     to: &str,
-    voucher_type: Option<String>,
-    ledger: Option<String>,
     alter_id: Option<u64>,
 ) -> Result<String, String> {
-    let type_filter = voucher_type
-        .map(TdlStringValue::new)
-        .transpose()?
-        .map(|value| format!(" AND $VoucherTypeName = \"{}\"", value.xml()))
-        .unwrap_or_default();
-    let ledger_filter = ledger
-        .map(TdlStringValue::new)
-        .transpose()?
-        .map(|value| format!(" AND $AllLedgerEntries.LedgerName = \"{}\"", value.xml()))
-        .unwrap_or_default();
+    let company = TdlStringValue::new(company.to_string())?;
     let alter_filter = alter_id
         .map(|value| format!(" AND $AlterID > {value}"))
         .unwrap_or_default();
-    Ok(format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{type_filter}{ledger_filter}{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company)))
+    Ok(format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", company.xml()))
 }
 
 fn render_agent_changed_vouchers(company: &str, checkpoint: u64, snapshot: u64) -> String {
@@ -2938,8 +2902,6 @@ mod tests {
             "BRIDGE SYNTHETIC BOOK",
             "20260401",
             "20260430",
-            None,
-            None,
             Some(99),
         )
         .expect("safe profile");
@@ -3411,10 +3373,25 @@ mod tests {
     fn voucher_ledger_filter_drops_mixed_response_rows_that_do_not_match_live_spelling() {
         let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><VOUCHERNUMBER>keep</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>R and D</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER><VOUCHERNUMBER>drop</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
         let rows = parse_agent_rows(xml).expect("mixed voucher rows");
-        let (rows, filter_not_honoured) = filter_voucher_rows_for_ledger(rows, "R-and_D");
-        assert!(filter_not_honoured);
+        let rows = filter_voucher_rows_for_ledger(rows, "R-and_D");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["voucher_number"], "keep");
+    }
+
+    #[test]
+    fn client_side_ledger_filter_accepts_unquoted_tdl_ledger_names() {
+        for ledger in ["Input CGST 9%", "=BVL Zeta Formula", "खर्चा"] {
+            let resolved = resolve_ledger_name([ledger].into_iter(), ledger)
+                .expect("live ledger spelling resolves");
+            let request = render_agent_vouchers("BRIDGE SYNTHETIC BOOK", "20260901", "20260902", None)
+                .expect("date-only voucher request");
+            assert!(!request.contains(ledger), "ledger must not enter TDL");
+            let rows = filter_voucher_rows_for_ledger(
+                vec![json!({"amounts":[{"ledger": ledger}]})],
+                &resolved,
+            );
+            assert_eq!(rows.len(), 1, "ledger remains selected after parsing");
+        }
     }
 
     #[test]
