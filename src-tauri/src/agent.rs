@@ -2219,13 +2219,16 @@ fn parse_agent_rows_with_accounting_state(
             }
             Ok(quick_xml::events::Event::Text(text)) => {
                 if let Some(row) = entry.as_mut() {
-                    if let Ok(text) = text.decode() {
-                        row.insert(current_tag.clone(), text.into_owned());
-                    }
+                    append_agent_text(row, &current_tag, decoded_agent_text(text)?);
                 } else if let Some(row) = current.as_mut() {
-                    if let Ok(text) = text.decode() {
-                        row.insert(current_tag.clone(), text.into_owned());
-                    }
+                    append_agent_text(row, &current_tag, decoded_agent_text(text)?);
+                }
+            }
+            Ok(quick_xml::events::Event::GeneralRef(reference)) => {
+                if let Some(row) = entry.as_mut() {
+                    append_agent_text(row, &current_tag, decoded_agent_reference(reference)?);
+                } else if let Some(row) = current.as_mut() {
+                    append_agent_text(row, &current_tag, decoded_agent_reference(reference)?);
                 }
             }
             Ok(quick_xml::events::Event::End(event)) => {
@@ -2267,6 +2270,28 @@ fn parse_agent_rows_with_accounting_state(
         }
     }
     Ok(rows)
+}
+
+fn append_agent_text(row: &mut BTreeMap<String, String>, tag: &str, value: String) {
+    row.entry(tag.to_string()).or_default().push_str(&value);
+}
+
+fn decoded_agent_text(text: quick_xml::events::BytesText<'_>) -> Result<String, String> {
+    let decoded = text
+        .decode()
+        .map_err(|_| "agent_read_protocol_invalid".to_string())?;
+    quick_xml::escape::unescape(&decoded)
+        .map(|value| value.into_owned())
+        .map_err(|_| "agent_read_protocol_invalid".to_string())
+}
+
+fn decoded_agent_reference(reference: quick_xml::events::BytesRef<'_>) -> Result<String, String> {
+    let reference = reference
+        .decode()
+        .map_err(|_| "agent_read_protocol_invalid".to_string())?;
+    quick_xml::escape::unescape(&format!("&{reference};"))
+        .map(|value| value.into_owned())
+        .map_err(|_| "agent_read_protocol_invalid".to_string())
 }
 
 fn required_tally_bool(value: Option<&String>) -> Result<bool, String> {
@@ -2752,6 +2777,17 @@ mod tests {
         let rows = parse_agent_rows(xml).expect("voucher rows");
         assert_eq!(rows[0]["amounts"][0]["ledger"], "A|B");
         assert_eq!(rows[0]["amounts"][0]["amount"], "-10");
+    }
+
+    #[test]
+    fn voucher_parsers_decode_entities_in_vouchers_and_change_feeds() {
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><VOUCHERNUMBER>R&amp;D</VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D</LEDGERNAME><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let vouchers = parse_agent_rows(xml).expect("voucher rows");
+        assert_eq!(vouchers[0]["voucher_number"], "R&D");
+        assert_eq!(vouchers[0]["amounts"][0]["ledger"], "R&D");
+        let changed = parse_agent_changed_rows(xml).expect("changed voucher rows");
+        assert_eq!(changed[0]["voucher_number"], "R&D");
+        assert_eq!(changed[0]["amounts"][0]["ledger"], "R&D");
     }
 
     #[test]
