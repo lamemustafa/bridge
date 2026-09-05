@@ -4,6 +4,7 @@ node_modules/
 /src-tauri/target
 /tools/target
 /packaging/mcpb/bin/
+/packaging/mcpb/stage/
 /packaging/mcpb/LICENSE
 /packaging/mcpb/NOTICE
 /packaging/mcpb/THIRD_PARTY_LICENSES.txt
