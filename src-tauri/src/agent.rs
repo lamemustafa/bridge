@@ -1450,7 +1450,10 @@ fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
         "read_evidence" | "egress_log" => &["limit"],
         _ => return Err("tool_not_found".to_string()),
     };
-    if let Some(unknown) = arguments.keys().find(|key| !allowed.contains(&key.as_str())) {
+    if let Some(unknown) = arguments
+        .keys()
+        .find(|key| !allowed.contains(&key.as_str()))
+    {
         return Err(format!("argument_unknown:{unknown}"));
     }
     Ok(())
@@ -1960,9 +1963,23 @@ fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
     let change_axis = ["vouchers", "masters"]
         .into_iter()
         .filter_map(|key| {
-            response["result"][key]
-                .as_array()
-                .map(|rows| (key, rows.len()))
+            let cursor_key = if key == "vouchers" {
+                "next_voucher_alter_id"
+            } else {
+                "next_master_alter_id"
+            };
+            let fallback_key = if key == "vouchers" {
+                "voucher_alter_id"
+            } else {
+                "master_alter_id"
+            };
+            (response["result"][cursor_key].is_u64() && response["result"][fallback_key].is_u64())
+                .then(|| {
+                    response["result"][key]
+                        .as_array()
+                        .map(|rows| (key, rows.len()))
+                })
+                .flatten()
         })
         .max_by_key(|(_, length)| *length)
         .filter(|(_, length)| *length > 0)
@@ -3461,7 +3478,25 @@ mod tests {
             absent_movement_entry_policy("Cash", Some("Cash")),
             Err("ledger_snapshot_drifted".to_string())
         );
-        assert_eq!(absent_movement_entry_policy("Created Later", Some("Cash")), Ok(()));
+        assert_eq!(
+            absent_movement_entry_policy("Created Later", Some("Cash")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn only_change_feed_responses_may_trim_cursor_rows() {
+        for (tool, key) in [
+            ("verify_import", "vouchers"),
+            ("validate_masters", "masters"),
+        ] {
+            let response = json!({"result": {key: [{"value": "x".repeat(512)}]}});
+            assert_eq!(
+                enforce_response_byte_cap(response, 128),
+                Err("agent_response_too_large".to_string()),
+                "{tool} must not have rows trimmed without a change-feed cursor"
+            );
+        }
     }
 
     #[test]
