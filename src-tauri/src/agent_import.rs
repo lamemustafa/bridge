@@ -236,7 +236,7 @@ impl Server {
             .unwrap_or_default();
         let line = ImportLedgerLine {
             batch_id: batch_id.clone(),
-            company_guid: payload.company_guid.clone(),
+            company_guid: canonical_batch_guid(&payload.company_guid),
             company: Some(import_company_tuple(&company)?),
             txn_ids: payload
                 .vouchers
@@ -281,7 +281,7 @@ impl Server {
         let line = self
             .latest_import_line(batch_id)?
             .ok_or_else(|| "import_batch_not_found".to_string())?;
-        if line.company_guid != guid {
+        if !batch_guid_matches(&line.company_guid, guid) {
             return Err("import_batch_company_mismatch".to_string());
         }
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
@@ -440,6 +440,14 @@ impl Server {
             .map_err(|_| "import_ledger_unavailable".to_string())?;
         set_private(&path)
     }
+}
+
+fn canonical_batch_guid(guid: &str) -> String {
+    guid.to_ascii_lowercase()
+}
+
+fn batch_guid_matches(stored: &str, supplied: &str) -> bool {
+    stored.eq_ignore_ascii_case(supplied)
 }
 
 pub(super) fn voucher_input_schema() -> Value {
@@ -1509,6 +1517,13 @@ mod tests {
             ),
             Err("verification_incomplete:window_possibly_truncated".to_string())
         );
+    }
+
+    #[test]
+    fn batch_guid_is_canonicalized_and_compared_case_insensitively() {
+        let stored = canonical_batch_guid("A1B2-C3D4");
+        assert_eq!(stored, "a1b2-c3d4");
+        assert!(batch_guid_matches(&stored, "A1B2-C3D4"));
     }
 
     #[test]
