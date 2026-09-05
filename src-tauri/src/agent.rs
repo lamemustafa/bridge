@@ -13,9 +13,7 @@ use crate::tally::{
 use bridge_tally_protocol::xml_read_profiles::{
     ReadOnlyProfile, ValidatedCompanyName, ValidatedDateRange,
 };
-use bridge_tally_protocol::{
-    parse_ledgers, parse_vouchers, TallyCompany, TallyLedger, TallyVoucher,
-};
+use bridge_tally_protocol::{parse_vouchers, TallyCompany, TallyLedger, TallyVoucher};
 use bridge_tally_transport::{canonical_loopback_origin, TallyEndpointConfig};
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use chrono::{SecondsFormat, Utc};
@@ -1097,8 +1095,7 @@ impl Server {
             return Err("invalid_date_range".to_string());
         }
         let (company, identity, mut evidence) = self.verified_company(guid).await?;
-        let (ledgers, ledger_evidence) =
-            self.read_movement_ledgers(&identity, &company.name).await?;
+        let (ledgers, ledger_evidence) = self.read_movement_ledgers(&identity).await?;
         evidence = combine_evidence(evidence, ledger_evidence);
         let books_from = normalized_date(
             company
@@ -1257,20 +1254,13 @@ impl Server {
     async fn read_movement_ledgers(
         &self,
         identity: &VerifiedCompanyIdentity,
-        company: &str,
     ) -> Result<(Vec<TallyLedger>, Evidence), String> {
-        let company = ValidatedCompanyName::new(company.to_string())
-            .map_err(|_| "company_name_invalid".to_string())?;
-        let (xml, evidence) = self
-            .post_read(
-                identity,
-                ReadOnlyProfile::LedgersV1 { company: &company }.render(),
-            )
-            .await?;
-        Ok((
-            parse_ledgers(&xml).map_err(|_| "ledger_movement_read_failed".to_string())?,
-            evidence,
-        ))
+        let (ledgers, evidence) = self
+            .runtime
+            .fetch_ledgers_with_evidence(self.tally_config(), identity)
+            .await
+            .map_err(|_| "ledger_movement_read_failed".to_string())?;
+        Ok((ledgers, evidence_from_runtime_read(evidence)))
     }
 
     async fn read_movement_vouchers(
@@ -3188,6 +3178,36 @@ mod tests {
         assert_eq!(
             ensure_movement_window_within_books("20260401", "20260401"),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn ledger_movement_opening_export_is_pinned_to_admitted_books_from() {
+        use bridge_tally_protocol::native_outstandings::{
+            render_native_ledger_export_request, NativeLedgerExportPeriod,
+            NativeLedgerExportPeriodError,
+        };
+        use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
+
+        let books_from = bridge_tally_core::TallyDate::parse("20260401").expect("BooksFrom");
+        let last_voucher = bridge_tally_core::TallyDate::parse("20260915").expect("last voucher");
+        let matching = NativeLedgerExportPeriod::new(
+            DateBoundaryProfile::EducationRestricted,
+            books_from,
+            last_voucher.clone(),
+        )
+        .expect("an admitted BOOKSFROM period");
+        let request = render_native_ledger_export_request("Book", &matching);
+        assert!(request.contains("<SVFROMDATE TYPE=\"Date\">20260401</SVFROMDATE>"));
+
+        assert_eq!(
+            NativeLedgerExportPeriod::new(
+                DateBoundaryProfile::EducationRestricted,
+                bridge_tally_core::TallyDate::parse("20260415").expect("mismatched date"),
+                last_voucher,
+            ),
+            Err(NativeLedgerExportPeriodError::UnsupportedBoundary),
+            "an unsupported opening boundary is rejected before Tally can substitute its display period",
         );
     }
 

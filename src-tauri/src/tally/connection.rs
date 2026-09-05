@@ -18,7 +18,7 @@ use super::{
 use crate::reports::party_ledger_master::{
     PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
 };
-use crate::tally::runtime::PartyLedgerMasterCurrencyAssertion;
+use crate::tally::runtime::{PartyLedgerMasterCurrencyAssertion, RuntimeReadEvidence};
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityProfile, CapabilityState,
     EvidenceConfidence, TransportId,
@@ -873,6 +873,17 @@ impl TallyClient {
         expected_company_guid: &str,
         boundary_profile: DateBoundaryProfile,
     ) -> anyhow::Result<Vec<TallyLedger>> {
+        self.fetch_ledgers_with_evidence(company, expected_company_guid, boundary_profile)
+            .await
+            .map(|(ledgers, _)| ledgers)
+    }
+
+    pub(crate) async fn fetch_ledgers_with_evidence(
+        &self,
+        company: &str,
+        expected_company_guid: &str,
+        boundary_profile: DateBoundaryProfile,
+    ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
         let opening_extent = self
             .fetch_company_book_extent(company, expected_company_guid)
             .await?;
@@ -886,10 +897,14 @@ impl TallyClient {
                 "Tally master ledger export period is not supported by the endpoint compatibility profile"
             )
         })?;
-        let paired = self
-            .fetch_native_report_paired(render_native_ledger_export_request(company, &period))
-            .await?;
-        let NativePairedRead::Stable { body, .. } = paired else {
+        let request = render_native_ledger_export_request(company, &period);
+        let paired = self.fetch_native_report_paired(request.clone()).await?;
+        let NativePairedRead::Stable {
+            body,
+            encoded_bytes,
+            encoded_sha256,
+        } = paired
+        else {
             return Err(anyhow::Error::new(
                 PairedReadValidationError::NativeLedgerCollection,
             ));
@@ -904,24 +919,27 @@ impl TallyClient {
                 PairedReadValidationError::NativeLedgerExtent,
             ));
         }
-        Ok(parsed
-            .records
-            .into_iter()
-            .map(|record| record.record)
-            .collect())
+        Ok((
+            parsed
+                .records
+                .into_iter()
+                .map(|record| record.record)
+                .collect(),
+            RuntimeReadEvidence::paired(&request, encoded_sha256, encoded_bytes),
+        ))
     }
 
     /// Reads the identity-bearing ledger master and the existing period-bound
     /// balance snapshot as one bracketed source for a customer workbook. The
     /// balance parser requires row GUID evidence for the selected company
     /// before any `(name, parent)` join can attach money to a master.
-    pub(crate) async fn fetch_party_ledger_master_source(
+    pub(crate) async fn fetch_party_ledger_master_source_with_evidence(
         &self,
         company: &str,
         expected_company_guid: &str,
         boundary_profile: DateBoundaryProfile,
         currency_assertion: PartyLedgerMasterCurrencyAssertion,
-    ) -> anyhow::Result<PartyLedgerMasterSource> {
+    ) -> anyhow::Result<(PartyLedgerMasterSource, RuntimeReadEvidence)> {
         let opening_extent = self
             .fetch_company_book_extent(company, expected_company_guid)
             .await?;
@@ -938,8 +956,9 @@ impl TallyClient {
             opening_extent.last_voucher_date().clone(),
         )
         .map_err(|_| anyhow::Error::new(PartyLedgerMasterSourceValidationError::BalancePeriod))?;
+        let master_request = render_party_ledger_master_request(company, &master_period);
         let master_pair = self
-            .fetch_native_report_paired(render_party_ledger_master_request(company, &master_period))
+            .fetch_native_report_paired(master_request.clone())
             .await?;
         let NativePairedRead::Stable {
             body: master_body,
@@ -961,11 +980,9 @@ impl TallyClient {
                 PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
             ));
         }
+        let balance_request = render_native_ledger_snapshot_request(company, &balance_period);
         let balance_pair = self
-            .fetch_native_report_paired(render_native_ledger_snapshot_request(
-                company,
-                &balance_period,
-            ))
+            .fetch_native_report_paired(balance_request.clone())
             .await?;
         let NativePairedRead::Stable {
             body: balance_body,
@@ -980,8 +997,9 @@ impl TallyClient {
         let balances =
             parse_native_ledger_snapshot_for_company(&balance_body, expected_company_guid)
                 .map_err(party_ledger_master_balance_snapshot_error)?;
+        let group_request = render_native_group_snapshot_request(company);
         let group_pair = self
-            .fetch_native_report_paired(render_native_group_snapshot_request(company))
+            .fetch_native_report_paired(group_request.clone())
             .await?;
         let NativePairedRead::Stable {
             body: group_body,
@@ -1074,25 +1092,42 @@ impl TallyClient {
             ));
         }
         rows.sort_by(|left, right| left.name.cmp(&right.name).then(left.guid.cmp(&right.guid)));
-        Ok(PartyLedgerMasterSource {
-            company: company.to_string(),
-            company_guid: expected_company_guid.to_string(),
-            currency_assertion: currency.assertion,
-            currency_decimal_places: currency.decimal_places,
-            from: master_period.from().clone(),
-            // The snapshot period is the balance evidence. Its derived end is
-            // the date Tally was actually asked to honor, not merely the last
-            // voucher date used by the identity/master read.
-            to: balance_period.to().clone(),
-            rows,
-            master_response_sha256,
-            balance_response_sha256,
-            group_response_sha256,
-            master_response_bytes,
-            balance_response_bytes,
-            group_response_bytes,
-            groups,
-        })
+        Ok((
+            PartyLedgerMasterSource {
+                company: company.to_string(),
+                company_guid: expected_company_guid.to_string(),
+                currency_assertion: currency.assertion,
+                currency_decimal_places: currency.decimal_places,
+                from: master_period.from().clone(),
+                // The snapshot period is the balance evidence. Its derived end is
+                // the date Tally was actually asked to honor, not merely the last
+                // voucher date used by the identity/master read.
+                to: balance_period.to().clone(),
+                rows,
+                master_response_sha256: master_response_sha256.clone(),
+                balance_response_sha256: balance_response_sha256.clone(),
+                group_response_sha256: group_response_sha256.clone(),
+                master_response_bytes,
+                balance_response_bytes,
+                group_response_bytes,
+                groups,
+            },
+            RuntimeReadEvidence::paired(
+                &master_request,
+                master_response_sha256,
+                master_response_bytes,
+            )
+            .combine(RuntimeReadEvidence::paired(
+                &balance_request,
+                balance_response_sha256,
+                balance_response_bytes,
+            ))
+            .combine(RuntimeReadEvidence::paired(
+                &group_request,
+                group_response_sha256,
+                group_response_bytes,
+            )),
+        ))
     }
 
     /// Reads the documented standard ledger collection as an explicitly limited

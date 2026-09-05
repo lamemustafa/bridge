@@ -49,6 +49,18 @@ larger receipt file still yields its bounded tail without loading the head.
 `changed_since` detects changes only for Ledger and Group masters; other Tally
 master types are deliberately out of scope and cannot advance its master cursor.
 
+### Ledger-movement opening decision
+
+`ledger_movement` reads `OPENINGBALANCE` through the native ledger export with
+`SVFROMDATE=BOOKSFROM`, then applies only the literal pre-window voucher
+movement before the requested `from` date. This is the chosen first option:
+the protocol evidence in `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §5.5
+verifies that `OPENINGBALANCE` follows `SVFROMDATE`, and that a date-less read
+can instead use Tally's current display period. The same section records that
+the master response has no returned date span, so Bridge admits the exact
+`BOOKSFROM` boundary through the endpoint compatibility profile before sending
+the request rather than claiming an unobservable response-period assertion.
+
 ## Voucher-file loop (manual Tally import only; disabled by default)
 
 `build_import_xml` and `verify_import` are hidden unless the operator sets

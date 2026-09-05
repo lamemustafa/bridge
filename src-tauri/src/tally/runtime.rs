@@ -72,7 +72,7 @@ pub struct RuntimeReadEvidence {
 }
 
 impl RuntimeReadEvidence {
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             request_sha256: String::new(),
             response_sha256: String::new(),
@@ -80,7 +80,7 @@ impl RuntimeReadEvidence {
         }
     }
 
-    fn paired(request: &str, response_sha256: String, encoded_bytes: usize) -> Self {
+    pub(crate) fn paired(request: &str, response_sha256: String, encoded_bytes: usize) -> Self {
         Self {
             request_sha256: sha256_hex(request.as_bytes()),
             response_sha256,
@@ -89,7 +89,7 @@ impl RuntimeReadEvidence {
         }
     }
 
-    fn combine(self, other: Self) -> Self {
+    pub(crate) fn combine(self, other: Self) -> Self {
         if self.bytes == 0 {
             return other;
         }
@@ -1540,6 +1540,18 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<Vec<TallyLedger>> {
+        self.fetch_ledgers_with_evidence(config, identity)
+            .await
+            .map(|(ledgers, _)| ledgers)
+    }
+
+    /// Reads the BOOKSFROM-pinned ledger export and retains the paired wire
+    /// evidence used by agent-visible ledger responses.
+    pub async fn fetch_ledgers_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
@@ -1552,7 +1564,7 @@ impl TallyRuntime {
                 async move {
                     bracket_verified_company_identity(&client, &identity).await?;
                     let ledgers = client
-                        .fetch_ledgers(
+                        .fetch_ledgers_with_evidence(
                             identity.display_name(),
                             identity.company_guid(),
                             boundary_profile,
@@ -1572,6 +1584,17 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         currency_assertion: PartyLedgerMasterCurrencyAssertion,
     ) -> anyhow::Result<PartyLedgerMasterSource> {
+        self.fetch_party_ledger_master_source_with_evidence(config, identity, currency_assertion)
+            .await
+            .map(|(source, _)| source)
+    }
+
+    async fn fetch_party_ledger_master_source_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
+    ) -> anyhow::Result<(PartyLedgerMasterSource, RuntimeReadEvidence)> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
@@ -1585,7 +1608,7 @@ impl TallyRuntime {
                 async move {
                     bracket_verified_company_identity(&client, &identity).await?;
                     let source = client
-                        .fetch_party_ledger_master_source(
+                        .fetch_party_ledger_master_source_with_evidence(
                             identity.display_name(),
                             identity.company_guid(),
                             boundary_profile,
@@ -1635,6 +1658,46 @@ impl TallyRuntime {
                 fields: row.fields,
             })
             .collect())
+    }
+
+    /// Returns the paired party/ledger master rows together with the currency
+    /// and master-source wire evidence that established them.
+    pub async fn fetch_agent_party_ledger_masters_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<(
+        Vec<bridge_tally_protocol::PartyLedgerMasterRecord>,
+        RuntimeReadEvidence,
+    )> {
+        let currency_read = self
+            .detect_base_currency_with_extent(config.clone(), identity)
+            .await?;
+        let currency_evidence = currency_read.evidence.clone();
+        let assertion = match (currency_read.currency_count(), currency_read.is_inr()) {
+            (1, true) => OutstandingsCurrencyAssertion::Inr,
+            (0, _) => anyhow::bail!("company_currency_probe_failed"),
+            (1, false) => anyhow::bail!("company_base_currency_not_inr"),
+            _ => anyhow::bail!("company_base_currency_undetermined"),
+        };
+        let assertion = currency_read.bind_party_ledger_master_assertion(assertion);
+        let (source, source_evidence) = self
+            .fetch_party_ledger_master_source_with_evidence(config, identity, assertion)
+            .await?;
+        let rows = source
+            .rows
+            .into_iter()
+            .map(|row| bridge_tally_protocol::PartyLedgerMasterRecord {
+                ledger: TallyLedger {
+                    name: row.name,
+                    parent: row.parent,
+                    party_gstin: row.party_gstin,
+                    opening_balance: Some(row.opening_balance.as_str().to_string()),
+                },
+                fields: row.fields,
+            })
+            .collect();
+        Ok((rows, currency_evidence.combine(source_evidence)))
     }
 
     /// Fetches the limited, documented standard collection response used for
