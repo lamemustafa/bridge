@@ -1715,7 +1715,7 @@ fn enforce_response_byte_cap(
 }
 
 fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
-    let offset = response["result"]["offset"].as_u64().unwrap_or(0);
+    let requested_offset = response["result"]["offset"].as_u64().unwrap_or(0);
     for key in ["items", "open_bills"] {
         if let Some(items) = response["result"][key]
             .as_array_mut()
@@ -1724,13 +1724,10 @@ fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
             items.pop();
             let remaining = items.len();
             response["truncated"] = Value::Bool(true);
-            response["result"]["next_offset"] = json!(offset + remaining as u64);
+            response["result"]["next_offset"] = json!(requested_offset + remaining as u64);
             return Ok(true);
         }
     }
-    let unallocated_offset = response["result"]["unallocated"]["next_offset"]
-        .as_u64()
-        .unwrap_or(offset);
     if let Some(parties) = response["result"]["unallocated"]["parties"]
         .as_array_mut()
         .filter(|parties| !parties.is_empty())
@@ -1740,7 +1737,7 @@ fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
         response["truncated"] = Value::Bool(true);
         response["result"]["unallocated"]["truncated"] = Value::Bool(true);
         response["result"]["unallocated"]["next_offset"] =
-            json!(unallocated_offset + remaining as u64);
+            json!(requested_offset + remaining as u64);
         return Ok(true);
     }
     Ok(false)
@@ -3025,6 +3022,35 @@ mod tests {
             Some(1)
         );
         assert_eq!(response["result"]["unallocated"]["next_offset"], 1);
+    }
+
+    #[test]
+    fn byte_trimming_keeps_each_cursor_relative_to_its_requested_offset() {
+        for key in ["items", "open_bills"] {
+            let mut response = json!({"result": {"offset": 500}});
+            response["result"][key] = json!(vec![json!({"row": 1}); 101]);
+            assert!(truncate_response_items(&mut response).expect("trims result page"));
+            assert_eq!(response["result"][key].as_array().map(Vec::len), Some(100));
+            assert_eq!(response["result"]["next_offset"], 600);
+        }
+
+        let mut response = json!({
+            "result": {
+                "offset": 500,
+                "unallocated": {
+                    "parties": vec![json!({"party": "Supplier"}); 101],
+                    "next_offset": 601,
+                }
+            }
+        });
+        assert!(truncate_response_items(&mut response).expect("trims unallocated page"));
+        assert_eq!(
+            response["result"]["unallocated"]["parties"]
+                .as_array()
+                .map(Vec::len),
+            Some(100)
+        );
+        assert_eq!(response["result"]["unallocated"]["next_offset"], 600);
     }
 
     #[tokio::test]
