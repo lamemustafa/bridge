@@ -2271,7 +2271,7 @@ fn render_agent_changed_vouchers(company: &str, checkpoint: u64, snapshot: u64) 
 
 fn render_agent_changed_masters(company: &str, checkpoint: u64, snapshot: u64) -> String {
     format!(
-        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Changed Masters</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentChangedMaster\">$AlterID &gt; {checkpoint} AND $AlterID &lt;= {snapshot}</SYSTEM><COLLECTION NAME=\"Bridge Agent Changed Ledgers\" TYPE=\"Ledger\"><FETCH>NAME,PARENT,ALTERID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS><SORT>Default: $AlterID</SORT></COLLECTION><COLLECTION NAME=\"Bridge Agent Changed Groups\" TYPE=\"Group\"><FETCH>NAME,PARENT,ALTERID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS><SORT>Default: $AlterID</SORT></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Changed Masters</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentChangedMaster\">$AlterID &gt; {checkpoint} AND $AlterID &lt;= {snapshot}</SYSTEM><COLLECTION NAME=\"Bridge Agent Changed Ledgers\" TYPE=\"Ledger\"><FETCH>NAME,PARENT,ALTERID,GUID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS><SORT>Default: $AlterID</SORT></COLLECTION><COLLECTION NAME=\"Bridge Agent Changed Groups\" TYPE=\"Group\"><FETCH>NAME,PARENT,ALTERID,GUID,MASTERID</FETCH><FILTERS>BridgeAgentChangedMaster</FILTERS><SORT>Default: $AlterID</SORT></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
         xml_escape(company)
     )
 }
@@ -2457,7 +2457,14 @@ fn parse_agent_changed_masters(xml: &str) -> Result<Vec<Value>, String> {
                             .get("NAME")
                             .filter(|name| !name.trim().is_empty())
                             .ok_or_else(|| "change_row_name_invalid".to_string())?;
-                        rows.push(json!({"kind": kind.to_ascii_lowercase(), "name": name, "parent": fields.get("PARENT"), "alter_id": alter_id, "master_id": fields.get("MASTERID")}));
+                        let guid = fields.get("GUID").filter(|value| !value.trim().is_empty());
+                        let master_id = fields
+                            .get("MASTERID")
+                            .filter(|value| !value.trim().is_empty());
+                        if guid.is_none() && master_id.is_none() {
+                            return Err("change_row_identity_invalid".to_string());
+                        }
+                        rows.push(json!({"kind": kind.to_ascii_lowercase(), "name": name, "parent": fields.get("PARENT"), "alter_id": alter_id, "guid": guid, "master_id": master_id}));
                     }
                 }
                 tag.clear();
@@ -3915,9 +3922,20 @@ mod tests {
 
     #[test]
     fn changed_master_parser_decodes_entity_fragments() {
-        let rows = parse_agent_changed_masters("<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><NAME>R&amp;D</NAME><PARENT>Income &amp; Expense</PARENT><ALTERID>3</ALTERID></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>").expect("changed master");
+        let rows = parse_agent_changed_masters("<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><NAME>R&amp;D</NAME><PARENT>Income &amp; Expense</PARENT><ALTERID>3</ALTERID><GUID>ledger-guid</GUID></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>").expect("changed master");
         assert_eq!(rows[0]["name"], "R&D");
         assert_eq!(rows[0]["parent"], "Income & Expense");
+    }
+
+    #[test]
+    fn changed_master_rows_require_guid_or_master_id() {
+        let missing_identity = "<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><NAME>Cash</NAME><ALTERID>3</ALTERID></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>";
+        assert_eq!(
+            parse_agent_changed_masters(missing_identity),
+            Err("change_row_identity_invalid".to_string())
+        );
+        assert!(render_agent_changed_masters("BRIDGE SYNTHETIC BOOK", 2, 3)
+            .contains("<FETCH>NAME,PARENT,ALTERID,GUID,MASTERID</FETCH>"));
     }
 
     #[test]
