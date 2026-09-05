@@ -799,12 +799,13 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
                 let name = String::from_utf8_lossy(end.name().as_ref()).to_ascii_uppercase();
                 if name == "ALLLEDGERENTRIES.LIST" {
                     if let (Some(current), Some(item)) = (voucher.as_mut(), entry.take()) {
-                        if !item.ledger.is_empty()
-                            && !item.amount.is_empty()
-                            && !item.is_deemed_positive.is_empty()
+                        if item.ledger.trim().is_empty()
+                            || item.amount.trim().is_empty()
+                            || item.is_deemed_positive.trim().is_empty()
                         {
-                            current.entries.push(item);
+                            return Err("import_verification_export_invalid".to_string());
                         }
+                        current.entries.push(item);
                     }
                 } else if name == "VOUCHER" {
                     if let Some(current) = voucher.take() {
@@ -1869,6 +1870,23 @@ mod tests {
         ] {
             assert_eq!(
                 parse_import_vouchers(xml),
+                Err("import_verification_export_invalid".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn verification_rejects_incomplete_ledger_entries() {
+        for entry in [
+            "<AMOUNT>-12.50</AMOUNT><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>",
+            "<LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>",
+            "<LEDGERNAME>Expense</LEDGERNAME><AMOUNT>-12.50</AMOUNT>",
+        ] {
+            let xml = format!(
+                "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST>{entry}</ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+            );
+            assert_eq!(
+                parse_import_vouchers(&xml),
                 Err("import_verification_export_invalid".to_string())
             );
         }
