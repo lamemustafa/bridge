@@ -253,7 +253,9 @@ impl Server {
         };
         let path = self.imports_dir()?.join(format!("{batch_id}.xml"));
         write_private(&path, xml.as_bytes())?;
-        self.append_import_ledger_while_admitted(&line)?;
+        if let Err(error) = self.append_import_ledger_while_admitted(&line) {
+            return Err(remove_orphaned_import_file(&path, error));
+        }
         let (debit, credit) = totals(&line.vouchers)?;
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
@@ -439,6 +441,13 @@ impl Server {
         file.sync_data()
             .map_err(|_| "import_ledger_unavailable".to_string())?;
         set_private(&path)
+    }
+}
+
+fn remove_orphaned_import_file(path: &Path, append_error: String) -> String {
+    match fs::remove_file(path) {
+        Ok(()) => append_error,
+        Err(_) => format!("import_file_orphaned:{}", path.display()),
     }
 }
 
@@ -1524,6 +1533,18 @@ mod tests {
         let stored = canonical_batch_guid("A1B2-C3D4");
         assert_eq!(stored, "a1b2-c3d4");
         assert!(batch_guid_matches(&stored, "A1B2-C3D4"));
+    }
+
+    #[test]
+    fn failed_ledger_append_removes_the_written_import_file() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("batch.xml");
+        fs::write(&path, "xml").expect("import file");
+        assert_eq!(
+            remove_orphaned_import_file(&path, "import_ledger_unavailable".to_string()),
+            "import_ledger_unavailable"
+        );
+        assert!(!path.exists());
     }
 
     #[test]
