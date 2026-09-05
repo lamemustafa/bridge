@@ -87,8 +87,8 @@ impl Settings {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(9000);
-        let max_rows = bounded_env("BRIDGE_AGENT_MAX_ROWS", 500, 1, 10_000);
-        let max_bytes = bounded_env("BRIDGE_AGENT_MAX_BYTES", 200_000, 256, 5_000_000);
+        let max_rows = bounded_env("BRIDGE_AGENT_MAX_ROWS", 500, 1, 10_000)?;
+        let max_bytes = bounded_env("BRIDGE_AGENT_MAX_BYTES", 200_000, 256, 5_000_000)?;
         // The transport remains the authoritative hard cap.  The agent cap only
         // narrows it and is applied to the response before parsing/returning.
         let data_dir = env::var_os("BRIDGE_AGENT_DATA_DIR")
@@ -112,12 +112,20 @@ impl Settings {
     }
 }
 
-fn bounded_env(name: &str, default: usize, min: usize, max: usize) -> usize {
-    env::var(name)
+fn bounded_env(name: &str, default: usize, min: usize, max: usize) -> Result<usize, String> {
+    match env::var(name) {
+        Err(env::VarError::NotPresent) => Ok(default),
+        Ok(value) => parse_bounded_limit(name, &value, min, max),
+        Err(_) => Err(format!("limit_setting_invalid:{name}")),
+    }
+}
+
+fn parse_bounded_limit(name: &str, value: &str, min: usize, max: usize) -> Result<usize, String> {
+    value
+        .parse::<usize>()
         .ok()
-        .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| (*value >= min) && (*value <= max))
-        .unwrap_or(default)
+        .ok_or_else(|| format!("limit_setting_invalid:{name}"))
 }
 
 fn default_data_dir() -> PathBuf {
@@ -2167,6 +2175,20 @@ mod tests {
             Err("argument_invalid:voucher_type".to_string())
         );
         assert_eq!(optional_string(&json!({}), "ledger"), Ok(None));
+    }
+
+    #[test]
+    fn configured_agent_limits_reject_malformed_or_out_of_range_values() {
+        for value in ["not-a-number", "0", "10001"] {
+            assert_eq!(
+                parse_bounded_limit("BRIDGE_AGENT_MAX_ROWS", value, 1, 10_000),
+                Err("limit_setting_invalid:BRIDGE_AGENT_MAX_ROWS".to_string())
+            );
+        }
+        assert_eq!(
+            parse_bounded_limit("BRIDGE_AGENT_MAX_BYTES", "256", 256, 5_000_000),
+            Ok(256)
+        );
     }
 
     #[test]
