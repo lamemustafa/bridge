@@ -2112,7 +2112,7 @@ fn validate_agent_envelope(xml: &str, expected_row: &str) -> Result<(), String> 
 fn parse_company_high_water(xml: &str, expected_guid: &str) -> Result<Value, String> {
     validate_agent_envelope(xml, "COMPANY")?;
     let mut reader = quick_xml::Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
+    reader.config_mut().trim_text(false);
     let mut rows = Vec::<BTreeMap<String, String>>::new();
     let mut current: Option<BTreeMap<String, String>> = None;
     let mut tag = String::new();
@@ -2205,9 +2205,12 @@ fn parse_agent_changed_masters(xml: &str) -> Result<Vec<Value>, String> {
             }
             Ok(quick_xml::events::Event::Text(text)) => {
                 if let Some((_, fields)) = current.as_mut() {
-                    if let Ok(value) = text.decode() {
-                        fields.insert(tag.clone(), value.into_owned());
-                    }
+                    append_agent_text(fields, &tag, decoded_agent_text(text)?);
+                }
+            }
+            Ok(quick_xml::events::Event::GeneralRef(reference)) => {
+                if let Some((_, fields)) = current.as_mut() {
+                    append_agent_text(fields, &tag, decoded_agent_reference(reference)?);
                 }
             }
             Ok(quick_xml::events::Event::End(event)) => {
@@ -3427,6 +3430,13 @@ mod tests {
             parse_agent_changed_masters("<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><NAME>   </NAME><ALTERID>3</ALTERID></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"),
             Err("change_row_name_invalid".to_string())
         );
+    }
+
+    #[test]
+    fn changed_master_parser_decodes_entity_fragments() {
+        let rows = parse_agent_changed_masters("<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><NAME>R&amp;D</NAME><PARENT>Income &amp; Expense</PARENT><ALTERID>3</ALTERID></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>").expect("changed master");
+        assert_eq!(rows[0]["name"], "R&D");
+        assert_eq!(rows[0]["parent"], "Income&Expense");
     }
 
     #[test]
