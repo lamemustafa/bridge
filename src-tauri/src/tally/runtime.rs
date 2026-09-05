@@ -120,14 +120,15 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn agent_company_list_from_response(response: String) -> anyhow::Result<AgentCompanyList> {
+fn agent_company_list_from_response(
+    response: String,
+    encoded_bytes: usize,
+    encoded_sha256: String,
+) -> anyhow::Result<AgentCompanyList> {
     let companies = parse_companies_from_collection(&response)?;
     Ok(AgentCompanyList {
-        response_bytes: response.len(),
-        response_sha256: Sha256::digest(response.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect(),
+        response_bytes: encoded_bytes,
+        response_sha256: encoded_sha256,
         companies,
     })
 }
@@ -1511,10 +1512,17 @@ impl TallyRuntime {
             ReadOperation::CompanyList,
             ReadRetryPolicy::transient_default(),
             |client| async move {
-                let response = client
-                    .post_xml(ReadOnlyProfile::CompanyListV2.render())
-                    .await?;
-                agent_company_list_from_response(response)
+                let NativePairedRead::Stable {
+                    body,
+                    encoded_bytes,
+                    encoded_sha256,
+                } = client
+                    .fetch_native_report_paired(ReadOnlyProfile::CompanyListV2.render())
+                    .await?
+                else {
+                    anyhow::bail!("company collection drifted between paired reads");
+                };
+                agent_company_list_from_response(body, encoded_bytes, encoded_sha256)
             },
         )
         .await
@@ -2957,14 +2965,16 @@ mod tests {
     }
 
     #[test]
-    fn agent_company_list_evidence_hashes_the_exact_raw_response_bytes() {
+    fn agent_company_list_evidence_hashes_the_encoded_utf16_response_bytes() {
         let response = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Book\"><GUID>g-1</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>".to_string();
-        let expected_bytes = response.len();
-        let expected_sha = Sha256::digest(response.as_bytes())
+        let encoded = bridge_tally_protocol::encode_tally_xml_request_utf16le(&response);
+        let expected_bytes = encoded.len();
+        let expected_sha = Sha256::digest(&encoded)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        let listed = agent_company_list_from_response(response).expect("company list");
+        let listed = agent_company_list_from_response(response, expected_bytes, expected_sha.clone())
+            .expect("company list");
         assert_eq!(listed.response_bytes, expected_bytes);
         assert_eq!(listed.response_sha256, expected_sha);
         assert_eq!(listed.companies.len(), 1);
