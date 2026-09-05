@@ -784,14 +784,14 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
                 tag = name;
             }
             Ok(Event::Text(text)) => {
-                if let (Some(current), Ok(value)) = (voucher.as_mut(), decoded_tally_text(text)) {
+                let value = decoded_tally_text(text)?;
+                if let Some(current) = voucher.as_mut() {
                     append_import_text(current, entry.as_mut(), &tag, value);
                 }
             }
             Ok(Event::GeneralRef(reference)) => {
-                if let (Some(current), Ok(value)) =
-                    (voucher.as_mut(), decoded_tally_reference(reference))
-                {
+                let value = decoded_tally_reference(reference)?;
+                if let Some(current) = voucher.as_mut() {
                     append_import_text(current, entry.as_mut(), &tag, value);
                 }
             }
@@ -1859,6 +1859,19 @@ mod tests {
             Some("Party & Co <quoted> \"name\" &")
         );
         assert_eq!(observed[0].entries[0].ledger, "R&D <Lab> \"A\" &");
+    }
+
+    #[test]
+    fn verification_rejects_unknown_entities_in_ledger_and_narration_fragments() {
+        for xml in [
+            "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST><LEDGERNAME>A&bogus;B</LEDGERNAME></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>",
+            "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><NARRATION>A&bogus;B</NARRATION></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>",
+        ] {
+            assert_eq!(
+                parse_import_vouchers(xml),
+                Err("import_verification_export_invalid".to_string())
+            );
+        }
     }
 
     #[test]
