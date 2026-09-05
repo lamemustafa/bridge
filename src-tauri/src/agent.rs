@@ -846,7 +846,10 @@ impl Server {
                         )
                     })
                     .collect::<Vec<_>>();
-                let unallocated = statement_unallocated_by_party
+                let unallocated_count = statement_unallocated_by_party.len();
+                let (unallocated, unallocated_truncated, next_unallocated_offset) =
+                    paginate_open_bills(statement_unallocated_by_party, bill_offset, bill_limit);
+                let unallocated = unallocated
                     .into_iter()
                     .map(|party| {
                         redact_value(
@@ -856,8 +859,8 @@ impl Server {
                     })
                     .collect::<Vec<_>>();
                 (
-                    json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": next_bill_offset, "unallocated":{"count": unallocated.len(), "amount": unallocated_total, "parties": unallocated}}),
-                    bills_truncated,
+                    json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": next_bill_offset, "unallocated":{"count": unallocated_count, "amount": unallocated_total, "parties": unallocated, "truncated": unallocated_truncated, "next_offset": next_unallocated_offset}}),
+                    bills_truncated || unallocated_truncated,
                 )
             }
             OutstandingsLoadResult::Partial { reason, .. } => {
@@ -1334,30 +1337,45 @@ fn enforce_response_byte_cap(
 
 fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
     let offset = response["result"]["offset"].as_u64().unwrap_or(0);
-    let Some(items) = response["result"]["items"].as_array_mut() else {
-        return Ok(false);
-    };
-    if items.is_empty() {
-        return Ok(false);
+    for key in ["items", "open_bills"] {
+        if let Some(items) = response["result"][key]
+            .as_array_mut()
+            .filter(|items| !items.is_empty())
+        {
+            items.pop();
+            let remaining = items.len();
+            response["truncated"] = Value::Bool(true);
+            response["result"]["next_offset"] = json!(offset + remaining as u64);
+            return Ok(true);
+        }
     }
-    items.pop();
-    let remaining = items.len();
-    response["truncated"] = Value::Bool(true);
-    response["result"]["next_offset"] = json!(offset + remaining as u64);
-    Ok(true)
+    let unallocated_offset = response["result"]["unallocated"]["next_offset"]
+        .as_u64()
+        .unwrap_or(offset);
+    if let Some(parties) = response["result"]["unallocated"]["parties"]
+        .as_array_mut()
+        .filter(|parties| !parties.is_empty())
+    {
+        parties.pop();
+        let remaining = parties.len();
+        response["truncated"] = Value::Bool(true);
+        response["result"]["unallocated"]["truncated"] = Value::Bool(true);
+        response["result"]["unallocated"]["next_offset"] =
+            json!(unallocated_offset + remaining as u64);
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn response_row_count(response: &Value) -> Option<usize> {
-    [
-        "items",
-        "ledgers",
-        "records",
-        "companies",
-        "vouchers",
-        "open_bills",
-    ]
-    .into_iter()
-    .find_map(|key| response["result"][key].as_array().map(Vec::len))
+    let result = &response["result"];
+    if let Some(vouchers) = result["vouchers"].as_array() {
+        return Some(vouchers.len() + result["masters"].as_array().map_or(0, Vec::len));
+    }
+    ["items", "ledgers", "records", "companies", "open_bills"]
+        .into_iter()
+        .find_map(|key| result[key].as_array().map(Vec::len))
+        .or_else(|| result["unallocated"]["parties"].as_array().map(Vec::len))
 }
 
 fn set_mcp_content_summary(mcp_response: &mut Value, name: &str, fallback_rows: usize) {
@@ -2226,6 +2244,37 @@ mod tests {
         assert_eq!(ranked.len(), 12);
         assert_eq!(ranked[0]["party"], "Party 12");
         assert_eq!(ranked[11]["party"], "Party 01");
+    }
+
+    #[test]
+    fn unallocated_parties_are_bounded_without_dropping_the_aggregate() {
+        let (page, truncated, next_offset) =
+            paginate_open_bills(vec![json!({"party":"A"}), json!({"party":"B"})], 0, 1);
+        assert_eq!(page.len(), 1);
+        assert!(truncated);
+        assert_eq!(next_offset, Some(1));
+
+        let mut response = json!({
+            "result": {
+                "unallocated": {
+                    "count": 2,
+                    "amount": "30",
+                    "parties": [json!({"party":"A"}), json!({"party":"B"})],
+                    "truncated": false,
+                    "next_offset": null,
+                }
+            }
+        });
+        assert!(truncate_response_items(&mut response).expect("trims unallocated parties"));
+        assert_eq!(response["result"]["unallocated"]["count"], 2);
+        assert_eq!(response["result"]["unallocated"]["amount"], "30");
+        assert_eq!(
+            response["result"]["unallocated"]["parties"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(response["result"]["unallocated"]["next_offset"], 1);
     }
 
     #[tokio::test]
