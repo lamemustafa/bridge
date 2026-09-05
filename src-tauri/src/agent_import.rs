@@ -134,6 +134,8 @@ struct ReadVoucher {
     narration: Option<String>,
     voucher_number: Option<String>,
     master_id: Option<String>,
+    cancelled: Option<bool>,
+    optional: Option<bool>,
     entries: Vec<ReadEntry>,
 }
 
@@ -289,7 +291,7 @@ impl Server {
             render_import_verification_read(&company.name, &line.date_from, &line.date_to);
         let (xml, evidence) = self.post_read(&identity, request).await?;
         let observed = parse_import_vouchers(&xml)?;
-        let result = verify_batch(&line, &observed);
+        let result = verify_batch(&line, &observed)?;
         let proof = json!({
             "company": company_json(&company, std::slice::from_ref(&company)),
             "batch_id": line.batch_id, "batch_sha256": line.sha256,
@@ -681,7 +683,7 @@ fn render_voucher_xml(voucher: &ImportVoucher) -> String {
 }
 
 fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
-    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
+    format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Import Verification</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeImportWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"</SYSTEM><COLLECTION NAME=\"Bridge Agent Import Verification\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,REMOTEID,GUID,MASTERID,ALTERID,NARRATION,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeImportWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company))
 }
 
 fn xml_escape(value: &str) -> String {
@@ -731,6 +733,8 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
                         narration: None,
                         voucher_number: None,
                         master_id: None,
+                        cancelled: None,
+                        optional: None,
                         entries: Vec::new(),
                     });
                 } else if name == "ALLLEDGERENTRIES.LIST" && voucher.is_some() {
@@ -828,7 +832,17 @@ fn append_import_text(
         "VOUCHERNUMBER" => append_read_text(&mut current.voucher_number, value),
         "ALTERID" => current.alter_id = value.parse().ok(),
         "NARRATION" => append_read_text(&mut current.narration, value),
+        "ISCANCELLED" => current.cancelled = tally_bool(&value),
+        "ISOPTIONAL" => current.optional = tally_bool(&value),
         _ => {}
+    }
+}
+
+fn tally_bool(value: &str) -> Option<bool> {
+    match value.trim() {
+        "Yes" => Some(true),
+        "No" => Some(false),
+        _ => None,
     }
 }
 
@@ -848,10 +862,11 @@ fn validate_verification_envelope(xml: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Value {
+fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Value, String> {
     let mut rows = Vec::new();
     let mut counts = BTreeMap::from([
         ("posted_verified", 0_u64),
+        ("posted_not_effective", 0),
         ("posted_divergent", 0),
         ("not_found", 0),
         ("not_attributable", 0),
@@ -910,11 +925,16 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Value {
             json!({"bridge_txn_id":expected.bridge_txn_id,"status":"duplicate_fingerprint","marker":marker,"matches":matches.len()})
         } else {
             let diffs = voucher_diffs(expected, matches[0]);
-            if diffs.is_empty() {
+            if diffs.is_empty() && voucher_is_accounting_effective(matches[0])? {
                 counts
                     .entry("posted_verified")
                     .and_modify(|count| *count += 1);
                 json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_verified","marker":marker,"voucher_number":matches[0].voucher_number,"guid":matches[0].guid,"master_id":matches[0].master_id,"alter_id":matches[0].alter_id})
+            } else if diffs.is_empty() {
+                counts
+                    .entry("posted_not_effective")
+                    .and_modify(|count| *count += 1);
+                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_not_effective","marker":marker,"reason":"voucher_cancelled_or_optional","voucher_number":matches[0].voucher_number,"guid":matches[0].guid,"master_id":matches[0].master_id,"alter_id":matches[0].alter_id})
             } else {
                 counts
                     .entry("posted_divergent")
@@ -925,7 +945,17 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Value {
         rows.push(value);
     }
     let (batch_duplicates, unrelated_duplicates_in_window) = batch_duplicate_sets(line, observed);
-    json!({"counts":counts,"vouchers":rows,"duplicates":batch_duplicates,"unrelated_duplicates_in_window":unrelated_duplicates_in_window})
+    Ok(
+        json!({"counts":counts,"vouchers":rows,"duplicates":batch_duplicates,"unrelated_duplicates_in_window":unrelated_duplicates_in_window}),
+    )
+}
+
+fn voucher_is_accounting_effective(voucher: &ReadVoucher) -> Result<bool, String> {
+    match (voucher.cancelled, voucher.optional) {
+        (Some(false), Some(false)) => Ok(true),
+        (Some(true), _) | (_, Some(true)) => Ok(false),
+        _ => Err("voucher_accounting_state_not_observed".to_string()),
+    }
 }
 
 fn verification_status(result: &Value, expected_voucher_count: usize) -> &'static str {
@@ -1274,6 +1304,8 @@ mod tests {
                 narration: Some("[BRIDGE:txn-001]".to_string()),
                 voucher_number: None,
                 master_id: None,
+                cancelled: Some(false),
+                optional: Some(false),
                 entries: vec![
                     ReadEntry {
                         ledger: "Expense".to_string(),
@@ -1296,6 +1328,8 @@ mod tests {
                 narration: None,
                 voucher_number: None,
                 master_id: None,
+                cancelled: Some(false),
+                optional: Some(false),
                 entries: vec![
                     ReadEntry {
                         ledger: "Expense".to_string(),
@@ -1310,7 +1344,7 @@ mod tests {
                 ],
             },
         ];
-        let result = verify_batch(&line, &observed);
+        let result = verify_batch(&line, &observed).expect("verification result");
         assert_eq!(result["counts"]["posted_divergent"], 1);
         assert_eq!(result["counts"]["not_found"], 1);
         assert_eq!(result["duplicates"].as_array().map(Vec::len), Some(1));
@@ -1354,6 +1388,8 @@ mod tests {
             narration: Some("[BRIDGE:txn-001]".to_string()),
             voucher_number: None,
             master_id: None,
+            cancelled: Some(false),
+            optional: Some(false),
             entries: vec![
                 ReadEntry {
                     ledger: "Expense".to_string(),
@@ -1377,13 +1413,16 @@ mod tests {
             narration: None,
             voucher_number: None,
             master_id: None,
+            cancelled: Some(false),
+            optional: Some(false),
             entries: vec![ReadEntry {
                 ledger: "Unrelated".to_string(),
                 amount: "1.00".to_string(),
                 is_deemed_positive: "No".to_string(),
             }],
         };
-        let result = verify_batch(&line, &[posted, unrelated("u-1"), unrelated("u-2")]);
+        let result = verify_batch(&line, &[posted, unrelated("u-1"), unrelated("u-2")])
+            .expect("verification result");
         assert_eq!(result["counts"]["posted_verified"], 1);
         assert!(result["duplicates"].as_array().is_some_and(Vec::is_empty));
         assert_eq!(
@@ -1427,6 +1466,8 @@ mod tests {
             narration: None,
             voucher_number: None,
             master_id: None,
+            cancelled: Some(false),
+            optional: Some(false),
             entries: vec![
                 ReadEntry {
                     ledger: "Expense".to_string(),
@@ -1441,12 +1482,79 @@ mod tests {
             ],
         };
         assert_eq!(
-            verify_batch(&line, &[observed(10)])["vouchers"][0]["status"],
+            verify_batch(&line, &[observed(10)]).expect("verification result")["vouchers"][0]
+                ["status"],
             "not_attributable"
         );
         assert_eq!(
-            verify_batch(&line, &[observed(11)])["vouchers"][0]["status"],
+            verify_batch(&line, &[observed(11)]).expect("verification result")["vouchers"][0]
+                ["status"],
             "posted_verified"
+        );
+    }
+
+    #[test]
+    fn verified_import_vouchers_require_observed_effective_accounting_flags() {
+        let input = payload();
+        let line = ImportLedgerLine {
+            batch_id: "batch-accounting-state".to_string(),
+            company_guid: GUID.to_string(),
+            company: None,
+            txn_ids: vec!["txn-001".to_string()],
+            date_from: "20260901".to_string(),
+            date_to: "20260901".to_string(),
+            sha256: "hash".to_string(),
+            built_at: now(),
+            status: "built".to_string(),
+            pre_import_mark: PreImportMark {
+                kind: "company_high_water".to_string(),
+                value: Some(10),
+                master_value: Some(7),
+            },
+            vouchers: vec![input.vouchers[0].clone()],
+        };
+        let observed = ReadVoucher {
+            remote_id: Some("posted-1".to_string()),
+            guid: Some("posted-guid".to_string()),
+            alter_id: Some(11),
+            date: Some("20260901".to_string()),
+            voucher_type: Some("Payment".to_string()),
+            narration: Some("[BRIDGE:txn-001]".to_string()),
+            voucher_number: None,
+            master_id: None,
+            cancelled: Some(false),
+            optional: Some(false),
+            entries: vec![
+                ReadEntry {
+                    ledger: "Expense".to_string(),
+                    amount: "-12.50".to_string(),
+                    is_deemed_positive: "Yes".to_string(),
+                },
+                ReadEntry {
+                    ledger: "Bank".to_string(),
+                    amount: "12.50".to_string(),
+                    is_deemed_positive: "No".to_string(),
+                },
+            ],
+        };
+        assert_eq!(
+            verify_batch(&line, std::slice::from_ref(&observed)).expect("effective voucher")
+                ["vouchers"][0]["status"],
+            "posted_verified"
+        );
+        for (cancelled, optional) in [(Some(true), Some(false)), (Some(false), Some(true))] {
+            let mut ineffective = observed.clone();
+            ineffective.cancelled = cancelled;
+            ineffective.optional = optional;
+            let result = verify_batch(&line, &[ineffective]).expect("ineffective voucher result");
+            assert_eq!(result["vouchers"][0]["status"], "posted_not_effective");
+            assert_eq!(result["counts"]["posted_not_effective"], 1);
+        }
+        let mut missing = observed;
+        missing.optional = None;
+        assert_eq!(
+            verify_batch(&line, &[missing]),
+            Err("voucher_accounting_state_not_observed".to_string())
         );
     }
 
@@ -1506,7 +1614,12 @@ mod tests {
         let company = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SYNTHETIC BOOK\"><GUID>{GUID}</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
         let ledgers = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COMPANYCONTEXT><SCHEMA>bridge.tally.ledgers/1</SCHEMA><OBJECTTYPE>LEDGER</OBJECTTYPE><NAME>BRIDGE SYNTHETIC BOOK</NAME><GUID>{GUID}</GUID><RECORDCOUNT>3</RECORDCOUNT></COMPANYCONTEXT><COLLECTION><LEDGER NAME=\"Expense\" GUID=\"{GUID}-00000001\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER><LEDGER NAME=\"Bank\" GUID=\"{GUID}-00000002\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER><LEDGER NAME=\"Income\" GUID=\"{GUID}-00000003\"><PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>");
         let premark = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>{GUID}</GUID><ALTVCHID>10</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
-        let readback = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER REMOTEID=\"tally-assigned-1\"><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>g-1</GUID><MASTERID>1</MASTERID><ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER REMOTEID=\"tally-assigned-2\"><DATE>20260902</DATE><VOUCHERNUMBER>RV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><GUID>g-2</GUID><MASTERID>2</MASTERID><ALTERID>13</ALTERID><NARRATION>[BRIDGE:txn-002]</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Income</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>".to_string();
+        let readback = concat!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
+            "<VOUCHER REMOTEID=\"tally-assigned-1\"><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>g-1</GUID><MASTERID>1</MASTERID><ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER>",
+            "<VOUCHER REMOTEID=\"tally-assigned-2\"><DATE>20260902</DATE><VOUCHERNUMBER>RV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><GUID>g-2</GUID><MASTERID>2</MASTERID><ALTERID>13</ALTERID><NARRATION>[BRIDGE:txn-002]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Income</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+        )
+        .to_string();
         let simulator = SequenceSimulator::spawn(
             vec![
                 company.clone(),
