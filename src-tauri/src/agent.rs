@@ -2441,6 +2441,18 @@ fn parse_agent_rows_with_accounting_state(
                     }
                 } else if end == "VOUCHER" {
                     if let Some(row) = current.take() {
+                        if require_accounting_state
+                            && row
+                                .get("GUID")
+                                .filter(|value| !value.trim().is_empty())
+                                .is_none()
+                            && row
+                                .get("MASTERID")
+                                .filter(|value| !value.trim().is_empty())
+                                .is_none()
+                        {
+                            return Err("change_row_identity_invalid".to_string());
+                        }
                         let amounts = std::mem::take(&mut entries);
                         let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": row.get("ALTERID").and_then(|v| v.parse::<u64>().ok()), "master_id": row.get("MASTERID"), "amounts": amounts});
                         if require_accounting_state {
@@ -3023,16 +3035,28 @@ mod tests {
 
     #[test]
     fn changed_voucher_rows_require_typed_accounting_state() {
-        let complete = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>Yes</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let complete = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-guid</GUID><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>Yes</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
         let rows = parse_agent_changed_rows(complete).expect("changed voucher rows");
         assert_eq!(rows[0]["cancelled"], false);
         assert_eq!(rows[0]["optional"], true);
 
-        let absent = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let absent = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-guid</GUID><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
         assert_eq!(
             parse_agent_changed_rows(absent),
             Err("voucher_accounting_state_not_observed".to_string())
         );
+    }
+
+    #[test]
+    fn changed_voucher_rows_require_a_stable_identity() {
+        let missing = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        assert_eq!(
+            parse_agent_changed_rows(missing),
+            Err("change_row_identity_invalid".to_string())
+        );
+
+        let master_id = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><MASTERID>3</MASTERID><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        assert!(parse_agent_changed_rows(master_id).is_ok());
     }
 
     #[tokio::test]
