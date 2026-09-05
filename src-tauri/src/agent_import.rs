@@ -216,7 +216,7 @@ impl Server {
         }
         validate_dates(&payload, company.books_from.as_deref())?;
         let _admission_lock = self.lock_import_admission()?;
-        let existing = self.import_ledger()?;
+        let existing = self.import_ledger_while_admitted()?;
         reject_known_transactions(&payload, &existing)?;
         let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
         let batch_id = format!("bridge-{}", Uuid::new_v4());
@@ -402,7 +402,26 @@ impl Server {
         Ok(file)
     }
 
+    fn lock_import_admission_shared(&self) -> Result<std::fs::File, String> {
+        let path = self.settings.data_dir.join("agent-import-admission.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        file.lock_shared()
+            .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        Ok(file)
+    }
+
     fn import_ledger(&self) -> Result<Vec<ImportLedgerLine>, String> {
+        let _admission_lock = self.lock_import_admission_shared()?;
+        self.import_ledger_while_admitted()
+    }
+
+    fn import_ledger_while_admitted(&self) -> Result<Vec<ImportLedgerLine>, String> {
         let path = self.settings.data_dir.join("agent-import-ledger.jsonl");
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
@@ -1399,6 +1418,46 @@ mod tests {
             Err("import_ledger_unavailable".to_string())
         );
         assert_eq!(writer.bytes, b"before\n");
+    }
+
+    #[test]
+    fn external_import_ledger_read_waits_for_the_append_admission_lock() {
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let settings = super::super::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: super::super::Redaction::None,
+            import_enabled: true,
+        };
+        let server = Server::new(settings.clone());
+        let append_admission = server.lock_import_admission().expect("append admission lock");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            started_tx.send(()).expect("reader started");
+            done_tx.send(Server::new(settings).import_ledger()).expect("reader completed");
+        });
+        started_rx.recv().expect("reader started");
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .is_err(),
+            "the external reader must wait while an append is admitted"
+        );
+        drop(append_admission);
+        assert!(
+            done_rx
+                .recv()
+                .expect("reader result")
+                .expect("ledger read after append admission releases")
+                .is_empty()
+        );
+        reader.join().expect("reader thread");
     }
 
     #[test]
