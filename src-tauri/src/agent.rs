@@ -1563,14 +1563,14 @@ fn ageing_buckets_from_open_bills(bills: &[OpenBillRow]) -> Result<Value, String
     let mut days_61_90 = "0".to_string();
     let mut days_90_plus = "0".to_string();
     for bill in bills {
-        let Some(age) = bill.age_days else {
-            continue;
-        };
-        let bucket = match age {
-            0..=30 => &mut days_0_30,
-            31..=60 => &mut days_31_60,
-            61..=90 => &mut days_61_90,
-            _ => &mut days_90_plus,
+        let bucket = match bill.age_days {
+            None => &mut days_0_30,
+            Some(age) => match age {
+                0..=30 => &mut days_0_30,
+                31..=60 => &mut days_31_60,
+                61..=90 => &mut days_61_90,
+                _ => &mut days_90_plus,
+            },
         };
         *bucket = add_decimal(bucket, bill.amount.as_str())?;
     }
@@ -3123,6 +3123,23 @@ mod tests {
         assert_eq!(
             unallocated_total_from_parties(&payable_unallocated).expect("payable unallocated"),
             "40"
+        );
+    }
+
+    #[test]
+    fn future_due_open_bills_remain_in_the_first_ageing_bucket() {
+        let bill = OpenBillRow {
+            party: "Customer".to_string(),
+            reference: "FUTURE".to_string(),
+            bill_date: "20260910".to_string(),
+            due_date: "20260910".to_string(),
+            amount: bridge_tally_core::ExactDecimal::parse("25".to_string()).expect("amount"),
+            age_days: None,
+            kind: ExposureDirection::Receivable,
+        };
+        assert_eq!(
+            ageing_buckets_from_open_bills(&[bill]).expect("ageing buckets"),
+            json!({"days_0_30":"25", "days_31_60":"0", "days_61_90":"0", "days_90_plus":"0"})
         );
     }
 
