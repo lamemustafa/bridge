@@ -517,6 +517,14 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         if voucher.entries.len() < 2 {
             return Err("voucher_entries_too_few".to_string());
         }
+        for text in [voucher.narration.as_deref(), voucher.reference.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            if contains_reserved_marker(text) {
+                return Err("narration_reserved_marker".to_string());
+            }
+        }
         for text in [
             voucher.narration.as_deref(),
             voucher.reference.as_deref(),
@@ -551,6 +559,12 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn contains_reserved_marker(value: &str) -> bool {
+    quick_xml::escape::unescape(value)
+        .map(|decoded| decoded.to_ascii_uppercase().contains("[BRIDGE:"))
+        .unwrap_or_else(|_| value.to_ascii_uppercase().contains("[BRIDGE:"))
 }
 
 /// Dates cross the tool boundary in the human-friendly form but are persisted
@@ -1293,6 +1307,25 @@ mod tests {
             {"bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":"Payment","narration":"Paid & settled","reference":"REF-1","entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},{"ledger":"Bank","amount":"12.50","side":"Cr"}]},
             {"bridge_txn_id":"txn-002","date":"2026-09-02","voucher_type":"Receipt","entries":[{"ledger":"Bank","amount":"7.50","side":"Dr"},{"ledger":"Income","amount":"7.50","side":"Cr"}]}
         ]})).expect("sample payload")
+    }
+
+    #[test]
+    fn narration_and_reference_reject_reserved_markers_after_entity_decoding() {
+        for text in ["[bridge:forged]", "&#91;BrIdGe:forged]"] {
+            let mut input = payload();
+            input.vouchers[0].narration = Some(text.to_string());
+            assert_eq!(
+                validate_payload(&input),
+                Err("narration_reserved_marker".to_string())
+            );
+
+            let mut input = payload();
+            input.vouchers[0].reference = Some(text.to_string());
+            assert_eq!(
+                validate_payload(&input),
+                Err("narration_reserved_marker".to_string())
+            );
+        }
     }
 
     #[test]
