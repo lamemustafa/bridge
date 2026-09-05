@@ -639,38 +639,53 @@ impl Server {
         let (company, identity, company_evidence) = self.verified_company(guid).await?;
         let fields = optional_string(args, "fields")?.unwrap_or_else(|| "basic".to_string());
         let compliance = fields == "compliance";
-        let mut ledgers = if compliance {
-            self.runtime
+        let (mut ledgers, ledger_evidence) = if compliance {
+            let records = self
+                .runtime
                 .fetch_agent_party_ledger_masters(self.tally_config(), &identity)
                 .await
-                .map_err(|_| "party_ledger_master_read_failed".to_string())?
-                .into_iter()
-                .map(|record| {
-                    json!({
-                        "name": party_name(record.ledger.name),
-                        "parent": record.ledger.parent.returned_text(),
-                        "opening_balance": record.ledger.opening_balance,
-                        "party_gstin": record.ledger.party_gstin.returned_text(),
-                        "compliance": mark_compliance_party_names(
-                            serde_json::to_value(record.fields).unwrap_or_default(),
-                        ),
-                    })
-                })
-                .collect::<Vec<_>>()
-        } else {
-            self.runtime
-                .fetch_ledgers(self.tally_config(), &identity)
+                .map_err(|_| "party_ledger_master_read_failed".to_string())?;
+            let (_, evidence) = self
+                .runtime
+                .fetch_ledgers_with_evidence(self.tally_config(), &identity)
                 .await
-                .map_err(|_| "ledger_export_invalid".to_string())?
-                .into_iter()
-                .map(|ledger| {
-                    json!({
-                        "name": party_name(ledger.name),
-                        "parent": ledger.parent.returned_text(),
-                        "opening_balance": ledger.opening_balance,
+                .map_err(|_| "ledger_export_invalid".to_string())?;
+            (
+                records
+                    .into_iter()
+                    .map(|record| {
+                        json!({
+                            "name": party_name(record.ledger.name),
+                            "parent": record.ledger.parent.returned_text(),
+                            "opening_balance": record.ledger.opening_balance,
+                            "party_gstin": record.ledger.party_gstin.returned_text(),
+                            "compliance": mark_compliance_party_names(
+                                serde_json::to_value(record.fields).unwrap_or_default(),
+                            ),
+                        })
                     })
-                })
-                .collect::<Vec<_>>()
+                    .collect::<Vec<_>>(),
+                evidence,
+            )
+        } else {
+            let (records, evidence) = self
+                .runtime
+                .fetch_ledgers_with_evidence(self.tally_config(), &identity)
+                .await
+                .map_err(|_| "ledger_export_invalid".to_string())?;
+            (
+                records
+                    .into_iter()
+                    .map(|ledger| {
+                        json!({
+                            "name": party_name(ledger.name),
+                            "parent": ledger.parent.returned_text(),
+                            "opening_balance": ledger.opening_balance,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+                evidence,
+            )
         };
         if let Some(group) = optional_string(args, "group")? {
             ledgers.retain(|ledger| ledger["parent"].as_str() == Some(group.as_str()));
@@ -690,7 +705,10 @@ impl Server {
         let result = json!({"items": page, "offset": offset, "total": total, "fields": fields, "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
-            company_evidence,
+            combine_evidence(
+                company_evidence,
+                evidence_from_runtime_read(ledger_evidence),
+            ),
             Some(guid.to_string()),
             page_len,
             ledger_fields_returned(compliance),
@@ -3217,6 +3235,31 @@ mod tests {
         let baseline = combine_evidence(evidence(b"ledger"), evidence(b"voucher-one"));
         let changed = combine_evidence(evidence(b"ledger"), evidence(b"voucher-two"));
         assert_ne!(baseline.response_sha256, changed.response_sha256);
+    }
+
+    #[test]
+    fn ledger_masters_evidence_changes_when_a_ledger_response_changes() {
+        let identity = Evidence {
+            request_sha256: "company-request".into(),
+            response_sha256: "company-response".into(),
+            bytes: 10,
+            state: "complete",
+            read_at: None,
+            duration_ms: None,
+            reason_code: None,
+        };
+        let read = |response| {
+            evidence_from_runtime_read(RuntimeReadEvidence::paired(
+                "ledger-request",
+                sha256_hex(response),
+                response.len(),
+            ))
+        };
+        let baseline = combine_evidence(identity.clone(), read(b"ledger-one"));
+        let changed = combine_evidence(identity, read(b"ledger-two"));
+
+        assert_ne!(baseline.response_sha256, changed.response_sha256);
+        assert!(changed.bytes > 10, "the ledger read bytes are retained");
     }
 
     #[test]
