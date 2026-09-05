@@ -1202,9 +1202,19 @@ impl Server {
             evidence.state = "partial";
             evidence.reason_code = Some("opening_balance_not_observed".to_string());
         }
+        let offset = arg_usize(args, "offset", 0)?;
+        let limit = arg_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+        let total = rows.len();
+        let rows = rows
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect::<Vec<_>>();
+        let truncated = offset.saturating_add(rows.len()) < total;
+        let next_offset = truncated.then_some(offset + rows.len());
         let (rows_returned, voucher_rows_observed) = ledger_movement_counts(&rows, &vouchers);
         Ok((
-            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": if opening_unobserved {"partial"} else {"complete"}, "partial_reason": opening_unobserved.then_some("opening_balance_not_observed"), "ledgers": rows, "voucher_rows_observed": voucher_rows_observed, "evidence_method": if books_from < from {"runtime_ledger_opening_plus_pre_window_entries_to_from"} else {"runtime_ledger_opening_at_books_from_plus_literal_window_entries"}}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": if opening_unobserved {"partial"} else {"complete"}, "partial_reason": opening_unobserved.then_some("opening_balance_not_observed"), "ledgers": rows, "offset": offset, "next_offset": next_offset, "voucher_rows_observed": voucher_rows_observed, "evidence_method": if books_from < from {"runtime_ledger_opening_plus_pre_window_entries_to_from"} else {"runtime_ledger_opening_at_books_from_plus_literal_window_entries"}}}),
             evidence,
             Some(guid.to_string()),
             rows_returned,
@@ -1215,7 +1225,7 @@ impl Server {
                 "credit".into(),
                 "closing".into(),
             ],
-            false,
+            truncated,
         ))
     }
 
@@ -1725,7 +1735,7 @@ fn enforce_response_byte_cap(
 
 fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
     let requested_offset = response["result"]["offset"].as_u64().unwrap_or(0);
-    for key in ["items", "open_bills"] {
+    for key in ["items", "open_bills", "ledgers"] {
         if let Some(items) = response["result"][key]
             .as_array_mut()
             .filter(|items| !items.is_empty())
@@ -3090,7 +3100,7 @@ mod tests {
 
     #[test]
     fn byte_trimming_keeps_each_cursor_relative_to_its_requested_offset() {
-        for key in ["items", "open_bills"] {
+        for key in ["items", "open_bills", "ledgers"] {
             let mut response = json!({"result": {"offset": 500}});
             response["result"][key] = json!(vec![json!({"row": 1}); 101]);
             assert!(truncate_response_items(&mut response).expect("trims result page"));
