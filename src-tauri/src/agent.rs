@@ -324,7 +324,7 @@ impl Server {
         let args_sha256 = sha256_json(&args);
         let started = Utc::now();
         let result = self.tool_payload(name, &args).await;
-        let (payload, evidence, company_guid, rows, fields, truncated) = match result {
+        let (payload, evidence, company_guid, _rows, fields, truncated) = match result {
             Ok(outcome) => outcome,
             Err(code) => {
                 let evidence = Evidence {
@@ -354,7 +354,7 @@ impl Server {
             }),
             self.settings.redaction,
         );
-        let (response_value, bytes_truncated) = match enforce_response_byte_cap(
+        let (response_value, bytes_truncated, surviving_rows) = match enforce_response_byte_cap(
             response_value,
             self.settings.max_bytes,
         ) {
@@ -373,9 +373,12 @@ impl Server {
             "structuredContent": response_value,
             "isError": response_value["result"].get("error").is_some(),
         });
-        if let Err(code) =
-            enforce_mcp_result_byte_cap(&mut mcp_response, self.settings.max_bytes, name, rows)
-        {
+        if let Err(code) = enforce_mcp_result_byte_cap(
+            &mut mcp_response,
+            self.settings.max_bytes,
+            name,
+            surviving_rows,
+        ) {
             return json!({
                 "content": [{"type":"text", "text": format!("{name}: read withheld\n{code}")}],
                 "structuredContent": {"error": {"code": code, "message": "Bridge response exceeds the configured byte cap."}},
@@ -383,7 +386,7 @@ impl Server {
             });
         }
         let response_value = mcp_response["structuredContent"].clone();
-        let rows = response_row_count(&response_value).unwrap_or(rows);
+        let rows = response_row_count(&response_value).unwrap_or(surviving_rows);
         let truncated = truncated || response_value["truncated"].as_bool().unwrap_or(false);
         let response_sha256 = sha256_json(&response_value);
         self.record_evidence(response_value["evidence"].clone());
@@ -1267,16 +1270,18 @@ where
 fn enforce_response_byte_cap(
     mut response: Value,
     max_bytes: usize,
-) -> Result<(Value, bool), String> {
+) -> Result<(Value, bool, usize), String> {
     if response.to_string().len() <= max_bytes {
-        return Ok((response, false));
+        let rows = response_row_count(&response).unwrap_or_default();
+        return Ok((response, false, rows));
     }
     while response.to_string().len() > max_bytes {
         if !truncate_response_items(&mut response)? {
             return Err("agent_response_too_large".to_string());
         }
     }
-    Ok((response, true))
+    let rows = response_row_count(&response).unwrap_or_default();
+    Ok((response, true, rows))
 }
 
 fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
@@ -1295,9 +1300,16 @@ fn truncate_response_items(response: &mut Value) -> Result<bool, String> {
 }
 
 fn response_row_count(response: &Value) -> Option<usize> {
-    ["items", "ledgers", "records", "companies"]
-        .into_iter()
-        .find_map(|key| response["result"][key].as_array().map(Vec::len))
+    [
+        "items",
+        "ledgers",
+        "records",
+        "companies",
+        "vouchers",
+        "open_bills",
+    ]
+    .into_iter()
+    .find_map(|key| response["result"][key].as_array().map(Vec::len))
 }
 
 fn set_mcp_content_summary(mcp_response: &mut Value, name: &str, fallback_rows: usize) {
@@ -2311,8 +2323,10 @@ mod tests {
     fn response_byte_cap_covers_the_serialized_jsonrpc_result_and_keeps_content_short() {
         let input = json!({"truncated":false,"result":{"offset":0,"items":[{"name":"first"},{"name":"second"}]}});
         let cap = json!({"truncated":true,"result":{"offset":0,"items":[{"name":"first"}],"next_offset":1}}).to_string().len();
-        let (bounded, truncated) = enforce_response_byte_cap(input, cap).expect("one row fits");
+        let (bounded, truncated, rows) =
+            enforce_response_byte_cap(input, cap).expect("one row fits");
         assert!(truncated);
+        assert_eq!(rows, 1);
         assert_eq!(bounded["result"]["items"].as_array().map(Vec::len), Some(1));
         assert_eq!(bounded["result"]["next_offset"], 1);
         assert_eq!(
