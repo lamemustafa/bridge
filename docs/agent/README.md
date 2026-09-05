@@ -8,7 +8,7 @@ Tally.
 Build and run it with Rust 1.96:
 
 ```sh
-rustup run 1.96.0-aarch64-apple-darwin cargo run --manifest-path src-tauri/Cargo.toml --bin bridge_mcp
+rustup run 1.96.0 cargo run --manifest-path src-tauri/Cargo.toml --bin bridge_mcp
 ```
 
 Configure it with `BRIDGE_TALLY_HOST` (default `localhost`),

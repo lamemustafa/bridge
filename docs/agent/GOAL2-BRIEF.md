@@ -18,6 +18,6 @@ Useful prior art: `git show a0fcf05` (a reverted "fail-closed payment receipt im
 ## Tests (simulator)
 - Unit: schema validation, balance check, near-miss matcher (cases: trailing space, case, NBSP, en-dash vs hyphen, curly quotes, prefix), XML rendering golden file (assert exact bytes for a two-voucher batch), sign convention, escaping, batch/txn uniqueness, import-ledger append.
 - Integration: extend `tally-protocol-simulator` (or a test-local simulator response fixture) so a voucher read returns vouchers carrying REMOTEIDs; then `build_import_xml` → simulate the accountant's import by loading the built vouchers into the simulator's served set → `verify_import` returns `posted_verified` for all; a second scenario where one voucher is absent → `not_found`, and one has a changed amount → `posted_divergent`; a duplicate-fingerprint scenario.
-- Keep Goal 1 tests green; `cargo clippy` clean for the bin; use `rustup run 1.96.0-aarch64-apple-darwin cargo …` as in the Goal 1 report.
+- Keep Goal 1 tests green; `cargo clippy` clean for the bin; use `rustup run 1.96.0 cargo …` as in the Goal 1 report.
 
 Write `docs/agent/GOAL2-REPORT.md` (what was built, sign-convention basis, test output summary, what is not covered, exact commands). Commit everything.

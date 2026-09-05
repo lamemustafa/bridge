@@ -1,6 +1,6 @@
 # Goal 5 — Address the second-round Codex review threads on PR #228 (12 findings, 2026-09-04 11:06 UTC)
 
-Same worktree/branch/rules as `GOAL4-BRIEF.md`: Rust 1.96 on PATH (`export PATH=$HOME/.rustup/toolchains/1.96.0-aarch64-apple-darwin/bin:$PATH`), sealed-surface edits only where already authorised (`GOAL3B-BRIEF.md`) followed by the documented reseal, regression test per fix, commit as you go, do not push, no "won't fix" without file:line counter-evidence. Report as a table in `docs/agent/GOAL5-REPORT.md` (`path:line | finding | fix commit | test | note`). Run the full workspace suite, clippy for the bin with `-D warnings`, `corepack pnpm test`, and the compatibility gate at the end.
+Same worktree/branch/rules as `GOAL4-BRIEF.md`: Rust 1.96 via `rustup run 1.96.0`, sealed-surface edits only where already authorised (`GOAL3B-BRIEF.md`) followed by the documented reseal, regression test per fix, commit as you go, do not push, no "won't fix" without file:line counter-evidence. Report as a table in `docs/agent/GOAL5-REPORT.md` (`path:line | finding | fix commit | test | note`). Run the full workspace suite, clippy for the bin with `-D warnings`, `corepack pnpm test`, and the compatibility gate at the end.
 
 ## Findings
 
