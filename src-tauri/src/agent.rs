@@ -3168,7 +3168,7 @@ mod tests {
 
     #[test]
     fn voucher_parsers_decode_entities_in_vouchers_and_change_feeds() {
-        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><VOUCHERNUMBER>R&amp;D</VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D</LEDGERNAME><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-guid</GUID><VOUCHERNUMBER>R&amp;D</VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D</LEDGERNAME><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
         let vouchers = parse_agent_rows(xml).expect("voucher rows");
         assert_eq!(vouchers[0]["voucher_number"], "R&D");
         assert_eq!(vouchers[0]["amounts"][0]["ledger"], "R&D");
