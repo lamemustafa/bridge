@@ -619,6 +619,29 @@ impl Server {
         append_egress_line(&path, &line)
     }
 
+    fn append_notification_refusal_egress(&self, tool: &str, args: &Value) -> Result<(), String> {
+        let refusal = "tools_call_notification_forbidden";
+        let receipt = EgressReceipt {
+            ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            tool,
+            args_sha256: sha256_json(args),
+            company_guid: args
+                .get("company_guid")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            rows_returned: 0,
+            fields_returned: Vec::new(),
+            bytes_returned: 0,
+            enforced_bytes: self.settings.max_bytes,
+            response_sha256: sha256_hex(refusal.as_bytes()),
+            truncated: false,
+            redaction_preset: self.settings.redaction.label(),
+        };
+        let line = serde_json::to_string(&receipt)
+            .map_err(|_| "egress_record_write_failed".to_string())?;
+        append_egress_line(&self.settings.data_dir.join("agent-egress.jsonl"), &line)
+    }
+
     async fn tool_payload(&self, name: &str, args: &Value) -> Result<ToolOutcome, String> {
         validate_tool_arguments(name, args)?;
         match name {
@@ -2809,6 +2832,15 @@ where
         let id = request.get("id").cloned();
         let method = request.get("method").and_then(Value::as_str).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+        if id.is_none() && method == "tools/call" {
+            let tool = params.get("name").and_then(Value::as_str).unwrap_or("unknown");
+            let arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            server.append_notification_refusal_egress(tool, &arguments)?;
+            continue;
+        }
         let mut egress = None;
         let result = match method {
             "initialize" => params
@@ -3178,6 +3210,40 @@ mod tests {
         assert_eq!(receipt["rows_returned"], 0);
         assert_eq!(receipt["fields_returned"], json!([]));
         assert_eq!(receipt["truncated"], false);
+    }
+
+    #[tokio::test]
+    async fn tools_call_notifications_are_refused_and_receipted_without_dispatch() {
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+        });
+        let (mut client, server_io) = tokio::io::duplex(4_096);
+        let (server_read, mut server_write) = tokio::io::split(server_io);
+        let serve = tokio::spawn(async move {
+            serve_stdio(server, BufReader::new(server_read), &mut server_write).await
+        });
+        client
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"list_companies\",\"arguments\":{}}}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{}}\n")
+            .await
+            .expect("write notification and ping");
+        client.shutdown().await.expect("close request stream");
+        let mut output = String::new();
+        client.read_to_string(&mut output).await.expect("read response");
+        serve.await.expect("server task").expect("session remains healthy");
+        assert_eq!(serde_json::from_str::<Value>(output.trim_end()).expect("ping response")["id"], 1);
+        let receipt = fs::read_to_string(directory.path().join("agent-egress.jsonl"))
+            .expect("notification refusal receipt");
+        assert!(receipt.contains("list_companies"));
+        assert_eq!(receipt.lines().count(), 1);
     }
 
     #[tokio::test]
