@@ -1833,6 +1833,7 @@ fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
     validate_agent_envelope(xml, "VOUCHER")?;
     let mut current: Option<BTreeMap<String, String>> = None;
     let mut entry: Option<BTreeMap<String, String>> = None;
+    let mut entries = Vec::<Value>::new();
     let mut current_tag = String::new();
     loop {
         match reader.read_event() {
@@ -1840,6 +1841,7 @@ fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
                 let tag = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
                 if tag == "VOUCHER" {
                     current = Some(BTreeMap::new());
+                    entries.clear();
                 }
                 if tag == "ALLLEDGERENTRIES.LIST" && current.is_some() {
                     entry = Some(BTreeMap::new());
@@ -1860,7 +1862,7 @@ fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
             Ok(quick_xml::events::Event::End(event)) => {
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
                 if end == "ALLLEDGERENTRIES.LIST" {
-                    if let (Some(row), Some(entry_row)) = (current.as_mut(), entry.take()) {
+                    if let (Some(_), Some(entry_row)) = (current.as_mut(), entry.take()) {
                         if let (Some(ledger), Some(amount)) =
                             (entry_row.get("LEDGERNAME"), entry_row.get("AMOUNT"))
                         {
@@ -1868,17 +1870,16 @@ fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
                                 .get("ISDEEMEDPOSITIVE")
                                 .map(String::as_str)
                                 .unwrap_or("not_observed");
-                            row.entry("AMOUNTS".to_string())
-                                .and_modify(|amounts| {
-                                    amounts.push('|');
-                                    amounts.push_str(&format!("{ledger}|{amount}|{polarity}"));
-                                })
-                                .or_insert_with(|| format!("{ledger}|{amount}|{polarity}"));
+                            entries.push(json!({
+                                "ledger": ledger,
+                                "amount": amount,
+                                "is_deemed_positive": polarity,
+                            }));
                         }
                     }
                 } else if end == "VOUCHER" {
                     if let Some(row) = current.take() {
-                        let amounts = row.get("AMOUNTS").map(|items| items.split('|').collect::<Vec<_>>().chunks(3).filter(|chunk| chunk.len() == 3).map(|chunk| json!({"ledger":chunk[0],"amount":chunk[1],"is_deemed_positive":chunk[2]})).collect::<Vec<_>>()).unwrap_or_default();
+                        let amounts = std::mem::take(&mut entries);
                         rows.push(json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": row.get("ALTERID").and_then(|v| v.parse::<u64>().ok()), "master_id": row.get("MASTERID"), "amounts": amounts}));
                     }
                 }
@@ -2225,6 +2226,14 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines.iter().any(|line| line["tool"] == "one"));
         assert!(lines.iter().any(|line| line["tool"] == "two"));
+    }
+
+    #[test]
+    fn voucher_parser_keeps_pipe_characters_inside_structured_ledger_names() {
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><ALLLEDGERENTRIES.LIST><LEDGERNAME>A|B</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let rows = parse_agent_rows(xml).expect("voucher rows");
+        assert_eq!(rows[0]["amounts"][0]["ledger"], "A|B");
+        assert_eq!(rows[0]["amounts"][0]["amount"], "-10");
     }
 
     #[test]
