@@ -436,12 +436,51 @@ impl Server {
             .append(true)
             .open(&path)
             .map_err(|_| "import_ledger_unavailable".to_string())?;
-        file.write_all(encoded.as_bytes())
-            .map_err(|_| "import_ledger_unavailable".to_string())?;
-        file.sync_data()
-            .map_err(|_| "import_ledger_unavailable".to_string())?;
+        append_import_ledger_bytes(&mut file, encoded.as_bytes())?;
         set_private(&path)
     }
+}
+
+trait ImportLedgerWriter {
+    fn length(&mut self) -> std::io::Result<u64>;
+    fn append(&mut self, bytes: &[u8]) -> std::io::Result<()>;
+    fn sync(&mut self) -> std::io::Result<()>;
+    fn truncate(&mut self, length: u64) -> std::io::Result<()>;
+}
+
+impl ImportLedgerWriter for std::fs::File {
+    fn length(&mut self) -> std::io::Result<u64> {
+        self.metadata().map(|metadata| metadata.len())
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.write_all(bytes)
+    }
+
+    fn sync(&mut self) -> std::io::Result<()> {
+        self.sync_data()
+    }
+
+    fn truncate(&mut self, length: u64) -> std::io::Result<()> {
+        self.set_len(length)
+    }
+}
+
+fn append_import_ledger_bytes(
+    writer: &mut impl ImportLedgerWriter,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let original_length = writer
+        .length()
+        .map_err(|_| "import_ledger_unavailable".to_string())?;
+    if writer.append(bytes).and_then(|_| writer.sync()).is_err() {
+        writer
+            .truncate(original_length)
+            .and_then(|_| writer.sync())
+            .map_err(|_| "import_ledger_rollback_failed".to_string())?;
+        return Err("import_ledger_unavailable".to_string());
+    }
+    Ok(())
 }
 
 fn remove_orphaned_import_file(path: &Path, append_error: String) -> String {
@@ -1326,6 +1365,40 @@ mod tests {
                 Err("narration_reserved_marker".to_string())
             );
         }
+    }
+
+    #[test]
+    fn import_ledger_append_rolls_back_a_partial_failing_write() {
+        struct FailingWriter {
+            bytes: Vec<u8>,
+        }
+
+        impl ImportLedgerWriter for FailingWriter {
+            fn length(&mut self) -> std::io::Result<u64> {
+                Ok(self.bytes.len() as u64)
+            }
+
+            fn append(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+                self.bytes.extend_from_slice(&bytes[..1]);
+                Err(std::io::Error::other("synthetic write failure"))
+            }
+
+            fn sync(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn truncate(&mut self, length: u64) -> std::io::Result<()> {
+                self.bytes.truncate(length as usize);
+                Ok(())
+            }
+        }
+
+        let mut writer = FailingWriter { bytes: b"before\n".to_vec() };
+        assert_eq!(
+            append_import_ledger_bytes(&mut writer, b"after\n"),
+            Err("import_ledger_unavailable".to_string())
+        );
+        assert_eq!(writer.bytes, b"before\n");
     }
 
     #[test]
