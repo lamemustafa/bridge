@@ -34,10 +34,14 @@ export async function stageMcpbResources(stageDirectory, sourceRoot = root) {
   await verifyMcpbStage(stageDirectory);
 }
 
+export function releaseMcpbBinaryPath(sourceRoot = root, binary) {
+  return resolve(sourceRoot, "src-tauri", "target", "release", binary);
+}
+
 async function main() {
   const manifest = resolve(root, "src-tauri", "Cargo.toml");
   const binary = platform() === "win32" ? "bridge_mcp.exe" : "bridge_mcp";
-  const build = spawnSync("cargo", ["build", "--manifest-path", manifest, "--bin", "bridge_mcp"], {
+  const build = spawnSync("cargo", ["build", "--release", "--manifest-path", manifest, "--bin", "bridge_mcp"], {
     cwd: root,
     stdio: "inherit",
   });
@@ -47,7 +51,7 @@ async function main() {
   const destination = resolve(stageDirectory, "bin", binary);
   await mkdir(resolve(stageDirectory, "bin"), { recursive: true });
   await rm(destination, { force: true });
-  await cp(resolve(root, "src-tauri", "target", "debug", binary), destination);
+  await cp(releaseMcpbBinaryPath(root, binary), destination);
   await stageMcpbResources(stageDirectory);
   console.log(`Prepared ${destination} and verified required license resources for local .mcpb assembly; do not commit this host binary.`);
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { verifyMcpbStage } from "./package-mcpb.mjs";
+import { releaseMcpbBinaryPath, verifyMcpbStage } from "./package-mcpb.mjs";
 
 const resources = [
   "LICENSE",
@@ -25,4 +25,8 @@ test("MCPB stage verifier requires every license and inventory resource", async 
   );
   await writeFile(join(stage, resources.at(-1)), "fixture");
   await verifyMcpbStage(stage);
+});
+
+test("MCPB packaging reads the release binary", () => {
+  assert.match(releaseMcpbBinaryPath("/fixture", "bridge_mcp"), /src-tauri\/target\/release\/bridge_mcp$/);
 });
