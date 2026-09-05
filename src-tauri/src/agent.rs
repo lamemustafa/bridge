@@ -7,7 +7,7 @@ mod agent_import;
 
 use crate::tally::{
     ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, OutstandingsCurrencyAssertion,
-    OutstandingsLoadResult, TallyConfig, TallyRuntime, VerifiedCompanyIdentity,
+    OutstandingsLoadResult, TallyConfig, TallyRuntime, UnallocatedParty, VerifiedCompanyIdentity,
 };
 use bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile;
 use bridge_tally_protocol::TallyCompany;
@@ -832,10 +832,9 @@ impl Server {
         let mut result_evidence = identity_evidence;
         let (result, bills_truncated) = match load {
             OutstandingsLoadResult::Complete {
-                report,
+                report: _,
                 statement_open_bills,
                 statement_unallocated_by_party,
-                unallocated_total,
                 ..
             } => {
                 let direction =
@@ -843,16 +842,16 @@ impl Server {
                 if !matches!(direction.as_str(), "receivable" | "payable" | "both") {
                     return Err("invalid_direction".to_string());
                 }
-                let parties = ranked_parties_from_open_bills(&statement_open_bills, top)?
+                let all_bills = statement_open_bills
+                    .into_iter()
+                    .filter(|bill| direction_matches(bill.kind, &direction))
+                    .collect::<Vec<_>>();
+                let parties = ranked_parties_from_open_bills(&all_bills, top)?
                     .into_iter()
                     .map(|party| redact_value(party, self.settings.redaction))
                     .collect::<Vec<_>>();
-                let all_bills = statement_open_bills
-                    .into_iter()
-                    .filter(|bill| {
-                        direction == "both" || bill.kind.label().eq_ignore_ascii_case(&direction)
-                    })
-                    .collect::<Vec<_>>();
+                let totals = outstanding_totals_from_open_bills(&all_bills)?;
+                let ageing_buckets = ageing_buckets_from_open_bills(&all_bills)?;
                 let (bills, bills_truncated, next_bill_offset) =
                     paginate_open_bills(all_bills, bill_offset, bill_limit);
                 let bills = bills
@@ -864,9 +863,14 @@ impl Server {
                         )
                     })
                     .collect::<Vec<_>>();
-                let unallocated_count = statement_unallocated_by_party.len();
+                let selected_unallocated = statement_unallocated_by_party
+                    .into_iter()
+                    .filter(|party| direction_matches(party.direction, &direction))
+                    .collect::<Vec<_>>();
+                let unallocated_count = selected_unallocated.len();
+                let unallocated_total = unallocated_total_from_parties(&selected_unallocated)?;
                 let (unallocated, unallocated_truncated, next_unallocated_offset) =
-                    paginate_open_bills(statement_unallocated_by_party, bill_offset, bill_limit);
+                    paginate_open_bills(selected_unallocated, bill_offset, bill_limit);
                 let unallocated = unallocated
                     .into_iter()
                     .map(|party| {
@@ -877,7 +881,7 @@ impl Server {
                     })
                     .collect::<Vec<_>>();
                 (
-                    json!({"state":"complete", "totals":{"receivable": report.receivable_total, "payable": report.payable_total}, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": report.ageing, "top_parties": parties, "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": next_bill_offset, "unallocated":{"count": unallocated_count, "amount": unallocated_total, "parties": unallocated, "truncated": unallocated_truncated, "next_offset": next_unallocated_offset}}),
+                    json!({"state":"complete", "totals":totals, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": ageing_buckets, "top_parties": parties, "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": next_bill_offset, "unallocated":{"count": unallocated_count, "amount": unallocated_total, "parties": unallocated, "truncated": unallocated_truncated, "next_offset": next_unallocated_offset}}),
                     bills_truncated || unallocated_truncated,
                 )
             }
@@ -1299,6 +1303,55 @@ fn ledger_movement_row(
         ),
         opening_unobserved,
     ))
+}
+
+fn direction_matches(kind: ExposureDirection, requested: &str) -> bool {
+    requested == "both" || kind.label().eq_ignore_ascii_case(requested)
+}
+
+fn outstanding_totals_from_open_bills(bills: &[OpenBillRow]) -> Result<Value, String> {
+    let mut receivable = "0".to_string();
+    let mut payable = "0".to_string();
+    for bill in bills {
+        match bill.kind {
+            ExposureDirection::Receivable => {
+                receivable = add_decimal(&receivable, bill.amount.as_str())?
+            }
+            ExposureDirection::Payable => payable = add_decimal(&payable, bill.amount.as_str())?,
+        }
+    }
+    Ok(json!({"receivable": receivable, "payable": payable}))
+}
+
+fn ageing_buckets_from_open_bills(bills: &[OpenBillRow]) -> Result<Value, String> {
+    let mut days_0_30 = "0".to_string();
+    let mut days_31_60 = "0".to_string();
+    let mut days_61_90 = "0".to_string();
+    let mut days_90_plus = "0".to_string();
+    for bill in bills {
+        let Some(age) = bill.age_days else {
+            continue;
+        };
+        let bucket = match age {
+            0..=30 => &mut days_0_30,
+            31..=60 => &mut days_31_60,
+            61..=90 => &mut days_61_90,
+            _ => &mut days_90_plus,
+        };
+        *bucket = add_decimal(bucket, bill.amount.as_str())?;
+    }
+    Ok(json!({
+        "days_0_30": days_0_30,
+        "days_31_60": days_31_60,
+        "days_61_90": days_61_90,
+        "days_90_plus": days_90_plus,
+    }))
+}
+
+fn unallocated_total_from_parties(parties: &[UnallocatedParty]) -> Result<String, String> {
+    parties.iter().try_fold("0".to_string(), |total, party| {
+        add_decimal(&total, party.amount.as_str())
+    })
 }
 
 fn ranked_parties_from_open_bills(bills: &[OpenBillRow], top: usize) -> Result<Vec<Value>, String> {
@@ -2558,6 +2611,67 @@ mod tests {
         assert_eq!(ranked.len(), 12);
         assert_eq!(ranked[0]["party"], "Party 12");
         assert_eq!(ranked[11]["party"], "Party 01");
+    }
+
+    #[test]
+    fn payable_outstandings_views_exclude_mixed_receivable_rows() {
+        let bill = |party: &str, amount: &str, age_days, kind| OpenBillRow {
+            party: party.to_string(),
+            reference: format!("{party}-REF"),
+            bill_date: "20260901".to_string(),
+            due_date: "20260901".to_string(),
+            amount: bridge_tally_core::ExactDecimal::parse(amount.to_string())
+                .expect("synthetic amount"),
+            age_days: Some(age_days),
+            kind,
+        };
+        let mixed_bills = vec![
+            bill("Customer A", "100", 12, ExposureDirection::Receivable),
+            bill("Supplier B", "200", 45, ExposureDirection::Payable),
+        ];
+        let payable_bills = mixed_bills
+            .into_iter()
+            .filter(|bill| direction_matches(bill.kind, "payable"))
+            .collect::<Vec<_>>();
+        assert_eq!(payable_bills.len(), 1);
+        assert_eq!(payable_bills[0].party, "Supplier B");
+        assert_eq!(
+            outstanding_totals_from_open_bills(&payable_bills).expect("payable totals"),
+            json!({"receivable":"0", "payable":"200"})
+        );
+        assert_eq!(
+            ageing_buckets_from_open_bills(&payable_bills).expect("payable ageing"),
+            json!({"days_0_30":"0", "days_31_60":"200", "days_61_90":"0", "days_90_plus":"0"})
+        );
+        assert_eq!(
+            ranked_parties_from_open_bills(&payable_bills, 10).expect("payable ranking")[0]
+                ["party"],
+            "Supplier B"
+        );
+        let mixed_unallocated = vec![
+            UnallocatedParty {
+                party: "Customer A".to_string(),
+                amount: bridge_tally_core::ExactDecimal::parse("30".to_string())
+                    .expect("synthetic amount"),
+                direction: ExposureDirection::Receivable,
+            },
+            UnallocatedParty {
+                party: "Supplier B".to_string(),
+                amount: bridge_tally_core::ExactDecimal::parse("40".to_string())
+                    .expect("synthetic amount"),
+                direction: ExposureDirection::Payable,
+            },
+        ];
+        let payable_unallocated = mixed_unallocated
+            .into_iter()
+            .filter(|party| direction_matches(party.direction, "payable"))
+            .collect::<Vec<_>>();
+        assert_eq!(payable_unallocated.len(), 1);
+        assert_eq!(payable_unallocated[0].party, "Supplier B");
+        assert_eq!(
+            unallocated_total_from_parties(&payable_unallocated).expect("payable unallocated"),
+            "40"
+        );
     }
 
     #[test]
