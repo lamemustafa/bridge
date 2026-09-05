@@ -159,6 +159,10 @@ struct Evidence {
     bytes: usize,
     state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    read_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reason_code: Option<String>,
 }
 
@@ -223,6 +227,8 @@ impl Server {
             response_sha256: sha256_hex(response.as_bytes()),
             bytes: response.len(),
             state: "complete",
+            read_at: None,
+            duration_ms: None,
             reason_code: None,
         };
         Ok((response, evidence))
@@ -250,6 +256,8 @@ impl Server {
                 response_sha256: sha256_json(&observed),
                 bytes: observed.to_string().len(),
                 state: "complete",
+                read_at: None,
+                duration_ms: None,
                 reason_code: None,
             },
         ))
@@ -266,6 +274,8 @@ impl Server {
             response_sha256: sha256_json(&companies),
             bytes: 0,
             state: "complete",
+            read_at: None,
+            duration_ms: None,
             reason_code: None,
         };
         Ok((companies, evidence))
@@ -333,7 +343,7 @@ impl Server {
         let args_sha256 = sha256_json(&args);
         let started = Utc::now();
         let result = self.tool_payload(name, &args).await;
-        let (payload, evidence, company_guid, _rows, fields, truncated) = match result {
+        let (payload, mut evidence, company_guid, _rows, fields, truncated) = match result {
             Ok(outcome) => outcome,
             Err(code) => {
                 let evidence = Evidence {
@@ -341,6 +351,8 @@ impl Server {
                     response_sha256: sha256_hex(code.as_bytes()),
                     bytes: 0,
                     state: "partial",
+                    read_at: None,
+                    duration_ms: None,
                     reason_code: Some(code.clone()),
                 };
                 (
@@ -355,6 +367,8 @@ impl Server {
                 )
             }
         };
+        evidence.read_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true));
+        evidence.duration_ms = Some((Utc::now() - started).num_milliseconds().max(0) as u128);
         let response_value = redact_value(
             json!({
                 "company": payload.get("company").cloned().unwrap_or_else(|| json!({"state":"not_company_scoped"})),
@@ -444,6 +458,14 @@ impl Server {
             } else {
                 "partial"
             },
+            read_at: value
+                .get("read_at")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            duration_ms: value
+                .get("duration_ms")
+                .and_then(Value::as_u64)
+                .map(u128::from),
             reason_code: value
                 .get("reason_code")
                 .and_then(Value::as_str)
@@ -672,6 +694,8 @@ impl Server {
                         ),
                         bytes: 0,
                         state: "complete",
+                        read_at: None,
+                        duration_ms: None,
                         reason_code: None,
                     },
                 ),
@@ -1022,6 +1046,8 @@ impl Server {
             response_sha256: sha256_json(&values),
             bytes: 0,
             state: "complete",
+            read_at: None,
+            duration_ms: None,
             reason_code: None,
         };
         Ok((
@@ -1048,6 +1074,8 @@ impl Server {
             response_sha256: sha256_json(&lines),
             bytes: 0,
             state: "complete",
+            read_at: None,
+            duration_ms: None,
             reason_code: None,
         };
         Ok((
@@ -1459,6 +1487,8 @@ fn combine_evidence(left: Evidence, right: Evidence) -> Evidence {
         } else {
             "partial"
         },
+        read_at: None,
+        duration_ms: None,
         reason_code: left.reason_code.or(right.reason_code),
     }
 }
@@ -2234,6 +2264,29 @@ mod tests {
         let rows = parse_agent_rows(xml).expect("voucher rows");
         assert_eq!(rows[0]["amounts"][0]["ledger"], "A|B");
         assert_eq!(rows[0]["amounts"][0]["amount"], "-10");
+    }
+
+    #[tokio::test]
+    async fn stored_evidence_records_have_individual_timestamps_and_durations() {
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+        });
+        server.call_tool("voucher_schema", json!({})).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        server.call_tool("voucher_schema", json!({})).await;
+        let records = server.evidence.lock().expect("evidence records");
+        assert_eq!(records.len(), 2);
+        assert!(records.iter().all(|record| record.duration_ms.is_some()));
+        assert_ne!(records[0].read_at, records[1].read_at);
     }
 
     #[test]

@@ -1148,6 +1148,8 @@ fn local_evidence(label: &str) -> Evidence {
         response_sha256: sha256_hex(label.as_bytes()),
         bytes: 0,
         state: "complete",
+        read_at: None,
+        duration_ms: None,
         reason_code: None,
     }
 }
