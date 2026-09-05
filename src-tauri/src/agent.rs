@@ -872,7 +872,7 @@ impl Server {
         let request =
             render_agent_changed_vouchers(&company.name, voucher_alter_id, voucher_snapshot);
         let (xml, evidence) = self.post_read(&identity, request).await?;
-        let all_rows = parse_agent_rows(&xml)?;
+        let all_rows = parse_agent_changed_rows(&xml)?;
         let (rows, voucher_truncated, truncated_voucher_cursor) = stable_change_page(
             all_rows,
             voucher_alter_id,
@@ -1981,7 +1981,7 @@ fn render_agent_vouchers(
 
 fn render_agent_changed_vouchers(company: &str, checkpoint: u64, snapshot: u64) -> String {
     format!(
-        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Changed Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentChangedVoucher\">$AlterID &gt; {checkpoint} AND $AlterID &lt;= {snapshot}</SYSTEM><COLLECTION NAME=\"Bridge Agent Changed Vouchers\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeAgentChangedVoucher</FILTERS><SORT>Default: $AlterID</SORT></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Changed Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentChangedVoucher\">$AlterID &gt; {checkpoint} AND $AlterID &lt;= {snapshot}</SYSTEM><COLLECTION NAME=\"Bridge Agent Changed Vouchers\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeAgentChangedVoucher</FILTERS><SORT>Default: $AlterID</SORT></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>",
         xml_escape(company)
     )
 }
@@ -2185,6 +2185,17 @@ fn xml_escape(value: &str) -> String {
 }
 
 fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
+    parse_agent_rows_with_accounting_state(xml, false)
+}
+
+fn parse_agent_changed_rows(xml: &str) -> Result<Vec<Value>, String> {
+    parse_agent_rows_with_accounting_state(xml, true)
+}
+
+fn parse_agent_rows_with_accounting_state(
+    xml: &str,
+    require_accounting_state: bool,
+) -> Result<Vec<Value>, String> {
     // Tally's collection XML varies by release; use a deliberately conservative
     // extractor and never infer a missing field. Unknown collection shapes return
     // an empty result rather than invented records.
@@ -2241,7 +2252,14 @@ fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
                 } else if end == "VOUCHER" {
                     if let Some(row) = current.take() {
                         let amounts = std::mem::take(&mut entries);
-                        rows.push(json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": row.get("ALTERID").and_then(|v| v.parse::<u64>().ok()), "master_id": row.get("MASTERID"), "amounts": amounts}));
+                        let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": row.get("ALTERID").and_then(|v| v.parse::<u64>().ok()), "master_id": row.get("MASTERID"), "amounts": amounts});
+                        if require_accounting_state {
+                            parsed["cancelled"] =
+                                Value::Bool(required_tally_bool(row.get("ISCANCELLED"))?);
+                            parsed["optional"] =
+                                Value::Bool(required_tally_bool(row.get("ISOPTIONAL"))?);
+                        }
+                        rows.push(parsed);
                     }
                 }
                 current_tag.clear();
@@ -2252,6 +2270,14 @@ fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
         }
     }
     Ok(rows)
+}
+
+fn required_tally_bool(value: Option<&String>) -> Result<bool, String> {
+    match value.map(String::as_str).map(str::trim) {
+        Some("Yes") => Ok(true),
+        Some("No") => Ok(false),
+        _ => Err("voucher_accounting_state_not_observed".to_string()),
+    }
 }
 
 fn tool_definitions(import_enabled: bool) -> Value {
@@ -2739,6 +2765,20 @@ mod tests {
         assert!(filter_not_honoured);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["voucher_number"], "keep");
+    }
+
+    #[test]
+    fn changed_voucher_rows_require_typed_accounting_state() {
+        let complete = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>Yes</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let rows = parse_agent_changed_rows(complete).expect("changed voucher rows");
+        assert_eq!(rows[0]["cancelled"], false);
+        assert_eq!(rows[0]["optional"], true);
+
+        let absent = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        assert_eq!(
+            parse_agent_changed_rows(absent),
+            Err("voucher_accounting_state_not_observed".to_string())
+        );
     }
 
     #[tokio::test]
