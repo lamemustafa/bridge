@@ -1412,7 +1412,9 @@ mod tests {
             }
         }
 
-        let mut writer = FailingWriter { bytes: b"before\n".to_vec() };
+        let mut writer = FailingWriter {
+            bytes: b"before\n".to_vec(),
+        };
         assert_eq!(
             append_import_ledger_bytes(&mut writer, b"after\n"),
             Err("import_ledger_unavailable".to_string())
@@ -1435,12 +1437,16 @@ mod tests {
             import_enabled: true,
         };
         let server = Server::new(settings.clone());
-        let append_admission = server.lock_import_admission().expect("append admission lock");
+        let append_admission = server
+            .lock_import_admission()
+            .expect("append admission lock");
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let reader = std::thread::spawn(move || {
             started_tx.send(()).expect("reader started");
-            done_tx.send(Server::new(settings).import_ledger()).expect("reader completed");
+            done_tx
+                .send(Server::new(settings).import_ledger())
+                .expect("reader completed");
         });
         started_rx.recv().expect("reader started");
         assert!(
@@ -1450,13 +1456,11 @@ mod tests {
             "the external reader must wait while an append is admitted"
         );
         drop(append_admission);
-        assert!(
-            done_rx
-                .recv()
-                .expect("reader result")
-                .expect("ledger read after append admission releases")
-                .is_empty()
-        );
+        assert!(done_rx
+            .recv()
+            .expect("reader result")
+            .expect("ledger read after append admission releases")
+            .is_empty());
         reader.join().expect("reader thread");
     }
 

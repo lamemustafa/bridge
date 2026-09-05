@@ -796,12 +796,7 @@ impl Server {
         } else {
             None
         };
-        let request = render_agent_vouchers(
-            &company.name,
-            &from,
-            &to,
-            None,
-        )?;
+        let request = render_agent_vouchers(&company.name, &from, &to, None)?;
         let (xml, mut evidence) = self.post_read(&identity, request).await?;
         let mut rows = parse_agent_rows(&xml)?;
         if let Some(ledger) = resolved_ledger.as_deref() {
@@ -814,12 +809,7 @@ impl Server {
         let mut corroboration_reason = None;
         if rows.is_empty() {
             let (wider_from, wider_to) = widened_window(&from, &to)?;
-            let wider_request = render_agent_vouchers(
-                &company.name,
-                &wider_from,
-                &wider_to,
-                None,
-            )?;
+            let wider_request = render_agent_vouchers(&company.name, &wider_from, &wider_to, None)?;
             let (wider_xml, wider_evidence) = self.post_read(&identity, wider_request).await?;
             evidence = combine_evidence(evidence, wider_evidence);
             let wider_rows = parse_agent_rows(&wider_xml)?;
@@ -1631,8 +1621,7 @@ fn resolve_ledger_name<'a>(
 
 fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> Vec<Value> {
     let key = ledger_lookup_key(ledger);
-    rows
-        .into_iter()
+    rows.into_iter()
         .filter(|row| {
             row.get("amounts")
                 .and_then(Value::as_array)
@@ -2822,7 +2811,10 @@ where
         let method = request.get("method").and_then(Value::as_str).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
         if id.is_none() && method == "tools/call" {
-            let tool = params.get("name").and_then(Value::as_str).unwrap_or("unknown");
+            let tool = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
             let arguments = params
                 .get("arguments")
                 .cloned()
@@ -2916,7 +2908,8 @@ fn attach_build_egress_failure(response: &mut Value) -> bool {
     response["result"]["structuredContent"]["evidence"]["state"] = json!("partial");
     response["result"]["structuredContent"]["evidence"]["reason_code"] =
         json!("egress_record_write_failed");
-    response["result"]["content"][0]["text"] = json!("build_import_xml: batch built; egress_recorded=false");
+    response["result"]["content"][0]["text"] =
+        json!("build_import_xml: batch built; egress_recorded=false");
     response["result"]["isError"] = Value::Bool(true);
     true
 }
@@ -2949,13 +2942,9 @@ mod tests {
 
     #[test]
     fn agent_voucher_profile_uses_literal_filters_and_redaction_never_reveals_party() {
-        let request = render_agent_vouchers(
-            "BRIDGE SYNTHETIC BOOK",
-            "20260401",
-            "20260430",
-            Some(99),
-        )
-        .expect("safe profile");
+        let request =
+            render_agent_vouchers("BRIDGE SYNTHETIC BOOK", "20260401", "20260430", Some(99))
+                .expect("safe profile");
         assert!(request.contains("<FILTERS>BridgeAgentWindow</FILTERS>"));
         assert!(request.contains("$AlterID > 99"));
         assert_eq!(
@@ -3018,8 +3007,14 @@ mod tests {
             }
         });
         assert!(attach_build_egress_failure(&mut response));
-        assert_eq!(response["result"]["structuredContent"]["result"]["batch_id"], "bridge-built");
-        assert_eq!(response["result"]["structuredContent"]["result"]["egress_recorded"], false);
+        assert_eq!(
+            response["result"]["structuredContent"]["result"]["batch_id"],
+            "bridge-built"
+        );
+        assert_eq!(
+            response["result"]["structuredContent"]["result"]["egress_recorded"],
+            false
+        );
         assert_eq!(response["result"]["isError"], true);
         assert!(!attach_build_egress_failure(&mut json!({"result": {}})));
     }
@@ -3050,7 +3045,10 @@ mod tests {
             .as_array()
             .and_then(|tools| tools.iter().find(|tool| tool["name"] == "ledger_movement"))
             .expect("ledger movement tool definition");
-        assert_eq!(movement["inputSchema"]["properties"]["offset"]["minimum"], 0);
+        assert_eq!(
+            movement["inputSchema"]["properties"]["offset"]["minimum"],
+            0
+        );
         assert_eq!(movement["inputSchema"]["properties"]["limit"]["minimum"], 1);
     }
 
@@ -3271,9 +3269,18 @@ mod tests {
             .expect("write notification and ping");
         client.shutdown().await.expect("close request stream");
         let mut output = String::new();
-        client.read_to_string(&mut output).await.expect("read response");
-        serve.await.expect("server task").expect("session remains healthy");
-        assert_eq!(serde_json::from_str::<Value>(output.trim_end()).expect("ping response")["id"], 1);
+        client
+            .read_to_string(&mut output)
+            .await
+            .expect("read response");
+        serve
+            .await
+            .expect("server task")
+            .expect("session remains healthy");
+        assert_eq!(
+            serde_json::from_str::<Value>(output.trim_end()).expect("ping response")["id"],
+            1
+        );
         let receipt = fs::read_to_string(directory.path().join("agent-egress.jsonl"))
             .expect("notification refusal receipt");
         assert!(receipt.contains("list_companies"));
@@ -3455,8 +3462,9 @@ mod tests {
         for ledger in ["Input CGST 9%", "=BVL Zeta Formula", "खर्चा"] {
             let resolved = resolve_ledger_name([ledger].into_iter(), ledger)
                 .expect("live ledger spelling resolves");
-            let request = render_agent_vouchers("BRIDGE SYNTHETIC BOOK", "20260901", "20260902", None)
-                .expect("date-only voucher request");
+            let request =
+                render_agent_vouchers("BRIDGE SYNTHETIC BOOK", "20260901", "20260902", None)
+                    .expect("date-only voucher request");
             assert!(!request.contains(ledger), "ledger must not enter TDL");
             let rows = filter_voucher_rows_for_ledger(
                 vec![json!({"amounts":[{"ledger": ledger}]})],

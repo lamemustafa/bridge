@@ -2973,8 +2973,9 @@ mod tests {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        let listed = agent_company_list_from_response(response, expected_bytes, expected_sha.clone())
-            .expect("company list");
+        let listed =
+            agent_company_list_from_response(response, expected_bytes, expected_sha.clone())
+                .expect("company list");
         assert_eq!(listed.response_bytes, expected_bytes);
         assert_eq!(listed.response_sha256, expected_sha);
         assert_eq!(listed.companies.len(), 1);
