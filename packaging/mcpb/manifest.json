@@ -1,0 +1,36 @@
+{
+  "manifest_version": "0.1",
+  "name": "bridge-tally",
+  "display_name": "Bridge Tally",
+  "version": "0.2.0",
+  "description": "Read-only, loopback-only Bridge connector for Tally; optional local import-file planning is disabled by default and is not live-verified.",
+  "server": {
+    "type": "binary",
+    "entry_point": {
+      "darwin-arm64": "bin/bridge_mcp",
+      "darwin-x64": "bin/bridge_mcp",
+      "win32-x64": "bin/bridge_mcp.exe"
+    }
+  },
+  "user_config": {
+    "host": {
+      "type": "string",
+      "title": "Tally host",
+      "default": "localhost",
+      "env": "BRIDGE_TALLY_HOST"
+    },
+    "port": {
+      "type": "number",
+      "title": "Tally port",
+      "default": 9000,
+      "env": "BRIDGE_TALLY_PORT"
+    },
+    "redaction": {
+      "type": "string",
+      "title": "Response redaction",
+      "enum": ["none", "mask_parties", "drop_narration"],
+      "default": "none",
+      "env": "BRIDGE_AGENT_REDACTION"
+    }
+  }
+}

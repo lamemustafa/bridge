@@ -107,11 +107,11 @@
     },
     {
       "path": "src-tauri/Cargo.lock",
-      "sha256": "c70a963cea317830e5cccf84b01e75ab21428b7b26d15b4dd54d7884de55685f"
+      "sha256": "0f65f3b93ede0291703eabde0edb84ce1a3d818bec03667e440b14bc4b6558b0"
     },
     {
       "path": "src-tauri/Cargo.toml",
-      "sha256": "78791f1973a1dc42419a3a50f53dae16edafa93414149a6f7cbc085dd4758375"
+      "sha256": "6a1ccb2fcc8871491448736e8eaadf7fab9d9eac32d307e27755b01eaa2f5b83"
     },
     {
       "path": "src-tauri/crates/bridge-tally-core/Cargo.toml",
@@ -411,7 +411,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "87046d7ff340e76a9a409e96f5417b88e5d0ab37cc014551b745fd9885f64a9a"
+      "sha256": "ab5aec7e68ab51eb7dbee53f4f30930880a0b6fb9e14cff0a3bd3493020ab286"
     },
     {
       "path": "src-tauri/src/reports/bulk_party_statement.rs",
@@ -487,7 +487,7 @@
     },
     {
       "path": "src-tauri/src/tally/mod.rs",
-      "sha256": "c867a865944498606b006fd281d1862ce87a18195686ffa14cd3bd1a75b343d7"
+      "sha256": "0834a52880ea9686ad4996bd91ae195e29c927d6533ed08afc554adf8ba17fe8"
     },
     {
       "path": "src-tauri/src/tally/outstandings_runtime.rs",
@@ -495,7 +495,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "1c1b276b5078cfa10d9ee91dee90454da903856ca498492e3b238eeb5de8fd52"
+      "sha256": "1f67deec68dca59ad3776c83f8718aec3980b9f1eb7ee332c326c41fda3b5a8e"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -654,5 +654,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "3d07406f609c3a6a885b42bc1e8df00505925a62e811a13904d06653cebfa518"
+  "manifest_sha256": "8ed43eb8cd21c7156197c96a02cdda46d09f4d0ed82256032e0142f451609f22"
 }
