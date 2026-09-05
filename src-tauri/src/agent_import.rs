@@ -893,7 +893,20 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
             })
             .collect::<Vec<_>>();
         let (matches, marker, not_attributable) = if !tagged.is_empty() {
-            (tagged, "narration_tag", false)
+            let attributable = tagged
+                .iter()
+                .copied()
+                .filter(|voucher| {
+                    line.pre_import_mark
+                        .value
+                        .is_some_and(|mark| voucher.alter_id.is_some_and(|id| id > mark))
+                })
+                .collect::<Vec<_>>();
+            (
+                attributable,
+                "narration_tag",
+                !tagged.is_empty() && line.pre_import_mark.value.is_some(),
+            )
         } else {
             let attributable = fingerprint_matches
                 .iter()
@@ -914,7 +927,12 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
             counts
                 .entry("not_attributable")
                 .and_modify(|count| *count += 1);
-            json!({"bridge_txn_id":expected.bridge_txn_id,"status":"not_attributable","marker":marker,"reason":"fingerprint_precedes_pre_import_voucher_mark"})
+            let reason = if marker == "narration_tag" {
+                "tag_precedes_pre_import_voucher_mark"
+            } else {
+                "fingerprint_precedes_pre_import_voucher_mark"
+            };
+            json!({"bridge_txn_id":expected.bridge_txn_id,"status":"not_attributable","marker":marker,"reason":reason})
         } else if matches.is_empty() {
             counts.entry("not_found").and_modify(|count| *count += 1);
             json!({"bridge_txn_id":expected.bridge_txn_id,"status":"not_found"})
@@ -1491,6 +1509,62 @@ mod tests {
         assert_eq!(
             verify_batch(&line, &[observed(11)]).expect("verification result")["vouchers"][0]
                 ["status"],
+            "posted_verified"
+        );
+    }
+
+    #[test]
+    fn narration_tag_verification_requires_a_post_mark_voucher() {
+        let input = payload();
+        let line = ImportLedgerLine {
+            batch_id: "batch-tag-mark".to_string(),
+            company_guid: GUID.to_string(),
+            company: None,
+            txn_ids: vec!["txn-001".to_string()],
+            date_from: "20260901".to_string(),
+            date_to: "20260901".to_string(),
+            sha256: "hash".to_string(),
+            built_at: now(),
+            status: "built".to_string(),
+            pre_import_mark: PreImportMark {
+                kind: "company_high_water".to_string(),
+                value: Some(10),
+                master_value: Some(7),
+            },
+            vouchers: vec![input.vouchers[0].clone()],
+        };
+        let observed = |alter_id| ReadVoucher {
+            remote_id: Some("posted-1".to_string()),
+            guid: Some("posted-guid".to_string()),
+            alter_id: Some(alter_id),
+            date: Some("20260901".to_string()),
+            voucher_type: Some("Payment".to_string()),
+            narration: Some("[BRIDGE:txn-001]".to_string()),
+            voucher_number: None,
+            master_id: None,
+            cancelled: Some(false),
+            optional: Some(false),
+            entries: vec![
+                ReadEntry {
+                    ledger: "Expense".to_string(),
+                    amount: "-12.50".to_string(),
+                    is_deemed_positive: "Yes".to_string(),
+                },
+                ReadEntry {
+                    ledger: "Bank".to_string(),
+                    amount: "12.50".to_string(),
+                    is_deemed_positive: "No".to_string(),
+                },
+            ],
+        };
+        let before = verify_batch(&line, &[observed(10)]).expect("pre-mark tag");
+        assert_eq!(before["vouchers"][0]["status"], "not_attributable");
+        assert_eq!(
+            before["vouchers"][0]["reason"],
+            "tag_precedes_pre_import_voucher_mark"
+        );
+        assert_eq!(
+            verify_batch(&line, &[observed(11)]).expect("post-mark tag")["vouchers"][0]["status"],
             "posted_verified"
         );
     }
