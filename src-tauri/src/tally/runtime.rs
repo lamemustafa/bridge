@@ -61,6 +61,60 @@ pub struct AgentCompanyList {
     pub response_sha256: String,
 }
 
+/// Wire evidence for a runtime read. The response hash and byte count are
+/// taken from the paired transport response, while the request hash is taken
+/// from the exact XML dispatched to Tally.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeReadEvidence {
+    pub request_sha256: String,
+    pub response_sha256: String,
+    pub bytes: usize,
+}
+
+impl RuntimeReadEvidence {
+    fn empty() -> Self {
+        Self {
+            request_sha256: String::new(),
+            response_sha256: String::new(),
+            bytes: 0,
+        }
+    }
+
+    fn paired(request: &str, response_sha256: String, encoded_bytes: usize) -> Self {
+        Self {
+            request_sha256: sha256_hex(request.as_bytes()),
+            response_sha256,
+            // A stable paired read receives this response twice.
+            bytes: encoded_bytes.saturating_mul(2),
+        }
+    }
+
+    fn combine(self, other: Self) -> Self {
+        if self.bytes == 0 {
+            return other;
+        }
+        if other.bytes == 0 {
+            return self;
+        }
+        Self {
+            request_sha256: sha256_hex(
+                format!("{}:{}", self.request_sha256, other.request_sha256).as_bytes(),
+            ),
+            response_sha256: sha256_hex(
+                format!("{}:{}", self.response_sha256, other.response_sha256).as_bytes(),
+            ),
+            bytes: self.bytes.saturating_add(other.bytes),
+        }
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn agent_company_list_from_response(response: String) -> anyhow::Result<AgentCompanyList> {
     let companies = parse_companies_from_collection(&response)?;
     Ok(AgentCompanyList {
@@ -202,6 +256,7 @@ impl PartyLedgerMasterCurrencyAssertion {
 pub(crate) struct CompanyCurrencyRead {
     currency: CompanyCurrency,
     extent: CompanyBookExtent,
+    evidence: RuntimeReadEvidence,
 }
 
 impl CompanyCurrencyRead {
@@ -1734,7 +1789,7 @@ impl TallyRuntime {
         as_of: TallyDate,
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
-    ) -> anyhow::Result<OutstandingsLoadResult> {
+    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
@@ -1753,7 +1808,10 @@ impl TallyRuntime {
                         .fetch_company_book_extent(company, expected_company_guid)
                         .await?;
                     if &as_of < extent.books_from() {
-                        return Ok(partial_result("as_of_precedes_books_from"));
+                        return Ok((
+                            partial_result("as_of_precedes_books_from"),
+                            RuntimeReadEvidence::empty(),
+                        ));
                     }
                     let books_from = extent.books_from().clone();
                     let snapshot_period = match admit_native_ledger_snapshot_period(
@@ -1763,70 +1821,99 @@ impl TallyRuntime {
                     ) {
                         NativeLedgerSnapshotPeriodAdmission::Period(period) => period,
                         NativeLedgerSnapshotPeriodAdmission::Partial(partial) => {
-                            return Ok(partial);
+                            return Ok((partial, RuntimeReadEvidence::empty()));
                         }
                     };
                     let mut total_bytes = 0usize;
+                    let mut read_evidence = RuntimeReadEvidence::empty();
                     let read =
                         |kind| render_native_bills_request(kind, company, &books_from, &as_of);
+                    let receivable_request = read(NativeBillsReportKind::Receivable);
                     let receivable = client
-                        .fetch_native_report_paired(read(NativeBillsReportKind::Receivable))
+                        .fetch_native_report_paired(receivable_request.clone())
                         .await?;
                     let NativePairedRead::Stable {
                         body: receivable_body,
                         encoded_bytes,
-                        ..
+                        encoded_sha256,
                     } = receivable
                     else {
-                        return Ok(partial_result("native_bills_report_drifted"));
+                        return Ok((partial_result("native_bills_report_drifted"), read_evidence));
                     };
                     total_bytes += encoded_bytes;
+                    read_evidence = read_evidence.combine(RuntimeReadEvidence::paired(
+                        &receivable_request,
+                        encoded_sha256,
+                        encoded_bytes,
+                    ));
 
                     // A ledger's immediate parent can be an arbitrary custom
                     // subgroup. The native group snapshot resolves it all the
                     // way to Sundry Debtors/Creditors without importing the
                     // legacy custom-TDL profile.
+                    let group_request = render_native_group_snapshot_request(company);
                     let groups = client
-                        .fetch_native_report_paired(render_native_group_snapshot_request(company))
+                        .fetch_native_report_paired(group_request.clone())
                         .await?;
                     let NativePairedRead::Stable {
                         body: group_body,
                         encoded_bytes,
-                        ..
+                        encoded_sha256,
                     } = groups
                     else {
-                        return Ok(partial_result("native_group_snapshot_drifted"));
+                        return Ok((
+                            partial_result("native_group_snapshot_drifted"),
+                            read_evidence,
+                        ));
                     };
                     total_bytes += encoded_bytes;
+                    read_evidence = read_evidence.combine(RuntimeReadEvidence::paired(
+                        &group_request,
+                        encoded_sha256,
+                        encoded_bytes,
+                    ));
 
+                    let payable_request = read(NativeBillsReportKind::Payable);
                     let payable = client
-                        .fetch_native_report_paired(read(NativeBillsReportKind::Payable))
+                        .fetch_native_report_paired(payable_request.clone())
                         .await?;
                     let NativePairedRead::Stable {
                         body: payable_body,
                         encoded_bytes,
-                        ..
+                        encoded_sha256,
                     } = payable
                     else {
-                        return Ok(partial_result("native_bills_report_drifted"));
+                        return Ok((partial_result("native_bills_report_drifted"), read_evidence));
                     };
                     total_bytes += encoded_bytes;
+                    read_evidence = read_evidence.combine(RuntimeReadEvidence::paired(
+                        &payable_request,
+                        encoded_sha256,
+                        encoded_bytes,
+                    ));
 
+                    let ledger_request =
+                        render_native_ledger_snapshot_request(company, &snapshot_period);
                     let ledgers = client
-                        .fetch_native_report_paired(render_native_ledger_snapshot_request(
-                            company,
-                            &snapshot_period,
-                        ))
+                        .fetch_native_report_paired(ledger_request.clone())
                         .await?;
                     let NativePairedRead::Stable {
                         body: ledger_body,
                         encoded_bytes,
-                        ..
+                        encoded_sha256,
                     } = ledgers
                     else {
-                        return Ok(partial_result("native_ledger_snapshot_drifted"));
+                        return Ok((
+                            partial_result("native_ledger_snapshot_drifted"),
+                            read_evidence,
+                        ));
                     };
                     total_bytes += encoded_bytes;
+                    read_evidence = read_evidence.combine(RuntimeReadEvidence::paired(
+                        &ledger_request,
+                        encoded_sha256,
+                        encoded_bytes,
+                    ));
 
                     // Re-pin after every read. The native rows cannot be
                     // GUID-checked individually, so an unchanged extent across
@@ -1836,7 +1923,7 @@ impl TallyRuntime {
                         .fetch_company_book_extent(company, expected_company_guid)
                         .await?;
                     if closing_extent != extent {
-                        return Ok(partial_result("book_changed_during_read"));
+                        return Ok((partial_result("book_changed_during_read"), read_evidence));
                     }
                     bracket_verified_company_identity(&client, &identity).await?;
 
@@ -1847,7 +1934,9 @@ impl TallyRuntime {
                         parse_native_ledger_snapshot(&ledger_body).map_err(anyhow::Error::from),
                     )? {
                         NativeLedgerSnapshotAdmission::Snapshot(snapshot) => snapshot,
-                        NativeLedgerSnapshotAdmission::Partial(partial) => return Ok(partial),
+                        NativeLedgerSnapshotAdmission::Partial(partial) => {
+                            return Ok((partial, read_evidence));
+                        }
                     };
                     let group_rows =
                         parse_native_group_snapshot(&group_body, expected_company_guid)?;
@@ -1872,22 +1961,25 @@ impl TallyRuntime {
                     )?;
 
                     if let Some(reason) = native_crosscheck_partial_reason(&result, &as_of) {
-                        return Ok(partial_result(reason));
+                        return Ok((partial_result(reason), read_evidence));
                     }
 
                     let statement_open_bills =
                         all_open_bill_rows(&receivable_rows, &payable_rows, ageing_anchor, &as_of);
                     let statement_unallocated_by_party = all_unallocated_parties(&result.residuals);
-                    Ok(OutstandingsLoadResult::Complete {
-                        report: Box::new(result.report),
-                        read_strategy: OutstandingsReadStrategy::NativeBills,
-                        currency_assertion,
-                        ageing_anchor,
-                        synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
-                        unallocated_total: Some(result.residual_total),
-                        statement_unallocated_by_party,
-                        statement_open_bills,
-                    })
+                    Ok((
+                        OutstandingsLoadResult::Complete {
+                            report: Box::new(result.report),
+                            read_strategy: OutstandingsReadStrategy::NativeBills,
+                            currency_assertion,
+                            ageing_anchor,
+                            synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+                            unallocated_total: Some(result.residual_total),
+                            statement_unallocated_by_party,
+                            statement_open_bills,
+                        },
+                        read_evidence,
+                    ))
                 }
             },
         )
@@ -1912,6 +2004,19 @@ impl TallyRuntime {
             .detect_base_currency_with_extent(config, identity)
             .await?
             .currency)
+    }
+
+    /// Reads the base-currency assertion together with the exact paired wire
+    /// evidence that established it for an agent-visible monetary result.
+    pub async fn detect_base_currency_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+    ) -> anyhow::Result<(CompanyCurrency, RuntimeReadEvidence)> {
+        let read = self
+            .detect_base_currency_with_extent(config, identity)
+            .await?;
+        Ok((read.currency, read.evidence))
     }
 
     /// Runs the existing currency probe while retaining its stable company
@@ -1945,12 +2050,14 @@ impl TallyRuntime {
                     let extent = client
                         .fetch_company_book_extent(identity.display_name(), identity.company_guid())
                         .await?;
-                    let body = client
-                        .fetch_native_report_paired(render_company_currency_request(
-                            identity.display_name(),
-                        ))
-                        .await?;
-                    let NativePairedRead::Stable { body, .. } = body else {
+                    let request = render_company_currency_request(identity.display_name());
+                    let body = client.fetch_native_report_paired(request.clone()).await?;
+                    let NativePairedRead::Stable {
+                        body,
+                        encoded_bytes,
+                        encoded_sha256,
+                    } = body
+                    else {
                         return Err(anyhow::Error::new(
                             PairedReadValidationError::CurrencyMaster,
                         ));
@@ -1967,6 +2074,11 @@ impl TallyRuntime {
                     Ok(CompanyCurrencyRead {
                         currency: parse_company_currency(&body)?,
                         extent,
+                        evidence: RuntimeReadEvidence::paired(
+                            &request,
+                            encoded_sha256,
+                            encoded_bytes,
+                        ),
                     })
                 }
             },
@@ -1990,6 +2102,44 @@ impl TallyRuntime {
     ) -> anyhow::Result<OutstandingsLoadResult> {
         self.fetch_outstandings_native(config, identity, as_of, currency_assertion, ageing_anchor)
             .await
+            .map(|(result, _)| result)
+    }
+
+    #[cfg(not(feature = "voucher-scan"))]
+    pub async fn fetch_outstandings_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        as_of: TallyDate,
+        currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
+    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
+        self.fetch_outstandings_native(config, identity, as_of, currency_assertion, ageing_anchor)
+            .await
+    }
+
+    #[cfg(feature = "voucher-scan")]
+    pub async fn fetch_outstandings_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        as_of: TallyDate,
+        currency_assertion: OutstandingsCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
+    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
+        if self.outstandings_segment_policy.is_none() {
+            return self
+                .fetch_outstandings_native(
+                    config,
+                    identity,
+                    as_of,
+                    currency_assertion,
+                    ageing_anchor,
+                )
+                .await;
+        }
+
+        anyhow::bail!("outstandings_read_evidence_unavailable")
     }
 
     #[cfg(feature = "voucher-scan")]
@@ -2025,7 +2175,8 @@ impl TallyRuntime {
                     currency_assertion,
                     ageing_anchor,
                 )
-                .await;
+                .await
+                .map(|(result, _)| result);
         };
         let Some(_coverage) = self.unallocated_balance_coverage.as_ref() else {
             return Ok(partial_result("unallocated_direct_postings_not_covered"));
@@ -2728,6 +2879,22 @@ mod tests {
         assert_eq!(listed.companies.len(), 1);
     }
 
+    #[test]
+    fn outstandings_wire_evidence_changes_with_any_native_report_response() {
+        let receivable = RuntimeReadEvidence::paired("<receivable/>", sha256_hex(b"r1"), 3);
+        let payable = RuntimeReadEvidence::paired("<payable/>", sha256_hex(b"p1"), 5);
+        let baseline = receivable.clone().combine(payable.clone());
+        let changed = receivable.combine(RuntimeReadEvidence::paired(
+            "<payable/>",
+            sha256_hex(b"p2"),
+            5,
+        ));
+
+        assert_eq!(baseline.bytes, 16, "both paired responses are counted");
+        assert_ne!(baseline.response_sha256, changed.response_sha256);
+        assert_ne!(baseline.request_sha256, String::new());
+    }
+
     fn utf16_xml_response(body: impl AsRef<str>) -> Vec<u8> {
         let body = bridge_tally_protocol::encode_tally_xml_request_utf16le(body.as_ref());
         utf16_xml_response_bytes(&body)
@@ -3234,6 +3401,7 @@ mod tests {
                 is_inr: true,
             },
             extent: read_extent.clone(),
+            evidence: RuntimeReadEvidence::empty(),
         }
         .bind_party_ledger_master_assertion(OutstandingsCurrencyAssertion::Inr);
 

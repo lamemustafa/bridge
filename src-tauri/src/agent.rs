@@ -5,6 +5,7 @@
 #[path = "agent_import.rs"]
 mod agent_import;
 
+use crate::tally::runtime::RuntimeReadEvidence;
 use crate::tally::{
     ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, OutstandingsCurrencyAssertion,
     OutstandingsLoadResult, TallyConfig, TallyRuntime, UnallocatedParty, VerifiedCompanyIdentity,
@@ -988,9 +989,9 @@ impl Server {
             "due_date" => OutstandingsAgeingAnchor::DueDate,
             _ => return Err("invalid_ageing_basis".to_string()),
         };
-        let currency = self
+        let (currency, currency_evidence) = self
             .runtime
-            .detect_base_currency(self.tally_config(), &identity)
+            .detect_base_currency_with_evidence(self.tally_config(), &identity)
             .await
             .map_err(|_| "company_currency_probe_failed".to_string())?;
         let assertion = match (currency.currency_count, currency.is_inr) {
@@ -999,16 +1000,28 @@ impl Server {
             (1, false) => return Err("company_base_currency_not_inr".to_string()),
             _ => return Err("company_base_currency_undetermined".to_string()),
         };
-        let load = self
+        let (load, outstandings_evidence) = self
             .runtime
-            .fetch_outstandings(self.tally_config(), &identity, to, assertion, ageing_anchor)
+            .fetch_outstandings_with_evidence(
+                self.tally_config(),
+                &identity,
+                to,
+                assertion,
+                ageing_anchor,
+            )
             .await
             .map_err(|_| "native_outstandings_read_failed".to_string())?;
         let top = arg_positive_usize(args, "top", 25)?.min(self.settings.max_rows);
         let bill_offset = arg_usize(args, "offset", 0)?;
         let bill_limit =
             arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
-        let mut result_evidence = identity_evidence;
+        let mut result_evidence = combine_evidence(
+            identity_evidence,
+            combine_evidence(
+                evidence_from_runtime_read(currency_evidence),
+                evidence_from_runtime_read(outstandings_evidence),
+            ),
+        );
         let (result, bills_truncated) = match load {
             OutstandingsLoadResult::Complete {
                 report: _,
@@ -1937,6 +1950,18 @@ fn combine_evidence(left: Evidence, right: Evidence) -> Evidence {
         read_at: None,
         duration_ms: None,
         reason_code: left.reason_code.or(right.reason_code),
+    }
+}
+
+fn evidence_from_runtime_read(read: RuntimeReadEvidence) -> Evidence {
+    Evidence {
+        request_sha256: read.request_sha256,
+        response_sha256: read.response_sha256,
+        bytes: read.bytes,
+        state: "complete",
+        read_at: None,
+        duration_ms: None,
+        reason_code: None,
     }
 }
 
