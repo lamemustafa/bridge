@@ -1036,7 +1036,11 @@ impl Server {
                     .into_iter()
                     .filter(|bill| direction_matches(bill.kind, &direction))
                     .collect::<Vec<_>>();
-                let parties = ranked_parties_from_open_bills(&all_bills, top)?
+                let selected_unallocated = statement_unallocated_by_party
+                    .into_iter()
+                    .filter(|party| direction_matches(party.direction, &direction))
+                    .collect::<Vec<_>>();
+                let parties = ranked_parties_from_exposure(&all_bills, &selected_unallocated, top)?
                     .into_iter()
                     .map(|party| redact_value(party, self.settings.redaction))
                     .collect::<Vec<_>>();
@@ -1047,10 +1051,6 @@ impl Server {
                 let bills = bills
                     .into_iter()
                     .map(|bill| redact_value(open_bill_json(&bill), self.settings.redaction))
-                    .collect::<Vec<_>>();
-                let selected_unallocated = statement_unallocated_by_party
-                    .into_iter()
-                    .filter(|party| direction_matches(party.direction, &direction))
                     .collect::<Vec<_>>();
                 let unallocated_count = selected_unallocated.len();
                 let unallocated_total = unallocated_total_from_parties(&selected_unallocated)?;
@@ -1606,53 +1606,79 @@ fn unallocated_total_from_parties(parties: &[UnallocatedParty]) -> Result<String
     })
 }
 
-fn ranked_parties_from_open_bills(bills: &[OpenBillRow], top: usize) -> Result<Vec<Value>, String> {
-    let mut totals = BTreeMap::<String, (String, String, Option<u32>)>::new();
+fn ranked_parties_from_exposure(
+    bills: &[OpenBillRow],
+    unallocated: &[UnallocatedParty],
+    top: usize,
+) -> Result<Vec<Value>, String> {
+    let mut totals = BTreeMap::<String, (String, String, String, Option<u32>)>::new();
     for bill in bills {
         let entry = totals
             .entry(bill.party.clone())
-            .or_insert_with(|| ("0".to_string(), "0".to_string(), None));
+            .or_insert_with(|| ("0".to_string(), "0".to_string(), "0".to_string(), None));
         match bill.kind {
             ExposureDirection::Receivable => entry.0 = add_decimal(&entry.0, bill.amount.as_str())?,
             ExposureDirection::Payable => entry.1 = add_decimal(&entry.1, bill.amount.as_str())?,
         }
-        entry.2 = match (entry.2, bill.age_days) {
+        entry.3 = match (entry.3, bill.age_days) {
             (Some(current), Some(age)) => Some(current.max(age)),
             (current, None) => current,
             (None, Some(age)) => Some(age),
         };
     }
+    for party in unallocated {
+        let entry = totals
+            .entry(party.party.clone())
+            .or_insert_with(|| ("0".to_string(), "0".to_string(), "0".to_string(), None));
+        entry.2 = add_decimal(&entry.2, party.amount.as_str())?;
+    }
     let mut ranked = totals
         .into_iter()
-        .map(|(party, (receivable, payable, oldest_bill_age_days))| {
-            let outstanding_total = add_decimal(&receivable, &payable)?;
-            let magnitude = bridge_tally_core::ExactDecimal::parse(outstanding_total.clone())
-                .map_err(|_| "outstandings_amount_invalid".to_string())?;
-            Ok((
-                party,
-                receivable,
-                payable,
-                outstanding_total,
-                oldest_bill_age_days,
-                magnitude,
-            ))
-        })
+        .map(
+            |(party, (receivable, payable, unallocated, oldest_bill_age_days))| {
+                let billed = add_decimal(&receivable, &payable)?;
+                let outstanding_total = add_decimal(&billed, &unallocated)?;
+                let magnitude = bridge_tally_core::ExactDecimal::parse(outstanding_total.clone())
+                    .map_err(|_| "outstandings_amount_invalid".to_string())?;
+                Ok((
+                    party,
+                    receivable,
+                    payable,
+                    billed,
+                    unallocated,
+                    outstanding_total,
+                    oldest_bill_age_days,
+                    magnitude,
+                ))
+            },
+        )
         .collect::<Result<Vec<_>, String>>()?;
     ranked.sort_by(|left, right| {
         right
-            .5
-            .cmp_magnitude(&left.5)
+            .7
+            .cmp_magnitude(&left.7)
             .then_with(|| left.0.cmp(&right.0))
     });
     Ok(ranked
         .into_iter()
         .take(top)
         .map(
-            |(party, receivable, payable, outstanding_total, oldest_bill_age_days, _)| {
+            |(
+                party,
+                receivable,
+                payable,
+                billed,
+                unallocated,
+                outstanding_total,
+                oldest_bill_age_days,
+                _,
+            )| {
                 json!({
                     "party": party_name(party),
                     "receivable": receivable,
                     "payable": payable,
+                    "billed": billed,
+                    "unallocated": unallocated,
                     "outstanding_total": outstanding_total,
                     "oldest_bill_age_days": oldest_bill_age_days,
                 })
@@ -3271,11 +3297,40 @@ mod tests {
                 kind: ExposureDirection::Receivable,
             })
             .collect::<Vec<_>>();
-        let ranked = ranked_parties_from_open_bills(&bills, 12).expect("ranked parties");
+        let ranked = ranked_parties_from_exposure(&bills, &[], 12).expect("ranked parties");
         assert_eq!(ranked.len(), 12);
         let ranked = redact_value(json!({"parties": ranked}), Redaction::None);
         assert_eq!(ranked["parties"][0]["party"], "Party 12");
         assert_eq!(ranked["parties"][11]["party"], "Party 01");
+    }
+
+    #[test]
+    fn outstandings_top_ranking_includes_wholly_unallocated_parties() {
+        let bills = vec![OpenBillRow {
+            party: "Billed Party".to_string(),
+            reference: "B-1".to_string(),
+            bill_date: "20260901".to_string(),
+            due_date: "20260901".to_string(),
+            amount: bridge_tally_core::ExactDecimal::parse("40".to_string())
+                .expect("synthetic amount"),
+            age_days: Some(1),
+            kind: ExposureDirection::Receivable,
+        }];
+        let unallocated = vec![UnallocatedParty {
+            party: "Unallocated Party".to_string(),
+            amount: bridge_tally_core::ExactDecimal::parse("100".to_string())
+                .expect("synthetic amount"),
+            direction: ExposureDirection::Receivable,
+        }];
+
+        let ranked = redact_value(
+            json!({"parties": ranked_parties_from_exposure(&bills, &unallocated, 2).expect("ranking")}),
+            Redaction::None,
+        );
+        assert_eq!(ranked["parties"][0]["party"], "Unallocated Party");
+        assert_eq!(ranked["parties"][0]["billed"], "0");
+        assert_eq!(ranked["parties"][0]["unallocated"], "100");
+        assert_eq!(ranked["parties"][0]["outstanding_total"], "100");
     }
 
     #[test]
@@ -3309,7 +3364,7 @@ mod tests {
             json!({"days_0_30":"0", "days_31_60":"200", "days_61_90":"0", "days_90_plus":"0"})
         );
         let ranked = redact_value(
-            json!({"parties": ranked_parties_from_open_bills(&payable_bills, 10).expect("payable ranking")}),
+            json!({"parties": ranked_parties_from_exposure(&payable_bills, &[], 10).expect("payable ranking")}),
             Redaction::None,
         );
         assert_eq!(ranked["parties"][0]["party"], "Supplier B");
