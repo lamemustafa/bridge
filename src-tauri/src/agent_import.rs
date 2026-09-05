@@ -252,7 +252,7 @@ impl Server {
         };
         let path = self.imports_dir()?.join(format!("{batch_id}.xml"));
         write_private(&path, xml.as_bytes())?;
-        self.append_import_ledger(&line)?;
+        self.append_import_ledger_while_admitted(&line)?;
         let (debit, credit) = totals(&line.vouchers)?;
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
@@ -404,19 +404,22 @@ impl Server {
     }
 
     fn append_import_ledger(&self, line: &ImportLedgerLine) -> Result<(), String> {
+        let _admission_lock = self.lock_import_admission()?;
+        self.append_import_ledger_while_admitted(line)
+    }
+
+    fn append_import_ledger_while_admitted(&self, line: &ImportLedgerLine) -> Result<(), String> {
         let path = self.settings.data_dir.join("agent-import-ledger.jsonl");
+        let encoded = serde_json::to_string(line)
+            .map_err(|_| "import_ledger_serialization_failed".to_string())?;
+        let encoded = format!("{encoded}\n");
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
             .map_err(|_| "import_ledger_unavailable".to_string())?;
-        writeln!(
-            file,
-            "{}",
-            serde_json::to_string(line)
-                .map_err(|_| "import_ledger_serialization_failed".to_string())?
-        )
-        .map_err(|_| "import_ledger_unavailable".to_string())?;
+        file.write_all(encoded.as_bytes())
+            .map_err(|_| "import_ledger_unavailable".to_string())?;
         file.sync_data()
             .map_err(|_| "import_ledger_unavailable".to_string())?;
         set_private(&path)
@@ -1289,6 +1292,25 @@ mod tests {
         };
         server.append_import_ledger(&line).expect("append");
         assert_eq!(server.import_ledger().expect("read").len(), 1);
+
+        let settings = server.settings.clone();
+        let first_settings = settings.clone();
+        let first_line = line.clone();
+        let second_settings = settings;
+        let second_line = line.clone();
+        let first = std::thread::spawn(move || {
+            Server::new(first_settings).append_import_ledger(&first_line)
+        });
+        let second = std::thread::spawn(move || {
+            Server::new(second_settings).append_import_ledger(&second_line)
+        });
+        first.join().expect("first writer").expect("first append");
+        second
+            .join()
+            .expect("second writer")
+            .expect("second append");
+        let lines = server.import_ledger().expect("parseable ledger lines");
+        assert_eq!(lines.len(), 3);
     }
 
     #[test]
