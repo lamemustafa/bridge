@@ -2753,7 +2753,7 @@ fn tool_definitions(import_enabled: bool) -> Value {
                     ),
                     "ledger_movement" => (
                         "Return literal-window ledger opening, exact debit/credit movement, closing, and touched-voucher count.",
-                        json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ledger":{"type":"string"}}}),
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ledger":{"type":"string"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "vouchers" => (
                         "Return bounded, literal-window voucher evidence with curated metadata and redaction applied.",
@@ -2975,6 +2975,17 @@ mod tests {
             ledger_master_fields("complaince"),
             Err("argument_invalid:fields".to_string())
         );
+    }
+
+    #[test]
+    fn ledger_movement_schema_exposes_offset_and_limit() {
+        let definitions = tool_definitions(true);
+        let movement = definitions
+            .as_array()
+            .and_then(|tools| tools.iter().find(|tool| tool["name"] == "ledger_movement"))
+            .expect("ledger movement tool definition");
+        assert_eq!(movement["inputSchema"]["properties"]["offset"]["minimum"], 0);
+        assert_eq!(movement["inputSchema"]["properties"]["limit"]["minimum"], 1);
     }
 
     #[test]
