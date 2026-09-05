@@ -337,7 +337,9 @@ impl Server {
                 (
                     json!({"error": {"code": code, "message": "Bridge withheld this read."}}),
                     evidence,
-                    arg_string(&args, "company_guid"),
+                    args.get("company_guid")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                     0,
                     Vec::new(),
                     false,
@@ -528,7 +530,8 @@ impl Server {
     async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, String> {
         let guid = required_string(args, "company_guid")?;
         let (company, identity, company_evidence) = self.verified_company(guid).await?;
-        let compliance = args.get("fields").and_then(Value::as_str) == Some("compliance");
+        let fields = optional_string(args, "fields")?.unwrap_or_else(|| "basic".to_string());
+        let compliance = fields == "compliance";
         let mut ledgers = if compliance {
             self.runtime
                 .fetch_agent_party_ledger_masters(self.tally_config(), &identity)
@@ -560,7 +563,7 @@ impl Server {
                 })
                 .collect::<Vec<_>>()
         };
-        if let Some(group) = arg_string(args, "group") {
+        if let Some(group) = optional_string(args, "group")? {
             ledgers.retain(|ledger| ledger["parent"].as_str() == Some(group.as_str()));
         }
         let offset = arg_usize(args, "offset", 0)?;
@@ -574,7 +577,7 @@ impl Server {
             .collect::<Vec<_>>();
         let page_len = page_length_after_offset(total, offset, limit);
         let truncated = offset.saturating_add(page.len()) < total;
-        let result = json!({"items": page, "offset": offset, "total": total, "fields": args.get("fields").and_then(Value::as_str).unwrap_or("basic"), "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
+        let result = json!({"items": page, "offset": offset, "total": total, "fields": fields, "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
             company_evidence,
@@ -597,8 +600,8 @@ impl Server {
             &company.name,
             &from,
             &to,
-            arg_string(args, "voucher_type"),
-            arg_string(args, "ledger"),
+            optional_string(args, "voucher_type")?,
+            optional_string(args, "ledger")?,
             None,
         )?;
         let (xml, evidence) = self.post_read(&identity, request).await?;
@@ -612,8 +615,8 @@ impl Server {
                 &company.name,
                 &wider_from,
                 &wider_to,
-                arg_string(args, "voucher_type"),
-                arg_string(args, "ledger"),
+                optional_string(args, "voucher_type")?,
+                optional_string(args, "ledger")?,
                 None,
             )?;
             let (wider_xml, _) = self.post_read(&identity, wider_request).await?;
@@ -622,7 +625,7 @@ impl Server {
                 return Err("empty_uncorroborated".to_string());
             }
         }
-        if let Some(kind) = arg_string(args, "voucher_type") {
+        if let Some(kind) = optional_string(args, "voucher_type")? {
             rows.retain(|row| row.get("voucher_type") == Some(&Value::String(kind.clone())));
         }
         let offset = arg_usize(args, "offset", 0)?;
@@ -772,19 +775,16 @@ impl Server {
     async fn outstandings(&self, args: &Value) -> Result<ToolOutcome, String> {
         let guid = required_string(args, "company_guid")?;
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
-        let as_of = args
-            .get("as_of")
-            .and_then(Value::as_str)
+        let as_of = optional_string(args, "as_of")?
+            .as_deref()
             .map(normalized_date)
             .transpose()?
             .unwrap_or_else(tally_host_today);
         let to =
             bridge_tally_core::TallyDate::parse(as_of).map_err(|_| "invalid_as_of".to_string())?;
-        let ageing_anchor = match args
-            .get("ageing_basis")
-            .and_then(Value::as_str)
-            .unwrap_or("due_date")
-        {
+        let ageing_basis =
+            optional_string(args, "ageing_basis")?.unwrap_or_else(|| "due_date".to_string());
+        let ageing_anchor = match ageing_basis.as_str() {
             "bill_date" => OutstandingsAgeingAnchor::BillDate,
             "due_date" => OutstandingsAgeingAnchor::DueDate,
             _ => return Err("invalid_ageing_basis".to_string()),
@@ -818,11 +818,9 @@ impl Server {
                 unallocated_total,
                 ..
             } => {
-                let direction = args
-                    .get("direction")
-                    .and_then(Value::as_str)
-                    .unwrap_or("both");
-                if !matches!(direction, "receivable" | "payable" | "both") {
+                let direction =
+                    optional_string(args, "direction")?.unwrap_or_else(|| "both".to_string());
+                if !matches!(direction.as_str(), "receivable" | "payable" | "both") {
                     return Err("invalid_direction".to_string());
                 }
                 let parties = ranked_parties_from_open_bills(&statement_open_bills, top)?
@@ -832,7 +830,7 @@ impl Server {
                 let all_bills = statement_open_bills
                     .into_iter()
                     .filter(|bill| {
-                        direction == "both" || bill.kind.label().eq_ignore_ascii_case(direction)
+                        direction == "both" || bill.kind.label().eq_ignore_ascii_case(&direction)
                     })
                     .collect::<Vec<_>>();
                 let (bills, bills_truncated, next_bill_offset) =
@@ -929,7 +927,7 @@ impl Server {
             .map_err(|_| "ledger_movement_read_failed".to_string())?;
         let pre_window = balance_affecting_vouchers(pre_window)?;
         let vouchers = balance_affecting_vouchers(vouchers)?;
-        let selected = arg_string(args, "ledger")
+        let selected = optional_string(args, "ledger")?
             .map(|name| {
                 matching_ledger_name(ledgers.iter().map(|ledger| ledger.name.as_str()), &name)
                     .ok_or_else(|| "ledger_not_found".to_string())
@@ -1463,8 +1461,12 @@ fn negotiate_protocol(requested: &str) -> Result<&'static str, String> {
 fn sha256_json<T: Serialize>(value: &T) -> String {
     sha256_hex(serde_json::to_vec(value).unwrap_or_default().as_slice())
 }
-fn arg_string(args: &Value, key: &str) -> Option<String> {
-    args.get(key).and_then(Value::as_str).map(str::to_string)
+fn optional_string(args: &Value, key: &str) -> Result<Option<String>, String> {
+    match args.get(key) {
+        None => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(format!("argument_invalid:{key}")),
+    }
 }
 fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     args.get(key)
@@ -2152,6 +2154,19 @@ mod tests {
             response["structuredContent"]["result"]["error"]["code"],
             "pagination_invalid"
         );
+    }
+
+    #[test]
+    fn optional_filters_reject_non_string_values_before_widening_a_read() {
+        assert_eq!(
+            optional_string(&json!({"ledger": 42}), "ledger"),
+            Err("argument_invalid:ledger".to_string())
+        );
+        assert_eq!(
+            optional_string(&json!({"voucher_type": []}), "voucher_type"),
+            Err("argument_invalid:voucher_type".to_string())
+        );
+        assert_eq!(optional_string(&json!({}), "ledger"), Ok(None));
     }
 
     #[test]
