@@ -1,5 +1,5 @@
 use super::{
-    combine_evidence, company_json, normalized_date, parse_company_high_water,
+    combine_evidence, company_json, normalized_date, parse_company_high_water, party_name,
     render_agent_company_high_water, required_string, sha256_hex, sha256_json, Evidence, Server,
     ToolOutcome,
 };
@@ -593,7 +593,7 @@ fn masters_for_payload(payload: &ImportPayload, catalogue: &[String]) -> Vec<Val
 
 fn master_match(wanted: &str, catalogue: &[String]) -> Value {
     if catalogue.iter().any(|name| name == wanted) {
-        return json!({"requested": wanted, "match_state":"exact", "exact_live_spelling":wanted});
+        return json!({"requested": party_name(wanted), "match_state":"exact", "exact_live_spelling":party_name(wanted)});
     }
     let key = master_key(wanted);
     let mut candidates = catalogue
@@ -607,9 +607,10 @@ fn master_match(wanted: &str, catalogue: &[String]) -> Value {
     candidates.sort();
     candidates.dedup();
     if candidates.is_empty() {
-        json!({"requested":wanted,"match_state":"missing"})
+        json!({"requested":party_name(wanted),"match_state":"missing"})
     } else {
-        json!({"requested":wanted,"match_state":"near_miss","exact_live_spelling":candidates.first(),"candidates":candidates})
+        let candidates = candidates.into_iter().map(party_name).collect::<Vec<_>>();
+        json!({"requested":party_name(wanted),"match_state":"near_miss","exact_live_spelling":candidates.first(),"candidates":candidates})
     }
 }
 

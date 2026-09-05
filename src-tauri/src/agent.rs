@@ -32,6 +32,86 @@ const MAX_EVIDENCE_RECORDS: usize = 256;
 const EGRESS_TAIL_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_EGRESS_TAIL_BYTES: usize = 256 * 1024;
 const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2024-11-05"];
+const PARTY_NAME_MARKER: &str = "$bridge_agent_party_name";
+
+/// A response-only marker for text that identifies a party. It serializes to
+/// an internal object so [`redact_value`] can materialize or mask it without
+/// relying on a field-name allowlist.
+#[derive(Clone, Debug)]
+pub(super) struct PartyName(String);
+
+impl PartyName {
+    pub(super) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
+
+impl Serialize for PartyName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry(PARTY_NAME_MARKER, &self.0)?;
+        map.end()
+    }
+}
+
+pub(super) fn party_name(value: impl Into<String>) -> PartyName {
+    PartyName::new(value)
+}
+
+fn party_name_value(value: String) -> Value {
+    serde_json::to_value(party_name(value)).unwrap_or_default()
+}
+
+fn mark_party_field(value: &mut Value, field: &str) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    let Some(Value::String(name)) = object.remove(field) else {
+        return;
+    };
+    object.insert(field.to_string(), party_name_value(name));
+}
+
+fn mark_compliance_party_names(mut compliance: Value) -> Value {
+    for field in ["name_on_pan", "bank_account_holder_name", "bank_details"] {
+        mark_party_field(&mut compliance, field);
+    }
+    compliance
+}
+
+fn mark_voucher_party_names(mut voucher: Value) -> Value {
+    for field in ["party", "party_ledger_name"] {
+        mark_party_field(&mut voucher, field);
+    }
+    if let Some(entries) = voucher.get_mut("amounts").and_then(Value::as_array_mut) {
+        for entry in entries {
+            mark_party_field(entry, "ledger");
+        }
+    }
+    voucher
+}
+
+fn mark_changed_master_party_name(mut master: Value) -> Value {
+    mark_party_field(&mut master, "name");
+    master
+}
+
+fn open_bill_json(bill: &OpenBillRow) -> Value {
+    let mut value = serde_json::to_value(bill).unwrap_or_default();
+    mark_party_field(&mut value, "party");
+    value
+}
+
+fn unallocated_party_json(party: &UnallocatedParty) -> Value {
+    let mut value = serde_json::to_value(party).unwrap_or_default();
+    mark_party_field(&mut value, "party");
+    value
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Redaction {
@@ -558,11 +638,13 @@ impl Server {
                 .into_iter()
                 .map(|record| {
                     json!({
-                        "name": record.ledger.name,
+                        "name": party_name(record.ledger.name),
                         "parent": record.ledger.parent.returned_text(),
                         "opening_balance": record.ledger.opening_balance,
                         "party_gstin": record.ledger.party_gstin.returned_text(),
-                        "compliance": record.fields,
+                        "compliance": mark_compliance_party_names(
+                            serde_json::to_value(record.fields).unwrap_or_default(),
+                        ),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -574,7 +656,7 @@ impl Server {
                 .into_iter()
                 .map(|ledger| {
                     json!({
-                        "name": ledger.name,
+                        "name": party_name(ledger.name),
                         "parent": ledger.parent.returned_text(),
                         "opening_balance": ledger.opening_balance,
                     })
@@ -677,7 +759,7 @@ impl Server {
             .into_iter()
             .skip(offset)
             .take(limit)
-            .map(|row| redact_value(row, self.settings.redaction))
+            .map(|row| redact_value(mark_voucher_party_names(row), self.settings.redaction))
             .collect::<Vec<_>>();
         let truncated = offset.saturating_add(items.len()) < total;
         Ok((
@@ -769,7 +851,12 @@ impl Server {
         )?;
         let masters = masters
             .into_iter()
-            .map(|master| redact_value(master, self.settings.redaction))
+            .map(|master| {
+                redact_value(
+                    mark_changed_master_party_name(master),
+                    self.settings.redaction,
+                )
+            })
             .collect::<Vec<_>>();
         let voucher_checkpoint_advanceable = checkpoint_advanceable(
             rows.iter().filter_map(|row| row["alter_id"].as_u64()).max(),
@@ -802,6 +889,10 @@ impl Server {
         } else {
             master_alter_id
         };
+        let rows = rows
+            .into_iter()
+            .map(|row| redact_value(mark_voucher_party_names(row), self.settings.redaction))
+            .collect::<Vec<_>>();
         let returned_rows = rows.len() + masters.len();
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"vouchers": rows, "masters": masters, "voucher_alter_id": voucher_alter_id, "master_alter_id": master_alter_id, "voucher_snapshot_alter_id": voucher_snapshot, "master_snapshot_alter_id": master_snapshot, "next_voucher_alter_id": next_voucher_alter_id, "next_master_alter_id": next_master_alter_id, "checkpoint_advanceable": checkpoint_advanceable, "checkpoint_reason": (!checkpoint_advanceable).then_some("scan_not_correlated_to_company_high_water"), "deletion_detection": "unsupported_alterid_does_not_observe_deletions", "current_company_high_water": snapshot}}),
@@ -880,12 +971,7 @@ impl Server {
                     paginate_open_bills(all_bills, bill_offset, bill_limit);
                 let bills = bills
                     .into_iter()
-                    .map(|bill| {
-                        redact_value(
-                            serde_json::to_value(bill).unwrap_or_default(),
-                            self.settings.redaction,
-                        )
-                    })
+                    .map(|bill| redact_value(open_bill_json(&bill), self.settings.redaction))
                     .collect::<Vec<_>>();
                 let selected_unallocated = statement_unallocated_by_party
                     .into_iter()
@@ -898,10 +984,7 @@ impl Server {
                 let unallocated = unallocated
                     .into_iter()
                     .map(|party| {
-                        redact_value(
-                            serde_json::to_value(party).unwrap_or_default(),
-                            self.settings.redaction,
-                        )
+                        redact_value(unallocated_party_json(&party), self.settings.redaction)
                     })
                     .collect::<Vec<_>>();
                 (
@@ -1313,7 +1396,7 @@ fn ledger_movement_row(
     Ok((
         redact_value(
             json!({
-                "ledger": name,
+                "ledger": party_name(name),
                 "parent": parent,
                 "opening": opening,
                 "debit": debit,
@@ -1422,7 +1505,7 @@ fn ranked_parties_from_open_bills(bills: &[OpenBillRow], top: usize) -> Result<V
         .map(
             |(party, receivable, payable, outstanding_total, oldest_bill_age_days, _)| {
                 json!({
-                    "party": party,
+                    "party": party_name(party),
                     "receivable": receivable,
                     "payable": payable,
                     "outstanding_total": outstanding_total,
@@ -1743,21 +1826,20 @@ fn redact_value(mut value: Value, redaction: Redaction) -> Value {
             }
         }
         Value::Object(values) => {
+            if values.len() == 1 {
+                if let Some(Value::String(value)) = values.get(PARTY_NAME_MARKER) {
+                    return Value::String(if redaction == Redaction::MaskParties {
+                        mask(value)
+                    } else {
+                        value.clone()
+                    });
+                }
+            }
             if redaction == Redaction::DropNarration {
                 values.remove("narration");
             }
-            for (key, value) in values {
-                if redaction == Redaction::MaskParties
-                    && matches!(
-                        key.as_str(),
-                        "party" | "ledger" | "name" | "party_ledger_name"
-                    )
-                    && value.is_string()
-                {
-                    *value = Value::String(mask(value.as_str().unwrap_or_default()));
-                } else {
-                    *value = redact_value(std::mem::take(value), redaction);
-                }
+            for value in values.values_mut() {
+                *value = redact_value(std::mem::take(value), redaction);
             }
         }
         _ => {}
@@ -2318,7 +2400,7 @@ mod tests {
         assert!(request.contains("$AlterID > 99"));
         assert_eq!(
             redact_value(
-                json!({"party":"Acme Party", "narration":"private"}),
+                json!({"party":party_name("Acme Party"), "narration":"private"}),
                 Redaction::MaskParties
             )["party"],
             "Ac…ty"
@@ -2346,7 +2428,7 @@ mod tests {
             );
         }
         let recursively_redacted = redact_value(
-            json!({"proof":{"name":"Acme Party"},"changed":{"ledger":"Cash Ledger"}}),
+            json!({"proof":{"name":party_name("Acme Party")},"changed":{"ledger":party_name("Cash Ledger")}}),
             Redaction::MaskParties,
         );
         assert_eq!(recursively_redacted["proof"]["name"], "Ac…ty");
@@ -2359,6 +2441,81 @@ mod tests {
         assert!(
             parse_agent_rows("<ENVELOPE><BODY><RESPONSE>bad</RESPONSE></BODY></ENVELOPE>").is_err()
         );
+    }
+
+    #[test]
+    fn mask_parties_walks_every_tool_sample_response_without_leaking_party_names() {
+        let known_parties = ["Customer One", "Supplier Two", "PAN Holder", "Entry Ledger"];
+        let samples = BTreeMap::from([
+            ("tally_status", json!({"product":"TallyPrime"})),
+            (
+                "list_companies",
+                json!({"companies":[{"name":"Bridge Books"}]}),
+            ),
+            ("voucher_schema", json!({"schema":{"type":"object"}})),
+            (
+                "validate_masters",
+                json!({"masters":[{"requested":party_name("Customer One"),"exact_live_spelling":party_name("Customer One"),"candidates":[party_name("Customer One")]}]}),
+            ),
+            (
+                "build_import_xml",
+                json!({"masters":[{"requested":party_name("Supplier Two"),"candidates":[party_name("Supplier Two")]}]}),
+            ),
+            ("verify_import", json!({"vouchers":[]})),
+            (
+                "ledger_masters",
+                json!({"items":[{"name":party_name("Customer One"),"compliance":mark_compliance_party_names(json!({"name_on_pan":"PAN Holder","bank_account_holder_name":"PAN Holder","bank_details":"PAN Holder"}))}]}),
+            ),
+            (
+                "vouchers",
+                mark_voucher_party_names(
+                    json!({"party":"Customer One","party_ledger_name":"Customer One","amounts":[{"ledger":"Entry Ledger"}]}),
+                ),
+            ),
+            (
+                "changed_since",
+                json!({"masters":[mark_changed_master_party_name(json!({"name":"Supplier Two"}))]}),
+            ),
+            (
+                "outstandings",
+                json!({"top_parties":[{"party":party_name("Customer One")}],"open_bills":[{"party":party_name("Supplier Two")}],"unallocated":{"parties":[{"party":party_name("Supplier Two")}]}}),
+            ),
+            (
+                "ledger_movement",
+                json!({"ledgers":[{"ledger":party_name("Entry Ledger")}]}),
+            ),
+            ("read_evidence", json!({"records":[]})),
+            ("egress_log", json!({"records":[]})),
+        ]);
+        assert_eq!(samples.len(), 13);
+        for (tool, sample) in samples {
+            let redacted = redact_value(sample, Redaction::MaskParties);
+            assert_no_known_party_name(&redacted, &known_parties, tool);
+        }
+    }
+
+    fn assert_no_known_party_name(value: &Value, known_parties: &[&str], tool: &str) {
+        match value {
+            Value::String(text) => assert!(
+                known_parties.iter().all(|party| !text.contains(party)),
+                "{tool} leaked a party name: {text}"
+            ),
+            Value::Array(values) => {
+                for value in values {
+                    assert_no_known_party_name(value, known_parties, tool);
+                }
+            }
+            Value::Object(values) => {
+                assert!(
+                    !values.contains_key(PARTY_NAME_MARKER),
+                    "{tool} returned an unmaterialized PartyName marker"
+                );
+                for value in values.values() {
+                    assert_no_known_party_name(value, known_parties, tool);
+                }
+            }
+            _ => {}
+        }
     }
 
     #[test]
@@ -2658,8 +2815,9 @@ mod tests {
             .collect::<Vec<_>>();
         let ranked = ranked_parties_from_open_bills(&bills, 12).expect("ranked parties");
         assert_eq!(ranked.len(), 12);
-        assert_eq!(ranked[0]["party"], "Party 12");
-        assert_eq!(ranked[11]["party"], "Party 01");
+        let ranked = redact_value(json!({"parties": ranked}), Redaction::None);
+        assert_eq!(ranked["parties"][0]["party"], "Party 12");
+        assert_eq!(ranked["parties"][11]["party"], "Party 01");
     }
 
     #[test]
@@ -2692,11 +2850,11 @@ mod tests {
             ageing_buckets_from_open_bills(&payable_bills).expect("payable ageing"),
             json!({"days_0_30":"0", "days_31_60":"200", "days_61_90":"0", "days_90_plus":"0"})
         );
-        assert_eq!(
-            ranked_parties_from_open_bills(&payable_bills, 10).expect("payable ranking")[0]
-                ["party"],
-            "Supplier B"
+        let ranked = redact_value(
+            json!({"parties": ranked_parties_from_open_bills(&payable_bills, 10).expect("payable ranking")}),
+            Redaction::None,
         );
+        assert_eq!(ranked["parties"][0]["party"], "Supplier B");
         let mixed_unallocated = vec![
             UnallocatedParty {
                 party: "Customer A".to_string(),
