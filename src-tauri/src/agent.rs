@@ -2182,7 +2182,11 @@ fn parse_agent_changed_masters(xml: &str) -> Result<Vec<Value>, String> {
                             .get("ALTERID")
                             .and_then(|value| value.parse::<u64>().ok())
                             .ok_or_else(|| "change_row_alterid_invalid".to_string())?;
-                        rows.push(json!({"kind": kind.to_ascii_lowercase(), "name": fields.get("NAME"), "parent": fields.get("PARENT"), "alter_id": alter_id, "master_id": fields.get("MASTERID")}));
+                        let name = fields
+                            .get("NAME")
+                            .filter(|name| !name.trim().is_empty())
+                            .ok_or_else(|| "change_row_name_invalid".to_string())?;
+                        rows.push(json!({"kind": kind.to_ascii_lowercase(), "name": name, "parent": fields.get("PARENT"), "alter_id": alter_id, "master_id": fields.get("MASTERID")}));
                     }
                 }
                 tag.clear();
@@ -3359,6 +3363,14 @@ mod tests {
         assert_eq!(
             parse_agent_changed_masters("<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><NAME>Bad</NAME><ALTERID>nope</ALTERID></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"),
             Err("change_row_alterid_invalid".to_string())
+        );
+        assert_eq!(
+            parse_agent_changed_masters("<ENVELOPE><BODY><DATA><COLLECTION><GROUP><ALTERID>3</ALTERID></GROUP></COLLECTION></DATA></BODY></ENVELOPE>"),
+            Err("change_row_name_invalid".to_string())
+        );
+        assert_eq!(
+            parse_agent_changed_masters("<ENVELOPE><BODY><DATA><COLLECTION><LEDGER><NAME>   </NAME><ALTERID>3</ALTERID></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"),
+            Err("change_row_name_invalid".to_string())
         );
     }
 
