@@ -9,8 +9,12 @@ use crate::tally::{
     ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, OutstandingsCurrencyAssertion,
     OutstandingsLoadResult, TallyConfig, TallyRuntime, UnallocatedParty, VerifiedCompanyIdentity,
 };
-use bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile;
-use bridge_tally_protocol::TallyCompany;
+use bridge_tally_protocol::xml_read_profiles::{
+    ReadOnlyProfile, ValidatedCompanyName, ValidatedDateRange,
+};
+use bridge_tally_protocol::{
+    parse_ledgers, parse_vouchers, TallyCompany, TallyLedger, TallyVoucher,
+};
 use bridge_tally_transport::{canonical_loopback_origin, TallyEndpointConfig};
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use chrono::{SecondsFormat, Utc};
@@ -1066,11 +1070,9 @@ impl Server {
             return Err("invalid_date_range".to_string());
         }
         let (company, identity, mut evidence) = self.verified_company(guid).await?;
-        let ledgers = self
-            .runtime
-            .fetch_ledgers(self.tally_config(), &identity)
-            .await
-            .map_err(|_| "ledger_movement_read_failed".to_string())?;
+        let (ledgers, ledger_evidence) =
+            self.read_movement_ledgers(&identity, &company.name).await?;
+        evidence = combine_evidence(evidence, ledger_evidence);
         let books_from = normalized_date(
             company
                 .books_from
@@ -1085,23 +1087,18 @@ impl Server {
                 .ok_or_else(|| "invalid_date".to_string())?
                 .format("%Y%m%d")
                 .to_string();
-            self.runtime
-                .fetch_vouchers(
-                    self.tally_config(),
-                    &identity,
-                    books_from.clone(),
-                    before_from,
-                )
-                .await
-                .map_err(|_| "ledger_movement_read_failed".to_string())?
+            let (rows, read_evidence) = self
+                .read_movement_vouchers(&identity, &company.name, books_from.clone(), before_from)
+                .await?;
+            evidence = combine_evidence(evidence, read_evidence);
+            rows
         } else {
             Vec::new()
         };
-        let vouchers = self
-            .runtime
-            .fetch_vouchers(self.tally_config(), &identity, from.clone(), to)
-            .await
-            .map_err(|_| "ledger_movement_read_failed".to_string())?;
+        let (vouchers, read_evidence) = self
+            .read_movement_vouchers(&identity, &company.name, from.clone(), to)
+            .await?;
+        evidence = combine_evidence(evidence, read_evidence);
         let pre_window = balance_affecting_vouchers(pre_window)?;
         let vouchers = balance_affecting_vouchers(vouchers)?;
         let selected = optional_string(args, "ledger")?
@@ -1226,6 +1223,52 @@ impl Server {
                 "closing".into(),
             ],
             truncated,
+        ))
+    }
+
+    async fn read_movement_ledgers(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+    ) -> Result<(Vec<TallyLedger>, Evidence), String> {
+        let company = ValidatedCompanyName::new(company.to_string())
+            .map_err(|_| "company_name_invalid".to_string())?;
+        let (xml, evidence) = self
+            .post_read(
+                identity,
+                ReadOnlyProfile::LedgersV1 { company: &company }.render(),
+            )
+            .await?;
+        Ok((
+            parse_ledgers(&xml).map_err(|_| "ledger_movement_read_failed".to_string())?,
+            evidence,
+        ))
+    }
+
+    async fn read_movement_vouchers(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        from: String,
+        to: String,
+    ) -> Result<(Vec<TallyVoucher>, Evidence), String> {
+        let company = ValidatedCompanyName::new(company.to_string())
+            .map_err(|_| "company_name_invalid".to_string())?;
+        let range =
+            ValidatedDateRange::new(from, to).map_err(|_| "invalid_date_range".to_string())?;
+        let (xml, evidence) = self
+            .post_read(
+                identity,
+                ReadOnlyProfile::VouchersV2 {
+                    company: &company,
+                    range: &range,
+                }
+                .render(),
+            )
+            .await?;
+        Ok((
+            parse_vouchers(&xml).map_err(|_| "ledger_movement_read_failed".to_string())?,
+            evidence,
         ))
     }
 
@@ -2949,6 +2992,22 @@ mod tests {
         ];
         let vouchers = [(), ()];
         assert_eq!(ledger_movement_counts(&rows, &vouchers), (3, 2));
+    }
+
+    #[test]
+    fn ledger_movement_evidence_changes_when_a_voucher_response_changes() {
+        let evidence = |response| Evidence {
+            request_sha256: "request".into(),
+            response_sha256: sha256_hex(response),
+            bytes: response.len(),
+            state: "complete",
+            read_at: None,
+            duration_ms: None,
+            reason_code: None,
+        };
+        let baseline = combine_evidence(evidence(b"ledger"), evidence(b"voucher-one"));
+        let changed = combine_evidence(evidence(b"ledger"), evidence(b"voucher-two"));
+        assert_ne!(baseline.response_sha256, changed.response_sha256);
     }
 
     #[test]
