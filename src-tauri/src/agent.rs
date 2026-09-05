@@ -11,7 +11,7 @@ use crate::tally::{
 };
 use bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile;
 use bridge_tally_protocol::TallyCompany;
-use bridge_tally_transport::TallyEndpointConfig;
+use bridge_tally_transport::{canonical_loopback_origin, TallyEndpointConfig};
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use chrono::{SecondsFormat, Utc};
 use fs2::FileExt;
@@ -152,6 +152,10 @@ fn default_data_dir() -> PathBuf {
     env::temp_dir().join("bridge")
 }
 
+fn endpoint_origin(endpoint: &TallyEndpointConfig) -> Result<String, String> {
+    canonical_loopback_origin(endpoint).map_err(|_| "endpoint_invalid".to_string())
+}
+
 #[derive(Clone, Serialize)]
 struct Evidence {
     request_sha256: String,
@@ -247,7 +251,7 @@ impl Server {
                 "product": serde_json::to_value(&probe.connection.product).unwrap_or_else(|_| json!("not_observed")),
                 "release": probe.profile.release,
                 "education_mode": probe.profile.mode,
-                "endpoint": format!("http://{}:{}", self.settings.endpoint.host, self.settings.endpoint.port),
+                "endpoint": endpoint_origin(&self.settings.endpoint)?,
                 "loaded_companies": probe.companies,
                 "refusal_reason": Value::Null,
             }),
@@ -2287,6 +2291,22 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert!(records.iter().all(|record| record.duration_ms.is_some()));
         assert_ne!(records[0].read_at, records[1].read_at);
+    }
+
+    #[test]
+    fn status_endpoint_uses_the_transport_canonical_loopback_origin() {
+        for (host, expected) in [
+            ("127.0.0.1", "http://127.0.0.1:9000"),
+            ("::1", "http://[::1]:9000"),
+        ] {
+            assert_eq!(
+                endpoint_origin(&TallyEndpointConfig {
+                    host: host.to_string(),
+                    port: 9000,
+                }),
+                Ok(expected.to_string())
+            );
+        }
     }
 
     #[test]
