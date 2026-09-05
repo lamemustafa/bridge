@@ -24,7 +24,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 const SERVER_NAME: &str = "bridge-tally";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -2089,8 +2089,16 @@ fn tool_definitions(import_enabled: bool) -> Value {
 pub async fn run_stdio() -> Result<(), String> {
     let server = Server::new(Settings::from_env()?);
     let stdin = BufReader::new(tokio::io::stdin());
-    let mut lines = stdin.lines();
     let mut stdout = tokio::io::stdout();
+    serve_stdio(server, stdin, &mut stdout).await
+}
+
+async fn serve_stdio<R, W>(server: Server, reader: R, stdout: &mut W) -> Result<(), String>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut lines = reader.lines();
     while let Some(line) = lines
         .next_line()
         .await
@@ -2124,24 +2132,28 @@ pub async fn run_stdio() -> Result<(), String> {
             }
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({"tools": tool_definitions(server.settings.import_enabled)})),
-            "tools/call" => {
-                let name = params
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "tool_name_required".to_string())?;
+            "tools/call" => match params.get("name").and_then(Value::as_str) {
+                Some(name) => {
                 let arguments = params
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
                 Ok(server.call_tool(name, arguments).await)
-            }
+                }
+                None => Err("tool_name_required".to_string()),
+            },
             _ => Err("method_not_found".to_string()),
         };
         if let Some(id) = id {
             let mut response = match result {
                 Ok(result) => json!({"jsonrpc":"2.0","id":id.clone(),"result":result}),
                 Err(code) => {
-                    json!({"jsonrpc":"2.0","id":id.clone(),"error":{"code":-32601,"message":code}})
+                    let error_code = if code == "method_not_found" {
+                        -32601
+                    } else {
+                        -32602
+                    };
+                    json!({"jsonrpc":"2.0","id":id.clone(),"error":{"code":error_code,"message":code}})
                 }
             };
             if method == "tools/call"
@@ -2169,6 +2181,7 @@ mod tests {
     use tally_protocol_simulator::{
         Fixture, ResponseFraming, ScenarioPlan, SequenceSimulator, WireEncoding,
     };
+    use tokio::io::AsyncReadExt;
 
     fn company_collection_xml() -> String {
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SYNTHETIC BOOK\"><GUID>00000000-0000-4000-8000-000000000001</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>".to_string()
@@ -2259,6 +2272,52 @@ mod tests {
             Redaction::parse("mask_everything"),
             Err("redaction_setting_invalid".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn malformed_tool_name_is_in_band_and_the_same_session_serves_the_next_request() {
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+        });
+        let (mut client, server_io) = tokio::io::duplex(4_096);
+        let (server_read, mut server_write) = tokio::io::split(server_io);
+        let serve = tokio::spawn(async move {
+            serve_stdio(server, BufReader::new(server_read), &mut server_write).await
+        });
+        client
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\",\"params\":{}}\n",
+            )
+            .await
+            .expect("write requests");
+        client.shutdown().await.expect("close request stream");
+        let mut output = String::new();
+        client
+            .read_to_string(&mut output)
+            .await
+            .expect("read responses");
+        serve
+            .await
+            .expect("server task")
+            .expect("session remains healthy");
+        let responses = output
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("JSON-RPC response"))
+            .collect::<Vec<_>>();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["error"]["code"], -32602);
+        assert_eq!(responses[0]["error"]["message"], "tool_name_required");
+        assert_eq!(responses[1]["id"], 2);
+        assert_eq!(responses[1]["result"], json!({}));
     }
 
     #[tokio::test]
