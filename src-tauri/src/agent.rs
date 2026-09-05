@@ -1652,6 +1652,8 @@ fn read_egress_tail(path: &Path, take: usize) -> Result<Vec<String>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(_) => return Err("egress_log_unreadable".to_string()),
     };
+    file.lock_shared()
+        .map_err(|_| "egress_log_unreadable".to_string())?;
     let file_len = file
         .metadata()
         .map_err(|_| "egress_log_unreadable".to_string())?
@@ -1682,7 +1684,10 @@ fn read_egress_tail(path: &Path, take: usize) -> Result<Vec<String>, String> {
     } else {
         text
     };
-    Ok(text.lines().rev().take(take).map(str::to_string).collect())
+    let lines = text.lines().rev().take(take).map(str::to_string).collect();
+    file.unlock()
+        .map_err(|_| "egress_log_unreadable".to_string())?;
+    Ok(lines)
 }
 
 fn paginate_open_bills<T>(
@@ -2891,6 +2896,29 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines.iter().any(|line| line["tool"] == "one"));
         assert!(lines.iter().any(|line| line["tool"] == "two"));
+    }
+
+    #[test]
+    fn egress_tail_waits_for_an_exclusive_append_lock() {
+        let directory = tempfile::tempdir().expect("temporary egress directory");
+        let path = directory.path().join("agent-egress.jsonl");
+        let mut writer = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("writer");
+        writer.lock_exclusive().expect("writer lock");
+        writer
+            .write_all(b"{\"tool\":\"complete\"}\n")
+            .expect("complete row");
+        let reader_path = path.clone();
+        let reader = std::thread::spawn(move || read_egress_tail(&reader_path, 1));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        writer.unlock().expect("writer unlock");
+        assert_eq!(
+            reader.join().expect("reader").expect("tail"),
+            vec!["{\"tool\":\"complete\"}"]
+        );
     }
 
     #[test]
