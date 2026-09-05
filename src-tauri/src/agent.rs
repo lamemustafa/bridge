@@ -14,6 +14,7 @@ use bridge_tally_protocol::TallyCompany;
 use bridge_tally_transport::TallyEndpointConfig;
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use chrono::{SecondsFormat, Utc};
+use fs2::FileExt;
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -459,26 +460,9 @@ impl Server {
 
     fn append_egress(&self, receipt: EgressReceipt<'_>) -> Result<(), String> {
         let path = self.settings.data_dir.join("agent-egress.jsonl");
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
+        let line = serde_json::to_string(&receipt)
             .map_err(|_| "egress_record_write_failed".to_string())?;
-        writeln!(
-            file,
-            "{}",
-            serde_json::to_string(&receipt).map_err(|_| "egress_record_write_failed".to_string())?
-        )
-        .map_err(|_| "egress_record_write_failed".to_string())?;
-        file.sync_data()
-            .map_err(|_| "egress_record_write_failed".to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(fs::Permissions::from_mode(0o600))
-                .map_err(|_| "egress_record_write_failed".to_string())?;
-        }
-        Ok(())
+        append_egress_line(&path, &line)
     }
 
     async fn tool_payload(&self, name: &str, args: &Value) -> Result<ToolOutcome, String> {
@@ -1080,6 +1064,35 @@ impl Server {
             false,
         ))
     }
+}
+
+fn append_egress_line(path: &Path, line: &str) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|_| "egress_record_write_failed".to_string())?;
+    file.lock_exclusive()
+        .map_err(|_| "egress_record_write_failed".to_string())?;
+    let write_result = (|| {
+        file.write_all(line.as_bytes())
+            .map_err(|_| "egress_record_write_failed".to_string())?;
+        file.write_all(b"\n")
+            .map_err(|_| "egress_record_write_failed".to_string())?;
+        file.sync_data()
+            .map_err(|_| "egress_record_write_failed".to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|_| "egress_record_write_failed".to_string())?;
+        }
+        Ok(())
+    })();
+    let unlock_result = file
+        .unlock()
+        .map_err(|_| "egress_record_write_failed".to_string());
+    write_result.and(unlock_result)
 }
 
 fn company_json(company: &TallyCompany, all: &[TallyCompany]) -> Value {
@@ -2189,6 +2202,29 @@ mod tests {
             parse_bounded_limit("BRIDGE_AGENT_MAX_BYTES", "256", 256, 5_000_000),
             Ok(256)
         );
+    }
+
+    #[test]
+    fn concurrent_egress_appends_leave_two_parseable_json_lines() {
+        let directory = tempfile::tempdir().expect("temporary egress directory");
+        let path = directory.path().join("agent-egress.jsonl");
+        let first = path.clone();
+        let second = path.clone();
+        let first = std::thread::spawn(move || append_egress_line(&first, r#"{"tool":"one"}"#));
+        let second = std::thread::spawn(move || append_egress_line(&second, r#"{"tool":"two"}"#));
+        first.join().expect("first writer").expect("first append");
+        second
+            .join()
+            .expect("second writer")
+            .expect("second append");
+        let lines = fs::read_to_string(path)
+            .expect("egress file")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("parseable receipt"))
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert!(lines.iter().any(|line| line["tool"] == "one"));
+        assert!(lines.iter().any(|line| line["tool"] == "two"));
     }
 
     #[test]
