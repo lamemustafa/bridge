@@ -175,12 +175,13 @@ impl Server {
             .into_iter()
             .map(|wanted| master_match(wanted, &catalogue))
             .collect::<Vec<_>>();
+        let reported_masters = report.len();
         let hash = sha256_json(&catalogue);
         Ok((
             json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"masters": report, "catalogue_evidence_sha256": hash}}),
             combine_evidence(identity_evidence, evidence),
             Some(guid.to_string()),
-            catalogue.len(),
+            reported_masters,
             vec![
                 "name".into(),
                 "match_state".into(),
