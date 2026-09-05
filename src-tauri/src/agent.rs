@@ -1212,6 +1212,7 @@ impl Server {
         for voucher in &pre_window {
             for entry in &voucher.ledger_entries {
                 let Some(record) = movement.get_mut(&entry.ledger_name) else {
+                    absent_movement_entry_policy(&entry.ledger_name, selected.as_deref())?;
                     continue;
                 };
                 if let Some(opening) = record.1.as_deref() {
@@ -1223,6 +1224,7 @@ impl Server {
             let mut touched = std::collections::BTreeSet::new();
             for entry in &voucher.ledger_entries {
                 let Some(record) = movement.get_mut(&entry.ledger_name) else {
+                    absent_movement_entry_policy(&entry.ledger_name, selected.as_deref())?;
                     continue;
                 };
                 let amount = bridge_tally_core::ExactDecimal::parse(entry.amount.clone())
@@ -1614,6 +1616,14 @@ fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> (Vec<Value>
 
 fn ledger_movement_counts<T>(rows: &[Value], vouchers: &[T]) -> (usize, usize) {
     (rows.len(), vouchers.len())
+}
+
+fn absent_movement_entry_policy(entry_ledger: &str, selected: Option<&str>) -> Result<(), String> {
+    if selected.is_none_or(|ledger| ledger == entry_ledger) {
+        Err("ledger_snapshot_drifted".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 struct LedgerMovementRow {
@@ -3439,6 +3449,19 @@ mod tests {
         ];
         let vouchers = [(), ()];
         assert_eq!(ledger_movement_counts(&rows, &vouchers), (3, 2));
+    }
+
+    #[test]
+    fn ledger_movement_refuses_snapshot_drift_except_unselected_entries() {
+        assert_eq!(
+            absent_movement_entry_policy("Created Later", None),
+            Err("ledger_snapshot_drifted".to_string())
+        );
+        assert_eq!(
+            absent_movement_entry_policy("Cash", Some("Cash")),
+            Err("ledger_snapshot_drifted".to_string())
+        );
+        assert_eq!(absent_movement_entry_policy("Created Later", Some("Cash")), Ok(()));
     }
 
     #[test]
