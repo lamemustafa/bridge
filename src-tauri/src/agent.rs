@@ -678,7 +678,7 @@ impl Server {
         let guid = required_string(args, "company_guid")?;
         let (company, identity, company_evidence) = self.verified_company(guid).await?;
         let fields = optional_string(args, "fields")?.unwrap_or_else(|| "basic".to_string());
-        let compliance = fields == "compliance";
+        let compliance = ledger_master_fields(&fields)?;
         let (mut ledgers, ledger_evidence) = if compliance {
             let (records, evidence) = self
                 .runtime
@@ -1457,6 +1457,14 @@ fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
         return Err(format!("argument_unknown:{unknown}"));
     }
     Ok(())
+}
+
+fn ledger_master_fields(fields: &str) -> Result<bool, String> {
+    match fields {
+        "basic" => Ok(false),
+        "compliance" => Ok(true),
+        _ => Err("argument_invalid:fields".to_string()),
+    }
 }
 
 fn append_egress_line(path: &Path, line: &str) -> Result<(), String> {
@@ -2958,6 +2966,14 @@ mod tests {
                 &json!({"company_guid":"company", "from":"2026-09-01", "to":"2026-09-02", "ledgre":"Cash"}),
             ),
             Err("argument_unknown:ledgre".to_string())
+        );
+    }
+
+    #[test]
+    fn ledger_master_fields_reject_unknown_schema_values() {
+        assert_eq!(
+            ledger_master_fields("complaince"),
+            Err("argument_invalid:fields".to_string())
         );
     }
 
