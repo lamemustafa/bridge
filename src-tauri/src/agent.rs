@@ -274,6 +274,18 @@ struct EgressReceipt<'a> {
     redaction_preset: &'a str,
 }
 
+struct EgressContext {
+    tool: String,
+    args_sha256: String,
+    company_guid: Option<String>,
+    fields_returned: Vec<String>,
+}
+
+struct ToolResponse {
+    value: Value,
+    egress: EgressContext,
+}
+
 struct Server {
     settings: Settings,
     runtime: TallyRuntime,
@@ -432,7 +444,12 @@ impl Server {
         Ok((company, identity, evidence))
     }
 
+    #[cfg(test)]
     async fn call_tool(&self, name: &str, args: Value) -> Value {
+        self.call_tool_response(name, args).await.value
+    }
+
+    async fn call_tool_response(&self, name: &str, args: Value) -> ToolResponse {
         let args_sha256 = sha256_json(&args);
         let started = Utc::now();
         let result = self.tool_payload(name, &args).await;
@@ -472,20 +489,21 @@ impl Server {
             }),
             self.settings.redaction,
         );
-        let (response_value, bytes_truncated, surviving_rows) = match enforce_response_byte_cap(
-            response_value,
-            self.settings.max_bytes,
-        ) {
-            Ok(value) => value,
-            Err(code) => {
-                return json!({
-                    "content": [{"type":"text", "text": format!("{name}: read withheld\\n{code}")}],
-                    "structuredContent": {"error": {"code": code, "message": "Bridge response exceeds the configured byte cap."}},
-                    "isError": true,
-                });
-            }
-        };
-        let truncated = truncated || bytes_truncated;
+        let (response_value, _bytes_truncated, surviving_rows) =
+            match enforce_response_byte_cap(response_value, self.settings.max_bytes) {
+                Ok(value) => value,
+                Err(code) => {
+                    return ToolResponse {
+                        value: response_too_large(name, &code),
+                        egress: EgressContext {
+                            tool: name.to_string(),
+                            args_sha256,
+                            company_guid,
+                            fields_returned: fields,
+                        },
+                    };
+                }
+            };
         let mut mcp_response = json!({
             "content": [{"type":"text", "text": ""}],
             "structuredContent": response_value,
@@ -497,37 +515,27 @@ impl Server {
             name,
             surviving_rows,
         ) {
-            return json!({
-                "content": [{"type":"text", "text": format!("{name}: read withheld\n{code}")}],
-                "structuredContent": {"error": {"code": code, "message": "Bridge response exceeds the configured byte cap."}},
-                "isError": true,
-            });
+            return ToolResponse {
+                value: response_too_large(name, &code),
+                egress: EgressContext {
+                    tool: name.to_string(),
+                    args_sha256,
+                    company_guid,
+                    fields_returned: fields,
+                },
+            };
         }
         let response_value = mcp_response["structuredContent"].clone();
-        let rows = response_row_count(&response_value).unwrap_or(surviving_rows);
-        let truncated = truncated || response_value["truncated"].as_bool().unwrap_or(false);
-        let response_sha256 = sha256_json(&response_value);
         self.record_evidence(response_value["evidence"].clone());
-        if let Err(code) = self.append_egress(EgressReceipt {
-            ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            tool: name,
-            args_sha256,
-            company_guid,
-            rows_returned: rows,
-            fields_returned: fields,
-            bytes_returned: mcp_response.to_string().len(),
-            enforced_bytes: self.settings.max_bytes,
-            response_sha256,
-            truncated,
-            redaction_preset: self.settings.redaction.label(),
-        }) {
-            return json!({
-                "content": [{"type":"text", "text": format!("{name}: read withheld\\n{code}")}],
-                "structuredContent": {"error": {"code": code, "message": "Bridge could not record egress."}},
-                "isError": true,
-            });
+        ToolResponse {
+            value: mcp_response,
+            egress: EgressContext {
+                tool: name.to_string(),
+                args_sha256,
+                company_guid,
+                fields_returned: fields,
+            },
         }
-        mcp_response
     }
 
     fn record_evidence(&self, value: Value) {
@@ -573,8 +581,39 @@ impl Server {
         }
     }
 
-    fn append_egress(&self, receipt: EgressReceipt<'_>) -> Result<(), String> {
+    fn append_framed_egress(
+        &self,
+        context: EgressContext,
+        response: &Value,
+        serialized_response: &str,
+    ) -> Result<(), String> {
+        let structured = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"));
+        let rows_returned = structured.and_then(response_row_count).unwrap_or_default();
+        let truncated = structured
+            .and_then(|value| value.get("truncated"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let fields_returned = if structured.is_some() {
+            context.fields_returned
+        } else {
+            Vec::new()
+        };
         let path = self.settings.data_dir.join("agent-egress.jsonl");
+        let receipt = EgressReceipt {
+            ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            tool: &context.tool,
+            args_sha256: context.args_sha256,
+            company_guid: context.company_guid,
+            rows_returned,
+            fields_returned,
+            bytes_returned: serialized_response.len(),
+            enforced_bytes: self.settings.max_bytes,
+            response_sha256: sha256_hex(serialized_response.as_bytes()),
+            truncated,
+            redaction_preset: self.settings.redaction.label(),
+        };
         let line = serde_json::to_string(&receipt)
             .map_err(|_| "egress_record_write_failed".to_string())?;
         append_egress_line(&path, &line)
@@ -1395,6 +1434,14 @@ fn append_egress_line(path: &Path, line: &str) -> Result<(), String> {
         .unlock()
         .map_err(|_| "egress_record_write_failed".to_string());
     write_result.and(unlock_result)
+}
+
+fn response_too_large(name: &str, code: &str) -> Value {
+    json!({
+        "content": [{"type":"text", "text": format!("{name}: read withheld\\n{code}")}],
+        "structuredContent": {"error": {"code": code, "message": "Bridge response exceeds the configured byte cap."}},
+        "isError": true,
+    })
 }
 
 fn company_json(company: &TallyCompany, all: &[TallyCompany]) -> Value {
@@ -2660,6 +2707,7 @@ where
         let id = request.get("id").cloned();
         let method = request.get("method").and_then(Value::as_str).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+        let mut egress = None;
         let result = match method {
             "initialize" => params
                 .get("protocolVersion")
@@ -2681,7 +2729,9 @@ where
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                Ok(server.call_tool(name, arguments).await)
+                let tool_response = server.call_tool_response(name, arguments).await;
+                egress = Some(tool_response.egress);
+                Ok(tool_response.value)
                 }
                 None => Err("tool_name_required".to_string()),
             },
@@ -2705,8 +2755,12 @@ where
             {
                 response = json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"agent_response_too_large"}});
             }
+            let serialized_response = format!("{response}\n");
+            if let Some(egress) = egress {
+                server.append_framed_egress(egress, &response, &serialized_response)?;
+            }
             stdout
-                .write_all(format!("{response}\n").as_bytes())
+                .write_all(serialized_response.as_bytes())
                 .await
                 .map_err(|_| "stdio_write_failed".to_string())?;
             stdout
@@ -2936,6 +2990,62 @@ mod tests {
         assert_eq!(responses[0]["error"]["message"], "tool_name_required");
         assert_eq!(responses[1]["id"], 2);
         assert_eq!(responses[1]["result"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn egress_receipt_uses_the_final_jsonrpc_replacement_when_only_the_envelope_exceeds_cap()
+    {
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let base_settings = Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: 9,
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+        };
+        let unframed = Server::new(base_settings.clone())
+            .call_tool("voucher_schema", json!({}))
+            .await;
+        let server = Server::new(Settings {
+            max_bytes: unframed.to_string().len(),
+            ..base_settings
+        });
+        let (mut client, server_io) = tokio::io::duplex(16_384);
+        let (server_read, mut server_write) = tokio::io::split(server_io);
+        let serve = tokio::spawn(async move {
+            serve_stdio(server, BufReader::new(server_read), &mut server_write).await
+        });
+        client
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"voucher_schema\",\"arguments\":{}}}\n",
+            )
+            .await
+            .expect("write tool request");
+        client.shutdown().await.expect("close request stream");
+        let mut output = String::new();
+        client
+            .read_to_string(&mut output)
+            .await
+            .expect("read response");
+        serve
+            .await
+            .expect("server task")
+            .expect("session remains healthy");
+
+        let response: Value = serde_json::from_str(output.trim_end()).expect("JSON-RPC response");
+        assert_eq!(response["error"]["message"], "agent_response_too_large");
+        let receipt_line = fs::read_to_string(directory.path().join("agent-egress.jsonl"))
+            .expect("egress receipt");
+        let receipt: Value = serde_json::from_str(receipt_line.trim_end()).expect("receipt JSON");
+        assert_eq!(receipt["bytes_returned"], output.len());
+        assert_eq!(receipt["response_sha256"], sha256_hex(output.as_bytes()));
+        assert_eq!(receipt["rows_returned"], 0);
+        assert_eq!(receipt["fields_returned"], json!([]));
+        assert_eq!(receipt["truncated"], false);
     }
 
     #[tokio::test]
@@ -3822,7 +3932,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn simulator_company_read_records_evidence_and_egress_while_down_endpoint_is_typed() {
+    async fn simulator_company_read_records_evidence_while_down_endpoint_is_typed() {
         let plan = ScenarioPlan::new(Fixture::SyntheticXml(company_collection_xml()))
             .with_encoding(WireEncoding::Utf16Le)
             .with_framing(ResponseFraming::ContentLength);
@@ -3840,7 +3950,6 @@ mod tests {
             Some(1)
         );
         assert!(response["structuredContent"]["evidence"]["request_sha256"].is_string());
-        assert!(directory.path().join("agent-egress.jsonl").exists());
         assert_eq!(simulator.finish().expect("simulator result").len(), 1);
 
         let down = Server::new(Settings {
@@ -3856,9 +3965,6 @@ mod tests {
         });
         let down_response = down.call_tool("tally_status", json!({})).await;
         assert!(down_response["structuredContent"]["result"]["error"]["code"].is_string());
-        let receipts = fs::read_to_string(directory.path().join("agent-egress.jsonl"))
-            .expect("egress receipts");
-        assert_eq!(receipts.lines().count(), 2);
     }
 
     #[tokio::test]
