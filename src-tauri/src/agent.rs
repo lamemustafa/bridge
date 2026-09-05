@@ -2534,7 +2534,7 @@ fn parse_agent_rows_with_accounting_state(
     // extractor and never infer a missing field. Unknown collection shapes return
     // an empty result rather than invented records.
     let mut reader = quick_xml::Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
+    reader.config_mut().trim_text(false);
     let mut rows = Vec::new();
     validate_agent_envelope(xml, "VOUCHER")?;
     let mut current: Option<BTreeMap<String, String>> = None;
@@ -3267,6 +3267,17 @@ mod tests {
         let changed = parse_agent_changed_rows(xml).expect("changed voucher rows");
         assert_eq!(changed[0]["voucher_number"], "R&D");
         assert_eq!(changed[0]["amounts"][0]["ledger"], "R&D");
+    }
+
+    #[test]
+    fn voucher_parsers_preserve_entity_adjacent_whitespace() {
+        let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-guid</GUID><VOUCHERNUMBER> before&amp;after </VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME> Input&amp;CGST </LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let vouchers = parse_agent_rows(xml).expect("voucher rows");
+        assert_eq!(vouchers[0]["voucher_number"], " before&after ");
+        assert_eq!(vouchers[0]["amounts"][0]["ledger"], " Input&CGST ");
+        let changed = parse_agent_changed_rows(xml).expect("changed voucher rows");
+        assert_eq!(changed[0]["voucher_number"], " before&after ");
+        assert_eq!(changed[0]["amounts"][0]["ledger"], " Input&CGST ");
     }
 
     #[test]
