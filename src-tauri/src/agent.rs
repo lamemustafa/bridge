@@ -703,13 +703,10 @@ impl Server {
                 .fetch_ledgers(self.tally_config(), &identity)
                 .await
                 .map_err(|_| "ledger_export_invalid".to_string())?;
-            Some(
-                matching_ledger_name(
-                    ledgers.iter().map(|ledger| ledger.name.as_str()),
-                    &requested,
-                )
-                .ok_or_else(|| "ledger_not_found".to_string())?,
-            )
+            Some(resolve_ledger_name(
+                ledgers.iter().map(|ledger| ledger.name.as_str()),
+                &requested,
+            )?)
         } else {
             None
         };
@@ -1103,8 +1100,7 @@ impl Server {
         let vouchers = balance_affecting_vouchers(vouchers)?;
         let selected = optional_string(args, "ledger")?
             .map(|name| {
-                matching_ledger_name(ledgers.iter().map(|ledger| ledger.name.as_str()), &name)
-                    .ok_or_else(|| "ledger_not_found".to_string())
+                resolve_ledger_name(ledgers.iter().map(|ledger| ledger.name.as_str()), &name)
             })
             .transpose()?;
         let mut movement = BTreeMap::<
@@ -1388,14 +1384,21 @@ fn ledger_lookup_key(value: &str) -> String {
         .collect()
 }
 
-fn matching_ledger_name<'a>(
-    mut ledger_names: impl Iterator<Item = &'a str>,
+fn resolve_ledger_name<'a>(
+    ledger_names: impl Iterator<Item = &'a str>,
     requested: &str,
-) -> Option<String> {
-    let requested = ledger_lookup_key(requested);
-    ledger_names
-        .find(|name| ledger_lookup_key(name) == requested)
-        .map(str::to_string)
+) -> Result<String, String> {
+    let exact = ledger_names
+        .filter(|name| ledger_lookup_key(name) == ledger_lookup_key(requested))
+        .collect::<Vec<_>>();
+    if let Some(name) = exact.iter().find(|name| **name == requested) {
+        return Ok((*name).to_string());
+    }
+    match exact.as_slice() {
+        [] => Err("ledger_not_found".to_string()),
+        [name] => Ok((*name).to_string()),
+        _ => Err("ledger_ambiguous".to_string()),
+    }
 }
 
 fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> (Vec<Value>, bool) {
@@ -2890,15 +2893,24 @@ mod tests {
     }
 
     #[test]
-    fn ledger_lookup_normalizes_separators_and_refuses_absent_ledgers() {
+    fn ledger_lookup_prefers_exact_live_spelling_and_rejects_ambiguous_matches() {
         let names = ["Bank Charges", "Sales-Ledger"];
         assert_eq!(
-            matching_ledger_name(names.into_iter(), "bank_charges"),
-            Some("Bank Charges".to_string())
+            resolve_ledger_name(names.into_iter(), "bank_charges"),
+            Ok("Bank Charges".to_string())
         );
         assert_eq!(
-            matching_ledger_name(names.into_iter(), "missing ledger"),
-            None
+            resolve_ledger_name(names.into_iter(), "missing ledger"),
+            Err("ledger_not_found".to_string())
+        );
+        let ambiguous = ["A-B", "AB"];
+        assert_eq!(
+            resolve_ledger_name(ambiguous.into_iter(), "a_b"),
+            Err("ledger_ambiguous".to_string())
+        );
+        assert_eq!(
+            resolve_ledger_name(ambiguous.into_iter(), "AB"),
+            Ok("AB".to_string())
         );
     }
 
