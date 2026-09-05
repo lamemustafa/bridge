@@ -622,11 +622,13 @@ impl Server {
             optional_string(args, "ledger")?,
             None,
         )?;
-        let (xml, evidence) = self.post_read(&identity, request).await?;
+        let (xml, mut evidence) = self.post_read(&identity, request).await?;
         let mut rows = parse_agent_rows(&xml)?;
         if !window_honoured(&rows, &from, &to) {
             return Err("window_not_honoured".to_string());
         }
+        let mut result_state = "complete";
+        let mut corroboration_reason = None;
         if rows.is_empty() {
             let (wider_from, wider_to) = widened_window(&from, &to)?;
             let wider_request = render_agent_vouchers(
@@ -637,11 +639,33 @@ impl Server {
                 optional_string(args, "ledger")?,
                 None,
             )?;
-            let (wider_xml, _) = self.post_read(&identity, wider_request).await?;
+            let (wider_xml, wider_evidence) = self.post_read(&identity, wider_request).await?;
+            evidence = combine_evidence(evidence, wider_evidence);
             let wider_rows = parse_agent_rows(&wider_xml)?;
             if !window_honoured(&wider_rows, &wider_from, &wider_to) {
                 return Err("empty_uncorroborated".to_string());
             }
+            let high_water = if wider_rows.is_empty() {
+                let (high_water_xml, high_water_evidence) = self
+                    .post_read(&identity, render_agent_company_high_water(&company.name))
+                    .await?;
+                evidence = combine_evidence(evidence, high_water_evidence);
+                Some(
+                    parse_company_high_water(&high_water_xml, guid)?["altvchid"]
+                        .as_u64()
+                        .ok_or_else(|| "voucher_checkpoint_invalid".to_string())?,
+                )
+            } else {
+                None
+            };
+            let (partial, reason) =
+                corroborate_empty_voucher_window(&wider_rows, &from, &to, high_water)?;
+            if partial {
+                result_state = "partial";
+                evidence.state = "partial";
+            }
+            corroboration_reason = reason;
+            evidence.reason_code = reason.map(str::to_string);
         }
         if let Some(kind) = optional_string(args, "voucher_type")? {
             rows.retain(|row| row.get("voucher_type") == Some(&Value::String(kind.clone())));
@@ -657,7 +681,7 @@ impl Server {
             .collect::<Vec<_>>();
         let truncated = offset.saturating_add(items.len()) < total;
         Ok((
-            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"items": items, "offset": offset, "total": total, "profile": "agent_vouchers_v1_filters"}}),
+            json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": result_state, "reason": corroboration_reason, "items": items, "offset": offset, "total": total, "profile": "agent_vouchers_v1_filters"}}),
             combine_evidence(identity_evidence, evidence),
             Some(guid.to_string()),
             items.len(),
@@ -1470,6 +1494,31 @@ fn window_honoured(rows: &[Value], from: &str, to: &str) -> bool {
             .and_then(Value::as_str)
             .is_some_and(|date| date >= from && date <= to)
     })
+}
+
+fn corroborate_empty_voucher_window(
+    widened_rows: &[Value],
+    from: &str,
+    to: &str,
+    company_high_water: Option<u64>,
+) -> Result<(bool, Option<&'static str>), String> {
+    if widened_rows.iter().any(|row| row_in_window(row, from, to)) {
+        return Err("window_contradicted".to_string());
+    }
+    if !widened_rows.is_empty() {
+        return Ok((false, None));
+    }
+    match company_high_water {
+        Some(0) => Ok((false, Some("company_has_no_vouchers"))),
+        Some(_) => Ok((true, Some("empty_uncorroborated"))),
+        None => Err("voucher_checkpoint_invalid".to_string()),
+    }
+}
+
+fn row_in_window(row: &Value, from: &str, to: &str) -> bool {
+    row.get("date")
+        .and_then(Value::as_str)
+        .is_some_and(|date| date >= from && date <= to)
 }
 
 fn widened_window(from: &str, to: &str) -> Result<(String, String), String> {
@@ -2935,6 +2984,36 @@ mod tests {
         assert_eq!(
             widened_window("20260901", "20260902"),
             Ok(("20260831".to_string(), "20260903".to_string()))
+        );
+    }
+
+    #[test]
+    fn empty_voucher_window_corroboration_handles_all_three_control_branches() {
+        assert_eq!(
+            corroborate_empty_voucher_window(
+                &[json!({"date":"20260831"}), json!({"date":"20260903"})],
+                "20260901",
+                "20260902",
+                None,
+            ),
+            Ok((false, None))
+        );
+        assert_eq!(
+            corroborate_empty_voucher_window(
+                &[json!({"date":"20260901"})],
+                "20260901",
+                "20260902",
+                None,
+            ),
+            Err("window_contradicted".to_string())
+        );
+        assert_eq!(
+            corroborate_empty_voucher_window(&[], "20260901", "20260902", Some(0)),
+            Ok((false, Some("company_has_no_vouchers")))
+        );
+        assert_eq!(
+            corroborate_empty_voucher_window(&[], "20260901", "20260902", Some(1)),
+            Ok((true, Some("empty_uncorroborated")))
         );
     }
 
