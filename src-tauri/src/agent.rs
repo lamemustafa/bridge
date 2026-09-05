@@ -903,6 +903,7 @@ impl Server {
                 .as_deref()
                 .ok_or_else(|| "company_identity_incomplete".to_string())?,
         )?;
+        ensure_movement_window_within_books(&from, &books_from)?;
         let pre_window = if books_from < from {
             let before_from = NaiveDate::parse_from_str(&from, "%Y%m%d")
                 .map_err(|_| "invalid_date".to_string())?
@@ -1128,6 +1129,12 @@ fn page_length_after_offset(total: usize, offset: usize, limit: usize) -> usize 
 
 fn page_is_truncated(total: usize, offset: usize, page_len: usize) -> bool {
     offset.saturating_add(page_len) < total
+}
+
+fn ensure_movement_window_within_books(from: &str, books_from: &str) -> Result<(), String> {
+    (from >= books_from)
+        .then_some(())
+        .ok_or_else(|| "window_precedes_books_from".to_string())
 }
 
 fn ledger_fields_returned(compliance: bool) -> Vec<String> {
@@ -2127,6 +2134,18 @@ mod tests {
         ];
         let vouchers = [(), ()];
         assert_eq!(ledger_movement_counts(&rows, &vouchers), (3, 2));
+    }
+
+    #[test]
+    fn ledger_movement_rejects_a_window_before_the_observed_books_from() {
+        assert_eq!(
+            ensure_movement_window_within_books("20260331", "20260401"),
+            Err("window_precedes_books_from".to_string())
+        );
+        assert_eq!(
+            ensure_movement_window_within_books("20260401", "20260401"),
+            Ok(())
+        );
     }
 
     #[tokio::test]
