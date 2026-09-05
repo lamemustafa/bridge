@@ -164,10 +164,7 @@ struct Settings {
 impl Settings {
     fn from_env() -> Result<Self, String> {
         let host = env::var("BRIDGE_TALLY_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let port = env::var("BRIDGE_TALLY_PORT")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(9000);
+        let port = tally_port(env::var("BRIDGE_TALLY_PORT").ok())?;
         let max_rows = bounded_env("BRIDGE_AGENT_MAX_ROWS", 500, 1, 10_000)?;
         let max_bytes = bounded_env("BRIDGE_AGENT_MAX_BYTES", 200_000, 256, 5_000_000)?;
         // The transport remains the authoritative hard cap.  The agent cap only
@@ -190,6 +187,15 @@ impl Settings {
             redaction: Redaction::from_env()?,
             import_enabled: env::var("BRIDGE_AGENT_ENABLE_IMPORT").as_deref() == Ok("1"),
         })
+    }
+}
+
+fn tally_port(value: Option<String>) -> Result<u16, String> {
+    match value {
+        None => Ok(9000),
+        Some(value) => value
+            .parse::<u16>()
+            .map_err(|_| "port_setting_invalid".to_string()),
     }
 }
 
@@ -2911,6 +2917,16 @@ mod tests {
         assert_eq!(
             resolve_ledger_name(ambiguous.into_iter(), "AB"),
             Ok("AB".to_string())
+        );
+    }
+
+    #[test]
+    fn tally_port_defaults_only_when_the_environment_value_is_absent() {
+        assert_eq!(tally_port(None), Ok(9000));
+        assert_eq!(tally_port(Some("9001".to_string())), Ok(9001));
+        assert_eq!(
+            tally_port(Some("not-a-port".to_string())),
+            Err("port_setting_invalid".to_string())
         );
     }
 
