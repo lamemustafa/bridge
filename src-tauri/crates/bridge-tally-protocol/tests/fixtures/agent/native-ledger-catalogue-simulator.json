@@ -1,0 +1,20 @@
+{
+  "source": "Live licensed TallyPrime synthetic-company StandardLedgerCatalogV1 paired read",
+  "observed_date": "2026-09-06",
+  "source_response_bytes": 13060,
+  "source_response_sha256": "f354993704f0feddc27a46d73b4ca10787b6028d9f385d8323994b18e5b34e0f",
+  "source_request_bytes": 1972,
+  "source_request_sha256": "46afed275173ae5371c24dbc18ea9998663b03d5e7b6eefc69c1ebfbe2ffb2a0",
+  "fixture_bytes": 13088,
+  "fixture_sha256": "d17f1d1c8ecf2ea08d3d56ce541f2cbab61153dd9e1bf6088869ea537ce1a767",
+  "encoding": "UTF-16LE without BOM",
+  "rows": 9,
+  "transformation": [
+    "Replace synthetic source company GUID (including ledger GUID prefixes) with simulator company GUID 00000000-0000-4000-8000-000000000001.",
+    "Replace synthetic company display name with BRIDGE SYNTHETIC BOOK.",
+    "Replace the NAME attribute and nested NAME value of three existing rows: Bridge Nested Debtor WR4 to Expense; Cash to Bank; WR2 Sales to Income.",
+    "Preserve remaining fields, row structure, numeric references, whitespace, and UTF-16LE encoding."
+  ],
+  "provenance_limit": "This is an explicitly transformed regression derivative, not byte-exact live output. It tests the existing import simulator against an observed native catalogue shape; no live import success is claimed.",
+  "sensitivity_review": "Synthetic lab identifiers only; no credentials, customer data, or operational paths."
+}

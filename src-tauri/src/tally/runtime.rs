@@ -27,8 +27,8 @@ use bridge_tally_protocol::native_outstandings::{
     render_native_ledger_export_request, render_native_ledger_snapshot_request,
     AgeingAnchor as NativeAgeingAnchor, CompanyCurrency, LedgerSnapshotEntry,
     NativeBillsReportKind, NativeGroupSnapshot, NativeLedgerExportPeriod,
-    NativeLedgerSnapshotPeriod, NativeMasterSnapshot, NativeOutstandingsError,
-    NativeOverdueCrosscheck,
+    NativeLedgerExportPeriodError, NativeLedgerSnapshotPeriod, NativeMasterSnapshot,
+    NativeOutstandingsError, NativeOverdueCrosscheck,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -562,6 +562,30 @@ fn partial_result(reason: impl Into<OutstandingsPartialReason>) -> OutstandingsL
         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
     }
 }
+
+fn ledger_opening_period(
+    profile: DateBoundaryProfile,
+    books_from: &TallyDate,
+    last_voucher_date: &TallyDate,
+    requested_from: Option<&TallyDate>,
+) -> Result<NativeLedgerExportPeriod, NativeLedgerExportPeriodError> {
+    let from = requested_from.unwrap_or(books_from);
+    if from < books_from {
+        return Err(NativeLedgerExportPeriodError::InvalidRange);
+    }
+    // The export does not fetch closing balances; `to` only avoids an inverted
+    // request when the requested opening follows the last posted voucher.
+    let to = if requested_from.is_some() {
+        last_voucher_date.max(from)
+    } else {
+        last_voucher_date
+    };
+    NativeLedgerExportPeriod::new(profile, from.clone(), to.clone())
+}
+
+#[cfg(test)]
+#[path = "runtime_ledger_opening_tests.rs"]
+mod ledger_opening_tests;
 
 enum NativeLedgerSnapshotPeriodAdmission {
     Period(NativeLedgerSnapshotPeriod),
@@ -1575,6 +1599,30 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
+        self.fetch_ledger_opening_with_evidence(config, identity, None)
+            .await
+    }
+
+    /// Reads the native period opening at `from`, retaining the existing paired
+    /// wire, company identity and book-extent checks. TALLY_PROTOCOL_REFERENCE
+    /// section 5.5 records the observed account-dependent period semantics;
+    /// callers must not treat every native opening as a running balance.
+    pub async fn fetch_ledger_opening_at_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        from: TallyDate,
+    ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
+        self.fetch_ledger_opening_with_evidence(config, identity, Some(from))
+            .await
+    }
+
+    async fn fetch_ledger_opening_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        opening_date: Option<TallyDate>,
+    ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
         let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
@@ -1584,15 +1632,17 @@ impl TallyRuntime {
             ReadRetryPolicy::transient_default(),
             move |client| {
                 let identity = identity.clone();
+                let opening_date = opening_date.clone();
                 async move {
                     bracket_verified_company_identity(&client, &identity).await?;
                     let opening_extent = client
                         .fetch_company_book_extent(identity.display_name(), identity.company_guid())
                         .await?;
-                    let period = NativeLedgerExportPeriod::new(
+                    let period = ledger_opening_period(
                         boundary_profile,
-                        opening_extent.books_from().clone(),
-                        opening_extent.last_voucher_date().clone(),
+                        opening_extent.books_from(),
+                        opening_extent.last_voucher_date(),
+                        opening_date.as_ref(),
                     )
                     .map_err(|_| anyhow::anyhow!("opening_period_not_honoured"))?;
                     let request =

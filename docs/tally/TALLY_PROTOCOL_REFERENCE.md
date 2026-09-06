@@ -342,6 +342,23 @@ At `FROM=BOOKSFROM`, only 3 of 88 Aarav ledgers were non-zero; the same date-les
 display period. Bridge therefore pins the native master export to `BOOKSFROM..LASTVOUCHERDATE`
 and treats its period as an accounting input, not a cosmetic request variable.
 
+**CORRECTION — live 2026-09-06, licensed synthetic lab.** Period opening is
+account-dependent; the two cash/bank observations above do not establish a
+running-balance rule for every ledger. Three Sales vouchers on 2026-08-01
+contributed `306.06`, but that Sales ledger returned native opening `0.00` for
+both 2026-08-02 and 2026-09-01. A debtor carried `-102.02` into September, and
+Cash carried a 2026-09-01 posting of `-12.50` into 2026-09-02. Paired native
+responses and MCP results agreed. These observations corroborate the earlier
+account-nature distinction: observed balance-sheet ledgers carry prior balances;
+observed nominal ledgers open at zero for the selected period.
+
+For a period movement report, use the observed native opening at the requested
+`from`, then apply only direct voucher entries inside the literal window. Do not
+add pre-window nominal activity to that opening. The resulting calculated
+closing is a period movement figure, not the balance-sheet `CLOSINGBALANCE`
+method. This is bounded evidence for the recorded ledgers and host, not universal
+report parity. Empty opening values remain unknown, never zero.
+
 **Compatibility boundary.** Education mode can silently refuse a non-01/02/31 `BOOKSFROM` and
 load its display period instead. The master response does not carry a returned date span, so this
 path cannot apply the voucher reader's I12 span comparison. Before dispatch, Bridge instead uses

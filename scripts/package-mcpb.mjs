@@ -43,19 +43,24 @@ export async function verifyMcpbStage(stageDirectory) {
   } catch {
     throw new Error("MCPB stage manifest is missing or invalid");
   }
-  const entries = manifest.server?.entry_point;
-  if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
-    throw new Error("MCPB stage manifest has no binary entry points");
+  const binary = manifest.server?.entry_point;
+  const host = Object.values(hostTargets).find(
+    (candidate) => binary === `bin/${candidate.target}/${candidate.binary}`,
+  );
+  if (!host) {
+    throw new Error("MCPB stage manifest has no supported host binary entry point");
   }
-  for (const [target, binary] of Object.entries(entries)) {
-    if (typeof binary !== "string" || !binary.startsWith("bin/")) {
-      throw new Error(`MCPB stage has invalid binary entry for ${target}`);
-    }
-    try {
-      await access(resolve(stageDirectory, binary));
-    } catch {
-      throw new Error(`MCPB stage advertises ${target} without binary ${binary}`);
-    }
+  const expectedPlatform = host.target.includes("windows") ? "win32" : "darwin";
+  if (JSON.stringify(manifest.compatibility?.platforms) !== JSON.stringify([expectedPlatform])) {
+    throw new Error("MCPB stage must advertise only its binary's operating system");
+  }
+  if (manifest.server.mcp_config?.command !== `\${__dirname}/${binary}`) {
+    throw new Error("MCPB launch command does not match its staged binary");
+  }
+  try {
+    await access(resolve(stageDirectory, binary));
+  } catch {
+    throw new Error(`MCPB stage is missing binary ${binary}`);
   }
 }
 
@@ -70,7 +75,9 @@ export async function stageHostManifest(stageDirectory, sourceRoot = root, host 
     await readFile(resolve(sourceRoot, "packaging", "mcpb", "manifest.json"), "utf8"),
   );
   const entryPoint = `bin/${host.target}/${host.binary}`;
-  template.server.entry_point = { [host.key]: entryPoint };
+  template.server.entry_point = entryPoint;
+  template.server.mcp_config.command = `\${__dirname}/${entryPoint}`;
+  template.compatibility = { platforms: [host.key.split("-")[0]] };
   await mkdir(stageDirectory, { recursive: true });
   await writeFile(resolve(stageDirectory, "manifest.json"), `${JSON.stringify(template, null, 2)}\n`);
   return entryPoint;
@@ -83,21 +90,21 @@ export function releaseMcpbBinaryPath(sourceRoot = root, binary) {
 async function main() {
   const manifest = resolve(root, "src-tauri", "Cargo.toml");
   const host = mcpbHostTarget();
-  const build = spawnSync("cargo", ["build", "--release", "--manifest-path", manifest, "--bin", "bridge_mcp"], {
+  const build = spawnSync("cargo", ["build", "--locked", "--release", "--manifest-path", manifest, "--bin", "bridge_mcp"], {
     cwd: root,
     stdio: "inherit",
   });
   if (build.status !== 0) process.exit(build.status ?? 1);
 
   const stageDirectory = resolve(root, "packaging", "mcpb", "stage");
+  await rm(stageDirectory, { recursive: true, force: true });
   const entryPoint = await stageHostManifest(stageDirectory, root, host);
   const destination = resolve(stageDirectory, entryPoint);
   await mkdir(resolve(stageDirectory, "bin", host.target), { recursive: true });
-  await rm(destination, { force: true });
   await cp(releaseMcpbBinaryPath(root, host.binary), destination);
   await stageMcpbResources(stageDirectory);
   await verifyMcpbStage(stageDirectory);
-  console.log(`Prepared ${destination} with a ${host.key}-only manifest and verified its staged resources; do not commit host artifacts.`);
+  console.log(`Prepared ${destination} and verified the ${host.key} binary, launch manifest, and legal resources; do not commit host artifacts.`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -1,0 +1,254 @@
+//! Movement for the local MCP adapter.
+use super::*;
+
+impl Server {
+    pub(super) async fn ledger_movement(&self, args: &Value) -> Result<ToolOutcome, String> {
+        let guid = required_string(args, "company_guid")?;
+        let from = normalized_date(required_string(args, "from")?)?;
+        let to = normalized_date(required_string(args, "to")?)?;
+        if from > to {
+            return Err("invalid_date_range".to_string());
+        }
+        let (company, identity, mut evidence) = self.verified_company(guid).await?;
+        let books_from = normalized_date(
+            company
+                .books_from
+                .as_deref()
+                .ok_or_else(|| "company_identity_incomplete".to_string())?,
+        )?;
+        ensure_movement_window_within_books(&from, &books_from)?;
+        let opening_date = bridge_tally_core::TallyDate::parse(from.clone())
+            .map_err(|_| "invalid_date".to_string())?;
+        let (ledgers, ledger_evidence) =
+            self.read_movement_ledgers(&identity, opening_date).await?;
+        evidence = combine_evidence(evidence, ledger_evidence);
+        let (vouchers, read_evidence) = self
+            .read_movement_vouchers(&identity, &company.name, from.clone(), to)
+            .await?;
+        evidence = combine_evidence(evidence, read_evidence);
+        let selected = optional_string(args, "ledger")?
+            .map(|name| {
+                resolve_ledger_name(ledgers.iter().map(|ledger| ledger.name.as_str()), &name)
+            })
+            .transpose()?;
+        let mut movement =
+            BTreeMap::<String, (Option<String>, Option<String>, String, String, usize)>::new();
+        for ledger in ledgers {
+            if selected.as_deref().is_none_or(|name| name == ledger.name) {
+                movement.insert(
+                    ledger.name,
+                    (
+                        ledger.parent.returned_text().map(str::to_string),
+                        ledger.opening_balance,
+                        "0".into(),
+                        "0".into(),
+                        0,
+                    ),
+                );
+            }
+        }
+        for voucher in &vouchers {
+            let mut touched = std::collections::BTreeSet::new();
+            for entry in &voucher.ledger_entries {
+                let Some(record) = movement.get_mut(&entry.ledger_name) else {
+                    absent_movement_entry_policy(&entry.ledger_name, selected.as_deref())?;
+                    continue;
+                };
+                let amount = bridge_tally_core::ExactDecimal::parse(entry.amount.clone())
+                    .map_err(|_| "voucher_amount_invalid".to_string())?;
+                let magnitude = amount
+                    .abs()
+                    .map_err(|_| "voucher_amount_invalid".to_string())?
+                    .as_str()
+                    .to_string();
+                if entry.is_deemed_positive {
+                    record.2 = add_decimal(&record.2, &format!("-{magnitude}"))?;
+                } else {
+                    record.3 = add_decimal(&record.3, &magnitude)?;
+                }
+                touched.insert(entry.ledger_name.clone());
+            }
+            for ledger in touched {
+                if let Some(record) = movement.get_mut(&ledger) {
+                    record.4 += 1;
+                }
+            }
+        }
+        let (rows, opening_unobserved) = movement
+            .into_iter()
+            .map(
+                |(name, (parent, opening, debit, credit, vouchers_touching))| {
+                    ledger_movement_row(
+                        LedgerMovementRow {
+                            name,
+                            parent,
+                            opening,
+                            debit,
+                            credit,
+                            vouchers_touching,
+                        },
+                        self.settings.redaction,
+                    )
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .fold(
+                (Vec::new(), false),
+                |(mut rows, any_partial), (row, partial)| {
+                    rows.push(row);
+                    (rows, any_partial || partial)
+                },
+            );
+        if opening_unobserved {
+            evidence.state = "partial";
+            evidence.reason_code = Some("opening_balance_not_observed".to_string());
+        }
+        let offset = arg_usize(args, "offset", 0)?;
+        let limit =
+            arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+        let total = rows.len();
+        let rows = rows
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect::<Vec<_>>();
+        let truncated = offset.saturating_add(rows.len()) < total;
+        let next_offset = truncated.then_some(offset + rows.len());
+        let (_, voucher_rows_observed) = ledger_movement_counts(&rows, &vouchers);
+        Ok(ToolOutcome {
+            payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": if opening_unobserved {"partial"} else {"complete"}, "partial_reason": opening_unobserved.then_some("opening_balance_not_observed"), "ledgers": rows, "offset": offset, "next_offset": next_offset, "voucher_rows_observed": voucher_rows_observed, "balance_basis": "tally_period_opening_plus_direct_voucher_movement", "evidence_method": "runtime_ledger_opening_at_from_plus_literal_window_entries"}}),
+            evidence,
+            company_guid: Some(guid.to_string()),
+            truncated,
+        })
+    }
+
+    pub(super) async fn read_movement_ledgers(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        from: bridge_tally_core::TallyDate,
+    ) -> Result<(Vec<TallyLedger>, Evidence), String> {
+        let (ledgers, evidence) = self
+            .runtime
+            .fetch_ledger_opening_at_with_evidence(self.tally_config(), identity, from)
+            .await
+            .map_err(|_| "ledger_movement_read_failed".to_string())?;
+        Ok((ledgers, evidence_from_runtime_read(evidence)))
+    }
+
+    pub(super) async fn read_movement_vouchers(
+        &self,
+        identity: &VerifiedCompanyIdentity,
+        company: &str,
+        from: String,
+        to: String,
+    ) -> Result<(Vec<MovementVoucher>, Evidence), String> {
+        let company = ValidatedCompanyName::new(company.to_string())
+            .map_err(|_| "company_name_invalid".to_string())?;
+        let range =
+            ValidatedDateRange::new(from, to).map_err(|_| "invalid_date_range".to_string())?;
+        let (xml, mut evidence) = self
+            .post_read(
+                identity,
+                render_agent_vouchers(
+                    company.as_str(),
+                    range.from_yyyymmdd(),
+                    range.to_yyyymmdd(),
+                    None,
+                )?,
+            )
+            .await?;
+        let page = parse_movement_rows(
+            parse_agent_changed_rows(&xml)?,
+            range.from_yyyymmdd(),
+            range.to_yyyymmdd(),
+        )?;
+        if page.observed_rows == 0 {
+            let (corroboration, partial, reason) = self
+                .corroborate_empty_voucher_read(
+                    identity,
+                    company.as_str(),
+                    range.from_yyyymmdd(),
+                    range.to_yyyymmdd(),
+                    None,
+                )
+                .await?;
+            if partial {
+                return Err(reason.unwrap_or("empty_uncorroborated").to_string());
+            }
+            evidence = combine_evidence(evidence, corroboration);
+        }
+        Ok((page.rows, evidence))
+    }
+}
+
+/// Native collection rows are parsed through the same boundary as the change
+/// feed. Bridge's report-format parser expects a different XML vocabulary.
+#[derive(serde::Deserialize)]
+pub(super) struct MovementVoucher {
+    date: String,
+    cancelled: bool,
+    optional: bool,
+    #[serde(rename = "amounts")]
+    pub(super) ledger_entries: Vec<MovementEntry>,
+}
+
+#[derive(serde::Deserialize)]
+pub(super) struct MovementEntry {
+    #[serde(rename = "ledger")]
+    ledger_name: String,
+    amount: String,
+    #[serde(deserialize_with = "parse_movement_polarity")]
+    is_deemed_positive: bool,
+}
+
+fn parse_movement_polarity<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<bool, D::Error> {
+    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+    required_tally_bool(Some(&value)).map_err(serde::de::Error::custom)
+}
+
+#[cfg(test)]
+pub(super) fn parse_movement_vouchers(
+    xml: &str,
+    from: &str,
+    to: &str,
+) -> Result<Vec<MovementVoucher>, String> {
+    Ok(parse_movement_rows(parse_agent_changed_rows(xml)?, from, to)?.rows)
+}
+
+struct MovementPage {
+    rows: Vec<MovementVoucher>,
+    observed_rows: usize,
+}
+
+fn parse_movement_rows(rows: Vec<Value>, from: &str, to: &str) -> Result<MovementPage, String> {
+    let observed_rows = rows.len();
+    let vouchers = rows
+        .into_iter()
+        .map(|row| {
+            serde_json::from_value::<MovementVoucher>(row)
+                .map_err(|_| "ledger_movement_read_failed".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // Check the whole window before excluding cancelled/optional records.
+    if vouchers
+        .iter()
+        .any(|voucher| voucher.date.as_str() < from || voucher.date.as_str() > to)
+    {
+        return Err("window_not_honoured".to_string());
+    }
+    Ok(MovementPage {
+        rows: vouchers
+            .into_iter()
+            .filter(|voucher| !voucher.cancelled && !voucher.optional)
+            .collect(),
+        observed_rows,
+    })
+}
+
+#[cfg(test)]
+#[path = "agent_movement_tests.rs"]
+mod tests;

@@ -38,36 +38,58 @@ Cursor uses the same server object in `.cursor/mcp.json`:
 ```
 
 The read tools are `tally_status`, `list_companies`, `outstandings`,
-`ledger_masters`, `ledger_movement`, `vouchers`, `changed_since`,
-`read_evidence`, and `egress_log`. Each call returns compact JSON with the
+`ledger_masters`, `ledger_movement`, `vouchers`,
+`read_evidence`, and `egress_log`; `voucher_schema` and `validate_masters` are also
+available by default (ten tools total). Each call returns compact JSON with the
 company identity where scoped, a read timestamp, request/response commitments,
 byte count, completeness reason, and truncation state. Every call appends a
 metadata-only receipt to `agent-egress.jsonl`; receipt lines never contain
 voucher bodies. Redaction happens before a result reaches the client.
+`fields_returned` contains sorted, unique leaf paths from the final redacted,
+byte-bounded `structuredContent`, including `company`, `evidence`, and `result`.
+For example, `result.open_bills[].due_date` records the released field, never its
+value. Arrays use `[]` without indices; null fields and empty collections remain
+represented. Protocol refusals with no structured payload list no released fields.
+All output object keys must remain server-defined; identifiers belong in values,
+including when adding new grouped reports.
 `egress_log` reads only the final 256 KiB, in 64 KiB reverse-seek chunks, so a
 larger receipt file still yields its bounded tail without loading the head.
-`changed_since` detects changes only for Ledger and Group masters; other Tally
-master types are deliberately out of scope and cannot advance its master cursor.
+`changed_since` is unavailable: it is omitted from tool discovery and direct calls
+are refused as `changed_since_unqualified` before contacting Tally. Bounded change
+enumeration and snapshot continuation have not been qualified. There is no operator
+setting to enable this tool.
 
 ### Ledger-movement opening decision
 
-`ledger_movement` reads `OPENINGBALANCE` through the native ledger export with
-`SVFROMDATE=BOOKSFROM`, then applies only the literal pre-window voucher
-movement before the requested `from` date. This is the chosen first option:
-the protocol evidence in `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §5.5
-verifies that `OPENINGBALANCE` follows `SVFROMDATE`, and that a date-less read
-can instead use Tally's current display period. The same section records that
-the master response has no returned date span, so Bridge admits the exact
-`BOOKSFROM` boundary through the endpoint compatibility profile before sending
-the request rather than claiming an unobservable response-period assertion.
+`ledger_movement` reads the native ledger opening with `SVFROMDATE` set to the
+requested `from` date, then combines it with voucher entries from the requested
+window. It does not scan earlier voucher history. The ordinary ledger-master
+export remains pinned to `BOOKSFROM`.
+
+`docs/tally/TALLY_PROTOCOL_REFERENCE.md` §5.5 records account-dependent native
+period semantics: observed balance-sheet ledgers carry balances into the period,
+while observed nominal ledgers open at zero. The returned `balance_basis` is
+`tally_period_opening_plus_direct_voucher_movement`. Calculated closing is a
+period movement result, not Tally's balance-sheet `CLOSINGBALANCE` field. Bridge
+uses the returned opening without guessing account classification from ledger names
+or immediate parent groups. A missing opening keeps both opening and closing
+unestablished, including at book start. Qualification covers the recorded account
+groups and instances; it is not a claim of universal ledger-report parity.
+
+The runtime retains its paired read, verified company, book-extent checks, and
+endpoint date-boundary admission. A rejected opening boundary is refused before
+the ledger export. A genuinely empty voucher response uses the same wider-window
+corroboration as `vouchers` before zero movement can be reported. Cancelled and
+optional rows establish response presence while contributing no accounting movement.
 
 ## Voucher-file loop (manual Tally import only; disabled by default)
 
 `build_import_xml` and `verify_import` are hidden unless the operator sets
-`BRIDGE_AGENT_ENABLE_IMPORT=1`. No live-Tally import/read-back evidence is
-recorded yet, so enabling this local planning path returns
-`live_evidence: "none_recorded"` and links to `docs/agent/GOAL2-REPORT.md`.
-It must not be described as live-verified.
+`BRIDGE_AGENT_ENABLE_IMPORT=1`. A licensed synthetic-lab Journal file cycle and
+exact-file repeat import were observed on 2026-09-06. The response records
+`live_evidence: "synthetic_lab_readback"` and links to
+[the assessment](ASSESSMENT-2026-09-06.md). This does not qualify every voucher
+type, host, licence mode, or manually imported file, so the feature remains opt-in.
 
 1. Call `voucher_schema` and produce a payload matching its schema. Transaction
    IDs are client-supplied, unique, and retained in the local import ledger.
@@ -94,8 +116,7 @@ before manual import.
 
 Safety boundary: local loopback only, bounded responses, verified company tuple
 selection, append-only receipts, and no agent import dispatch. Unsupported:
-Tally Cloud Access and every non-loopback Tally host. `changed_since` also
-explicitly does not claim deletion detection from AlterID alone. A
+Tally Cloud Access, every non-loopback Tally host, and change enumeration. A
 `posted_verified` result is a readback comparison of the selected date window,
 not live-Tally qualification or a claim that every Tally configuration or
 licence mode has been qualified.
@@ -117,13 +138,48 @@ live-Tally compatibility claim:
 ```
 
 `outstandings` returns the runtime's paired native result. A complete read has
-exact totals, four ageing buckets, top parties, open bills, and unallocated
-amount/count; a refused runtime read instead has `state: "partial"` and its
+billed totals explicitly scoped to open bills, four ageing buckets, top parties,
+open bills, and unallocated counts and directional totals; a refused runtime read instead has `state: "partial"` and its
 exact `partial_reason`. `ledger_movement` returns literal-window voucher
 movement with exact decimal `opening`, `debit`, `credit`, `closing`, parent,
 and `vouchers_touching`. `ledger_masters` accepts `fields: "compliance"` to
 return the paired party-master GSTIN/PAN/MSME/bank/IFSC/email/phone/state and
 address observations; `mask_parties` redacts the ledger name before it leaves
-the server. `changed_since` returns changed voucher/master records, the
-observed company `ALTVCHID`/`ALTMSTID` when exposed, and always states that
+the server. The unavailable `changed_since` implementation must not be used as
+change-enumeration evidence; its retained internal response states that
 deletion detection is unsupported.
+
+## Protocol and migration notes
+
+The server negotiates MCP `2025-06-18` or `2024-11-05`, returning a supported
+version when a client proposes a newer one. Initialization must precede tool
+requests. Frames are limited to 5 MB; tool responses obey the configured byte
+cap including the JSON-RPC wrapper and newline. Text content contains the same
+serialized, redacted JSON as `structuredContent` for older clients.
+
+Unknown arguments, wrong selector types, and invalid enums are rejected before
+any Tally request. Checkpoint numeric strings are no longer accepted at the tool
+boundary. `changed_since` is unavailable; existing clients must stop calling it.
+
+Top-party ranking uses `gross_exposure`, with billed and unallocated receivable
+and payable fields kept separate. `totals.scope` is `open_bills_only`.
+`unallocated.totals` contains `receivable`, `payable`, and `gross_unallocated`.
+The previous ambiguous `outstanding_total` and `unallocated.amount` fields have
+been removed. Gross exposure is not net money due.
+
+A fingerprint match without a retained transaction marker is
+`matching_content_observed`, with attribution unestablished; it is not counted
+as `posted_verified`. Verification entry differences are structured objects;
+duplicate metadata uses `fingerprint_sha256`. Each observed voucher can satisfy
+at most one expected transaction. Exact numeric comparison tolerates equivalent decimal spellings
+without changing the generated file or its stored hash.
+
+If a build persists a file but the response or receipt fails, the JSON-RPC error
+contains `error.data.batch_id`. Retain it and use `verify_import` or inspect the
+local import ledger; do not blindly rebuild or import another batch. Proof JSON,
+Markdown, and ledger status are published under one admission lock.
+
+No database migration is required. Roll back the binary/client configuration
+together if needed; preserve the data directory and import ledger. A binary
+rollback does not undo a separately imported Tally voucher. Existing files and
+transaction IDs remain local recovery evidence.

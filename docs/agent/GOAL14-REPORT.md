@@ -109,6 +109,6 @@ Duration  773ms
 $ corepack pnpm exec playwright test  # direct Vite server at 127.0.0.1:4173
 2 passed (916ms)
 
-$ PATH="/Users/tapishkhandelwal/.rustup/toolchains/1.96.0-aarch64-apple-darwin/bin:$PATH" node scripts/package-mcpb.mjs
-Prepared /Users/tapishkhandelwal/Desktop/dev/worktrees/bridge-agent-connector/packaging/mcpb/stage/bin/aarch64-apple-darwin/bridge_mcp with a darwin-arm64-only manifest and verified its staged resources; do not commit host artifacts.
+$ rustup run 1.96.0 node scripts/package-mcpb.mjs
+Prepared packaging/mcpb/stage/bin/aarch64-apple-darwin/bridge_mcp with a darwin-arm64-only manifest and verified its staged resources; do not commit host artifacts.
 ```
