@@ -37,7 +37,7 @@ the protocol's transport, lifecycle, and tool requirements.
 | --- | --- |
 | Native collection requests | Use explicit object-type elements, a defined collection matching the export ID, and measured ledger-entry fetch paths. |
 | Native parser | Read actual collection objects and direct scalar fields; preserve strict row validation and exact decimal values. Retained live captures exercise counters, numeric padding, Unicode, and nested allocations. |
-| Ledger movement | Use Tally's observed period opening at the requested start. Apply only in-window, non-cancelled, non-optional voucher entries. Eliminate the earlier-history scan. Corroborate opening snapshots and require freshly observed licence mode for caller-specified opening dates. |
+| Ledger movement | Use Tally's observed period opening at the requested start. Apply only in-window, non-cancelled, non-optional voucher entries. Eliminate the earlier-history scan. Corroborate opening snapshots and require freshly observed licence mode for both book-start and caller-specified opening dates. |
 | Change enumeration | Hide and refuse `changed_since`. A client result cap is not a server-work bound, and unqualified snapshot continuation is not a reliable change feed. No bypass setting is added. |
 | Import verification | Reserve explicit markers before fallback matching, consume each observed row once, and distinguish attributed postings from matching content. Equivalent decimal spellings compare equally without changing stored XML bytes. |
 | Response recovery | Preserve a persisted batch ID through result caps, final framing caps, and receipt failures. The client can recover without generating another transaction. |
@@ -89,6 +89,20 @@ before returning complete reads or calculating movement. Wrong object types in
 a voucher collection are refused instead of becoming an empty observation.
 Evidence-history reads mark omissions from both requested limits and retention
 eviction as truncated.
+
+Both book-start and explicit-date ledger openings now obtain a fresh mode probe
+before date admission and bracket the read with a closing mode observation. A
+stale cached mode cannot admit an unsupported Education-mode date. Captured-source
+regressions cover absent/stale cache, unsafe book starts, and closing mode drift.
+
+Import verification fingerprints each expected and observed voucher once and
+indexes marker/content candidates before matching. A captured-derived local
+1,000-expected/10,000-observed regression retained the same verdicts while reducing
+matching from 19.4 seconds to 0.48 seconds without markers, and from 30.8 seconds
+to 0.39 seconds with markers. These are local comparison measurements, not Tally
+response-time claims. New voucher-file generation and its schema admit only
+Journal, the type established by live import/readback. Payment, Receipt, and
+Contra fail before network or file effects; historical records remain readable.
 
 Receipt records distinguish `response_prepared` from `stdio_write_completed`,
 linked by receipt ID and frame hash. Preparation records use `*_prepared` fields;
@@ -176,7 +190,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **929 Rust workspace tests**, **187 agent tests
+Local candidate verification: **932 Rust workspace tests**, **189 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -185,16 +199,17 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed nineteen live checks with party masking:
-eighteen complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed twenty live checks with party masking:
+nineteen complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
-window correctly carried the test Journal's Cash opening. Status, master
+window correctly carried the test Journal's Cash opening. A separate fresh process
+read all nine basic ledgers without a preceding status call. Status, master
 validation, filtered and unfiltered vouchers, compliance masters, outstandings,
 restored-batch verification, and egress-log readback also completed.
 Every emitted frame matched its linked preparation/completion receipts and
 text/structured representations.
-Status, filtered-voucher, and compliance-master commitments and source byte counts
+Status, filtered-voucher, compliance-master, and basic-ledger commitments and source byte counts
 were independently recomputed from the captured transport request/response files.
 The voucher-type filter and a nonmatching ledger selection both completed.
 Ordinary voucher rows exposed observed boolean cancellation and optional flags.
@@ -217,9 +232,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `fbd1a1b73762cb7b53ce0a804574aa58795a1f82cd71a2cbdeb56103e170dc8b`.
-- MCPB archive SHA-256: `e820a426c42dc1caaacd320ffef9df0d1b387993d5234f063573870e582bebf5`.
-- Source fingerprint (324 build-input files, unchanged through the settled-source rebuild): `ec47fd2b3f98ee2915b48abd66e7eb5a5a0bf13d7731e1505b542a92b7c19800`.
+- Release executable SHA-256: `0f52ba83a1d89a092898b3b071168996e99332dc7db7c96a32c9da5fdc45fdbb`.
+- MCPB archive SHA-256: `47fdefcd89a4fa4ce4a330e3c8eac4c61b54a2bf901b1908fea84842db9b6558`.
+- Source fingerprint (326 build-input files, unchanged through the settled-source rebuild): `ee2c33c69bfdd8a804d9c8c96cceef798a949af0cdd07bfd117f87c35cc8f6e0`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -236,7 +251,7 @@ were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
 The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates the existing runtime pin for duplicate ledger-identity admission. Earlier
+updates the existing runtime pin for fresh opening-mode admission. Earlier
 changes covered request commitments, report-source fields, CI packaging, and
 the period-opening protocol reference. The existing pin
 set was rehashed, sealed, and repointed using the release-process commands.
