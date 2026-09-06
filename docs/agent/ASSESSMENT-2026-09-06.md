@@ -274,7 +274,7 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.54` after repeated catalogue and licensed-mode observations, and
+additional Journal file for `12.55` after repeated catalogue and licensed-mode observations, and
 readback confirmed `not_found`; that file was not imported. No additional Tally
 posting was performed. The expected read refusal retained its actual completed source
 commitments and byte count, retrievable through `read_evidence`; omitted egress
@@ -291,9 +291,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `0ca9ad2c687791024a2229915911160e0e0592ae4b80e20cfe62adb425a01e01`.
-- MCPB archive SHA-256: `c2d52ec0796cef73b0ce792cefb57b12da0e41c2ecb502bc5b74e0f3deaddd8d`.
-- Source fingerprint (346 build-input files, unchanged through the settled-source rebuild): `fd643210f2ab1b1f560f83e3da064b71b3bf9bb7f1d260b850600853f627ed9c`.
+- Release executable SHA-256: `aaeedc9aecf66ae4ae55d6e180b3278d369ce54d476e980fe3821be0dd6ec8dd`.
+- MCPB archive SHA-256: `2d02e4d5437f710114b619d3e6b7d11122455a7b5e2dd46971bb78105f055872`.
+- Source fingerprint (346 build-input files, unchanged through the settled-source rebuild): `2f186d0ecc576a6642edc61afd9237d7f3ab8d04481bdc1f51574d1955fe3236`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
