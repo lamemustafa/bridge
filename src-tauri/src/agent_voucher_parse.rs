@@ -1,12 +1,17 @@
 //! Voucher parse for the local MCP adapter.
 use super::*;
 
+#[path = "agent_voucher_scalars.rs"]
+mod scalars;
+pub(super) use scalars::*;
+
 /// Shares the native collection boundary used by the protocol crate: CMPINFO
 /// contains identically named counters outside BODY/DATA/COLLECTION.
 #[derive(Default)]
 pub(super) struct NativeCollectionScope {
     path: Vec<String>,
     collection_seen: bool,
+    repeated_collection: bool,
 }
 
 impl NativeCollectionScope {
@@ -31,8 +36,15 @@ impl NativeCollectionScope {
             && self.path[..5] == ["ENVELOPE", "BODY", "DATA", "COLLECTION", "VOUCHER"]
             && self.path[5] == "ALLLEDGERENTRIES.LIST"
     }
+    pub(super) fn voucher_scalar(&self) -> bool {
+        self.path.last().is_some_and(|field| {
+            (self.field("VOUCHER") && is_voucher_scalar(field))
+                || (self.entry_field() && is_voucher_entry_scalar(field))
+        })
+    }
     pub(super) fn start(&mut self, name: String) {
         if self.path == ["ENVELOPE", "BODY", "DATA"] && name == "COLLECTION" {
+            self.repeated_collection |= self.collection_seen;
             self.collection_seen = true;
         }
         self.path.push(name);
@@ -44,7 +56,7 @@ impl NativeCollectionScope {
         Ok(())
     }
     pub(super) fn finish(&self) -> Result<(), String> {
-        if self.collection_seen && self.path.is_empty() {
+        if self.collection_seen && !self.repeated_collection && self.path.is_empty() {
             Ok(())
         } else {
             Err("agent_read_protocol_invalid".to_string())
@@ -70,7 +82,7 @@ pub(super) fn parse_agent_rows_with_accounting_state(
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut rows = Vec::new();
-    validate_agent_envelope(xml, "VOUCHER")?;
+    validate_agent_envelope(xml)?;
     let mut current: Option<BTreeMap<String, String>> = None;
     let mut entry: Option<BTreeMap<String, String>> = None;
     let mut entries = Vec::<Value>::new();
@@ -80,6 +92,9 @@ pub(super) fn parse_agent_rows_with_accounting_state(
         match reader.read_event() {
             Ok(quick_xml::events::Event::Start(event)) => {
                 let tag = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                if scope.voucher_scalar() {
+                    return Err("agent_read_protocol_invalid".into());
+                }
                 if tag == "VOUCHER" && scope.collection() {
                     current = Some(BTreeMap::new());
                     entries.clear();
@@ -87,6 +102,7 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                 if tag == "ALLLEDGERENTRIES.LIST" && scope.row("VOUCHER") {
                     entry = Some(BTreeMap::new());
                 }
+                claim_voucher_scalar(&scope, &tag, current.as_mut(), entry.as_mut())?;
                 scope.start(tag.clone());
                 current_tag = tag;
             }
@@ -95,6 +111,17 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                     append_agent_text(row, &current_tag, decoded_agent_text(text)?);
                 } else if let Some(row) = current.as_mut().filter(|_| scope.field("VOUCHER")) {
                     append_agent_text(row, &current_tag, decoded_agent_text(text)?);
+                }
+            }
+            Ok(quick_xml::events::Event::CData(text)) => {
+                let value = text
+                    .decode()
+                    .map_err(|_| "agent_read_protocol_invalid".to_string())?
+                    .into_owned();
+                if let Some(row) = entry.as_mut().filter(|_| scope.entry_field()) {
+                    append_agent_text(row, &current_tag, value);
+                } else if let Some(row) = current.as_mut().filter(|_| scope.field("VOUCHER")) {
+                    append_agent_text(row, &current_tag, value);
                 }
             }
             Ok(quick_xml::events::Event::GeneralRef(reference)) => {
@@ -116,13 +143,16 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                             .get("AMOUNT")
                             .filter(|value| !value.trim().is_empty())
                             .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
-                        bridge_tally_core::ExactDecimal::parse(amount.clone())
+                        let parsed_amount = bridge_tally_core::ExactDecimal::parse(amount.clone())
                             .map_err(|_| "voucher_amount_invalid".to_string())?;
                         let polarity = entry_row
                             .get("ISDEEMEDPOSITIVE")
                             .filter(|value| !value.trim().is_empty())
                             .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
-                        required_tally_bool(Some(polarity))?;
+                        validate_tally_entry_polarity(
+                            &parsed_amount,
+                            required_tally_bool(Some(polarity))?,
+                        )?;
                         entries.push(json!({
                             "ledger": ledger,
                             "amount": amount,
@@ -155,8 +185,12 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                         }
                         bridge_tally_core::TallyDate::parse(row["DATE"].clone())
                             .map_err(|_| "voucher_date_invalid".to_string())?;
+                        parse_optional_tally_u64(
+                            row.get("MASTERID").map(String::as_str),
+                            "voucher_master_id_invalid",
+                        )?;
                         let amounts = std::mem::take(&mut entries);
-                        let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": row.get("ALTERID").and_then(|v| v.trim().parse::<u64>().ok()), "master_id": row.get("MASTERID"), "amounts": amounts});
+                        let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": parse_optional_tally_alter_id(row.get("ALTERID").map(String::as_str))?, "master_id": row.get("MASTERID"), "amounts": amounts});
                         parsed["cancelled"] =
                             Value::Bool(required_tally_bool(row.get("ISCANCELLED"))?);
                         parsed["optional"] =
@@ -169,9 +203,13 @@ pub(super) fn parse_agent_rows_with_accounting_state(
             }
             Ok(quick_xml::events::Event::Empty(event)) => {
                 let name = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
+                if scope.voucher_scalar() {
+                    return Err("agent_read_protocol_invalid".into());
+                }
                 if scope.collection() && name == "VOUCHER" {
                     return Err("agent_read_protocol_invalid".to_string());
                 }
+                claim_voucher_scalar(&scope, &name, current.as_mut(), entry.as_mut())?;
                 scope.start(name.clone());
                 scope.end(&name)?;
             }
@@ -186,6 +224,25 @@ pub(super) fn parse_agent_rows_with_accounting_state(
 
 pub(super) fn append_agent_text(row: &mut BTreeMap<String, String>, tag: &str, value: String) {
     row.entry(tag.to_string()).or_default().push_str(&value);
+}
+
+fn claim_voucher_scalar(
+    scope: &NativeCollectionScope,
+    field: &str,
+    current: Option<&mut BTreeMap<String, String>>,
+    entry: Option<&mut BTreeMap<String, String>>,
+) -> Result<(), String> {
+    let row = if scope.row("VOUCHER") && is_voucher_scalar(field) {
+        current
+    } else if scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST") && is_voucher_entry_scalar(field) {
+        entry
+    } else {
+        None
+    };
+    if let Some(row) = row {
+        claim_agent_scalar(row, field)?;
+    }
+    Ok(())
 }
 
 pub(super) fn decoded_agent_text(text: quick_xml::events::BytesText<'_>) -> Result<String, String> {
