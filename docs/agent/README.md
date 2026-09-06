@@ -97,6 +97,11 @@ the ledger export. A genuinely empty voucher response uses the same wider-window
 corroboration as `vouchers` before zero movement can be reported. Cancelled and
 optional rows establish response presence while contributing no accounting movement.
 
+Capability profile version 4 adds the observed licence tier alongside the release.
+Older serialized profiles remain readable with an unknown tier, but saved profile
+reuse requires a fresh matching version-4 observation. No database migration is
+required.
+
 ## Voucher-file loop (manual Tally import only; disabled by default)
 
 `build_import_xml` and `verify_import` are hidden unless the operator sets

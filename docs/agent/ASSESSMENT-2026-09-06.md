@@ -337,8 +337,10 @@ were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
 The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates the existing protocol-reference pin for the qualified file-identity and
-numbering clarification. Previous seals cover the literal-date counter-observation,
+updates eight existing paths for observed release/tier profile version 4, its
+constructor migration, typed native-ledger validation and the protocol observation.
+No paths were added or removed. Previous seals cover the qualified file-identity
+and numbering clarification, literal-date counter-observation,
 negative-verdict qualification limit, currency witness,
 standard-library file locking, fresh financial mode admission and retained refusal
 evidence. Earlier
