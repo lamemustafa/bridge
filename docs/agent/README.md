@@ -217,9 +217,23 @@ Receipts count released master-validation and loaded-company rows. Unknown tool
 names are represented by `unknown` and `tool_name_sha256`; company IDs are
 canonical UUIDs. Failed receipt appends restore the previous file length.
 An incomplete log or failed rollback stops the session; a persisted build still
-returns its recovery batch ID before termination.
+returns its recovery batch ID before termination. Reads withheld by the result
+byte cap retain partial source commitments in the in-process evidence store.
+Voucher selectors are applied after source-emptiness corroboration; a nonempty
+source with no matching ledger can return a complete empty selection. Amounts
+must parse as exact decimals before ordinary voucher rows are released. Movement
+metadata counts all source vouchers, including non-posting rows excluded from
+balances.
 
-No database migration is required. Roll back the binary/client configuration
-together if needed; preserve the data directory and import ledger. A binary
-rollback does not undo a separately imported Tally voucher. Existing files and
-transaction IDs remain local recovery evidence.
+Verification appends a compact status record bound to the batch ID and original
+file hash, rather than duplicating vouchers and narration. The reader accepts
+existing full batch records and their historical updates. Output row limits do
+not determine verification-source completeness; the collection read is uncapped
+by that setting and its identity set is independently corroborated.
+
+No database migration is required. Older binaries cannot read the new compact
+status records. Preserve the data directory, import ledger, and proofs; use the
+new binary for the import workflow or disable imports after a binary downgrade.
+Do not truncate the ledger to force downgrade compatibility. A binary rollback
+does not undo a separately imported Tally voucher. Existing files and transaction
+IDs remain local recovery evidence.

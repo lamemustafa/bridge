@@ -57,6 +57,17 @@ entry point, and environment mappings; official CLI validation is part of bundle
 CI. A ZIP file with a manifest-shaped object is insufficient evidence.
 [Official schema](https://github.com/anthropics/mcpb/blob/70fe3b34cd6dff1b3bba046638edc72a6467a4fb/src/schemas/0.1.ts)
 
+### Final review corrections
+
+Voucher amounts must parse before either ordinary or accounting reads release
+them. Empty-window corroboration applies to the unfiltered source; a selector
+with no matches does not erase evidence that source rows were observed. Movement
+metadata preserves cancelled and optional source-row counts while excluding their
+entries from balances. Response-cap refusals retain partial source commitments
+in the in-process evidence store. Import verification is independent of the MCP
+output-row limit, and repeated verification appends compact hash-bound status
+records instead of duplicating the batch payload.
+
 ### Dated correction: period opening
 
 The earlier implementation calculated a running opening by adding every prior
@@ -130,7 +141,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **888 Rust workspace tests**, **148 agent tests
+Local candidate verification: **893 Rust workspace tests**, **153 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -139,8 +150,8 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed sixteen live checks with party masking:
-fifteen complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed seventeen live checks with party masking:
+sixteen complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. Status, master
@@ -149,19 +160,23 @@ restored-batch verification, and egress-log readback also completed.
 Every emitted frame matched its receipt and text/structured representations.
 Status, filtered-voucher, and compliance-master commitments and source byte counts
 were independently recomputed from the captured transport request/response files.
-The voucher-type filter also completed. A new staged file was generated, its
-journal was cleaned up, and readback correctly reported it as not imported; no
-additional Tally posting was performed. A separate process check confirmed port
-zero fails at startup before creating the data directory.
+The voucher-type filter and a nonmatching ledger selection both completed.
+Two verifications with a one-row output cap retained an attributed complete
+result and appended 408 bytes total to the local ledger. A previously generated
+staged file still correctly reported as not imported. No additional Tally posting
+was performed. The first process started before the recording proxy was ready;
+its failed observations were retained, then the calls were repeated after an
+explicit readiness check. A separate process check confirmed port zero fails
+at startup before creating the data directory.
 That same binary passed eight checks using official MCP
 JavaScript SDK 1.30.0, negotiating 2025-11-25 down to 2025-06-18. Official MCPB
 CLI 2.1.2 validated and packed the archive. Its extracted executable and all four
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `88ea543bacbc359d74b07c4400464dabe4a4086b675d63ed29f2be3c42a4063d`.
-- MCPB archive SHA-256: `bfa7a2ed179974956ec24914ad35d23077fff0d783dd3897ee85c3971a493b7b`.
-- Source fingerprint (303 build-input files, unchanged through the settled-source rebuild): `654f109a80197a92ac95f040b9c81522980016401b9828bd9c17b01e079c88cd`.
+- Release executable SHA-256: `b009265fcc8a7211a10b6e678895263176fce874a1cd484c66fda69fc2ecfe81`.
+- MCPB archive SHA-256: `3ee4ae213022cfeb7ae315566a78c5097f579349de4d0d7e9706b79e4d339927`.
+- Source fingerprint (305 build-input files, unchanged through the settled-source rebuild): `2d96e972a53efcae3ee7b9841cc2d22740412c1dc95d7863f6da502b165a969d`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -188,9 +203,11 @@ No compatibility cell was promoted.
 
 See [README migration notes](README.md#protocol-and-migration-notes) for output
 field changes, unavailable change enumeration, strict argument admission, and
-fingerprint-only attribution. There is no database migration. Preserve local
-import files and their append-only ledger across binary rollback. Rolling back
-the connector does not undo an operator import into Tally.
+fingerprint-only attribution. There is no database migration. The new reader
+accepts legacy full batch records and compact hash-bound verification status
+records; older binaries refuse the compact format. Preserve the ledger and
+proofs, and disable imports after a binary downgrade instead of truncating
+history. Rolling back the connector does not undo an operator import into Tally.
 
 The connector remains loopback-only and never dispatches import XML. Company
 identity, response redaction, bounded input/output, local private-file handling,
