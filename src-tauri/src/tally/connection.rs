@@ -996,176 +996,207 @@ impl TallyClient {
         boundary_profile: DateBoundaryProfile,
         currency_assertion: PartyLedgerMasterCurrencyAssertion,
     ) -> anyhow::Result<PartyLedgerMasterSource> {
-        let opening_extent = self
-            .fetch_company_book_extent(company, expected_company_guid)
-            .await?;
-        let currency = currency_assertion.require_opening_extent(&opening_extent)?;
-        let master_period = NativeLedgerExportPeriod::new(
-            boundary_profile,
-            opening_extent.books_from().clone(),
-            opening_extent.last_voucher_date().clone(),
-        )
-        .map_err(|_| anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterPeriod))?;
-        let balance_period = party_ledger_master_balance_period(
-            boundary_profile,
-            opening_extent.books_from().clone(),
-            opening_extent.last_voucher_date().clone(),
-        )
-        .map_err(|_| anyhow::Error::new(PartyLedgerMasterSourceValidationError::BalancePeriod))?;
-        let requests = [
-            render_party_ledger_master_request(company, &master_period),
-            render_native_ledger_snapshot_request(company, &balance_period),
-            render_native_group_snapshot_request(company),
-        ];
-        let request_sha256 = party_ledger_request_commitment(&requests);
-        let [master_request, balance_request, group_request] = requests;
-        let master_pair = self.fetch_native_report_paired(master_request).await?;
-        let NativePairedRead::Stable {
-            body: master_body,
-            encoded_bytes: master_response_bytes,
-            encoded_sha256: master_response_sha256,
-        } = master_pair
-        else {
-            return Err(anyhow::Error::new(
-                PairedReadValidationError::PartyLedgerMaster,
+        let mut evidence = RuntimeReadEvidence::empty();
+        let result = async {
+            let opening_extent = self
+                .fetch_company_book_extent(company, expected_company_guid)
+                .await?;
+            let currency = currency_assertion.require_opening_extent(&opening_extent)?;
+            let master_period = NativeLedgerExportPeriod::new(
+                boundary_profile,
+                opening_extent.books_from().clone(),
+                opening_extent.last_voucher_date().clone(),
+            )
+            .map_err(|_| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterPeriod)
+            })?;
+            let balance_period = party_ledger_master_balance_period(
+                boundary_profile,
+                opening_extent.books_from().clone(),
+                opening_extent.last_voucher_date().clone(),
+            )
+            .map_err(|_| {
+                anyhow::Error::new(PartyLedgerMasterSourceValidationError::BalancePeriod)
+            })?;
+            let requests = [
+                render_party_ledger_master_request(company, &master_period),
+                render_native_ledger_snapshot_request(company, &balance_period),
+                render_native_group_snapshot_request(company),
+            ];
+            let request_sha256 = party_ledger_request_commitment(&requests);
+            let [master_request, balance_request, group_request] = requests;
+            let master_pair = self
+                .fetch_native_report_paired(master_request.clone())
+                .await?;
+            let NativePairedRead::Stable {
+                body: master_body,
+                encoded_bytes: master_response_bytes,
+                encoded_sha256: master_response_sha256,
+            } = master_pair
+            else {
+                return Err(anyhow::Error::new(
+                    PairedReadValidationError::PartyLedgerMaster,
+                ));
+            };
+            evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
+                &master_request,
+                master_response_sha256.clone(),
+                master_response_bytes,
             ));
-        };
-        let master = parse_native_party_ledger_master_records_with_evidence(
-            &master_body,
-            expected_company_guid,
-        )
-        .map_err(party_ledger_master_master_snapshot_error)?;
-        if !master.evidence.duplicate_identities.is_empty() {
-            return Err(anyhow::Error::new(
-                PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
+            let master = parse_native_party_ledger_master_records_with_evidence(
+                &master_body,
+                expected_company_guid,
+            )
+            .map_err(party_ledger_master_master_snapshot_error)?;
+            if !master.evidence.duplicate_identities.is_empty() {
+                return Err(anyhow::Error::new(
+                    PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
+                ));
+            }
+            let balance_pair = self
+                .fetch_native_report_paired(balance_request.clone())
+                .await?;
+            let NativePairedRead::Stable {
+                body: balance_body,
+                encoded_bytes: balance_response_bytes,
+                encoded_sha256: balance_response_sha256,
+            } = balance_pair
+            else {
+                return Err(anyhow::Error::new(
+                    PairedReadValidationError::PartyLedgerBalance,
+                ));
+            };
+            evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
+                &balance_request,
+                balance_response_sha256.clone(),
+                balance_response_bytes,
             ));
-        }
-        let balance_pair = self.fetch_native_report_paired(balance_request).await?;
-        let NativePairedRead::Stable {
-            body: balance_body,
-            encoded_bytes: balance_response_bytes,
-            encoded_sha256: balance_response_sha256,
-        } = balance_pair
-        else {
-            return Err(anyhow::Error::new(
-                PairedReadValidationError::PartyLedgerBalance,
+            let balances =
+                parse_native_ledger_snapshot_for_company(&balance_body, expected_company_guid)
+                    .map_err(party_ledger_master_balance_snapshot_error)?;
+            let group_pair = self
+                .fetch_native_report_paired(group_request.clone())
+                .await?;
+            let NativePairedRead::Stable {
+                body: group_body,
+                encoded_bytes: group_response_bytes,
+                encoded_sha256: group_response_sha256,
+            } = group_pair
+            else {
+                return Err(anyhow::Error::new(
+                    PairedReadValidationError::PartyLedgerGroup,
+                ));
+            };
+            evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
+                &group_request,
+                group_response_sha256.clone(),
+                group_response_bytes,
             ));
-        };
-        let balances =
-            parse_native_ledger_snapshot_for_company(&balance_body, expected_company_guid)
-                .map_err(party_ledger_master_balance_snapshot_error)?;
-        let group_pair = self.fetch_native_report_paired(group_request).await?;
-        let NativePairedRead::Stable {
-            body: group_body,
-            encoded_bytes: group_response_bytes,
-            encoded_sha256: group_response_sha256,
-        } = group_pair
-        else {
-            return Err(anyhow::Error::new(
-                PairedReadValidationError::PartyLedgerGroup,
-            ));
-        };
-        let groups = parse_native_group_snapshot_with_evidence(&group_body, expected_company_guid)
-            .map_err(party_ledger_master_group_snapshot_error)?
-            .into_iter()
-            .map(|entry| PartyLedgerMasterGroup {
-                name: entry.record.name,
-                parent: entry.record.parent,
-                reserved_name: entry.record.reserved_name,
-            })
-            .collect();
-        let closing_extent = self
-            .fetch_company_book_extent(company, expected_company_guid)
-            .await?;
-        if closing_extent != opening_extent {
-            return Err(anyhow::Error::new(
-                PairedReadValidationError::PartyLedgerExtent,
-            ));
-        }
+            let groups =
+                parse_native_group_snapshot_with_evidence(&group_body, expected_company_guid)
+                    .map_err(party_ledger_master_group_snapshot_error)?
+                    .into_iter()
+                    .map(|entry| PartyLedgerMasterGroup {
+                        name: entry.record.name,
+                        parent: entry.record.parent,
+                        reserved_name: entry.record.reserved_name,
+                    })
+                    .collect();
+            let closing_extent = self
+                .fetch_company_book_extent(company, expected_company_guid)
+                .await?;
+            if closing_extent != opening_extent {
+                return Err(anyhow::Error::new(
+                    PairedReadValidationError::PartyLedgerExtent,
+                ));
+            }
 
-        let mut balances_by_key = HashMap::new();
-        for balance in balances {
-            let key = ledger_display_key(&balance.name, balance.parent.as_deref());
-            if balances_by_key.insert(key, balance).is_some() {
+            let mut balances_by_key = HashMap::new();
+            for balance in balances {
+                let key = ledger_display_key(&balance.name, balance.parent.as_deref());
+                if balances_by_key.insert(key, balance).is_some() {
+                    return Err(anyhow::Error::new(
+                        PartyLedgerMasterSourceValidationError::DuplicateBalanceDisplayKey,
+                    ));
+                }
+            }
+            let mut rows = Vec::with_capacity(master.records.len());
+            for source in master.records {
+                let key = ledger_display_key(
+                    &source.record.ledger.name,
+                    source.record.ledger.parent.nonempty_returned_text(),
+                );
+                let balance = balances_by_key.remove(&key).ok_or_else(|| {
+                    anyhow::Error::new(
+                        PartyLedgerMasterSourceValidationError::BalanceMissingMasterLedger,
+                    )
+                })?;
+                let guid = source.identities.guid.ok_or_else(|| {
+                    anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterGuid)
+                })?;
+                let master_id = source.identities.master_id.ok_or_else(|| {
+                    anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterId)
+                })?;
+                let alter_id = source.alter_id.ok_or_else(|| {
+                    anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterAlterId)
+                })?;
+                let master_opening =
+                    source
+                        .record
+                        .ledger
+                        .opening_balance
+                        .as_deref()
+                        .ok_or_else(|| {
+                            anyhow::Error::new(
+                                PartyLedgerMasterSourceValidationError::MasterOpeningBalance,
+                            )
+                        })?;
+                if !party_ledger_master_openings_agree(master_opening, &balance.opening_balance)? {
+                    return Err(anyhow::Error::new(
+                        PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
+                    ));
+                }
+                rows.push(PartyLedgerMasterRow {
+                    name: source.record.ledger.name,
+                    parent: source.record.ledger.parent,
+                    party_gstin: source.record.ledger.party_gstin,
+                    fields: source.record.fields,
+                    guid,
+                    master_id,
+                    alter_id,
+                    opening_balance: balance.opening_balance,
+                    closing_balance: balance.closing_balance,
+                });
+            }
+            if !balances_by_key.is_empty() {
                 return Err(anyhow::Error::new(
-                    PartyLedgerMasterSourceValidationError::DuplicateBalanceDisplayKey,
+                    PartyLedgerMasterSourceValidationError::BalanceLedgerAbsentFromMasterEvidence,
                 ));
             }
+            rows.sort_by(|left, right| left.name.cmp(&right.name).then(left.guid.cmp(&right.guid)));
+            Ok(PartyLedgerMasterSource {
+                company: company.to_string(),
+                company_guid: expected_company_guid.to_string(),
+                currency_assertion: currency.assertion,
+                currency_decimal_places: currency.decimal_places,
+                from: master_period.from().clone(),
+                // The snapshot period is the balance evidence. Its derived end is
+                // the date Tally was actually asked to honor, not merely the last
+                // voucher date used by the identity/master read.
+                to: balance_period.to().clone(),
+                rows,
+                request_sha256,
+                master_response_sha256,
+                balance_response_sha256,
+                group_response_sha256,
+                master_response_bytes,
+                balance_response_bytes,
+                group_response_bytes,
+                groups,
+            })
         }
-        let mut rows = Vec::with_capacity(master.records.len());
-        for source in master.records {
-            let key = ledger_display_key(
-                &source.record.ledger.name,
-                source.record.ledger.parent.nonempty_returned_text(),
-            );
-            let balance = balances_by_key.remove(&key).ok_or_else(|| {
-                anyhow::Error::new(
-                    PartyLedgerMasterSourceValidationError::BalanceMissingMasterLedger,
-                )
-            })?;
-            let guid = source.identities.guid.ok_or_else(|| {
-                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterGuid)
-            })?;
-            let master_id = source.identities.master_id.ok_or_else(|| {
-                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterId)
-            })?;
-            let alter_id = source.alter_id.ok_or_else(|| {
-                anyhow::Error::new(PartyLedgerMasterSourceValidationError::MasterAlterId)
-            })?;
-            let master_opening =
-                source
-                    .record
-                    .ledger
-                    .opening_balance
-                    .as_deref()
-                    .ok_or_else(|| {
-                        anyhow::Error::new(
-                            PartyLedgerMasterSourceValidationError::MasterOpeningBalance,
-                        )
-                    })?;
-            if !party_ledger_master_openings_agree(master_opening, &balance.opening_balance)? {
-                return Err(anyhow::Error::new(
-                    PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed,
-                ));
-            }
-            rows.push(PartyLedgerMasterRow {
-                name: source.record.ledger.name,
-                parent: source.record.ledger.parent,
-                party_gstin: source.record.ledger.party_gstin,
-                fields: source.record.fields,
-                guid,
-                master_id,
-                alter_id,
-                opening_balance: balance.opening_balance,
-                closing_balance: balance.closing_balance,
-            });
-        }
-        if !balances_by_key.is_empty() {
-            return Err(anyhow::Error::new(
-                PartyLedgerMasterSourceValidationError::BalanceLedgerAbsentFromMasterEvidence,
-            ));
-        }
-        rows.sort_by(|left, right| left.name.cmp(&right.name).then(left.guid.cmp(&right.guid)));
-        Ok(PartyLedgerMasterSource {
-            company: company.to_string(),
-            company_guid: expected_company_guid.to_string(),
-            currency_assertion: currency.assertion,
-            currency_decimal_places: currency.decimal_places,
-            from: master_period.from().clone(),
-            // The snapshot period is the balance evidence. Its derived end is
-            // the date Tally was actually asked to honor, not merely the last
-            // voucher date used by the identity/master read.
-            to: balance_period.to().clone(),
-            rows,
-            request_sha256,
-            master_response_sha256,
-            balance_response_sha256,
-            group_response_sha256,
-            master_response_bytes,
-            balance_response_bytes,
-            group_response_bytes,
-            groups,
-        })
+        .await;
+        result.map_err(|error| crate::tally::runtime::with_read_evidence(error, evidence))
     }
 
     /// Reads the documented standard ledger collection as an explicitly limited
