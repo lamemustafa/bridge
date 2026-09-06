@@ -72,7 +72,15 @@ fn identical_expected_vouchers_verify_only_with_unique_full_attribution() {
         extra.guid = Some("unexpected-guid".into());
         extra.master_id = Some("999".into());
         extra.remote_id = Some("unexpected-remote".into());
+        let has_tag = extra_tag.is_some();
         extra.narration = extra_tag;
+        if has_tag {
+            assert_eq!(
+                verify_observed_batch(&line, &[observed.clone(), vec![extra]].concat()),
+                Err("import_verification_tag_ambiguous".into())
+            );
+            continue;
+        }
         let result =
             verify_observed_batch(&line, &[observed.clone(), vec![extra]].concat()).unwrap();
         assert!(!result["duplicates"].as_array().unwrap().is_empty());
@@ -118,5 +126,28 @@ fn overlapping_expected_tags_remain_ambiguous_in_both_payload_orders() {
                 Err("import_verification_tag_ambiguous".into())
             );
         }
+    }
+}
+
+#[test]
+fn repeated_transaction_tags_across_pre_and_post_mark_rows_refuse_attribution() {
+    let (mut line, mut observed) = identical_batch();
+    line.vouchers.truncate(1);
+    observed.truncate(1);
+    let mut earlier = observed[0].clone();
+    earlier.guid = Some("pre-mark-other-guid".into());
+    earlier.master_id = Some("999".into());
+    earlier.remote_id = Some("pre-mark-other-remote".into());
+    earlier.alter_id = Some(1);
+    earlier.entries[0].amount = "-99.99".into();
+    for reverse in [false, true] {
+        let mut source = vec![earlier.clone(), observed[0].clone()];
+        if reverse {
+            source.reverse();
+        }
+        assert_eq!(
+            verify_observed_batch(&line, &source),
+            Err("import_verification_tag_ambiguous".into())
+        );
     }
 }

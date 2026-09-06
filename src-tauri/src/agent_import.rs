@@ -158,6 +158,7 @@ struct ImportReadSource {
 impl ImportReadSource {
     fn admit(mut rows: Vec<ReadVoucher>) -> Result<Self, String> {
         let mut identities = super::VoucherSourceIdentities::default();
+        let mut transaction_tags = BTreeSet::new();
         for row in &mut rows {
             if let Some(guid) = row.guid.as_mut() {
                 *guid = guid.trim().to_ascii_lowercase();
@@ -178,11 +179,14 @@ impl ImportReadSource {
                 if index > 0 {
                     return Err("import_verification_tag_ambiguous".into());
                 }
-                narration[start..]
+                let tag = narration[start..]
                     .strip_prefix("[BRIDGE:")
                     .and_then(|tail| tail.split_once(']').map(|(id, _)| id))
                     .filter(|id| valid_txn_id(id))
                     .ok_or_else(|| "import_verification_tag_invalid".to_string())?;
+                if !transaction_tags.insert(tag.to_string()) {
+                    return Err("import_verification_tag_ambiguous".into());
+                }
             }
         }
         Ok(Self { rows })
