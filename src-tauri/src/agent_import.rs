@@ -503,7 +503,9 @@ impl Server {
         let path = self.settings.data_dir.join("imports");
         super::ensure_private_directory(&path).map_err(|error| match error {
             super::DirectoryAdmissionError::Unavailable => "imports_dir_unavailable".to_string(),
-            super::DirectoryAdmissionError::Permissions => "import_file_permissions_failed".to_string(),
+            super::DirectoryAdmissionError::Permissions => {
+                "import_file_permissions_failed".to_string()
+            }
         })?;
         Ok(path)
     }
@@ -1275,19 +1277,9 @@ fn batch_duplicate_sets(
     expected_tags: &BTreeSet<&str>,
     fully_verified_identities: &BTreeSet<String>,
 ) -> (Vec<Value>, Vec<Value>) {
-    // Keep the existing opaque digest input stable; canonical entry sorting was
-    // already done once for matching above.
-    let duplicate_keys = fingerprints
-        .iter()
-        .map(|key| {
-            format!(
-                "{}|{}|{}",
-                key.0.as_deref().unwrap_or(""),
-                key.1.as_deref().unwrap_or(""),
-                key.2.join(",")
-            )
-        })
-        .collect::<Vec<_>>();
+    // Serialize the structured vector before hashing: ledger names may contain
+    // the delimiters used inside an entry, so joining entries is ambiguous.
+    let duplicate_keys = fingerprints.iter().map(sha256_json).collect::<Vec<_>>();
     let all_duplicates = duplicates(observed, identities, &duplicate_keys)
         .into_iter()
         .filter(|duplicate| {
@@ -1326,10 +1318,7 @@ fn batch_duplicate_sets(
     let safe_duplicate = |mut duplicate: Value| {
         if let Some(fields) = duplicate.as_object_mut() {
             if let Some(Value::String(fingerprint)) = fields.remove("fingerprint") {
-                fields.insert(
-                    "fingerprint_sha256".into(),
-                    json!(sha256_hex(fingerprint.as_bytes())),
-                );
+                fields.insert("fingerprint_sha256".into(), json!(fingerprint));
             }
         }
         duplicate

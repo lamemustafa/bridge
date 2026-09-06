@@ -94,3 +94,57 @@ fn captured_derived_large_verification_preserves_tag_and_fallback_multiplicity()
         assert!(result["duplicates"][0]["fingerprint_sha256"].is_string());
     }
 }
+
+#[test]
+fn delimiter_bearing_ledger_names_do_not_create_accounting_duplicates() {
+    // Pure matching fault case; these rows do not claim a live Tally capture.
+    let mut first = parse_import_vouchers(&boundary_tests::captured_vouchers())
+        .unwrap()
+        .rows
+        .remove(0);
+    first.entries = vec![
+        ReadEntry {
+            ledger: "A".into(),
+            amount: "1".into(),
+            is_deemed_positive: "No".into(),
+        },
+        ReadEntry {
+            ledger: "B".into(),
+            amount: "1".into(),
+            is_deemed_positive: "No".into(),
+        },
+    ];
+    first.remote_id = None;
+    let mut second = first.clone();
+    second.guid = Some("different-guid".into());
+    second.master_id = Some("999".into());
+    second.entries = vec![ReadEntry {
+        ledger: "A|1|No,B".into(),
+        amount: "1".into(),
+        is_deemed_positive: "No".into(),
+    }];
+    let rows = vec![first, second];
+    let fingerprints = rows.iter().map(observed_fingerprint).collect::<Vec<_>>();
+    assert_ne!(fingerprints[0], fingerprints[1]);
+    assert_eq!(fingerprints[0].2.join(","), fingerprints[1].2.join(","));
+    let identities = rows
+        .iter()
+        .map(observed_voucher_identity)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let expected = BTreeMap::from([(&fingerprints[0], 1)]);
+    let (batch, unrelated) = batch_duplicate_sets(
+        &rows,
+        &identities,
+        &fingerprints,
+        &expected,
+        &[None, None],
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+    );
+    assert!(
+        batch.is_empty(),
+        "distinct entry vectors must not block a verified batch"
+    );
+    assert!(unrelated.is_empty());
+}

@@ -1499,15 +1499,7 @@ fn test_duplicates(observed: &[ReadVoucher]) -> Result<Vec<Value>, String> {
         .collect::<Result<Vec<_>, _>>()?;
     let fingerprints = observed
         .iter()
-        .map(|voucher| {
-            let key = observed_fingerprint(voucher);
-            format!(
-                "{}|{}|{}",
-                key.0.as_deref().unwrap_or(""),
-                key.1.as_deref().unwrap_or(""),
-                key.2.join(",")
-            )
-        })
+        .map(|voucher| sha256_json(&observed_fingerprint(voucher)))
         .collect::<Vec<_>>();
     Ok(duplicates(observed, &identities, &fingerprints))
 }
