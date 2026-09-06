@@ -391,7 +391,7 @@ impl Server {
                 .await?;
             accumulated = combine_evidence(accumulated.clone(), preflight_evidence.clone());
             let preflight = parse_import_vouchers(&preflight_xml, identity.company_guid())?;
-            validate_import_window(&preflight, &date_from, &date_to)?;
+            verification_window_identities(&preflight, &date_from, &date_to)?;
             let verification_preflight = json!({
                 "state":"current_window_readable", "from":date_from, "to":date_to,
                 "source_rows":preflight.rows.len(),
@@ -1114,7 +1114,12 @@ fn parse_import_vouchers(xml: &str, company_guid: &str) -> Result<ImportReadSour
     ImportReadSource::admit(rows)
 }
 
-fn validate_import_window(observed: &ImportReadSource, from: &str, to: &str) -> Result<(), String> {
+// File preflight and later verification require the same window and row identities.
+fn verification_window_identities(
+    observed: &ImportReadSource,
+    from: &str,
+    to: &str,
+) -> Result<BTreeSet<(String, u64)>, String> {
     if observed.rows.iter().any(|voucher| {
         voucher
             .date
@@ -1123,7 +1128,21 @@ fn validate_import_window(observed: &ImportReadSource, from: &str, to: &str) -> 
     }) {
         return Err("window_not_honoured".to_string());
     }
-    Ok(())
+    observed
+        .rows
+        .iter()
+        .map(|voucher| {
+            Ok((
+                voucher
+                    .guid
+                    .clone()
+                    .ok_or_else(|| "verification_incomplete:window_not_corroborated".to_string())?,
+                voucher
+                    .alter_id
+                    .ok_or_else(|| "verification_incomplete:window_not_corroborated".to_string())?,
+            ))
+        })
+        .collect()
 }
 
 fn corroborate_verification_window(
@@ -1132,26 +1151,12 @@ fn corroborate_verification_window(
     from: &str,
     to: &str,
 ) -> Result<(), String> {
-    validate_import_window(observed, from, to)?;
-    validate_import_window(corroboration, from, to)?;
     // This collection request has no row limit. The MCP output-page setting
     // cannot establish source truncation; corroborate the observed identity set
     // independently of that presentation cap.
-    let pairs = |rows: &[ReadVoucher]| {
-        rows.iter()
-            .map(|voucher| {
-                Ok((
-                    voucher.guid.clone().ok_or_else(|| {
-                        "verification_incomplete:window_not_corroborated".to_string()
-                    })?,
-                    voucher.alter_id.ok_or_else(|| {
-                        "verification_incomplete:window_not_corroborated".to_string()
-                    })?,
-                ))
-            })
-            .collect::<Result<BTreeSet<_>, String>>()
-    };
-    if pairs(&observed.rows)? != pairs(&corroboration.rows)? {
+    if verification_window_identities(observed, from, to)?
+        != verification_window_identities(corroboration, from, to)?
+    {
         return Err("verification_incomplete:window_not_corroborated".to_string());
     }
     Ok(())

@@ -23,7 +23,18 @@ async fn build_preflight_refuses_unreadable_or_out_of_window_sources_before_file
         .rows
         .iter()
         .all(|row| row.date.as_deref() == Some("20260801")));
-    for fault in ["out_of_window", "invalid_amount", "http"] {
+    for fault in [
+        "out_of_window",
+        "invalid_amount",
+        "missing_alter_id",
+        "http",
+    ] {
+        let mut input = captured_catalogue_payload();
+        if fault == "missing_alter_id" {
+            for voucher in &mut input.vouchers {
+                voucher.date = "2026-08-01".into();
+            }
+        }
         let mut plans = qualified_import_cycle_plans()[..30].to_vec();
         if fault == "http" {
             plans[25].http_status = 503;
@@ -35,6 +46,21 @@ async fn build_preflight_refuses_unreadable_or_out_of_window_sources_before_file
                     + "<AMOUNT TYPE=\"Amount\">".len();
                 let end = start + source[start..].find("</AMOUNT>").unwrap();
                 format!("{}invalid{}", &source[..start], &source[end..])
+            } else if fault == "missing_alter_id" {
+                let mut body = source.clone();
+                for id in [1, 2, 3] {
+                    let tag = format!("<ALTERID TYPE=\"Number\"> {id}</ALTERID>");
+                    assert_eq!(body.matches(&tag).count(), 1);
+                    body = body.replace(&tag, "");
+                }
+                let rows = parse_import_vouchers(&body, CAPTURED_GUID).unwrap();
+                assert_eq!(rows.rows.len(), 3);
+                assert!(rows.rows.iter().all(|row| row.alter_id.is_none()));
+                assert!(rows
+                    .rows
+                    .iter()
+                    .all(|row| row.date.as_deref() == Some("20260801")));
+                body
             } else {
                 source.clone()
             };
@@ -60,7 +86,7 @@ async fn build_preflight_refuses_unreadable_or_out_of_window_sources_before_file
             import_enabled: true,
         });
         let error = server
-            .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).unwrap())
+            .build_import_xml(&serde_json::to_value(input).unwrap())
             .await
             .err()
             .unwrap();
@@ -70,6 +96,7 @@ async fn build_preflight_refuses_unreadable_or_out_of_window_sources_before_file
                 "out_of_window" => "window_not_honoured",
                 "invalid_amount" => "import_verification_amount_invalid",
                 "http" => "agent_runtime_read_failed",
+                "missing_alter_id" => "verification_incomplete:window_not_corroborated",
                 _ => unreachable!(),
             },
             "{fault}"
