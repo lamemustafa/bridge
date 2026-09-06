@@ -205,7 +205,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"education_mode_date_restriction": "If the connected Tally is Education mode, only days 1, 2, and 31 are observed safe; this server does not infer licence mode."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed licensed TallyPrime before and after the build reads; Education and unknown modes are unqualified."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -241,6 +241,35 @@ impl Server {
         })
     }
 
+    async fn qualified_import_mode(&self) -> Result<Evidence, ToolFailure> {
+        use bridge_tally_core::{CapabilityFeatureId, CapabilityState, EvidenceConfidence};
+        let (probe, wire) = self
+            .runtime
+            .probe_with_wire_evidence(self.tally_config())
+            .await
+            .map_err(|error| ToolFailure::from_runtime("import_mode_probe_failed", error))?;
+        let evidence = super::evidence_from_runtime_read(wire);
+        let qualified = probe.profile.product.eq_ignore_ascii_case("TallyPrime")
+            && probe
+                .profile
+                .mode
+                .as_deref()
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("Licensed"))
+            && probe
+                .profile
+                .features
+                .get(&CapabilityFeatureId::ProductAndMode)
+                .is_some_and(|feature| {
+                    feature.state == CapabilityState::Supported
+                        && feature.confidence == EvidenceConfidence::Observed
+                });
+        if !qualified {
+            return Err(ToolFailure::from("import_mode_unqualified".to_string())
+                .with_prior_evidence(evidence));
+        }
+        Ok(evidence)
+    }
+
     pub(super) async fn build_import_xml(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let mut payload = parse_payload(args)?;
         validate_payload(&payload)?;
@@ -253,9 +282,12 @@ impl Server {
             return Err("import_voucher_type_unqualified".to_string().into());
         }
         normalize_payload_dates(&mut payload)?;
-        let (company, identity, identity_evidence) =
-            self.verified_company(&payload.company_guid).await?;
-        let mut accumulated = identity_evidence.clone();
+        let mode_evidence = self.qualified_import_mode().await?;
+        let (company, identity, identity_evidence) = self
+            .verified_company(&payload.company_guid)
+            .await
+            .map_err(|failure| failure.with_prior_evidence(mode_evidence.clone()))?;
+        let mut accumulated = combine_evidence(mode_evidence, identity_evidence.clone());
         let result: Result<ToolOutcome, ToolFailure> = async {
             let (catalogue, catalogue_evidence) =
                 self.read_ledger_catalogue(&identity, &company.name).await?;
@@ -268,7 +300,7 @@ impl Server {
                         "catalogue_evidence_sha256":sha256_json(&catalogue),
                         "next_step":"Use the exact live spelling from validate_masters, then build a new batch. No file was written."
                     }}),
-                    evidence: combine_evidence(identity_evidence, catalogue_evidence),
+                    evidence: accumulated.clone(),
                     company_guid: Some(payload.company_guid),
                     truncated: false,
                 });
@@ -279,6 +311,8 @@ impl Server {
             reject_known_transactions(&payload, &existing)?;
             let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
             accumulated = combine_evidence(accumulated.clone(), mark_evidence.clone());
+            let closing_mode_evidence = self.qualified_import_mode().await?;
+            accumulated = combine_evidence(accumulated.clone(), closing_mode_evidence);
             let batch_id = format!("bridge-{}", Uuid::new_v4());
             let xml = render_import_xml(&company.name, &payload.vouchers);
             let sha256 = sha256_hex(xml.as_bytes());
@@ -322,10 +356,7 @@ impl Server {
                     evidence: Evidence {
                         state: "partial",
                         reason_code: Some(error),
-                        ..combine_evidence(
-                            combine_evidence(identity_evidence, catalogue_evidence),
-                            mark_evidence,
-                        )
+                        ..accumulated.clone()
                     },
                     company_guid: Some(line.company_guid.clone()),
                     truncated: false,
@@ -340,10 +371,7 @@ impl Server {
                     "warnings": ["No XML was sent to Tally. Import the written file manually, then use verify_import."],
                     "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
                 }}),
-                evidence: combine_evidence(
-                    combine_evidence(identity_evidence, catalogue_evidence),
-                    mark_evidence,
-                ),
+                evidence: accumulated.clone(),
                 company_guid: Some(line.company_guid.clone()),
                 truncated: false,
             })

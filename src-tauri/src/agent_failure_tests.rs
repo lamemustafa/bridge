@@ -22,7 +22,7 @@ async fn import_post_read_failures_retain_source_evidence_and_admission_errors_s
         }
         let company_bytes = response_bytes(&plans[0]);
         let catalogue_bytes = response_bytes(&plans[5]);
-        let expected_response = sha256_hex(
+        let mut expected_response = sha256_hex(
             format!(
                 "{}:{}",
                 sha256_hex(&company_bytes),
@@ -30,6 +30,25 @@ async fn import_post_read_failures_retain_source_evidence_and_admission_errors_s
             )
             .as_bytes(),
         );
+        let mut expected_bytes = 2 * (company_bytes.len() + catalogue_bytes.len());
+        if !malformed_catalogue {
+            let probe = mode_tests::licensed_import_probe();
+            let probe_response = sha256_hex(
+                format!(
+                    "{}:{}",
+                    sha256_hex(&response_bytes(&probe[0])),
+                    sha256_hex(&response_bytes(&probe[1]))
+                )
+                .as_bytes(),
+            );
+            let identity_response =
+                sha256_hex(format!("{probe_response}:{}", sha256_hex(&company_bytes)).as_bytes());
+            expected_response = sha256_hex(
+                format!("{identity_response}:{}", sha256_hex(&catalogue_bytes)).as_bytes(),
+            );
+            expected_bytes += response_bytes(&probe[0]).len() + response_bytes(&probe[1]).len();
+            plans = [probe, plans].concat();
+        }
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let server = Server::new(Settings {
@@ -70,10 +89,7 @@ async fn import_post_read_failures_retain_source_evidence_and_admission_errors_s
         assert_eq!(content["evidence"]["state"], "partial");
         assert_eq!(content["evidence"]["reason_code"], code);
         assert_eq!(content["evidence"]["response_sha256"], expected_response);
-        assert_eq!(
-            content["evidence"]["bytes"],
-            2 * (company_bytes.len() + catalogue_bytes.len())
-        );
+        assert_eq!(content["evidence"]["bytes"], expected_bytes);
         {
             let records = server.evidence.lock().unwrap();
             let recorded = records.records.last().unwrap();
@@ -91,19 +107,17 @@ async fn import_post_read_failures_retain_source_evidence_and_admission_errors_s
         let observed = simulator.finish().unwrap();
         assert_eq!(
             observed.len(),
-            10,
+            if malformed_catalogue { 10 } else { 12 },
             "admission failure sends no extra requests"
         );
-        assert_eq!(
-            content["evidence"]["request_sha256"],
-            sha256_hex(
-                format!(
-                    "{}:{}",
-                    observed[0].request_body_sha256, observed[5].request_body_sha256
-                )
-                .as_bytes()
-            )
-        );
+        let join = |a: &str, b: &str| sha256_hex(format!("{a}:{b}").as_bytes());
+        let req = |i: usize| observed[i].request_body_sha256.as_str();
+        let expected_request = if malformed_catalogue {
+            join(req(0), req(5))
+        } else {
+            join(&join(&join(req(0), req(1)), req(2)), req(7))
+        };
+        assert_eq!(content["evidence"]["request_sha256"], expected_request);
         assert!(!directory.path().join("imports").exists());
     }
 }

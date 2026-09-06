@@ -1200,7 +1200,8 @@ fn batch_company_tuple_rejects_a_same_guid_different_book() {
 #[tokio::test]
 async fn simulator_verification_is_independent_of_the_output_row_limit() {
     for max_rows in [1, 2, 10] {
-        let simulator = SequenceSimulator::spawn(import_cycle_plans()).expect("simulator");
+        let simulator =
+            SequenceSimulator::spawn(qualified_import_cycle_plans()).expect("simulator");
         let directory = tempfile::tempdir().expect("temporary data directory");
         let server = Server::new(super::super::Settings {
             endpoint: TallyEndpointConfig {
@@ -1245,7 +1246,7 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
                     .expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 32);
+        assert_eq!(simulator.finish().expect("requests").len(), 36);
     }
 }
 
@@ -1513,3 +1514,18 @@ fn test_duplicates(observed: &[ReadVoucher]) -> Result<Vec<Value>, String> {
 
 #[path = "agent_import_qualification_tests.rs"]
 mod qualification_tests;
+
+fn qualified_import_cycle_plans() -> Vec<ScenarioPlan> {
+    let cycle = import_cycle_plans();
+    let probe = mode_tests::licensed_import_probe();
+    [
+        probe.clone(),
+        cycle[..16].to_vec(),
+        probe,
+        cycle[16..].to_vec(),
+    ]
+    .concat()
+}
+
+#[path = "agent_import_mode_tests.rs"]
+mod mode_tests;
