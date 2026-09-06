@@ -63,7 +63,7 @@ jobs:
           fi
 
           # tools/ is deliberately excluded: it is not shipped in the bundle, which validates the artifact and its resources.
-          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|packaging/mcpb/|package\.json|pnpm-lock\.yaml|\.node-version|vite\.config\.ts|tsconfig\.json|postcss\.config\.js|index\.html|src/|src-tauri/(src/|crates/|Cargo\.lock|Cargo\.toml|.*/Cargo\.toml|tauri\.conf\.json|build\.rs|icons/)|LICENSE$|NOTICE$|THIRD_PARTY_LICENSES\.txt$|THIRD_PARTY_LICENSES_RUST\.txt$|scripts/(package-mcpb\.mjs|check-license-metadata\.mjs|check-dependency-inventory\.mjs|check-windows-bundle-resources\.ps1|check-macos-bundle-resources\.mjs)$)'; then
+          if printf '%s\n' "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|\.github/actions/setup-windows-native/|packaging/mcpb/|package\.json|pnpm-lock\.yaml|\.node-version|vite\.config\.ts|tsconfig\.json|postcss\.config\.js|index\.html|src/|src-tauri/(src/|crates/|Cargo\.lock|Cargo\.toml|.*/Cargo\.toml|tauri\.conf\.json|build\.rs|icons/)|LICENSE$|NOTICE$|THIRD_PARTY_LICENSES\.txt$|THIRD_PARTY_LICENSES_RUST\.txt$|scripts/(check-mcpb-bundle(\.test)?\.py|package-mcpb\.mjs|check-license-metadata\.mjs|check-dependency-inventory\.mjs|check-windows-bundle-resources\.ps1|check-macos-bundle-resources\.mjs)$)'; then
             echo 'bundle=true' >> "$GITHUB_OUTPUT"
           else
             echo 'bundle=false' >> "$GITHUB_OUTPUT"
@@ -352,6 +352,16 @@ jobs:
           npx --yes @anthropic-ai/mcpb@2.1.2 validate packaging/mcpb/stage/manifest.json
           npx --yes @anthropic-ai/mcpb@2.1.2 pack packaging/mcpb/stage src-tauri/target/release/bundle/bridge-tally.mcpb
           npx --yes @anthropic-ai/mcpb@2.1.2 info src-tauri/target/release/bundle/bridge-tally.mcpb
+      - name: Exercise the packaged MCPB stdio server
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_command=python
+          else
+            python_command=python3
+          fi
+          "$python_command" scripts/check-mcpb-bundle.test.py
+          "$python_command" scripts/check-mcpb-bundle.py src-tauri/target/release/bundle/bridge-tally.mcpb --output src-tauri/target/release/bundle/mcpb-smoke.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unsigned-bundle-smoke-${{ matrix.os }}

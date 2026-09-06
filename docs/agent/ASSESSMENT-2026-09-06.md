@@ -148,10 +148,13 @@ the manifest command initialized and listed ten default tools successfully.
 - MCPB archive SHA-256: `600e1727a3cc420a81f788570464e0a1e2d2b832c72998500cb03cc85d08b227`.
 - Source fingerprint (297 build-input files, unchanged through build): `6b612a8b54aeb97f7b3bafe13f4d7f214e9a7452a79c2889de089f25e56e788e`.
 
-Windows CI builds, validates and packs the MCPB but does not launch the extracted
-archive with a desktop client. That specific platform evidence remains a release
-gap even if native tests and bundle CI pass. The local archive is unsigned and is
-not a production release.
+CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
+and macOS. The portable smoke checks initialization, ten default tools, the local
+voucher schema, and its persisted egress receipt with bounded execution and
+output. Five harness regressions and the final local archive passed this check.
+Hosted results must confirm the same check for the published candidate; desktop
+client installation remains separate. The local archive is unsigned and is not
+a production release.
 
 The final verification record must distinguish local tests, actual archive
 launch, official client smoke, live Tally evidence, and hosted Windows/macOS
