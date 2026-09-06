@@ -23,9 +23,13 @@ impl Server {
             .read_movement_ledgers(&identity, opening_date.clone())
             .await?;
         evidence = combine_evidence(evidence, ledger_evidence);
-        let (vouchers, read_evidence) = self
+        let (page, read_evidence) = self
             .read_movement_vouchers(&identity, &company.name, from.clone(), to)
             .await?;
+        let MovementPage {
+            rows: vouchers,
+            observed_rows: voucher_rows_observed,
+        } = page;
         evidence = combine_evidence(evidence, read_evidence);
         let (corroborating_ledgers, corroboration_evidence) =
             self.read_movement_ledgers(&identity, opening_date).await?;
@@ -121,7 +125,6 @@ impl Server {
             .collect::<Vec<_>>();
         let truncated = offset.saturating_add(rows.len()) < total;
         let next_offset = truncated.then_some(offset + rows.len());
-        let (_, voucher_rows_observed) = ledger_movement_counts(&rows, &vouchers);
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": if opening_unobserved {"partial"} else {"complete"}, "partial_reason": opening_unobserved.then_some("opening_balance_not_observed"), "ledgers": rows, "offset": offset, "next_offset": next_offset, "voucher_rows_observed": voucher_rows_observed, "balance_basis": "tally_period_opening_plus_direct_voucher_movement", "evidence_method": "runtime_ledger_opening_at_from_plus_literal_window_entries"}}),
             evidence,
@@ -143,13 +146,13 @@ impl Server {
         Ok((ledgers, evidence_from_runtime_read(evidence)))
     }
 
-    pub(super) async fn read_movement_vouchers(
+    async fn read_movement_vouchers(
         &self,
         identity: &VerifiedCompanyIdentity,
         company: &str,
         from: String,
         to: String,
-    ) -> Result<(Vec<MovementVoucher>, Evidence), String> {
+    ) -> Result<(MovementPage, Evidence), String> {
         let company = ValidatedCompanyName::new(company.to_string())
             .map_err(|_| "company_name_invalid".to_string())?;
         let range =
@@ -185,7 +188,7 @@ impl Server {
             }
             evidence = combine_evidence(evidence, corroboration);
         }
-        Ok((page.rows, evidence))
+        Ok((page, evidence))
     }
 }
 

@@ -8,7 +8,7 @@ use tally_protocol_simulator::{
 };
 use tokio::io::AsyncReadExt;
 
-fn company_collection_xml() -> String {
+pub(super) fn company_collection_xml() -> String {
     "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SYNTHETIC BOOK\"><GUID>00000000-0000-4000-8000-000000000001</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>".to_string()
 }
 
@@ -852,17 +852,6 @@ fn tally_port_defaults_only_when_the_environment_value_is_absent() {
             "{value} must fail at settings admission"
         );
     }
-}
-
-#[test]
-fn ledger_movement_receipt_counts_three_ledgers_from_two_vouchers() {
-    let rows = vec![
-        json!({"ledger":"Bank"}),
-        json!({"ledger":"Expense"}),
-        json!({"ledger":"Income"}),
-    ];
-    let vouchers = [(), ()];
-    assert_eq!(ledger_movement_counts(&rows, &vouchers), (3, 2));
 }
 
 #[test]

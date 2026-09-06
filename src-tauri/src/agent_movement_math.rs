@@ -1,10 +1,6 @@
 //! Movement math for the local MCP adapter.
 use super::*;
 
-pub(super) fn ledger_movement_counts<T>(rows: &[Value], vouchers: &[T]) -> (usize, usize) {
-    (rows.len(), vouchers.len())
-}
-
 pub(super) struct LedgerMovementRow {
     pub(super) name: String,
     pub(super) parent: Option<String>,
