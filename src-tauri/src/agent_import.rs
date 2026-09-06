@@ -1139,6 +1139,11 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
     }
     let line = &comparison_line;
     let observed = comparison_observed.as_slice();
+    let observed_identities = observed
+        .iter()
+        .map(observed_voucher_identity)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut fully_verified_identities = BTreeSet::new();
     let mut rows = Vec::new();
     let fingerprint_key = |voucher: &ImportVoucher| {
         format!(
@@ -1170,7 +1175,7 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
         })
         .map(|(index, _)| index)
         .collect::<BTreeSet<_>>();
-    let mut consumed_matches = BTreeSet::new();
+    let mut consumed_identities = BTreeSet::new();
     let mut ambiguous_within_batch = Vec::new();
     let mut counts = BTreeMap::from([
         ("posted_verified", 0_u64),
@@ -1206,7 +1211,7 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
             .enumerate()
             .filter(|voucher| {
                 !tagged_indexes.contains(&voucher.0)
-                    && !consumed_matches.contains(&voucher.0)
+                    && !consumed_identities.contains(&observed_identities[voucher.0])
                     && voucher.1.date.as_deref() == normalized_date(&expected.date).ok().as_deref()
                     && voucher.1.voucher_type.as_deref() == Some(expected.voucher_type.as_str())
                     && actual_entry_fingerprint(voucher.1) == fingerprint
@@ -1217,7 +1222,7 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
                 .iter()
                 .copied()
                 .filter(|voucher| {
-                    !consumed_matches.contains(&voucher.0)
+                    !consumed_identities.contains(&observed_identities[voucher.0])
                         && line
                             .pre_import_mark
                             .value
@@ -1235,7 +1240,7 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
                 .iter()
                 .copied()
                 .filter(|voucher| {
-                    !consumed_matches.contains(&voucher.0)
+                    !consumed_identities.contains(&observed_identities[voucher.0])
                         && line
                             .pre_import_mark
                             .value
@@ -1247,7 +1252,7 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
                 "accounting_fingerprint",
                 fingerprint_matches
                     .iter()
-                    .any(|voucher| !consumed_matches.contains(&voucher.0))
+                    .any(|voucher| !consumed_identities.contains(&observed_identities[voucher.0]))
                     && line.pre_import_mark.value.is_some(),
                 true,
             )
@@ -1256,7 +1261,12 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
             counts
                 .entry("not_attributable")
                 .and_modify(|count| *count += 1);
-            let reason = if marker == "narration_tag" {
+            let reason = if tagged
+                .iter()
+                .any(|voucher| consumed_identities.contains(&observed_identities[voucher.0]))
+            {
+                "observed_voucher_already_attributed"
+            } else if marker == "narration_tag" {
                 "tag_precedes_pre_import_voucher_mark"
             } else {
                 "fingerprint_precedes_pre_import_voucher_mark"
@@ -1271,7 +1281,7 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
                 .and_modify(|count| *count += 1);
             json!({"bridge_txn_id":expected.bridge_txn_id,"status":"duplicate_fingerprint","marker":marker,"matches":matches.len()})
         } else {
-            consumed_matches.insert(matches[0].0);
+            consumed_identities.insert(observed_identities[matches[0].0].clone());
             let matched = matches[0].1;
             let diffs = voucher_diffs(expected, matched);
             if fingerprint_fallback {
@@ -1280,6 +1290,7 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
                     .and_modify(|count| *count += 1);
                 json!({"bridge_txn_id":expected.bridge_txn_id,"status":"matching_content_observed","marker":marker,"attribution":"not_established","accounting_effective":voucher_is_accounting_effective(matched)?,"diffs":diffs,"voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id,"alter_id":matched.alter_id})
             } else if diffs.is_empty() && voucher_is_accounting_effective(matched)? {
+                fully_verified_identities.insert(observed_identities[matches[0].0].clone());
                 counts
                     .entry("posted_verified")
                     .and_modify(|count| *count += 1);
@@ -1302,7 +1313,8 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
         }
         rows.push(value);
     }
-    let (batch_duplicates, unrelated_duplicates_in_window) = batch_duplicate_sets(line, observed)?;
+    let (batch_duplicates, unrelated_duplicates_in_window) =
+        batch_duplicate_sets(line, observed, &fully_verified_identities)?;
     Ok(
         json!({"counts":counts,"vouchers":rows,"duplicates":batch_duplicates,"unrelated_duplicates_in_window":unrelated_duplicates_in_window,"ambiguous_within_batch":ambiguous_within_batch}),
     )
@@ -1329,8 +1341,27 @@ fn verification_status(result: &Value, expected_voucher_count: usize) -> &'stati
 fn batch_duplicate_sets(
     line: &ImportLedgerLine,
     observed: &[ReadVoucher],
+    fully_verified_identities: &BTreeSet<String>,
 ) -> Result<(Vec<Value>, Vec<Value>), String> {
-    let all_duplicates = duplicates(observed)?;
+    // Identical contents are permitted when every distinct source identity in
+    // the group was verified against its own expected tagged transaction. Any
+    // additional, untagged or divergent identity keeps the group ambiguous.
+    // REMOTEID reuse remains independently reportable.
+    let all_duplicates = duplicates(observed)?
+        .into_iter()
+        .filter(|duplicate| {
+            duplicate["kind"] != "accounting_fingerprint"
+                || !duplicate["voucher_ids"]
+                    .as_array()
+                    .is_some_and(|identities| {
+                        identities.iter().all(|identity| {
+                            identity.as_str().is_some_and(|identity| {
+                                fully_verified_identities.contains(identity)
+                            })
+                        })
+                    })
+        })
+        .collect::<Vec<_>>();
     let batch_vouchers = observed
         .iter()
         .filter(|voucher| voucher_belongs_to_batch(line, voucher))

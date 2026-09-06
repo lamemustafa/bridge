@@ -1453,3 +1453,6 @@ mod failure_tests;
 
 #[path = "agent_import_boundary_tests.rs"]
 mod boundary_tests;
+
+#[path = "agent_import_multiplicity_tests.rs"]
+mod multiplicity_tests;
