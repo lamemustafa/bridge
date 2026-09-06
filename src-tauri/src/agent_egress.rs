@@ -128,6 +128,11 @@ pub(super) fn read_egress_tail(path: &Path, take: usize) -> Result<EgressTail, S
     }
     chunks.reverse();
     let bytes = chunks.concat();
+    // Appends commit newline-terminated rows while holding the same file lock.
+    // A process interruption must not turn an unfinished receipt into evidence.
+    if file_len > 0 && bytes.last() != Some(&b'\n') {
+        return Err("egress_log_incomplete".to_string());
+    }
     let complete_lines = if position > 0 {
         // The discarded leading row can begin inside a UTF-8 code point.
         bytes.splitn(2, |byte| *byte == b'\n').nth(1).unwrap_or(&[])
@@ -135,7 +140,13 @@ pub(super) fn read_egress_tail(path: &Path, take: usize) -> Result<EgressTail, S
         &bytes
     };
     let text =
-        std::str::from_utf8(complete_lines).map_err(|_| "egress_log_unreadable".to_string())?;
+        std::str::from_utf8(complete_lines).map_err(|_| "egress_log_incomplete".to_string())?;
+    // Validate every complete row in the bounded scan without allocating its
+    // JSON tree. The deliberately discarded leading fragment is not a row.
+    for line in text.lines() {
+        serde_json::from_str::<serde::de::IgnoredAny>(line)
+            .map_err(|_| "egress_log_incomplete".to_string())?;
+    }
     let mut lines = text.lines().rev();
     let records = lines.by_ref().take(take).map(str::to_string).collect();
     let truncated = position > 0 || lines.next().is_some();

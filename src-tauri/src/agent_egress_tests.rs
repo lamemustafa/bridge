@@ -50,6 +50,10 @@ fn failed_rollback_is_distinct_and_incomplete_log_refuses_future_appends() {
         Err("egress_log_incomplete".into())
     );
     assert_eq!(fs::read(&path).unwrap(), damaged);
+    assert_eq!(
+        read_egress_tail(&path, 20).unwrap_err(),
+        "egress_log_incomplete"
+    );
 }
 
 #[test]
@@ -206,4 +210,64 @@ async fn egress_log_reports_byte_bounded_tail_even_below_requested_record_count(
         bounded["structuredContent"]["result"]["records"],
         json!(tail.records)
     );
+}
+
+#[tokio::test]
+async fn egress_log_rejects_unterminated_and_malformed_receipts_in_band() {
+    use super::super::{Redaction, Server, Settings, TallyEndpointConfig};
+    use serde_json::{json, Value};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("agent-egress.jsonl");
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 100,
+        max_bytes: 1_000_000,
+        redaction: Redaction::MaskParties,
+        import_enabled: false,
+    });
+    server
+        .append_notification_refusal_egress("voucher_schema", &json!({}))
+        .unwrap();
+    let valid = fs::read(&path).unwrap();
+    let receipt: Value = serde_json::from_slice(&valid).unwrap();
+    assert_eq!(receipt["tool"], "voucher_schema");
+    assert!(receipt["response_sha256"].is_string());
+    assert!(receipt["fields_returned"].is_array());
+    let complete = read_egress_tail(&path, 20).unwrap();
+    assert_eq!(complete.records.len(), 1);
+    assert!(!complete.truncated);
+    let mut prefix_with_newline = valid[..valid.len() / 2].to_vec();
+    prefix_with_newline.push(b'\n');
+    for damaged in [
+        valid[..valid.len() - 1].to_vec(),
+        valid[..valid.len() / 2].to_vec(),
+        prefix_with_newline,
+        [b"{\"tool\":\n".as_slice(), valid.as_slice()].concat(),
+    ] {
+        fs::write(&path, &damaged).unwrap();
+        assert_eq!(
+            read_egress_tail(&path, 20).unwrap_err(),
+            "egress_log_incomplete"
+        );
+        let response = server.call_tool("egress_log", json!({"limit":20})).await;
+        assert_eq!(response["isError"], true);
+        assert_eq!(
+            response["structuredContent"]["result"]["error"]["code"],
+            "egress_log_incomplete"
+        );
+        assert_eq!(
+            response["structuredContent"]["evidence"]["state"],
+            "partial"
+        );
+        assert!(response["structuredContent"]["result"]["records"].is_null());
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            damaged,
+            "reads never repair damaged receipts"
+        );
+    }
 }
