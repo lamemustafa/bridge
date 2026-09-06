@@ -2273,31 +2273,6 @@ fn mask(value: &str) -> String {
 /// New agent-only profile. The literal `$Date` filter is intentionally
 /// separate from SVFROMDATE/SVTODATE: those variables do not restrict
 /// collection membership on every supported Tally build.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TdlStringValue(String);
-
-impl TdlStringValue {
-    fn new(value: String) -> Result<Self, String> {
-        let safe = |character: char| {
-            character.is_ascii_alphanumeric()
-                || matches!(character, ' ' | '_' | '-' | '.' | '/' | '&' | '(' | ')')
-        };
-        if value.is_empty()
-            || value.chars().any(|character| {
-                character.is_control()
-                    || matches!(character, '\"' | '\'' | '$' | '#' | ':')
-                    || !safe(character)
-            })
-        {
-            return Err("tdl_string_value_invalid".to_string());
-        }
-        Ok(Self(value))
-    }
-
-    fn xml(&self) -> String {
-        xml_escape(&self.0)
-    }
-}
 
 fn render_agent_vouchers(
     company: &str,
@@ -2305,11 +2280,12 @@ fn render_agent_vouchers(
     to: &str,
     alter_id: Option<u64>,
 ) -> Result<String, String> {
-    let company = TdlStringValue::new(company.to_string())?;
+    let company = ValidatedCompanyName::new(company.to_string())
+        .map_err(|_| "company_name_invalid".to_string())?;
     let alter_filter = alter_id
         .map(|value| format!(" AND $AlterID > {value}"))
         .unwrap_or_default();
-    Ok(format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", company.xml()))
+    Ok(format!("<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Bridge Agent Vouchers</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY><SVFROMDATE TYPE=\"Date\">{from}</SVFROMDATE><SVTODATE TYPE=\"Date\">{to}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE><SYSTEM TYPE=\"Formulae\" NAME=\"BridgeAgentWindow\">$Date &gt;= $$Date:\"{from}\" AND $Date &lt;= $$Date:\"{to}\"{alter_filter}</SYSTEM><COLLECTION NAME=\"Bridge Agent Vouchers\" TYPE=\"Voucher\"><FETCH>DATE,VOUCHERNUMBER,VOUCHERTYPENAME,PARTYLEDGERNAME,NARRATION,GUID,ALTERID,MASTERID,ALLLEDGERENTRIES.LIST</FETCH><FILTERS>BridgeAgentWindow</FILTERS></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>", xml_escape(company.as_str())))
 }
 
 fn render_agent_changed_vouchers(company: &str, checkpoint: u64, snapshot: u64) -> String {
@@ -3000,12 +2976,6 @@ mod tests {
             outstandings["inputSchema"]["properties"]["direction"]["enum"],
             json!(["receivable", "payable", "both"])
         );
-        for attack in ["Party \" Name", "$$SysName:XML", "Party:Name"] {
-            assert_eq!(
-                TdlStringValue::new(attack.to_string()),
-                Err("tdl_string_value_invalid".to_string())
-            );
-        }
         let recursively_redacted = redact_value(
             json!({"proof":{"name":party_name("Acme Party")},"changed":{"ledger":party_name("Cash Ledger")}}),
             Redaction::MaskParties,
@@ -3019,6 +2989,17 @@ mod tests {
         );
         assert!(
             parse_agent_rows("<ENVELOPE><BODY><RESPONSE>bad</RESPONSE></BODY></ENVELOPE>").is_err()
+        );
+    }
+
+    #[test]
+    fn voucher_company_name_is_validated_and_xml_escaped_without_a_tdl_literal() {
+        let request = render_agent_vouchers("Bridge, + खर्चा", "20260901", "20260902", None)
+            .expect("company name is an XML value");
+        assert!(request.contains("<SVCURRENTCOMPANY>Bridge, + खर्चा</SVCURRENTCOMPANY>"));
+        assert_eq!(
+            render_agent_vouchers("invalid\ncompany", "20260901", "20260902", None),
+            Err("company_name_invalid".to_string())
         );
     }
 
