@@ -1114,11 +1114,7 @@ fn parse_import_vouchers(xml: &str, company_guid: &str) -> Result<ImportReadSour
     ImportReadSource::admit(rows)
 }
 
-fn validate_import_window(
-    observed: &ImportReadSource,
-    from: &str,
-    to: &str,
-) -> Result<(), String> {
+fn validate_import_window(observed: &ImportReadSource, from: &str, to: &str) -> Result<(), String> {
     if observed.rows.iter().any(|voucher| {
         voucher
             .date
