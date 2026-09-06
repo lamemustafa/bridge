@@ -24,23 +24,13 @@ impl Server {
         };
         let request = render_agent_vouchers(&company.name, &from, &to, None)?;
         let (xml, mut evidence) = self.post_read(&identity, request).await?;
-        let mut rows = validate_then_filter_voucher_rows(
-            parse_agent_rows(&xml)?,
-            &from,
-            &to,
-            resolved_ledger.as_deref(),
-        )?;
+        let mut rows =
+            validate_then_filter_voucher_rows(parse_agent_rows(&xml)?, &from, &to, None)?;
         let mut result_state = "complete";
         let mut corroboration_reason = None;
         if rows.is_empty() {
             let (read_evidence, partial, reason) = self
-                .corroborate_empty_voucher_read(
-                    &identity,
-                    &company.name,
-                    &from,
-                    &to,
-                    resolved_ledger.as_deref(),
-                )
+                .corroborate_empty_voucher_read(&identity, &company.name, &from, &to, None)
                 .await?;
             evidence = combine_evidence(evidence, read_evidence);
             if partial {
@@ -51,6 +41,11 @@ impl Server {
                 corroboration_reason = reason;
                 evidence.reason_code = reason.map(str::to_string);
             }
+        }
+        // A nonempty, validated source can legitimately have no selector match.
+        // Corroborate actual source emptiness before any client-side selector.
+        if let Some(ledger) = resolved_ledger {
+            rows = filter_voucher_rows_for_ledger(rows, &ledger);
         }
         if let Some(kind) = optional_string(args, "voucher_type")? {
             rows.retain(|row| {

@@ -1,6 +1,6 @@
 //! Transport regressions reuse the existing simulator/captured catalogue inputs.
 use super::*;
-use crate::agent::{Redaction, Settings};
+use crate::agent::{parse_agent_rows, Redaction, Settings};
 
 fn server_for(address: std::net::SocketAddr, data_dir: &Path) -> Server {
     Server::new(Settings {
@@ -22,6 +22,83 @@ fn response_bytes(plan: &ScenarioPlan) -> Vec<u8> {
 
 fn join_hashes(left: &str, right: &str) -> String {
     sha256_hex(format!("{left}:{right}").as_bytes())
+}
+
+#[tokio::test]
+async fn empty_ledger_selection_does_not_replace_source_emptiness() {
+    fn captured_plan(bytes: &[u8]) -> ScenarioPlan {
+        let words = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        ScenarioPlan::new(Fixture::SyntheticXml(String::from_utf16(&words).unwrap()))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength)
+    }
+    let populated = captured_plan(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+    ));
+    let empty = captured_plan(include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
+    ));
+    assert_eq!(
+        parse_agent_rows(&populated.fixture.body()).unwrap().len(),
+        3
+    );
+    assert!(parse_agent_rows(&empty.fixture.body()).unwrap().is_empty());
+    for source_is_empty in [false, true] {
+        let cycle = import_cycle_plans();
+        let mut plans = cycle[..10].to_vec();
+        let paired_read = |source: &ScenarioPlan| {
+            [
+                cycle[0].clone(),
+                source.clone(),
+                cycle[1].clone(),
+                source.clone(),
+                cycle[1].clone(),
+                cycle[0].clone(),
+            ]
+        };
+        plans.extend(paired_read(if source_is_empty {
+            &empty
+        } else {
+            &populated
+        }));
+        if source_is_empty {
+            // The same captured vouchers in the widened read contradict true
+            // source emptiness, even though none touch the selected Cash ledger.
+            plans.extend(paired_read(&populated));
+        }
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let response = server_for(simulator.address(), directory.path())
+            .call_tool(
+                "vouchers",
+                json!({"company_guid":CAPTURED_GUID,
+                "from":"20260801","to":"20260802","ledger":"Cash"}),
+            )
+            .await;
+        if source_is_empty {
+            assert_eq!(response["isError"], true);
+            assert_eq!(
+                response["structuredContent"]["result"]["error"]["code"],
+                "window_contradicted"
+            );
+        } else {
+            assert_eq!(response["isError"], false);
+            assert_eq!(response["structuredContent"]["result"]["state"], "complete");
+            assert_eq!(response["structuredContent"]["result"]["items"], json!([]));
+            assert_eq!(response["structuredContent"]["result"]["total"], 0);
+            assert_eq!(
+                response["structuredContent"]["evidence"]["state"],
+                "complete"
+            );
+        }
+        assert_eq!(
+            simulator.finish().unwrap().len(),
+            if source_is_empty { 22 } else { 16 }
+        );
+    }
 }
 
 #[tokio::test]
