@@ -56,8 +56,8 @@ use egress::{append_egress_line, read_egress_tail};
 
 use crate::tally::runtime::RuntimeReadEvidence;
 use crate::tally::{
-    ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor,
-    OutstandingsLoadResult, TallyConfig, TallyRuntime, UnallocatedParty, VerifiedCompanyIdentity,
+    ExposureDirection, OpenBillRow, OutstandingsAgeingAnchor, OutstandingsLoadResult, TallyConfig,
+    TallyRuntime, UnallocatedParty, VerifiedCompanyIdentity,
 };
 use bridge_tally_protocol::xml_read_profiles::{
     ReadOnlyProfile, ValidatedCompanyName, ValidatedDateRange,
