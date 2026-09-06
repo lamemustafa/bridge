@@ -267,18 +267,19 @@ fn default_data_dir() -> PathBuf {
         if let Some(app_data) = env::var_os("APPDATA") {
             return PathBuf::from(app_data).join("Bridge").join("agent");
         }
-        return PathBuf::from("Bridge").join("agent");
+        PathBuf::from("Bridge").join("agent")
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     {
+        #[cfg(target_os = "macos")]
         if let Some(home) = env::var_os("HOME") {
             return PathBuf::from(home)
                 .join("Library")
                 .join("Application Support")
                 .join("Bridge");
         }
+        env::temp_dir().join("bridge")
     }
-    env::temp_dir().join("bridge")
 }
 
 fn endpoint_origin(endpoint: &TallyEndpointConfig) -> Result<String, String> {

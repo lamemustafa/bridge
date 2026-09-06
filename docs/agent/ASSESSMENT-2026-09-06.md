@@ -155,9 +155,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `5b1b197943e4b52cd3b6ce90dc52706fc750c5aec7cc97a833536f1029df853c`.
-- MCPB archive SHA-256: `10b9e3f8a275cd20578f0277476335f5a748f083f6e108c3a1f3c52ced435393`.
-- Source fingerprint (303 build-input files, unchanged through the settled-source rebuild): `e40f9724b1644812a0bc77ea6af1c9d9d6f60ed9bd8fceaa3886af6ac829f5c6`.
+- Release executable SHA-256: `e20bbcfc4a9629c615452c883b70b11d29e0ace77957958411d7ac0a80b6c8d4`.
+- MCPB archive SHA-256: `434162d79592e6430baa76999b29b8fcef211c91b6f3d6eb0c588ebada253da0`.
+- Source fingerprint (303 build-input files, unchanged through the settled-source rebuild): `21675a40648d24397fc7e6ca12a8b97ea7fa327f3822ce1d8244ca1bd3d9a13e`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local

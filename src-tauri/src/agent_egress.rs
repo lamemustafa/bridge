@@ -1,6 +1,8 @@
 //! Locked append-only egress receipts and bounded tail reads.
 use fs2::FileExt;
-use std::fs::{self, File, OpenOptions};
+#[cfg(any(unix, test))]
+use std::fs;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -35,18 +37,20 @@ pub(super) fn append_egress_line(path: &Path, line: &str) -> Result<(), String> 
     // Every append seeks to EOF while holding this exclusive lock.
     file.lock_exclusive()
         .map_err(|_| "egress_record_write_failed".to_string())?;
-    let write_result = (|| {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(fs::Permissions::from_mode(0o600))
-                .map_err(|_| "egress_record_write_failed".to_string())?;
-        }
+    #[cfg(unix)]
+    let permission_result = {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|_| "egress_record_write_failed".to_string())
+    };
+    #[cfg(not(unix))]
+    let permission_result: Result<(), String> = Ok(());
+    let write_result = permission_result.and_then(|()| {
         append_locked(&mut file, line, |file, bytes| {
             file.write_all(bytes)?;
             file.sync_data()
         })
-    })();
+    });
     let unlock_result = file
         .unlock()
         .map_err(|_| "egress_record_write_failed".to_string());

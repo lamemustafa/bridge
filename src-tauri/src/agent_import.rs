@@ -1584,6 +1584,8 @@ fn set_private_dir(path: &Path) -> Result<(), String> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .map_err(|_| "import_file_permissions_failed".to_string())?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
