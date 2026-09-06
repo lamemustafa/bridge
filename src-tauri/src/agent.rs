@@ -798,13 +798,12 @@ impl Server {
         };
         let request = render_agent_vouchers(&company.name, &from, &to, None)?;
         let (xml, mut evidence) = self.post_read(&identity, request).await?;
-        let mut rows = parse_agent_rows(&xml)?;
-        if let Some(ledger) = resolved_ledger.as_deref() {
-            rows = filter_voucher_rows_for_ledger(rows, ledger);
-        }
-        if !window_honoured(&rows, &from, &to) {
-            return Err("window_not_honoured".to_string());
-        }
+        let mut rows = validate_then_filter_voucher_rows(
+            parse_agent_rows(&xml)?,
+            &from,
+            &to,
+            resolved_ledger.as_deref(),
+        )?;
         let mut result_state = "complete";
         let mut corroboration_reason = None;
         if rows.is_empty() {
@@ -812,15 +811,12 @@ impl Server {
             let wider_request = render_agent_vouchers(&company.name, &wider_from, &wider_to, None)?;
             let (wider_xml, wider_evidence) = self.post_read(&identity, wider_request).await?;
             evidence = combine_evidence(evidence, wider_evidence);
-            let wider_rows = parse_agent_rows(&wider_xml)?;
-            let wider_rows = if let Some(ledger) = resolved_ledger.as_deref() {
-                filter_voucher_rows_for_ledger(wider_rows, ledger)
-            } else {
-                wider_rows
-            };
-            if !window_honoured(&wider_rows, &wider_from, &wider_to) {
-                return Err("empty_uncorroborated".to_string());
-            }
+            let wider_rows = validate_then_filter_voucher_rows(
+                parse_agent_rows(&wider_xml)?,
+                &wider_from,
+                &wider_to,
+                resolved_ledger.as_deref(),
+            )?;
             let high_water = if wider_rows.is_empty() {
                 let (high_water_xml, high_water_evidence) = self
                     .post_read(&identity, render_agent_company_high_water(&company.name))
@@ -1634,6 +1630,21 @@ fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> Vec<Value> 
                 })
         })
         .collect()
+}
+
+fn validate_then_filter_voucher_rows(
+    rows: Vec<Value>,
+    from: &str,
+    to: &str,
+    selected_ledger: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    if !window_honoured(&rows, from, to) {
+        return Err("window_not_honoured".to_string());
+    }
+    match selected_ledger {
+        Some(ledger) => Ok(filter_voucher_rows_for_ledger(rows, ledger)),
+        None => Ok(rows),
+    }
 }
 
 fn ledger_movement_counts<T>(rows: &[Value], vouchers: &[T]) -> (usize, usize) {
@@ -3469,6 +3480,18 @@ mod tests {
         );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["voucher_number"], "exact");
+    }
+
+    #[test]
+    fn voucher_window_is_validated_before_the_ledger_selector() {
+        let rows = vec![
+            json!({"date":"20260901","amounts":[{"ledger":"AB"}]}),
+            json!({"date":"20260915","amounts":[{"ledger":"A-B"}]}),
+        ];
+        assert_eq!(
+            validate_then_filter_voucher_rows(rows, "20260901", "20260902", Some("AB")),
+            Err("window_not_honoured".to_string())
+        );
     }
 
     #[test]
