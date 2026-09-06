@@ -1727,3 +1727,57 @@ fn evidence_reads_disclose_requested_limits_and_permanent_retention_eviction() {
     assert_eq!(rows.len(), MAX_EVIDENCE_RECORDS);
     assert_eq!(rows.last().unwrap()["request_sha256"], "1");
 }
+
+#[tokio::test]
+async fn diagnostic_history_reads_honor_the_configured_global_row_cap() {
+    for max_rows in [1, 2] {
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: 9,
+            },
+            data_dir: directory.path().into(),
+            max_rows,
+            max_bytes: 200_000,
+            redaction: Redaction::None,
+            import_enabled: false,
+        });
+        for index in 0..3 {
+            server.record_evidence(Evidence {
+                request_sha256: index.to_string(),
+                response_sha256: "observed".into(),
+                bytes: 0,
+                state: "complete",
+                read_at: None,
+                duration_ms: None,
+                reason_code: None,
+            });
+            append_egress_line(
+                &directory.path().join("agent-egress.jsonl"),
+                &json!({"index": index}).to_string(),
+            )
+            .unwrap();
+        }
+        for tool in ["read_evidence", "egress_log"] {
+            for (args, expected) in [
+                (json!({}), max_rows),
+                (json!({"limit":256}), max_rows),
+                (json!({"limit":1}), 1),
+            ] {
+                let response = server.call_tool(tool, args).await;
+                assert_eq!(response["isError"], false, "{tool}");
+                let content = &response["structuredContent"];
+                assert_eq!(
+                    content["result"]["records"].as_array().unwrap().len(),
+                    expected,
+                    "{tool} max_rows={max_rows}"
+                );
+                assert_eq!(
+                    content["truncated"], true,
+                    "omitted records remain explicit: {tool}"
+                );
+            }
+        }
+    }
+}

@@ -629,7 +629,9 @@ impl Server {
     }
 
     fn read_evidence(&self, args: &Value) -> Result<ToolOutcome, String> {
-        let take = arg_positive_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
+        let take = arg_positive_usize(args, "limit", 20)?
+            .min(self.settings.max_rows)
+            .min(MAX_EVIDENCE_RECORDS);
         let store = self
             .evidence
             .lock()
@@ -660,7 +662,9 @@ impl Server {
     }
 
     fn egress_log(&self, args: &Value) -> Result<ToolOutcome, String> {
-        let take = arg_positive_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
+        let take = arg_positive_usize(args, "limit", 20)?
+            .min(self.settings.max_rows)
+            .min(MAX_EVIDENCE_RECORDS);
         let path = self.settings.data_dir.join("agent-egress.jsonl");
         let tail = read_egress_tail(&path, take)?;
         let evidence = Evidence {
