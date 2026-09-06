@@ -1620,7 +1620,6 @@ fn resolve_ledger_name<'a>(
 }
 
 fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> Vec<Value> {
-    let key = ledger_lookup_key(ledger);
     rows.into_iter()
         .filter(|row| {
             row.get("amounts")
@@ -1630,7 +1629,7 @@ fn filter_voucher_rows_for_ledger(rows: Vec<Value>, ledger: &str) -> Vec<Value> 
                         entry
                             .get("ledger")
                             .and_then(Value::as_str)
-                            .is_some_and(|name| ledger_lookup_key(name) == key)
+                            .is_some_and(|name| name == ledger)
                     })
                 })
         })
@@ -3452,9 +3451,24 @@ mod tests {
     fn voucher_ledger_filter_drops_mixed_response_rows_that_do_not_match_live_spelling() {
         let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><VOUCHERNUMBER>keep</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>R and D</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER><VOUCHERNUMBER>drop</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
         let rows = parse_agent_rows(xml).expect("mixed voucher rows");
-        let rows = filter_voucher_rows_for_ledger(rows, "R-and_D");
+        let rows = filter_voucher_rows_for_ledger(rows, "R and D");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["voucher_number"], "keep");
+    }
+
+    #[test]
+    fn resolved_ledger_filter_keeps_only_the_exact_live_spelling() {
+        let resolved = resolve_ledger_name(["AB", "A-B"].into_iter(), "AB")
+            .expect("exact requested ledger resolves");
+        let rows = filter_voucher_rows_for_ledger(
+            vec![
+                json!({"voucher_number":"exact","amounts":[{"ledger":"AB"}]}),
+                json!({"voucher_number":"near","amounts":[{"ledger":"A-B"}]}),
+            ],
+            &resolved,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["voucher_number"], "exact");
     }
 
     #[test]
