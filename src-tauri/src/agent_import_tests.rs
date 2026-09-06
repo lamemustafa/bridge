@@ -1246,7 +1246,7 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
                     .expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 36);
+        assert_eq!(simulator.finish().expect("requests").len(), 42);
     }
 }
 
@@ -1513,6 +1513,7 @@ fn qualified_import_cycle_plans() -> Vec<ScenarioPlan> {
     [
         probe.clone(),
         cycle[..16].to_vec(),
+        cycle[4..10].to_vec(),
         probe,
         cycle[16..].to_vec(),
     ]

@@ -1,13 +1,13 @@
 use super::*;
 use crate::agent::{agent_protocol::finish_response, Settings, ToolResponse};
 
-// Reuse the existing build/readback regression's first twenty observations, including fresh mode probes.
+// Reuse the existing build/readback regression's first twenty-six observations, including fresh mode probes.
 // No new Tally behavior is inferred from these simulator fixtures.
 async fn persisted_build(cap: usize) -> (tempfile::TempDir, Server, ToolResponse) {
     let simulator = SequenceSimulator::spawn(
         qualified_import_cycle_plans()
             .into_iter()
-            .take(20)
+            .take(26)
             .collect(),
     )
     .unwrap();
@@ -59,7 +59,7 @@ async fn persisted_build(cap: usize) -> (tempfile::TempDir, Server, ToolResponse
     assert_eq!(ledger["batch_id"], *batch_id);
     assert_eq!(ledger["status"], "built");
     assert_eq!(ledger["sha256"], sha256_hex(&xml));
-    assert_eq!(simulator.finish().unwrap().len(), 20);
+    assert_eq!(simulator.finish().unwrap().len(), 26);
     (directory, server, tool)
 }
 

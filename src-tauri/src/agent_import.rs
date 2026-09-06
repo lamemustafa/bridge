@@ -311,6 +311,14 @@ impl Server {
             reject_known_transactions(&payload, &existing)?;
             let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
             accumulated = combine_evidence(accumulated.clone(), mark_evidence.clone());
+            let (_, repeated_catalogue_evidence) =
+                self.read_ledger_catalogue(&identity, &company.name).await?;
+            accumulated = combine_evidence(accumulated.clone(), repeated_catalogue_evidence.clone());
+            // Compare the complete captured catalogue, including identities and parents.
+            // This proves stability across these observations, not an atomic snapshot.
+            if catalogue_evidence.response_sha256 != repeated_catalogue_evidence.response_sha256 {
+                return Err("import_catalogue_changed".to_string().into());
+            }
             let closing_mode_evidence = self.qualified_import_mode().await?;
             accumulated = combine_evidence(accumulated.clone(), closing_mode_evidence);
             let batch_id = format!("bridge-{}", Uuid::new_v4());
