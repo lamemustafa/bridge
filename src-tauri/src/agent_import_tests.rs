@@ -1685,3 +1685,6 @@ mod verify_mode_tests;
 
 #[path = "agent_import_identity_tests.rs"]
 mod identity_tests;
+
+#[path = "agent_import_text_tests.rs"]
+mod text_tests;

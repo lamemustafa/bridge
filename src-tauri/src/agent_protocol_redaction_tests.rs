@@ -58,7 +58,9 @@ async fn narration_redaction_preserves_the_closed_server_voucher_schema() {
     let schema = &result["structuredContent"]["result"]["schema"];
     let voucher = &schema["properties"]["vouchers"]["items"];
     assert_eq!(voucher["additionalProperties"], false);
-    assert_eq!(voucher["properties"]["narration"], json!({"type":"string"}));
+    assert_eq!(schema, &agent_import::voucher_input_schema());
+    assert_eq!(voucher["properties"]["narration"]["minLength"], 1);
+    assert_eq!(voucher["properties"]["narration"]["maxLength"], 2000);
     let build_schema = &responses[1]["result"]["tools"]
         .as_array()
         .unwrap()

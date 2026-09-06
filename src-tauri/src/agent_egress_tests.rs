@@ -1,4 +1,5 @@
 use super::*;
+use std::fs::OpenOptions;
 
 #[test]
 fn failed_partial_write_and_sync_restore_the_original_receipts() {

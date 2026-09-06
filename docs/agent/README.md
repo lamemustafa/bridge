@@ -22,6 +22,11 @@ must belong to the current user and have that mode. Otherwise startup refuses
 it without changing its permissions. Select a new dedicated leaf under a shared
 parent rather than using the shared directory itself. Windows directories retain
 their inherited ACLs; symlink and reparse-point leaves are refused.
+Local journals, locks, staging files and delivery receipts must be regular files
+with a single link, owned by the current user on Unix. Admission checks the
+opened file before reading it or changing bytes or permissions. Existing files
+that do not meet these requirements are refused; reconcile their storage before
+continuing. New transaction directories are private from creation.
 
 Claude Desktop example:
 
@@ -136,6 +141,11 @@ type, host, licence mode, or manually imported file, so the feature remains opt-
 The file path is deliberately not a direct-posting path. Masters must already
 exist and match exactly. File generation requires the observed TallyPrime Silver 7.1 profile;
 the checks do not make a later manual import atomic with the earlier reads.
+Optional narration and reference must contain 1–2,000 Unicode characters when
+supplied; omit them when unused. Control characters and the reserved attribution
+marker are refused, including XML entity-encoded marker spellings. Voucher
+numbers contain 1–32 characters and cannot contain controls or `$`. Lengths match
+JSON Schema's character semantics; the 5 MB request-frame limit remains separate.
 If verification would report any `not_found`, TallyPrime Silver 7.1 must have been
 observed before and after readback. Otherwise `verification_mode_unqualified`,
 `verification_release_unqualified`, or `verification_license_tier_unqualified`

@@ -1,7 +1,7 @@
 //! Locked append-only egress receipts and bounded tail reads.
 #[cfg(any(unix, test))]
 use std::fs;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -19,18 +19,7 @@ pub(super) fn append_egress_line(path: &Path, line: &str) -> Result<(), String> 
     if line.len().saturating_add(1) >= MAX_EGRESS_TAIL_BYTES {
         return Err("egress_record_too_large".to_string());
     }
-    let mut options = OpenOptions::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
+    let mut file = super::local_file::open_local_file(path, true)
         .map_err(|_| "egress_record_write_failed".to_string())?;
     // Read/write access permits LockFileEx and rollback truncation on Windows.
     // Every append seeks to EOF while holding this exclusive lock.
@@ -94,7 +83,7 @@ pub(super) struct EgressTail {
 }
 
 pub(super) fn read_egress_tail(path: &Path, take: usize) -> Result<EgressTail, String> {
-    let mut file = match File::open(path) {
+    let mut file = match super::local_file::open_local_file(path, false) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(EgressTail::default())

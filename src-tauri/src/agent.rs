@@ -5,6 +5,8 @@
 #[path = "agent_directory.rs"]
 mod directory;
 use directory::{ensure_private_directory, DirectoryAdmissionError};
+#[path = "agent_file.rs"]
+mod local_file;
 
 #[path = "agent_import.rs"]
 mod agent_import;

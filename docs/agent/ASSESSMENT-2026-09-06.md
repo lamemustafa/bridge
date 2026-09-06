@@ -330,7 +330,27 @@ and a real rename obstruction: the recovery marker and batch ID survive, includi
 the smallest framing budget. The partial response does not promise a complete XML
 file or import-ledger row.
 
-Local candidate verification: **999 Rust workspace tests**, **233 agent tests
+Local artifact admission is shared across journals, locks, staging and delivery
+receipts. It validates the opened regular file before reading or changing it;
+transaction directories are private at creation. Temporary-file regressions cover
+refusal without changing original bytes or permissions, alongside normal append,
+locking and recovery. The same helper cross-compiled with warnings denied for
+Windows using existing dependencies; hosted Windows runtime evidence remains
+required. This does not claim protection against same-user ancestor-directory
+replacement.
+
+The readable voucher-schema module publishes text, positive amount and ledger
+constraints alongside runtime admission. Optional text is limited to 2,000 Unicode
+characters, matching JSON Schema, with the separate 5 MB request cap unchanged.
+An independent Ajv 8.20.0 validator and official MCP SDK client checked 471 cases;
+448 invalid payloads returned typed refusals with zero Tally source bytes. Cases
+include multibyte limits, all controls at the start/middle/end, terminal line
+separators, zero and oversized amounts, and blank ledger names. Both schema
+advertisements match and narration redaction preserves the complete schema.
+Calendar/company/master/balance and decoded-marker checks remain runtime domain
+admission. [JSON Schema string constraints](https://github.com/json-schema-org/json-schema-spec/blob/main/specs/jsonschema-validation.md#maxlength)
+
+Local candidate verification: **1,007 Rust workspace tests**, **241 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -363,7 +383,9 @@ result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
 additional Journal file for `12.63` using the same caller label in the same intact
 local journal after catalogue, verification-window and Silver 7.1 profile
-observations. Its batch ID and XML hash differ from the earlier file, whose
+observations. This final file contains 2,000-character narration and reference
+values whose Unicode text is preserved exactly in the generated XML; it was not
+imported, so this checks file generation, not Tally storage limits for long text. Its batch ID and XML hash differ from the earlier file, whose
 bytes remain unchanged; both files are retained. Its preflight observed the existing Journal;
 readback correctly reported the new file as `not_found`. The file was not imported.
 A separate narration-redaction process preserved the schema's narration property
@@ -417,7 +439,7 @@ checks. None substitutes for the others. Graphify data and its refresh script
 were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
-The 163-entry sealed surface was audited before each reseal. No sealed path changed in the final batch/recovery correction. The preceding reseal
+The 163-entry sealed surface was audited before each reseal. No sealed path changed in the final artifact/schema correction. The preceding reseal
 updated six existing paths for shared company-number admission and retained
 probe/drift evidence across financial readers. No paths were added or
 removed. Previous seals cover observed release/tier profile version 4, typed

@@ -10,12 +10,15 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::fs;
+use std::io::{Read, Seek, SeekFrom, Write};
 
 #[path = "agent_import_identity.rs"]
 mod identity;
 use identity::{import_identity, ImportIdentityScheme};
+#[path = "agent_import_schema.rs"]
+mod schema;
+pub(super) use schema::voucher_input_schema;
 #[path = "agent_import_ledger.rs"]
 mod ledger;
 #[path = "agent_import_persistence.rs"]
@@ -57,7 +60,7 @@ impl ImportProfileRefusal {
 const MAX_VOUCHERS: usize = 1_000;
 pub(super) const MAX_MASTER_NAMES: usize = 100;
 pub(super) const MAX_MASTER_NAME_CHARS: usize = 1024;
-const MAX_TEXT_BYTES: usize = 2_000;
+const MAX_TEXT_CHARS: usize = 2_000;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -625,12 +628,7 @@ impl Server {
 
     fn lock_import_admission(&self) -> Result<std::fs::File, String> {
         let path = self.settings.data_dir.join("agent-import-admission.lock");
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(path)
+        let file = super::local_file::open_local_file(&path, true)
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
         file.lock()
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
@@ -640,12 +638,7 @@ impl Server {
 
     fn lock_import_admission_shared(&self) -> Result<std::fs::File, String> {
         let path = self.settings.data_dir.join("agent-import-admission.lock");
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(path)
+        let file = super::local_file::open_local_file(&path, true)
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
         file.lock_shared()
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
@@ -669,11 +662,14 @@ impl Server {
 
     fn import_snapshots_while_admitted(&self) -> Result<Vec<ledger::BatchSnapshot>, String> {
         let path = self.settings.data_dir.join("agent-import-ledger.jsonl");
-        let text = match fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        let mut file = match super::local_file::open_local_file(&path, false) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(_) => return Err("import_ledger_unavailable".to_string()),
         };
+        let mut text = String::new();
+        file.read_to_string(&mut text)
+            .map_err(|_| "import_ledger_unavailable".to_string())?;
         ledger::parse_snapshots(&text)
     }
 
@@ -712,19 +708,8 @@ fn append_private_import_ledger(
     bytes: &[u8],
     prepare_permissions: impl FnOnce(&std::fs::File) -> Result<(), String>,
 ) -> Result<(), String> {
-    let mut options = OpenOptions::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
     // Admission serializes writers; read/write access also permits Windows rollback.
-    let mut file = options
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
+    let mut file = super::local_file::open_local_file(path, true)
         .map_err(|_| "import_ledger_unavailable".to_string())?;
     prepare_permissions(&file)?;
     file.seek(SeekFrom::End(0))
@@ -780,12 +765,6 @@ fn canonical_batch_guid(guid: &str) -> String {
 
 fn batch_guid_matches(stored: &str, supplied: &str) -> bool {
     stored.eq_ignore_ascii_case(supplied)
-}
-
-pub(super) fn voucher_input_schema() -> Value {
-    json!({"type":"object", "additionalProperties":false, "required":["company_guid","vouchers"], "properties": {
-        "company_guid":{"type":"string","minLength":1}, "vouchers":{"type":"array","minItems":1,"maxItems":MAX_VOUCHERS,"description":"At most 100 distinct ledger names across the batch; repeated ledgers do not reduce the 1000-voucher limit.","items":{"type":"object","additionalProperties":false,"required":["bridge_txn_id","date","voucher_type","entries"],"properties": {
-        "bridge_txn_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}, "date":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}, "voucher_type":{"enum":LIVE_QUALIFIED_VOUCHER_TYPES}, "narration":{"type":"string"}, "reference":{"type":"string"}, "voucher_number":{"type":"string","minLength":1,"maxLength":32}, "entries":{"type":"array","minItems":2,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount","side"],"properties":{"ledger":{"type":"string","minLength":1,"maxLength":MAX_MASTER_NAME_CHARS},"amount":{"type":"string","pattern":"^\\d+\\.\\d{2}$"},"side":{"enum":["Dr","Cr"]}}}} }}} }})
 }
 
 fn parse_payload(args: &Value) -> Result<ImportPayload, String> {
@@ -857,7 +836,10 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         .into_iter()
         .flatten()
         {
-            if text.is_empty() || text.len() > MAX_TEXT_BYTES || text.chars().any(char::is_control)
+            // JSON Schema minLength/maxLength count Unicode code points, not UTF-8 bytes.
+            if text.is_empty()
+                || text.chars().count() > MAX_TEXT_CHARS
+                || text.chars().any(char::is_control)
             {
                 return Err("voucher_text_invalid".to_string());
             }
@@ -1648,17 +1630,7 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mut options = OpenOptions::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
+    let mut file = super::local_file::open_local_file(path, true)
         .map_err(|_| "import_file_write_failed".to_string())?;
     set_private_file(&file)?;
     file.set_len(0)
@@ -1677,18 +1649,10 @@ fn set_private_file(file: &std::fs::File) -> Result<(), String> {
     let _ = file;
     Ok(())
 }
-fn set_private_dir(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-            .map_err(|_| "import_file_permissions_failed".to_string())?;
-    }
-    #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
-}
-
 #[cfg(test)]
 #[path = "agent_import_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_import_file_tests.rs"]
+mod file_tests;

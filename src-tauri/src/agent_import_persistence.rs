@@ -6,6 +6,17 @@ use super::*;
 const TRANSACTION: &str = ".proof-publication";
 const BUILD_TRANSACTION: &str = ".build-publication";
 
+fn create_transaction(path: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)
+}
+
 pub(super) fn require_settled(imports: &Path) -> Result<(), String> {
     for (name, error_code) in [
         (TRANSACTION, "proof_publication_recovery_required"),
@@ -37,9 +48,9 @@ fn persist_build_with_stage(
 ) -> Result<Option<String>, String> {
     let path = imports.join(format!("{}.xml", line.batch_id));
     let transaction = imports.join(BUILD_TRANSACTION);
-    fs::create_dir(&transaction).map_err(|_| "import_publication_recovery_required".to_string())?;
+    create_transaction(&transaction)
+        .map_err(|_| "import_publication_recovery_required".to_string())?;
     let publication = (|| {
-        set_private_dir(&transaction)?;
         write_private(
             &transaction.join("update.json"),
             &serde_json::to_vec_pretty(line)
@@ -94,7 +105,8 @@ pub(super) fn publish_proofs(
     mut before: impl FnMut(PublicationStep) -> Result<(), String>,
 ) -> Result<(), String> {
     let transaction = imports.join(TRANSACTION);
-    fs::create_dir(&transaction).map_err(|_| "proof_publication_recovery_required".to_string())?;
+    create_transaction(&transaction)
+        .map_err(|_| "proof_publication_recovery_required".to_string())?;
     let targets = [
         imports.join(format!("{}.proof.json", update.batch_id)),
         imports.join(format!("{}.proof.md", update.batch_id)),
@@ -107,7 +119,6 @@ pub(super) fn publish_proofs(
     let mut backed_up = [false; 2];
     let mut published = [false; 2];
     let result = (|| {
-        set_private_dir(&transaction)?;
         // Preserve enough context for explicit recovery after process death.
         write_private(
             &transaction.join("update.json"),
