@@ -1,6 +1,33 @@
 use super::*;
 
 #[tokio::test]
+async fn voucher_type_selector_is_bounded_before_any_tally_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+    });
+    let mut args = json!({"company_guid":"synthetic-company",
+        "from":"20260901","to":"20260902","voucher_type":"名".repeat(1025)});
+    let response = server.call_tool_response("vouchers", args.clone()).await;
+    assert_eq!(response.value["isError"], true);
+    assert_eq!(
+        response.value["structuredContent"]["result"]["error"]["code"],
+        "argument_invalid:voucher_type"
+    );
+    assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
+    args["voucher_type"] = json!("名".repeat(1024));
+    assert!(validate_tool_arguments("vouchers", &args).is_ok());
+}
+
+#[tokio::test]
 async fn unqualified_change_feed_is_hidden_and_direct_calls_refuse_before_tally() {
     for import_enabled in [false, true] {
         assert!(!tool_definitions(import_enabled)

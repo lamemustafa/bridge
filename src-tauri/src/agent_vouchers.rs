@@ -53,7 +53,9 @@ impl Server {
             }
         }
         if let Some(kind) = optional_string(args, "voucher_type")? {
-            rows.retain(|row| row.get("voucher_type") == Some(&Value::String(kind.clone())));
+            rows.retain(|row| {
+                row.get("voucher_type").and_then(Value::as_str) == Some(kind.as_str())
+            });
         }
         let offset = arg_usize(args, "offset", 0)?;
         let limit =
