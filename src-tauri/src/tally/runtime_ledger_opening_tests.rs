@@ -424,7 +424,9 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
         if unsafe_book_start {
             let error = result.unwrap_err();
             assert_eq!(
-                error.downcast_ref::<OpeningBoundaryObservationError>(),
+                error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
                 Some(&OpeningBoundaryObservationError::Period(
                     NativeLedgerExportPeriodError::UnsupportedBoundary
                 ))
@@ -433,7 +435,8 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
             assert_eq!(
                 result
                     .unwrap_err()
-                    .downcast_ref::<OpeningBoundaryObservationError>(),
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
                 Some(&OpeningBoundaryObservationError::Changed)
             );
         } else {
