@@ -114,11 +114,15 @@ fn tally_command_error(
 }
 
 fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
-    if error
-        .downcast_ref::<PartyLedgerMasterSourceValidationError>()
-        .is_some()
-        || error.downcast_ref::<PairedReadValidationError>().is_some()
-    {
+    if error.chain().any(|cause| {
+        cause
+            .downcast_ref::<PartyLedgerMasterSourceValidationError>()
+            .is_some()
+            || cause.downcast_ref::<PairedReadValidationError>().is_some()
+            || cause
+                .downcast_ref::<crate::tally::runtime::OpeningBoundaryObservationError>()
+                .is_some()
+    }) {
         return tally_command_error(
             "response_validation_failed",
             "Response validation",
@@ -128,7 +132,10 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
             "Keep the result unverified and inspect redacted diagnostics before retrying.",
         );
     }
-    if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
+    if let Some(control) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<TallyRuntimeControlError>())
+    {
         return match control {
             TallyRuntimeControlError::Cancelled => tally_command_error(
                 "request_cancelled",
@@ -3352,6 +3359,23 @@ mod tests {
             assert_eq!(mapped.code, "response_validation_failed");
             assert_eq!(mapped.category, "Response validation");
             assert_ne!(mapped.code, "endpoint_unreachable");
+        }
+    }
+
+    #[test]
+    fn retained_wire_evidence_does_not_hide_typed_command_refusals() {
+        use crate::tally::runtime::{with_read_evidence, RuntimeReadEvidence};
+        for (source, code) in [
+            (anyhow::Error::new(crate::tally::runtime::OpeningBoundaryObservationError::Unobserved), "response_validation_failed"),
+            (anyhow::Error::new(crate::tally::runtime::OpeningBoundaryObservationError::Changed), "response_validation_failed"),
+            (anyhow::Error::new(crate::tally::connection::PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed), "response_validation_failed"),
+            (anyhow::Error::new(crate::tally::connection::PairedReadValidationError::PartyLedgerMaster), "response_validation_failed"),
+            (anyhow::Error::new(crate::tally::runtime::TallyRuntimeControlError::QueueDeadline), "tally_runtime_temporarily_unavailable"),
+        ] {
+            let wrapped = with_read_evidence(source, RuntimeReadEvidence::empty());
+            let mapped = tally_runtime_command_error(wrapped);
+            assert_eq!(mapped.code, code);
+            assert!(!mapped.message.contains("opening balances disagreed"));
         }
     }
 
