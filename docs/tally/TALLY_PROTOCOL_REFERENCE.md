@@ -288,11 +288,43 @@ machine, Tally build, licence tier, company, or configuration.
 **The failure is invisible from the response.** When the period is silently widened:
 
 - **without** a `<FILTERS>` clause you receive far **too many** rows;
-- **with** a `<FILTERS>` clause you receive **zero** rows, because `##SVToDate` does not
-  resolve and the predicate excludes everything.
+- **with** a `<FILTERS>` predicate bound to `##SVFromDate` / `##SVToDate`, you receive
+  **zero** rows, because the refused date variable does not resolve and the predicate excludes
+  everything. This observation does not describe a predicate using literal date bounds.
 
 Both return `STATUS=1`. Neither reports an error. A zero-row response is indistinguishable
 from a genuinely empty period without corroboration.
+
+**VERIFIED, limited literal-predicate counter-observation (2026-08-21).** Retained request
+and response bytes from TallyPrime 7.1 Education, synthetic `WR2 Unicode Lab`, distinguish
+that variable-dependent failure from a literal-date predicate. Both requests sent
+`SVFROMDATE=20260701` and the refused `SVTODATE=20260830`:
+
+| Predicate bounds | Actual voucher rows | Returned voucher dates | Response bytes | Response SHA-256 |
+| --- | --- | --- | --- | --- |
+| `$Date >= ##SVFromDate AND $Date <= ##SVToDate` | 0 | none | 3,022 | `49d1cf0c7cf56220fbaa7e2f583a99835f6af74dda7ad807ad54a34277bbff7e` |
+| `$Date >= $$Date:"20260701" AND $Date <= $$Date:"20260831"` | 3 | all `20260801` | 9,974 | `544dd8facaffa54263ded46db4f18a75cb940450ca49aacce7f0014b22703b98` |
+
+Both responses carried `STATUS=1`. Rows and dates were counted from complete XML elements,
+not substring matches. The literal predicate does not depend on the refused date variable;
+this is direct counter-evidence to treating every filtered voucher collection as the zero-row
+failure above. Ordinary agent voucher reads and import readback use literal bounds and validate
+returned row dates. This differs from a native opening/balance report with no returned span,
+whose monetary period still requires current-mode admission.
+
+**Measurement limits:** one Education instance and one synthetic company. The literal request
+used `DATE,VOUCHERNUMBER`; the variable request used the broader accounting projection. Its
+literal upper bound was `20260831`, one day after the refused static-variable upper bound;
+the three observed vouchers fall inside both windows. This was not an otherwise-identical
+full-projection comparison, does not qualify every arbitrary-date window or mode transition,
+and does not establish that repeating an empty response proves absence. A regression test
+protects the literal predicates in both agent renderers; it is not additional live evidence.
+
+**Import verification qualification policy:** persisting any `not_found` verdict requires an
+observed licensed TallyPrime profile before the voucher reads and a qualified closing observation.
+An unqualified negative verdict must leave the prior proof and batch status unchanged. Positive
+historical readback remains available. This is a conservative qualification limit on negative
+verdicts, not a claim that Education was observed to reject a literal day-15 predicate.
 
 **Bridge native-outstandings policy.** The paired ledger snapshot is the only exact money
 discriminator available after a zero-row Bills response: a book with no named bills and no

@@ -1521,3 +1521,56 @@ fn qualified_import_cycle_plans() -> Vec<ScenarioPlan> {
 
 #[path = "agent_import_mode_tests.rs"]
 mod mode_tests;
+
+#[test]
+fn voucher_and_import_read_filters_use_literal_dates_independently_of_static_periods() {
+    // The recorded Education refusal affected ##SVFromDate/##SVToDate predicates.
+    // Guard both production renderers against restoring that dependency; this
+    // request test does not simulate or qualify Tally's date behavior.
+    let (from, to) = ("20260815", "20260822");
+    let requests = [
+        render_import_verification_read("Synthetic Book", from, to),
+        super::super::render_agent_vouchers("Synthetic Book", from, to, None).unwrap(),
+    ];
+    for request in requests {
+        let mut reader = quick_xml::Reader::from_str(&request);
+        let mut formulae = Vec::new();
+        let mut bounds = BTreeMap::new();
+        loop {
+            match reader.read_event().unwrap() {
+                quick_xml::events::Event::Start(tag) => {
+                    let name = tag.name();
+                    if name.as_ref() == b"SYSTEM" {
+                        let text = reader.read_text(name).unwrap();
+                        let decoded = text.decode().unwrap();
+                        formulae.push(quick_xml::escape::unescape(&decoded).unwrap().into_owned());
+                    } else if matches!(name.as_ref(), b"SVFROMDATE" | b"SVTODATE") {
+                        let value = reader
+                            .read_text(name)
+                            .unwrap()
+                            .decode()
+                            .unwrap()
+                            .into_owned();
+                        assert!(bounds.insert(name.as_ref().to_vec(), value).is_none());
+                    }
+                }
+                quick_xml::events::Event::Eof => break,
+                _ => {}
+            }
+        }
+        assert_eq!(
+            formulae,
+            [format!(
+                "$Date >= $$Date:\"{from}\" AND $Date <= $$Date:\"{to}\""
+            )]
+        );
+        assert_eq!(
+            bounds.get(b"SVFROMDATE".as_slice()).map(String::as_str),
+            Some(from)
+        );
+        assert_eq!(
+            bounds.get(b"SVTODATE".as_slice()).map(String::as_str),
+            Some(to)
+        );
+    }
+}
