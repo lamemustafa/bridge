@@ -1402,7 +1402,18 @@ fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
     let arguments = args
         .as_object()
         .ok_or_else(|| "argument_schema_invalid".to_string())?;
-    let allowed: &[&str] = match name {
+    let allowed = tool_argument_allowlist(name).ok_or_else(|| "tool_not_found".to_string())?;
+    if let Some(unknown) = arguments
+        .keys()
+        .find(|key| !allowed.contains(&key.as_str()))
+    {
+        return Err(format!("argument_unknown:{unknown}"));
+    }
+    Ok(())
+}
+
+fn tool_argument_allowlist(name: &str) -> Option<&'static [&'static str]> {
+    Some(match name {
         "tally_status" | "list_companies" | "voucher_schema" => &[],
         "validate_masters" => &["company_guid", "ledgers"],
         "build_import_xml" => &["company_guid", "vouchers"],
@@ -1417,7 +1428,7 @@ fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
             "limit",
         ],
         "ledger_masters" => &["company_guid", "group", "fields", "offset", "limit"],
-        "ledger_movement" => &["company_guid", "from", "to", "ledger"],
+        "ledger_movement" => &["company_guid", "from", "to", "ledger", "offset", "limit"],
         "vouchers" => &[
             "company_guid",
             "from",
@@ -1435,15 +1446,8 @@ fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), String> {
             "master_snapshot_alter_id",
         ],
         "read_evidence" | "egress_log" => &["limit"],
-        _ => return Err("tool_not_found".to_string()),
-    };
-    if let Some(unknown) = arguments
-        .keys()
-        .find(|key| !allowed.contains(&key.as_str()))
-    {
-        return Err(format!("argument_unknown:{unknown}"));
-    }
-    Ok(())
+        _ => return None,
+    })
 }
 
 fn ledger_master_fields(fields: &str) -> Result<bool, String> {
@@ -3050,6 +3054,24 @@ mod tests {
             ),
             Err("argument_unknown:ledgre".to_string())
         );
+    }
+
+    #[test]
+    fn every_declared_tool_property_is_allowed_by_dispatch() {
+        for tool in tool_definitions(true).as_array().expect("tool definitions") {
+            let name = tool["name"].as_str().expect("tool name");
+            let allowed = tool_argument_allowlist(name).expect("dispatch allowlist");
+            for property in tool["inputSchema"]["properties"]
+                .as_object()
+                .into_iter()
+                .flat_map(|properties| properties.keys())
+            {
+                assert!(
+                    allowed.contains(&property.as_str()),
+                    "{name} declares {property} but dispatch rejects it"
+                );
+            }
+        }
     }
 
     #[test]
