@@ -346,3 +346,34 @@ fn captured_remote_id_is_validated_once_and_exposed_only_to_changed_rows() {
         }
     }
 }
+
+#[test]
+fn repeated_captured_voucher_identities_are_refused_before_selection_or_movement() {
+    let captured = captured_native_vouchers();
+    let original = parse_agent_changed_rows(&captured).unwrap();
+    let first_start = captured.find("<VOUCHER ").unwrap();
+    let first_end =
+        first_start + captured[first_start..].find("</VOUCHER>").unwrap() + "</VOUCHER>".len();
+    let first = &captured[first_start..first_end];
+    let guid = original[0]["guid"].as_str().unwrap();
+    let master = original[0]["master_id"].as_str().unwrap();
+    for duplicate in [
+        first.to_string(),
+        first
+            .replace(guid, &guid.to_ascii_uppercase())
+            .replace(&format!(">{master}</MASTERID>"), ">999</MASTERID>"),
+        first
+            .replace(guid, "distinct-guid")
+            .replace(&format!(">{master}</MASTERID>"), ">0001</MASTERID>"),
+    ] {
+        let repeated = captured.replacen("</COLLECTION>", &format!("{duplicate}</COLLECTION>"), 1);
+        for require_identity in [false, true] {
+            assert_eq!(
+                parse_agent_rows_with_accounting_state(&repeated, require_identity),
+                Err("voucher_source_identity_invalid".into())
+            );
+        }
+    }
+    // Distinct accounting contents are not an identity; preserve distinct rows.
+    assert_eq!(parse_agent_changed_rows(&captured).unwrap().len(), 3);
+}

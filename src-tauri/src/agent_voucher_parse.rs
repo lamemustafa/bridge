@@ -82,6 +82,7 @@ pub(super) fn parse_agent_rows_with_accounting_state(
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut rows = Vec::new();
+    let mut identities = VoucherSourceIdentities::default();
     validate_agent_envelope(xml)?;
     let mut current: Option<BTreeMap<String, String>> = None;
     let mut entry: Option<BTreeMap<String, String>> = None;
@@ -122,6 +123,9 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                 }
                 claim_voucher_scalar(&scope, &tag, current.as_mut(), entry.as_mut())?;
                 scope.start(tag.clone());
+                if scope.repeated_collection {
+                    return Err("agent_read_protocol_invalid".into());
+                }
                 current_tag = tag;
             }
             Ok(quick_xml::events::Event::Text(text)) => {
@@ -203,10 +207,11 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                         }
                         bridge_tally_core::TallyDate::parse(row["DATE"].clone())
                             .map_err(|_| "voucher_date_invalid".to_string())?;
-                        parse_optional_tally_u64(
+                        let master_id = parse_optional_tally_u64(
                             row.get("MASTERID").map(String::as_str),
                             "voucher_master_id_invalid",
                         )?;
+                        identities.admit(row.get("GUID").map(String::as_str), master_id)?;
                         let amounts = std::mem::take(&mut entries);
                         let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": parse_optional_tally_alter_id(row.get("ALTERID").map(String::as_str))?, "master_id": row.get("MASTERID"), "amounts": amounts});
                         if require_change_identity {
@@ -232,6 +237,9 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                 }
                 claim_voucher_scalar(&scope, &name, current.as_mut(), entry.as_mut())?;
                 scope.start(name.clone());
+                if scope.repeated_collection {
+                    return Err("agent_read_protocol_invalid".into());
+                }
                 scope.end(&name)?;
             }
             Ok(quick_xml::events::Event::Eof) => break,

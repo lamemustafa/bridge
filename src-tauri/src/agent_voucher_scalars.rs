@@ -1,5 +1,5 @@
 //! Shared scalar admission for native voucher readers.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(in crate::agent) fn is_voucher_scalar(field: &str) -> bool {
     matches!(
@@ -75,4 +75,31 @@ pub(in crate::agent) fn parse_optional_tally_u64(
             value.parse::<u64>().map_err(|_| error_code.to_string())
         })
         .transpose()
+}
+
+/// Per-collection identity admission, before selectors or accounting arithmetic.
+/// Missing identities retain each reader's policy; present identities are unique.
+#[derive(Default)]
+pub(in crate::agent) struct VoucherSourceIdentities {
+    guids: BTreeSet<String>,
+    master_ids: BTreeSet<u64>,
+}
+
+impl VoucherSourceIdentities {
+    pub(in crate::agent) fn admit(
+        &mut self,
+        guid: Option<&str>,
+        master_id: Option<u64>,
+    ) -> Result<(), String> {
+        if let Some(guid) = guid {
+            let guid = guid.trim().to_ascii_lowercase();
+            if guid.is_empty() || !self.guids.insert(guid) {
+                return Err("voucher_source_identity_invalid".into());
+            }
+        }
+        if master_id.is_some_and(|id| !self.master_ids.insert(id)) {
+            return Err("voucher_source_identity_invalid".into());
+        }
+        Ok(())
+    }
 }

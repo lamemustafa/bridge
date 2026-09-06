@@ -154,22 +154,18 @@ struct ImportReadSource {
 
 impl ImportReadSource {
     fn admit(mut rows: Vec<ReadVoucher>) -> Result<Self, String> {
-        let mut guids = BTreeSet::new();
-        let mut master_ids = BTreeSet::new();
+        let mut identities = super::VoucherSourceIdentities::default();
         for row in &mut rows {
             if let Some(guid) = row.guid.as_mut() {
                 *guid = guid.trim().to_ascii_lowercase();
-                if guid.is_empty() || !guids.insert(guid.clone()) {
-                    return Err("import_verification_identity_invalid".into());
-                }
             }
             let master_id = super::parse_optional_tally_u64(
                 row.master_id.as_deref(),
                 "import_verification_master_id_invalid",
             )?;
-            if master_id.is_some_and(|id| !master_ids.insert(id)) {
-                return Err("import_verification_identity_invalid".into());
-            }
+            identities
+                .admit(row.guid.as_deref(), master_id)
+                .map_err(|_| "import_verification_identity_invalid".to_string())?;
             row.master_id = master_id.map(|id| id.to_string());
             if row.guid.is_none() && row.master_id.is_none() {
                 return Err("import_verification_identity_invalid".into());
@@ -926,7 +922,9 @@ fn parse_import_vouchers(xml: &str) -> Result<ImportReadSource, String> {
             | "change_row_core_field_invalid"
             | "voucher_date_invalid"
             | "voucher_accounting_state_not_observed" => "import_verification_export_invalid",
-            "change_row_identity_invalid" => "import_verification_identity_invalid",
+            "change_row_identity_invalid" | "voucher_source_identity_invalid" => {
+                "import_verification_identity_invalid"
+            }
             "voucher_amount_invalid" => "import_verification_amount_invalid",
             "voucher_master_id_invalid" => "import_verification_master_id_invalid",
             _ => return code,
