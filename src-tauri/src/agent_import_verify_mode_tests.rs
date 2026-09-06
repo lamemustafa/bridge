@@ -137,8 +137,13 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             vouchers,
         };
         server.append_import_ledger(&line).unwrap();
+        let generation = server
+            .latest_import_snapshot(&line.batch_id)
+            .unwrap()
+            .unwrap()
+            .generation;
         server
-            .persist_import_verification(&json!({"batch_id":line.batch_id}), &line)
+            .persist_import_verification(&json!({"batch_id":line.batch_id}), &line, generation)
             .unwrap();
         let paths = [
             server.settings.data_dir.join("agent-import-ledger.jsonl"),

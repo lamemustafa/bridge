@@ -199,6 +199,11 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
         vouchers: vec![],
     };
     server.append_import_ledger(&initial).unwrap();
+    let generation = server
+        .latest_import_snapshot(&initial.batch_id)
+        .unwrap()
+        .unwrap()
+        .generation;
     let admission = server
         .lock_import_admission()
         .expect("hold publication admission");
@@ -213,7 +218,8 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
         std::thread::spawn(move || {
             let proof = json!({"batch_id":"batch-proof", "company":{"name":state}, "writer":state});
             started.send(()).expect("writer started");
-            let result = Server::new(settings).persist_import_verification(&proof, &update);
+            let result =
+                Server::new(settings).persist_import_verification(&proof, &update, generation);
             done.send(result).expect("writer result");
         })
     });
@@ -230,12 +236,18 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
     for writer in writers {
         writer.join().expect("publication writer");
     }
-    for _ in 0..2 {
-        done_rx
-            .recv()
-            .expect("publication result")
-            .expect("publication succeeds");
-    }
+    let results = (0..2)
+        .map(|_| done_rx.recv().expect("publication result"))
+        .collect::<Vec<_>>();
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.as_ref().err().map(String::as_str)
+                == Some("import_verification_conflict_retry"))
+            .count(),
+        1
+    );
     assert!(
         !published_before_admission,
         "proof files must wait for publication admission"
@@ -244,11 +256,11 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
         serde_json::from_slice(&fs::read(json_path).expect("JSON proof")).expect("parseable proof");
     let markdown = fs::read_to_string(md_path).expect("Markdown proof");
     let latest = server
-        .latest_import_line("batch-proof")
+        .latest_import_snapshot("batch-proof")
         .expect("ledger read")
         .expect("published status");
-    assert_eq!(proof["writer"], latest.status);
-    assert!(markdown.contains(&format!("- Company: `{}`", latest.status)));
+    assert_eq!(proof["writer"], latest.batch.status);
+    assert!(markdown.contains(&format!("- Company: `{}`", latest.batch.status)));
 }
 
 #[test]

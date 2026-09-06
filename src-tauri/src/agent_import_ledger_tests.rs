@@ -64,7 +64,14 @@ fn repeated_verification_appends_only_compact_status_and_preserves_batch_bytes()
         }
         .into();
         let proof = json!({"batch_id":batch.batch_id,"company":{"name":"Synthetic Book"}});
-        server.persist_import_verification(&proof, &batch).unwrap();
+        let generation = server
+            .latest_import_snapshot(&batch.batch_id)
+            .unwrap()
+            .unwrap()
+            .generation;
+        server
+            .persist_import_verification(&proof, &batch, generation)
+            .unwrap();
     }
     let bytes = fs::read(&path).unwrap();
     assert!(bytes.starts_with(&original));
@@ -84,7 +91,11 @@ fn repeated_verification_appends_only_compact_status_and_preserves_batch_bytes()
         assert!(value.get("vouchers").is_none());
         assert!(value.get("txn_ids").is_none());
     }
-    let loaded = server.latest_import_line(&batch.batch_id).unwrap().unwrap();
+    let loaded = server
+        .latest_import_snapshot(&batch.batch_id)
+        .unwrap()
+        .unwrap()
+        .batch;
     assert_eq!(loaded.status, "posted_verified");
     assert_eq!(
         sha256_json(&serde_json::to_value(&loaded.vouchers).unwrap()),
@@ -106,12 +117,21 @@ fn compact_status_hydrates_legacy_full_records_and_rejects_unknown_builds() {
     let mut current = original.clone();
     current.status = "verification_incomplete".into();
     server
-        .persist_import_verification(&json!({}), &current)
+        .persist_import_verification(
+            &json!({}),
+            &current,
+            server
+                .latest_import_snapshot(&current.batch_id)
+                .unwrap()
+                .unwrap()
+                .generation,
+        )
         .unwrap();
     let loaded = server
-        .latest_import_line(&original.batch_id)
+        .latest_import_snapshot(&original.batch_id)
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .batch;
     assert_eq!(loaded.status, "verification_incomplete");
     assert_eq!(loaded.txn_ids, original.txn_ids);
     assert_eq!(loaded.vouchers.len(), 1);
@@ -126,14 +146,116 @@ fn compact_status_hydrates_legacy_full_records_and_rejects_unknown_builds() {
             value[key] = new_value.clone();
         }
         assert_eq!(
-            ledger::parse_records(&format!("{existing}{value}\n")).err(),
+            ledger::parse_snapshots(&format!("{existing}{value}\n")).err(),
             Some("import_ledger_invalid".into())
         );
     }
     let mut unknown_record = serde_json::to_value(&original).unwrap();
     unknown_record["record_type"] = json!("future_record");
     assert_eq!(
-        ledger::parse_records(&unknown_record.to_string()).err(),
+        ledger::parse_snapshots(&unknown_record.to_string()).err(),
         Some("import_ledger_invalid".into())
     );
+}
+
+#[test]
+fn stale_verifier_cannot_replace_a_newer_same_batch_publication() {
+    for identical_status in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let older = server(directory.path());
+        let newer = server(directory.path());
+        let original = batch();
+        older.append_import_ledger(&original).unwrap();
+        let proof = json!({"batch_id":original.batch_id,"company":{"name":"Synthetic Book"}});
+        let generation = older
+            .latest_import_snapshot(&original.batch_id)
+            .unwrap()
+            .unwrap()
+            .generation;
+        older
+            .persist_import_verification(&proof, &original, generation)
+            .unwrap();
+        // Both processes finish admission before either publishes its reads.
+        let stale = older
+            .latest_import_snapshot(&original.batch_id)
+            .unwrap()
+            .unwrap();
+        let mut current = newer
+            .latest_import_snapshot(&original.batch_id)
+            .unwrap()
+            .unwrap();
+        if !identical_status {
+            current.batch.status = "posted_verified".into();
+        }
+        newer
+            .persist_import_verification(&proof, &current.batch, current.generation)
+            .unwrap();
+        let paths = [
+            directory.path().join("agent-import-ledger.jsonl"),
+            directory
+                .path()
+                .join("imports")
+                .join(format!("{}.proof.json", original.batch_id)),
+            directory
+                .path()
+                .join("imports")
+                .join(format!("{}.proof.md", original.batch_id)),
+        ];
+        let before = paths
+            .iter()
+            .map(fs::read)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let stale_proof = json!({"batch_id":original.batch_id,"company":{"name":"Stale result"}});
+        assert_eq!(
+            older.persist_import_verification(&stale_proof, &stale.batch, stale.generation),
+            Err("import_verification_conflict_retry".into())
+        );
+        assert_eq!(
+            before,
+            paths
+                .iter()
+                .map(fs::read)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        );
+        assert!(!directory.path().join("imports/.proof-publication").exists());
+        if identical_status {
+            let journal = fs::read_to_string(&paths[0]).unwrap();
+            let lines = journal.lines().collect::<Vec<_>>();
+            assert_eq!(
+                lines[lines.len() - 1],
+                lines[lines.len() - 2],
+                "identical physical status appends still advance generation"
+            );
+        }
+        // Retrying requires a fresh snapshot. An unrelated batch publication
+        // between its admission and publication must not invalidate that token.
+        let retry = older
+            .latest_import_snapshot(&original.batch_id)
+            .unwrap()
+            .unwrap();
+        let mut other = original.clone();
+        other.batch_id = "independent-batch".into();
+        newer.append_import_ledger(&other).unwrap();
+        let other_generation = newer
+            .latest_import_snapshot(&other.batch_id)
+            .unwrap()
+            .unwrap()
+            .generation;
+        newer
+            .persist_import_verification(
+                &json!({"batch_id":other.batch_id}),
+                &other,
+                other_generation,
+            )
+            .unwrap();
+        older
+            .persist_import_verification(&stale_proof, &retry.batch, retry.generation)
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(&paths[1]).unwrap()).unwrap(),
+            stale_proof
+        );
+    }
 }

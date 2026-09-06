@@ -404,8 +404,11 @@ impl Server {
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
-        let line = self
-            .latest_import_line(batch_id)?
+        let ledger::BatchSnapshot {
+            batch: line,
+            generation,
+        } = self
+            .latest_import_snapshot(batch_id)?
             .ok_or_else(|| "import_batch_not_found".to_string())?;
         if !batch_guid_matches(&line.company_guid, guid) {
             return Err("import_batch_company_mismatch".to_string().into());
@@ -458,7 +461,7 @@ impl Server {
             let status = verification_status(&result, line.vouchers.len());
             let mut update = line.clone();
             update.status = status.to_string();
-            self.persist_import_verification(&proof, &update)?;
+            self.persist_import_verification(&proof, &update, generation)?;
             Ok(ToolOutcome {
                 payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof}),
                 evidence: accumulated.clone(),
@@ -474,8 +477,16 @@ impl Server {
         &self,
         proof: &Value,
         update: &ImportLedgerLine,
+        expected_generation: ledger::VerificationGeneration,
     ) -> Result<(), String> {
         let _admission_lock = self.lock_import_admission()?;
+        let current = self
+            .import_snapshots_while_admitted()?
+            .into_iter()
+            .rfind(|snapshot| snapshot.batch.batch_id == update.batch_id);
+        if current.map(|snapshot| snapshot.generation) != Some(expected_generation) {
+            return Err("import_verification_conflict_retry".into());
+        }
         let imports = self.imports_dir()?;
         let local_proof = super::redact_value(proof.clone(), super::Redaction::None);
         let json = serde_json::to_vec_pretty(&local_proof)
@@ -578,26 +589,39 @@ impl Server {
         Ok(file)
     }
 
+    #[cfg(test)]
     fn import_ledger(&self) -> Result<Vec<ImportLedgerLine>, String> {
         let _admission_lock = self.lock_import_admission_shared()?;
         self.import_ledger_while_admitted()
     }
 
     fn import_ledger_while_admitted(&self) -> Result<Vec<ImportLedgerLine>, String> {
+        Ok(self
+            .import_snapshots_while_admitted()?
+            .into_iter()
+            .map(|snapshot| snapshot.batch)
+            .collect())
+    }
+
+    fn import_snapshots_while_admitted(&self) -> Result<Vec<ledger::BatchSnapshot>, String> {
         let path = self.settings.data_dir.join("agent-import-ledger.jsonl");
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(_) => return Err("import_ledger_unavailable".to_string()),
         };
-        ledger::parse_records(&text)
+        ledger::parse_snapshots(&text)
     }
 
-    fn latest_import_line(&self, batch_id: &str) -> Result<Option<ImportLedgerLine>, String> {
+    fn latest_import_snapshot(
+        &self,
+        batch_id: &str,
+    ) -> Result<Option<ledger::BatchSnapshot>, String> {
+        let _admission_lock = self.lock_import_admission_shared()?;
         Ok(self
-            .import_ledger()?
+            .import_snapshots_while_admitted()?
             .into_iter()
-            .rfind(|line| line.batch_id == batch_id))
+            .rfind(|snapshot| snapshot.batch.batch_id == batch_id))
     }
 
     #[cfg(test)]

@@ -194,9 +194,10 @@ async fn persisted_batch_survives_failed_stdout_without_a_completion_claim() {
     assert_eq!(fs::read(&xml_path).unwrap(), xml);
     assert_eq!(
         server
-            .latest_import_line(&batch_id)
+            .latest_import_snapshot(&batch_id)
             .unwrap()
             .unwrap()
+            .batch
             .batch_id,
         batch_id
     );

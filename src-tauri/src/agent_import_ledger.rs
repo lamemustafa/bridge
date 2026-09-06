@@ -27,10 +27,20 @@ impl From<&ImportLedgerLine> for StatusRecord {
     }
 }
 
-pub(super) fn parse_records(text: &str) -> Result<Vec<ImportLedgerLine>, String> {
-    let mut batches: Vec<ImportLedgerLine> = Vec::new();
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct VerificationGeneration(usize);
+
+pub(super) struct BatchSnapshot {
+    pub(super) batch: ImportLedgerLine,
+    // Last matching physical journal record, including identical status appends.
+    pub(super) generation: VerificationGeneration,
+}
+
+pub(super) fn parse_snapshots(text: &str) -> Result<Vec<BatchSnapshot>, String> {
+    let mut batches: Vec<BatchSnapshot> = Vec::new();
     let mut latest: BTreeMap<String, usize> = BTreeMap::new();
-    for text in text.lines() {
+    for (generation, text) in text.lines().enumerate() {
+        let generation = VerificationGeneration(generation);
         let value: Value =
             serde_json::from_str(text).map_err(|_| "import_ledger_invalid".to_string())?;
         if value.get("record_type").is_some() {
@@ -39,17 +49,19 @@ pub(super) fn parse_records(text: &str) -> Result<Vec<ImportLedgerLine>, String>
             let index = latest
                 .get(&update.batch_id)
                 .ok_or_else(|| "import_ledger_invalid".to_string())?;
-            let batch = &mut batches[*index];
+            let snapshot = &mut batches[*index];
+            let batch = &mut snapshot.batch;
             if batch.sha256 != update.batch_sha256 {
                 return Err("import_ledger_invalid".into());
             }
             batch.status = update.status;
+            snapshot.generation = generation;
         } else {
             let batch: ImportLedgerLine =
                 serde_json::from_value(value).map_err(|_| "import_ledger_invalid".to_string())?;
             // Keep legacy full-record history readable without rewriting it.
             latest.insert(batch.batch_id.clone(), batches.len());
-            batches.push(batch);
+            batches.push(BatchSnapshot { batch, generation });
         }
     }
     Ok(batches)
