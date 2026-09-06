@@ -122,6 +122,7 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                             .get("ISDEEMEDPOSITIVE")
                             .filter(|value| !value.trim().is_empty())
                             .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
+                        required_tally_bool(Some(polarity))?;
                         entries.push(json!({
                             "ledger": ledger,
                             "amount": amount,
@@ -218,6 +219,36 @@ pub(super) fn required_tally_bool(value: Option<&String>) -> Result<bool, String
 #[cfg(test)]
 mod amount_tests {
     use super::*;
+
+    #[test]
+    fn malformed_polarity_in_captured_voucher_is_refused_at_the_parse_boundary() {
+        let bytes = include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+        );
+        let words = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        let captured = String::from_utf16(&words).unwrap();
+        let rows = parse_agent_rows(&captured).unwrap();
+        assert_eq!(rows[0]["amounts"][0]["is_deemed_positive"], "Yes");
+        assert_eq!(rows[0]["amounts"][1]["is_deemed_positive"], "No");
+        for invalid in ["Maybe", "true", "1"] {
+            // Mutate only the captured ledger-entry polarity for negative testing.
+            let damaged = captured.replacen(
+                "\n      <ISDEEMEDPOSITIVE TYPE=\"Logical\">Yes</ISDEEMEDPOSITIVE>",
+                &format!("\n      <ISDEEMEDPOSITIVE TYPE=\"Logical\">{invalid}</ISDEEMEDPOSITIVE>"),
+                1,
+            );
+            assert_ne!(damaged, captured);
+            for accounting_state in [false, true] {
+                assert_eq!(
+                    parse_agent_rows_with_accounting_state(&damaged, accounting_state),
+                    Err("voucher_accounting_state_not_observed".to_string())
+                );
+            }
+        }
+    }
 
     #[test]
     fn malformed_amount_in_captured_voucher_is_refused_at_the_parse_boundary() {
