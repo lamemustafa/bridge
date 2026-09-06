@@ -303,8 +303,6 @@ impl Server {
             &line.date_from,
             &line.date_to,
             self.settings.max_rows,
-            verification_read_possibly_truncated(&xml)
-                || verification_read_possibly_truncated(&corroboration_xml),
         )?;
         let result = verify_batch(&line, &observed)?;
         let proof = json!({
@@ -972,17 +970,12 @@ fn validate_verification_envelope(xml: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn verification_read_possibly_truncated(xml: &str) -> bool {
-    xml.to_ascii_uppercase().contains("TRUNCAT")
-}
-
 fn corroborate_verification_window(
     observed: &[ReadVoucher],
     corroboration: &[ReadVoucher],
     from: &str,
     to: &str,
     max_rows: usize,
-    truncated_signal: bool,
 ) -> Result<(), String> {
     if observed.iter().any(|voucher| {
         voucher
@@ -992,7 +985,11 @@ fn corroborate_verification_window(
     }) {
         return Err("window_not_honoured".to_string());
     }
-    if observed.len() >= max_rows || truncated_signal {
+    // The decoded envelope and paired transport currently expose no structural
+    // total/count/completeness marker. Completeness is therefore limited to a
+    // below-cap row count and an identical stable GUID/ALTERID set on the
+    // second read; user-controlled free text is never a truncation signal.
+    if observed.len() >= max_rows {
         return Err("verification_incomplete:window_possibly_truncated".to_string());
     }
     let pairs = |rows: &[ReadVoucher]| {
@@ -1714,7 +1711,6 @@ mod tests {
                 "20260901",
                 "20260902",
                 10,
-                false
             ),
             Err("window_not_honoured".to_string())
         );
@@ -1725,7 +1721,6 @@ mod tests {
                 "20260901",
                 "20260902",
                 10,
-                false
             ),
             Err("verification_incomplete:window_not_corroborated".to_string())
         );
@@ -1736,9 +1731,18 @@ mod tests {
                 "20260901",
                 "20260902",
                 1,
-                false
             ),
             Err("verification_incomplete:window_possibly_truncated".to_string())
+        );
+    }
+
+    #[test]
+    fn verification_narration_with_truncated_text_is_not_a_completeness_marker() {
+        let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>guid-1</GUID><ALTERID>3</ALTERID><NARRATION>truncated payment</NARRATION></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+        let observed = parse_import_vouchers(xml).expect("verification response");
+        assert_eq!(
+            corroborate_verification_window(&observed, &observed, "20260901", "20260902", 10,),
+            Ok(())
         );
     }
 
