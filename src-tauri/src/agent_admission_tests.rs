@@ -139,3 +139,39 @@ async fn ledger_selectors_are_bounded_before_company_or_catalogue_reads() {
         .is_ok());
     }
 }
+
+#[tokio::test]
+async fn oversized_unknown_property_cannot_expand_response_or_retained_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 5_000_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+    });
+    for key in ["unknown".to_string(), "x".repeat(1_000_000)] {
+        let response = server
+            .call_tool_response("tally_status", json!({key: null}))
+            .await;
+        let value = response.value;
+        assert!(serde_json::to_vec(&value).unwrap().len() < 2_000);
+        assert!(
+            value["structuredContent"]["result"]["error"]["code"].as_str()
+                == Some("argument_unknown")
+        );
+        assert_eq!(value["structuredContent"]["evidence"]["bytes"], 0);
+    }
+    let store = server.evidence.lock().unwrap();
+    assert_eq!(store.records.len(), 2);
+    assert!(serde_json::to_vec(&store.records).unwrap().len() < 2_000);
+    assert!(store
+        .records
+        .iter()
+        .all(|record| record.reason_code.as_deref() == Some("argument_unknown")));
+    assert!(server.runtime.snapshots().unwrap().is_empty());
+}

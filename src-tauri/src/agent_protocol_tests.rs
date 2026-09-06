@@ -186,7 +186,7 @@ async fn oversized_untrusted_names_and_selectors_never_expand_receipts() {
     assert_eq!(responses[2]["result"]["isError"], true);
     assert_eq!(
         responses[2]["result"]["structuredContent"]["result"]["error"]["code"],
-        "argument_unknown:company_guid"
+        "argument_unknown"
     );
     let path = directory.path().join("agent-egress.jsonl");
     let bytes = fs::read(&path).unwrap();

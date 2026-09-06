@@ -184,7 +184,7 @@ fn tool_arguments_reject_unknown_keys_before_tool_dispatch() {
             "vouchers",
             &json!({"company_guid":"company", "from":"2026-09-01", "to":"2026-09-02", "ledgre":"Cash"}),
         ),
-        Err("argument_unknown:ledgre".to_string())
+        Err("argument_unknown".to_string())
     );
 }
 

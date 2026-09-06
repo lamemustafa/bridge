@@ -15,7 +15,7 @@ pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), St
     let properties = schema["properties"].as_object();
     for key in arguments.keys() {
         if !properties.is_some_and(|properties| properties.contains_key(key)) {
-            return Err(format!("argument_unknown:{key}"));
+            return Err("argument_unknown".to_string());
         }
     }
     for key in schema["required"].as_array().into_iter().flatten() {
