@@ -96,8 +96,13 @@ Company checkpoints preserve fragmented text and require one matching identity.
 Voucher and ledger collections reject duplicate GUIDs or numeric master IDs
 before returning complete reads or calculating movement. Wrong object types in
 a voucher collection are refused instead of becoming an empty observation.
-Evidence-history reads mark omissions from both requested limits and retention
-eviction as truncated.
+Evidence and egress history reads obey the configured global row cap as well as
+the requested limit and retention ceiling. Omitted history is marked truncated.
+All JSON-RPC responses, including control messages, obey the final newline-inclusive
+byte cap. Oversized controls return a bounded refusal without invalidating the
+session. Status product identity comes from an observed gateway capability; an
+unrecognized, conflicting, or unavailable status-page banner cannot override it.
+An unobserved gateway capability returns `not_observed`.
 
 Both book-start and explicit-date ledger openings now obtain a fresh mode probe
 before date admission and bracket the read with a closing mode observation. A
@@ -243,7 +248,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **957 Rust workspace tests**, **202 agent tests
+Local candidate verification: **961 Rust workspace tests**, **206 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -274,7 +279,7 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.55` after repeated catalogue and licensed-mode observations, and
+additional Journal file for `12.56` after repeated catalogue and licensed-mode observations, and
 readback confirmed `not_found`; that file was not imported. No additional Tally
 posting was performed. The expected read refusal retained its actual completed source
 commitments and byte count, retrievable through `read_evidence`; omitted egress
@@ -284,16 +289,19 @@ before these calls. An earlier candidate run had a proxy startup failure; those
 failed observations and its successful repeat remain retained separately.
 Separate release-process checks confirmed port zero and a non-loopback host
 fail at startup before creating the data directory. An existing shared directory
-was refused without changing its mode or creating files.
+was refused without changing its mode or creating files. At the minimum 256-byte
+cap, control refusals and malformed-request errors fit and a subsequent ping
+succeeded. Both diagnostic tools returned one truncated row under a global
+one-row cap despite a larger requested limit.
 That same binary passed eight checks using official MCP
 JavaScript SDK 1.30.0, negotiating 2025-11-25 down to 2025-06-18. Official MCPB
 CLI 2.1.2 validated and packed the archive. Its extracted executable and all four
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `aaeedc9aecf66ae4ae55d6e180b3278d369ce54d476e980fe3821be0dd6ec8dd`.
-- MCPB archive SHA-256: `2d02e4d5437f710114b619d3e6b7d11122455a7b5e2dd46971bb78105f055872`.
-- Source fingerprint (346 build-input files, unchanged through the settled-source rebuild): `2f186d0ecc576a6642edc61afd9237d7f3ab8d04481bdc1f51574d1955fe3236`.
+- Release executable SHA-256: `e7c87084c755e95868ca599e5487941f0d3425061cf8e7f3461a64f7739cdd79`.
+- MCPB archive SHA-256: `4c90c9c23d989635a3e3dcce11317ac54dbdb39e1b898cd614afe796e9724e9f`.
+- Source fingerprint (348 build-input files, unchanged through the settled-source rebuild): `e972be225ff049ea6d6292314b2a49ea89abe035cb491661b069f8dade37f459`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local

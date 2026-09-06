@@ -188,8 +188,10 @@ deletion detection is unsupported.
 
 The server negotiates MCP `2025-06-18` or `2024-11-05`, returning a supported
 version when a client proposes a newer one. Initialization must precede tool
-requests. Frames are limited to 5 MB; tool responses obey the configured byte
-cap including the JSON-RPC wrapper and newline. Text content contains the same
+requests. Incoming frames are limited to 5 MB. All responses obey the configured
+byte cap, including control replies, the JSON-RPC wrapper, and newline. A tool
+catalogue that cannot fit returns `agent_response_too_large`; the session remains
+usable. Text content contains the same
 serialized, redacted JSON as `structuredContent` for older clients.
 
 Port zero and ports above 65535 are rejected at startup.
@@ -261,8 +263,9 @@ voucher source after its final opening snapshot and refuses changes to either
 source before calculating balances. This establishes stability across repeated
 observations, not an atomic Tally snapshot.
 
-Egress-log reads set `truncated` when either the requested row count
-or the bounded tail scan omits older records. Missing terminal newlines, invalid
+Evidence-history and egress-log reads use the smallest of the requested limit,
+`BRIDGE_AGENT_MAX_ROWS`, and the 256-record ceiling. Omitted history sets
+`truncated`; egress-log reads also report omissions from the bounded tail scan. Missing terminal newlines, invalid
 UTF-8, or invalid JSON in retained complete rows return `egress_log_incomplete`.
 
 Verification rejects malformed accounting fields before matching. Distinct,
