@@ -44,10 +44,12 @@ the protocol's transport, lifecycle, and tool requirements.
 | Receipts and proofs | Derive released field paths from final redacted output. Serialize proof publication. Use portable receipt locking and decode only complete UTF-8 tail lines. |
 | Financial summaries | Label gross exposure explicitly and keep billed/unallocated receivable and payable directions separate. |
 | MCPB packaging | Validate the actual per-platform manifest, packaged executable, legal resources, and extracted archive launch. |
+| Admission and pagination | Bound master-name inputs and suggestions before report expansion. Refuse active entryless movement rows. Keep shared-offset pages advancing or return an explicit size error. |
 
-The Windows receipt handle now requests read access in addition to append access.
-That supplies the access required by `LockFileEx` while retaining append-only
-writes. [Microsoft file-lock contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex)
+Receipt writes use a readable and writable handle, seek to the end under an
+exclusive lock, and restore the original length if appending or syncing fails.
+The access rights support both Windows locking and failed-write rollback.
+[Microsoft file-lock contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex)
 
 MCPB staging follows the actual manifest 0.1 schema, including executable command,
 entry point, and environment mappings; official CLI validation is part of bundle
@@ -127,7 +129,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **850 Rust workspace tests**, **115 agent tests
+Local candidate verification: **864 Rust workspace tests**, **129 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -136,17 +138,19 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary also passed five live tools (status,
-vouchers, movement, outstandings, and restored-batch verification), with party
-masking selected. That same binary passed eight checks using official MCP
+The final macOS arm64 release binary also passed seven probes (status, master
+validation, vouchers, movement, outstandings, restored-batch verification, and
+egress-log readback), with party masking selected. Live receipts counted 16
+loaded companies and three master results and matched every emitted wire hash.
+That same binary passed eight checks using official MCP
 JavaScript SDK 1.30.0, negotiating 2025-11-25 down to 2025-06-18. Official MCPB
 CLI 2.1.2 validated and packed the archive. Its extracted executable and all four
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `fb41a41f9e6c5375e2cc61bd6855a2f13eb1e7babb8b42eca9b737ae1f114aee`.
-- MCPB archive SHA-256: `600e1727a3cc420a81f788570464e0a1e2d2b832c72998500cb03cc85d08b227`.
-- Source fingerprint (297 build-input files, unchanged through build): `6b612a8b54aeb97f7b3bafe13f4d7f214e9a7452a79c2889de089f25e56e788e`.
+- Release executable SHA-256: `a35d687f6d55c528254ee935add1530d2e1650c2538a9ac0e1e1332b5946f879`.
+- MCPB archive SHA-256: `cc77662b96dd7b36e5106294f088fa410826840306c19350af395b5144410f12`.
+- Source fingerprint (299 build-input files, unchanged through the settled-source rebuild): `a7156a249517d78019ae8cebb4e7d8dc21c633999a0ce45ec1a10a9bf2c2a965`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local

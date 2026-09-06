@@ -161,6 +161,18 @@ Unknown arguments, wrong selector types, and invalid enums are rejected before
 any Tally request. Checkpoint numeric strings are no longer accepted at the tool
 boundary. `changed_since` is unavailable; existing clients must stop calling it.
 
+`validate_masters` accepts 1–100 nonblank names, each at most 1024 characters.
+Near-miss suggestions are limited to 25 names and 8192 UTF-8 bytes per requested
+name; `candidate_count` and `candidates_truncated` preserve ambiguity. Import
+planning allows 1000 vouchers but at most 100 distinct ledger names per batch.
+Repeated uses of a ledger do not consume additional distinct-name slots.
+
+Byte-limited pages retain forward progress or return `agent_response_too_large`;
+they never advertise the same offset after removing every row. Outstandings
+trims both collections to a shared page width because they share an input offset.
+Active vouchers without observed accounting entries are refused before movement
+filtering; cancelled and optional vouchers remain excluded from movement totals.
+
 Top-party ranking uses `gross_exposure`, with billed and unallocated receivable
 and payable fields kept separate. `totals.scope` is `open_bills_only`.
 `unallocated.totals` contains `receivable`, `payable`, and `gross_unallocated`.
@@ -178,6 +190,12 @@ If a build persists a file but the response or receipt fails, the JSON-RPC error
 contains `error.data.batch_id`. Retain it and use `verify_import` or inspect the
 local import ledger; do not blindly rebuild or import another batch. Proof JSON,
 Markdown, and ledger status are published under one admission lock.
+
+Receipts count released master-validation and loaded-company rows. Unknown tool
+names are represented by `unknown` and `tool_name_sha256`; company IDs are
+canonical UUIDs. Failed receipt appends restore the previous file length.
+An incomplete log or failed rollback stops the session; a persisted build still
+returns its recovery batch ID before termination.
 
 No database migration is required. Roll back the binary/client configuration
 together if needed; preserve the data directory and import ledger. A binary
