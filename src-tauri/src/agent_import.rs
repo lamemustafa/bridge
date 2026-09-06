@@ -13,6 +13,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 
+#[path = "agent_import_identity.rs"]
+mod identity;
+use identity::{import_identity, ImportIdentityScheme};
 #[path = "agent_import_ledger.rs"]
 mod ledger;
 #[path = "agent_import_persistence.rs"]
@@ -128,6 +131,8 @@ struct ImportEntry {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ImportLedgerLine {
     batch_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity_scheme: Option<ImportIdentityScheme>,
     company_guid: String,
     #[serde(default)]
     company: Option<ImportCompanyTuple>,
@@ -401,10 +406,11 @@ impl Server {
             let closing_mode_evidence = self.qualified_import_profile().await?;
             accumulated = combine_evidence(accumulated.clone(), closing_mode_evidence);
             let batch_id = format!("bridge-{}", Uuid::new_v4());
-            let xml = render_import_xml(&company.name, &payload.vouchers);
+            let xml = render_import_xml(&company.name, &payload.vouchers, &batch_id);
             let sha256 = sha256_hex(xml.as_bytes());
             let line = ImportLedgerLine {
                 batch_id: batch_id.clone(),
+                identity_scheme: Some(ImportIdentityScheme::BatchV1),
                 company_guid: canonical_batch_guid(&payload.company_guid),
                 company: Some(import_company_tuple(&company)?),
                 txn_ids: payload
@@ -443,6 +449,7 @@ impl Server {
                     "voucher_count": line.vouchers.len(), "total_debit": debit.as_str(), "total_credit": credit.as_str(),
                     "live_evidence": "synthetic_lab_readback",
                     "verification_preflight": verification_preflight,
+                    "identity_scheme": line.identity_scheme,
                     "qualified_profile": {"product":"TallyPrime","release":LIVE_QUALIFIED_IMPORT_RELEASE,"license_tier":"silver"},
                     "live_evidence_report": "docs/agent/ASSESSMENT-2026-09-06.md",
                     "warnings": ["No import XML was sent to Tally. Import the written file manually, then use verify_import.", "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits."],
@@ -857,7 +864,7 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         if voucher
             .voucher_number
             .as_deref()
-            .is_some_and(|number| number.len() > 32 || number.contains('$'))
+            .is_some_and(|number| number.chars().count() > 32 || number.contains('$'))
         {
             return Err("voucher_number_invalid".to_string());
         }
@@ -1028,19 +1035,24 @@ fn reject_known_transactions(
     }
 }
 
-fn render_import_xml(company: &str, vouchers: &[ImportVoucher]) -> String {
-    let messages = vouchers.iter().map(render_voucher_xml).collect::<String>();
+fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) -> String {
+    let messages = vouchers
+        .iter()
+        .map(|voucher| {
+            render_voucher_xml(voucher, import_identity(batch_id, &voucher.bridge_txn_id))
+        })
+        .collect::<String>();
     format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>{messages}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>", xml_escape(company))
 }
 
-fn render_voucher_xml(voucher: &ImportVoucher) -> String {
+fn render_voucher_xml(voucher: &ImportVoucher, identity: Uuid) -> String {
     let narration = format!(
         "<NARRATION>{}</NARRATION>",
         xml_escape(
             format!(
                 "{} [BRIDGE:{}]",
                 voucher.narration.as_deref().unwrap_or("").trim(),
-                voucher.bridge_txn_id
+                identity
             )
             .trim(),
         )
@@ -1063,7 +1075,7 @@ fn render_voucher_xml(voucher: &ImportVoucher) -> String {
     // The qualified human-import slice uses Create + stable client REMOTEID;
     // a supplied voucher number is optional and is not its identity key.
     // See docs/tally/TALLY_PROTOCOL_REFERENCE.md §9.8 for scope and limits.
-    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{}</DATE><VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", xml_escape(&voucher.bridge_txn_id), voucher.voucher_type.as_str(), normalized_date(&voucher.date).unwrap_or_default(), voucher.voucher_type.as_str())
+    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{}</DATE><VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", identity, voucher.voucher_type.as_str(), normalized_date(&voucher.date).unwrap_or_default(), voucher.voucher_type.as_str())
 }
 
 fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
@@ -1243,10 +1255,14 @@ fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<
             .entry(fingerprint)
             .or_insert(0_usize) += 1;
     }
-    let expected_tags = line
+    let expected_markers = line
         .vouchers
         .iter()
-        .map(|voucher| voucher.bridge_txn_id.as_str())
+        .map(|voucher| line.attribution_tag(voucher))
+        .collect::<Vec<_>>();
+    let expected_tags = expected_markers
+        .iter()
+        .map(String::as_str)
         .collect::<BTreeSet<_>>();
     // Source admission permits at most one well-formed reserved marker. Parse it
     // once, then reserve expected tags before any fingerprint fallback is used.
@@ -1288,9 +1304,14 @@ fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<
         ("not_attributable", 0),
         ("duplicate_fingerprint", 0),
     ]);
-    for (expected, expected_key) in line.vouchers.iter().zip(&expected_fingerprints) {
+    for ((expected, expected_key), marker_identity) in line
+        .vouchers
+        .iter()
+        .zip(&expected_fingerprints)
+        .zip(&expected_markers)
+    {
         let fingerprint_ambiguous_within_batch = expected_fingerprint_counts[expected_key] > 1;
-        let tagged_group = tagged.get(expected.bridge_txn_id.as_str());
+        let tagged_group = tagged.get(marker_identity.as_str());
         let fingerprint_fallback = tagged_group.is_none();
         let group = tagged_group.or_else(|| fallback.get(expected_key));
         let marker = if fingerprint_fallback {

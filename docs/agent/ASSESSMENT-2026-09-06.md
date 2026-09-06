@@ -255,6 +255,24 @@ generated file. No automatic import retry was used.
 | Controlled comparison | A temporary change to the owned test Journal was reported as divergent with masked entry names in both MCP representations. The original generated file was restored afterward. |
 | 256-byte build response | A persisted second batch returned a 152-byte error containing its recovery batch ID. That second file was not imported. |
 
+A later identity qualification reused the first file's caller transaction label
+in a separate local batch, generating a new `batch_v1` wire UUID and narration
+marker. The `12.61` Journal dated September 7 created exactly one new voucher
+(master ID 5, assigned number 2, AlterID 9). Repeating the exact file altered that
+same voucher to AlterID 10 with zero creations, errors, exceptions or deletions.
+Immediate before/after verification retained the old voucher's GUID, master ID 4,
+number 1 and AlterID 8 unchanged. The new file SHA-256 was
+`e39eb3c0bfe53144bdd9c0f4afcb88c3d63a2050214233ee77465d42a54245ef`.
+Its unchanged 7,990-byte readback and metadata are committed as a regression
+fixture. The regression reproduces the exact generated file hash, verifies the
+new posting, and loses attribution when only the expected batch ID changes.
+This qualifies exact-file repeat and independent batch identity in the observed
+Silver 7.1 Journal slice. Rebuilding after losing the local batch state creates a
+new identity; it does not deduplicate the underlying business event. UUIDv8 is
+used as the representation for a domain-separated hash of the random batch UUID
+and caller label; UUIDv8 itself does not promise uniqueness.
+[RFC 9562 §5.8](https://www.rfc-editor.org/rfc/rfc9562.html#section-5.8)
+
 This qualifies the recorded synthetic slice only. It does not qualify every
 voucher type, account nature, licence mode, release, customer dataset, or desktop
 client. Direct Tally imports remain outside the connector. The compatibility
@@ -291,7 +309,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **982 Rust workspace tests**, **220 agent tests
+Local candidate verification: **989 Rust workspace tests**, **227 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -300,8 +318,8 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed twenty-six live checks with party masking and separate narration-redaction checks:
-twenty-five complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed twenty-seven live checks with party masking and separate narration-redaction checks:
+twenty-six complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. A separate fresh process
@@ -322,15 +340,16 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.60` after catalogue, verification-window and
+additional Journal file for `12.62` after catalogue, verification-window and
 Silver 7.1 profile observations. Its preflight observed the existing Journal;
 readback correctly reported the new file as `not_found`. The file was not imported.
 A separate narration-redaction process preserved the schema's narration property
 while removing accounting narration from the returned Journal. The earlier
 controlled exact-file repeat, bracketed by observed Silver 7.1 status, returned
 zero created and one altered; its GUID, master ID, assigned number and exact signed
-amount remained stable while AlterID advanced from 7 to 8. The current pass made
-no operator import and created no Tally voucher. The expected read refusal retained its actual completed source
+amount remained stable while AlterID advanced from 7 to 8. The final read pass made
+no operator import and created no Tally voucher; it also verified the new namespaced
+Journal at master ID 5 and AlterID 10. The expected read refusal retained its actual completed source
 commitments and byte count, retrievable through `read_evidence`. A captured-source regression also proves that
 a final JSON-RPC frame refusal records partial evidence with the cap reason while
 retaining the original source commitments. Nonpageable company/master/history
@@ -357,9 +376,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `215620afb87e57afc9ad9c7bce4b5f61f26c3549d7d54e13504beea4fbe97aa5`.
-- MCPB archive SHA-256: `e918045e1eb249761b7eccdc61fd64da03b4ec3e94b20e2395892cd44c4eb7e8`.
-- Source fingerprint (357 build-input files, unchanged through the settled-source rebuild): `9a80c3d91f10f1fbf2dea8d56f49d449966d88ad16c4d120489d5a0962dbf66c`.
+- Release executable SHA-256: `647ded543fa92594456203e90304dd3da2fa4dc7cea8212be32489cc71d77425`.
+- MCPB archive SHA-256: `a85ee1527a72c3e084382f6e06649f4babf1f90814a4d9c83b0937cde8132716`.
+- Source fingerprint (361 build-input files, unchanged through the settled-source rebuild): `d179a989252a08d751a83cf562e70c49c2eee55c957a38b51a9ab819d6865bf6`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -376,8 +395,8 @@ were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
 The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates six existing paths for shared company-bound voucher identity, completed
-paired-source evidence and exact no-BOM capture replay. No paths were added or
+updates four existing paths for typed company book-date admission and the
+observed batch-identity protocol note. No paths were added or
 removed. Previous seals cover observed release/tier profile version 4, typed
 native-ledger validation, the protocol observation, and the qualified file-identity
 and numbering clarification, literal-date counter-observation,

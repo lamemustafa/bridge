@@ -2,6 +2,7 @@ use super::*;
 
 fn batch() -> ImportLedgerLine {
     ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "bridge-00000000-0000-4000-8000-000000000001".into(),
         company_guid: GUID.into(),
         company: None,

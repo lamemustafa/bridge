@@ -40,6 +40,7 @@ fn captured_derived_large_verification_preserves_tag_and_fallback_multiplicity()
         })
         .collect::<Vec<_>>();
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "scale-batch".into(),
         company_guid: GUID.into(),
         company: None,

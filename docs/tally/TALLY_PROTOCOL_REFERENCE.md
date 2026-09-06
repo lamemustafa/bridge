@@ -705,6 +705,21 @@ REMOTEID semantics. The connector neither dispatches imports nor retries them.
 A mandatory manual-numbering preflight would require a separately observed
 voucher-type read contract; it cannot be inferred from the failed-`Alter` case.
 
+**Batch identity qualification — verified 2026-09-06, recorded 2026-09-07.**
+A new synthetic Journal reused the earlier caller transaction label in a separate
+local batch. Its `REMOTEID` and narration marker used the same batch-derived UUID;
+the caller label was not the wire key. The first exact-file import returned
+`CREATED=1, ALTERED=0`; its repeat returned `CREATED=0, ALTERED=1`. Both had zero
+errors, exceptions and deletions. Readback retained new master ID 5, voucher number
+2, and the same GUID while AlterID advanced from 9 to 10. The old voucher's GUID,
+master ID 4, number 1 and AlterID 8 were unchanged in immediate before/after reads.
+The new file SHA-256 was
+`e39eb3c0bfe53144bdd9c0f4afcb88c3d63a2050214233ee77465d42a54245ef`.
+The unchanged UTF-16LE readback is retained as
+`native-namespaced-journal.utf16le.xml` in the protocol fixture tree, with capture
+metadata. This is a Silver 7.1 Journal observation; it does not qualify other
+profiles or deduplication after losing/rebuilding a batch.
+
 Creating such a type over XML works: `<VOUCHERTYPE ACTION="Create">` with
 `<NUMBERINGMETHOD>Manual</NUMBERINGMETHOD>` and `<PREVENTDUPLICATES>Yes</PREVENTDUPLICATES>`
 returned `CREATED=1`.

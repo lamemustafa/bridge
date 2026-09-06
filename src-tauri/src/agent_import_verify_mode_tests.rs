@@ -139,6 +139,7 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             vouchers.push(missing);
         }
         let line = ImportLedgerLine {
+            identity_scheme: None,
             batch_id: "mode-history".into(),
             company_guid: CAPTURED_GUID.into(),
             company: Some(import_company_tuple(&company).unwrap()),

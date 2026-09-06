@@ -212,6 +212,8 @@ Company selectors accept native hyphenated UUID spelling, case-insensitively.
 Malformed selectors refuse before network reads. A malformed observed GUID cannot
 construct a verified identity; discovery reports `identity_state: "invalid_guid"`
 instead of `verified_tuple`.
+Nonempty `BOOKSFROM` must also parse as a valid Tally date before scoped access;
+discovery reports `invalid_books_from` for a malformed value.
 
 Port zero and ports above 65535 are rejected at startup.
 Unknown arguments, wrong selector types, and invalid enums are rejected before
@@ -259,6 +261,16 @@ as `posted_verified`. Verification entry differences are structured objects;
 duplicate metadata uses `fingerprint_sha256`. Each observed voucher can satisfy
 at most one expected transaction. Exact numeric comparison tolerates equivalent decimal spellings
 without changing the generated file or its stored hash.
+
+New files use `identity_scheme: "batch_v1"`. Each voucher's wire `REMOTEID` and
+narration marker share a UUID derived from the generated batch ID and caller's
+`bridge_txn_id`. The caller ID remains the local transaction label; it is not
+sent directly as Tally's upsert key. Reused labels in independent batches therefore
+have different wire identities. Retry the saved file: rebuilding after losing the
+batch journal creates a new identity and does not deduplicate the business event.
+Historical records without an identity scheme retain their original raw-label
+interpretation. Unknown schemes are refused. Narration markers support readback
+attribution; they are not authenticated provenance.
 
 If a build persists a file but its response exceeds the framing budget or its
 preparation receipt fails, the recovery JSON-RPC error contains

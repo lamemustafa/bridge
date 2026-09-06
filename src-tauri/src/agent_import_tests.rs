@@ -182,6 +182,7 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
     };
     let server = Server::new(settings.clone());
     let initial = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-proof".into(),
         company_guid: GUID.into(),
         company: None,
@@ -297,10 +298,16 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         master_match("Bank", &["Bank Charges".to_string()])["match_state"],
         "near_miss"
     );
-    let xml = render_import_xml("Book & Co", &input.vouchers);
+    let xml = render_import_xml("Book & Co", &input.vouchers, "batch-render");
     assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
-    assert!(xml.contains("<NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION>"));
-    assert!(xml.contains("<NARRATION>[BRIDGE:txn-002]</NARRATION>"));
+    assert!(xml.contains(&format!(
+        "<NARRATION>Paid &amp; settled [BRIDGE:{}]</NARRATION>",
+        import_identity("batch-render", "txn-001")
+    )));
+    assert!(xml.contains(&format!(
+        "<NARRATION>[BRIDGE:{}]</NARRATION>",
+        import_identity("batch-render", "txn-002")
+    )));
     assert_eq!(
         voucher_input_schema()["properties"]["vouchers"]["items"]["properties"]["entries"]["items"]
             ["properties"]["side"]["enum"],
@@ -319,6 +326,7 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         import_enabled: true,
     });
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-a".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -412,6 +420,7 @@ fn duplicate_detection_uses_stable_voucher_identity_independently_of_remote_id()
 fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
     let input = payload();
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "synthetic-redaction-batch".into(),
         company_guid: GUID.into(),
         company: None,
@@ -495,6 +504,7 @@ fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
 fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
     let input = payload();
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-b".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -659,6 +669,7 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
     });
     let input = payload();
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-unwritable".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -689,6 +700,7 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
 fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
     let input = payload();
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-unrelated".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -768,6 +780,7 @@ fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
 fn fingerprint_only_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-mark".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -828,6 +841,7 @@ fn fingerprint_fallback_consumes_an_observed_voucher_once_per_batch() {
     let mut duplicate = input.vouchers[0].clone();
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-fingerprint-once".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -886,6 +900,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
     let mut duplicate = input.vouchers[0].clone();
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let mut line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-fingerprint-once".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -951,6 +966,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
 fn narration_tag_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-tag-mark".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -1012,6 +1028,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
     }
     validate_payload(&input).expect("leading zeros satisfy the input contract");
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-tag-mark".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -1066,6 +1083,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
 fn verified_import_vouchers_require_observed_effective_accounting_flags() {
     let input = payload();
     let line = ImportLedgerLine {
+        identity_scheme: None,
         batch_id: "batch-accounting-state".to_string(),
         company_guid: GUID.to_string(),
         company: None,
@@ -1186,7 +1204,7 @@ fn verification_rejects_incomplete_ledger_entries() {
 fn optional_voucher_number_is_rendered_only_when_valid_and_supplied() {
     let mut input = payload();
     input.vouchers[0].voucher_number = Some("PV-0001".to_string());
-    let rendered = render_import_xml("Book", &input.vouchers);
+    let rendered = render_import_xml("Book", &input.vouchers, "batch-render");
     assert!(rendered.contains("<VOUCHERNUMBER>PV-0001</VOUCHERNUMBER>"));
     assert_eq!(rendered.matches("<VOUCHERNUMBER>").count(), 1);
     input.vouchers[0].voucher_number = Some("bad$number".to_string());
@@ -1194,6 +1212,34 @@ fn optional_voucher_number_is_rendered_only_when_valid_and_supplied() {
         validate_payload(&input),
         Err("voucher_number_invalid".to_string())
     );
+}
+
+#[test]
+fn voucher_number_length_counts_unicode_characters_and_preserves_safety_checks() {
+    assert_eq!(
+        voucher_input_schema()["properties"]["vouchers"]["items"]["properties"]["voucher_number"]
+            ["maxLength"],
+        32
+    );
+    let eleven = "क".repeat(11);
+    assert_eq!(eleven.chars().count(), 11);
+    assert_eq!(eleven.len(), 33);
+    let mut input = captured_catalogue_payload();
+    for number in [eleven, "क".repeat(32), "A".repeat(32)] {
+        input.vouchers[0].voucher_number = Some(number);
+        assert_eq!(validate_payload(&input), Ok(()));
+    }
+    for (number, code) in [
+        ("क".repeat(33), "voucher_number_invalid"),
+        ("A".repeat(33), "voucher_number_invalid"),
+        ("bad$number".into(), "voucher_number_invalid"),
+        ("bad\nnumber".into(), "voucher_text_invalid"),
+        ("bad\u{007f}number".into(), "voucher_text_invalid"),
+        (String::new(), "voucher_text_invalid"),
+    ] {
+        input.vouchers[0].voucher_number = Some(number);
+        assert_eq!(validate_payload(&input), Err(code.to_string()));
+    }
 }
 
 #[test]
@@ -1234,6 +1280,17 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
             .as_str()
             .expect("batch id")
             .to_string();
+        assert_eq!(built.payload["result"]["identity_scheme"], "batch_v1");
+        let saved = server
+            .latest_import_snapshot(&batch_id)
+            .unwrap()
+            .unwrap()
+            .batch;
+        assert!(matches!(
+            saved.identity_scheme,
+            Some(ImportIdentityScheme::BatchV1)
+        ));
+        assert_eq!(saved.txn_ids, ["txn-001", "txn-002"]);
         assert_eq!(
             built.payload["result"]["live_evidence"],
             "synthetic_lab_readback"
@@ -1247,7 +1304,13 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
             .verify_import(&json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}))
             .await
             .expect("verify");
-        assert_eq!(proof.payload["result"]["counts"]["posted_verified"], 2);
+        // These historical replay rows have caller-selected raw tags. They can
+        // corroborate contents but cannot prove attribution to this fresh batch.
+        assert_eq!(proof.payload["result"]["counts"]["posted_verified"], 0);
+        assert_eq!(
+            proof.payload["result"]["counts"]["matching_content_observed"],
+            2
+        );
         assert!(directory
             .path()
             .join("imports")
@@ -1619,3 +1682,6 @@ fn voucher_and_import_read_filters_use_literal_dates_independently_of_static_per
 
 #[path = "agent_import_verify_mode_tests.rs"]
 mod verify_mode_tests;
+
+#[path = "agent_import_identity_tests.rs"]
+mod identity_tests;

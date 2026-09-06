@@ -45,10 +45,18 @@ fn journal_renderer_preserves_create_remote_identity_with_optional_number() {
     let mut voucher = captured_catalogue_payload().vouchers.remove(0);
     for number in [None, Some("CLIENT-42".to_string())] {
         voucher.voucher_number = number.clone();
-        let xml = render_import_xml("Synthetic Book", std::slice::from_ref(&voucher));
+        let xml = render_import_xml(
+            "Synthetic Book",
+            std::slice::from_ref(&voucher),
+            "batch-render",
+        );
         assert_eq!(
             xml,
-            render_import_xml("Synthetic Book", std::slice::from_ref(&voucher))
+            render_import_xml(
+                "Synthetic Book",
+                std::slice::from_ref(&voucher),
+                "batch-render"
+            )
         );
         let mut reader = quick_xml::Reader::from_str(&xml);
         let mut vouchers = 0;
@@ -77,7 +85,10 @@ fn journal_renderer_preserves_create_remote_identity_with_optional_number() {
                         attributes,
                         BTreeMap::from([
                             ("ACTION".into(), "Create".into()),
-                            ("REMOTEID".into(), voucher.bridge_txn_id.clone()),
+                            (
+                                "REMOTEID".into(),
+                                import_identity("batch-render", &voucher.bridge_txn_id).to_string()
+                            ),
                             ("VCHTYPE".into(), "Journal".into()),
                             ("OBJVIEW".into(), "Accounting Voucher View".into()),
                         ])
