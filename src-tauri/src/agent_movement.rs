@@ -240,6 +240,12 @@ fn parse_movement_rows(rows: Vec<Value>, from: &str, to: &str) -> Result<Movemen
     {
         return Err("window_not_honoured".to_string());
     }
+    if vouchers
+        .iter()
+        .any(|voucher| !voucher.cancelled && !voucher.optional && voucher.ledger_entries.is_empty())
+    {
+        return Err("ledger_movement_entries_not_observed".to_string());
+    }
     Ok(MovementPage {
         rows: vouchers
             .into_iter()

@@ -22,7 +22,7 @@ fn missing_opening_is_partial_even_at_book_start() {
 
 #[test]
 fn movement_emptiness_uses_raw_presence_before_accounting_exclusions() {
-    for (cancelled, optional) in [(true, false), (false, true), (false, false)] {
+    for (cancelled, optional) in [(true, false), (false, true), (true, true)] {
         let page = parse_movement_rows(
             vec![json!({"date":"20260901", "cancelled":cancelled,
             "optional":optional,"amounts":[]})],
@@ -57,4 +57,18 @@ fn movement_uses_observed_period_opening_without_inferring_account_classificatio
         assert_eq!(row["closing"], closing);
         assert_eq!(row["reason"], Value::Null);
     }
+}
+
+#[test]
+fn active_entryless_movement_voucher_is_refused() {
+    let result = parse_movement_rows(
+        vec![json!({"date":"20260901", "cancelled":false,
+            "optional":false,"amounts":[]})],
+        "20260901",
+        "20260902",
+    );
+    assert_eq!(
+        result.err(),
+        Some("ledger_movement_entries_not_observed".into())
+    );
 }
