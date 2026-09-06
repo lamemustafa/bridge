@@ -305,13 +305,7 @@ impl Server {
         let (corroboration_xml, corroboration_evidence) =
             self.post_read(&identity, request).await?;
         let corroboration = parse_import_vouchers(&corroboration_xml)?;
-        corroborate_verification_window(
-            &observed,
-            &corroboration,
-            &line.date_from,
-            &line.date_to,
-            self.settings.max_rows,
-        )?;
+        corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)?;
         let result = verify_batch(&line, &observed)?;
         let proof = json!({
             "company": company_json(&company, std::slice::from_ref(&company)),
@@ -1046,7 +1040,6 @@ fn corroborate_verification_window(
     corroboration: &[ReadVoucher],
     from: &str,
     to: &str,
-    max_rows: usize,
 ) -> Result<(), String> {
     if observed.iter().any(|voucher| {
         voucher
@@ -1056,13 +1049,9 @@ fn corroborate_verification_window(
     }) {
         return Err("window_not_honoured".to_string());
     }
-    // The decoded envelope and paired transport currently expose no structural
-    // total/count/completeness marker. Completeness is therefore limited to a
-    // below-cap row count and an identical stable GUID/ALTERID set on the
-    // second read; user-controlled free text is never a truncation signal.
-    if observed.len() >= max_rows {
-        return Err("verification_incomplete:window_possibly_truncated".to_string());
-    }
+    // This collection request has no row limit. The MCP output-page setting
+    // cannot establish source truncation; corroborate the observed identity set
+    // independently of that presentation cap.
     let pairs = |rows: &[ReadVoucher]| {
         rows.iter()
             .map(|voucher| {

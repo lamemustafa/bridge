@@ -579,7 +579,6 @@ fn verification_window_corroboration_rejects_each_unsafe_branch() {
             std::slice::from_ref(&inside),
             "20260901",
             "20260902",
-            10,
         ),
         Err("window_not_honoured".to_string())
     );
@@ -589,7 +588,6 @@ fn verification_window_corroboration_rejects_each_unsafe_branch() {
             &[voucher("guid-2", 3, "20260901")],
             "20260901",
             "20260902",
-            10,
         ),
         Err("verification_incomplete:window_not_corroborated".to_string())
     );
@@ -599,9 +597,8 @@ fn verification_window_corroboration_rejects_each_unsafe_branch() {
             std::slice::from_ref(&inside),
             "20260901",
             "20260902",
-            1,
         ),
-        Err("verification_incomplete:window_possibly_truncated".to_string())
+        Ok(())
     );
 }
 
@@ -610,7 +607,7 @@ fn verification_narration_with_truncated_text_is_not_a_completeness_marker() {
     let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>guid-1</GUID><ALTERID>3</ALTERID><NARRATION>truncated payment</NARRATION></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
     let observed = parse_import_vouchers(xml).expect("verification response");
     assert_eq!(
-        corroborate_verification_window(&observed, &observed, "20260901", "20260902", 10,),
+        corroborate_verification_window(&observed, &observed, "20260901", "20260902"),
         Ok(())
     );
 }
@@ -1188,53 +1185,55 @@ fn batch_company_tuple_rejects_a_same_guid_different_book() {
 }
 
 #[tokio::test]
-async fn simulator_build_then_manual_import_readback_verifies_every_voucher() {
-    let simulator = SequenceSimulator::spawn(import_cycle_plans()).expect("simulator");
-    let directory = tempfile::tempdir().expect("temporary data directory");
-    let server = Server::new(super::super::Settings {
-        endpoint: TallyEndpointConfig {
-            host: "127.0.0.1".to_string(),
-            port: simulator.address().port(),
-        },
-        data_dir: directory.path().to_path_buf(),
-        max_rows: 10,
-        max_bytes: 200_000,
-        redaction: super::super::Redaction::None,
-        import_enabled: true,
-    });
-    let built = server
-        .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
-        .await
-        .expect("build");
-    let batch_id = built.payload["result"]["batch_id"]
-        .as_str()
-        .expect("batch id")
-        .to_string();
-    assert_eq!(
-        built.payload["result"]["live_evidence"],
-        "synthetic_lab_readback"
-    );
-    assert!(directory
-        .path()
-        .join("imports")
-        .join(format!("{batch_id}.xml"))
-        .exists());
-    let proof = server
-        .verify_import(&json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}))
-        .await
-        .expect("verify");
-    assert_eq!(proof.payload["result"]["counts"]["posted_verified"], 2);
-    assert!(directory
-        .path()
-        .join("imports")
-        .join(format!(
-            "{}.proof.md",
-            proof.payload["result"]["batch_id"]
-                .as_str()
-                .expect("batch id")
-        ))
-        .exists());
-    assert_eq!(simulator.finish().expect("requests").len(), 32);
+async fn simulator_verification_is_independent_of_the_output_row_limit() {
+    for max_rows in [1, 2, 10] {
+        let simulator = SequenceSimulator::spawn(import_cycle_plans()).expect("simulator");
+        let directory = tempfile::tempdir().expect("temporary data directory");
+        let server = Server::new(super::super::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".to_string(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().to_path_buf(),
+            max_rows,
+            max_bytes: 200_000,
+            redaction: super::super::Redaction::None,
+            import_enabled: true,
+        });
+        let built = server
+            .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
+            .await
+            .expect("build");
+        let batch_id = built.payload["result"]["batch_id"]
+            .as_str()
+            .expect("batch id")
+            .to_string();
+        assert_eq!(
+            built.payload["result"]["live_evidence"],
+            "synthetic_lab_readback"
+        );
+        assert!(directory
+            .path()
+            .join("imports")
+            .join(format!("{batch_id}.xml"))
+            .exists());
+        let proof = server
+            .verify_import(&json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}))
+            .await
+            .expect("verify");
+        assert_eq!(proof.payload["result"]["counts"]["posted_verified"], 2);
+        assert!(directory
+            .path()
+            .join("imports")
+            .join(format!(
+                "{}.proof.md",
+                proof.payload["result"]["batch_id"]
+                    .as_str()
+                    .expect("batch id")
+            ))
+            .exists());
+        assert_eq!(simulator.finish().expect("requests").len(), 32);
+    }
 }
 
 fn import_cycle_plans() -> Vec<ScenarioPlan> {
