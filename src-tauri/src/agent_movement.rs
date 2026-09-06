@@ -25,16 +25,28 @@ impl Server {
                 .await?;
             evidence = combine_evidence(evidence.clone(), ledger_evidence);
             let (page, read_evidence) = self
-                .read_movement_vouchers(&identity, &company.name, from.clone(), to)
+                .read_movement_vouchers(&identity, &company.name, from.clone(), to.clone())
                 .await?;
             let MovementPage {
                 rows: vouchers,
                 observed_rows: voucher_rows_observed,
             } = page;
+            let voucher_snapshot = read_evidence.response_sha256.clone();
             evidence = combine_evidence(evidence.clone(), read_evidence);
             let (corroborating_ledgers, corroboration_evidence) =
                 self.read_movement_ledgers(&identity, opening_date).await?;
             evidence = combine_evidence(evidence.clone(), corroboration_evidence);
+            // An in-window posting need not change the period opening. Repeat
+            // the voucher source across the final ledger read as well; an
+            // AlterID high-water alone cannot establish deletion stability.
+            let (_, closing_voucher_evidence) = self
+                .read_movement_vouchers(&identity, &company.name, from, to)
+                .await?;
+            let closing_snapshot = closing_voucher_evidence.response_sha256.clone();
+            evidence = combine_evidence(evidence.clone(), closing_voucher_evidence);
+            if voucher_snapshot != closing_snapshot {
+                return Err("voucher_snapshot_drifted".to_string().into());
+            }
             validate_movement_snapshot(&ledgers, &corroborating_ledgers, &vouchers)?;
             let selected = optional_string(args, "ledger")?
                 .map(|name| {
@@ -301,3 +313,7 @@ fn parse_movement_rows(rows: Vec<Value>, from: &str, to: &str) -> Result<Movemen
 #[cfg(test)]
 #[path = "agent_movement_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_movement_snapshot_tests.rs"]
+mod snapshot_tests;

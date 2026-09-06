@@ -1,0 +1,15 @@
+{
+  "source": "Live licensed TallyPrime synthetic-company read",
+  "observed_date": "2026-09-06",
+  "source_response_bytes": 18652,
+  "source_response_sha256": "f23bbac22243ca6ff10cafd13268b6f2c3917c0c1cb0ce977b2bdafeef112280",
+  "source_request_bytes": 2360,
+  "source_request_sha256": "5d0688c7863837094a8ceecb98983c8e80b09220cee332d1da5d95be36e3109b",
+  "fixture_bytes": 18652,
+  "fixture_sha256": "f23bbac22243ca6ff10cafd13268b6f2c3917c0c1cb0ce977b2bdafeef112280",
+  "encoding": "UTF-16LE without BOM",
+  "rows": 16,
+  "transformation": [],
+  "provenance_limit": "Byte-exact observed synthetic lab response. Concurrent-edit tests mutate a separate captured voucher body in memory; they do not claim a live concurrency experiment.",
+  "sensitivity_review": "Only operator-created synthetic companies; generic zero serial counter, no licence credentials, customer data, or machine paths."
+}
