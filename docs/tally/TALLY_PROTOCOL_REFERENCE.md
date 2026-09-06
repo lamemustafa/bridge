@@ -362,10 +362,12 @@ report parity. Empty opening values remain unknown, never zero.
 **Compatibility boundary.** Education mode can silently refuse a non-01/02/31 `BOOKSFROM` and
 load its display period instead. The master response does not carry a returned date span, so this
 path cannot apply the voucher reader's I12 span comparison. Before dispatch, Bridge instead uses
-the endpoint's `DateBoundaryProfile`: verified Education evidence rejects unsupported boundaries;
-licensed or unknown evidence remains mode-agnostic and permits ordinary calendar dates. Do not
-replace this with a global day-of-month rule: licensed Tally remains unverified but must not be
-silently narrowed by an Education-only observation.
+a freshly observed endpoint `DateBoundaryProfile`: verified Education evidence rejects unsupported
+boundaries; observed licensed mode permits ordinary calendar dates under the limited evidence
+above. Native opening, compliance-ledger, and native-outstandings reads require a recognized
+current mode and a matching closing mode observation. A missing or stale cached probe cannot
+admit these date-dependent balances. Unknown mode is refused. Do not replace this with a global
+day-of-month rule or imply that one licensed observation qualifies every installation.
 
 ---
 
