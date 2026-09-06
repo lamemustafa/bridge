@@ -120,6 +120,107 @@ fn confirmed_build_rollback_removes_only_the_uncommitted_batch() {
 }
 
 #[test]
+fn failed_xml_cleanup_retains_its_journal_and_recovery_id() {
+    let directory = tempfile::tempdir().unwrap();
+    let imports = directory.path();
+    let path = imports.join("batch-proof.xml");
+    let result = persist_build(imports, &line(), b"<retained/>", || {
+        // Keep the real XML bytes, but make remove_file fail portably.
+        fs::rename(&path, imports.join(BUILD_TRANSACTION).join("retained.xml")).unwrap();
+        fs::create_dir(&path).unwrap();
+        Err("import_ledger_unavailable".into())
+    });
+    assert_eq!(
+        result,
+        Ok(Some("import_publication_recovery_required".into()))
+    );
+    assert_eq!(
+        fs::read(imports.join(BUILD_TRANSACTION).join("retained.xml")).unwrap(),
+        b"<retained/>"
+    );
+    let journal: Value = serde_json::from_slice(
+        &fs::read(imports.join(BUILD_TRANSACTION).join("update.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(journal["batch_id"], "batch-proof");
+    assert_eq!(
+        require_settled(imports),
+        Err("import_publication_recovery_required".into())
+    );
+}
+
+#[test]
+fn partial_xml_stage_keeps_a_journal_and_never_exposes_the_importable_name() {
+    let directory = tempfile::tempdir().unwrap();
+    let imports = directory.path().join("imports");
+    fs::create_dir(&imports).unwrap();
+    let result = persist_build_with_stage(
+        &imports,
+        &line(),
+        b"<complete-batch/>",
+        || panic!("ledger append must not run"),
+        |path, bytes| {
+            write_private(path, &bytes[..5])?;
+            Err("import_file_write_failed".into())
+        },
+    );
+    assert_eq!(result, Err("import_file_write_failed".into()));
+    assert!(!imports.join("batch-proof.xml").exists());
+    assert_eq!(
+        fs::read(imports.join(BUILD_TRANSACTION).join("batch.xml")).unwrap(),
+        b"<comp"
+    );
+    let journal: Value = serde_json::from_slice(
+        &fs::read(imports.join(BUILD_TRANSACTION).join("update.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(journal["batch_id"], "batch-proof");
+    assert_eq!(
+        require_settled(&imports),
+        Err("import_publication_recovery_required".into())
+    );
+}
+
+#[test]
+fn interruption_after_xml_publication_keeps_admission_blocked() {
+    let directory = tempfile::tempdir().unwrap();
+    let imports = directory.path().join("imports");
+    fs::create_dir(&imports).unwrap();
+    // No error handler runs, modeling the observable files after interruption
+    // between publishing the complete XML and appending its ledger line.
+    let interrupted = std::panic::catch_unwind(|| {
+        let _ = persist_build(&imports, &line(), b"<complete-batch/>", || {
+            panic!("injected interruption before append")
+        });
+    });
+    assert!(interrupted.is_err());
+    assert_eq!(
+        fs::read(imports.join("batch-proof.xml")).unwrap(),
+        b"<complete-batch/>"
+    );
+    let server = Server::new(crate::agent::Settings {
+        endpoint: bridge_tally_transport::TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 256,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+    });
+    assert_eq!(
+        server.lock_import_admission().err(),
+        Some("import_publication_recovery_required".into())
+    );
+    assert_eq!(
+        server.lock_import_admission_shared().err(),
+        Some("import_publication_recovery_required".into())
+    );
+    assert!(!directory.path().join("agent-import-ledger.jsonl").exists());
+}
+
+#[test]
 fn publication_failures_restore_prior_proofs_and_leave_status_unchanged() {
     for existing in [false, true] {
         for fail_at in [

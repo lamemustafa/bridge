@@ -25,27 +25,36 @@ pub(super) fn persist_build(
     xml: &[u8],
     append_status: impl FnOnce() -> Result<(), String>,
 ) -> Result<Option<String>, String> {
+    persist_build_with_stage(imports, line, xml, append_status, write_private)
+}
+
+fn persist_build_with_stage(
+    imports: &Path,
+    line: &ImportLedgerLine,
+    xml: &[u8],
+    append_status: impl FnOnce() -> Result<(), String>,
+    stage_xml: impl FnOnce(&Path, &[u8]) -> Result<(), String>,
+) -> Result<Option<String>, String> {
     let path = imports.join(format!("{}.xml", line.batch_id));
-    write_private(&path, xml)?;
     let transaction = imports.join(BUILD_TRANSACTION);
-    let stage = (|| {
-        fs::create_dir(&transaction)
-            .map_err(|_| "import_publication_recovery_required".to_string())?;
-        set_private_dir(&transaction)?;
-        write_private(
-            &transaction.join("update.json"),
-            &serde_json::to_vec_pretty(line)
-                .map_err(|_| "import_ledger_serialization_failed".to_string())?,
-        )
-    })();
-    if let Err(error) = stage {
-        // No ledger append has happened, but preserve any journal for recovery.
-        return Err(remove_orphaned_import_file(&path, error));
-    }
+    fs::create_dir(&transaction).map_err(|_| "import_publication_recovery_required".to_string())?;
+    set_private_dir(&transaction)?;
+    write_private(
+        &transaction.join("update.json"),
+        &serde_json::to_vec_pretty(line)
+            .map_err(|_| "import_ledger_serialization_failed".to_string())?,
+    )?;
+    // Every partial write and process interruption now leaves an admission
+    // marker. Expose the importable name only after the staged XML is synced.
+    let staged_xml = transaction.join("batch.xml");
+    stage_xml(&staged_xml, xml)?;
+    fs::rename(&staged_xml, &path).map_err(|_| "import_file_write_failed".to_string())?;
     match append_status() {
         Err(error) if error == "import_ledger_rollback_failed" => Ok(Some(error)),
         Err(error) => {
-            let error = remove_orphaned_import_file(&path, error);
+            if fs::remove_file(&path).is_err() {
+                return Ok(Some("import_publication_recovery_required".into()));
+            }
             fs::remove_dir_all(&transaction)
                 .map_err(|_| "import_publication_recovery_required".to_string())?;
             Err(error)

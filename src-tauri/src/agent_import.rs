@@ -539,13 +539,6 @@ fn append_import_ledger_bytes(
     Ok(())
 }
 
-fn remove_orphaned_import_file(path: &Path, append_error: String) -> String {
-    match fs::remove_file(path) {
-        Ok(()) => append_error,
-        Err(_) => format!("import_file_orphaned:{}", path.display()),
-    }
-}
-
 fn canonical_batch_guid(guid: &str) -> String {
     guid.to_ascii_lowercase()
 }

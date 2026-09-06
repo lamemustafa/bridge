@@ -625,8 +625,6 @@ fn batch_guid_is_canonicalized_and_compared_case_insensitively() {
 #[test]
 fn unwritable_ledger_path_removes_the_written_import_file() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let path = directory.path().join("batch.xml");
-    fs::write(&path, "xml").expect("import file");
     fs::create_dir(directory.path().join("agent-import-ledger.jsonl"))
         .expect("directory makes the ledger path unwritable");
     let server = Server::new(super::super::Settings {
@@ -658,14 +656,14 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
         },
         vouchers: vec![input.vouchers[0].clone()],
     };
-    let append_error = server
-        .append_import_ledger_while_admitted(&line)
-        .expect_err("a directory cannot be opened as the JSONL ledger");
-    assert_eq!(
-        remove_orphaned_import_file(&path, append_error),
-        "import_ledger_unavailable"
-    );
-    assert!(!path.exists());
+    let imports = server.imports_dir().unwrap();
+    let _admission = server.lock_import_admission().unwrap();
+    let result = persistence::persist_build(&imports, &line, b"xml", || {
+        server.append_import_ledger_while_admitted(&line)
+    });
+    assert_eq!(result, Err("import_ledger_unavailable".into()));
+    assert!(!imports.join("batch-unwritable.xml").exists());
+    assert_eq!(persistence::require_settled(&imports), Ok(()));
 }
 
 #[test]
