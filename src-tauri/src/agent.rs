@@ -420,7 +420,7 @@ impl Server {
         &self,
         identity: &VerifiedCompanyIdentity,
         request: String,
-    ) -> Result<(String, Evidence), String> {
+    ) -> Result<(String, Evidence), ToolFailure> {
         let admitted = crate::tally::agent_read_request::AgentReadRequest::parse(request.clone())
             .map_err(|error| error.to_string())?;
         let request_sha256 = sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
@@ -430,7 +430,7 @@ impl Server {
             .runtime
             .fetch_agent_read(self.tally_config(), identity, admitted)
             .await
-            .map_err(|_| "agent_runtime_read_failed".to_string())?;
+            .map_err(|error| ToolFailure::from_runtime("agent_runtime_read_failed", error))?;
         let evidence = Evidence {
             request_sha256,
             response_sha256: response.encoded_sha256,
@@ -500,7 +500,8 @@ impl Server {
         });
         evidence.read_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true));
         evidence.duration_ms = Some((Utc::now() - started).num_milliseconds().max(0) as u128);
-        let response_value = redact_value(
+        let response_value = redact_tool_response(
+            name,
             json!({
                 "company": payload.get("company").cloned().unwrap_or_else(|| json!({"state":"not_company_scoped"})),
                 "read_at": started.to_rfc3339_opts(SecondsFormat::Millis, true),
@@ -937,6 +938,19 @@ fn add_decimal(left: &str, right: &str) -> Result<String, String> {
     left.checked_add(&right)
         .map(|value| value.as_str().to_string())
         .map_err(|_| "voucher_amount_invalid".to_string())
+}
+
+fn redact_tool_response(tool: &str, value: Value, redaction: Redaction) -> Value {
+    // Only this local tool produces the server-defined input schema. Its
+    // property names describe accepted input; they are not accounting data.
+    let schema = (tool == "voucher_schema" && redaction == Redaction::DropNarration)
+        .then(|| value.pointer("/result/schema").cloned())
+        .flatten();
+    let mut redacted = redact_value(value, redaction);
+    if let Some(schema) = schema {
+        redacted["result"]["schema"] = schema;
+    }
+    redacted
 }
 
 fn redact_value(mut value: Value, redaction: Redaction) -> Value {

@@ -4,6 +4,9 @@ use std::path::Path;
 #[path = "agent_protocol_cap_tests.rs"]
 mod cap_tests;
 
+#[path = "agent_protocol_redaction_tests.rs"]
+mod redaction_tests;
+
 fn server(path: &Path) -> Server {
     Server::new(Settings {
         endpoint: TallyEndpointConfig {
