@@ -12,6 +12,8 @@ use catalog::{registered_tool_definitions, tool_definitions, validate_tool_argum
 mod agent_protocol;
 #[path = "agent_receipt_fields.rs"]
 mod agent_receipt_fields;
+#[path = "agent_delivery.rs"]
+mod delivery;
 use agent_protocol::serve_stdio;
 #[path = "agent_company.rs"]
 mod company;
@@ -316,23 +318,6 @@ struct Evidence {
     reason_code: Option<String>,
 }
 
-#[derive(Serialize)]
-struct EgressReceipt<'a> {
-    ts: String,
-    tool: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_name_sha256: Option<String>,
-    args_sha256: String,
-    company_guid: Option<String>,
-    rows_returned: usize,
-    fields_returned: Vec<String>,
-    bytes_returned: usize,
-    enforced_bytes: usize,
-    response_sha256: String,
-    truncated: bool,
-    redaction_preset: &'a str,
-}
-
 fn receipt_tool_identity(tool: &str) -> (&str, Option<String>) {
     if registered_tool_definitions(true)
         .as_array()
@@ -560,72 +545,6 @@ impl Server {
         if records.len() > MAX_EVIDENCE_RECORDS {
             records.remove(0);
         }
-    }
-
-    fn append_framed_egress(
-        &self,
-        context: EgressContext,
-        response: &Value,
-        serialized_response: &str,
-    ) -> Result<(), String> {
-        let structured = response
-            .get("result")
-            .and_then(|result| result.get("structuredContent"));
-        let rows_returned = structured.and_then(response_row_count).unwrap_or_default();
-        let truncated = structured
-            .and_then(|value| value.get("truncated"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let fields_returned = structured
-            .map(agent_receipt_fields::released_fields)
-            .unwrap_or_default();
-        let path = self.settings.data_dir.join("agent-egress.jsonl");
-        let (tool, tool_name_sha256) = receipt_tool_identity(&context.tool);
-        let receipt = EgressReceipt {
-            ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            tool,
-            tool_name_sha256,
-            args_sha256: context.args_sha256,
-            company_guid: context
-                .company_guid
-                .as_deref()
-                .and_then(egress::canonical_company_guid),
-            rows_returned,
-            fields_returned,
-            bytes_returned: serialized_response.len(),
-            enforced_bytes: self.settings.max_bytes,
-            response_sha256: sha256_hex(serialized_response.as_bytes()),
-            truncated,
-            redaction_preset: self.settings.redaction.label(),
-        };
-        let line = serde_json::to_string(&receipt)
-            .map_err(|_| "egress_record_write_failed".to_string())?;
-        append_egress_line(&path, &line)
-    }
-
-    fn append_notification_refusal_egress(&self, tool: &str, args: &Value) -> Result<(), String> {
-        let refusal = "tools_call_notification_forbidden";
-        let (tool, tool_name_sha256) = receipt_tool_identity(tool);
-        let receipt = EgressReceipt {
-            ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            tool,
-            tool_name_sha256,
-            args_sha256: sha256_json(args),
-            company_guid: args
-                .get("company_guid")
-                .and_then(Value::as_str)
-                .and_then(egress::canonical_company_guid),
-            rows_returned: 0,
-            fields_returned: Vec::new(),
-            bytes_returned: 0,
-            enforced_bytes: self.settings.max_bytes,
-            response_sha256: sha256_hex(refusal.as_bytes()),
-            truncated: false,
-            redaction_preset: self.settings.redaction.label(),
-        };
-        let line = serde_json::to_string(&receipt)
-            .map_err(|_| "egress_record_write_failed".to_string())?;
-        append_egress_line(&self.settings.data_dir.join("agent-egress.jsonl"), &line)
     }
 
     async fn tool_payload(&self, name: &str, args: &Value) -> Result<ToolOutcome, ToolFailure> {

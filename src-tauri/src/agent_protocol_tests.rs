@@ -62,11 +62,13 @@ async fn negotiates_fallback_and_returns_complete_text_to_legacy_clients() {
         let receipt: Value = serde_json::from_str(
             fs::read_to_string(directory.path().join("agent-egress.jsonl"))
                 .unwrap()
-                .trim(),
+                .lines()
+                .next()
+                .unwrap(),
         )
         .unwrap();
         let wire = format!("{}\n", responses[1]);
-        assert_eq!(receipt["bytes_returned"], wire.len());
+        assert_eq!(receipt["bytes_prepared"], wire.len());
         assert_eq!(receipt["response_sha256"], sha256_hex(wire.as_bytes()));
     }
 }
@@ -150,13 +152,15 @@ async fn unknown_tools_and_methods_return_protocol_errors_with_exact_refusal_rec
     let receipt: Value = serde_json::from_str(
         fs::read_to_string(directory.path().join("agent-egress.jsonl"))
             .unwrap()
-            .trim(),
+            .lines()
+            .next()
+            .unwrap(),
     )
     .unwrap();
-    assert_eq!(receipt["rows_returned"], 0);
+    assert_eq!(receipt["rows_prepared"], 0);
     assert_eq!(receipt["tool"], "unknown");
     assert_eq!(receipt["tool_name_sha256"], sha256_hex(b"absent_tool"));
-    assert_eq!(receipt["fields_returned"], json!([]));
+    assert_eq!(receipt["fields_prepared"], json!([]));
     assert_eq!(
         receipt["response_sha256"],
         sha256_hex(format!("{}\n", responses[1]).as_bytes())
@@ -192,8 +196,13 @@ async fn oversized_untrusted_names_and_selectors_never_expand_receipts() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(receipts.len(), 4);
-    for (index, receipt) in receipts.iter().enumerate() {
+    assert_eq!(receipts.len(), 6);
+    let preparations = receipts
+        .iter()
+        .filter(|record| record["record_type"] != "stdio_write_completed")
+        .collect::<Vec<_>>();
+    assert_eq!(preparations.len(), 4);
+    for (index, receipt) in preparations.iter().enumerate() {
         assert_eq!(receipt["args_sha256"], sha256_json(&args));
         assert!(receipt["company_guid"].is_null());
         if index < 2 {

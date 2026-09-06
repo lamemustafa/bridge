@@ -59,7 +59,7 @@ fn standalone_master_and_status_rows_are_counted_in_final_receipts() {
             &fs::read_to_string(directory.path().join("agent-egress.jsonl")).unwrap(),
         )
         .unwrap();
-        assert_eq!(receipt["rows_returned"], 2, "{tool}");
+        assert_eq!(receipt["rows_prepared"], 2, "{tool}");
         assert_eq!(receipt["response_sha256"], sha256_hex(wire.as_bytes()));
     }
 }

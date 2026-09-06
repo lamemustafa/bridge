@@ -136,6 +136,25 @@ def resolve_environment(manifest):
     return resolved
 
 
+def validate_schema_receipts(raw, response):
+    records = [json.loads(line) for line in raw.splitlines()]
+    require(len(records) == 2, "schema_egress_completion_missing")
+    prepared, completed = records
+    digest = hashlib.sha256(response).hexdigest()
+    require(prepared.get("record_type") == "response_prepared"
+            and prepared.get("tool") == "voucher_schema"
+            and isinstance(prepared.get("receipt_id"), str) and bool(prepared["receipt_id"])
+            and prepared.get("bytes_prepared") == len(response)
+            and prepared.get("response_sha256") == digest,
+            "schema_egress_preparation_invalid")
+    require(completed.get("record_type") == "stdio_write_completed"
+            and completed.get("receipt_id") == prepared["receipt_id"]
+            and completed.get("bytes_written") == len(response)
+            and completed.get("response_sha256") == digest,
+            "schema_egress_completion_invalid")
+    return len(records)
+
+
 def smoke(archive, repository):
     with tempfile.TemporaryDirectory(prefix="bridge-mcpb-smoke-") as temporary:
         destination = Path(temporary) / "bundle"
@@ -169,15 +188,16 @@ def smoke(archive, repository):
                 and schema["structuredContent"]["result"]["schema"]["type"] == "object"
                 and json.loads(schema["content"][0]["text"]) == schema["structuredContent"],
                 "voucher_schema_response_invalid")
-        receipts = (Path(temporary) / "data" / "agent-egress.jsonl").read_bytes().splitlines()
-        require(len(receipts) == 1 and json.loads(receipts[0])["tool"] == "voucher_schema",
-                "schema_egress_receipt_missing")
+        receipts = validate_schema_receipts(
+            (Path(temporary) / "data" / "agent-egress.jsonl").read_bytes(),
+            output.splitlines(keepends=True)[2],
+        )
         return {
             "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
             "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
             "platform": sys.platform, "archive_entries": 6, "legal_resources": len(RESOURCES),
             "response_ids": [reply["id"] for reply in replies], "response_bytes": len(output),
-            "default_tool_count": len(names), "egress_receipts": len(receipts),
+            "default_tool_count": len(names), "egress_receipts": receipts,
             "stderr_bytes": len(diagnostics), "stderr_sha256": hashlib.sha256(diagnostics).hexdigest(),
         }
 

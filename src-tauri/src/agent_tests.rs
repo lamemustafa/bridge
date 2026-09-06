@@ -448,11 +448,12 @@ async fn egress_receipt_uses_the_final_jsonrpc_replacement_when_only_the_envelop
     assert_eq!(response["error"]["message"], "agent_response_too_large");
     let receipt_line =
         fs::read_to_string(directory.path().join("agent-egress.jsonl")).expect("egress receipt");
-    let receipt: Value = serde_json::from_str(receipt_line.trim_end()).expect("receipt JSON");
-    assert_eq!(receipt["bytes_returned"], output.len());
+    let receipt: Value =
+        serde_json::from_str(receipt_line.lines().next().unwrap()).expect("receipt JSON");
+    assert_eq!(receipt["bytes_prepared"], output.len());
     assert_eq!(receipt["response_sha256"], sha256_hex(output.as_bytes()));
-    assert_eq!(receipt["rows_returned"], 0);
-    assert_eq!(receipt["fields_returned"], json!([]));
+    assert_eq!(receipt["rows_prepared"], 0);
+    assert_eq!(receipt["fields_prepared"], json!([]));
     assert_eq!(receipt["truncated"], false);
 }
 

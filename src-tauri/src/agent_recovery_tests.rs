@@ -90,12 +90,14 @@ async fn release(server: &Server, tool: ToolResponse, receipt_fails: bool) -> Va
         let receipt: Value = serde_json::from_str(
             fs::read_to_string(server.settings.data_dir.join("agent-egress.jsonl"))
                 .unwrap()
-                .trim(),
+                .lines()
+                .next()
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(receipt["response_sha256"], sha256_hex(&wire));
-        assert_eq!(receipt["bytes_returned"], wire.len());
-        assert_eq!(receipt["fields_returned"], json!([]));
+        assert_eq!(receipt["bytes_prepared"], wire.len());
+        assert_eq!(receipt["fields_prepared"], json!([]));
     }
     response
 }
@@ -160,4 +162,41 @@ async fn capped_reads_retain_source_commitments_for_read_evidence() {
         assert!(record["read_at"].is_string());
         assert!(record["duration_ms"].is_number());
     }
+}
+
+#[tokio::test]
+async fn persisted_batch_survives_failed_stdout_without_a_completion_claim() {
+    let (_directory, server, tool) = persisted_build(200_000).await;
+    let batch_id = tool.recovery_batch_id.clone().unwrap();
+    let imports = server.settings.data_dir.join("imports");
+    let xml_path = imports.join(format!("{batch_id}.xml"));
+    let xml = fs::read(&xml_path).unwrap();
+    let (mut writer, reader) = tokio::io::duplex(64);
+    drop(reader);
+    assert_eq!(
+        finish_response(
+            &server,
+            &mut writer,
+            json!(1),
+            Ok(tool.value),
+            Some(tool.egress),
+            tool.recovery_batch_id,
+            true
+        )
+        .await,
+        Err("stdio_write_failed".into())
+    );
+    assert_eq!(fs::read(&xml_path).unwrap(), xml);
+    assert_eq!(
+        server
+            .latest_import_line(&batch_id)
+            .unwrap()
+            .unwrap()
+            .batch_id,
+        batch_id
+    );
+    let log = fs::read_to_string(server.settings.data_dir.join("agent-egress.jsonl")).unwrap();
+    assert_eq!(log.lines().count(), 1);
+    let receipt: Value = serde_json::from_str(log.trim()).unwrap();
+    assert_eq!(receipt["record_type"], "response_prepared");
 }

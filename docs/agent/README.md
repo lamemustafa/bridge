@@ -42,14 +42,24 @@ The read tools are `tally_status`, `list_companies`, `outstandings`,
 `read_evidence`, and `egress_log`; `voucher_schema` and `validate_masters` are also
 available by default (ten tools total). Each call returns compact JSON with the
 company identity where scoped, a read timestamp, request/response commitments,
-byte count, completeness reason, and truncation state. Every call appends a
-metadata-only receipt to `agent-egress.jsonl`; receipt lines never contain
-voucher bodies. Redaction happens before a result reaches the client.
-`fields_returned` contains sorted, unique leaf paths from the final redacted,
+byte count, completeness reason, and truncation state. Before a tool response is written, Bridge appends a metadata-only
+`response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
+After `write_all` and `flush` succeed, it appends a `stdio_write_completed` record
+with the same ID and response hash plus `bytes_written`. This confirms the local
+stdio write, not consumption by the client. A missing completion leaves delivery
+unconfirmed; a completion-record failure terminates the session before another
+request runs. Receipt lines never contain voucher bodies. Redaction happens before a result reaches the client.
+`fields_prepared` contains sorted, unique leaf paths from the final redacted,
 byte-bounded `structuredContent`, including `company`, `evidence`, and `result`.
-For example, `result.open_bills[].due_date` records the released field, never its
+For example, `result.open_bills[].due_date` records the prepared field, never its
 value. Arrays use `[]` without indices; null fields and empty collections remain
-represented. Protocol refusals with no structured payload list no released fields.
+represented. Protocol refusals with no structured payload list no prepared fields.
+`rows_prepared` and `bytes_prepared` describe the planned output, including its
+newline. Tool-call notifications produce only a `notification_refused` record;
+no response or write-completion record is produced. Existing untyped receipts
+and their former `*_returned` fields remain readable historical records, but
+cannot establish completed delivery. Consumers must join new records by
+`receipt_id`; preparation alone is not a completed write.
 All output object keys must remain server-defined; identifiers belong in values,
 including when adding new grouped reports.
 `egress_log` reads only the final 256 KiB, in 64 KiB reverse-seek chunks, so a
@@ -206,9 +216,12 @@ duplicate metadata uses `fingerprint_sha256`. Each observed voucher can satisfy
 at most one expected transaction. Exact numeric comparison tolerates equivalent decimal spellings
 without changing the generated file or its stored hash.
 
-If a build persists a file but the response or receipt fails, the JSON-RPC error
-contains `error.data.batch_id`. Retain it and use `verify_import` or inspect the
-local import ledger; do not blindly rebuild or import another batch. Proof JSON,
+If a build persists a file but its response exceeds the framing budget or its
+preparation receipt fails, the recovery JSON-RPC error contains
+`error.data.batch_id`. Retain it and use `verify_import` or inspect the local import
+ledger; do not blindly rebuild or import another batch. If stdout itself fails,
+the recovery ID may not reach the client; the generated XML and import ledger
+remain available for local recovery. Proof JSON,
 Markdown, and ledger status are published under one admission lock. Handled
 publication failures restore the prior proof pair and ledger state. Builds create
 the journal first, write and sync staged XML, then expose the importable filename. An interrupted
@@ -217,7 +230,7 @@ admission until the local files and ledger are reconciled. Preserve the journal,
 its backups, and generated XML; do not delete it merely to retry. This is explicit
 recovery after a partial file transaction, not a power-loss atomicity guarantee.
 
-Receipts count released master-validation and loaded-company rows. Unknown tool
+Prepared receipts count the bounded master-validation and loaded-company rows. Unknown tool
 names are represented by `unknown` and `tool_name_sha256`; company IDs are
 canonical UUIDs. Failed receipt appends restore the previous file length.
 An incomplete log or failed rollback stops the session; a persisted build still

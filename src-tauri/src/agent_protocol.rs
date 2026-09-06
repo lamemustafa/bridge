@@ -157,21 +157,25 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
     }
     let mut serialized_response = format!("{response}\n");
     let mut terminal_egress_error = None;
+    let mut prepared_receipt = None;
     if let Some(egress) = egress {
-        if let Err(error) = server.append_framed_egress(egress, &response, &serialized_response) {
-            if matches!(
-                error.as_str(),
-                "egress_record_rollback_failed" | "egress_log_incomplete"
-            ) {
-                terminal_egress_error = Some(error.clone());
+        match server.append_framed_egress(egress, &response, &serialized_response) {
+            Ok(receipt) => prepared_receipt = Some(receipt),
+            Err(error) => {
+                if matches!(
+                    error.as_str(),
+                    "egress_record_rollback_failed" | "egress_log_incomplete"
+                ) {
+                    terminal_egress_error = Some(error.clone());
+                }
+                if recovery_batch_id.is_some() {
+                    response = recovery_error(id, recovery_batch_id.as_deref(), &error);
+                } else if !attach_build_egress_failure(&mut response) {
+                    return Err(error);
+                }
+                enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes)?;
+                serialized_response = format!("{response}\n");
             }
-            if recovery_batch_id.is_some() {
-                response = recovery_error(id, recovery_batch_id.as_deref(), &error);
-            } else if !attach_build_egress_failure(&mut response) {
-                return Err(error);
-            }
-            enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes)?;
-            serialized_response = format!("{response}\n");
         }
     }
     stdout
@@ -182,6 +186,12 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
         .flush()
         .await
         .map_err(|_| "stdio_flush_failed".to_string())?;
+    if let Some(receipt) = prepared_receipt {
+        // A missing completion is deliberately ambiguous: output may have been
+        // partial, fully written, or consumed before recording failed. Stop on
+        // append failure rather than dispatch another request without audit.
+        server.append_stdio_write_completed(receipt)?;
+    }
     match terminal_egress_error {
         Some(error) => Err(error),
         None => Ok(()),

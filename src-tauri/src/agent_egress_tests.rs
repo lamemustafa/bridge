@@ -236,7 +236,7 @@ async fn egress_log_rejects_unterminated_and_malformed_receipts_in_band() {
     let receipt: Value = serde_json::from_slice(&valid).unwrap();
     assert_eq!(receipt["tool"], "voucher_schema");
     assert!(receipt["response_sha256"].is_string());
-    assert!(receipt["fields_returned"].is_array());
+    assert!(receipt["fields_prepared"].is_array());
     let complete = read_egress_tail(&path, 20).unwrap();
     assert_eq!(complete.records.len(), 1);
     assert!(!complete.truncated);
