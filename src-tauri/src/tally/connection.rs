@@ -21,7 +21,7 @@ use crate::reports::party_ledger_master::{
 use crate::tally::runtime::{PartyLedgerMasterCurrencyAssertion, RuntimeReadEvidence};
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityProfile, CapabilityState,
-    EvidenceConfidence, TransportId,
+    EvidenceConfidence, LicenseTier, TransportId,
 };
 #[cfg(feature = "voucher-scan")]
 use bridge_tally_protocol::outstandings::{
@@ -231,6 +231,8 @@ pub struct TallyProbeResult {
 
 struct GatewayProductModeEvidence {
     product: String,
+    release: Option<String>,
+    license_tier: Option<LicenseTier>,
     mode: Option<String>,
     capability: CapabilityEvidence,
 }
@@ -239,6 +241,8 @@ impl GatewayProductModeEvidence {
     fn unavailable() -> Self {
         Self {
             product: "Unknown".to_string(),
+            release: None,
+            license_tier: None,
             mode: None,
             capability: CapabilityEvidence {
                 state: CapabilityState::Unknown,
@@ -274,8 +278,19 @@ impl GatewayProductModeEvidence {
                 safe_reason_code: Some("license_mode_not_established".to_string()),
             }
         };
+        let license_tier = match (
+            observation.educational_mode,
+            observation.silver,
+            observation.gold,
+        ) {
+            (false, true, false) => Some(LicenseTier::Silver),
+            (false, false, true) => Some(LicenseTier::Gold),
+            _ => None,
+        };
         Self {
             product: observation.product,
+            release: observation.release,
+            license_tier,
             mode,
             capability,
         }
@@ -497,7 +512,7 @@ impl TallyClient {
             CapabilityEvidence {
                 state: CapabilityState::Unknown,
                 confidence: EvidenceConfidence::Unknown,
-                safe_reason_code: Some("release_not_observed".to_string()),
+                safe_reason_code: Some("transport_not_probed".to_string()),
             },
         );
         for transport in [TransportId::TdlCompanion, TransportId::Odbc] {
@@ -648,12 +663,12 @@ impl TallyClient {
                 connection,
                 companies,
                 profile: CapabilityProfile {
-                    // Version 3 adds observed gateway product/mode evidence. It
-                    // intentionally invalidates persisted version-2 snapshots,
-                    // whose literal Unknown/None values had a weaker meaning.
-                    profile_version: 3,
+                    // Version 4 adds observed release and licence tier, invalidating
+                    // reuse of version-3 snapshots without those observations.
+                    profile_version: 4,
                     product: gateway_product_mode.product,
-                    release: None,
+                    release: gateway_product_mode.release,
+                    license_tier: gateway_product_mode.license_tier,
                     mode: gateway_product_mode.mode,
                     transports,
                     features,
@@ -1877,6 +1892,81 @@ fn detect_product(text: &str) -> TallyProduct {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn capability_probe_preserves_captured_release_and_exclusive_license_tier() {
+        let capture = include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml");
+        let xml = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
+            capture,
+            "text/xml; charset=utf-16",
+            bridge_tally_protocol::ExpectedTallyTextEncoding::Utf16Le,
+            capture.len(),
+        )
+        .unwrap()
+        .text;
+        let observation = super::parse_company_gateway_capability_observation(&xml).unwrap();
+        for (education, silver, gold, tier) in [
+            (false, true, false, Some(super::LicenseTier::Silver)),
+            (false, false, true, Some(super::LicenseTier::Gold)),
+            (false, true, true, None),
+            (false, false, false, None),
+            (true, true, false, None),
+        ] {
+            let mut altered = observation.clone();
+            altered.educational_mode = education;
+            altered.silver = silver;
+            altered.gold = gold;
+            assert_eq!(
+                super::GatewayProductModeEvidence::from_observation(altered).license_tier,
+                tier
+            );
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for response in [
+                utf8_status_response("<RESPONSE>Unknown status banner</RESPONSE>"),
+                utf16_xml_response(&xml),
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let request = read_complete_http_request(&mut socket).await;
+                assert!(!request.is_empty());
+                socket.write_all(&response).await.unwrap();
+            }
+        });
+        let (probe, wire) = TallyClient::new(TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        })
+        .unwrap()
+        .probe_with_wire_evidence()
+        .await
+        .unwrap();
+        server.await.unwrap();
+        assert!(wire.bytes >= capture.len());
+        assert_eq!(probe.companies.len(), 16);
+        assert_eq!(probe.profile.profile_version, 4);
+        assert_eq!(probe.profile.product, "TallyPrime");
+        assert_eq!(probe.profile.mode.as_deref(), Some("Licensed"));
+        assert_eq!(probe.profile.release.as_deref(), Some("7.1"));
+        assert_eq!(probe.profile.license_tier, Some(super::LicenseTier::Silver));
+        assert_eq!(
+            probe.profile.transports[&TransportId::JsonEx].state,
+            CapabilityState::Unknown
+        );
+        assert_eq!(
+            probe.profile.transports[&TransportId::JsonEx]
+                .safe_reason_code
+                .as_deref(),
+            Some("transport_not_probed")
+        );
+        let mut old = serde_json::to_value(&probe.profile).unwrap();
+        old.as_object_mut().unwrap().remove("license_tier");
+        old["profile_version"] = serde_json::json!(3);
+        let old: bridge_tally_core::CapabilityProfile = serde_json::from_value(old).unwrap();
+        assert_eq!(old.license_tier, None);
+        assert_ne!(old.profile_version, probe.profile.profile_version);
+    }
+
     #[test]
     fn party_ledger_commitment_hashes_the_three_encoded_builder_requests() {
         let master = NativeLedgerExportPeriod::new(
@@ -3202,7 +3292,7 @@ mod tests {
         assert_eq!(probe.profile.product, "TallyPrime");
         assert!(probe.profile.release.is_none());
         assert_eq!(probe.profile.mode.as_deref(), Some("Licensed"));
-        assert_eq!(probe.profile.profile_version, 3);
+        assert_eq!(probe.profile.profile_version, 4);
         assert_eq!(
             probe.profile.features[&CapabilityFeatureId::ProductAndMode].state,
             CapabilityState::Supported

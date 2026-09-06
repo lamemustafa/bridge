@@ -119,11 +119,19 @@ pub struct CapabilityEvidence {
     pub safe_reason_code: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum LicenseTier {
+    Silver,
+    Gold,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CapabilityProfile {
     pub profile_version: u16,
     pub product: String,
     pub release: Option<String>,
+    #[serde(default)]
+    pub license_tier: Option<LicenseTier>,
     pub mode: Option<String>,
     pub transports: BTreeMap<TransportId, CapabilityEvidence>,
     #[serde(default)]

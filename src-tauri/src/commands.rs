@@ -755,7 +755,7 @@ pub async fn qualify_selected_tally_reads(
             },
         );
     }
-    probe.profile.profile_version = 3;
+    probe.profile.profile_version = 4;
     let selected_read_scope = SelectedReadScopeEvidence {
         scope_version: 2,
         ledger_profile_id: SELECTED_LEDGER_QUERY_PROFILE_ID.to_string(),
@@ -3570,6 +3570,7 @@ mod tests {
                 profile_version: 2,
                 product: "Unknown".to_string(),
                 release: None,
+                license_tier: None,
                 mode: None,
                 transports: BTreeMap::new(),
                 features: BTreeMap::new(),

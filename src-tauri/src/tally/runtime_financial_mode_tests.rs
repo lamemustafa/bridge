@@ -95,6 +95,7 @@ fn stale_cache(runtime: &TallyRuntime, config: &TallyConfig) {
                 profile_version: 3,
                 product: "TallyPrime".into(),
                 release: None,
+                license_tier: None,
                 mode: Some("Licensed".into()),
                 transports: Default::default(),
                 features: Default::default(),

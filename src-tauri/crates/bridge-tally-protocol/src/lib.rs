@@ -1134,9 +1134,12 @@ pub fn parse_companies_from_collection(xml: &str) -> anyhow::Result<Vec<TallyCom
 /// Product and licence-mode facts returned by the fixed `CompanyListV2`
 /// collection. The collection repeats endpoint-wide facts for every loaded
 /// company, so this parser requires all rows to agree before exposing them.
+/// Missing, empty or disagreeing optional release fields leave release unknown
+/// without discarding the independently agreed product and licence facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanyGatewayCapabilityObservation {
     pub product: String,
+    pub release: Option<String>,
     pub educational_mode: bool,
     pub silver: bool,
     pub gold: bool,
@@ -1152,7 +1155,8 @@ pub fn parse_company_gateway_capability_observation(
     validate_export_response(xml)?;
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
-    let mut observation = None;
+    let mut observation: Option<CompanyGatewayCapabilityObservation> = None;
+    let mut release_agrees = true;
     loop {
         match reader.read_event()? {
             Event::Start(element)
@@ -1161,7 +1165,12 @@ pub fn parse_company_gateway_capability_observation(
             {
                 let parsed = parse_company_gateway_capability_row(&mut reader, &element)?;
                 if let Some(previous) = &observation {
-                    if previous != &parsed {
+                    release_agrees &= previous.release == parsed.release;
+                    if previous.product != parsed.product
+                        || previous.educational_mode != parsed.educational_mode
+                        || previous.silver != parsed.silver
+                        || previous.gold != parsed.gold
+                    {
                         anyhow::bail!(
                             "company collection reported inconsistent gateway capabilities"
                         );
@@ -1179,7 +1188,12 @@ pub fn parse_company_gateway_capability_observation(
     if !path.is_empty() {
         anyhow::bail!("company capability response ended before its root closed");
     }
-    observation.ok_or_else(|| anyhow::anyhow!("company capability response omitted company rows"))
+    let mut observation = observation
+        .ok_or_else(|| anyhow::anyhow!("company capability response omitted company rows"))?;
+    if !release_agrees {
+        observation.release = None;
+    }
+    Ok(observation)
 }
 
 /// Validates the fixed, documented `List of Ledgers` collection used only to
@@ -1749,6 +1763,7 @@ fn parse_company_gateway_capability_row(
     validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
     let row_name = element.name().as_ref().to_ascii_uppercase();
     let mut product = None;
+    let mut release = None;
     let mut educational_mode = None;
     let mut silver = None;
     let mut gold = None;
@@ -1757,6 +1772,13 @@ fn parse_company_gateway_capability_row(
             Event::Start(child) => {
                 validate_only_attributes(&child, &[b"TYPE"])?;
                 let child_name = child.name().as_ref().to_ascii_uppercase();
+                if child_name == b"BRIDGERELEASE" {
+                    let value = read_optional_text(reader, child.name())?
+                        .map(|value| normalized_standard_value(&value, "release"))
+                        .transpose()?;
+                    set_once(&mut release, value)?;
+                    continue;
+                }
                 let value = read_required_text(reader, child.name())?;
                 match child_name.as_slice() {
                     b"PRODUCTNAME" => set_once(
@@ -1776,6 +1798,10 @@ fn parse_company_gateway_capability_row(
             }
             Event::Empty(child) => {
                 let child_name = child.name().as_ref().to_ascii_uppercase();
+                if child_name == b"BRIDGERELEASE" {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    set_once(&mut release, None)?;
+                }
                 if matches!(
                     child_name.as_slice(),
                     b"PRODUCTNAME" | b"EDUMODE" | b"SILVER" | b"GOLD"
@@ -1801,6 +1827,7 @@ fn parse_company_gateway_capability_row(
         }
     }
     Ok(CompanyGatewayCapabilityObservation {
+        release: release.flatten(),
         product: product
             .ok_or_else(|| anyhow::anyhow!("company capability collection omitted PRODUCTNAME"))?,
         educational_mode: educational_mode

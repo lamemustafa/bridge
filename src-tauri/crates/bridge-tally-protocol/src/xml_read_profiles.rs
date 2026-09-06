@@ -488,6 +488,8 @@ fn render_company_list() -> String {
 /// `HEADER`/`STATUS` at all — a `TYPE=Collection` export returns the
 /// ordinary shaped success envelope, so its response can satisfy the same
 /// `HEADER/STATUS=1` trust check every other export profile requires.
+// Product, mode, tier and release are observed endpoint facts; see
+// TALLY_PROTOCOL_REFERENCE.md §3.1 for the captured qualification scope.
 fn render_company_list_v2() -> String {
     r#"
 <ENVELOPE>
@@ -514,6 +516,7 @@ fn render_company_list_v2() -> String {
                         <COMPUTE>EduMode : $$LicenseInfo:IsEducationalMode</COMPUTE>
                         <COMPUTE>Silver : $$LicenseInfo:IsSilver</COMPUTE>
                         <COMPUTE>Gold : $$LicenseInfo:IsGold</COMPUTE>
+                        <COMPUTE>BridgeRelease : @@VersionReleaseString</COMPUTE>
                     </COLLECTION>
                 </TDLMESSAGE>
             </TDL>

@@ -4086,6 +4086,7 @@ mod tests {
                 profile_version: 2,
                 product: "Unknown".to_string(),
                 release: None,
+                license_tier: None,
                 mode: None,
                 transports: BTreeMap::new(),
                 features: BTreeMap::new(),

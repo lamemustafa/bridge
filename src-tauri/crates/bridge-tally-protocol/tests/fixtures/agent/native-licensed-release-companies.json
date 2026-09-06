@@ -1,0 +1,15 @@
+{
+  "source": "Live TallyPrime Silver 7.1 synthetic-company read through native MCP dispatch",
+  "observed_date": "2026-09-06",
+  "source_response_bytes": 20412,
+  "source_response_sha256": "998280fac5b6b40b23ee3879dcb35780bc439083a4d1a3a3fb9a64231adbaa50",
+  "source_request_bytes": 2524,
+  "source_request_sha256": "9df2a53f085dac2636e9435462b612c1487ec6f903677815036c9f39163f7dd8",
+  "fixture_bytes": 20412,
+  "fixture_sha256": "998280fac5b6b40b23ee3879dcb35780bc439083a4d1a3a3fb9a64231adbaa50",
+  "encoding": "UTF-16LE without BOM",
+  "rows": 16,
+  "transformation": [],
+  "provenance_limit": "Two identical native company-list responses independently observed release 7.1 and exclusive Silver licence flags in all 16 rows. This observes the endpoint label; it does not qualify other releases, configurations or licence tiers.",
+  "sensitivity_review": "Only operator-created synthetic company identities and product, release and mode metadata; no licence credentials, customer data or machine paths."
+}
