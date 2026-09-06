@@ -609,7 +609,7 @@ fn verification_window_corroboration_rejects_each_unsafe_branch() {
 
 #[test]
 fn verification_narration_with_truncated_text_is_not_a_completeness_marker() {
-    let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>guid-1</GUID><ALTERID>3</ALTERID><NARRATION>truncated payment</NARRATION></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+    let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>guid-1</GUID><ALTERID>3</ALTERID><NARRATION>truncated payment</NARRATION></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
     let observed = parse_import_vouchers(xml).expect("verification response");
     assert_eq!(
         corroborate_verification_window(&observed, &observed, "20260901", "20260902"),
@@ -1123,7 +1123,7 @@ fn company_high_water_mark_refuses_voucher_scan_shapes_and_preserves_attribution
 
 #[test]
 fn verification_unescapes_every_record_text_node_before_fingerprinting() {
-    let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><NARRATION>Party &amp; Co &lt;quoted&gt; &quot;name&quot; &#x26;</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D &lt;Lab&gt; &quot;A&quot; &#38;</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+    let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><NARRATION>Party &amp; Co &lt;quoted&gt; &quot;name&quot; &#x26;</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D &lt;Lab&gt; &quot;A&quot; &#38;</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
     let observed = parse_import_vouchers(xml).expect("escaped export parses");
     assert_eq!(
         observed[0].narration.as_deref(),
@@ -1450,3 +1450,6 @@ mod compact_ledger_tests;
 
 #[path = "agent_failure_tests.rs"]
 mod failure_tests;
+
+#[path = "agent_import_boundary_tests.rs"]
+mod boundary_tests;

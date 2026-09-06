@@ -881,6 +881,7 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
     let mut vouchers = Vec::new();
     let mut voucher: Option<ReadVoucher> = None;
     let mut entry: Option<ReadEntry> = None;
+    let mut flags = BTreeMap::new();
     let mut tag = String::new();
     let mut scope = super::NativeCollectionScope::default();
     loop {
@@ -888,6 +889,7 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
             Ok(Event::Start(start)) => {
                 let name = String::from_utf8_lossy(start.name().as_ref()).to_ascii_uppercase();
                 if name == "VOUCHER" && scope.collection() {
+                    flags.clear();
                     let remote_id = start
                         .attributes()
                         .flatten()
@@ -930,7 +932,7 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
                     .as_mut()
                     .filter(|_| scope.field("VOUCHER") || scope.entry_field())
                 {
-                    append_import_text(current, entry.as_mut(), &tag, value);
+                    append_import_text(current, entry.as_mut(), &mut flags, &tag, value);
                 }
             }
             Ok(Event::GeneralRef(reference)) => {
@@ -939,23 +941,44 @@ fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
                     .as_mut()
                     .filter(|_| scope.field("VOUCHER") || scope.entry_field())
                 {
-                    append_import_text(current, entry.as_mut(), &tag, value);
+                    append_import_text(current, entry.as_mut(), &mut flags, &tag, value);
                 }
             }
             Ok(Event::End(end)) => {
                 let name = String::from_utf8_lossy(end.name().as_ref()).to_ascii_uppercase();
                 if scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST") {
-                    if let (Some(current), Some(item)) = (voucher.as_mut(), entry.take()) {
+                    if let (Some(current), Some(mut item)) = (voucher.as_mut(), entry.take()) {
                         if item.ledger.trim().is_empty()
                             || item.amount.trim().is_empty()
                             || item.is_deemed_positive.trim().is_empty()
                         {
                             return Err("import_verification_export_invalid".to_string());
                         }
+                        let positive =
+                            super::required_tally_bool(Some(&item.is_deemed_positive))
+                                .map_err(|_| "import_verification_export_invalid".to_string())?;
+                        item.is_deemed_positive = if positive { "Yes" } else { "No" }.to_string();
+                        ExactDecimal::parse(item.amount.clone())
+                            .map_err(|_| "import_verification_amount_invalid".to_string())?;
                         current.entries.push(item);
                     }
                 } else if scope.row("VOUCHER") {
-                    if let Some(current) = voucher.take() {
+                    if let Some(mut current) = voucher.take() {
+                        bridge_tally_core::TallyDate::parse(
+                            current
+                                .date
+                                .clone()
+                                .ok_or_else(|| "import_verification_export_invalid".to_string())?,
+                        )
+                        .map_err(|_| "import_verification_export_invalid".to_string())?;
+                        current.cancelled = Some(
+                            super::required_tally_bool(flags.get("ISCANCELLED"))
+                                .map_err(|_| "import_verification_export_invalid".to_string())?,
+                        );
+                        current.optional = Some(
+                            super::required_tally_bool(flags.get("ISOPTIONAL"))
+                                .map_err(|_| "import_verification_export_invalid".to_string())?,
+                        );
                         vouchers.push(current);
                     }
                 }
@@ -1013,6 +1036,7 @@ fn decoded_tally_reference(reference: quick_xml::events::BytesRef<'_>) -> Result
 fn append_import_text(
     current: &mut ReadVoucher,
     entry: Option<&mut ReadEntry>,
+    flags: &mut BTreeMap<String, String>,
     tag: &str,
     value: String,
 ) {
@@ -1033,17 +1057,8 @@ fn append_import_text(
         "VOUCHERNUMBER" => append_read_text(&mut current.voucher_number, value),
         "ALTERID" => current.alter_id = value.trim().parse().ok(),
         "NARRATION" => append_read_text(&mut current.narration, value),
-        "ISCANCELLED" => current.cancelled = tally_bool(&value),
-        "ISOPTIONAL" => current.optional = tally_bool(&value),
+        "ISCANCELLED" | "ISOPTIONAL" => super::append_agent_text(flags, tag, value),
         _ => {}
-    }
-}
-
-fn tally_bool(value: &str) -> Option<bool> {
-    match value.trim() {
-        "Yes" => Some(true),
-        "No" => Some(false),
-        _ => None,
     }
 }
 
