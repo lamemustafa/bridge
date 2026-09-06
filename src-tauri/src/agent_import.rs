@@ -501,8 +501,10 @@ impl Server {
 
     fn imports_dir(&self) -> Result<PathBuf, String> {
         let path = self.settings.data_dir.join("imports");
-        fs::create_dir_all(&path).map_err(|_| "imports_dir_unavailable".to_string())?;
-        set_private_dir(&path)?;
+        super::ensure_private_directory(&path).map_err(|error| match error {
+            super::DirectoryAdmissionError::Unavailable => "imports_dir_unavailable".to_string(),
+            super::DirectoryAdmissionError::Permissions => "import_file_permissions_failed".to_string(),
+        })?;
         Ok(path)
     }
 
