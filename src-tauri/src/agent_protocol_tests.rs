@@ -204,7 +204,7 @@ async fn oversized_untrusted_names_and_selectors_never_expand_receipts() {
             assert!(receipt.get("tool_name_sha256").is_none());
         }
     }
-    assert_eq!(egress::read_egress_tail(&path, 4).unwrap().len(), 4);
+    assert_eq!(egress::read_egress_tail(&path, 4).unwrap().records.len(), 4);
 }
 
 #[tokio::test]

@@ -22,7 +22,10 @@ fn failed_partial_write_and_sync_restore_the_original_receipts() {
         assert_eq!(fs::read(&path).unwrap(), original);
         append_egress_line(&path, r#"{"tool":"next"}"#).unwrap();
         let rows = read_egress_tail(&path, 2).unwrap();
-        assert_eq!(rows, [r#"{"tool":"next"}"#, r#"{"tool":"existing"}"#]);
+        assert_eq!(
+            rows.records,
+            [r#"{"tool":"next"}"#, r#"{"tool":"existing"}"#]
+        );
     }
 }
 
@@ -62,7 +65,7 @@ fn receipt_size_limit_preserves_the_file_and_admitted_tail_is_readable() {
     assert_eq!(fs::read(&path).unwrap(), b"{}\n");
     let admitted = format!("\"{}\"", "x".repeat(MAX_EGRESS_TAIL_BYTES - 4));
     append_egress_line(&path, &admitted).unwrap();
-    assert_eq!(read_egress_tail(&path, 1).unwrap(), [admitted]);
+    assert_eq!(read_egress_tail(&path, 1).unwrap().records, [admitted]);
 }
 
 #[test]
@@ -104,7 +107,9 @@ fn tail_discards_a_partial_unicode_line_before_decoding() {
     assert!(!body.is_char_boundary(body.len() - EGRESS_TAIL_CHUNK_BYTES));
     fs::write(&path, body).expect("Unicode receipt followed by recent receipt");
     assert_eq!(
-        read_egress_tail(&path, 1).expect("latest complete receipt"),
+        read_egress_tail(&path, 1)
+            .expect("latest complete receipt")
+            .records,
         [r#"{"tool":"new"}"#]
     );
 }
@@ -120,7 +125,85 @@ fn locked_append_preserves_existing_receipts_and_adds_a_complete_line() {
         b"{\"tool\":\"existing\"}\n{\"tool\":\"new\"}\n"
     );
     assert_eq!(
-        read_egress_tail(&path, 2).expect("locked tail read"),
+        read_egress_tail(&path, 2)
+            .expect("locked tail read")
+            .records,
         [r#"{"tool":"new"}"#, r#"{"tool":"existing"}"#]
+    );
+}
+
+#[test]
+fn egress_tail_distinguishes_complete_logs_from_record_limited_pages() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("agent-egress.jsonl");
+    let missing = read_egress_tail(&path, 20).unwrap();
+    assert!(missing.records.is_empty());
+    assert!(!missing.truncated);
+    fs::write(&path, b"").unwrap();
+    let empty = read_egress_tail(&path, 20).unwrap();
+    assert!(empty.records.is_empty());
+    assert!(!empty.truncated);
+    append_egress_line(&path, r#"{"index":0}"#).unwrap();
+    append_egress_line(&path, r#"{"index":1}"#).unwrap();
+    for limit in [2, 20] {
+        let complete = read_egress_tail(&path, limit).unwrap();
+        assert_eq!(complete.records, [r#"{"index":1}"#, r#"{"index":0}"#]);
+        assert!(!complete.truncated);
+    }
+    let bounded = read_egress_tail(&path, 1).unwrap();
+    assert_eq!(bounded.records, [r#"{"index":1}"#]);
+    assert!(bounded.truncated);
+}
+
+#[tokio::test]
+async fn egress_log_reports_byte_bounded_tail_even_below_requested_record_count() {
+    use super::super::{Redaction, Server, Settings, TallyEndpointConfig};
+    use serde_json::{json, Value};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("agent-egress.jsonl");
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 100,
+        max_bytes: 1_000_000,
+        redaction: Redaction::MaskParties,
+        import_enabled: false,
+    });
+    append_egress_line(&path, r#"{"index":0}"#).unwrap();
+    let complete = server.call_tool("egress_log", json!({"limit":20})).await;
+    assert_eq!(complete["isError"], false);
+    assert_eq!(complete["structuredContent"]["truncated"], false);
+    assert_eq!(
+        complete["structuredContent"]["result"]["records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    for index in 1..=6 {
+        let row = json!({"index": index, "padding": "古".repeat(20_000)}).to_string();
+        append_egress_line(&path, &row).unwrap();
+    }
+    assert!(fs::metadata(&path).unwrap().len() > MAX_EGRESS_TAIL_BYTES as u64);
+    let tail = read_egress_tail(&path, 20).unwrap();
+    assert!(tail.truncated);
+    assert_eq!(
+        tail.records.len(),
+        4,
+        "only four complete rows fit the scan bound"
+    );
+    for (offset, row) in tail.records.iter().enumerate() {
+        let parsed: Value = serde_json::from_str(row).expect("complete UTF-8 JSON receipt");
+        assert_eq!(parsed["index"], 6 - offset);
+    }
+    let bounded = server.call_tool("egress_log", json!({"limit":20})).await;
+    assert_eq!(bounded["isError"], false);
+    assert_eq!(bounded["structuredContent"]["truncated"], true);
+    assert_eq!(
+        bounded["structuredContent"]["result"]["records"],
+        json!(tail.records)
     );
 }

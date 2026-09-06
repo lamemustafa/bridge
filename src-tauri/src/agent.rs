@@ -671,10 +671,10 @@ impl Server {
     fn egress_log(&self, args: &Value) -> Result<ToolOutcome, String> {
         let take = arg_positive_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
         let path = self.settings.data_dir.join("agent-egress.jsonl");
-        let lines = read_egress_tail(&path, take)?;
+        let tail = read_egress_tail(&path, take)?;
         let evidence = Evidence {
             request_sha256: sha256_hex(b"egress_log"),
-            response_sha256: sha256_json(&lines),
+            response_sha256: sha256_json(&tail.records),
             bytes: 0,
             state: "complete",
             read_at: None,
@@ -682,10 +682,10 @@ impl Server {
             reason_code: None,
         };
         Ok(ToolOutcome {
-            payload: json!({"result": {"records": lines}}),
+            payload: json!({"result": {"records": tail.records}}),
             evidence,
             company_guid: None,
-            truncated: false,
+            truncated: tail.truncated,
         })
     }
 }

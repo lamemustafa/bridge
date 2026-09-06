@@ -609,7 +609,7 @@ fn egress_tail_waits_for_an_exclusive_append_lock() {
     );
     writer.unlock().expect("writer unlock");
     assert_eq!(
-        reader.join().expect("reader").expect("tail"),
+        reader.join().expect("reader").expect("tail").records,
         vec!["{\"tool\":\"complete\"}"]
     );
 }
@@ -811,9 +811,10 @@ fn egress_log_tail_reads_only_the_last_bounded_chunks() {
     assert!(body.len() > EGRESS_TAIL_CHUNK_BYTES);
     fs::write(&path, body).expect("large egress fixture");
     let tail = read_egress_tail(&path, 2).expect("bounded tail");
-    assert_eq!(tail.len(), 2);
-    assert!(tail[0].contains("11999"));
-    assert!(tail[1].contains("11998"));
+    assert_eq!(tail.records.len(), 2);
+    assert!(tail.records[0].contains("11999"));
+    assert!(tail.records[1].contains("11998"));
+    assert!(tail.truncated);
 }
 
 #[test]

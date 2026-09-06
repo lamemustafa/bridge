@@ -87,10 +87,19 @@ fn append_locked(
     Ok(())
 }
 
-pub(super) fn read_egress_tail(path: &Path, take: usize) -> Result<Vec<String>, String> {
+#[derive(Debug, Default)]
+pub(super) struct EgressTail {
+    pub records: Vec<String>,
+    /// Older receipts were omitted by the requested count or byte scan bound.
+    pub truncated: bool,
+}
+
+pub(super) fn read_egress_tail(path: &Path, take: usize) -> Result<EgressTail, String> {
     let mut file = match File::open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(EgressTail::default())
+        }
         Err(_) => return Err("egress_log_unreadable".to_string()),
     };
     file.lock_shared()
@@ -127,10 +136,12 @@ pub(super) fn read_egress_tail(path: &Path, take: usize) -> Result<Vec<String>, 
     };
     let text =
         std::str::from_utf8(complete_lines).map_err(|_| "egress_log_unreadable".to_string())?;
-    let lines = text.lines().rev().take(take).map(str::to_string).collect();
+    let mut lines = text.lines().rev();
+    let records = lines.by_ref().take(take).map(str::to_string).collect();
+    let truncated = position > 0 || lines.next().is_some();
     file.unlock()
         .map_err(|_| "egress_log_unreadable".to_string())?;
-    Ok(lines)
+    Ok(EgressTail { records, truncated })
 }
 
 #[cfg(test)]
