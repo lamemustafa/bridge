@@ -11,127 +11,129 @@ impl Server {
         }
         let (company, identity, mut evidence) = self.verified_company(guid).await?;
         let result: Result<ToolOutcome, ToolFailure> = async {
-        let books_from = normalized_date(
-            company
-                .books_from
-                .as_deref()
-                .ok_or_else(|| "company_identity_incomplete".to_string())?,
-        )?;
-        ensure_movement_window_within_books(&from, &books_from)?;
-        let opening_date = bridge_tally_core::TallyDate::parse(from.clone())
-            .map_err(|_| "invalid_date".to_string())?;
-        let (ledgers, ledger_evidence) = self
-            .read_movement_ledgers(&identity, opening_date.clone())
-            .await?;
-        evidence = combine_evidence(evidence.clone(), ledger_evidence);
-        let (page, read_evidence) = self
-            .read_movement_vouchers(&identity, &company.name, from.clone(), to)
-            .await?;
-        let MovementPage {
-            rows: vouchers,
-            observed_rows: voucher_rows_observed,
-        } = page;
-        evidence = combine_evidence(evidence.clone(), read_evidence);
-        let (corroborating_ledgers, corroboration_evidence) =
-            self.read_movement_ledgers(&identity, opening_date).await?;
-        evidence = combine_evidence(evidence.clone(), corroboration_evidence);
-        validate_movement_snapshot(&ledgers, &corroborating_ledgers, &vouchers)?;
-        let selected = optional_string(args, "ledger")?
-            .map(|name| {
-                resolve_ledger_name(ledgers.iter().map(|ledger| ledger.name.as_str()), &name)
-            })
-            .transpose()?;
-        let mut movement =
-            BTreeMap::<String, (Option<String>, Option<String>, String, String, usize)>::new();
-        for ledger in ledgers {
-            if selected.as_deref().is_none_or(|name| name == ledger.name) {
-                movement.insert(
-                    ledger.name,
-                    (
-                        ledger.parent.returned_text().map(str::to_string),
-                        ledger.opening_balance,
-                        "0".into(),
-                        "0".into(),
-                        0,
-                    ),
+            let books_from = normalized_date(
+                company
+                    .books_from
+                    .as_deref()
+                    .ok_or_else(|| "company_identity_incomplete".to_string())?,
+            )?;
+            ensure_movement_window_within_books(&from, &books_from)?;
+            let opening_date = bridge_tally_core::TallyDate::parse(from.clone())
+                .map_err(|_| "invalid_date".to_string())?;
+            let (ledgers, ledger_evidence) = self
+                .read_movement_ledgers(&identity, opening_date.clone())
+                .await?;
+            evidence = combine_evidence(evidence.clone(), ledger_evidence);
+            let (page, read_evidence) = self
+                .read_movement_vouchers(&identity, &company.name, from.clone(), to)
+                .await?;
+            let MovementPage {
+                rows: vouchers,
+                observed_rows: voucher_rows_observed,
+            } = page;
+            evidence = combine_evidence(evidence.clone(), read_evidence);
+            let (corroborating_ledgers, corroboration_evidence) =
+                self.read_movement_ledgers(&identity, opening_date).await?;
+            evidence = combine_evidence(evidence.clone(), corroboration_evidence);
+            validate_movement_snapshot(&ledgers, &corroborating_ledgers, &vouchers)?;
+            let selected = optional_string(args, "ledger")?
+                .map(|name| {
+                    resolve_ledger_name(ledgers.iter().map(|ledger| ledger.name.as_str()), &name)
+                })
+                .transpose()?;
+            let mut movement =
+                BTreeMap::<String, (Option<String>, Option<String>, String, String, usize)>::new();
+            for ledger in ledgers {
+                if selected.as_deref().is_none_or(|name| name == ledger.name) {
+                    movement.insert(
+                        ledger.name,
+                        (
+                            ledger.parent.returned_text().map(str::to_string),
+                            ledger.opening_balance,
+                            "0".into(),
+                            "0".into(),
+                            0,
+                        ),
+                    );
+                }
+            }
+            for voucher in &vouchers {
+                let mut touched = std::collections::BTreeSet::new();
+                for entry in &voucher.ledger_entries {
+                    let Some(record) = movement.get_mut(&entry.ledger_name) else {
+                        // The full catalogue was corroborated before selection;
+                        // this entry belongs to a known, unselected ledger.
+                        continue;
+                    };
+                    let amount = bridge_tally_core::ExactDecimal::parse(entry.amount.clone())
+                        .map_err(|_| "voucher_amount_invalid".to_string())?;
+                    let magnitude = amount
+                        .abs()
+                        .map_err(|_| "voucher_amount_invalid".to_string())?
+                        .as_str()
+                        .to_string();
+                    if entry.is_deemed_positive {
+                        record.2 = add_decimal(&record.2, &format!("-{magnitude}"))?;
+                    } else {
+                        record.3 = add_decimal(&record.3, &magnitude)?;
+                    }
+                    touched.insert(entry.ledger_name.clone());
+                }
+                for ledger in touched {
+                    if let Some(record) = movement.get_mut(&ledger) {
+                        record.4 += 1;
+                    }
+                }
+            }
+            let (rows, opening_unobserved) = movement
+                .into_iter()
+                .map(
+                    |(name, (parent, opening, debit, credit, vouchers_touching))| {
+                        ledger_movement_row(
+                            LedgerMovementRow {
+                                name,
+                                parent,
+                                opening,
+                                debit,
+                                credit,
+                                vouchers_touching,
+                            },
+                            self.settings.redaction,
+                        )
+                    },
+                )
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .fold(
+                    (Vec::new(), false),
+                    |(mut rows, any_partial), (row, partial)| {
+                        rows.push(row);
+                        (rows, any_partial || partial)
+                    },
                 );
+            if opening_unobserved {
+                evidence.state = "partial";
+                evidence.reason_code = Some("opening_balance_not_observed".to_string());
             }
+            let offset = arg_usize(args, "offset", 0)?;
+            let limit =
+                arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+            let total = rows.len();
+            let rows = rows
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .collect::<Vec<_>>();
+            let truncated = offset.saturating_add(rows.len()) < total;
+            let next_offset = truncated.then_some(offset + rows.len());
+            Ok(ToolOutcome {
+                payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": if opening_unobserved {"partial"} else {"complete"}, "partial_reason": opening_unobserved.then_some("opening_balance_not_observed"), "ledgers": rows, "offset": offset, "next_offset": next_offset, "voucher_rows_observed": voucher_rows_observed, "balance_basis": "tally_period_opening_plus_direct_voucher_movement", "evidence_method": "runtime_ledger_opening_at_from_plus_literal_window_entries"}}),
+                evidence: evidence.clone(),
+                company_guid: Some(guid.to_string()),
+                truncated,
+            })
         }
-        for voucher in &vouchers {
-            let mut touched = std::collections::BTreeSet::new();
-            for entry in &voucher.ledger_entries {
-                let Some(record) = movement.get_mut(&entry.ledger_name) else {
-                    // The full catalogue was corroborated before selection;
-                    // this entry belongs to a known, unselected ledger.
-                    continue;
-                };
-                let amount = bridge_tally_core::ExactDecimal::parse(entry.amount.clone())
-                    .map_err(|_| "voucher_amount_invalid".to_string())?;
-                let magnitude = amount
-                    .abs()
-                    .map_err(|_| "voucher_amount_invalid".to_string())?
-                    .as_str()
-                    .to_string();
-                if entry.is_deemed_positive {
-                    record.2 = add_decimal(&record.2, &format!("-{magnitude}"))?;
-                } else {
-                    record.3 = add_decimal(&record.3, &magnitude)?;
-                }
-                touched.insert(entry.ledger_name.clone());
-            }
-            for ledger in touched {
-                if let Some(record) = movement.get_mut(&ledger) {
-                    record.4 += 1;
-                }
-            }
-        }
-        let (rows, opening_unobserved) = movement
-            .into_iter()
-            .map(
-                |(name, (parent, opening, debit, credit, vouchers_touching))| {
-                    ledger_movement_row(
-                        LedgerMovementRow {
-                            name,
-                            parent,
-                            opening,
-                            debit,
-                            credit,
-                            vouchers_touching,
-                        },
-                        self.settings.redaction,
-                    )
-                },
-            )
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .fold(
-                (Vec::new(), false),
-                |(mut rows, any_partial), (row, partial)| {
-                    rows.push(row);
-                    (rows, any_partial || partial)
-                },
-            );
-        if opening_unobserved {
-            evidence.state = "partial";
-            evidence.reason_code = Some("opening_balance_not_observed".to_string());
-        }
-        let offset = arg_usize(args, "offset", 0)?;
-        let limit =
-            arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
-        let total = rows.len();
-        let rows = rows
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect::<Vec<_>>();
-        let truncated = offset.saturating_add(rows.len()) < total;
-        let next_offset = truncated.then_some(offset + rows.len());
-        Ok(ToolOutcome {
-            payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": if opening_unobserved {"partial"} else {"complete"}, "partial_reason": opening_unobserved.then_some("opening_balance_not_observed"), "ledgers": rows, "offset": offset, "next_offset": next_offset, "voucher_rows_observed": voucher_rows_observed, "balance_basis": "tally_period_opening_plus_direct_voucher_movement", "evidence_method": "runtime_ledger_opening_at_from_plus_literal_window_entries"}}),
-            evidence: evidence.clone(),
-            company_guid: Some(guid.to_string()),
-            truncated,
-        })        }.await;
+        .await;
         result.map_err(|failure| failure.with_prior_evidence(evidence))
     }
 

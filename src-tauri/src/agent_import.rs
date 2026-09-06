@@ -202,97 +202,98 @@ impl Server {
             self.verified_company(&payload.company_guid).await?;
         let mut accumulated = identity_evidence.clone();
         let result: Result<ToolOutcome, ToolFailure> = async {
-        let (catalogue, catalogue_evidence) =
-            self.read_ledger_catalogue(&identity, &company.name).await?;
-        accumulated = combine_evidence(accumulated.clone(), catalogue_evidence.clone());
-        let report = masters_for_payload(&payload, &catalogue);
-        if report.iter().any(|value| value["match_state"] != "exact") {
-            return Ok(ToolOutcome {
-                payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
-                    "state":"refused", "reason":"masters_not_exact", "masters":report,
-                    "catalogue_evidence_sha256":sha256_json(&catalogue),
-                    "next_step":"Use the exact live spelling from validate_masters, then build a new batch. No file was written."
-                }}),
-                evidence: combine_evidence(identity_evidence, catalogue_evidence),
-                company_guid: Some(payload.company_guid),
-                truncated: false,
-            });
-        }
-        validate_dates(&payload, company.books_from.as_deref())?;
-        let _admission_lock = self.lock_import_admission()?;
-        let existing = self.import_ledger_while_admitted()?;
-        reject_known_transactions(&payload, &existing)?;
-        let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
-        accumulated = combine_evidence(accumulated.clone(), mark_evidence.clone());
-        let batch_id = format!("bridge-{}", Uuid::new_v4());
-        let xml = render_import_xml(&company.name, &payload.vouchers);
-        let sha256 = sha256_hex(xml.as_bytes());
-        let date_from = payload
-            .vouchers
-            .iter()
-            .map(|voucher| voucher.date.clone())
-            .min()
-            .unwrap_or_default();
-        let date_to = payload
-            .vouchers
-            .iter()
-            .map(|voucher| voucher.date.clone())
-            .max()
-            .unwrap_or_default();
-        let line = ImportLedgerLine {
-            batch_id: batch_id.clone(),
-            company_guid: canonical_batch_guid(&payload.company_guid),
-            company: Some(import_company_tuple(&company)?),
-            txn_ids: payload
+            let (catalogue, catalogue_evidence) =
+                self.read_ledger_catalogue(&identity, &company.name).await?;
+            accumulated = combine_evidence(accumulated.clone(), catalogue_evidence.clone());
+            let report = masters_for_payload(&payload, &catalogue);
+            if report.iter().any(|value| value["match_state"] != "exact") {
+                return Ok(ToolOutcome {
+                    payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
+                        "state":"refused", "reason":"masters_not_exact", "masters":report,
+                        "catalogue_evidence_sha256":sha256_json(&catalogue),
+                        "next_step":"Use the exact live spelling from validate_masters, then build a new batch. No file was written."
+                    }}),
+                    evidence: combine_evidence(identity_evidence, catalogue_evidence),
+                    company_guid: Some(payload.company_guid),
+                    truncated: false,
+                });
+            }
+            validate_dates(&payload, company.books_from.as_deref())?;
+            let _admission_lock = self.lock_import_admission()?;
+            let existing = self.import_ledger_while_admitted()?;
+            reject_known_transactions(&payload, &existing)?;
+            let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
+            accumulated = combine_evidence(accumulated.clone(), mark_evidence.clone());
+            let batch_id = format!("bridge-{}", Uuid::new_v4());
+            let xml = render_import_xml(&company.name, &payload.vouchers);
+            let sha256 = sha256_hex(xml.as_bytes());
+            let date_from = payload
                 .vouchers
                 .iter()
-                .map(|voucher| voucher.bridge_txn_id.clone())
-                .collect(),
-            date_from,
-            date_to,
-            sha256: sha256.clone(),
-            built_at: now(),
-            status: "built".to_string(),
-            pre_import_mark: mark,
-            vouchers: payload.vouchers,
-        };
-        let imports = self.imports_dir()?;
-        let path = imports.join(format!("{batch_id}.xml"));
-        if let Some(error) = persistence::persist_build(&imports, &line, xml.as_bytes(), || {
-            self.append_import_ledger_while_admitted(&line)
-        })? {
-            return Ok(ToolOutcome {
-                payload: json!({"result":{"batch_id":batch_id,"error":{"code":error,
-                    "message":"The local batch is retained; reconcile its import journal before continuing."}}}),
-                evidence: Evidence {
-                    state: "partial",
-                    reason_code: Some(error),
-                    ..combine_evidence(
-                        combine_evidence(identity_evidence, catalogue_evidence),
-                        mark_evidence,
-                    )
-                },
+                .map(|voucher| voucher.date.clone())
+                .min()
+                .unwrap_or_default();
+            let date_to = payload
+                .vouchers
+                .iter()
+                .map(|voucher| voucher.date.clone())
+                .max()
+                .unwrap_or_default();
+            let line = ImportLedgerLine {
+                batch_id: batch_id.clone(),
+                company_guid: canonical_batch_guid(&payload.company_guid),
+                company: Some(import_company_tuple(&company)?),
+                txn_ids: payload
+                    .vouchers
+                    .iter()
+                    .map(|voucher| voucher.bridge_txn_id.clone())
+                    .collect(),
+                date_from,
+                date_to,
+                sha256: sha256.clone(),
+                built_at: now(),
+                status: "built".to_string(),
+                pre_import_mark: mark,
+                vouchers: payload.vouchers,
+            };
+            let imports = self.imports_dir()?;
+            let path = imports.join(format!("{batch_id}.xml"));
+            if let Some(error) = persistence::persist_build(&imports, &line, xml.as_bytes(), || {
+                self.append_import_ledger_while_admitted(&line)
+            })? {
+                return Ok(ToolOutcome {
+                    payload: json!({"result":{"batch_id":batch_id,"error":{"code":error,
+                        "message":"The local batch is retained; reconcile its import journal before continuing."}}}),
+                    evidence: Evidence {
+                        state: "partial",
+                        reason_code: Some(error),
+                        ..combine_evidence(
+                            combine_evidence(identity_evidence, catalogue_evidence),
+                            mark_evidence,
+                        )
+                    },
+                    company_guid: Some(line.company_guid.clone()),
+                    truncated: false,
+                });
+            }
+            Ok(ToolOutcome {
+                payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
+                    "batch_id": batch_id, "path": path, "sha256": sha256,
+                    "voucher_count": line.vouchers.len(), "total_debit": debit.as_str(), "total_credit": credit.as_str(),
+                    "live_evidence": "synthetic_lab_readback",
+                    "live_evidence_report": "docs/agent/ASSESSMENT-2026-09-06.md",
+                    "warnings": ["No XML was sent to Tally. Import the written file manually, then use verify_import."],
+                    "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
+                }}),
+                evidence: combine_evidence(
+                    combine_evidence(identity_evidence, catalogue_evidence),
+                    mark_evidence,
+                ),
                 company_guid: Some(line.company_guid.clone()),
                 truncated: false,
-            });
+            })
         }
-        Ok(ToolOutcome {
-            payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
-                "batch_id": batch_id, "path": path, "sha256": sha256,
-                "voucher_count": line.vouchers.len(), "total_debit": debit.as_str(), "total_credit": credit.as_str(),
-                "live_evidence": "synthetic_lab_readback",
-                "live_evidence_report": "docs/agent/ASSESSMENT-2026-09-06.md",
-                "warnings": ["No XML was sent to Tally. Import the written file manually, then use verify_import."],
-                "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
-            }}),
-            evidence: combine_evidence(
-                combine_evidence(identity_evidence, catalogue_evidence),
-                mark_evidence,
-            ),
-            company_guid: Some(line.company_guid.clone()),
-            truncated: false,
-        })
-        }.await;
+        .await;
         result.map_err(|failure| failure.with_prior_evidence(accumulated))
     }
 
@@ -308,43 +309,44 @@ impl Server {
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
         let mut accumulated = identity_evidence.clone();
         let result: Result<ToolOutcome, ToolFailure> = async {
-        if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
-            return Err("company_identity_mismatch".to_string().into());
+            if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
+                return Err("company_identity_mismatch".to_string().into());
+            }
+            let request =
+                render_import_verification_read(&company.name, &line.date_from, &line.date_to);
+            let (xml, evidence) = self.post_read(&identity, request.clone()).await?;
+            accumulated = combine_evidence(accumulated.clone(), evidence.clone());
+            let observed = parse_import_vouchers(&xml)?;
+            let (corroboration_xml, corroboration_evidence) =
+                self.post_read(&identity, request).await?;
+            accumulated = combine_evidence(accumulated.clone(), corroboration_evidence.clone());
+            let corroboration = parse_import_vouchers(&corroboration_xml)?;
+            corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)?;
+            let result = verify_batch(&line, &observed)?;
+            let proof = json!({
+                "company": company_json(&company, std::slice::from_ref(&company)),
+                "batch_id": line.batch_id, "batch_sha256": line.sha256,
+                "built_at": line.built_at, "verified_at": now(),
+                "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed),
+                "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
+                "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
+                "evidence": {"company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
+            });
+            let status = verification_status(&result, line.vouchers.len());
+            let mut update = line.clone();
+            update.status = status.to_string();
+            self.persist_import_verification(&proof, &update)?;
+            Ok(ToolOutcome {
+                payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof}),
+                evidence: combine_evidence(
+                    combine_evidence(identity_evidence, evidence),
+                    corroboration_evidence,
+                ),
+                company_guid: Some(guid.to_string()),
+                truncated: false,
+            })
         }
-        let request =
-            render_import_verification_read(&company.name, &line.date_from, &line.date_to);
-        let (xml, evidence) = self.post_read(&identity, request.clone()).await?;
-        accumulated = combine_evidence(accumulated.clone(), evidence.clone());
-        let observed = parse_import_vouchers(&xml)?;
-        let (corroboration_xml, corroboration_evidence) =
-            self.post_read(&identity, request).await?;
-        accumulated = combine_evidence(accumulated.clone(), corroboration_evidence.clone());
-        let corroboration = parse_import_vouchers(&corroboration_xml)?;
-        corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)?;
-        let result = verify_batch(&line, &observed)?;
-        let proof = json!({
-            "company": company_json(&company, std::slice::from_ref(&company)),
-            "batch_id": line.batch_id, "batch_sha256": line.sha256,
-            "built_at": line.built_at, "verified_at": now(),
-            "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed),
-            "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
-            "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
-            "evidence": {"company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
-        });
-        let status = verification_status(&result, line.vouchers.len());
-        let mut update = line.clone();
-        update.status = status.to_string();
-        self.persist_import_verification(&proof, &update)?;
-        Ok(ToolOutcome {
-            payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof}),
-            evidence: combine_evidence(
-                combine_evidence(identity_evidence, evidence),
-                corroboration_evidence,
-            ),
-            company_guid: Some(guid.to_string()),
-            truncated: false,
-        })
-        }.await;
+        .await;
         result.map_err(|failure| failure.with_prior_evidence(accumulated))
     }
 

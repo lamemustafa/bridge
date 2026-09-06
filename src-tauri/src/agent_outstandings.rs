@@ -6,110 +6,112 @@ impl Server {
         let guid = required_string(args, "company_guid")?;
         let (company, identity, mut result_evidence) = self.verified_company(guid).await?;
         let result: Result<ToolOutcome, ToolFailure> = async {
-        let as_of = optional_string(args, "as_of")?
-            .as_deref()
-            .map(normalized_date)
-            .transpose()?
-            .unwrap_or_else(tally_host_today);
-        let to =
-            bridge_tally_core::TallyDate::parse(as_of).map_err(|_| "invalid_as_of".to_string())?;
-        let ageing_basis =
-            optional_string(args, "ageing_basis")?.unwrap_or_else(|| "due_date".to_string());
-        let ageing_anchor = match ageing_basis.as_str() {
-            "bill_date" => OutstandingsAgeingAnchor::BillDate,
-            "due_date" => OutstandingsAgeingAnchor::DueDate,
-            _ => return Err("invalid_ageing_basis".to_string().into()),
-        };
-        let (currency, currency_evidence) = self
-            .runtime
-            .detect_base_currency_with_evidence(self.tally_config(), &identity)
-            .await
-            .map_err(|_| "company_currency_probe_failed".to_string())?;
-        result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(currency_evidence));
-        let assertion = match (currency.currency_count, currency.is_inr) {
-            (1, true) => OutstandingsCurrencyAssertion::Inr,
-            (0, _) => return Err("company_currency_probe_failed".to_string().into()),
-            (1, false) => return Err("company_base_currency_not_inr".to_string().into()),
-            _ => return Err("company_base_currency_undetermined".to_string().into()),
-        };
-        let (load, outstandings_evidence) = self
-            .runtime
-            .fetch_outstandings_with_evidence(
-                self.tally_config(),
-                &identity,
-                to,
-                assertion,
-                ageing_anchor,
-            )
-            .await
-            .map_err(|_| "native_outstandings_read_failed".to_string())?;
-        result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(outstandings_evidence));
-        let top = arg_positive_usize(args, "top", 25)?.min(self.settings.max_rows);
-        let bill_offset = arg_usize(args, "offset", 0)?;
-        let bill_limit =
-            arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
-        let (result, bills_truncated) = match load {
-            OutstandingsLoadResult::Complete {
-                report: _,
-                statement_open_bills,
-                statement_unallocated_by_party,
-                ..
-            } => {
-                let direction =
-                    optional_string(args, "direction")?.unwrap_or_else(|| "both".to_string());
-                if !matches!(direction.as_str(), "receivable" | "payable" | "both") {
-                    return Err("invalid_direction".to_string().into());
+            let as_of = optional_string(args, "as_of")?
+                .as_deref()
+                .map(normalized_date)
+                .transpose()?
+                .unwrap_or_else(tally_host_today);
+            let to =
+                bridge_tally_core::TallyDate::parse(as_of).map_err(|_| "invalid_as_of".to_string())?;
+            let ageing_basis =
+                optional_string(args, "ageing_basis")?.unwrap_or_else(|| "due_date".to_string());
+            let ageing_anchor = match ageing_basis.as_str() {
+                "bill_date" => OutstandingsAgeingAnchor::BillDate,
+                "due_date" => OutstandingsAgeingAnchor::DueDate,
+                _ => return Err("invalid_ageing_basis".to_string().into()),
+            };
+            let (currency, currency_evidence) = self
+                .runtime
+                .detect_base_currency_with_evidence(self.tally_config(), &identity)
+                .await
+                .map_err(|_| "company_currency_probe_failed".to_string())?;
+            result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(currency_evidence));
+            let assertion = match (currency.currency_count, currency.is_inr) {
+                (1, true) => OutstandingsCurrencyAssertion::Inr,
+                (0, _) => return Err("company_currency_probe_failed".to_string().into()),
+                (1, false) => return Err("company_base_currency_not_inr".to_string().into()),
+                _ => return Err("company_base_currency_undetermined".to_string().into()),
+            };
+            let (load, outstandings_evidence) = self
+                .runtime
+                .fetch_outstandings_with_evidence(
+                    self.tally_config(),
+                    &identity,
+                    to,
+                    assertion,
+                    ageing_anchor,
+                )
+                .await
+                .map_err(|_| "native_outstandings_read_failed".to_string())?;
+            result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(outstandings_evidence));
+            let top = arg_positive_usize(args, "top", 25)?.min(self.settings.max_rows);
+            let bill_offset = arg_usize(args, "offset", 0)?;
+            let bill_limit =
+                arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
+            let (result, bills_truncated) = match load {
+                OutstandingsLoadResult::Complete {
+                    report: _,
+                    statement_open_bills,
+                    statement_unallocated_by_party,
+                    ..
+                } => {
+                    let direction =
+                        optional_string(args, "direction")?.unwrap_or_else(|| "both".to_string());
+                    if !matches!(direction.as_str(), "receivable" | "payable" | "both") {
+                        return Err("invalid_direction".to_string().into());
+                    }
+                    let all_bills = statement_open_bills
+                        .into_iter()
+                        .filter(|bill| direction_matches(bill.kind, &direction))
+                        .collect::<Vec<_>>();
+                    let selected_unallocated = statement_unallocated_by_party
+                        .into_iter()
+                        .filter(|party| direction_matches(party.direction, &direction))
+                        .collect::<Vec<_>>();
+                    let parties = ranked_parties_from_exposure(&all_bills, &selected_unallocated, top)?
+                        .into_iter()
+                        .map(|party| redact_value(party, self.settings.redaction))
+                        .collect::<Vec<_>>();
+                    let totals = outstanding_totals_from_open_bills(&all_bills)?;
+                    let ageing_buckets = ageing_buckets_from_open_bills(&all_bills)?;
+                    let (bills, bills_truncated, next_bill_offset) =
+                        paginate_open_bills(all_bills, bill_offset, bill_limit);
+                    let bills = bills
+                        .into_iter()
+                        .map(|bill| redact_value(open_bill_json(&bill), self.settings.redaction))
+                        .collect::<Vec<_>>();
+                    let unallocated_count = selected_unallocated.len();
+                    let unallocated_totals = unallocated_totals_from_parties(&selected_unallocated)?;
+                    let (unallocated, unallocated_truncated, next_unallocated_offset) =
+                        paginate_open_bills(selected_unallocated, bill_offset, bill_limit);
+                    let unallocated = unallocated
+                        .into_iter()
+                        .map(|party| {
+                            redact_value(unallocated_party_json(&party), self.settings.redaction)
+                        })
+                        .collect::<Vec<_>>();
+                    (
+                        json!({"state":"complete", "totals":totals, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": ageing_buckets, "top_parties": parties, "top_parties_ranked_by":"gross_exposure", "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": next_bill_offset, "unallocated":{"count": unallocated_count, "totals": unallocated_totals, "parties": unallocated, "truncated": unallocated_truncated, "next_offset": next_unallocated_offset}}),
+                        bills_truncated || unallocated_truncated,
+                    )
                 }
-                let all_bills = statement_open_bills
-                    .into_iter()
-                    .filter(|bill| direction_matches(bill.kind, &direction))
-                    .collect::<Vec<_>>();
-                let selected_unallocated = statement_unallocated_by_party
-                    .into_iter()
-                    .filter(|party| direction_matches(party.direction, &direction))
-                    .collect::<Vec<_>>();
-                let parties = ranked_parties_from_exposure(&all_bills, &selected_unallocated, top)?
-                    .into_iter()
-                    .map(|party| redact_value(party, self.settings.redaction))
-                    .collect::<Vec<_>>();
-                let totals = outstanding_totals_from_open_bills(&all_bills)?;
-                let ageing_buckets = ageing_buckets_from_open_bills(&all_bills)?;
-                let (bills, bills_truncated, next_bill_offset) =
-                    paginate_open_bills(all_bills, bill_offset, bill_limit);
-                let bills = bills
-                    .into_iter()
-                    .map(|bill| redact_value(open_bill_json(&bill), self.settings.redaction))
-                    .collect::<Vec<_>>();
-                let unallocated_count = selected_unallocated.len();
-                let unallocated_totals = unallocated_totals_from_parties(&selected_unallocated)?;
-                let (unallocated, unallocated_truncated, next_unallocated_offset) =
-                    paginate_open_bills(selected_unallocated, bill_offset, bill_limit);
-                let unallocated = unallocated
-                    .into_iter()
-                    .map(|party| {
-                        redact_value(unallocated_party_json(&party), self.settings.redaction)
-                    })
-                    .collect::<Vec<_>>();
-                (
-                    json!({"state":"complete", "totals":totals, "ageing_basis": if matches!(ageing_anchor, OutstandingsAgeingAnchor::BillDate) {"bill_date"} else {"due_date"}, "ageing_buckets": ageing_buckets, "top_parties": parties, "top_parties_ranked_by":"gross_exposure", "open_bills": bills, "offset": bill_offset, "limit": bill_limit, "next_offset": next_bill_offset, "unallocated":{"count": unallocated_count, "totals": unallocated_totals, "parties": unallocated, "truncated": unallocated_truncated, "next_offset": next_unallocated_offset}}),
-                    bills_truncated || unallocated_truncated,
-                )
-            }
-            OutstandingsLoadResult::Partial { reason, .. } => {
-                result_evidence.state = "partial";
-                result_evidence.reason_code = Some(reason.reason_code.clone());
-                (
-                    json!({"state":"partial", "partial_reason": reason.reason_code}),
-                    false,
-                )
-            }
-        };
-        Ok(ToolOutcome {
-            payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
-            evidence: result_evidence.clone(),
-            company_guid: Some(guid.to_string()),
-            truncated: bills_truncated,
-        })        }.await;
+                OutstandingsLoadResult::Partial { reason, .. } => {
+                    result_evidence.state = "partial";
+                    result_evidence.reason_code = Some(reason.reason_code.clone());
+                    (
+                        json!({"state":"partial", "partial_reason": reason.reason_code}),
+                        false,
+                    )
+                }
+            };
+            Ok(ToolOutcome {
+                payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
+                evidence: result_evidence.clone(),
+                company_guid: Some(guid.to_string()),
+                truncated: bills_truncated,
+            })
+        }
+        .await;
         result.map_err(|failure| failure.with_prior_evidence(result_evidence))
     }
 }
