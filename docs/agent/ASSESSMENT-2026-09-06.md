@@ -70,7 +70,17 @@ in the in-process evidence store. Import verification is independent of the MCP
 output-row limit, and repeated verification appends compact hash-bound status
 records instead of duplicating the batch payload. Typed failures retain completed
 source observations through parsing, window validation, and downstream read errors.
-The egress tail reports truncation for both row and scan-byte omissions.
+The egress tail reports truncation for both row and scan-byte omissions, and
+refuses incomplete or malformed retained JSONL records. Ordinary voucher rows
+expose typed cancellation and optional state. Import readback applies the same
+accounting-domain validation before any verdict. Fully attributed expected
+multiplicity is allowed while one observed identity can satisfy only one
+transaction and unexpected duplicates remain blocking.
+
+Movement also repeats its voucher source after the final opening-ledger read.
+An unchanged opening cannot hide an in-window posting, edit, or deletion between
+those reads. Captured-source replay covers stable reads and each drift case.
+This establishes repeated-observation stability, not an atomic Tally snapshot.
 
 ### Dated correction: period opening
 
@@ -122,7 +132,8 @@ XML interface, but returned bytes and readback establish the behavior above.
 ## Regression provenance
 
 The protocol fixture tree contains unchanged UTF-16LE captures for an empty
-native collection, a three-voucher response, and the ledger catalogue. The
+native collection, a three-voucher response, the ledger catalogue, licensed
+company discovery, book extents, and native period opening. The
 simulator adopts the catalogue's captured synthetic identities; it does not
 rewrite the captured response. Metadata records the exact original wire hash.
 Fixture-integrity policy remains enforced. Simulators test regressions after
@@ -145,7 +156,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **900 Rust workspace tests**, **160 agent tests
+Local candidate verification: **906 Rust workspace tests**, **166 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -165,6 +176,9 @@ Every emitted frame matched its receipt and text/structured representations.
 Status, filtered-voucher, and compliance-master commitments and source byte counts
 were independently recomputed from the captured transport request/response files.
 The voucher-type filter and a nonmatching ledger selection both completed.
+Ordinary voucher rows exposed observed boolean cancellation and optional flags.
+Movement completed with repeated voucher-source corroboration after the final
+opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. No additional Tally posting
@@ -181,9 +195,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `8fc1e9530e9b5a14de38414134d384d530aaa76c1247b93a0f2ad8ba584489e5`.
-- MCPB archive SHA-256: `d7254b54578752bb778a0c0602030e1ddc3abf87e5743c25aeb411bff81f195e`.
-- Source fingerprint (307 build-input files, unchanged through the settled-source rebuild): `bafdc83f8f38ad450c8785c5e7e043c5f8ec67ef1f75b219fd1f62ccec22fb88`.
+- Release executable SHA-256: `212f68dbb3a4d1be5eb356250d4fee31512db29066e7f40ce4bfde1e3f330901`.
+- MCPB archive SHA-256: `7058f8a41a0816598c01f9bc396658041ec9e84a4fad5ed7b649ffae9e76ec37`.
+- Source fingerprint (317 build-input files, unchanged through the settled-source rebuild): `8ccd363c516748771c21cd9b0a09251829de1e6b22aec1af0caec1cd05ecaddc`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local

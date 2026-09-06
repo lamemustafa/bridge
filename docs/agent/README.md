@@ -230,8 +230,22 @@ must be valid calendar dates before ordinary voucher rows are released. Ledger
 selectors require matching catalogues before and after the voucher read, unique
 names, and catalogue membership for every observed entry. Movement
 metadata counts all source vouchers, including non-posting rows excluded from
-balances. Egress-log reads set `truncated` when either the requested row count
-or the bounded tail scan omits older records.
+balances. Ordinary voucher rows expose boolean `cancelled` and `optional` fields;
+non-posting amounts are not presented without that state. Movement repeats the
+voucher source after its final opening snapshot and refuses changes to either
+source before calculating balances. This establishes stability across repeated
+observations, not an atomic Tally snapshot.
+
+Egress-log reads set `truncated` when either the requested row count
+or the bounded tail scan omits older records. Missing terminal newlines, invalid
+UTF-8, or invalid JSON in retained complete rows return `egress_log_incomplete`.
+
+Verification rejects malformed accounting fields before matching. Distinct,
+fully attributed expected vouchers may have identical accounting contents; each
+observed identity can satisfy only one expected transaction, and unexpected
+duplicate postings remain blocking. A stable observed identity claiming multiple
+expected transaction tags returns `import_verification_tag_ambiguous` before
+matching, so transaction order cannot choose an attribution.
 
 Verification appends a compact status record bound to the batch ID and original
 file hash, rather than duplicating vouchers and narration. The reader accepts
