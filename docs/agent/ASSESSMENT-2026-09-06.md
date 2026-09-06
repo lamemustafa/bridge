@@ -95,6 +95,21 @@ before date admission and bracket the read with a closing mode observation. A
 stale cached mode cannot admit an unsupported Education-mode date. Captured-source
 regressions cover absent/stale cache, unsafe book starts, and closing mode drift.
 
+The same fresh-mode requirement covers compliance ledgers and native
+outstandings, whose balance fields also lack an independently returned period.
+The corrected boundary is the runtime source, rather than a requirement that a
+client call status first. Mode/date refusals retain completed wire observations
+through the runtime and adapter error mappings.
+
+The final date-admission audit traced every MCP route:
+
+| Read family | Admission evidence |
+| --- | --- |
+| Basic/compliance ledger balances, movement openings, native outstandings | Fresh recognized mode, typed permitted period, closing mode observation. |
+| Voucher reads and import readback | Literal date predicates, returned-row window validation, and empty-result corroboration or a non-posted verdict. |
+| Catalogue, currency, company identity, import high-water | Metadata only; no period-dependent balance is released. |
+| Legacy calibrated scan and change enumeration | Unavailable through the MCP evidence path. |
+
 Import verification fingerprints each expected and observed voucher once and
 indexes marker/content candidates before matching. A captured-derived local
 1,000-expected/10,000-observed regression retained the same verdicts while reducing
@@ -167,7 +182,8 @@ XML interface, but returned bytes and readback establish the behavior above.
 
 The protocol fixture tree contains unchanged UTF-16LE captures for an empty
 native collection, a three-voucher response, the ledger catalogue, licensed
-company discovery, book extents, and native period opening. The
+company discovery, book extents, native period opening, compliance master/balance/group
+sources, and the four native ageing sources. The
 simulator adopts the catalogue's captured synthetic identities; it does not
 rewrite the captured response. Metadata records the exact original wire hash.
 Fixture-integrity policy remains enforced. Simulators test regressions after
@@ -190,7 +206,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **932 Rust workspace tests**, **189 agent tests
+Local candidate verification: **943 Rust workspace tests**, **190 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -199,17 +215,19 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed twenty live checks with party masking:
-nineteen complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed twenty-two live checks with party masking:
+twenty-one complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. A separate fresh process
-read all nine basic ledgers without a preceding status call. Status, master
+read all nine basic ledgers without a preceding status call. Separate fresh
+processes also completed compliance ledgers and native outstandings. Status, master
 validation, filtered and unfiltered vouchers, compliance masters, outstandings,
 restored-batch verification, and egress-log readback also completed.
 Every emitted frame matched its linked preparation/completion receipts and
 text/structured representations.
-Status, filtered-voucher, compliance-master, and basic-ledger commitments and source byte counts
+Status, filtered-voucher, compliance-master, basic-ledger, and native-outstandings
+commitments and source byte counts
 were independently recomputed from the captured transport request/response files.
 The voucher-type filter and a nonmatching ledger selection both completed.
 Ordinary voucher rows exposed observed boolean cancellation and optional flags.
@@ -232,9 +250,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `0f52ba83a1d89a092898b3b071168996e99332dc7db7c96a32c9da5fdc45fdbb`.
-- MCPB archive SHA-256: `47fdefcd89a4fa4ce4a330e3c8eac4c61b54a2bf901b1908fea84842db9b6558`.
-- Source fingerprint (326 build-input files, unchanged through the settled-source rebuild): `ee2c33c69bfdd8a804d9c8c96cceef798a949af0cdd07bfd117f87c35cc8f6e0`.
+- Release executable SHA-256: `12873acd72002abe36b2865412f44e7cb4aa9f5a63724787d250f068cad4f2d4`.
+- MCPB archive SHA-256: `7594e54675eb1b0315f6ff74725eec8ac36a61a03a7b0fcc5d6cb08f55254289`.
+- Source fingerprint (342 build-input files, unchanged through the settled-source rebuild): `b552f6d6b93a2946e771026337f372d331825d3e043d0fcfd78a6cfd9dd6e2a4`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -251,7 +269,8 @@ were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
 The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates the existing runtime pin for fresh opening-mode admission. Earlier
+updates the existing runtime, connection, command-mapping, and protocol-reference
+pins for fresh financial mode admission and retained refusal evidence. Earlier
 changes covered request commitments, report-source fields, CI packaging, and
 the period-opening protocol reference. The existing pin
 set was rehashed, sealed, and repointed using the release-process commands.
