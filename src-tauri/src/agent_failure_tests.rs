@@ -78,7 +78,7 @@ async fn import_post_read_failures_retain_source_evidence_and_admission_errors_s
                 .call_tool_response("build_import_xml", serde_json::to_value(input).unwrap())
                 .await
         };
-        let content = &response.value["structuredContent"];
+        let content = response.value["structuredContent"].clone();
         let code = if malformed_catalogue {
             "ledger_export_invalid"
         } else {
@@ -90,6 +90,18 @@ async fn import_post_read_failures_retain_source_evidence_and_admission_errors_s
         assert_eq!(content["evidence"]["reason_code"], code);
         assert_eq!(content["evidence"]["response_sha256"], expected_response);
         assert_eq!(content["evidence"]["bytes"], expected_bytes);
+        let mut wire = Vec::new();
+        crate::agent::agent_protocol::finish_response(
+            &server,
+            &mut wire,
+            json!(1),
+            Ok(response.value),
+            Some(response.egress),
+            response.recovery_batch_id,
+            true,
+        )
+        .await
+        .unwrap();
         {
             let records = server.evidence.lock().unwrap();
             let recorded = records.records.last().unwrap();

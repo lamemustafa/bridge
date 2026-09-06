@@ -65,6 +65,7 @@ async fn persisted_build(cap: usize) -> (tempfile::TempDir, Server, ToolResponse
 
 async fn release(server: &Server, tool: ToolResponse, receipt_fails: bool) -> Value {
     let expected_batch = tool.recovery_batch_id.clone().unwrap();
+    let source = tool.egress.evidence.clone().unwrap();
     if receipt_fails {
         fs::create_dir(server.settings.data_dir.join("agent-egress.jsonl")).unwrap();
     }
@@ -91,6 +92,20 @@ async fn release(server: &Server, tool: ToolResponse, receipt_fails: bool) -> Va
             "agent_response_too_large"
         }
     );
+    {
+        let history = server.evidence.lock().unwrap();
+        assert_eq!(history.records.len(), 1);
+        let recorded = &history.records[0];
+        assert_eq!(recorded.request_sha256, source.request_sha256);
+        assert_eq!(recorded.response_sha256, source.response_sha256);
+        assert_eq!(recorded.bytes, source.bytes);
+        assert!(recorded.bytes > 0);
+        assert_eq!(recorded.state, "partial");
+        assert_eq!(
+            recorded.reason_code.as_deref(),
+            response["error"]["message"].as_str()
+        );
+    }
     if !receipt_fails {
         let receipt: Value = serde_json::from_str(
             fs::read_to_string(server.settings.data_dir.join("agent-egress.jsonl"))
@@ -147,6 +162,7 @@ async fn capped_reads_retain_source_commitments_for_read_evidence() {
             tool.value["structuredContent"]["error"]["code"],
             "agent_response_too_large"
         );
+        release(&server, tool, false).await;
         server.settings.max_bytes = 200_000;
         let evidence = server.call_tool("read_evidence", json!({"limit": 1})).await;
         let records = evidence["structuredContent"]["result"]["records"]

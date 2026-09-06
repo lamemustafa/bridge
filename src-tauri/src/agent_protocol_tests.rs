@@ -233,6 +233,7 @@ async fn incomplete_receipt_log_stops_session_but_preserves_durable_batch_recove
         json!(2),
         Ok(json!({})),
         Some(EgressContext {
+            evidence: None,
             tool: "build_import_xml".into(),
             args_sha256: sha256_json(&json!({})),
             company_guid: None,
@@ -271,3 +272,6 @@ async fn incomplete_receipt_log_stops_session_but_preserves_durable_batch_recove
     assert_eq!(responses[0]["id"], 1);
     assert_eq!(fs::read(path).unwrap(), b"{\"partial");
 }
+
+#[path = "agent_protocol_evidence_tests.rs"]
+mod evidence_tests;

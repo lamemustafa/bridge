@@ -333,6 +333,7 @@ fn receipt_tool_identity(tool: &str) -> (&str, Option<String>) {
 }
 
 struct EgressContext {
+    evidence: Option<Evidence>,
     tool: String,
     args_sha256: String,
     company_guid: Option<String>,
@@ -446,7 +447,13 @@ impl Server {
 
     #[cfg(test)]
     async fn call_tool(&self, name: &str, args: Value) -> Value {
-        self.call_tool_response(name, args).await.value
+        let response = self.call_tool_response(name, args).await;
+        // In-process tests consume the inner result; production records evidence
+        // only after final JSON-RPC framing and receipt-stage substitutions.
+        if let Some(evidence) = response.egress.evidence {
+            self.record_evidence(evidence);
+        }
+        response.value
     }
 
     async fn call_tool_response(&self, name: &str, args: Value) -> ToolResponse {
@@ -509,7 +516,6 @@ impl Server {
                 Err(code) => {
                     evidence.state = "partial";
                     evidence.reason_code = Some(code.clone());
-                    self.record_evidence(evidence);
                     return ToolResponse {
                         recovery_batch_id,
                         value: response_too_large(
@@ -517,6 +523,7 @@ impl Server {
                             batch_error_code.as_deref().unwrap_or(&code),
                         ),
                         egress: EgressContext {
+                            evidence: Some(evidence),
                             tool: name.to_string(),
                             args_sha256,
                             company_guid,
@@ -537,22 +544,22 @@ impl Server {
         ) {
             evidence.state = "partial";
             evidence.reason_code = Some(code.clone());
-            self.record_evidence(evidence);
             return ToolResponse {
                 recovery_batch_id,
                 value: response_too_large(name, batch_error_code.as_deref().unwrap_or(&code)),
                 egress: EgressContext {
+                    evidence: Some(evidence),
                     tool: name.to_string(),
                     args_sha256,
                     company_guid,
                 },
             };
         }
-        self.record_evidence(evidence);
         ToolResponse {
             recovery_batch_id,
             value: mcp_response,
             egress: EgressContext {
+                evidence: Some(evidence),
                 tool: name.to_string(),
                 args_sha256,
                 company_guid,

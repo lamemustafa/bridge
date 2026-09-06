@@ -115,6 +115,14 @@ async fn delivery_failures_leave_preparation_without_claiming_a_completed_write(
             .await,
             Err(error.to_string())
         );
+        {
+            let history = server.evidence.lock().unwrap();
+            assert_eq!(history.records.len(), 1);
+            // The prepared read result is complete; delivery failure is a
+            // separate fact established by the missing completion receipt.
+            assert_eq!(history.records[0].state, "complete");
+            assert_eq!(history.records[0].reason_code, None);
+        }
         let events = records(&path);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["record_type"], "response_prepared");

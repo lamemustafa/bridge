@@ -158,10 +158,7 @@ async fn oversized_unknown_property_cannot_expand_response_or_retained_evidence(
         import_enabled: false,
     });
     for key in ["unknown".to_string(), "x".repeat(1_000_000)] {
-        let response = server
-            .call_tool_response("tally_status", json!({key: null}))
-            .await;
-        let value = response.value;
+        let value = server.call_tool("tally_status", json!({key: null})).await;
         assert!(serde_json::to_vec(&value).unwrap().len() < 2_000);
         assert!(
             value["structuredContent"]["result"]["error"]["code"].as_str()

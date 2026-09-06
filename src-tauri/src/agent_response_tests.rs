@@ -47,6 +47,7 @@ fn standalone_master_and_status_rows_are_counted_in_final_receipts() {
         server
             .append_framed_egress(
                 EgressContext {
+                    evidence: None,
                     tool: tool.into(),
                     args_sha256: sha256_json(&json!({})),
                     company_guid: None,

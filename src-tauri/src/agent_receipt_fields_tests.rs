@@ -18,6 +18,7 @@ fn receipt_for(directory: &Path, response: &Value) -> Value {
     server
         .append_framed_egress(
             EgressContext {
+                evidence: None,
                 tool: "outstandings".into(),
                 args_sha256: sha256_json(&json!({})),
                 company_guid: None,

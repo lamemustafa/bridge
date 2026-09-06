@@ -91,6 +91,7 @@ where
                     Ok(tool_response.value)
                 } else {
                     egress = Some(EgressContext {
+                        evidence: None,
                         tool: name.to_string(),
                         args_sha256: sha256_json(&arguments),
                         company_guid: None,
@@ -125,83 +126,106 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
     stdout: &mut W,
     id: Value,
     result: Result<Value, String>,
-    egress: Option<EgressContext>,
+    mut egress: Option<EgressContext>,
     recovery_batch_id: Option<String>,
     is_tool: bool,
 ) -> Result<(), String> {
-    let mut response = match result {
-        Ok(result) => json!({"jsonrpc":"2.0","id":id.clone(),"result":result}),
-        Err(code) => {
-            let error_code = if code == "method_not_found" {
-                -32601
-            } else {
-                -32602
-            };
-            json!({"jsonrpc":"2.0","id":id.clone(),"error":{"code":error_code,"message":code}})
+    let mut pending_evidence = egress.as_mut().and_then(|context| context.evidence.take());
+    let outcome: Result<(), String> = async {
+        let mut response = match result {
+            Ok(result) => json!({"jsonrpc":"2.0","id":id.clone(),"result":result}),
+            Err(code) => {
+                let error_code = if code == "method_not_found" {
+                    -32601
+                } else {
+                    -32602
+                };
+                json!({"jsonrpc":"2.0","id":id.clone(),"error":{"code":error_code,"message":code}})
+            }
+        };
+        if recovery_batch_id.is_some() && response["result"]["isError"] == true {
+            let code = response["result"]["structuredContent"]["result"]["error"]["code"]
+                .as_str()
+                .or_else(|| response["result"]["structuredContent"]["error"]["code"].as_str())
+                .unwrap_or("import_publication_recovery_required");
+            response = recovery_error(id.clone(), recovery_batch_id.as_deref(), code);
         }
-    };
-    if recovery_batch_id.is_some() && response["result"]["isError"] == true {
-        let code = response["result"]["structuredContent"]["result"]["error"]["code"]
-            .as_str()
-            .or_else(|| response["result"]["structuredContent"]["error"]["code"].as_str())
-            .unwrap_or("import_publication_recovery_required");
-        response = recovery_error(id.clone(), recovery_batch_id.as_deref(), code);
-    }
-    // Tools may reduce an explicitly paged result. Control messages (including
-    // the tool catalogue) must either fit intact or return a bounded refusal.
-    let fits = if is_tool {
-        enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes).is_ok()
-    } else {
-        response.to_string().len() < server.settings.max_bytes
-    };
-    if !fits {
-        response = recovery_error(
-            id.clone(),
-            recovery_batch_id.as_deref(),
-            "agent_response_too_large",
-        );
-    }
-    let mut serialized_response = serialize_response(&response, server.settings.max_bytes)?;
-    let mut terminal_egress_error = None;
-    let mut prepared_receipt = None;
-    if let Some(egress) = egress {
-        match server.append_framed_egress(egress, &response, &serialized_response) {
-            Ok(receipt) => prepared_receipt = Some(receipt),
-            Err(error) => {
-                if matches!(
-                    error.as_str(),
-                    "egress_record_rollback_failed" | "egress_log_incomplete"
-                ) {
-                    terminal_egress_error = Some(error.clone());
+        // Tools may reduce an explicitly paged result. Control messages (including
+        // the tool catalogue) must either fit intact or return a bounded refusal.
+        let fits = if is_tool {
+            enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes).is_ok()
+        } else {
+            response.to_string().len() < server.settings.max_bytes
+        };
+        if !fits {
+            response = recovery_error(
+                id.clone(),
+                recovery_batch_id.as_deref(),
+                "agent_response_too_large",
+            );
+        }
+        let mut serialized_response = serialize_response(&response, server.settings.max_bytes)?;
+        let mut terminal_egress_error = None;
+        let mut prepared_receipt = None;
+        if let Some(egress) = egress {
+            match server.append_framed_egress(egress, &response, &serialized_response) {
+                Ok(receipt) => prepared_receipt = Some(receipt),
+                Err(error) => {
+                    if let Some(evidence) = pending_evidence.as_mut() {
+                        evidence.state = "partial";
+                        evidence.reason_code = Some(error.clone());
+                    }
+                    if matches!(
+                        error.as_str(),
+                        "egress_record_rollback_failed" | "egress_log_incomplete"
+                    ) {
+                        terminal_egress_error = Some(error.clone());
+                    }
+                    if recovery_batch_id.is_some() {
+                        response = recovery_error(id, recovery_batch_id.as_deref(), &error);
+                    } else if !attach_build_egress_failure(&mut response) {
+                        return Err(error);
+                    }
+                    enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes)?;
+                    serialized_response = serialize_response(&response, server.settings.max_bytes)?;
                 }
-                if recovery_batch_id.is_some() {
-                    response = recovery_error(id, recovery_batch_id.as_deref(), &error);
-                } else if !attach_build_egress_failure(&mut response) {
-                    return Err(error);
-                }
-                enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes)?;
-                serialized_response = serialize_response(&response, server.settings.max_bytes)?;
             }
         }
+        if let Some(mut evidence) = pending_evidence.take() {
+            if let Some(code) = response["error"]["message"].as_str() {
+                evidence.state = "partial";
+                evidence.reason_code = Some(code.to_string());
+            }
+            server.record_evidence(evidence);
+        }
+        stdout
+            .write_all(serialized_response.as_bytes())
+            .await
+            .map_err(|_| "stdio_write_failed".to_string())?;
+        stdout
+            .flush()
+            .await
+            .map_err(|_| "stdio_flush_failed".to_string())?;
+        if let Some(receipt) = prepared_receipt {
+            // A missing completion is deliberately ambiguous: output may have been
+            // partial, fully written, or consumed before recording failed. Stop on
+            // append failure rather than dispatch another request without audit.
+            server.append_stdio_write_completed(receipt)?;
+        }
+        match terminal_egress_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
-    stdout
-        .write_all(serialized_response.as_bytes())
-        .await
-        .map_err(|_| "stdio_write_failed".to_string())?;
-    stdout
-        .flush()
-        .await
-        .map_err(|_| "stdio_flush_failed".to_string())?;
-    if let Some(receipt) = prepared_receipt {
-        // A missing completion is deliberately ambiguous: output may have been
-        // partial, fully written, or consumed before recording failed. Stop on
-        // append failure rather than dispatch another request without audit.
-        server.append_stdio_write_completed(receipt)?;
+    .await;
+    // Serialization or receipt failure can withhold the frame entirely. Keep
+    // its completed source commitments, but do not leave a complete claim.
+    if let Some(mut evidence) = pending_evidence {
+        evidence.state = "partial";
+        evidence.reason_code = outcome.as_ref().err().cloned();
+        server.record_evidence(evidence);
     }
-    match terminal_egress_error {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    outcome
 }
 
 fn recovery_error(id: Value, batch_id: Option<&str>, message: &str) -> Value {
