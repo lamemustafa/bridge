@@ -1,0 +1,15 @@
+{
+  "source": "Live licensed TallyPrime synthetic-company compliance ledger read",
+  "observed_date": "2026-09-06",
+  "source_response_bytes": 56046,
+  "source_response_sha256": "64e2886ff2a155ca70a209718be3de1117b0501b48cabe2032d18bfaa1af33e6",
+  "source_request_bytes": 1064,
+  "source_request_sha256": "eef756701f24b36a66a77845498dcec6609eebb135802a67325a1f77acc54fb6",
+  "fixture_bytes": 56046,
+  "fixture_sha256": "64e2886ff2a155ca70a209718be3de1117b0501b48cabe2032d18bfaa1af33e6",
+  "encoding": "UTF-16LE without BOM",
+  "rows": 29,
+  "transformation": [],
+  "provenance_limit": "Byte-exact observed synthetic lab response. Fault regressions mutate separate in-memory copies and do not claim live fault experiments.",
+  "sensitivity_review": "Only operator-created synthetic company and standard groups; no populated credentials, customer contact/tax/bank details, or machine paths. Raw control characters are retained unchanged."
+}
