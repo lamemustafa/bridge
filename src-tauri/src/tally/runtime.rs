@@ -632,6 +632,44 @@ fn ledger_opening_period(
     NativeLedgerExportPeriod::new(profile, from.clone(), to.clone())
 }
 
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+enum NativeLedgerIdentityAdmissionError {
+    #[error("native_ledger_identity_duplicate")]
+    Duplicate,
+    #[error("native_ledger_master_id_invalid")]
+    InvalidMasterId,
+}
+
+fn admit_native_ledger_opening_rows(
+    xml: &str,
+    company_guid: &str,
+) -> anyhow::Result<Vec<TallyLedger>> {
+    let parsed = parse_native_ledger_source_records_with_evidence(xml, company_guid)?;
+    if !parsed.evidence.duplicate_identities.is_empty() {
+        return Err(NativeLedgerIdentityAdmissionError::Duplicate.into());
+    }
+    // The parser commits duplicate GUIDs and textual aliases. MASTERID is a
+    // numeric identity, so leading-zero spellings must not create another row.
+    let mut master_ids = std::collections::HashSet::new();
+    for record in &parsed.records {
+        let master_id = record
+            .identities
+            .master_id
+            .as_deref()
+            .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or(NativeLedgerIdentityAdmissionError::InvalidMasterId)?;
+        if !master_ids.insert(master_id) {
+            return Err(NativeLedgerIdentityAdmissionError::Duplicate.into());
+        }
+    }
+    Ok(parsed
+        .records
+        .into_iter()
+        .map(|record| record.record)
+        .collect())
+}
+
 #[cfg(test)]
 #[path = "runtime_ledger_opening_tests.rs"]
 mod ledger_opening_tests;
@@ -1739,14 +1777,7 @@ impl TallyRuntime {
                             PairedReadValidationError::NativeLedgerCollection,
                         ));
                     };
-                    let ledgers = parse_native_ledger_source_records_with_evidence(
-                        &body,
-                        identity.company_guid(),
-                    )?
-                    .records
-                    .into_iter()
-                    .map(|record| record.record)
-                    .collect::<Vec<_>>();
+                    let ledgers = admit_native_ledger_opening_rows(&body, identity.company_guid())?;
                     let closing_extent = client
                         .fetch_company_book_extent(identity.display_name(), identity.company_guid())
                         .await?;

@@ -234,3 +234,82 @@ async fn scoped_opening_probes_before_export_even_with_a_stale_licensed_cache() 
         assert!(body.is_empty());
     }
 }
+
+#[test]
+fn native_ledger_opening_admission_rejects_duplicate_source_identities() {
+    let captured = include_str!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_master_fields_lab.utf8.xml"
+    );
+    let company = "56359347-3976-4d01-b44e-56fa0f6a422c";
+    let baseline = admit_native_ledger_opening_rows(captured, company).unwrap();
+    assert!(baseline.len() > 1);
+    let start = captured.find("<LEDGER NAME=").unwrap();
+    let end = start + captured[start..].find("</LEDGER>").unwrap() + "</LEDGER>".len();
+    let first_row = &captured[start..end];
+    // Duplicating captured source is negative fault injection, not a new fixture.
+    for duplicate in [
+        first_row.to_string(),
+        first_row.replacen(
+            "BRIDGE MFLAB CREDITOR ALPHA",
+            "Synthetic Duplicate Alias",
+            1,
+        ),
+    ] {
+        let faulty = format!("{}{}{}", &captured[..end], duplicate, &captured[end..]);
+        let error = admit_native_ledger_opening_rows(&faulty, company).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<NativeLedgerIdentityAdmissionError>(),
+            Some(&NativeLedgerIdentityAdmissionError::Duplicate)
+        );
+    }
+    let parsed = parse_native_ledger_source_records_with_evidence(captured, company).unwrap();
+    let duplicate_guid = captured.replacen(
+        parsed.records[1].identities.guid.as_deref().unwrap(),
+        &parsed.records[0]
+            .identities
+            .guid
+            .as_deref()
+            .unwrap()
+            .to_ascii_uppercase(),
+        1,
+    );
+    assert_eq!(
+        admit_native_ledger_opening_rows(&duplicate_guid, company)
+            .unwrap_err()
+            .downcast_ref::<NativeLedgerIdentityAdmissionError>(),
+        Some(&NativeLedgerIdentityAdmissionError::Duplicate)
+    );
+    let first_id = parsed.records[0].identities.master_id.as_deref().unwrap();
+    let second_id = parsed.records[1].identities.master_id.as_deref().unwrap();
+    let original = format!("<MASTERID TYPE=\"Number\"> {second_id}</MASTERID>");
+    assert!(captured.contains(&original));
+    let absent = captured.replacen(&original, "", 1);
+    // MASTERID was already required by the native row parser; admission does
+    // not turn an optional source field into a new requirement.
+    assert!(parse_native_ledger_source_records_with_evidence(&absent, company).is_err());
+    assert!(admit_native_ledger_opening_rows(&absent, company).is_err());
+    let alias = captured.replacen(&original, &format!("<MASTERID>0{first_id}</MASTERID>"), 1);
+    // The protocol's textual duplicate registry cannot see this numeric alias.
+    assert!(
+        parse_native_ledger_source_records_with_evidence(&alias, company)
+            .unwrap()
+            .evidence
+            .duplicate_identities
+            .is_empty()
+    );
+    assert_eq!(
+        admit_native_ledger_opening_rows(&alias, company)
+            .unwrap_err()
+            .downcast_ref::<NativeLedgerIdentityAdmissionError>(),
+        Some(&NativeLedgerIdentityAdmissionError::Duplicate)
+    );
+    for invalid in ["Maybe", "-1", "+1", "18446744073709551616"] {
+        let faulty = captured.replacen(&original, &format!("<MASTERID>{invalid}</MASTERID>"), 1);
+        assert_eq!(
+            admit_native_ledger_opening_rows(&faulty, company)
+                .unwrap_err()
+                .downcast_ref::<NativeLedgerIdentityAdmissionError>(),
+            Some(&NativeLedgerIdentityAdmissionError::InvalidMasterId)
+        );
+    }
+}
