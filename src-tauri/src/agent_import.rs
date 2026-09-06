@@ -21,6 +21,11 @@ use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+struct ImportModeObservation {
+    qualified_licensed_prime: bool,
+    evidence: Evidence,
+}
+
 const MAX_VOUCHERS: usize = 1_000;
 pub(super) const MAX_MASTER_NAMES: usize = 100;
 pub(super) const MAX_MASTER_NAME_CHARS: usize = 1024;
@@ -242,6 +247,15 @@ impl Server {
     }
 
     async fn qualified_import_mode(&self) -> Result<Evidence, ToolFailure> {
+        let observation = self.observe_import_mode().await?;
+        if !observation.qualified_licensed_prime {
+            return Err(ToolFailure::from("import_mode_unqualified".to_string())
+                .with_prior_evidence(observation.evidence));
+        }
+        Ok(observation.evidence)
+    }
+
+    async fn observe_import_mode(&self) -> Result<ImportModeObservation, ToolFailure> {
         use bridge_tally_core::{CapabilityFeatureId, CapabilityState, EvidenceConfidence};
         let (probe, wire) = self
             .runtime
@@ -263,11 +277,10 @@ impl Server {
                     feature.state == CapabilityState::Supported
                         && feature.confidence == EvidenceConfidence::Observed
                 });
-        if !qualified {
-            return Err(ToolFailure::from("import_mode_unqualified".to_string())
-                .with_prior_evidence(evidence));
-        }
-        Ok(evidence)
+        Ok(ImportModeObservation {
+            qualified_licensed_prime: qualified,
+            evidence,
+        })
     }
 
     pub(super) async fn build_import_xml(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
@@ -397,8 +410,13 @@ impl Server {
         if !batch_guid_matches(&line.company_guid, guid) {
             return Err("import_batch_company_mismatch".to_string().into());
         }
-        let (company, identity, identity_evidence) = self.verified_company(guid).await?;
-        let mut accumulated = identity_evidence.clone();
+        let opening_mode = self.observe_import_mode().await?;
+        let (company, identity, identity_evidence) = self
+            .verified_company(guid)
+            .await
+            .map_err(|failure| failure.with_prior_evidence(opening_mode.evidence.clone()))?;
+        let mut accumulated =
+            combine_evidence(opening_mode.evidence.clone(), identity_evidence.clone());
         let result: Result<ToolOutcome, ToolFailure> = async {
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
                 return Err("company_identity_mismatch".to_string().into());
@@ -414,6 +432,20 @@ impl Server {
             let corroboration = parse_import_vouchers(&corroboration_xml)?;
             corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)?;
             let result = verify_batch(&line, &observed)?;
+            let mut closing_mode_evidence = None;
+            if result["counts"]["not_found"].as_u64().unwrap_or(0) > 0 {
+                // Positive rows are direct observations. Absence additionally requires
+                // the licensed TallyPrime mode qualified by the retained live slice.
+                if !opening_mode.qualified_licensed_prime {
+                    return Err("verification_mode_unqualified".to_string().into());
+                }
+                let closing_mode = self.observe_import_mode().await?;
+                accumulated = combine_evidence(accumulated.clone(), closing_mode.evidence.clone());
+                if !closing_mode.qualified_licensed_prime {
+                    return Err("verification_mode_unqualified".to_string().into());
+                }
+                closing_mode_evidence = Some(closing_mode.evidence);
+            }
             let proof = json!({
                 "company": company_json(&company, std::slice::from_ref(&company)),
                 "batch_id": line.batch_id, "batch_sha256": line.sha256,
@@ -421,7 +453,7 @@ impl Server {
                 "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed.rows),
                 "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
-                "evidence": {"company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
+                "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
             });
             let status = verification_status(&result, line.vouchers.len());
             let mut update = line.clone();
@@ -429,10 +461,7 @@ impl Server {
             self.persist_import_verification(&proof, &update)?;
             Ok(ToolOutcome {
                 payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof}),
-                evidence: combine_evidence(
-                    combine_evidence(identity_evidence, evidence),
-                    corroboration_evidence,
-                ),
+                evidence: accumulated.clone(),
                 company_guid: Some(guid.to_string()),
                 truncated: false,
             })

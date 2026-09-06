@@ -1246,7 +1246,7 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
                     .expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 42);
+        assert_eq!(simulator.finish().expect("requests").len(), 44);
     }
 }
 
@@ -1514,6 +1514,7 @@ fn qualified_import_cycle_plans() -> Vec<ScenarioPlan> {
         probe.clone(),
         cycle[..16].to_vec(),
         cycle[4..10].to_vec(),
+        probe.clone(),
         probe,
         cycle[16..].to_vec(),
     ]
@@ -1575,3 +1576,6 @@ fn voucher_and_import_read_filters_use_literal_dates_independently_of_static_per
         );
     }
 }
+
+#[path = "agent_import_verify_mode_tests.rs"]
+mod verify_mode_tests;
