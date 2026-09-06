@@ -3,6 +3,13 @@
 > Historical planning brief: its simulator read-back is not live-Tally import
 > evidence. The connector now hides this path unless `BRIDGE_AGENT_ENABLE_IMPORT=1`.
 
+> 2026-09-07 deviation: new files use the qualified `batch_v1` identity scheme
+> documented in [README](README.md#protocol-and-migration-notes). Caller labels
+> are unique within a batch; independent batches may reuse them, including with
+> an intact local journal. Wire identities are batch-derived UUIDs, not raw
+> caller labels. Retry the saved file; a new build does not deduplicate a
+> business event. The original cross-batch rejection below is superseded.
+
 Same worktree and rules as `docs/agent/GOAL1-BRIEF.md`, branch `feat/agent-connector`. Read `docs/agent/GOAL1-REPORT.md` and `src-tauri/src/agent.rs` first — extend that MCP server. Never edit files listed in `docs/tally/compatibility/compatibility-surface.json`. Never send `<TALLYREQUEST>Import` to any endpoint in this goal; the accountant imports the file manually in Tally (Gateway → Import). Commit as you go; do not push.
 
 Useful prior art: `git show a0fcf05` (a reverted "fail-closed payment receipt import planner" — reuse its ideas/types where sound), `bridge_tally_protocol::parse_import_outcome` and `parse_ledger_write_readback_with_evidence` in `src-tauri/crates/bridge-tally-protocol/src/lib.rs`, the write-safety notes in `docs/tally/TALLY_PROTOCOL_REFERENCE.md` (duplicate creates succeed; REMOTEID upserts on re-import; `ERRORS=0` with `EXCEPTIONS=1` is a failure; masters must pre-exist; names match by exact codepoint; `ACTION="Create"` on an existing master silently ALTERs), and `src-tauri/src/db/tally_write_store.rs` (job state machine — reuse the state names, do not wire its DB).

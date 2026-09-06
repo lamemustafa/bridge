@@ -38,26 +38,34 @@ fn persist_build_with_stage(
     let path = imports.join(format!("{}.xml", line.batch_id));
     let transaction = imports.join(BUILD_TRANSACTION);
     fs::create_dir(&transaction).map_err(|_| "import_publication_recovery_required".to_string())?;
-    set_private_dir(&transaction)?;
-    write_private(
-        &transaction.join("update.json"),
-        &serde_json::to_vec_pretty(line)
-            .map_err(|_| "import_ledger_serialization_failed".to_string())?,
-    )?;
-    // Every partial write and process interruption now leaves an admission
-    // marker. Expose the importable name only after the staged XML is synced.
-    let staged_xml = transaction.join("batch.xml");
-    stage_xml(&staged_xml, xml)?;
-    fs::rename(&staged_xml, &path).map_err(|_| "import_file_write_failed".to_string())?;
+    let publication = (|| {
+        set_private_dir(&transaction)?;
+        write_private(
+            &transaction.join("update.json"),
+            &serde_json::to_vec_pretty(line)
+                .map_err(|_| "import_ledger_serialization_failed".to_string())?,
+        )?;
+        // Every partial write and process interruption now leaves an admission
+        // marker. Expose the importable name only after the staged XML is synced.
+        let staged_xml = transaction.join("batch.xml");
+        stage_xml(&staged_xml, xml)?;
+        fs::rename(&staged_xml, &path).map_err(|_| "import_file_write_failed".to_string())
+    })();
+    if let Err(error) = publication {
+        // Once our marker exists, the caller must return this batch's recovery
+        // ID even if no complete XML or journal record could be published.
+        return Ok(Some(error));
+    }
     match append_status() {
         Err(error) if error == "import_ledger_rollback_failed" => Ok(Some(error)),
         Err(error) => {
             if fs::remove_file(&path).is_err() {
                 return Ok(Some("import_publication_recovery_required".into()));
             }
-            fs::remove_dir_all(&transaction)
-                .map_err(|_| "import_publication_recovery_required".to_string())?;
-            Err(error)
+            match fs::remove_dir_all(&transaction) {
+                Ok(()) => Err(error),
+                Err(_) => Ok(Some("import_publication_recovery_required".into())),
+            }
         }
         Ok(()) => match fs::remove_dir_all(&transaction) {
             Ok(()) => Ok(None),

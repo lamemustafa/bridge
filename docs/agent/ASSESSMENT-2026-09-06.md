@@ -322,7 +322,15 @@ shared 1–16 ASCII-digit rule at discovery, verified identity and scoped tools;
 malformed values release no company report. Existing source-parser name admission
 remains in place.
 
-Local candidate verification: **997 Rust workspace tests**, **231 agent tests
+Independent-build regression reproduces the obsolete cross-batch label refusal,
+then verifies retained legacy records plus two successful new batches using the
+same labels. Within-batch duplicates remain refused before dispatch. Publication
+failure regression uses the recorded namespace XML commitment, partial staging
+and a real rename obstruction: the recovery marker and batch ID survive, including
+the smallest framing budget. The partial response does not promise a complete XML
+file or import-ledger row.
+
+Local candidate verification: **999 Rust workspace tests**, **233 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -353,8 +361,10 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.63` after catalogue, verification-window and
-Silver 7.1 profile observations. Its preflight observed the existing Journal;
+additional Journal file for `12.63` using the same caller label in the same intact
+local journal after catalogue, verification-window and Silver 7.1 profile
+observations. Its batch ID and XML hash differ from the earlier file, whose
+bytes remain unchanged; both files are retained. Its preflight observed the existing Journal;
 readback correctly reported the new file as `not_found`. The file was not imported.
 A separate narration-redaction process preserved the schema's narration property
 while removing accounting narration from the returned Journal. The earlier
@@ -407,8 +417,8 @@ checks. None substitutes for the others. Graphify data and its refresh script
 were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
-The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates six existing paths for shared company-number admission and retained
+The 163-entry sealed surface was audited before each reseal. No sealed path changed in the final batch/recovery correction. The preceding reseal
+updated six existing paths for shared company-number admission and retained
 probe/drift evidence across financial readers. No paths were added or
 removed. Previous seals cover observed release/tier profile version 4, typed
 native-ledger validation, the protocol observation, and the qualified file-identity

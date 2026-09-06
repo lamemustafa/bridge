@@ -164,7 +164,7 @@ fn partial_xml_stage_keeps_a_journal_and_never_exposes_the_importable_name() {
             Err("import_file_write_failed".into())
         },
     );
-    assert_eq!(result, Err("import_file_write_failed".into()));
+    assert_eq!(result, Ok(Some("import_file_write_failed".into())));
     assert!(!imports.join("batch-proof.xml").exists());
     assert_eq!(
         fs::read(imports.join(BUILD_TRANSACTION).join("batch.xml")).unwrap(),
@@ -179,6 +179,112 @@ fn partial_xml_stage_keeps_a_journal_and_never_exposes_the_importable_name() {
         require_settled(&imports),
         Err("import_publication_recovery_required".into())
     );
+}
+
+#[tokio::test]
+async fn staged_build_failures_retain_recorded_batch_identity_through_framing() {
+    let metadata: Value = serde_json::from_str(include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.json"
+    ))
+    .unwrap();
+    // The safe build fields from the recorded namespace qualification. The
+    // renderer commitment below must reproduce the actual imported file.
+    let batch: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":metadata["batch_id"], "identity_scheme":"batch_v1",
+        "company_guid":"61c6de69-1748-461c-ad3f-162cb949df9f",
+        "company":{"name":"WR2 Unicode Lab", "guid":"61c6de69-1748-461c-ad3f-162cb949df9f",
+            "company_number":"100004", "books_from":"20260401"},
+        "txn_ids":[metadata["caller_id"]], "date_from":"20260907", "date_to":"20260907",
+        "sha256":metadata["import_file_sha256"], "built_at":"2026-09-06T21:40:26.641Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water", "value":8, "master_value":219},
+        "vouchers":[{"bridge_txn_id":metadata["caller_id"], "date":"20260907",
+            "voucher_type":"Journal", "narration":"Bridge MCP batch namespace qualification",
+            "reference":null, "voucher_number":null,
+            "entries":[{"ledger":"Bridge Nested Debtor WR4", "amount":"12.61", "side":"Dr"},
+                {"ledger":"Cash", "amount":"12.61", "side":"Cr"}]}]
+    })).unwrap();
+    let xml = render_import_xml("WR2 Unicode Lab", &batch.vouchers, &batch.batch_id);
+    assert_eq!(sha256_hex(xml.as_bytes()), batch.sha256);
+    for stage_failure in [true, false] {
+        let directory = tempfile::tempdir().unwrap();
+        let imports = directory.path().join("imports");
+        fs::create_dir(&imports).unwrap();
+        let target = imports.join(format!("{}.xml", batch.batch_id));
+        if !stage_failure {
+            // A destination directory makes the actual rename fail on both
+            // supported platforms, while leaving the staged bytes intact.
+            fs::create_dir(&target).unwrap();
+        }
+        let result = persist_build_with_stage(
+            &imports,
+            &batch,
+            xml.as_bytes(),
+            || panic!("publication failure must precede ledger append"),
+            |path, bytes| {
+                write_private(path, if stage_failure { &bytes[..5] } else { bytes })?;
+                if stage_failure {
+                    Err("import_file_write_failed".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(result, Ok(Some("import_file_write_failed".into())));
+        let retained: ImportLedgerLine = serde_json::from_slice(
+            &fs::read(imports.join(BUILD_TRANSACTION).join("update.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(retained.batch_id, batch.batch_id);
+        assert_eq!(retained.sha256, batch.sha256);
+        assert_eq!(
+            fs::read(imports.join(BUILD_TRANSACTION).join("batch.xml")).unwrap(),
+            if stage_failure {
+                &xml.as_bytes()[..5]
+            } else {
+                xml.as_bytes()
+            }
+        );
+        assert!(!target.is_file());
+        assert_eq!(
+            require_settled(&imports),
+            Err("import_publication_recovery_required".into())
+        );
+        let server = Server::new(crate::agent::Settings {
+            endpoint: bridge_tally_transport::TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: 9,
+            },
+            data_dir: directory.path().into(),
+            max_rows: 10,
+            max_bytes: 256,
+            redaction: crate::agent::Redaction::None,
+            import_enabled: true,
+        });
+        assert_eq!(
+            server.lock_import_admission().err(),
+            Some("import_publication_recovery_required".into())
+        );
+        let code = result.unwrap().unwrap();
+        let mut wire = Vec::new();
+        crate::agent::agent_protocol::finish_response(
+            &server,
+            &mut wire,
+            json!(1),
+            Ok(
+                json!({"isError":true,"content":[],"structuredContent":{"result":{
+                "batch_id":retained.batch_id,"error":{"code":code}}}}),
+            ),
+            None,
+            Some(retained.batch_id.clone()),
+            true,
+        )
+        .await
+        .unwrap();
+        let framed: Value = serde_json::from_slice(&wire).unwrap();
+        assert_eq!(framed["error"]["message"], code);
+        assert_eq!(framed["error"]["data"]["batch_id"], retained.batch_id);
+        assert!(wire.len() <= 256);
+    }
 }
 
 #[test]

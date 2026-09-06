@@ -146,7 +146,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
                         json!({"type":"object", "additionalProperties":false, "required":["company_guid","ledgers"], "properties":{"company_guid":{"type":"string"},"ledgers":{"type":"array","minItems":1,"maxItems":agent_import::MAX_MASTER_NAMES,"items":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"}}}}),
                     ),
                     "build_import_xml" => (
-                        "Validate a Journal batch and read its current verification window before writing a local import file. Later changes may exceed read limits. Other voucher types are unqualified. This never dispatches import XML to Tally.",
+                        "Validate a Journal batch and read its current verification window before writing a local import file. Every build creates a new batch identity, even for reused transaction labels; retry the saved file instead of rebuilding the same business event. Later changes may exceed read limits. Other voucher types are unqualified. This never dispatches import XML to Tally.",
                         agent_import::voucher_input_schema(),
                     ),
                     "verify_import" => (

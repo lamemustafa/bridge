@@ -1,5 +1,91 @@
 use super::*;
 
+#[tokio::test]
+async fn independent_builds_reuse_labels_without_replacing_retained_batches() {
+    let plans = qualified_import_cycle_plans()[..32].to_vec();
+    let simulator = SequenceSimulator::spawn([plans.clone(), plans].concat()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(crate::agent::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().into(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+    });
+    let legacy: ImportLedgerLine = serde_json::from_value(legacy_record()).unwrap();
+    server.append_import_ledger(&legacy).unwrap();
+    let original_journal = fs::read(directory.path().join("agent-import-ledger.jsonl")).unwrap();
+    let input = serde_json::to_value(captured_catalogue_payload()).unwrap();
+    let mut built = Vec::new();
+    for _ in 0..2 {
+        let response = server
+            .call_tool_response("build_import_xml", input.clone())
+            .await;
+        assert_eq!(response.value["isError"], false, "{}", response.value);
+        let result = &response.value["structuredContent"]["result"];
+        let batch_id = result["batch_id"].as_str().unwrap();
+        let snapshot = server.latest_import_snapshot(batch_id).unwrap().unwrap();
+        let xml = fs::read(result["path"].as_str().unwrap()).unwrap();
+        assert_eq!(sha256_hex(&xml), result["sha256"]);
+        assert_eq!(snapshot.batch.txn_ids, ["txn-001", "txn-002"]);
+        assert_eq!(
+            snapshot.batch.identity_scheme,
+            Some(ImportIdentityScheme::BatchV1)
+        );
+        built.push((snapshot.batch, xml));
+    }
+    assert_ne!(built[0].0.batch_id, built[1].0.batch_id);
+    assert_ne!(built[0].1, built[1].1);
+    for voucher in &built[0].0.vouchers {
+        assert_ne!(
+            built[0].0.attribution_tag(voucher),
+            built[1].0.attribution_tag(voucher)
+        );
+    }
+    for (line, xml) in &built {
+        assert_eq!(
+            fs::read(
+                directory
+                    .path()
+                    .join("imports")
+                    .join(format!("{}.xml", line.batch_id))
+            )
+            .unwrap(),
+            *xml
+        );
+    }
+    let journal = fs::read(directory.path().join("agent-import-ledger.jsonl")).unwrap();
+    assert!(journal.starts_with(&original_journal));
+    assert_eq!(server.import_ledger().unwrap().len(), 3);
+    assert_eq!(
+        server
+            .latest_import_snapshot(&legacy.batch_id)
+            .unwrap()
+            .unwrap()
+            .batch
+            .attribution_tag(&legacy.vouchers[0]),
+        "txn-001"
+    );
+    let mut duplicate = captured_catalogue_payload();
+    duplicate.vouchers[1].bridge_txn_id = duplicate.vouchers[0].bridge_txn_id.clone();
+    let response = server
+        .call_tool_response("build_import_xml", serde_json::to_value(duplicate).unwrap())
+        .await;
+    assert_eq!(
+        response.value["structuredContent"]["result"]["error"]["code"],
+        "bridge_txn_id_invalid_or_duplicate"
+    );
+    assert_eq!(
+        fs::read(directory.path().join("agent-import-ledger.jsonl")).unwrap(),
+        journal
+    );
+    assert_eq!(simulator.finish().unwrap().len(), 64);
+}
+
 fn legacy_record() -> Value {
     json!({
         "batch_id":"batch-render", "company_guid":GUID, "company":null,

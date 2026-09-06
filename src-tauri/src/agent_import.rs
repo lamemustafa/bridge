@@ -234,7 +234,7 @@ impl Server {
         let schema = voucher_input_schema();
         Ok(ToolOutcome {
             payload: json!({"result": {"schema": schema, "rules": [
-                "bridge_txn_id is client-supplied, unique, 1-64 ASCII characters from [A-Za-z0-9_-]",
+                "bridge_txn_id is client-supplied, unique within this batch, 1-64 ASCII characters from [A-Za-z0-9_-]",
                 "new files accept only Journal, the voucher type with recorded live import/readback evidence",
                 "each voucher has at least two entries and exact debit total equals credit total",
                 "amounts are positive decimal strings with exactly two fractional digits",
@@ -362,8 +362,9 @@ impl Server {
             }
             validate_dates(&payload, company.books_from.as_deref())?;
             let _admission_lock = self.lock_import_admission()?;
-            let existing = self.import_ledger_while_admitted()?;
-            reject_known_transactions(&payload, &existing)?;
+            // Admit the journal before publication; labels in older batches do not
+            // collide with this build's independently generated wire identities.
+            self.import_ledger_while_admitted()?;
             let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
             accumulated = combine_evidence(accumulated.clone(), mark_evidence.clone());
             let (_, repeated_catalogue_evidence) =
@@ -433,7 +434,7 @@ impl Server {
             })? {
                 return Ok(ToolOutcome {
                     payload: json!({"result":{"batch_id":batch_id,"error":{"code":error,
-                        "message":"The local batch is retained; reconcile its import journal before continuing."}}}),
+                        "message":"Local batch publication is incomplete; reconcile its recovery journal before continuing."}}}),
                     evidence: Evidence {
                         state: "partial",
                         reason_code: Some(error),
@@ -1014,25 +1015,6 @@ fn master_key(value: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn reject_known_transactions(
-    payload: &ImportPayload,
-    lines: &[ImportLedgerLine],
-) -> Result<(), String> {
-    let known = lines
-        .iter()
-        .flat_map(|line| &line.txn_ids)
-        .collect::<BTreeSet<_>>();
-    if payload
-        .vouchers
-        .iter()
-        .any(|voucher| known.contains(&voucher.bridge_txn_id))
-    {
-        Err("bridge_txn_id_already_built".to_string())
-    } else {
-        Ok(())
-    }
 }
 
 fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) -> String {

@@ -117,11 +117,11 @@ live import/readback evidence. Historical batch records remain readable. The res
 type, host, licence mode, or manually imported file, so the feature remains opt-in.
 
 1. Call `voucher_schema` and produce a payload matching its schema. Transaction
-   IDs are client-supplied, unique, and retained in the local import ledger.
+   IDs are client-supplied, unique within the batch, and retained in the local import ledger.
 2. Call `validate_masters` with every ledger name. Correct every `near_miss`
    with the exact live spelling; Bridge never creates masters.
 3. Call `build_import_xml` with the payload. It checks exact decimal balance,
-   company date extent, live masters, and previously built transaction IDs,
+   company date extent, live masters, and local journal integrity,
    repeats the full catalogue to reject intervening changes, then writes `<data_dir>/imports/<batch_id>.xml` and records an append-only
    `agent-import-ledger.jsonl` line. `voucher_number` is optional: when absent,
    Tally applies the voucher type's own numbering configuration; when supplied,
@@ -274,6 +274,11 @@ batch journal creates a new identity and does not deduplicate the business event
 Historical records without an identity scheme retain their original raw-label
 interpretation. Unknown schemes are refused. Narration markers support readback
 attribution; they are not authenticated provenance.
+
+If file publication fails after its recovery marker is created, the partial
+response retains `result.batch_id`. This does not mean a complete XML file or
+import-ledger row exists. Preserve the recovery journal and any staged bytes;
+reconcile them before continuing the blocked import workflow.
 
 If a build persists a file but its response exceeds the framing budget or its
 preparation receipt fails, the recovery JSON-RPC error contains
