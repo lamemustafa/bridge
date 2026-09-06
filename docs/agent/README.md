@@ -142,8 +142,12 @@ for XML; empty for the status GET), and response commitments hash encoded respon
 bodies. Multiple sources combine their commitments in read order. `evidence.bytes`
 counts committed response bodies, including both accepted bodies of a paired read;
 it excludes auxiliary health and identity guards and is not total network traffic.
-Status commits its status and company-discovery responses. Local-only tools and
-refusals carry local evidence rather than a Tally wire commitment.
+Status commits its status and company-discovery responses. Read failures retain
+source observations already returned to the connector, including when parsing or
+window validation fails. Runtime-internal requests that fail without returning
+source evidence are not fabricated; zero retained bytes does not establish that
+no HTTP request was attempted. Local-only tools and refusals without retained
+source observations carry local evidence.
 
 `outstandings` returns the runtime's paired native result. A complete read has
 billed totals explicitly scoped to open bills, four overdue-age buckets, an
@@ -221,9 +225,13 @@ returns its recovery batch ID before termination. Reads withheld by the result
 byte cap retain partial source commitments in the in-process evidence store.
 Voucher selectors are applied after source-emptiness corroboration; a nonempty
 source with no matching ledger can return a complete empty selection. Amounts
-must parse as exact decimals before ordinary voucher rows are released. Movement
+must parse as exact decimals, polarity flags must be `Yes` or `No`, and dates
+must be valid calendar dates before ordinary voucher rows are released. Ledger
+selectors require matching catalogues before and after the voucher read, unique
+names, and catalogue membership for every observed entry. Movement
 metadata counts all source vouchers, including non-posting rows excluded from
-balances.
+balances. Egress-log reads set `truncated` when either the requested row count
+or the bounded tail scan omits older records.
 
 Verification appends a compact status record bound to the batch ID and original
 file hash, rather than duplicating vouchers and narration. The reader accepts

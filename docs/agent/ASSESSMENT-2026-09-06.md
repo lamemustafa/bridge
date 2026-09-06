@@ -59,14 +59,18 @@ CI. A ZIP file with a manifest-shaped object is insufficient evidence.
 
 ### Final review corrections
 
-Voucher amounts must parse before either ordinary or accounting reads release
-them. Empty-window corroboration applies to the unfiltered source; a selector
+Voucher amounts, polarity flags, and calendar dates must parse before either
+ordinary or accounting reads release them. Ledger selectors bracket voucher reads
+with matching catalogues and check observed entry membership, refusing ambiguous
+or changing names. Empty-window corroboration applies to the unfiltered source; a selector
 with no matches does not erase evidence that source rows were observed. Movement
 metadata preserves cancelled and optional source-row counts while excluding their
 entries from balances. Response-cap refusals retain partial source commitments
 in the in-process evidence store. Import verification is independent of the MCP
 output-row limit, and repeated verification appends compact hash-bound status
-records instead of duplicating the batch payload.
+records instead of duplicating the batch payload. Typed failures retain completed
+source observations through parsing, window validation, and downstream read errors.
+The egress tail reports truncation for both row and scan-byte omissions.
 
 ### Dated correction: period opening
 
@@ -141,7 +145,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **893 Rust workspace tests**, **153 agent tests
+Local candidate verification: **900 Rust workspace tests**, **160 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -150,8 +154,8 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed seventeen live checks with party masking:
-sixteen complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed eighteen live checks with party masking:
+seventeen complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. Status, master
@@ -164,9 +168,12 @@ The voucher-type filter and a nonmatching ledger selection both completed.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. No additional Tally posting
-was performed. The first process started before the recording proxy was ready;
-its failed observations were retained, then the calls were repeated after an
-explicit readiness check. A separate process check confirmed port zero fails
+was performed. The expected read refusal retained its actual completed source
+commitments and byte count, retrievable through `read_evidence`; omitted egress
+rows set `truncated`. The recording proxy passed an explicit readiness check
+before these calls. An earlier candidate run had a proxy startup failure; those
+failed observations and its successful repeat remain retained separately.
+A separate process check confirmed port zero fails
 at startup before creating the data directory.
 That same binary passed eight checks using official MCP
 JavaScript SDK 1.30.0, negotiating 2025-11-25 down to 2025-06-18. Official MCPB
@@ -174,9 +181,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `b009265fcc8a7211a10b6e678895263176fce874a1cd484c66fda69fc2ecfe81`.
-- MCPB archive SHA-256: `3ee4ae213022cfeb7ae315566a78c5097f579349de4d0d7e9706b79e4d339927`.
-- Source fingerprint (305 build-input files, unchanged through the settled-source rebuild): `2d96e972a53efcae3ee7b9841cc2d22740412c1dc95d7863f6da502b165a969d`.
+- Release executable SHA-256: `8fc1e9530e9b5a14de38414134d384d530aaa76c1247b93a0f2ad8ba584489e5`.
+- MCPB archive SHA-256: `d7254b54578752bb778a0c0602030e1ddc3abf87e5743c25aeb411bff81f195e`.
+- Source fingerprint (307 build-input files, unchanged through the settled-source rebuild): `bafdc83f8f38ad450c8785c5e7e043c5f8ec67ef1f75b219fd1f62ccec22fb88`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
