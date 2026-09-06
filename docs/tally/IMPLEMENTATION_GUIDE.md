@@ -537,8 +537,17 @@ failure:
 Under automatic numbering a client-supplied key is thrown away while the create still reports
 `CREATED=1, ERRORS=0`. Any dedupe built on it is silently ineffective.
 
-> **Rule: any voucher type Bridge writes to should use Manual numbering with
-> `PREVENTDUPLICATES=Yes`.** It converts a duplicated client voucher into a clean rejection.
+> **Rule: flows relying on voucher numbers for identity or duplicate rejection
+> require Manual numbering with `PREVENTDUPLICATES=Yes`.** The failed-`Alter`
+> result does not describe the distinct `Create` + client-`REMOTEID` path below.
+
+**2026-09-07 clarification:** the licensed Journal file workflow was measured
+with no `VOUCHERNUMBER`: exact-file repetition altered the same observed voucher
+instead of duplicating it. [Protocol reference §9.8](TALLY_PROTOCOL_REFERENCE.md#98-voucher-numbering-method-changes-everything--use-manual)
+records the input hash, counters, readback, and qualification limits. Preserve
+`ACTION="Create"` and the client `REMOTEID`; an optional number is a requested
+field to verify on readback, not this workflow's identity or retry key. This
+exception does not qualify an `Alter` path or automatic import dispatch.
 
 Creating such a type over XML works — `<VOUCHERTYPE ACTION="Create">` with
 `<NUMBERINGMETHOD>Manual</NUMBERINGMETHOD>` and `<PREVENTDUPLICATES>Yes</PREVENTDUPLICATES>`.

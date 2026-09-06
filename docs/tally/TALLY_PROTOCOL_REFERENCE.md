@@ -653,8 +653,25 @@ Two consequences, both significant:
 2. **Manual numbering converts a dangerous failure into a safe one.** The same failed Alter
    duplicates a client's voucher under automatic numbering and is rejected under manual.
 
-> **RULE: any voucher type Bridge writes to should use Manual numbering with
-> `PREVENTDUPLICATES=Yes`.** This is a safety property, not a preference.
+> **RULE: a flow that relies on voucher numbers for identity or duplicate
+> rejection requires Manual numbering with `PREVENTDUPLICATES=Yes`.** Do not
+> apply the failed-`Alter` observation to a different request identity mechanism.
+
+**Scope clarification — verified 2026-09-06, recorded 2026-09-07.** The licensed
+Journal file workflow uses `ACTION="Create"` with a stable client `REMOTEID`, as
+described in [Implementation Guide §3.3a](IMPLEMENTATION_GUIDE.md#33a-remoteid-is-the-idempotency-key--supersedes-34s-conclusion).
+The measured file omitted `VOUCHERNUMBER`. Its first import returned
+`CREATED=1, ALTERED=0`; importing the exact file again returned
+`CREATED=0, ALTERED=1`. Readback retained one voucher with the same GUID, numeric
+master ID, and assigned voucher number. The file SHA-256 was
+`7c02fd1b598d70157fa676e5a41ae16184034d39169793d8554e31713cd0f127`.
+
+This qualifies that exact-file repeat on the observed licensed Journal path. It
+does not establish voucher-number-based identity, the configured numbering
+method, other request shapes or voucher types, restart behavior, or universal
+REMOTEID semantics. The connector neither dispatches imports nor retries them.
+A mandatory manual-numbering preflight would require a separately observed
+voucher-type read contract; it cannot be inferred from the failed-`Alter` case.
 
 Creating such a type over XML works: `<VOUCHERTYPE ACTION="Create">` with
 `<NUMBERINGMETHOD>Manual</NUMBERINGMETHOD>` and `<PREVENTDUPLICATES>Yes</PREVENTDUPLICATES>`
