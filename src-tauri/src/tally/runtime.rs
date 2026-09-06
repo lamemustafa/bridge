@@ -97,7 +97,9 @@ impl RuntimeReadEvidence {
 
     pub(crate) fn paired(request: &str, response_sha256: String, encoded_bytes: usize) -> Self {
         Self {
-            request_sha256: sha256_hex(request.as_bytes()),
+            request_sha256: sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+                request,
+            )),
             response_sha256,
             // A stable paired read receives this response twice.
             bytes: encoded_bytes.saturating_mul(2),
@@ -105,10 +107,10 @@ impl RuntimeReadEvidence {
     }
 
     pub(crate) fn combine(self, other: Self) -> Self {
-        if self.bytes == 0 {
+        if self.request_sha256.is_empty() && self.response_sha256.is_empty() {
             return other;
         }
-        if other.bytes == 0 {
+        if other.request_sha256.is_empty() && other.response_sha256.is_empty() {
             return self;
         }
         Self {
@@ -560,6 +562,53 @@ fn partial_result(reason: impl Into<OutstandingsPartialReason>) -> OutstandingsL
     OutstandingsLoadResult::Partial {
         reason: reason.into(),
         synced_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+    }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+enum OpeningBoundaryObservationError {
+    #[error("opening_boundary_profile_not_observed")]
+    Unobserved,
+    #[error("opening_boundary_profile_changed")]
+    Changed,
+}
+
+fn observed_opening_boundary(
+    profile: &bridge_tally_core::CapabilityProfile,
+) -> Result<DateBoundaryProfile, OpeningBoundaryObservationError> {
+    use bridge_tally_core::{CapabilityFeatureId, CapabilityState, EvidenceConfidence};
+    let product = profile
+        .product
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    let observed = profile
+        .features
+        .get(&CapabilityFeatureId::ProductAndMode)
+        .is_some_and(|feature| {
+            feature.state == CapabilityState::Supported
+                && feature.confidence == EvidenceConfidence::Observed
+        });
+    if !observed
+        || !matches!(
+            product.as_str(),
+            "tallyprime" | "tallyprimeeditlog" | "tallyerp9"
+        )
+    {
+        return Err(OpeningBoundaryObservationError::Unobserved);
+    }
+    match profile.mode.as_deref() {
+        Some(mode) if mode.eq_ignore_ascii_case("licensed") => {
+            Ok(DateBoundaryProfile::ModeAgnostic)
+        }
+        Some(mode)
+            if mode.eq_ignore_ascii_case("education")
+                || mode.eq_ignore_ascii_case("educational") =>
+        {
+            Ok(DateBoundaryProfile::EducationRestricted)
+        }
+        _ => Err(OpeningBoundaryObservationError::Unobserved),
     }
 }
 
@@ -1396,14 +1445,32 @@ impl TallyRuntime {
         &self,
         config: TallyConfig,
     ) -> anyhow::Result<(String, i64, TallyProbeResult)> {
+        self.probe_with_wire_observation(config)
+            .await
+            .map(|(review, at, result, _)| (review, at, result))
+    }
+
+    pub(crate) async fn probe_with_wire_evidence(
+        &self,
+        config: TallyConfig,
+    ) -> anyhow::Result<(TallyProbeResult, RuntimeReadEvidence)> {
+        self.probe_with_wire_observation(config)
+            .await
+            .map(|(_, _, result, evidence)| (result, evidence))
+    }
+
+    async fn probe_with_wire_observation(
+        &self,
+        config: TallyConfig,
+    ) -> anyhow::Result<(String, i64, TallyProbeResult, RuntimeReadEvidence)> {
         let _lease = self.begin_ordinary_read(&config)?;
         let session = self.session(config.clone())?;
-        let result = self
+        let (result, evidence) = self
             .execute(
                 config,
                 ReadOperation::Capability,
                 ReadRetryPolicy::SINGLE_ATTEMPT,
-                |client| async move { client.probe().await },
+                |client| async move { client.probe_with_wire_evidence().await },
             )
             .await?;
         let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
@@ -1422,7 +1489,7 @@ impl TallyRuntime {
             result: result.clone(),
             reserved: false,
         });
-        Ok((review_id, observed_at_unix_ms, result))
+        Ok((review_id, observed_at_unix_ms, result, evidence))
     }
 
     /// Establishes one setup-review candidate only after the direct listing is
@@ -1623,7 +1690,10 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         opening_date: Option<TallyDate>,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
-        let boundary_profile = self.master_ledger_export_boundary_profile(&config)?;
+        let default_boundary_profile = opening_date
+            .is_none()
+            .then(|| self.master_ledger_export_boundary_profile(&config))
+            .transpose()?;
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -1634,6 +1704,17 @@ impl TallyRuntime {
                 let identity = identity.clone();
                 let opening_date = opening_date.clone();
                 async move {
+                    // A prior status call is not admission: the gateway's current
+                    // licence mode can differ from the cached observation.
+                    let (boundary_profile, mode_evidence) = if opening_date.is_some() {
+                        let (probe, evidence) = client.probe_with_wire_evidence().await?;
+                        (observed_opening_boundary(&probe.profile)?, evidence)
+                    } else {
+                        (
+                            default_boundary_profile.expect("unscoped boundary"),
+                            RuntimeReadEvidence::empty(),
+                        )
+                    };
                     bracket_verified_company_identity(&client, &identity).await?;
                     let opening_extent = client
                         .fetch_company_book_extent(identity.display_name(), identity.company_guid())
@@ -1675,10 +1756,20 @@ impl TallyRuntime {
                         ));
                     }
                     bracket_verified_company_identity(&client, &identity).await?;
-                    Ok((
-                        ledgers,
-                        RuntimeReadEvidence::paired(&request, encoded_sha256, encoded_bytes),
-                    ))
+                    let mut evidence = mode_evidence.combine(RuntimeReadEvidence::paired(
+                        &request,
+                        encoded_sha256,
+                        encoded_bytes,
+                    ));
+                    if opening_date.is_some() {
+                        let (probe, closing_mode_evidence) =
+                            client.probe_with_wire_evidence().await?;
+                        if observed_opening_boundary(&probe.profile)? != boundary_profile {
+                            return Err(OpeningBoundaryObservationError::Changed.into());
+                        }
+                        evidence = evidence.combine(closing_mode_evidence);
+                    }
+                    Ok((ledgers, evidence))
                 }
             },
         )
@@ -1741,11 +1832,12 @@ impl TallyRuntime {
             (1, false) => anyhow::bail!("company_base_currency_not_inr"),
             _ => anyhow::bail!("company_base_currency_undetermined"),
         };
+        let currency_evidence = currency_read.evidence.clone();
         let assertion = currency_read.bind_party_ledger_master_assertion(assertion);
         let source = self
             .fetch_party_ledger_master_source(config, identity, assertion)
             .await?;
-        let evidence = Self::party_ledger_master_source_evidence(&source);
+        let evidence = Self::party_ledger_master_source_evidence(&source, currency_evidence);
         let records = source
             .rows
             .into_iter()
@@ -1762,23 +1854,14 @@ impl TallyRuntime {
         Ok((records, evidence))
     }
 
-    /// The party-ledger source owns three paired native responses (master,
-    /// balance, and group). Its source model deliberately retains their raw
-    /// response commitments and byte counts but not the private request bodies;
-    /// bind the resulting evidence to the verified company and established
-    /// period rather than issuing a second, unrelated ordinary-ledger read.
+    /// Retain the three actual request body commitments alongside their paired
+    /// source responses, and include the currency observation that admitted them.
     fn party_ledger_master_source_evidence(
         source: &PartyLedgerMasterSource,
+        currency_evidence: RuntimeReadEvidence,
     ) -> RuntimeReadEvidence {
-        let request_scope = format!(
-            "party-ledger-master-source:{}:{}:{}:{}",
-            source.company,
-            source.company_guid,
-            source.from.as_str(),
-            source.to.as_str(),
-        );
-        RuntimeReadEvidence {
-            request_sha256: sha256_hex(request_scope.as_bytes()),
+        currency_evidence.combine(RuntimeReadEvidence {
+            request_sha256: source.request_sha256.clone(),
             response_sha256: sha256_hex(
                 format!(
                     "{}:{}:{}",
@@ -1793,7 +1876,7 @@ impl TallyRuntime {
                 .saturating_add(source.balance_response_bytes)
                 .saturating_add(source.group_response_bytes)
                 .saturating_mul(2),
-        }
+        })
     }
 
     /// Fetches the limited, documented standard collection response used for
@@ -1895,11 +1978,11 @@ impl TallyRuntime {
     /// identity-bracketed runtime used by the product read paths.  The caller
     /// owns parsing the documented response shape; it cannot bypass the
     /// loopback policy, queue, or complete company-tuple witness.
-    pub async fn fetch_agent_read(
+    pub(crate) async fn fetch_agent_read(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
-        request: String,
+        request: super::agent_read_request::AgentReadRequest,
     ) -> anyhow::Result<AgentRead> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
@@ -1916,7 +1999,9 @@ impl TallyRuntime {
                         body,
                         encoded_bytes,
                         encoded_sha256,
-                    } = client.fetch_native_report_paired(request).await?
+                    } = client
+                        .fetch_native_report_paired(request.into_xml())
+                        .await?
                     else {
                         anyhow::bail!("agent custom read drifted between paired responses");
                     };
@@ -3053,7 +3138,7 @@ mod tests {
     }
 
     #[test]
-    fn party_ledger_master_evidence_tracks_source_responses_without_plain_ledger_read() {
+    fn party_ledger_master_evidence_includes_currency_probe_and_source_responses() {
         let source = |master_response_sha256: &str| PartyLedgerMasterSource {
             company: "Synthetic Books".to_string(),
             company_guid: "company-guid".to_string(),
@@ -3062,6 +3147,7 @@ mod tests {
             from: TallyDate::parse("20260401").expect("source from"),
             to: TallyDate::parse("20260731").expect("source to"),
             rows: Vec::new(),
+            request_sha256: "0".repeat(64),
             master_response_sha256: master_response_sha256.to_string(),
             balance_response_sha256: "b".repeat(64),
             group_response_sha256: "c".repeat(64),
@@ -3070,12 +3156,54 @@ mod tests {
             group_response_bytes: 17,
             groups: Vec::new(),
         };
-        let baseline = TallyRuntime::party_ledger_master_source_evidence(&source(&"a".repeat(64)));
-        let changed = TallyRuntime::party_ledger_master_source_evidence(&source(&"d".repeat(64)));
+        let currency =
+            RuntimeReadEvidence::paired("<currency/>", sha256_hex(b"currency-response"), 19);
+        let baseline = TallyRuntime::party_ledger_master_source_evidence(
+            &source(&"a".repeat(64)),
+            currency.clone(),
+        );
+        let changed = TallyRuntime::party_ledger_master_source_evidence(
+            &source(&"d".repeat(64)),
+            currency.clone(),
+        );
+        let changed_currency = TallyRuntime::party_ledger_master_source_evidence(
+            &source(&"a".repeat(64)),
+            RuntimeReadEvidence::paired(
+                "<currency/>",
+                sha256_hex(b"changed-currency-response"),
+                23,
+            ),
+        );
+        let source_scope = "0".repeat(64);
+        let source_responses = sha256_hex(
+            format!("{}:{}:{}", "a".repeat(64), "b".repeat(64), "c".repeat(64)).as_bytes(),
+        );
+        assert_eq!(
+            baseline.request_sha256,
+            sha256_hex(format!("{}:{source_scope}", currency.request_sha256).as_bytes())
+        );
+        assert_eq!(
+            baseline.response_sha256,
+            sha256_hex(format!("{}:{source_responses}", currency.response_sha256).as_bytes())
+        );
+        assert_eq!(baseline.request_sha256, changed_currency.request_sha256);
+        assert_ne!(baseline.response_sha256, changed_currency.response_sha256);
+        assert_eq!(changed_currency.bytes, (11 + 13 + 17 + 23) * 2);
 
         assert_eq!(baseline.request_sha256, changed.request_sha256);
         assert_ne!(baseline.response_sha256, changed.response_sha256);
-        assert_eq!(baseline.bytes, (11 + 13 + 17) * 2);
+        assert_eq!(baseline.bytes, (11 + 13 + 17 + 19) * 2);
+    }
+
+    #[test]
+    fn paired_evidence_commits_to_utf16le_request_body_not_utf8_source() {
+        let request = "<ENVELOPE>₹ &amp; Co</ENVELOPE>";
+        let mut encoded = vec![0xff, 0xfe];
+        encoded.extend(request.encode_utf16().flat_map(u16::to_le_bytes));
+        let evidence = RuntimeReadEvidence::paired(request, "r".repeat(64), 7);
+        assert_eq!(evidence.request_sha256, sha256_hex(&encoded));
+        assert_ne!(evidence.request_sha256, sha256_hex(request.as_bytes()));
+        assert_eq!(evidence.bytes, 14);
     }
 
     #[test]

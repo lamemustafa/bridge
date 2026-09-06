@@ -370,25 +370,22 @@ impl Server {
         identity: &VerifiedCompanyIdentity,
         request: String,
     ) -> Result<(String, Evidence), String> {
-        // This is the final in-process boundary: all Tally traffic emitted by
-        // bridge-mcp must be a read. Keeping it here makes an accidental future
-        // call site fail closed before bytes leave the loopback transport.
-        if request
-            .to_ascii_lowercase()
-            .contains("<tallyrequest>import")
-        {
-            return Err("agent_write_dispatch_forbidden".to_string());
-        }
-        let request_sha256 = sha256_hex(request.as_bytes());
+        let admitted = crate::tally::agent_read_request::AgentReadRequest::parse(request.clone())
+            .map_err(|error| error.to_string())?;
+        let request_sha256 = sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+            &request,
+        ));
         let response = self
             .runtime
-            .fetch_agent_read(self.tally_config(), identity, request)
+            .fetch_agent_read(self.tally_config(), identity, admitted)
             .await
             .map_err(|_| "agent_runtime_read_failed".to_string())?;
         let evidence = Evidence {
             request_sha256,
             response_sha256: response.encoded_sha256,
-            bytes: response.encoded_bytes,
+            // Both accepted source bodies from the stable paired read; auxiliary
+            // health and identity guards are outside this source commitment.
+            bytes: response.encoded_bytes.saturating_mul(2),
             state: "complete",
             read_at: None,
             duration_ms: None,
@@ -437,6 +434,11 @@ impl Server {
         // A successfully persisted batch must remain recoverable even when its
         // normal result cannot fit the MCP or JSON-RPC framing budget.
         let recovery_batch_id = payload["result"]["batch_id"].as_str().map(str::to_string);
+        let batch_error_code = recovery_batch_id.as_ref().and_then(|_| {
+            payload["result"]["error"]["code"]
+                .as_str()
+                .map(str::to_string)
+        });
         evidence.read_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true));
         evidence.duration_ms = Some((Utc::now() - started).num_milliseconds().max(0) as u128);
         let response_value = redact_value(
@@ -455,7 +457,10 @@ impl Server {
                 Err(code) => {
                     return ToolResponse {
                         recovery_batch_id,
-                        value: response_too_large(name, &code),
+                        value: response_too_large(
+                            name,
+                            batch_error_code.as_deref().unwrap_or(&code),
+                        ),
                         egress: EgressContext {
                             tool: name.to_string(),
                             args_sha256,
@@ -477,7 +482,7 @@ impl Server {
         ) {
             return ToolResponse {
                 recovery_batch_id,
-                value: response_too_large(name, &code),
+                value: response_too_large(name, batch_error_code.as_deref().unwrap_or(&code)),
                 egress: EgressContext {
                     tool: name.to_string(),
                     args_sha256,
@@ -721,9 +726,14 @@ fn ledger_master_fields(fields: &str) -> Result<bool, String> {
 }
 
 fn response_too_large(name: &str, code: &str) -> Value {
+    let message = if code == "agent_response_too_large" {
+        "Bridge response exceeds the configured byte cap."
+    } else {
+        "Bridge withheld this response; recover the retained batch before continuing."
+    };
     json!({
         "content": [{"type":"text", "text": format!("{name}: read withheld\\n{code}")}],
-        "structuredContent": {"error": {"code": code, "message": "Bridge response exceeds the configured byte cap."}},
+        "structuredContent": {"error": {"code": code, "message": message}},
         "isError": true,
     })
 }
@@ -750,8 +760,9 @@ fn resolve_ledger_name<'a>(
     ledger_names: impl Iterator<Item = &'a str>,
     requested: &str,
 ) -> Result<String, String> {
+    let requested_key = ledger_lookup_key(requested);
     let exact = ledger_names
-        .filter(|name| ledger_lookup_key(name) == ledger_lookup_key(requested))
+        .filter(|name| ledger_lookup_key(name) == requested_key)
         .collect::<Vec<_>>();
     if let Some(name) = exact.iter().find(|name| **name == requested) {
         return Ok((*name).to_string());

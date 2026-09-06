@@ -32,7 +32,7 @@ where
             recovery_error(
                 id.clone(),
                 Some("bridge-00000000-0000-0000-0000-000000000000"),
-                "egress_record_rollback_failed",
+                "import_publication_recovery_required",
             )
             .to_string()
             .len()
@@ -139,16 +139,16 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
             json!({"jsonrpc":"2.0","id":id.clone(),"error":{"code":error_code,"message":code}})
         }
     };
+    if recovery_batch_id.is_some() && response["result"]["isError"] == true {
+        let code = response["result"]["structuredContent"]["result"]["error"]["code"]
+            .as_str()
+            .or_else(|| response["result"]["structuredContent"]["error"]["code"].as_str())
+            .unwrap_or("import_publication_recovery_required");
+        response = recovery_error(id.clone(), recovery_batch_id.as_deref(), code);
+    }
     if is_tool
         && enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes).is_err()
     {
-        response = recovery_error(
-            id.clone(),
-            recovery_batch_id.as_deref(),
-            "agent_response_too_large",
-        );
-    }
-    if recovery_batch_id.is_some() && response["result"]["isError"] == true {
         response = recovery_error(
             id.clone(),
             recovery_batch_id.as_deref(),

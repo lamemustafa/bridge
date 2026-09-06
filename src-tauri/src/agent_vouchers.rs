@@ -9,16 +9,14 @@ impl Server {
         if from > to {
             return Err("invalid_date_range".to_string());
         }
-        let (company, identity, identity_evidence) = self.verified_company(guid).await?;
+        let (company, identity, mut identity_evidence) = self.verified_company(guid).await?;
         let requested_ledger = optional_string(args, "ledger")?;
         let resolved_ledger = if let Some(requested) = requested_ledger {
-            let ledgers = self
-                .runtime
-                .fetch_ledgers(self.tally_config(), &identity)
-                .await
-                .map_err(|_| "ledger_export_invalid".to_string())?;
+            let (ledgers, catalogue_evidence) =
+                self.read_ledger_catalogue(&identity, &company.name).await?;
+            identity_evidence = combine_evidence(identity_evidence, catalogue_evidence);
             Some(resolve_ledger_name(
-                ledgers.iter().map(|ledger| ledger.name.as_str()),
+                ledgers.iter().map(String::as_str),
                 &requested,
             )?)
         } else {

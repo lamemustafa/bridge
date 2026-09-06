@@ -860,22 +860,6 @@ fn ledger_movement_receipt_counts_three_ledgers_from_two_vouchers() {
 }
 
 #[test]
-fn ledger_movement_refuses_snapshot_drift_except_unselected_entries() {
-    assert_eq!(
-        absent_movement_entry_policy("Created Later", None),
-        Err("ledger_snapshot_drifted".to_string())
-    );
-    assert_eq!(
-        absent_movement_entry_policy("Cash", Some("Cash")),
-        Err("ledger_snapshot_drifted".to_string())
-    );
-    assert_eq!(
-        absent_movement_entry_policy("Created Later", Some("Cash")),
-        Ok(())
-    );
-}
-
-#[test]
 fn only_change_feed_responses_may_trim_cursor_rows() {
     for (tool, key) in [
         ("verify_import", "vouchers"),
@@ -1071,7 +1055,7 @@ fn payable_outstandings_views_exclude_mixed_receivable_rows() {
     );
     assert_eq!(
         ageing_buckets_from_open_bills(&payable_bills).expect("payable ageing"),
-        json!({"days_0_30":"0", "days_31_60":"200", "days_61_90":"0", "days_90_plus":"0"})
+        json!({"unaged":"0", "days_0_30":"0", "days_31_60":"200", "days_61_90":"0", "days_90_plus":"0"})
     );
     let ranked = redact_value(
         json!({"parties": ranked_parties_from_exposure(&payable_bills, &[], 10).expect("payable ranking")}),
@@ -1105,7 +1089,7 @@ fn payable_outstandings_views_exclude_mixed_receivable_rows() {
 }
 
 #[test]
-fn future_due_open_bills_remain_in_the_first_ageing_bucket() {
+fn future_due_open_bills_remain_unaged() {
     let bill = OpenBillRow {
         party: "Customer".to_string(),
         reference: "FUTURE".to_string(),
@@ -1117,7 +1101,7 @@ fn future_due_open_bills_remain_in_the_first_ageing_bucket() {
     };
     assert_eq!(
         ageing_buckets_from_open_bills(&[bill]).expect("ageing buckets"),
-        json!({"days_0_30":"25", "days_31_60":"0", "days_61_90":"0", "days_90_plus":"0"})
+        json!({"unaged":"25", "days_0_30":"0", "days_31_60":"0", "days_61_90":"0", "days_90_plus":"0"})
     );
 }
 
@@ -1587,7 +1571,7 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
                 .len();
     assert_eq!(
         response["structuredContent"]["evidence"]["bytes"],
-        expected_bytes
+        expected_bytes * 2
     );
     assert_ne!(
         response["structuredContent"]["evidence"]["bytes"],

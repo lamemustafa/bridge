@@ -3,13 +3,11 @@ use super::*;
 
 impl Server {
     pub(super) async fn status(&self) -> Result<(Value, Evidence), String> {
-        let probe = self
+        let (probe, wire_evidence) = self
             .runtime
-            .probe(self.tally_config())
+            .probe_with_wire_evidence(self.tally_config())
             .await
             .map_err(|_| "status_probe_unavailable".to_string())?;
-        let observed = serde_json::to_value(&probe)
-            .map_err(|_| "status_probe_observation_invalid".to_string())?;
         Ok((
             json!({
                 "product": serde_json::to_value(&probe.connection.product).unwrap_or_else(|_| json!("not_observed")),
@@ -19,15 +17,7 @@ impl Server {
                 "loaded_companies": probe.companies,
                 "refusal_reason": Value::Null,
             }),
-            Evidence {
-                request_sha256: sha256_hex(b"runtime.probe"),
-                response_sha256: sha256_json(&observed),
-                bytes: observed.to_string().len(),
-                state: "complete",
-                read_at: None,
-                duration_ms: None,
-                reason_code: None,
-            },
+            evidence_from_runtime_read(wire_evidence),
         ))
     }
 
@@ -38,9 +28,11 @@ impl Server {
             .await
             .map_err(|_| "company_collection_invalid".to_string())?;
         let evidence = Evidence {
-            request_sha256: sha256_hex(ReadOnlyProfile::CompanyListV2.render().as_bytes()),
+            request_sha256: sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+                &ReadOnlyProfile::CompanyListV2.render(),
+            )),
             response_sha256: company_list.response_sha256,
-            bytes: company_list.response_bytes,
+            bytes: company_list.response_bytes.saturating_mul(2),
             state: "complete",
             read_at: None,
             duration_ms: None,

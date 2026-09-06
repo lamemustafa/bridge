@@ -18,7 +18,7 @@ use super::{
 use crate::reports::party_ledger_master::{
     PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
 };
-use crate::tally::runtime::PartyLedgerMasterCurrencyAssertion;
+use crate::tally::runtime::{PartyLedgerMasterCurrencyAssertion, RuntimeReadEvidence};
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityProfile, CapabilityState,
     EvidenceConfidence, TransportId,
@@ -410,7 +410,25 @@ impl TallyClient {
     }
 
     pub(crate) async fn check_connection_strict(&self) -> anyhow::Result<ConnectionStatus> {
+        self.check_connection_strict_with_wire_evidence()
+            .await
+            .map(|(status, _)| status)
+    }
+
+    async fn check_connection_strict_with_wire_evidence(
+        &self,
+    ) -> anyhow::Result<(ConnectionStatus, RuntimeReadEvidence)> {
         let response = self.http.get_status_decoded().await?;
+        let wire_evidence = RuntimeReadEvidence {
+            // GET /status has an empty request body. This is a body commitment,
+            // matching POST request_body_sha256, not an invented operation label.
+            request_sha256: Sha256::digest([])
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            response_sha256: response.encoded_sha256().to_string(),
+            bytes: response.encoded_bytes(),
+        };
         self.record_observed_body_bytes(response.encoded_bytes());
         self.record_observed_encoding(response.encoding());
         let response_text = response.into_text();
@@ -421,20 +439,44 @@ impl TallyClient {
             TallyProduct::TallyErp9 => "Tally ERP 9 Server is Running",
             TallyProduct::Unknown => "Endpoint responded with an unrecognized status document",
         };
-        Ok(ConnectionStatus {
-            reachable: true,
-            compatible,
-            product,
-            server_text: server_text.to_string(),
-            error: None,
-        })
+        Ok((
+            ConnectionStatus {
+                reachable: true,
+                compatible,
+                product,
+                server_text: server_text.to_string(),
+                error: None,
+            },
+            wire_evidence,
+        ))
     }
 
     pub async fn probe(&self) -> anyhow::Result<TallyProbeResult> {
+        self.probe_with_wire_evidence()
+            .await
+            .map(|(probe, _)| probe)
+    }
+
+    pub(crate) async fn probe_with_wire_evidence(
+        &self,
+    ) -> anyhow::Result<(TallyProbeResult, RuntimeReadEvidence)> {
         // `/status` is useful local diagnostics but is not part of Tally's
         // documented third-party XML contract. Never gate the POST probe or
         // authoritative product metadata on this unauthenticated heuristic.
-        let mut connection = self.check_connection().await?;
+        let (mut connection, mut wire_evidence) =
+            match self.check_connection_strict_with_wire_evidence().await {
+                Ok(observation) => observation,
+                Err(error) => (
+                    ConnectionStatus {
+                        reachable: false,
+                        compatible: false,
+                        server_text: String::new(),
+                        product: TallyProduct::Unknown,
+                        error: Some(safe_connection_failure_code(&error).to_string()),
+                    },
+                    RuntimeReadEvidence::empty(),
+                ),
+            };
         let mut transports = BTreeMap::new();
         let mut features = BTreeMap::new();
         let mut packs = BTreeMap::new();
@@ -442,7 +484,12 @@ impl TallyClient {
 
         let mut gateway_product_mode = GatewayProductModeEvidence::unavailable();
         let xml_evidence = self
-            .company_discovery_evidence(&mut connection, &mut companies, &mut gateway_product_mode)
+            .company_discovery_evidence(
+                &mut connection,
+                &mut companies,
+                &mut gateway_product_mode,
+                &mut wire_evidence,
+            )
             .await?;
         transports.insert(TransportId::XmlHttp, xml_evidence.clone());
         transports.insert(
@@ -596,24 +643,27 @@ impl TallyClient {
             );
         }
 
-        Ok(TallyProbeResult {
-            connection,
-            companies,
-            profile: CapabilityProfile {
-                // Version 3 adds observed gateway product/mode evidence. It
-                // intentionally invalidates persisted version-2 snapshots,
-                // whose literal Unknown/None values had a weaker meaning.
-                profile_version: 3,
-                product: gateway_product_mode.product,
-                release: None,
-                mode: gateway_product_mode.mode,
-                transports,
-                features,
-                packs,
+        Ok((
+            TallyProbeResult {
+                connection,
+                companies,
+                profile: CapabilityProfile {
+                    // Version 3 adds observed gateway product/mode evidence. It
+                    // intentionally invalidates persisted version-2 snapshots,
+                    // whose literal Unknown/None values had a weaker meaning.
+                    profile_version: 3,
+                    product: gateway_product_mode.product,
+                    release: None,
+                    mode: gateway_product_mode.mode,
+                    transports,
+                    features,
+                    packs,
+                },
+                selected_read_scope: None,
+                passport_snapshot_id: None,
             },
-            selected_read_scope: None,
-            passport_snapshot_id: None,
-        })
+            wire_evidence,
+        ))
     }
 
     /// Discovers companies through Tally's documented `Company` collection
@@ -632,9 +682,10 @@ impl TallyClient {
         connection: &mut ConnectionStatus,
         companies: &mut Vec<TallyCompany>,
         gateway_product_mode: &mut GatewayProductModeEvidence,
+        wire_evidence: &mut RuntimeReadEvidence,
     ) -> anyhow::Result<CapabilityEvidence> {
         let xml = self
-            .post_xml(ReadOnlyProfile::CompanyListV2.render())
+            .post_probe_xml(ReadOnlyProfile::CompanyListV2.render(), wire_evidence)
             .await?;
         match xml_parser::parse_companies_from_collection(&xml) {
             Ok(discovered) => {
@@ -662,7 +713,7 @@ impl TallyClient {
                 })
             }
             Err(_) => {
-                self.legacy_company_discovery_evidence(connection, companies)
+                self.legacy_company_discovery_evidence(connection, companies, wire_evidence)
                     .await
             }
         }
@@ -678,8 +729,11 @@ impl TallyClient {
         &self,
         connection: &mut ConnectionStatus,
         companies: &mut Vec<TallyCompany>,
+        wire_evidence: &mut RuntimeReadEvidence,
     ) -> anyhow::Result<CapabilityEvidence> {
-        let xml = self.post_xml(tdl_engine::company_list_request()).await?;
+        let xml = self
+            .post_probe_xml(tdl_engine::company_list_request(), wire_evidence)
+            .await?;
         Ok(match xml_parser::parse_companies(&xml) {
             Ok(discovered) => {
                 connection.reachable = true;
@@ -730,6 +784,26 @@ impl TallyClient {
                 },
             },
         })
+    }
+
+    async fn post_probe_xml(
+        &self,
+        xml: String,
+        evidence: &mut RuntimeReadEvidence,
+    ) -> anyhow::Result<String> {
+        let response = self.http.post_xml_decoded(xml).await?;
+        let wire = RuntimeReadEvidence {
+            request_sha256: response
+                .request_body_sha256()
+                .ok_or_else(|| anyhow::anyhow!("Tally POST omitted request wire commitment"))?
+                .to_string(),
+            response_sha256: response.encoded_sha256().to_string(),
+            bytes: response.encoded_bytes(),
+        };
+        self.record_observed_body_bytes(response.encoded_bytes());
+        self.record_observed_encoding(response.encoding());
+        *evidence = evidence.clone().combine(wire);
+        Ok(response.into_text())
     }
 
     pub(super) async fn post_xml(&self, xml: String) -> anyhow::Result<String> {
@@ -938,9 +1012,14 @@ impl TallyClient {
             opening_extent.last_voucher_date().clone(),
         )
         .map_err(|_| anyhow::Error::new(PartyLedgerMasterSourceValidationError::BalancePeriod))?;
-        let master_pair = self
-            .fetch_native_report_paired(render_party_ledger_master_request(company, &master_period))
-            .await?;
+        let requests = [
+            render_party_ledger_master_request(company, &master_period),
+            render_native_ledger_snapshot_request(company, &balance_period),
+            render_native_group_snapshot_request(company),
+        ];
+        let request_sha256 = party_ledger_request_commitment(&requests);
+        let [master_request, balance_request, group_request] = requests;
+        let master_pair = self.fetch_native_report_paired(master_request).await?;
         let NativePairedRead::Stable {
             body: master_body,
             encoded_bytes: master_response_bytes,
@@ -961,12 +1040,7 @@ impl TallyClient {
                 PartyLedgerMasterSourceValidationError::DuplicateMasterIdentity,
             ));
         }
-        let balance_pair = self
-            .fetch_native_report_paired(render_native_ledger_snapshot_request(
-                company,
-                &balance_period,
-            ))
-            .await?;
+        let balance_pair = self.fetch_native_report_paired(balance_request).await?;
         let NativePairedRead::Stable {
             body: balance_body,
             encoded_bytes: balance_response_bytes,
@@ -980,9 +1054,7 @@ impl TallyClient {
         let balances =
             parse_native_ledger_snapshot_for_company(&balance_body, expected_company_guid)
                 .map_err(party_ledger_master_balance_snapshot_error)?;
-        let group_pair = self
-            .fetch_native_report_paired(render_native_group_snapshot_request(company))
-            .await?;
+        let group_pair = self.fetch_native_report_paired(group_request).await?;
         let NativePairedRead::Stable {
             body: group_body,
             encoded_bytes: group_response_bytes,
@@ -1085,6 +1157,7 @@ impl TallyClient {
             // voucher date used by the identity/master read.
             to: balance_period.to().clone(),
             rows,
+            request_sha256,
             master_response_sha256,
             balance_response_sha256,
             group_response_sha256,
@@ -1701,6 +1774,18 @@ fn verify_selected_company_name(
     Ok(())
 }
 
+fn party_ledger_request_commitment(requests: &[String; 3]) -> String {
+    let hashes = requests
+        .iter()
+        .map(|request| {
+            sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
+                request,
+            ))
+        })
+        .collect::<Vec<_>>();
+    sha256_hex(hashes.join(":").as_bytes())
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -1761,6 +1846,42 @@ fn detect_product(text: &str) -> TallyProduct {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn party_ledger_commitment_hashes_the_three_encoded_builder_requests() {
+        let master = NativeLedgerExportPeriod::new(
+            DateBoundaryProfile::ModeAgnostic,
+            TallyDate::parse("20260401").unwrap(),
+            TallyDate::parse("20260731").unwrap(),
+        )
+        .unwrap();
+        let balance = party_ledger_master_balance_period(
+            DateBoundaryProfile::ModeAgnostic,
+            TallyDate::parse("20260401").unwrap(),
+            TallyDate::parse("20260731").unwrap(),
+        )
+        .unwrap();
+        let requests = [
+            super::render_party_ledger_master_request("Synthetic ₹ Books", &master),
+            super::render_native_ledger_snapshot_request("Synthetic ₹ Books", &balance),
+            super::render_native_group_snapshot_request("Synthetic ₹ Books"),
+        ];
+        let hashes = requests
+            .iter()
+            .map(|request| {
+                let mut bytes = vec![0xff, 0xfe];
+                bytes.extend(request.encode_utf16().flat_map(u16::to_le_bytes));
+                super::sha256_hex(&bytes)
+            })
+            .collect::<Vec<_>>();
+        let expected = super::sha256_hex(hashes.join(":").as_bytes());
+        assert_eq!(super::party_ledger_request_commitment(&requests), expected);
+        for index in 0..3 {
+            let mut changed = requests.clone();
+            changed[index].push(' ');
+            assert_ne!(super::party_ledger_request_commitment(&changed), expected);
+        }
+    }
+
     #[cfg(feature = "voucher-scan")]
     use super::LedgerOpeningCoverageRead;
     use super::{

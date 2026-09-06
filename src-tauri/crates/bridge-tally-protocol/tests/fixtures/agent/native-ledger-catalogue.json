@@ -1,0 +1,15 @@
+{
+  "source": "Live licensed TallyPrime synthetic-company StandardLedgerCatalogV1 paired read",
+  "observed_date": "2026-09-06",
+  "source_response_bytes": 13060,
+  "source_response_sha256": "f354993704f0feddc27a46d73b4ca10787b6028d9f385d8323994b18e5b34e0f",
+  "source_request_bytes": 1972,
+  "source_request_sha256": "46afed275173ae5371c24dbc18ea9998663b03d5e7b6eefc69c1ebfbe2ffb2a0",
+  "fixture_bytes": 13060,
+  "fixture_sha256": "f354993704f0feddc27a46d73b4ca10787b6028d9f385d8323994b18e5b34e0f",
+  "encoding": "UTF-16LE without BOM",
+  "rows": 9,
+  "transformation": [],
+  "provenance_limit": "Byte-exact live response from an authorized synthetic lab company. The simulator adapts its company and ledger selectors to these observed names; no live import success is claimed.",
+  "sensitivity_review": "Synthetic lab identifiers only; no credentials, customer data, or operational paths."
+}

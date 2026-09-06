@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 #[test]
 fn scoped_opening_uses_requested_boundary_without_changing_book_start_default() {
@@ -76,4 +77,160 @@ fn scoped_opening_rejects_unsupported_and_prebook_dates_before_dispatch() {
     .unwrap();
     assert_eq!(period.from(), &after_last);
     assert_eq!(period.to(), &after_last);
+}
+
+#[test]
+fn scoped_opening_requires_observed_mode_and_does_not_infer_unknown_as_licensed() {
+    use bridge_tally_core::{
+        CapabilityEvidence, CapabilityFeatureId, CapabilityProfile, CapabilityState,
+        EvidenceConfidence,
+    };
+    let mut profile = CapabilityProfile {
+        profile_version: 2,
+        product: "TallyPrime".into(),
+        release: None,
+        mode: None,
+        transports: BTreeMap::new(),
+        features: BTreeMap::new(),
+        packs: BTreeMap::new(),
+    };
+    assert_eq!(
+        observed_opening_boundary(&profile),
+        Err(OpeningBoundaryObservationError::Unobserved)
+    );
+    profile.mode = Some("Licensed".into());
+    assert_eq!(
+        observed_opening_boundary(&profile),
+        Err(OpeningBoundaryObservationError::Unobserved)
+    );
+    profile.features.insert(
+        CapabilityFeatureId::ProductAndMode,
+        CapabilityEvidence {
+            state: CapabilityState::Supported,
+            confidence: EvidenceConfidence::Observed,
+            safe_reason_code: None,
+        },
+    );
+    assert_eq!(
+        observed_opening_boundary(&profile),
+        Ok(DateBoundaryProfile::ModeAgnostic)
+    );
+    profile.mode = Some("Education".into());
+    let boundary = observed_opening_boundary(&profile).unwrap();
+    assert_eq!(boundary, DateBoundaryProfile::EducationRestricted);
+    assert_eq!(
+        ledger_opening_period(
+            boundary,
+            &TallyDate::parse("20260401").unwrap(),
+            &TallyDate::parse("20260902").unwrap(),
+            Some(&TallyDate::parse("20260815").unwrap())
+        ),
+        Err(NativeLedgerExportPeriodError::UnsupportedBoundary)
+    );
+    profile.mode = None;
+    assert_eq!(
+        observed_opening_boundary(&profile),
+        Err(OpeningBoundaryObservationError::Unobserved)
+    );
+}
+
+#[tokio::test]
+async fn scoped_opening_probes_before_export_even_with_a_stale_licensed_cache() {
+    use crate::tally::TallyProduct;
+    use bridge_tally_core::CapabilityProfile;
+    use tokio::io::AsyncReadExt;
+    for cached in [false, true] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let config = TallyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+        };
+        let runtime = TallyRuntime::default();
+        let company = TallyCompany {
+            name: "Synthetic Company".into(),
+            guid: Some("synthetic-guid".into()),
+            company_number: Some("100001".into()),
+            books_from: Some("20260401".into()),
+        };
+        let identity = VerifiedCompanyIdentity::from_observed_companies(
+            company.name.clone(),
+            company.guid.clone().unwrap(),
+            "100001".into(),
+            "20260401".into(),
+            std::slice::from_ref(&company),
+        )
+        .unwrap();
+        if cached {
+            let session = runtime.session(config.clone()).unwrap();
+            *session.cached_probe.write().unwrap() = Some(CachedProbe {
+                review_id: "stale-licensed".into(),
+                observed_at_unix_ms: 1,
+                freshness_origin_unix_ms: 1,
+                reserved: false,
+                result: TallyProbeResult {
+                    connection: ConnectionStatus {
+                        reachable: true,
+                        compatible: true,
+                        server_text: String::new(),
+                        product: TallyProduct::Unknown,
+                        error: None,
+                    },
+                    companies: vec![company],
+                    profile: CapabilityProfile {
+                        profile_version: 2,
+                        product: "TallyPrime".into(),
+                        release: None,
+                        mode: Some("Licensed".into()),
+                        transports: BTreeMap::new(),
+                        features: BTreeMap::new(),
+                        packs: BTreeMap::new(),
+                    },
+                    selected_read_scope: None,
+                    passport_snapshot_id: None,
+                },
+            });
+        }
+        let read = tokio::spawn(async move {
+            runtime
+                .fetch_ledger_opening_at_with_evidence(
+                    config,
+                    &identity,
+                    TallyDate::parse("20260815").unwrap(),
+                )
+                .await
+        });
+        // Inspect the complete first request, then cancel without fabricating a
+        // Tally response. This tests request admission order, not licence semantics.
+        let first_request = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                headers.push(socket.read_u8().await.unwrap());
+                assert!(headers.len() < 64 * 1024);
+            }
+            let headers = String::from_utf8(headers).unwrap();
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    key.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            let mut body = vec![0; length];
+            socket.read_exact(&mut body).await.unwrap();
+            (headers, body)
+        })
+        .await;
+        read.abort();
+        let _ = read.await;
+        let (headers, body) = first_request.expect("opening must make a fresh mode probe");
+        assert!(
+            headers.starts_with("GET /status HTTP/1.1\r\n"),
+            "opening bypassed fresh mode probe; cached={cached}; first_line={:?}",
+            headers.lines().next()
+        );
+        assert!(body.is_empty());
+    }
 }

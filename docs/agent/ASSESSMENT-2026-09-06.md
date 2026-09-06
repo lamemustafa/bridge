@@ -37,14 +37,15 @@ the protocol's transport, lifecycle, and tool requirements.
 | --- | --- |
 | Native collection requests | Use explicit object-type elements, a defined collection matching the export ID, and measured ledger-entry fetch paths. |
 | Native parser | Read actual collection objects and direct scalar fields; preserve strict row validation and exact decimal values. Retained live captures exercise counters, numeric padding, Unicode, and nested allocations. |
-| Ledger movement | Use Tally's observed period opening at the requested start. Apply only in-window, non-cancelled, non-optional voucher entries. Eliminate the earlier-history scan. |
+| Ledger movement | Use Tally's observed period opening at the requested start. Apply only in-window, non-cancelled, non-optional voucher entries. Eliminate the earlier-history scan. Corroborate opening snapshots and require freshly observed licence mode for caller-specified opening dates. |
 | Change enumeration | Hide and refuse `changed_since`. A client result cap is not a server-work bound, and unqualified snapshot continuation is not a reliable change feed. No bypass setting is added. |
 | Import verification | Reserve explicit markers before fallback matching, consume each observed row once, and distinguish attributed postings from matching content. Equivalent decimal spellings compare equally without changing stored XML bytes. |
 | Response recovery | Preserve a persisted batch ID through result caps, final framing caps, and receipt failures. The client can recover without generating another transaction. |
-| Receipts and proofs | Derive released field paths from final redacted output. Serialize proof publication. Use portable receipt locking and decode only complete UTF-8 tail lines. |
-| Financial summaries | Label gross exposure explicitly and keep billed/unallocated receivable and payable directions separate. |
+| Source commitments | Hash the UTF-16LE request entities sent by transport; retain status, selector-catalogue, and currency-probe evidence. Count both accepted bodies of paired source reads. |
+| Receipts and proofs | Derive released field paths from final redacted output. Roll back handled proof-publication failures and retain a recovery journal after interruption or uncertain rollback. Use portable receipt locking and decode only complete UTF-8 tail lines. |
+| Financial summaries | Label gross exposure explicitly and keep billed/unallocated receivable and payable directions separate. Preserve future-due or unknown ages in `unaged`. |
 | MCPB packaging | Validate the actual per-platform manifest, packaged executable, legal resources, and extracted archive launch. |
-| Admission and pagination | Bound master-name inputs and suggestions before report expansion. Refuse active entryless movement rows. Keep shared-offset pages advancing or return an explicit size error. |
+| Admission and pagination | Bound master-name inputs and suggestions before report expansion. Refuse active entryless movement rows. Keep shared-offset pages advancing or return an explicit size error. Search page widths with logarithmically bounded serialization probes. |
 
 Receipt writes use a readable and writable handle, seek to the end under an
 exclusive lock, and restore the original length if appending or syncing fails.
@@ -106,11 +107,11 @@ XML interface, but returned bytes and readback establish the behavior above.
 ## Regression provenance
 
 The protocol fixture tree contains unchanged UTF-16LE captures for an empty
-native collection and a three-voucher response. A separate ledger-catalog
-regression derivative changes only documented synthetic identities/names to fit
-the existing simulator. Its metadata records original and transformed hashes
-separately; it is not represented as unchanged live output. Fixture-integrity
-policy remains enforced. Simulators test regressions after live observation.
+native collection, a three-voucher response, and the ledger catalogue. The
+simulator adopts the catalogue's captured synthetic identities; it does not
+rewrite the captured response. Metadata records the exact original wire hash.
+Fixture-integrity policy remains enforced. Simulators test regressions after
+live observation.
 
 ## Verification and release gate
 
@@ -129,7 +130,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **864 Rust workspace tests**, **129 agent tests
+Local candidate verification: **884 Rust workspace tests**, **144 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -138,19 +139,25 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary also passed seven probes (status, master
-validation, vouchers, movement, outstandings, restored-batch verification, and
-egress-log readback), with party masking selected. Live receipts counted 16
-loaded companies and three master results and matched every emitted wire hash.
+The final macOS arm64 release binary passed twelve live checks with party masking:
+eleven complete responses and one expected `empty_uncorroborated` refusal for a
+window with no nearby voucher evidence. A fresh process then completed movement
+from August 3 through September 1 without any prior status call, and a second
+window correctly carried the test Journal's Cash opening. Status, master
+validation, filtered and unfiltered vouchers, compliance masters, outstandings,
+restored-batch verification, and egress-log readback also completed.
+Every emitted frame matched its receipt and text/structured representations.
+Status, filtered-voucher, and compliance-master commitments and source byte counts
+were independently recomputed from the captured transport request/response files.
 That same binary passed eight checks using official MCP
 JavaScript SDK 1.30.0, negotiating 2025-11-25 down to 2025-06-18. Official MCPB
 CLI 2.1.2 validated and packed the archive. Its extracted executable and all four
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `a35d687f6d55c528254ee935add1530d2e1650c2538a9ac0e1e1332b5946f879`.
-- MCPB archive SHA-256: `cc77662b96dd7b36e5106294f088fa410826840306c19350af395b5144410f12`.
-- Source fingerprint (299 build-input files, unchanged through the settled-source rebuild): `a7156a249517d78019ae8cebb4e7d8dc21c633999a0ce45ec1a10a9bf2c2a965`.
+- Release executable SHA-256: `5b1b197943e4b52cd3b6ce90dc52706fc750c5aec7cc97a833536f1029df853c`.
+- MCPB archive SHA-256: `10b9e3f8a275cd20578f0277476335f5a748f083f6e108c3a1f3c52ced435393`.
+- Source fingerprint (303 build-input files, unchanged through the settled-source rebuild): `e40f9724b1644812a0bc77ea6af1c9d9d6f60ed9bd8fceaa3886af6ac829f5c6`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -166,10 +173,12 @@ checks. None substitutes for the others. Graphify data and its refresh script
 were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
-Three of 163 sealed-surface entries changed: CI packaging verification, the
-native period-opening adapter, and its protocol-reference correction. The
-existing pin set was audited and rehashed, sealed, and repointed using the
-release-process commands. No compatibility cell was promoted.
+The 163-entry sealed surface was audited before each reseal. This correction
+updates six existing pins for request commitments, runtime admission, and the
+internal report-source field and its test constructors; the earlier changes also
+covered CI packaging and the period-opening protocol reference. The existing pin
+set was rehashed, sealed, and repointed using the release-process commands.
+No compatibility cell was promoted.
 
 ## Migration, rollback, and security impact
 

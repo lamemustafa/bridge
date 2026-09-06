@@ -72,3 +72,46 @@ fn active_entryless_movement_voucher_is_refused() {
         Some("ledger_movement_entries_not_observed".into())
     );
 }
+
+#[test]
+fn movement_snapshot_rejects_renames_even_when_the_selected_name_returns() {
+    let ledger = |name: &str| TallyLedger {
+        name: name.into(),
+        parent: Default::default(),
+        party_gstin: Default::default(),
+        opening_balance: Some("0".into()),
+    };
+    let opening = vec![ledger("Cash"), ledger("Sales")];
+    let vouchers = |name: &str| {
+        vec![MovementVoucher {
+            date: "20260901".into(),
+            cancelled: false,
+            optional: false,
+            ledger_entries: vec![MovementEntry {
+                ledger_name: name.into(),
+                amount: "-10".into(),
+                is_deemed_positive: true,
+            }],
+        }]
+    };
+    let renamed = vec![ledger("New Cash"), ledger("Sales")];
+    assert_eq!(
+        validate_movement_snapshot(&opening, &renamed, &vouchers("New Cash")),
+        Err("ledger_snapshot_drifted".into())
+    );
+    assert_eq!(
+        validate_movement_snapshot(&opening, &opening, &vouchers("New Cash")),
+        Err("ledger_snapshot_drifted".into())
+    );
+    // Known entries outside the selected Cash ledger remain admissible.
+    assert_eq!(
+        validate_movement_snapshot(&opening, &opening, &vouchers("Sales")),
+        Ok(())
+    );
+    let mut changed_opening = opening.clone();
+    changed_opening[0].opening_balance = Some("1".into());
+    assert_eq!(
+        validate_movement_snapshot(&opening, &changed_opening, &vouchers("Cash")),
+        Err("ledger_snapshot_drifted".into())
+    );
+}

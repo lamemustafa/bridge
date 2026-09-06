@@ -19,13 +19,18 @@ impl Server {
         ensure_movement_window_within_books(&from, &books_from)?;
         let opening_date = bridge_tally_core::TallyDate::parse(from.clone())
             .map_err(|_| "invalid_date".to_string())?;
-        let (ledgers, ledger_evidence) =
-            self.read_movement_ledgers(&identity, opening_date).await?;
+        let (ledgers, ledger_evidence) = self
+            .read_movement_ledgers(&identity, opening_date.clone())
+            .await?;
         evidence = combine_evidence(evidence, ledger_evidence);
         let (vouchers, read_evidence) = self
             .read_movement_vouchers(&identity, &company.name, from.clone(), to)
             .await?;
         evidence = combine_evidence(evidence, read_evidence);
+        let (corroborating_ledgers, corroboration_evidence) =
+            self.read_movement_ledgers(&identity, opening_date).await?;
+        validate_movement_snapshot(&ledgers, &corroborating_ledgers, &vouchers)?;
+        evidence = combine_evidence(evidence, corroboration_evidence);
         let selected = optional_string(args, "ledger")?
             .map(|name| {
                 resolve_ledger_name(ledgers.iter().map(|ledger| ledger.name.as_str()), &name)
@@ -51,7 +56,8 @@ impl Server {
             let mut touched = std::collections::BTreeSet::new();
             for entry in &voucher.ledger_entries {
                 let Some(record) = movement.get_mut(&entry.ledger_name) else {
-                    absent_movement_entry_policy(&entry.ledger_name, selected.as_deref())?;
+                    // The full catalogue was corroborated before selection;
+                    // this entry belongs to a known, unselected ledger.
                     continue;
                 };
                 let amount = bridge_tally_core::ExactDecimal::parse(entry.amount.clone())
@@ -181,6 +187,32 @@ impl Server {
         }
         Ok((page.rows, evidence))
     }
+}
+
+fn validate_movement_snapshot(
+    opening: &[TallyLedger],
+    corroboration: &[TallyLedger],
+    vouchers: &[MovementVoucher],
+) -> Result<(), String> {
+    let initial = opening
+        .iter()
+        .map(|ledger| (ledger.name.as_str(), ledger))
+        .collect::<BTreeMap<_, _>>();
+    let repeated = corroboration
+        .iter()
+        .map(|ledger| (ledger.name.as_str(), ledger))
+        .collect::<BTreeMap<_, _>>();
+    if initial.len() != opening.len()
+        || repeated.len() != corroboration.len()
+        || initial != repeated
+        || vouchers
+            .iter()
+            .flat_map(|voucher| &voucher.ledger_entries)
+            .any(|entry| !initial.contains_key(entry.ledger_name.as_str()))
+    {
+        return Err("ledger_snapshot_drifted".to_string());
+    }
+    Ok(())
 }
 
 /// Native collection rows are parsed through the same boundary as the change

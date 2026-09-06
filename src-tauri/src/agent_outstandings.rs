@@ -139,13 +139,14 @@ pub(super) fn outstanding_totals_from_open_bills(bills: &[OpenBillRow]) -> Resul
 }
 
 pub(super) fn ageing_buckets_from_open_bills(bills: &[OpenBillRow]) -> Result<Value, String> {
+    let mut unaged = "0".to_string();
     let mut days_0_30 = "0".to_string();
     let mut days_31_60 = "0".to_string();
     let mut days_61_90 = "0".to_string();
     let mut days_90_plus = "0".to_string();
     for bill in bills {
         let bucket = match bill.age_days {
-            None => &mut days_0_30,
+            None => &mut unaged,
             Some(age) => match age {
                 0..=30 => &mut days_0_30,
                 31..=60 => &mut days_31_60,
@@ -156,6 +157,7 @@ pub(super) fn ageing_buckets_from_open_bills(bills: &[OpenBillRow]) -> Result<Va
         *bucket = add_decimal(bucket, bill.amount.as_str())?;
     }
     Ok(json!({
+        "unaged": unaged,
         "days_0_30": days_0_30,
         "days_31_60": days_31_60,
         "days_61_90": days_61_90,

@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn large_pages_use_logarithmically_bounded_serialization_probes() {
+    let mut response = json!({"result":{"offset":0,"items":
+        (0..10_000).map(|id| json!({"id":id,"padding":"x".repeat(64)})).collect::<Vec<_>>()}});
+    let mut probes = 0;
+    assert!(fit_response(&mut response, "", 512, |value| {
+        probes += 1;
+        value.to_string().len()
+    })
+    .unwrap());
+    assert!(probes <= 15, "serialization probes: {probes}");
+    assert!(response.to_string().len() <= 512);
+    let kept = response["result"]["items"].as_array().unwrap();
+    assert!(!kept.is_empty());
+    assert_eq!(response["result"]["next_offset"], kept.len());
+    assert_eq!(kept[0]["id"], 0);
+    assert_eq!(kept.last().unwrap()["id"], kept.len() - 1);
+}
+
+#[test]
 fn standalone_master_and_status_rows_are_counted_in_final_receipts() {
     for (tool, axis) in [
         ("validate_masters", "masters"),

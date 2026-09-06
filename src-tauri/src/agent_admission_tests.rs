@@ -78,3 +78,37 @@ async fn master_validation_rejects_unbounded_and_blank_names_before_tally() {
     )
     .is_ok());
 }
+
+#[tokio::test]
+async fn ledger_selectors_are_bounded_before_company_or_catalogue_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+    });
+    for tool in ["vouchers", "ledger_movement"] {
+        for ledger in ["x".repeat(1025), " ".into(), String::new()] {
+            let args = json!({"company_guid":"00000000-0000-4000-8000-000000000001",
+                "from":"20260901","to":"20260902","ledger":ledger});
+            let response = server.call_tool_response(tool, args).await;
+            assert_eq!(
+                response.value["structuredContent"]["result"]["error"]["code"],
+                "argument_invalid:ledger"
+            );
+            assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
+        }
+        assert!(validate_tool_arguments(
+            tool,
+            &json!({"company_guid":"synthetic-company",
+            "from":"20260901","to":"20260902","ledger":"名".repeat(1024)})
+        )
+        .is_ok());
+    }
+}

@@ -13,7 +13,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
+
+#[path = "agent_import_persistence.rs"]
+mod persistence;
 use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
@@ -188,6 +191,7 @@ impl Server {
     pub(super) async fn build_import_xml(&self, args: &Value) -> Result<ToolOutcome, String> {
         let mut payload = parse_payload(args)?;
         validate_payload(&payload)?;
+        let (debit, credit) = totals(&payload.vouchers)?;
         normalize_payload_dates(&mut payload)?;
         let (company, identity, identity_evidence) =
             self.verified_company(&payload.company_guid).await?;
@@ -243,12 +247,26 @@ impl Server {
             pre_import_mark: mark,
             vouchers: payload.vouchers,
         };
-        let path = self.imports_dir()?.join(format!("{batch_id}.xml"));
-        write_private(&path, xml.as_bytes())?;
-        if let Err(error) = self.append_import_ledger_while_admitted(&line) {
-            return Err(remove_orphaned_import_file(&path, error));
+        let imports = self.imports_dir()?;
+        let path = imports.join(format!("{batch_id}.xml"));
+        if let Some(error) = persistence::persist_build(&imports, &line, xml.as_bytes(), || {
+            self.append_import_ledger_while_admitted(&line)
+        })? {
+            return Ok(ToolOutcome {
+                payload: json!({"result":{"batch_id":batch_id,"error":{"code":error,
+                    "message":"The local batch is retained; reconcile its import journal before continuing."}}}),
+                evidence: Evidence {
+                    state: "partial",
+                    reason_code: Some(error),
+                    ..combine_evidence(
+                        combine_evidence(identity_evidence, catalogue_evidence),
+                        mark_evidence,
+                    )
+                },
+                company_guid: Some(line.company_guid.clone()),
+                truncated: false,
+            });
         }
-        let (debit, credit) = totals(&line.vouchers)?;
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                 "batch_id": batch_id, "path": path, "sha256": sha256,
@@ -327,19 +345,20 @@ impl Server {
         let _admission_lock = self.lock_import_admission()?;
         let imports = self.imports_dir()?;
         let local_proof = super::redact_value(proof.clone(), super::Redaction::None);
-        write_private(
-            &imports.join(format!("{}.proof.json", update.batch_id)),
-            &serde_json::to_vec_pretty(&local_proof)
-                .map_err(|_| "proof_serialization_failed".to_string())?,
-        )?;
-        write_private(
-            &imports.join(format!("{}.proof.md", update.batch_id)),
-            render_proof_markdown(&local_proof).as_bytes(),
-        )?;
-        self.append_import_ledger_while_admitted(update)
+        let json = serde_json::to_vec_pretty(&local_proof)
+            .map_err(|_| "proof_serialization_failed".to_string())?;
+        let markdown = render_proof_markdown(&local_proof);
+        persistence::publish_proofs(
+            &imports,
+            update,
+            &json,
+            markdown.as_bytes(),
+            || self.append_import_ledger_while_admitted(update),
+            |_| Ok(()),
+        )
     }
 
-    async fn read_ledger_catalogue(
+    pub(super) async fn read_ledger_catalogue(
         &self,
         identity: &super::VerifiedCompanyIdentity,
         company_name: &str,
@@ -395,6 +414,7 @@ impl Server {
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
         file.lock_exclusive()
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        persistence::require_settled(&self.settings.data_dir.join("imports"))?;
         Ok(file)
     }
 
@@ -409,6 +429,7 @@ impl Server {
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
         file.lock_shared()
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        persistence::require_settled(&self.settings.data_dir.join("imports"))?;
         Ok(file)
     }
 
@@ -447,14 +468,33 @@ impl Server {
         let encoded = serde_json::to_string(line)
             .map_err(|_| "import_ledger_serialization_failed".to_string())?;
         let encoded = format!("{encoded}\n");
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|_| "import_ledger_unavailable".to_string())?;
-        append_import_ledger_bytes(&mut file, encoded.as_bytes())?;
-        set_private(&path)
+        append_private_import_ledger(&path, encoded.as_bytes(), set_private_file)
     }
+}
+
+fn append_private_import_ledger(
+    path: &Path,
+    bytes: &[u8],
+    prepare_permissions: impl FnOnce(&std::fs::File) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut options = OpenOptions::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    // Admission serializes writers; read/write access also permits Windows rollback.
+    let mut file = options
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|_| "import_ledger_unavailable".to_string())?;
+    prepare_permissions(&file)?;
+    file.seek(SeekFrom::End(0))
+        .map_err(|_| "import_ledger_unavailable".to_string())?;
+    append_import_ledger_bytes(&mut file, bytes)
 }
 
 trait ImportLedgerWriter {
@@ -1508,16 +1548,33 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    fs::write(path, bytes).map_err(|_| "import_file_write_failed".to_string())?;
-    set_private(path)
+    let mut options = OpenOptions::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|_| "import_file_write_failed".to_string())?;
+    set_private_file(&file)?;
+    file.set_len(0)
+        .and_then(|_| file.write_all(bytes))
+        .and_then(|_| file.sync_data())
+        .map_err(|_| "import_file_write_failed".to_string())
 }
-fn set_private(path: &Path) -> Result<(), String> {
+fn set_private_file(file: &std::fs::File) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        file.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|_| "import_file_permissions_failed".to_string())?;
     }
+    #[cfg(not(unix))]
+    let _ = file;
     Ok(())
 }
 fn set_private_dir(path: &Path) -> Result<(), String> {

@@ -5,17 +5,6 @@ pub(super) fn ledger_movement_counts<T>(rows: &[Value], vouchers: &[T]) -> (usiz
     (rows.len(), vouchers.len())
 }
 
-pub(super) fn absent_movement_entry_policy(
-    entry_ledger: &str,
-    selected: Option<&str>,
-) -> Result<(), String> {
-    if selected.is_none_or(|ledger| ledger == entry_ledger) {
-        Err("ledger_snapshot_drifted".to_string())
-    } else {
-        Ok(())
-    }
-}
-
 pub(super) struct LedgerMovementRow {
     pub(super) name: String,
     pub(super) parent: Option<String>,

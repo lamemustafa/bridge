@@ -5,12 +5,63 @@ use tally_protocol_simulator::{
 };
 
 const GUID: &str = "00000000-0000-4000-8000-000000000001";
+const CAPTURED_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
+
+fn captured_catalogue_payload() -> ImportPayload {
+    let mut input = payload();
+    input.company_guid = CAPTURED_GUID.into();
+    for entry in input
+        .vouchers
+        .iter_mut()
+        .flat_map(|voucher| &mut voucher.entries)
+    {
+        entry.ledger = match entry.ledger.as_str() {
+            "Expense" => "Bridge Nested Debtor WR4",
+            "Bank" => "Cash",
+            "Income" => "WR2 Sales",
+            _ => unreachable!("known simulator payload ledger"),
+        }
+        .into();
+    }
+    input
+}
 
 fn payload() -> ImportPayload {
     serde_json::from_value(json!({"company_guid":GUID,"vouchers":[
         {"bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":"Payment","narration":"Paid & settled","reference":"REF-1","entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},{"ledger":"Bank","amount":"12.50","side":"Cr"}]},
         {"bridge_txn_id":"txn-002","date":"2026-09-02","voucher_type":"Receipt","entries":[{"ledger":"Bank","amount":"7.50","side":"Dr"},{"ledger":"Income","amount":"7.50","side":"Cr"}]}
     ]})).expect("sample payload")
+}
+
+#[tokio::test]
+async fn batch_total_overflow_is_refused_before_dispatch_or_persistence() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(super::super::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: super::super::Redaction::None,
+        import_enabled: true,
+    });
+    let mut input = payload();
+    for entry in input
+        .vouchers
+        .iter_mut()
+        .flat_map(|voucher| &mut voucher.entries)
+    {
+        entry.amount = format!("{}.99", "9".repeat(253));
+    }
+    validate_payload(&input).expect("each voucher individually fits exact decimal bounds");
+    let result = server
+        .build_import_xml(&serde_json::to_value(input).unwrap())
+        .await;
+    assert_eq!(result.err(), Some("voucher_amount_overflow".into()));
+    assert!(!directory.path().join("imports").exists());
+    assert!(!directory.path().join("agent-import-ledger.jsonl").exists());
 }
 
 #[test]
@@ -1154,7 +1205,7 @@ async fn simulator_build_then_manual_import_readback_verifies_every_voucher() {
         import_enabled: true,
     });
     let built = server
-        .build_import_xml(&serde_json::to_value(payload()).expect("json"))
+        .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
         .await
         .expect("build");
     let batch_id = built.payload["result"]["batch_id"]
@@ -1171,7 +1222,7 @@ async fn simulator_build_then_manual_import_readback_verifies_every_voucher() {
         .join(format!("{batch_id}.xml"))
         .exists());
     let proof = server
-        .verify_import(&json!({"company_guid":GUID,"batch_id":batch_id}))
+        .verify_import(&json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}))
         .await
         .expect("verify");
     assert_eq!(proof.payload["result"]["counts"]["posted_verified"], 2);
@@ -1189,20 +1240,22 @@ async fn simulator_build_then_manual_import_readback_verifies_every_voucher() {
 }
 
 fn import_cycle_plans() -> Vec<ScenarioPlan> {
-    let company = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SYNTHETIC BOOK\"><GUID>{GUID}</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
-    // Explicitly transformed live catalogue: see adjacent provenance JSON.
-    let bytes = include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue-simulator.utf16le.xml");
+    let company = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"WR2 Unicode Lab\"><GUID>{CAPTURED_GUID}</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
+    // Replay byte-exact live catalogue; only the simulator inputs adapt to it.
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
+    );
     let words = bytes
         .chunks_exact(2)
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect::<Vec<_>>();
-    let ledgers = String::from_utf16(&words).expect("captured native catalogue derivative");
-    let premark = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>{GUID}</GUID><ALTVCHID>10</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
+    let ledgers = String::from_utf16(&words).expect("captured native catalogue");
+    let premark = format!("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY><GUID>{CAPTURED_GUID}</GUID><ALTVCHID>10</ALTVCHID><ALTMSTID>7</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>");
     let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>".to_string();
     let readback = concat!(
         "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
-        "<VOUCHER REMOTEID=\"tally-assigned-1\"><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>g-1</GUID><MASTERID>1</MASTERID><ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER>",
-        "<VOUCHER REMOTEID=\"tally-assigned-2\"><DATE>20260902</DATE><VOUCHERNUMBER>RV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><GUID>g-2</GUID><MASTERID>2</MASTERID><ALTERID>13</ALTERID><NARRATION>[BRIDGE:txn-002]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Income</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+        "<VOUCHER REMOTEID=\"tally-assigned-1\"><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>g-1</GUID><MASTERID>1</MASTERID><ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bridge Nested Debtor WR4</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER>",
+        "<VOUCHER REMOTEID=\"tally-assigned-2\"><DATE>20260902</DATE><VOUCHERNUMBER>RV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME><GUID>g-2</GUID><MASTERID>2</MASTERID><ALTERID>13</ALTERID><NARRATION>[BRIDGE:txn-002]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>WR2 Sales</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
     )
     .to_string();
     vec![
@@ -1254,6 +1307,28 @@ fn import_cycle_plans() -> Vec<ScenarioPlan> {
         }
     })
     .collect()
+}
+
+#[test]
+fn import_catalogue_fixture_is_byte_exact_live_capture() {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
+    );
+    let metadata: Value = serde_json::from_str(include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.json"
+    ))
+    .unwrap();
+    assert_eq!(bytes.len(), 13_060);
+    assert_eq!(
+        sha256_hex(bytes),
+        "f354993704f0feddc27a46d73b4ca10787b6028d9f385d8323994b18e5b34e0f"
+    );
+    assert_eq!(
+        metadata["fixture_sha256"],
+        metadata["source_response_sha256"]
+    );
+    assert_eq!(metadata["fixture_sha256"], sha256_hex(bytes));
+    assert_eq!(metadata["transformation"], json!([]));
 }
 
 #[path = "agent_recovery_tests.rs"]
@@ -1364,3 +1439,6 @@ async fn import_bounds_distinct_ledger_names_before_tally_without_reducing_vouch
     assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
     assert!(!directory.path().join("imports").exists());
 }
+
+#[path = "agent_wire_evidence_tests.rs"]
+mod wire_evidence_tests;

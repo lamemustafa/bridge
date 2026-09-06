@@ -27,7 +27,10 @@ async fn persisted_build(cap: usize) -> (tempfile::TempDir, Server, ToolResponse
         import_enabled: true,
     });
     let tool = server
-        .call_tool_response("build_import_xml", serde_json::to_value(payload()).unwrap())
+        .call_tool_response(
+            "build_import_xml",
+            serde_json::to_value(captured_catalogue_payload()).unwrap(),
+        )
         .await;
     let batch_id = tool
         .recovery_batch_id

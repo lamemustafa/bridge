@@ -137,8 +137,17 @@ live-Tally compatibility claim:
 }
 ```
 
+For Tally reads, request commitments hash the transmitted request body (UTF-16LE
+for XML; empty for the status GET), and response commitments hash encoded response
+bodies. Multiple sources combine their commitments in read order. `evidence.bytes`
+counts committed response bodies, including both accepted bodies of a paired read;
+it excludes auxiliary health and identity guards and is not total network traffic.
+Status commits its status and company-discovery responses. Local-only tools and
+refusals carry local evidence rather than a Tally wire commitment.
+
 `outstandings` returns the runtime's paired native result. A complete read has
-billed totals explicitly scoped to open bills, four ageing buckets, top parties,
+billed totals explicitly scoped to open bills, four overdue-age buckets, an
+`unaged` bucket for future-due or unobserved ages, top parties,
 open bills, and unallocated counts and directional totals; a refused runtime read instead has `state: "partial"` and its
 exact `partial_reason`. `ledger_movement` returns literal-window voucher
 movement with exact decimal `opening`, `debit`, `credit`, `closing`, parent,
@@ -166,12 +175,18 @@ Near-miss suggestions are limited to 25 names and 8192 UTF-8 bytes per requested
 name; `candidate_count` and `candidates_truncated` preserve ambiguity. Import
 planning allows 1000 vouchers but at most 100 distinct ledger names per batch.
 Repeated uses of a ledger do not consume additional distinct-name slots.
+Voucher and movement ledger selectors share the 1024-character bound; their
+normalized lookup key is computed once before scanning live names.
 
 Byte-limited pages retain forward progress or return `agent_response_too_large`;
 they never advertise the same offset after removing every row. Outstandings
 trims both collections to a shared page width because they share an input offset.
 Active vouchers without observed accounting entries are refused before movement
 filtering; cancelled and optional vouchers remain excluded from movement totals.
+Movement corroborates the complete opening-ledger snapshot after voucher reads
+and rejects unknown entry names before selecting a ledger. Caller-specified
+opening dates require freshly observed product and licence mode before and after
+the read; a prior status call or cached licensed profile does not grant admission.
 
 Top-party ranking uses `gross_exposure`, with billed and unallocated receivable
 and payable fields kept separate. `totals.scope` is `open_bills_only`.
@@ -189,7 +204,12 @@ without changing the generated file or its stored hash.
 If a build persists a file but the response or receipt fails, the JSON-RPC error
 contains `error.data.batch_id`. Retain it and use `verify_import` or inspect the
 local import ledger; do not blindly rebuild or import another batch. Proof JSON,
-Markdown, and ledger status are published under one admission lock.
+Markdown, and ledger status are published under one admission lock. Handled
+publication failures restore the prior proof pair and ledger state. An interrupted
+publication or failed rollback leaves a recovery journal and blocks further import
+admission until the local files and ledger are reconciled. Preserve the journal,
+its backups, and generated XML; do not delete it merely to retry. This is explicit
+recovery after a partial file transaction, not a power-loss atomicity guarantee.
 
 Receipts count released master-validation and loaded-company rows. Unknown tool
 names are represented by `unknown` and `tool_name_sha256`; company IDs are
