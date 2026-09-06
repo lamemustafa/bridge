@@ -153,12 +153,12 @@ impl Server {
         &self,
         identity: &VerifiedCompanyIdentity,
         from: bridge_tally_core::TallyDate,
-    ) -> Result<(Vec<TallyLedger>, Evidence), String> {
+    ) -> Result<(Vec<TallyLedger>, Evidence), ToolFailure> {
         let (ledgers, evidence) = self
             .runtime
             .fetch_ledger_opening_at_with_evidence(self.tally_config(), identity, from)
             .await
-            .map_err(|_| "ledger_movement_read_failed".to_string())?;
+            .map_err(|error| ToolFailure::from_runtime("ledger_movement_read_failed", error))?;
         Ok((ledgers, evidence_from_runtime_read(evidence)))
     }
 

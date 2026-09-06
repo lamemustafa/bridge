@@ -198,3 +198,61 @@ async fn write_shaped_adapter_request_is_refused_before_any_transport() {
 
 #[path = "agent_voucher_selection_tests.rs"]
 mod selection_tests;
+
+#[tokio::test]
+async fn opening_mode_refusals_retain_probe_evidence_through_agent_mapping() {
+    for (tool, args, code) in [
+        (
+            "ledger_masters",
+            json!({"company_guid": CAPTURED_GUID}),
+            "ledger_export_invalid",
+        ),
+        (
+            "ledger_movement",
+            json!({"company_guid": CAPTURED_GUID, "from":"20260901", "to":"20260902"}),
+            "ledger_movement_read_failed",
+        ),
+    ] {
+        // Reuse the existing identity/status replay without a recognized mode.
+        // The new opening probe must refuse before any ledger export and its
+        // observed bytes must survive the adapter's stable public error code.
+        let cycle = import_cycle_plans();
+        let mut plans = cycle[..4].to_vec();
+        plans.extend([cycle[1].clone(), cycle[0].clone()]);
+        let company = response_bytes(&cycle[0]);
+        let status = response_bytes(&cycle[1]);
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_for(simulator.address(), directory.path());
+        let response = server.call_tool(tool, args).await;
+        let content = &response["structuredContent"];
+        assert_eq!(content["result"]["error"]["code"], code);
+        let evidence = &content["evidence"];
+        assert_eq!(evidence["state"], "partial");
+        assert_eq!(evidence["bytes"], 3 * company.len() + status.len());
+        assert_eq!(
+            evidence["response_sha256"],
+            join_hashes(
+                &sha256_hex(&company),
+                &join_hashes(&sha256_hex(&status), &sha256_hex(&company))
+            )
+        );
+        let observed = simulator.finish().unwrap();
+        assert_eq!(observed.len(), 6);
+        assert_eq!(
+            evidence["request_sha256"],
+            join_hashes(
+                &observed[0].request_body_sha256,
+                &join_hashes(
+                    &observed[4].request_body_sha256,
+                    &observed[5].request_body_sha256
+                )
+            )
+        );
+        let history = server.call_tool("read_evidence", json!({})).await;
+        assert_eq!(
+            history["structuredContent"]["result"]["records"][0],
+            *evidence
+        );
+    }
+}

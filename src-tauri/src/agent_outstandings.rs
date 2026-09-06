@@ -24,7 +24,7 @@ impl Server {
                 .runtime
                 .detect_base_currency_with_evidence(self.tally_config(), &identity)
                 .await
-                .map_err(|_| "company_currency_probe_failed".to_string())?;
+                .map_err(|error| ToolFailure::from_runtime("company_currency_probe_failed", error))?;
             result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(currency_evidence));
             let assertion = match (currency.currency_count, currency.is_inr) {
                 (1, true) => OutstandingsCurrencyAssertion::Inr,
@@ -42,7 +42,7 @@ impl Server {
                     ageing_anchor,
                 )
                 .await
-                .map_err(|_| "native_outstandings_read_failed".to_string())?;
+                .map_err(|error| ToolFailure::from_runtime("native_outstandings_read_failed", error))?;
             result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(outstandings_evidence));
             let top = arg_positive_usize(args, "top", 25)?.min(self.settings.max_rows);
             let bill_offset = arg_usize(args, "offset", 0)?;

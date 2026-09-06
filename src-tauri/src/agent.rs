@@ -376,6 +376,18 @@ impl From<String> for ToolFailure {
 }
 
 impl ToolFailure {
+    fn from_runtime(code: &str, error: anyhow::Error) -> Self {
+        let evidence = error.chain().find_map(|cause| {
+            cause
+                .downcast_ref::<crate::tally::runtime::RuntimeReadFailure>()
+                .map(|failure| Box::new(evidence_from_runtime_read(failure.evidence.clone())))
+        });
+        Self {
+            code: code.to_string(),
+            evidence,
+        }
+    }
+
     // The caller owns only observations completed before its failing child.
     // Combining prior first preserves read order without counting a read twice.
     fn with_prior_evidence(mut self, prior: Evidence) -> Self {
