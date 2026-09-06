@@ -2,9 +2,10 @@
 use super::*;
 
 impl Server {
-    pub(super) async fn outstandings(&self, args: &Value) -> Result<ToolOutcome, String> {
+    pub(super) async fn outstandings(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
-        let (company, identity, identity_evidence) = self.verified_company(guid).await?;
+        let (company, identity, mut result_evidence) = self.verified_company(guid).await?;
+        let result: Result<ToolOutcome, ToolFailure> = async {
         let as_of = optional_string(args, "as_of")?
             .as_deref()
             .map(normalized_date)
@@ -17,18 +18,19 @@ impl Server {
         let ageing_anchor = match ageing_basis.as_str() {
             "bill_date" => OutstandingsAgeingAnchor::BillDate,
             "due_date" => OutstandingsAgeingAnchor::DueDate,
-            _ => return Err("invalid_ageing_basis".to_string()),
+            _ => return Err("invalid_ageing_basis".to_string().into()),
         };
         let (currency, currency_evidence) = self
             .runtime
             .detect_base_currency_with_evidence(self.tally_config(), &identity)
             .await
             .map_err(|_| "company_currency_probe_failed".to_string())?;
+        result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(currency_evidence));
         let assertion = match (currency.currency_count, currency.is_inr) {
             (1, true) => OutstandingsCurrencyAssertion::Inr,
-            (0, _) => return Err("company_currency_probe_failed".to_string()),
-            (1, false) => return Err("company_base_currency_not_inr".to_string()),
-            _ => return Err("company_base_currency_undetermined".to_string()),
+            (0, _) => return Err("company_currency_probe_failed".to_string().into()),
+            (1, false) => return Err("company_base_currency_not_inr".to_string().into()),
+            _ => return Err("company_base_currency_undetermined".to_string().into()),
         };
         let (load, outstandings_evidence) = self
             .runtime
@@ -41,17 +43,11 @@ impl Server {
             )
             .await
             .map_err(|_| "native_outstandings_read_failed".to_string())?;
+        result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(outstandings_evidence));
         let top = arg_positive_usize(args, "top", 25)?.min(self.settings.max_rows);
         let bill_offset = arg_usize(args, "offset", 0)?;
         let bill_limit =
             arg_positive_usize(args, "limit", self.settings.max_rows)?.min(self.settings.max_rows);
-        let mut result_evidence = combine_evidence(
-            identity_evidence,
-            combine_evidence(
-                evidence_from_runtime_read(currency_evidence),
-                evidence_from_runtime_read(outstandings_evidence),
-            ),
-        );
         let (result, bills_truncated) = match load {
             OutstandingsLoadResult::Complete {
                 report: _,
@@ -62,7 +58,7 @@ impl Server {
                 let direction =
                     optional_string(args, "direction")?.unwrap_or_else(|| "both".to_string());
                 if !matches!(direction.as_str(), "receivable" | "payable" | "both") {
-                    return Err("invalid_direction".to_string());
+                    return Err("invalid_direction".to_string().into());
                 }
                 let all_bills = statement_open_bills
                     .into_iter()
@@ -110,10 +106,11 @@ impl Server {
         };
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
-            evidence: result_evidence,
+            evidence: result_evidence.clone(),
             company_guid: Some(guid.to_string()),
             truncated: bills_truncated,
-        })
+        })        }.await;
+        result.map_err(|failure| failure.with_prior_evidence(result_evidence))
     }
 }
 

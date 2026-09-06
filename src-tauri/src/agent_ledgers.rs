@@ -2,9 +2,10 @@
 use super::*;
 
 impl Server {
-    pub(super) async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, String> {
+    pub(super) async fn ledger_masters(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
-        let (company, identity, company_evidence) = self.verified_company(guid).await?;
+        let (company, identity, mut evidence) = self.verified_company(guid).await?;
+        let result: Result<ToolOutcome, ToolFailure> = async {
         let fields = optional_string(args, "fields")?.unwrap_or_else(|| "basic".to_string());
         let compliance = ledger_master_fields(&fields)?;
         let (mut ledgers, ledger_evidence) = if compliance {
@@ -50,6 +51,7 @@ impl Server {
                 evidence,
             )
         };
+        evidence = combine_evidence(evidence.clone(), evidence_from_runtime_read(ledger_evidence));
         if let Some(group) = optional_string(args, "group")? {
             ledgers.retain(|ledger| ledger["parent"].as_str() == Some(group.as_str()));
         }
@@ -67,12 +69,10 @@ impl Server {
         let result = json!({"items": page, "offset": offset, "total": total, "fields": fields, "compliance": if compliance {"paired_party_ledger_master_source"} else {"not_requested"}});
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": result}),
-            evidence: combine_evidence(
-                company_evidence,
-                evidence_from_runtime_read(ledger_evidence),
-            ),
+            evidence: evidence.clone(),
             company_guid: Some(guid.to_string()),
             truncated,
-        })
+        })        }.await;
+        result.map_err(|failure| failure.with_prior_evidence(evidence))
     }
 }

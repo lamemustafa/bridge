@@ -2,7 +2,7 @@
 use super::*;
 
 impl Server {
-    pub(super) async fn changed_since(&self, args: &Value) -> Result<ToolOutcome, String> {
+    pub(super) async fn changed_since(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let voucher_alter_id = checkpoint_arg(args, "voucher_alter_id")?
             .or(checkpoint_arg(args, "alter_id")?)
@@ -54,7 +54,7 @@ impl Server {
                         snapshot_evidence,
                     )
                 }
-                _ => return Err("change_snapshot_incomplete".to_string()),
+                _ => return Err("change_snapshot_incomplete".to_string().into()),
             };
         let voucher_snapshot = snapshot["altvchid"]
             .as_u64()
@@ -63,7 +63,7 @@ impl Server {
             .as_u64()
             .ok_or_else(|| "master_checkpoint_invalid".to_string())?;
         if voucher_alter_id > voucher_snapshot || master_alter_id > master_snapshot {
-            return Err("change_checkpoint_exceeds_snapshot".to_string());
+            return Err("change_checkpoint_exceeds_snapshot".to_string().into());
         }
         let request =
             render_agent_changed_vouchers(&company.name, voucher_alter_id, voucher_snapshot);

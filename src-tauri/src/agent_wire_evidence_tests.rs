@@ -25,83 +25,6 @@ fn join_hashes(left: &str, right: &str) -> String {
 }
 
 #[tokio::test]
-async fn empty_ledger_selection_does_not_replace_source_emptiness() {
-    fn captured_plan(bytes: &[u8]) -> ScenarioPlan {
-        let words = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        ScenarioPlan::new(Fixture::SyntheticXml(String::from_utf16(&words).unwrap()))
-            .with_encoding(WireEncoding::Utf16Le)
-            .with_framing(ResponseFraming::ContentLength)
-    }
-    let populated = captured_plan(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
-    ));
-    let empty = captured_plan(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
-    ));
-    assert_eq!(
-        parse_agent_rows(&populated.fixture.body()).unwrap().len(),
-        3
-    );
-    assert!(parse_agent_rows(&empty.fixture.body()).unwrap().is_empty());
-    for source_is_empty in [false, true] {
-        let cycle = import_cycle_plans();
-        let mut plans = cycle[..10].to_vec();
-        let paired_read = |source: &ScenarioPlan| {
-            [
-                cycle[0].clone(),
-                source.clone(),
-                cycle[1].clone(),
-                source.clone(),
-                cycle[1].clone(),
-                cycle[0].clone(),
-            ]
-        };
-        plans.extend(paired_read(if source_is_empty {
-            &empty
-        } else {
-            &populated
-        }));
-        if source_is_empty {
-            // The same captured vouchers in the widened read contradict true
-            // source emptiness, even though none touch the selected Cash ledger.
-            plans.extend(paired_read(&populated));
-        }
-        let simulator = SequenceSimulator::spawn(plans).unwrap();
-        let directory = tempfile::tempdir().unwrap();
-        let response = server_for(simulator.address(), directory.path())
-            .call_tool(
-                "vouchers",
-                json!({"company_guid":CAPTURED_GUID,
-                "from":"20260801","to":"20260802","ledger":"Cash"}),
-            )
-            .await;
-        if source_is_empty {
-            assert_eq!(response["isError"], true);
-            assert_eq!(
-                response["structuredContent"]["result"]["error"]["code"],
-                "window_contradicted"
-            );
-        } else {
-            assert_eq!(response["isError"], false);
-            assert_eq!(response["structuredContent"]["result"]["state"], "complete");
-            assert_eq!(response["structuredContent"]["result"]["items"], json!([]));
-            assert_eq!(response["structuredContent"]["result"]["total"], 0);
-            assert_eq!(
-                response["structuredContent"]["evidence"]["state"],
-                "complete"
-            );
-        }
-        assert_eq!(
-            simulator.finish().unwrap().len(),
-            if source_is_empty { 22 } else { 16 }
-        );
-    }
-}
-
-#[tokio::test]
 async fn status_evidence_matches_observed_request_and_encoded_response_bodies() {
     let mut previous = None;
     for framing in [
@@ -164,12 +87,16 @@ async fn voucher_selector_catalogue_contributes_to_final_wire_evidence() {
             cycle[1].clone(),
             cycle[0].clone(),
         ]);
+        plans.extend(cycle[4..10].iter().cloned());
         let company = response_bytes(&plans[0]);
         let catalogue = response_bytes(&plans[5]);
         let vouchers = response_bytes(&plans[11]);
         let expected_response = join_hashes(
-            &join_hashes(&sha256_hex(&company), &sha256_hex(&catalogue)),
-            &sha256_hex(&vouchers),
+            &join_hashes(
+                &join_hashes(&sha256_hex(&company), &sha256_hex(&catalogue)),
+                &sha256_hex(&vouchers),
+            ),
+            &sha256_hex(&catalogue),
         );
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let directory = tempfile::tempdir().unwrap();
@@ -190,7 +117,7 @@ async fn voucher_selector_catalogue_contributes_to_final_wire_evidence() {
         assert_eq!(evidence["response_sha256"], expected_response);
         assert_eq!(
             evidence["bytes"],
-            2 * (company.len() + catalogue.len() + vouchers.len())
+            2 * (company.len() + 2 * catalogue.len() + vouchers.len())
         );
         let items = &response["structuredContent"]["result"]["items"];
         assert_eq!(items.as_array().unwrap().len(), 2);
@@ -200,15 +127,18 @@ async fn voucher_selector_catalogue_contributes_to_final_wire_evidence() {
         }
         previous = Some((items.clone(), evidence["response_sha256"].clone()));
         let observed = simulator.finish().unwrap();
-        assert_eq!(observed.len(), 16);
+        assert_eq!(observed.len(), 22);
         assert_eq!(
             evidence["request_sha256"],
             join_hashes(
                 &join_hashes(
-                    &observed[0].request_body_sha256,
-                    &observed[5].request_body_sha256,
+                    &join_hashes(
+                        &observed[0].request_body_sha256,
+                        &observed[5].request_body_sha256,
+                    ),
+                    &observed[11].request_body_sha256,
                 ),
-                &observed[11].request_body_sha256,
+                &observed[17].request_body_sha256,
             ),
         );
     }
@@ -265,3 +195,6 @@ async fn write_shaped_adapter_request_is_refused_before_any_transport() {
         );
     }
 }
+
+#[path = "agent_voucher_selection_tests.rs"]
+mod selection_tests;

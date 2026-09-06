@@ -3,6 +3,7 @@ use super::*;
 
 impl Server {
     pub(super) async fn status(&self) -> Result<(Value, Evidence), String> {
+        let endpoint = endpoint_origin(&self.settings.endpoint)?;
         let (probe, wire_evidence) = self
             .runtime
             .probe_with_wire_evidence(self.tally_config())
@@ -13,7 +14,7 @@ impl Server {
                 "product": serde_json::to_value(&probe.connection.product).unwrap_or_else(|_| json!("not_observed")),
                 "release": probe.profile.release,
                 "education_mode": probe.profile.mode,
-                "endpoint": endpoint_origin(&self.settings.endpoint)?,
+                "endpoint": endpoint,
                 "loaded_companies": probe.companies,
                 "refusal_reason": Value::Null,
             }),
@@ -44,59 +45,67 @@ impl Server {
     pub(super) async fn verified_company(
         &self,
         guid: &str,
-    ) -> Result<(TallyCompany, VerifiedCompanyIdentity, Evidence), String> {
+    ) -> Result<(TallyCompany, VerifiedCompanyIdentity, Evidence), ToolFailure> {
         if guid.trim().is_empty() {
-            return Err("company_guid_required".to_string());
+            return Err("company_guid_required".to_string().into());
         }
         let (companies, evidence) = self.companies().await?;
-        let observed_companies = companies.clone();
-        let matches = companies
-            .into_iter()
-            .filter(|company| {
-                company
-                    .guid
-                    .as_deref()
-                    .is_some_and(|value| value.eq_ignore_ascii_case(guid))
-            })
-            .collect::<Vec<_>>();
-        if matches.len() != 1 {
-            return Err(if matches.is_empty() {
-                "company_identity_not_found".to_string()
-            } else {
-                "company_identity_ambiguous".to_string()
-            });
-        }
-        let company = matches.into_iter().next().expect("one checked above");
-        let company_number = company
-            .company_number
-            .clone()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "company_identity_incomplete".to_string())?;
-        let books_from = company
-            .books_from
-            .clone()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "company_identity_incomplete".to_string())?;
-        let identity = VerifiedCompanyIdentity::from_observed_companies(
-            company.name.clone(),
-            guid.to_string(),
-            company_number,
-            books_from,
-            &observed_companies,
-        )
-        .map_err(|error| {
-            match error {
-                crate::tally::VerifiedCompanyIdentityError::Missing => "company_identity_not_found",
-                crate::tally::VerifiedCompanyIdentityError::DuplicateTuple => {
-                    "company_identity_ambiguous"
+        let result: Result<(TallyCompany, VerifiedCompanyIdentity, Evidence), ToolFailure> =
+            async {
+                let observed_companies = companies.clone();
+                let matches = companies
+                    .into_iter()
+                    .filter(|company| {
+                        company
+                            .guid
+                            .as_deref()
+                            .is_some_and(|value| value.eq_ignore_ascii_case(guid))
+                    })
+                    .collect::<Vec<_>>();
+                if matches.len() != 1 {
+                    return Err(if matches.is_empty() {
+                        "company_identity_not_found".to_string()
+                    } else {
+                        "company_identity_ambiguous".to_string()
+                    }
+                    .into());
                 }
-                crate::tally::VerifiedCompanyIdentityError::DisplayScopeAmbiguous => {
-                    "company_display_scope_ambiguous"
-                }
+                let company = matches.into_iter().next().expect("one checked above");
+                let company_number = company
+                    .company_number
+                    .clone()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "company_identity_incomplete".to_string())?;
+                let books_from = company
+                    .books_from
+                    .clone()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "company_identity_incomplete".to_string())?;
+                let identity = VerifiedCompanyIdentity::from_observed_companies(
+                    company.name.clone(),
+                    guid.to_string(),
+                    company_number,
+                    books_from,
+                    &observed_companies,
+                )
+                .map_err(|error| {
+                    match error {
+                        crate::tally::VerifiedCompanyIdentityError::Missing => {
+                            "company_identity_not_found"
+                        }
+                        crate::tally::VerifiedCompanyIdentityError::DuplicateTuple => {
+                            "company_identity_ambiguous"
+                        }
+                        crate::tally::VerifiedCompanyIdentityError::DisplayScopeAmbiguous => {
+                            "company_display_scope_ambiguous"
+                        }
+                    }
+                    .to_string()
+                })?;
+                Ok((company, identity, evidence.clone()))
             }
-            .to_string()
-        })?;
-        Ok((company, identity, evidence))
+            .await;
+        result.map_err(|failure| failure.with_prior_evidence(evidence))
     }
 }
 

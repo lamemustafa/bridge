@@ -1,7 +1,7 @@
 use super::{
     combine_evidence, company_json, normalized_date, parse_company_high_water, party_name,
     render_agent_company_high_water, required_string, sha256_hex, sha256_json, Evidence, Server,
-    ToolOutcome,
+    ToolFailure, ToolOutcome,
 };
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::parse_standard_ledger_catalog;
@@ -164,7 +164,7 @@ impl Server {
         })
     }
 
-    pub(super) async fn validate_masters(&self, args: &Value) -> Result<ToolOutcome, String> {
+    pub(super) async fn validate_masters(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let ledgers = args
             .get("ledgers")
@@ -176,7 +176,10 @@ impl Server {
             .filter(|names| !names.is_empty())
             .ok_or_else(|| "ledgers_required".to_string())?;
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
-        let (catalogue, evidence) = self.read_ledger_catalogue(&identity, &company.name).await?;
+        let (catalogue, evidence) = self
+            .read_ledger_catalogue(&identity, &company.name)
+            .await
+            .map_err(|failure| failure.with_prior_evidence(identity_evidence.clone()))?;
         let report = ledgers
             .into_iter()
             .map(|wanted| master_match(wanted, &catalogue))
@@ -190,15 +193,18 @@ impl Server {
         })
     }
 
-    pub(super) async fn build_import_xml(&self, args: &Value) -> Result<ToolOutcome, String> {
+    pub(super) async fn build_import_xml(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let mut payload = parse_payload(args)?;
         validate_payload(&payload)?;
         let (debit, credit) = totals(&payload.vouchers)?;
         normalize_payload_dates(&mut payload)?;
         let (company, identity, identity_evidence) =
             self.verified_company(&payload.company_guid).await?;
+        let mut accumulated = identity_evidence.clone();
+        let result: Result<ToolOutcome, ToolFailure> = async {
         let (catalogue, catalogue_evidence) =
             self.read_ledger_catalogue(&identity, &company.name).await?;
+        accumulated = combine_evidence(accumulated.clone(), catalogue_evidence.clone());
         let report = masters_for_payload(&payload, &catalogue);
         if report.iter().any(|value| value["match_state"] != "exact") {
             return Ok(ToolOutcome {
@@ -217,6 +223,7 @@ impl Server {
         let existing = self.import_ledger_while_admitted()?;
         reject_known_transactions(&payload, &existing)?;
         let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
+        accumulated = combine_evidence(accumulated.clone(), mark_evidence.clone());
         let batch_id = format!("bridge-{}", Uuid::new_v4());
         let xml = render_import_xml(&company.name, &payload.vouchers);
         let sha256 = sha256_hex(xml.as_bytes());
@@ -285,27 +292,33 @@ impl Server {
             company_guid: Some(line.company_guid.clone()),
             truncated: false,
         })
+        }.await;
+        result.map_err(|failure| failure.with_prior_evidence(accumulated))
     }
 
-    pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, String> {
+    pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
         let line = self
             .latest_import_line(batch_id)?
             .ok_or_else(|| "import_batch_not_found".to_string())?;
         if !batch_guid_matches(&line.company_guid, guid) {
-            return Err("import_batch_company_mismatch".to_string());
+            return Err("import_batch_company_mismatch".to_string().into());
         }
         let (company, identity, identity_evidence) = self.verified_company(guid).await?;
+        let mut accumulated = identity_evidence.clone();
+        let result: Result<ToolOutcome, ToolFailure> = async {
         if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
-            return Err("company_identity_mismatch".to_string());
+            return Err("company_identity_mismatch".to_string().into());
         }
         let request =
             render_import_verification_read(&company.name, &line.date_from, &line.date_to);
         let (xml, evidence) = self.post_read(&identity, request.clone()).await?;
+        accumulated = combine_evidence(accumulated.clone(), evidence.clone());
         let observed = parse_import_vouchers(&xml)?;
         let (corroboration_xml, corroboration_evidence) =
             self.post_read(&identity, request).await?;
+        accumulated = combine_evidence(accumulated.clone(), corroboration_evidence.clone());
         let corroboration = parse_import_vouchers(&corroboration_xml)?;
         corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)?;
         let result = verify_batch(&line, &observed)?;
@@ -331,6 +344,8 @@ impl Server {
             company_guid: Some(guid.to_string()),
             truncated: false,
         })
+        }.await;
+        result.map_err(|failure| failure.with_prior_evidence(accumulated))
     }
 
     fn persist_import_verification(
@@ -358,7 +373,7 @@ impl Server {
         &self,
         identity: &super::VerifiedCompanyIdentity,
         company_name: &str,
-    ) -> Result<(Vec<String>, Evidence), String> {
+    ) -> Result<(Vec<String>, Evidence), ToolFailure> {
         let name = ValidatedCompanyName::new(company_name.to_string())
             .map_err(|_| "company_name_invalid".to_string())?;
         let (xml, evidence) = self
@@ -368,7 +383,10 @@ impl Server {
             )
             .await?;
         let ledgers = parse_standard_ledger_catalog(&xml, company_name, identity.company_guid())
-            .map_err(|_| "ledger_export_invalid".to_string())?;
+            .map_err(|_| {
+                ToolFailure::from("ledger_export_invalid".to_string())
+                    .with_prior_evidence(evidence.clone())
+            })?;
         Ok((
             ledgers.into_iter().map(|ledger| ledger.name).collect(),
             evidence,
@@ -379,7 +397,7 @@ impl Server {
         &self,
         company: &bridge_tally_protocol::TallyCompany,
         identity: &super::VerifiedCompanyIdentity,
-    ) -> Result<(PreImportMark, Evidence), String> {
+    ) -> Result<(PreImportMark, Evidence), ToolFailure> {
         let guid = company
             .guid
             .as_deref()
@@ -387,9 +405,13 @@ impl Server {
         let (xml, evidence) = self
             .post_read(identity, render_agent_company_high_water(&company.name))
             .await?;
-        let high_water = parse_company_high_water(&xml, guid)
-            .map_err(|_| "pre_import_mark_unobserved".to_string())?;
-        Ok((company_high_water_mark(&high_water)?, evidence))
+        let high_water = parse_company_high_water(&xml, guid).map_err(|_| {
+            ToolFailure::from("pre_import_mark_unobserved".to_string())
+                .with_prior_evidence(evidence.clone())
+        })?;
+        let mark = company_high_water_mark(&high_water)
+            .map_err(|code| ToolFailure::from(code).with_prior_evidence(evidence.clone()))?;
+        Ok((mark, evidence))
     }
 
     fn imports_dir(&self) -> Result<PathBuf, String> {

@@ -59,7 +59,9 @@ async fn batch_total_overflow_is_refused_before_dispatch_or_persistence() {
     let result = server
         .build_import_xml(&serde_json::to_value(input).unwrap())
         .await;
-    assert_eq!(result.err(), Some("voucher_amount_overflow".into()));
+    let failure = result.err().unwrap();
+    assert_eq!(failure.code, "voucher_amount_overflow");
+    assert!(failure.evidence.is_none());
     assert!(!directory.path().join("imports").exists());
     assert!(!directory.path().join("agent-import-ledger.jsonl").exists());
 }
@@ -1445,3 +1447,6 @@ mod wire_evidence_tests;
 
 #[path = "agent_import_ledger_tests.rs"]
 mod compact_ledger_tests;
+
+#[path = "agent_failure_tests.rs"]
+mod failure_tests;

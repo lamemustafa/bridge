@@ -288,7 +288,7 @@ fn endpoint_origin(endpoint: &TallyEndpointConfig) -> Result<String, String> {
     canonical_loopback_origin(endpoint).map_err(|_| "endpoint_invalid".to_string())
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct Evidence {
     request_sha256: String,
     response_sha256: String,
@@ -355,6 +355,33 @@ struct ToolOutcome {
     truncated: bool,
 }
 
+#[derive(Debug)]
+struct ToolFailure {
+    code: String,
+    evidence: Option<Box<Evidence>>,
+}
+
+impl From<String> for ToolFailure {
+    fn from(code: String) -> Self {
+        Self {
+            code,
+            evidence: None,
+        }
+    }
+}
+
+impl ToolFailure {
+    // The caller owns only observations completed before its failing child.
+    // Combining prior first preserves read order without counting a read twice.
+    fn with_prior_evidence(mut self, prior: Evidence) -> Self {
+        self.evidence = Some(Box::new(match self.evidence {
+            Some(current) => combine_evidence(prior, *current),
+            None => prior,
+        }));
+        self
+    }
+}
+
 impl Server {
     fn new(settings: Settings) -> Self {
         Self {
@@ -413,8 +440,8 @@ impl Server {
             truncated,
         } = match result {
             Ok(outcome) => outcome,
-            Err(code) => {
-                let evidence = Evidence {
+            Err(ToolFailure { code, evidence }) => {
+                let mut evidence = evidence.map(|value| *value).unwrap_or_else(|| Evidence {
                     request_sha256: sha256_hex(format!("{name}:{args_sha256}").as_bytes()),
                     response_sha256: sha256_hex(code.as_bytes()),
                     bytes: 0,
@@ -422,7 +449,9 @@ impl Server {
                     read_at: None,
                     duration_ms: None,
                     reason_code: Some(code.clone()),
-                };
+                });
+                evidence.state = "partial";
+                evidence.reason_code = Some(code.clone());
                 ToolOutcome {
                     payload: json!({"error": {"code": code, "message": "Bridge withheld this read."}}),
                     evidence,
@@ -585,9 +614,9 @@ impl Server {
         append_egress_line(&self.settings.data_dir.join("agent-egress.jsonl"), &line)
     }
 
-    async fn tool_payload(&self, name: &str, args: &Value) -> Result<ToolOutcome, String> {
+    async fn tool_payload(&self, name: &str, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         if name == "changed_since" {
-            return Err("changed_since_unqualified".to_string());
+            return Err("changed_since_unqualified".to_string().into());
         }
         if matches!(name, "build_import_xml" | "verify_import") {
             self.import_enabled()?;
@@ -616,7 +645,7 @@ impl Server {
                     truncated: false,
                 })
             }
-            "voucher_schema" => self.voucher_schema(),
+            "voucher_schema" => self.voucher_schema().map_err(Into::into),
             "validate_masters" => self.validate_masters(args).await,
             "build_import_xml" => {
                 self.import_enabled()?;
@@ -631,9 +660,9 @@ impl Server {
             "changed_since" => self.changed_since(args).await,
             "outstandings" => self.outstandings(args).await,
             "ledger_movement" => self.ledger_movement(args).await,
-            "read_evidence" => self.read_evidence(args),
-            "egress_log" => self.egress_log(args),
-            _ => Err("tool_not_found".to_string()),
+            "read_evidence" => self.read_evidence(args).map_err(Into::into),
+            "egress_log" => self.egress_log(args).map_err(Into::into),
+            _ => Err("tool_not_found".to_string().into()),
         }
     }
 

@@ -2,14 +2,15 @@
 use super::*;
 
 impl Server {
-    pub(super) async fn ledger_movement(&self, args: &Value) -> Result<ToolOutcome, String> {
+    pub(super) async fn ledger_movement(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let from = normalized_date(required_string(args, "from")?)?;
         let to = normalized_date(required_string(args, "to")?)?;
         if from > to {
-            return Err("invalid_date_range".to_string());
+            return Err("invalid_date_range".to_string().into());
         }
         let (company, identity, mut evidence) = self.verified_company(guid).await?;
+        let result: Result<ToolOutcome, ToolFailure> = async {
         let books_from = normalized_date(
             company
                 .books_from
@@ -22,7 +23,7 @@ impl Server {
         let (ledgers, ledger_evidence) = self
             .read_movement_ledgers(&identity, opening_date.clone())
             .await?;
-        evidence = combine_evidence(evidence, ledger_evidence);
+        evidence = combine_evidence(evidence.clone(), ledger_evidence);
         let (page, read_evidence) = self
             .read_movement_vouchers(&identity, &company.name, from.clone(), to)
             .await?;
@@ -30,11 +31,11 @@ impl Server {
             rows: vouchers,
             observed_rows: voucher_rows_observed,
         } = page;
-        evidence = combine_evidence(evidence, read_evidence);
+        evidence = combine_evidence(evidence.clone(), read_evidence);
         let (corroborating_ledgers, corroboration_evidence) =
             self.read_movement_ledgers(&identity, opening_date).await?;
+        evidence = combine_evidence(evidence.clone(), corroboration_evidence);
         validate_movement_snapshot(&ledgers, &corroborating_ledgers, &vouchers)?;
-        evidence = combine_evidence(evidence, corroboration_evidence);
         let selected = optional_string(args, "ledger")?
             .map(|name| {
                 resolve_ledger_name(ledgers.iter().map(|ledger| ledger.name.as_str()), &name)
@@ -127,10 +128,11 @@ impl Server {
         let next_offset = truncated.then_some(offset + rows.len());
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"state": if opening_unobserved {"partial"} else {"complete"}, "partial_reason": opening_unobserved.then_some("opening_balance_not_observed"), "ledgers": rows, "offset": offset, "next_offset": next_offset, "voucher_rows_observed": voucher_rows_observed, "balance_basis": "tally_period_opening_plus_direct_voucher_movement", "evidence_method": "runtime_ledger_opening_at_from_plus_literal_window_entries"}}),
-            evidence,
+            evidence: evidence.clone(),
             company_guid: Some(guid.to_string()),
             truncated,
-        })
+        })        }.await;
+        result.map_err(|failure| failure.with_prior_evidence(evidence))
     }
 
     pub(super) async fn read_movement_ledgers(
@@ -152,7 +154,7 @@ impl Server {
         company: &str,
         from: String,
         to: String,
-    ) -> Result<(MovementPage, Evidence), String> {
+    ) -> Result<(MovementPage, Evidence), ToolFailure> {
         let company = ValidatedCompanyName::new(company.to_string())
             .map_err(|_| "company_name_invalid".to_string())?;
         let range =
@@ -168,27 +170,31 @@ impl Server {
                 )?,
             )
             .await?;
-        let page = parse_movement_rows(
-            parse_agent_changed_rows(&xml)?,
-            range.from_yyyymmdd(),
-            range.to_yyyymmdd(),
-        )?;
-        if page.observed_rows == 0 {
-            let (corroboration, partial, reason) = self
-                .corroborate_empty_voucher_read(
-                    identity,
-                    company.as_str(),
-                    range.from_yyyymmdd(),
-                    range.to_yyyymmdd(),
-                    None,
-                )
-                .await?;
-            if partial {
-                return Err(reason.unwrap_or("empty_uncorroborated").to_string());
+        let result: Result<(MovementPage, Evidence), ToolFailure> = async {
+            let page = parse_movement_rows(
+                parse_agent_changed_rows(&xml)?,
+                range.from_yyyymmdd(),
+                range.to_yyyymmdd(),
+            )?;
+            if page.observed_rows == 0 {
+                let (corroboration, partial, reason) = self
+                    .corroborate_empty_voucher_read(
+                        identity,
+                        company.as_str(),
+                        range.from_yyyymmdd(),
+                        range.to_yyyymmdd(),
+                        None,
+                    )
+                    .await?;
+                evidence = combine_evidence(evidence.clone(), corroboration);
+                if partial {
+                    return Err(reason.unwrap_or("empty_uncorroborated").to_string().into());
+                }
             }
-            evidence = combine_evidence(evidence, corroboration);
+            Ok((page, evidence.clone()))
         }
-        Ok((page, evidence))
+        .await;
+        result.map_err(|failure| failure.with_prior_evidence(evidence))
     }
 }
 
