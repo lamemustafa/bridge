@@ -171,7 +171,9 @@ for XML; empty for the status GET), and response commitments hash encoded respon
 bodies. Multiple sources combine their commitments in read order. `evidence.bytes`
 counts committed response bodies, including both accepted bodies of a paired read;
 it excludes auxiliary health and identity guards and is not total network traffic.
-Status commits its status and company-discovery responses. Read failures retain
+Status commits its status and company-discovery responses. Scoped agent reads use
+a single attempt. Company discovery can retry transient failures; its commitments
+describe the terminal attempt, excluding earlier attempts. Read failures retain
 source observations already returned to the connector, including when parsing or
 window validation fails. Runtime-internal requests that fail without returning
 source evidence are not fabricated; zero retained bytes does not establish that
@@ -223,6 +225,17 @@ planning allows 1000 vouchers but at most 100 distinct ledger names per batch.
 Repeated uses of a ledger do not consume additional distinct-name slots.
 Voucher-type and ledger selectors share the 1024-character bound; ledger
 lookup keys are computed once before scanning live names.
+
+Voucher `offset`, `limit`, ledger and voucher-type selectors apply after the
+complete source window is read and validated. They do not page Tally's work.
+The fixed profile fetches named voucher fields and three ledger-entry fields;
+it does not expand `ALLLEDGERENTRIES.*`. Each source response is subject to the
+transport's 32 MiB limit and 20-second deadline. A failed source read releases
+no complete page or movement total. These client limits do not bound Tally's
+server-side generation cost. Dense-window throughput and automatic source
+partitioning are unqualified; start with a narrow date window and do not treat
+a small output limit as a source-volume safeguard. Even a single day can be too
+large. The connector does not automatically retry or subdivide such a failure.
 
 Byte-limited pages retain forward progress or return `agent_response_too_large`;
 they never advertise the same offset after removing every row. Outstandings
@@ -303,6 +316,16 @@ file hash, rather than duplicating vouchers and narration. The reader accepts
 existing full batch records and their historical updates. Output row limits do
 not determine verification-source completeness; the collection read is uncapped
 by that setting and its identity set is independently corroborated.
+
+Before publishing a new import file, the builder reads the exact min/max-date
+verification window with the same fixed projection used by `verify_import`.
+Both native responses must agree, and all rows must pass company, accounting
+and window admission, including the GUID/AlterID pair required by verification. A timeout, oversized response or invalid source prevents
+file and batch publication while retaining completed source evidence.
+`verification_preflight` records the observed rows, paired source bytes and
+response commitment. It proves that the current window was readable; the new
+import or later changes can still make subsequent verification exceed the
+transport limits. It is not a future-capacity reservation.
 
 No database migration is required. Older binaries cannot read the new compact
 status records. Preserve the data directory, import ledger, and proofs; use the

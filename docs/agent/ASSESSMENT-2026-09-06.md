@@ -186,6 +186,36 @@ An unchanged opening cannot hide an in-window posting, edit, or deletion between
 those reads. Captured-source replay covers stable reads and each drift case.
 This establishes repeated-observation stability, not an atomic Tally snapshot.
 
+### Source volume and current-window admission
+
+Output pagination follows a complete, validated source read. It does not limit
+Tally's export. The voucher and import profiles fetch named scalar fields and
+three ledger-entry fields, whereas the large-volume measurements in protocol
+reference §12a.8 used wildcard expansion. Their bytes-per-voucher and timing
+constants cannot be applied to this projection. No dense-book throughput or
+server-work bound is claimed. The existing 32 MiB/20-second transport limits
+refuse unreadable sources, and completed observations survive that refusal;
+they cannot cancel work already being performed inside Tally.
+
+File generation now exercises its exact verification projection and date window
+before publication. The source must be paired, company-bound and valid for the
+window, with the same GUID/AlterID admission used by verification, and a closing qualified profile must still be observed. The result
+records the current source row count, paired bytes and response commitment.
+This prevents issuing a file whose verification window is already unreadable.
+It does not reserve capacity for the import or concurrent future changes.
+
+Adaptive partitioning was not added. Its completeness, mutation stability and
+request budget would require a separately observed end-to-end slice. Applying
+wildcard sizing constants or assuming AlterID/date locality would add unsupported
+behavior to the connector. Dense-window support remains an explicit limitation.
+
+Every voucher now carries a GUID bound to the selected company before filtering,
+movement or import attribution. Missing GUIDs cannot fall back to unscoped master
+IDs. Failed pairs retain completed source commitments, including drift and
+closing identity failures. Narration redaction preserves only the known
+`voucher_schema` metadata subtree; accounting narration remains redacted and
+text content matches the structured result.
+
 ### Dated correction: period opening
 
 The earlier implementation calculated a running opening by adding every prior
@@ -261,7 +291,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **974 Rust workspace tests**, **213 agent tests
+Local candidate verification: **982 Rust workspace tests**, **220 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -270,8 +300,8 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed twenty-seven live checks with party masking:
-twenty-six complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed twenty-six live checks with party masking and separate narration-redaction checks:
+twenty-five complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. A separate fresh process
@@ -292,11 +322,15 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.59` after repeated catalogue and Silver 7.1 profile observations, and
-readback confirmed `not_found`; that file was not imported. A controlled exact-file repeat, bracketed by observed Silver 7.1 status,
-returned zero created and one altered. Readback retained the same GUID, master ID,
-assigned number and exact signed amount; only its AlterID advanced from 7 to 8.
-No additional voucher was created. The expected read refusal retained its actual completed source
+additional Journal file for `12.60` after catalogue, verification-window and
+Silver 7.1 profile observations. Its preflight observed the existing Journal;
+readback correctly reported the new file as `not_found`. The file was not imported.
+A separate narration-redaction process preserved the schema's narration property
+while removing accounting narration from the returned Journal. The earlier
+controlled exact-file repeat, bracketed by observed Silver 7.1 status, returned
+zero created and one altered; its GUID, master ID, assigned number and exact signed
+amount remained stable while AlterID advanced from 7 to 8. The current pass made
+no operator import and created no Tally voucher. The expected read refusal retained its actual completed source
 commitments and byte count, retrievable through `read_evidence`. A captured-source regression also proves that
 a final JSON-RPC frame refusal records partial evidence with the cap reason while
 retaining the original source commitments. Nonpageable company/master/history
@@ -323,9 +357,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `fd2793cb1b7e941f90cffa59bcb4c0010b501978f0d1321abdd4018368259fa1`.
-- MCPB archive SHA-256: `5722b810b79c86e8ccf35101e3edca23352ac59f8a25f76189be78bd14ce9526`.
-- Source fingerprint (354 build-input files, unchanged through the settled-source rebuild): `9260e92cd3c04eb44119f10bee4e43bd50fa02733039613f88b55297f5eb22c7`.
+- Release executable SHA-256: `215620afb87e57afc9ad9c7bce4b5f61f26c3549d7d54e13504beea4fbe97aa5`.
+- MCPB archive SHA-256: `e918045e1eb249761b7eccdc61fd64da03b4ec3e94b20e2395892cd44c4eb7e8`.
+- Source fingerprint (357 build-input files, unchanged through the settled-source rebuild): `9a80c3d91f10f1fbf2dea8d56f49d449966d88ad16c4d120489d5a0962dbf66c`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -342,9 +376,10 @@ were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
 The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates eight existing paths for observed release/tier profile version 4, its
-constructor migration, typed native-ledger validation and the protocol observation.
-No paths were added or removed. Previous seals cover the qualified file-identity
+updates six existing paths for shared company-bound voucher identity, completed
+paired-source evidence and exact no-BOM capture replay. No paths were added or
+removed. Previous seals cover observed release/tier profile version 4, typed
+native-ledger validation, the protocol observation, and the qualified file-identity
 and numbering clarification, literal-date counter-observation,
 negative-verdict qualification limit, currency witness,
 standard-library file locking, fresh financial mode admission and retained refusal
