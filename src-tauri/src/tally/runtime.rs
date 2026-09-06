@@ -699,7 +699,7 @@ fn ledger_opening_period(
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-enum NativeLedgerIdentityAdmissionError {
+pub(crate) enum NativeLedgerIdentityAdmissionError {
     #[error("native_ledger_identity_duplicate")]
     Duplicate,
     #[error("native_ledger_master_id_invalid")]

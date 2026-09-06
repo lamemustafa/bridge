@@ -113,6 +113,10 @@ fn tally_command_error(
     }
 }
 
+#[cfg(test)]
+#[path = "commands_native_ledger_tests.rs"]
+mod native_ledger_tests;
+
 fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
     if error.chain().any(|cause| {
         cause
@@ -121,6 +125,9 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
             || cause.downcast_ref::<PairedReadValidationError>().is_some()
             || cause
                 .downcast_ref::<crate::tally::runtime::OpeningBoundaryObservationError>()
+                .is_some()
+            || cause
+                .downcast_ref::<crate::tally::runtime::NativeLedgerIdentityAdmissionError>()
                 .is_some()
     }) {
         return tally_command_error(
