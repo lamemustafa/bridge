@@ -70,11 +70,19 @@ pub(super) fn truncate_response_items(response: &mut Value) -> Result<bool, Stri
         return Ok(true);
     }
     let requested_offset = response["result"]["offset"].as_u64().unwrap_or(0);
-    for key in ["items", "open_bills", "ledgers"] {
+    if response["result"]["open_bills"].is_array()
+        || response["result"]["unallocated"]["parties"].is_array()
+    {
+        return truncate_outstandings_page(response, requested_offset);
+    }
+    for key in ["items", "ledgers"] {
         if let Some(items) = response["result"][key]
             .as_array_mut()
             .filter(|items| !items.is_empty())
         {
+            if items.len() == 1 {
+                return Err("agent_response_too_large".to_string());
+            }
             items.pop();
             let remaining = items.len();
             response["truncated"] = Value::Bool(true);
@@ -82,19 +90,44 @@ pub(super) fn truncate_response_items(response: &mut Value) -> Result<bool, Stri
             return Ok(true);
         }
     }
-    if let Some(parties) = response["result"]["unallocated"]["parties"]
-        .as_array_mut()
-        .filter(|parties| !parties.is_empty())
-    {
-        parties.pop();
-        let remaining = parties.len();
-        response["truncated"] = Value::Bool(true);
-        response["result"]["unallocated"]["truncated"] = Value::Bool(true);
-        response["result"]["unallocated"]["next_offset"] =
-            json!(requested_offset + remaining as u64);
-        return Ok(true);
-    }
     Ok(false)
+}
+
+fn truncate_outstandings_page(response: &mut Value, offset: u64) -> Result<bool, String> {
+    let bills = response["result"]["open_bills"]
+        .as_array()
+        .map_or(0, Vec::len);
+    let parties = response["result"]["unallocated"]["parties"]
+        .as_array()
+        .map_or(0, Vec::len);
+    let width = bills.max(parties);
+    if width == 0 {
+        return Ok(false);
+    }
+    if width == 1 {
+        return Err("agent_response_too_large".to_string());
+    }
+    // Both collections consume the same input offset. Shrink their shared page
+    // width together so every continuing cursor advances without skipping rows
+    // from the other collection. An already exhausted shorter axis stays intact.
+    let remaining = width - 1;
+    if bills > remaining {
+        response["result"]["open_bills"]
+            .as_array_mut()
+            .unwrap()
+            .truncate(remaining);
+        response["result"]["next_offset"] = json!(offset + remaining as u64);
+    }
+    if parties > remaining {
+        response["result"]["unallocated"]["parties"]
+            .as_array_mut()
+            .unwrap()
+            .truncate(remaining);
+        response["result"]["unallocated"]["truncated"] = Value::Bool(true);
+        response["result"]["unallocated"]["next_offset"] = json!(offset + remaining as u64);
+    }
+    response["truncated"] = Value::Bool(true);
+    Ok(true)
 }
 
 pub(super) fn response_row_count(response: &Value) -> Option<usize> {
@@ -113,9 +146,16 @@ pub(super) fn response_row_count(response: &Value) -> Option<usize> {
                     .map_or(0, Vec::len),
         );
     }
-    ["items", "ledgers", "records", "companies", "open_bills"]
-        .into_iter()
-        .find_map(|key| result[key].as_array().map(Vec::len))
+    [
+        "items",
+        "ledgers",
+        "records",
+        "companies",
+        "masters",
+        "loaded_companies",
+    ]
+    .into_iter()
+    .find_map(|key| result[key].as_array().map(Vec::len))
 }
 
 pub(super) fn set_mcp_content_json(mcp_response: &mut Value) {
@@ -162,3 +202,7 @@ pub(super) fn enforce_jsonrpc_response_byte_cap(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "agent_response_tests.rs"]
+mod tests;
