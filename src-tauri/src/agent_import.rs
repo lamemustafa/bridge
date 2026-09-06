@@ -15,6 +15,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 
+#[path = "agent_import_ledger.rs"]
+mod ledger;
 #[path = "agent_import_persistence.rs"]
 mod persistence;
 use std::path::{Path, PathBuf};
@@ -347,7 +349,7 @@ impl Server {
             update,
             &json,
             markdown.as_bytes(),
-            || self.append_import_ledger_while_admitted(update),
+            || self.append_import_record_while_admitted(&ledger::StatusRecord::from(update)),
             |_| Ok(()),
         )
     }
@@ -439,9 +441,7 @@ impl Server {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(_) => return Err("import_ledger_unavailable".to_string()),
         };
-        text.lines()
-            .map(|line| serde_json::from_str(line).map_err(|_| "import_ledger_invalid".to_string()))
-            .collect()
+        ledger::parse_records(&text)
     }
 
     fn latest_import_line(&self, batch_id: &str) -> Result<Option<ImportLedgerLine>, String> {
@@ -458,6 +458,10 @@ impl Server {
     }
 
     fn append_import_ledger_while_admitted(&self, line: &ImportLedgerLine) -> Result<(), String> {
+        self.append_import_record_while_admitted(line)
+    }
+
+    fn append_import_record_while_admitted(&self, line: &impl Serialize) -> Result<(), String> {
         let path = self.settings.data_dir.join("agent-import-ledger.jsonl");
         let encoded = serde_json::to_string(line)
             .map_err(|_| "import_ledger_serialization_failed".to_string())?;

@@ -103,7 +103,7 @@ pub(super) fn publish_proofs(
         // Preserve enough context for explicit recovery after process death.
         write_private(
             &transaction.join("update.json"),
-            &serde_json::to_vec_pretty(update)
+            &serde_json::to_vec_pretty(&ledger::StatusRecord::from(update))
                 .map_err(|_| "proof_serialization_failed".to_string())?,
         )?;
         before(PublicationStep::StageJson)?;

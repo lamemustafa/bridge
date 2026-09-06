@@ -176,33 +176,36 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
         import_enabled: true,
     };
     let server = Server::new(settings.clone());
+    let initial = ImportLedgerLine {
+        batch_id: "batch-proof".into(),
+        company_guid: GUID.into(),
+        company: None,
+        txn_ids: vec![],
+        date_from: "20260901".into(),
+        date_to: "20260901".into(),
+        sha256: "hash".into(),
+        built_at: now(),
+        status: "built".into(),
+        pre_import_mark: PreImportMark {
+            kind: "company_high_water".into(),
+            value: Some(10),
+            master_value: Some(10),
+        },
+        vouchers: vec![],
+    };
+    server.append_import_ledger(&initial).unwrap();
     let admission = server
         .lock_import_admission()
         .expect("hold publication admission");
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let writers = ["first", "second"].map(|state| {
+        let mut update = initial.clone();
+        update.status = state.into();
         let settings = settings.clone();
         let started = started_tx.clone();
         let done = done_tx.clone();
         std::thread::spawn(move || {
-            let update = ImportLedgerLine {
-                batch_id: "batch-proof".into(),
-                company_guid: GUID.into(),
-                company: None,
-                txn_ids: vec![],
-                date_from: "20260901".into(),
-                date_to: "20260901".into(),
-                sha256: "hash".into(),
-                built_at: now(),
-                status: state.into(),
-                pre_import_mark: PreImportMark {
-                    kind: "company_high_water".into(),
-                    value: Some(10),
-                    master_value: Some(10),
-                },
-                vouchers: vec![],
-            };
             let proof = json!({"batch_id":"batch-proof", "company":{"name":state}, "writer":state});
             started.send(()).expect("writer started");
             let result = Server::new(settings).persist_import_verification(&proof, &update);
@@ -1439,3 +1442,6 @@ async fn import_bounds_distinct_ledger_names_before_tally_without_reducing_vouch
 
 #[path = "agent_wire_evidence_tests.rs"]
 mod wire_evidence_tests;
+
+#[path = "agent_import_ledger_tests.rs"]
+mod compact_ledger_tests;
