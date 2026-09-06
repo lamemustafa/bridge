@@ -161,3 +161,66 @@ fn every_cap_layer_refuses_a_page_whose_first_rows_cannot_fit() {
         );
     }
 }
+
+#[test]
+fn nonpageable_results_refuse_byte_trimming_without_inventing_continuations() {
+    for (tool, axis) in [
+        ("list_companies", "companies"),
+        ("tally_status", "loaded_companies"),
+        ("validate_masters", "masters"),
+        ("read_evidence", "records"),
+        ("egress_log", "records"),
+    ] {
+        // History tools may already report a bounded tail. That does not make
+        // the tail offset-pageable, and its existing truncation must survive.
+        let mut structured = json!({"truncated":axis == "records", "result":{}});
+        structured["result"][axis] = json!((0..5)
+            .map(|id| json!({"id":id,"padding":"x".repeat(160)}))
+            .collect::<Vec<_>>());
+        let (complete, trimmed, rows) =
+            enforce_response_byte_cap(structured.clone(), 10_000).unwrap();
+        assert_eq!(complete, structured);
+        assert!(!trimmed);
+        assert_eq!(rows, 5);
+        assert!(complete["result"].get("next_offset").is_none());
+        assert_eq!(
+            enforce_response_byte_cap(structured.clone(), 500).unwrap_err(),
+            "agent_response_too_large",
+            "{tool}"
+        );
+        let mut mcp = json!({"content":[{"type":"text","text":""}], "isError":false, "structuredContent":structured});
+        assert_eq!(
+            enforce_mcp_result_byte_cap(&mut mcp, 500, tool, 5).unwrap_err(),
+            "agent_response_too_large",
+            "{tool}"
+        );
+        assert_eq!(mcp["structuredContent"], structured);
+        let mut framed = json!({"jsonrpc":"2.0","id":1,"result":mcp});
+        assert_eq!(
+            enforce_jsonrpc_response_byte_cap(&mut framed, 500).unwrap_err(),
+            "agent_response_too_large",
+            "{tool}"
+        );
+        assert_eq!(framed["result"]["structuredContent"], structured);
+        let refusal = response_too_large(tool, "agent_response_too_large");
+        assert!(refusal.to_string().len() <= 500);
+        assert_eq!(refusal["isError"], true);
+    }
+}
+
+#[test]
+fn offset_row_pages_still_advance_after_byte_trimming() {
+    for axis in ["items", "ledgers"] {
+        let mut structured = json!({"result":{"offset":7}});
+        structured["result"][axis] = json!((7..12)
+            .map(|id| json!({"id":id,"padding":"x".repeat(160)}))
+            .collect::<Vec<_>>());
+        let (page, trimmed, count) = enforce_response_byte_cap(structured, 500).unwrap();
+        assert!(trimmed);
+        assert!(count > 0 && count < 5);
+        assert_eq!(page["result"]["next_offset"], 7 + count);
+        assert_eq!(page["result"][axis][0]["id"], 7);
+        assert_eq!(page["result"][axis][count - 1]["id"], 6 + count);
+        assert!(page.to_string().len() <= 500);
+    }
+}

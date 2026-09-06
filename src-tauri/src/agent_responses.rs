@@ -176,6 +176,8 @@ pub(super) fn response_row_count(response: &Value) -> Option<usize> {
                     .map_or(0, Vec::len),
         );
     }
+    // Receipt counting does not imply pagination support. Only page_shape
+    // determines which arrays can be trimmed with a resumable cursor.
     [
         "items",
         "ledgers",
