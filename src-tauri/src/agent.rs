@@ -2,6 +2,10 @@
 //! transport. Import XML is only rendered to a local file: this server never
 //! dispatches an import or another write request to Tally.
 
+#[path = "agent_directory.rs"]
+mod directory;
+use directory::{ensure_private_directory, DirectoryAdmissionError};
+
 #[path = "agent_import.rs"]
 mod agent_import;
 
@@ -231,13 +235,10 @@ impl Settings {
         let data_dir = env::var_os("BRIDGE_AGENT_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(default_data_dir);
-        fs::create_dir_all(&data_dir).map_err(|_| "agent_data_dir_unavailable".to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o700))
-                .map_err(|_| "agent_data_dir_permissions_failed".to_string())?;
-        }
+        ensure_private_directory(&data_dir).map_err(|error| match error {
+            DirectoryAdmissionError::Unavailable => "agent_data_dir_unavailable".to_string(),
+            DirectoryAdmissionError::Permissions => "agent_data_dir_permissions_failed".to_string(),
+        })?;
         Ok(Self {
             endpoint,
             data_dir,
