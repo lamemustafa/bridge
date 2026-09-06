@@ -39,3 +39,71 @@ async fn unqualified_voucher_types_are_refused_before_dispatch_or_persistence() 
         assert!(!directory.path().join("agent-import-ledger.jsonl").exists());
     }
 }
+
+#[test]
+fn journal_renderer_preserves_create_remote_identity_with_optional_number() {
+    let mut voucher = captured_catalogue_payload().vouchers.remove(0);
+    for number in [None, Some("CLIENT-42".to_string())] {
+        voucher.voucher_number = number.clone();
+        let xml = render_import_xml("Synthetic Book", std::slice::from_ref(&voucher));
+        assert_eq!(
+            xml,
+            render_import_xml("Synthetic Book", std::slice::from_ref(&voucher))
+        );
+        let mut reader = quick_xml::Reader::from_str(&xml);
+        let mut vouchers = 0;
+        let mut numbers = Vec::new();
+        loop {
+            match reader.read_event().unwrap() {
+                quick_xml::events::Event::Start(tag) if tag.name().as_ref() == b"VOUCHER" => {
+                    vouchers += 1;
+                    let attributes = tag
+                        .attributes()
+                        .map(|attribute| {
+                            let attribute = attribute.unwrap();
+                            (
+                                String::from_utf8(attribute.key.as_ref().to_vec()).unwrap(),
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        quick_xml::XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .unwrap()
+                                    .into_owned(),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    assert_eq!(
+                        attributes,
+                        BTreeMap::from([
+                            ("ACTION".into(), "Create".into()),
+                            ("REMOTEID".into(), voucher.bridge_txn_id.clone()),
+                            ("VCHTYPE".into(), "Journal".into()),
+                            ("OBJVIEW".into(), "Accounting Voucher View".into()),
+                        ])
+                    );
+                }
+                quick_xml::events::Event::Start(tag) if tag.name().as_ref() == b"VOUCHERNUMBER" => {
+                    numbers.push(
+                        reader
+                            .read_text(tag.name())
+                            .unwrap()
+                            .decode()
+                            .unwrap()
+                            .into_owned(),
+                    );
+                }
+                quick_xml::events::Event::Start(tag) | quick_xml::events::Event::Empty(tag) => {
+                    assert!(!matches!(
+                        tag.name().as_ref(),
+                        b"GUID" | b"MASTERID" | b"REMOTEID"
+                    ));
+                }
+                quick_xml::events::Event::Eof => break,
+                _ => {}
+            }
+        }
+        assert_eq!(vouchers, 1);
+        assert_eq!(numbers, number.into_iter().collect::<Vec<_>>());
+    }
+}
