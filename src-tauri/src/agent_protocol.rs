@@ -18,6 +18,7 @@ where
                 write_response(
                     stdout,
                     &json!({"jsonrpc":"2.0","id":null,"error":{"code":code,"message":message}}),
+                    server.settings.max_bytes,
                 )
                 .await?;
                 continue;
@@ -39,7 +40,7 @@ where
                 + 1
                 > server.settings.max_bytes
         }) {
-            write_response(stdout, &json!({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"request_id_too_large"}})).await?;
+            write_response(stdout, &json!({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"request_id_too_large"}}), server.settings.max_bytes).await?;
             continue;
         }
         if id.is_none() && method == "tools/call" {
@@ -146,16 +147,21 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
             .unwrap_or("import_publication_recovery_required");
         response = recovery_error(id.clone(), recovery_batch_id.as_deref(), code);
     }
-    if is_tool
-        && enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes).is_err()
-    {
+    // Tools may reduce an explicitly paged result. Control messages (including
+    // the tool catalogue) must either fit intact or return a bounded refusal.
+    let fits = if is_tool {
+        enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes).is_ok()
+    } else {
+        response.to_string().len() < server.settings.max_bytes
+    };
+    if !fits {
         response = recovery_error(
             id.clone(),
             recovery_batch_id.as_deref(),
             "agent_response_too_large",
         );
     }
-    let mut serialized_response = format!("{response}\n");
+    let mut serialized_response = serialize_response(&response, server.settings.max_bytes)?;
     let mut terminal_egress_error = None;
     let mut prepared_receipt = None;
     if let Some(egress) = egress {
@@ -174,7 +180,7 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
                     return Err(error);
                 }
                 enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes)?;
-                serialized_response = format!("{response}\n");
+                serialized_response = serialize_response(&response, server.settings.max_bytes)?;
             }
         }
     }
@@ -266,15 +272,25 @@ fn parse_request(line: String) -> Result<Value, (i32, &'static str)> {
 async fn write_response<W: AsyncWrite + Unpin>(
     stdout: &mut W,
     response: &Value,
+    max_bytes: usize,
 ) -> Result<(), String> {
+    let serialized = serialize_response(response, max_bytes)?;
     stdout
-        .write_all(format!("{response}\n").as_bytes())
+        .write_all(serialized.as_bytes())
         .await
         .map_err(|_| "stdio_write_failed".to_string())?;
     stdout
         .flush()
         .await
         .map_err(|_| "stdio_flush_failed".to_string())
+}
+
+fn serialize_response(response: &Value, max_bytes: usize) -> Result<String, String> {
+    let serialized = format!("{response}\n");
+    if serialized.len() > max_bytes {
+        return Err("agent_response_too_large".into());
+    }
+    Ok(serialized)
 }
 
 #[cfg(test)]

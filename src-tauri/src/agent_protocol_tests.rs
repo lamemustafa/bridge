@@ -1,6 +1,9 @@
 use super::*;
 use std::path::Path;
 
+#[path = "agent_protocol_cap_tests.rs"]
+mod cap_tests;
+
 fn server(path: &Path) -> Server {
     Server::new(Settings {
         endpoint: TallyEndpointConfig {
