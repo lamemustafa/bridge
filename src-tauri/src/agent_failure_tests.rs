@@ -76,7 +76,7 @@ async fn import_post_read_failures_retain_source_evidence_and_admission_errors_s
         );
         {
             let records = server.evidence.lock().unwrap();
-            let recorded = records.last().unwrap();
+            let recorded = records.records.last().unwrap();
             assert_eq!(recorded.response_sha256, expected_response);
             assert_eq!(recorded.reason_code.as_deref(), Some(code));
         }

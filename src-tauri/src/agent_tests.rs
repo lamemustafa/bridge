@@ -777,7 +777,8 @@ async fn stored_evidence_records_have_individual_timestamps_and_durations() {
     server.call_tool("voucher_schema", json!({})).await;
     tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     server.call_tool("voucher_schema", json!({})).await;
-    let records = server.evidence.lock().expect("evidence records");
+    let store = server.evidence.lock().expect("evidence records");
+    let records = &store.records;
     assert_eq!(records.len(), 2);
     assert!(records.iter().all(|record| record.duration_ms.is_some()));
     assert_ne!(records[0].read_at, records[1].read_at);
@@ -1666,4 +1667,64 @@ fn native_captured_vouchers_keep_direct_amounts_and_padded_identifiers() {
             .len(),
         3
     );
+}
+
+#[test]
+fn evidence_reads_disclose_requested_limits_and_permanent_retention_eviction() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().into(),
+        max_rows: 1000,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+    });
+    assert!(!server.read_evidence(&json!({"limit":1})).unwrap().truncated);
+    let record = |index: usize| Evidence {
+        request_sha256: index.to_string(),
+        response_sha256: "observed".into(),
+        bytes: 0,
+        state: "complete",
+        read_at: None,
+        duration_ms: None,
+        reason_code: None,
+    };
+    for index in 0..3 {
+        server.record_evidence(record(index));
+    }
+    let limited = server.read_evidence(&json!({"limit":2})).unwrap();
+    assert!(limited.truncated);
+    assert_eq!(
+        limited.payload["result"]["records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        limited.payload["result"]["records"][0]["request_sha256"],
+        "2"
+    );
+    assert!(!server.read_evidence(&json!({"limit":3})).unwrap().truncated);
+    for index in 3..MAX_EVIDENCE_RECORDS {
+        server.record_evidence(record(index));
+    }
+    assert!(
+        !server
+            .read_evidence(&json!({"limit":MAX_EVIDENCE_RECORDS}))
+            .unwrap()
+            .truncated
+    );
+    server.record_evidence(record(MAX_EVIDENCE_RECORDS));
+    let evicted = server
+        .read_evidence(&json!({"limit":MAX_EVIDENCE_RECORDS + 1}))
+        .unwrap();
+    assert!(evicted.truncated);
+    let rows = evicted.payload["result"]["records"].as_array().unwrap();
+    assert_eq!(rows.len(), MAX_EVIDENCE_RECORDS);
+    assert_eq!(rows.last().unwrap()["request_sha256"], "1");
 }

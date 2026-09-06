@@ -341,10 +341,16 @@ struct ToolResponse {
     recovery_batch_id: Option<String>,
 }
 
+#[derive(Default)]
+struct EvidenceStore {
+    records: Vec<Evidence>,
+    evicted: bool,
+}
+
 struct Server {
     settings: Settings,
     runtime: TallyRuntime,
-    evidence: Arc<Mutex<Vec<Evidence>>>,
+    evidence: Arc<Mutex<EvidenceStore>>,
 }
 
 struct ToolOutcome {
@@ -386,7 +392,7 @@ impl Server {
         Self {
             settings,
             runtime: TallyRuntime::default(),
-            evidence: Arc::new(Mutex::new(Vec::new())),
+            evidence: Arc::new(Mutex::new(EvidenceStore::default())),
         }
     }
 
@@ -540,10 +546,11 @@ impl Server {
     }
 
     fn record_evidence(&self, evidence: Evidence) {
-        let mut records = self.evidence.lock().expect("evidence mutex");
-        records.push(evidence);
-        if records.len() > MAX_EVIDENCE_RECORDS {
-            records.remove(0);
+        let mut store = self.evidence.lock().expect("evidence mutex");
+        store.records.push(evidence);
+        if store.records.len() > MAX_EVIDENCE_RECORDS {
+            store.records.remove(0);
+            store.evicted = true;
         }
     }
 
@@ -608,11 +615,18 @@ impl Server {
 
     fn read_evidence(&self, args: &Value) -> Result<ToolOutcome, String> {
         let take = arg_positive_usize(args, "limit", 20)?.min(MAX_EVIDENCE_RECORDS);
-        let records = self
+        let store = self
             .evidence
             .lock()
             .map_err(|_| "evidence_store_unavailable".to_string())?;
-        let values = records.iter().rev().take(take).cloned().collect::<Vec<_>>();
+        let truncated = store.evicted || store.records.len() > take;
+        let values = store
+            .records
+            .iter()
+            .rev()
+            .take(take)
+            .cloned()
+            .collect::<Vec<_>>();
         let evidence = Evidence {
             request_sha256: sha256_hex(b"read_evidence"),
             response_sha256: sha256_json(&values),
@@ -626,7 +640,7 @@ impl Server {
             payload: json!({"result": {"records": values}}),
             evidence,
             company_guid: None,
-            truncated: false,
+            truncated,
         })
     }
 

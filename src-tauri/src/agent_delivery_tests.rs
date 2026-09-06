@@ -186,7 +186,7 @@ async fn delivery_completion_failure_stops_before_another_tool_dispatch() {
         Err("egress_record_write_failed".into())
     );
     assert_eq!(
-        evidence.lock().unwrap().len(),
+        evidence.lock().unwrap().records.len(),
         1,
         "second tool was never dispatched"
     );
