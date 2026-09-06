@@ -127,3 +127,37 @@ async fn persisted_batch_survives_final_256_byte_cap_and_receipt_failure() {
         release(&server, tool, receipt_fails).await;
     }
 }
+
+#[tokio::test]
+async fn capped_reads_retain_source_commitments_for_read_evidence() {
+    let (_directory, _server, baseline) = persisted_build(200_000).await;
+    let expected = &baseline.value["structuredContent"]["evidence"];
+    let structured_bytes = baseline.value["structuredContent"].to_string().len();
+    let mcp_bytes = baseline.value.to_string().len();
+    for cap in [structured_bytes - 100, (structured_bytes + mcp_bytes) / 2] {
+        let (_directory, mut server, tool) = persisted_build(cap).await;
+        assert_eq!(
+            tool.value["structuredContent"]["error"]["code"],
+            "agent_response_too_large"
+        );
+        server.settings.max_bytes = 200_000;
+        let evidence = server.call_tool("read_evidence", json!({"limit": 1})).await;
+        let records = evidence["structuredContent"]["result"]["records"]
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            records.len(),
+            1,
+            "read evidence survives either cap replacement"
+        );
+        let record = &records[0];
+        for field in ["request_sha256", "response_sha256", "bytes"] {
+            assert_eq!(record[field], expected[field], "{field}");
+        }
+        assert!(record["bytes"].as_u64().unwrap() > 0);
+        assert_eq!(record["state"], "partial");
+        assert_eq!(record["reason_code"], "agent_response_too_large");
+        assert!(record["read_at"].is_string());
+        assert!(record["duration_ms"].is_number());
+    }
+}

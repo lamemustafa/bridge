@@ -458,6 +458,9 @@ impl Server {
             match enforce_response_byte_cap(response_value, self.settings.max_bytes) {
                 Ok(value) => value,
                 Err(code) => {
+                    evidence.state = "partial";
+                    evidence.reason_code = Some(code.clone());
+                    self.record_evidence(evidence);
                     return ToolResponse {
                         recovery_batch_id,
                         value: response_too_large(
@@ -483,6 +486,9 @@ impl Server {
             name,
             surviving_rows,
         ) {
+            evidence.state = "partial";
+            evidence.reason_code = Some(code.clone());
+            self.record_evidence(evidence);
             return ToolResponse {
                 recovery_batch_id,
                 value: response_too_large(name, batch_error_code.as_deref().unwrap_or(&code)),
@@ -493,8 +499,7 @@ impl Server {
                 },
             };
         }
-        let response_value = mcp_response["structuredContent"].clone();
-        self.record_evidence(response_value["evidence"].clone());
+        self.record_evidence(evidence);
         ToolResponse {
             recovery_batch_id,
             value: mcp_response,
@@ -506,46 +511,11 @@ impl Server {
         }
     }
 
-    fn record_evidence(&self, value: Value) {
-        let evidence = Evidence {
-            request_sha256: value
-                .get("request_sha256")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            response_sha256: value
-                .get("response_sha256")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            bytes: value
-                .get("bytes")
-                .and_then(Value::as_u64)
-                .unwrap_or_default() as usize,
-            state: if value.get("state").and_then(Value::as_str) == Some("complete") {
-                "complete"
-            } else {
-                "partial"
-            },
-            read_at: value
-                .get("read_at")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            duration_ms: value
-                .get("duration_ms")
-                .and_then(Value::as_u64)
-                .map(u128::from),
-            reason_code: value
-                .get("reason_code")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        };
-        {
-            let mut records = self.evidence.lock().expect("evidence mutex");
-            records.push(evidence);
-            if records.len() > MAX_EVIDENCE_RECORDS {
-                records.remove(0);
-            }
+    fn record_evidence(&self, evidence: Evidence) {
+        let mut records = self.evidence.lock().expect("evidence mutex");
+        records.push(evidence);
+        if records.len() > MAX_EVIDENCE_RECORDS {
+            records.remove(0);
         }
     }
 
