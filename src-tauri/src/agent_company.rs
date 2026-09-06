@@ -44,12 +44,12 @@ impl Server {
         ))
     }
 
-    pub(super) async fn companies(&self) -> Result<(Vec<TallyCompany>, Evidence), String> {
+    pub(super) async fn companies(&self) -> Result<(Vec<TallyCompany>, Evidence), ToolFailure> {
         let company_list = self
             .runtime
             .fetch_agent_companies(self.tally_config())
             .await
-            .map_err(|_| "company_collection_invalid".to_string())?;
+            .map_err(|error| ToolFailure::from_runtime("company_collection_invalid", error))?;
         let evidence = Evidence {
             request_sha256: sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
                 &ReadOnlyProfile::CompanyListV2.render(),

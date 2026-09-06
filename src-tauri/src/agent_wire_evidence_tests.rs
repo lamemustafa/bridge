@@ -190,8 +190,13 @@ async fn write_shaped_adapter_request_is_refused_before_any_transport() {
     for operation in ["Import Data", "Execute", "Import"] {
         let request = format!("<ENVELOPE><HEADER><TALLYREQUEST>{operation}</TALLYREQUEST><TYPE>Collection</TYPE></HEADER><BODY/></ENVELOPE>");
         assert_eq!(
-            server.post_read(&identity, request).await.err().as_deref(),
-            Some("agent_write_dispatch_forbidden")
+            server
+                .post_read(&identity, request)
+                .await
+                .err()
+                .unwrap()
+                .code,
+            "agent_write_dispatch_forbidden"
         );
     }
 }
@@ -255,4 +260,132 @@ async fn opening_mode_refusals_retain_probe_evidence_through_agent_mapping() {
             *evidence
         );
     }
+}
+
+#[tokio::test]
+async fn paired_transport_refusal_retains_completed_catalogue_through_tool_and_history() {
+    for fail_at in [6, 7, 8, 9] {
+        let mut plans = import_cycle_plans()[..10].to_vec();
+        let company_bytes = response_bytes(&plans[0]);
+        let catalogue_bytes = response_bytes(&plans[5]);
+        plans[fail_at].http_status = 503;
+        plans.truncate(fail_at + 1);
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut server = server_for(simulator.address(), directory.path());
+        server.settings.import_enabled = true;
+        let response = server
+            .call_tool(
+                "validate_masters",
+                json!({"company_guid":CAPTURED_GUID,"ledgers":["Cash"]}),
+            )
+            .await;
+        assert_eq!(response["isError"], true);
+        assert_eq!(
+            response["structuredContent"]["result"]["error"]["code"],
+            "agent_runtime_read_failed"
+        );
+        let observed = simulator.finish().unwrap();
+        assert_eq!(observed.len(), fail_at + 1);
+        let evidence = &response["structuredContent"]["evidence"];
+        assert_eq!(evidence["state"], "partial");
+        assert_eq!(evidence["reason_code"], "agent_runtime_read_failed");
+        assert_eq!(
+            evidence["request_sha256"],
+            join_hashes(
+                &observed[0].request_body_sha256,
+                &observed[5].request_body_sha256
+            )
+        );
+        assert_eq!(
+            evidence["response_sha256"],
+            join_hashes(&sha256_hex(&company_bytes), &sha256_hex(&catalogue_bytes))
+        );
+        assert_eq!(
+            evidence["bytes"],
+            company_bytes.len() * 2 + catalogue_bytes.len() * if fail_at < 8 { 1 } else { 2 }
+        );
+        let history = server.call_tool("read_evidence", json!({"limit":1})).await;
+        assert_eq!(
+            history["structuredContent"]["result"]["records"][0],
+            *evidence
+        );
+    }
+}
+
+#[tokio::test]
+async fn paired_company_refusal_retains_completed_discovery_source() {
+    for fail_at in [1, 2, 3] {
+        let mut plans = import_cycle_plans()[..4].to_vec();
+        let body = response_bytes(&plans[0]);
+        // A non-transient HTTP refusal isolates one admitted paired attempt.
+        plans[fail_at].http_status = 400;
+        plans.truncate(fail_at + 1);
+        let simulator = SequenceSimulator::spawn(plans).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let server = server_for(simulator.address(), directory.path());
+        let response = server.call_tool("list_companies", json!({})).await;
+        assert_eq!(response["isError"], true);
+        assert_eq!(
+            response["structuredContent"]["result"]["error"]["code"],
+            "company_collection_invalid"
+        );
+        let observed = simulator.finish().unwrap();
+        assert_eq!(observed.len(), fail_at + 1);
+        let evidence = &response["structuredContent"]["evidence"];
+        assert_eq!(evidence["state"], "partial");
+        assert_eq!(evidence["reason_code"], "company_collection_invalid");
+        assert_eq!(evidence["request_sha256"], observed[0].request_body_sha256);
+        assert_eq!(evidence["response_sha256"], sha256_hex(&body));
+        assert_eq!(
+            evidence["bytes"],
+            body.len() * if fail_at < 3 { 1 } else { 2 }
+        );
+    }
+}
+
+#[tokio::test]
+async fn company_retries_commit_only_the_terminal_attempt() {
+    let cycle = import_cycle_plans();
+    let first = cycle[0].clone();
+    let mut last = first.clone();
+    let original = last.fixture.body().into_owned();
+    let changed = original.replace("WR2 Unicode Lab", "WR2 Changed Lab");
+    assert_ne!(original, changed);
+    last.fixture = Fixture::SyntheticXml(changed);
+    let expected = response_bytes(&last);
+    let mut failure = cycle[1].clone();
+    failure.http_status = 503;
+    let simulator = SequenceSimulator::spawn(vec![
+        first.clone(),
+        failure.clone(),
+        first,
+        failure.clone(),
+        last,
+        failure,
+    ])
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = server_for(simulator.address(), directory.path());
+    let response = server.call_tool("list_companies", json!({})).await;
+    assert_eq!(response["isError"], true);
+    assert_eq!(
+        response["structuredContent"]["result"]["error"]["code"],
+        "company_collection_invalid"
+    );
+    let observed = simulator.finish().unwrap();
+    assert_eq!(
+        observed.len(),
+        6,
+        "three native read attempts, each followed by a failed health check"
+    );
+    let evidence = &response["structuredContent"]["evidence"];
+    assert_eq!(evidence["state"], "partial");
+    assert_eq!(evidence["request_sha256"], observed[4].request_body_sha256);
+    assert_eq!(evidence["response_sha256"], sha256_hex(&expected));
+    assert_eq!(
+        evidence["bytes"],
+        expected.len(),
+        "terminal-attempt source commitment, not a traffic counter"
+    );
 }

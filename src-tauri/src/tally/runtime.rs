@@ -76,9 +76,11 @@ pub struct AgentRead {
     pub encoded_sha256: String,
 }
 
-/// Wire evidence for a runtime read. The response hash and byte count are
-/// taken from the paired transport response, while the request hash is taken
-/// from the exact XML dispatched to Tally.
+/// Commitments to completed runtime source observations, using actual encoded
+/// request and response bodies. Stable pairs share a hash and count both bodies;
+/// a failed pair may retain only its first body, or combine differing bodies.
+/// Auxiliary health and identity guards are not native-report source bodies.
+/// Retried operations retain their terminal attempt only, not total traffic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeReadEvidence {
     pub request_sha256: String,
@@ -116,13 +118,17 @@ impl RuntimeReadEvidence {
     }
 
     pub(crate) fn paired(request: &str, response_sha256: String, encoded_bytes: usize) -> Self {
+        // Stable pairs share one commitment and count both completed bodies.
+        Self::single(request, response_sha256, encoded_bytes.saturating_mul(2))
+    }
+
+    pub(crate) fn single(request: &str, response_sha256: String, encoded_bytes: usize) -> Self {
         Self {
             request_sha256: sha256_hex(&bridge_tally_protocol::encode_tally_xml_request_utf16le(
                 request,
             )),
             response_sha256,
-            // A stable paired read receives this response twice.
-            bytes: encoded_bytes.saturating_mul(2),
+            bytes: encoded_bytes,
         }
     }
 
@@ -165,6 +171,16 @@ fn agent_company_list_from_response(
     })
 }
 
+#[derive(Debug, thiserror::Error)]
+enum CompanyIdentityBracketError {
+    #[error(
+        "Tally returned a presentation-equivalent same-GUID company with a distinct book tuple"
+    )]
+    PresentationCollision,
+    #[error("Tally complete company identity was absent or ambiguous")]
+    AbsentOrAmbiguous,
+}
+
 /// Re-enumerate the complete identity immediately before or after a scoped
 /// read. Tally accepts a company name as the scope selector, so the GUID alone
 /// is not a sufficient witness when company names differ only by presentation.
@@ -177,16 +193,14 @@ async fn bracket_verified_company_identity(
         .iter()
         .any(|company| identity.is_presentation_equivalent_guid_sibling(company))
     {
-        anyhow::bail!(
-            "Tally returned a presentation-equivalent same-GUID company with a distinct book tuple"
-        );
+        return Err(CompanyIdentityBracketError::PresentationCollision.into());
     }
     let matches = companies
         .iter()
         .filter(|company| identity.matches_observed_company(company))
         .count();
     if matches != 1 {
-        anyhow::bail!("Tally complete company identity was absent or ambiguous");
+        return Err(CompanyIdentityBracketError::AbsentOrAmbiguous.into());
     }
     Ok(())
 }
@@ -743,6 +757,10 @@ mod ledger_opening_tests;
 #[cfg(test)]
 #[path = "runtime_financial_mode_tests.rs"]
 mod financial_mode_tests;
+
+#[cfg(test)]
+#[path = "runtime_agent_read_evidence_tests.rs"]
+mod agent_read_evidence_tests;
 
 #[cfg(test)]
 #[path = "runtime_party_evidence_tests.rs"]
@@ -1714,7 +1732,8 @@ impl TallyRuntime {
     }
 
     /// Reads the documented company collection and retains evidence for the
-    /// exact raw response bytes used to produce the parsed company list.
+    /// exact raw response bytes used to produce the parsed company list. As in
+    /// the shared retry runtime, only the terminal attempt contributes evidence.
     pub async fn fetch_agent_companies(
         &self,
         config: TallyConfig,
@@ -1725,17 +1744,14 @@ impl TallyRuntime {
             ReadOperation::CompanyList,
             ReadRetryPolicy::transient_default(),
             |client| async move {
-                let NativePairedRead::Stable {
-                    body,
-                    encoded_bytes,
-                    encoded_sha256,
-                } = client
-                    .fetch_native_report_paired(ReadOnlyProfile::CompanyListV2.render())
-                    .await?
-                else {
-                    anyhow::bail!("company collection drifted between paired reads");
-                };
+                let request = ReadOnlyProfile::CompanyListV2.render();
+                let (body, encoded_bytes, encoded_sha256) = client
+                    .fetch_native_report_paired_with_evidence(request.clone())
+                    .await?;
+                let evidence =
+                    RuntimeReadEvidence::paired(&request, encoded_sha256.clone(), encoded_bytes);
                 agent_company_list_from_response(body, encoded_bytes, encoded_sha256)
+                    .map_err(|error| with_read_evidence(error, evidence))
             },
         )
         .await
@@ -2117,17 +2133,22 @@ impl TallyRuntime {
                 let request = request.clone();
                 async move {
                     bracket_verified_company_identity(&client, &identity).await?;
-                    let NativePairedRead::Stable {
-                        body,
-                        encoded_bytes,
-                        encoded_sha256,
-                    } = client
-                        .fetch_native_report_paired(request.into_xml())
-                        .await?
-                    else {
-                        anyhow::bail!("agent custom read drifted between paired responses");
-                    };
-                    bracket_verified_company_identity(&client, &identity).await?;
+                    let request_xml = request.into_xml();
+                    let (body, encoded_bytes, encoded_sha256) = client
+                        .fetch_native_report_paired_with_evidence(request_xml.clone())
+                        .await?;
+                    bracket_verified_company_identity(&client, &identity)
+                        .await
+                        .map_err(|error| {
+                            with_read_evidence(
+                                error,
+                                RuntimeReadEvidence::paired(
+                                    &request_xml,
+                                    encoded_sha256.clone(),
+                                    encoded_bytes,
+                                ),
+                            )
+                        })?;
                     Ok(AgentRead {
                         body,
                         encoded_bytes,

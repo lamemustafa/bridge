@@ -185,6 +185,10 @@ pub(crate) enum LedgerOpeningCoverageRead {
     Drifted,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Tally native report changed between paired reads")]
+pub(crate) struct NativeReportPairDrift;
+
 /// Outcome of a paired native-report read. `Drifted` means the two reads
 /// disagreed, so the book moved between them and no total may be reported.
 pub(crate) enum NativePairedRead {
@@ -1315,27 +1319,66 @@ impl TallyClient {
         &self,
         request_xml: String,
     ) -> anyhow::Result<NativePairedRead> {
+        match self
+            .fetch_native_report_paired_with_evidence(request_xml)
+            .await
+        {
+            Ok((body, encoded_bytes, encoded_sha256)) => Ok(NativePairedRead::Stable {
+                body,
+                encoded_bytes,
+                encoded_sha256,
+            }),
+            // Preserve existing financial callers' explicit Partial verdict.
+            Err(error)
+                if error
+                    .chain()
+                    .any(|cause| cause.is::<NativeReportPairDrift>()) =>
+            {
+                Ok(NativePairedRead::Drifted)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    // The adapter needs the completed source commitments even on pair drift;
+    // the legacy verdict wrapper above deliberately keeps its existing API.
+    pub(crate) async fn fetch_native_report_paired_with_evidence(
+        &self,
+        request_xml: String,
+    ) -> anyhow::Result<(String, usize, String)> {
         let (first, first_bytes, first_sha256) = self
             .post_xml_with_encoded_bytes(request_xml.clone())
             .await?;
-        self.http
-            .get_status_decoded()
-            .await
-            .context("Tally health check between paired native report reads failed")?;
-        let (second, second_bytes, second_sha256) =
-            self.post_xml_with_encoded_bytes(request_xml).await?;
-        self.http
-            .get_status_decoded()
-            .await
-            .context("Tally health check after paired native report reads failed")?;
-        if first != second || first_bytes != second_bytes || first_sha256 != second_sha256 {
-            return Ok(NativePairedRead::Drifted);
+        let mut evidence =
+            RuntimeReadEvidence::single(&request_xml, first_sha256.clone(), first_bytes);
+        let result = async {
+            self.http
+                .get_status_decoded()
+                .await
+                .context("Tally health check between paired native report reads failed")?;
+            let (second, second_bytes, second_sha256) = self
+                .post_xml_with_encoded_bytes(request_xml.clone())
+                .await?;
+            if first_bytes == second_bytes && first_sha256 == second_sha256 {
+                evidence.bytes = evidence.bytes.saturating_add(second_bytes);
+            } else {
+                evidence = evidence.clone().combine(RuntimeReadEvidence::single(
+                    &request_xml,
+                    second_sha256.clone(),
+                    second_bytes,
+                ));
+            }
+            self.http
+                .get_status_decoded()
+                .await
+                .context("Tally health check after paired native report reads failed")?;
+            if first != second || first_bytes != second_bytes || first_sha256 != second_sha256 {
+                return Err(NativeReportPairDrift.into());
+            }
+            Ok((first, first_bytes, first_sha256))
         }
-        Ok(NativePairedRead::Stable {
-            body: first,
-            encoded_bytes: first_bytes,
-            encoded_sha256: first_sha256,
-        })
+        .await;
+        result.map_err(|error| super::runtime::with_read_evidence(error, evidence))
     }
 
     #[cfg(feature = "voucher-scan")]
