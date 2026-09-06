@@ -1017,6 +1017,24 @@ fn corroborate_verification_window(
 
 fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Value, String> {
     let mut rows = Vec::new();
+    let fingerprint_key = |voucher: &ImportVoucher| {
+        format!(
+            "{}:{}:{}",
+            normalized_date(&voucher.date).unwrap_or_default(),
+            voucher.voucher_type.as_str(),
+            expected_entry_fingerprint(voucher).join("\u{1f}"),
+        )
+    };
+    let expected_fingerprint_counts =
+        line.vouchers
+            .iter()
+            .fold(BTreeMap::new(), |mut counts, voucher| {
+                let key = fingerprint_key(voucher);
+                *counts.entry(key).or_insert(0_usize) += 1;
+                counts
+            });
+    let mut consumed_fingerprint_matches = BTreeSet::new();
+    let mut ambiguous_within_batch = Vec::new();
     let mut counts = BTreeMap::from([
         ("posted_verified", 0_u64),
         ("posted_not_effective", 0),
@@ -1029,54 +1047,70 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
         let tag = format!("[BRIDGE:{}]", expected.bridge_txn_id);
         let tagged = observed
             .iter()
+            .enumerate()
             .filter(|voucher| {
                 voucher
+                    .1
                     .narration
                     .as_deref()
                     .is_some_and(|value| value.contains(&tag))
             })
             .collect::<Vec<_>>();
         let fingerprint = expected_entry_fingerprint(expected);
+        let expected_key = fingerprint_key(expected);
+        let fingerprint_ambiguous_within_batch = expected_fingerprint_counts
+            .get(&expected_key)
+            .copied()
+            .unwrap_or_default()
+            > 1;
         let fingerprint_matches = observed
             .iter()
+            .enumerate()
             .filter(|voucher| {
-                voucher.date.as_deref() == normalized_date(&expected.date).ok().as_deref()
-                    && voucher.voucher_type.as_deref() == Some(expected.voucher_type.as_str())
-                    && actual_entry_fingerprint(voucher) == fingerprint
+                voucher.1.date.as_deref() == normalized_date(&expected.date).ok().as_deref()
+                    && voucher.1.voucher_type.as_deref() == Some(expected.voucher_type.as_str())
+                    && actual_entry_fingerprint(voucher.1) == fingerprint
             })
             .collect::<Vec<_>>();
-        let (matches, marker, not_attributable) = if !tagged.is_empty() {
+        let (matches, marker, not_attributable, fingerprint_fallback) = if !tagged.is_empty() {
             let attributable = tagged
                 .iter()
                 .copied()
                 .filter(|voucher| {
                     line.pre_import_mark
                         .value
-                        .is_some_and(|mark| voucher.alter_id.is_some_and(|id| id > mark))
+                        .is_some_and(|mark| voucher.1.alter_id.is_some_and(|id| id > mark))
                 })
                 .collect::<Vec<_>>();
             (
                 attributable,
                 "narration_tag",
                 !tagged.is_empty() && line.pre_import_mark.value.is_some(),
+                false,
             )
         } else {
             let attributable = fingerprint_matches
                 .iter()
                 .copied()
                 .filter(|voucher| {
-                    line.pre_import_mark
-                        .value
-                        .is_some_and(|mark| voucher.alter_id.is_some_and(|id| id > mark))
+                    !consumed_fingerprint_matches.contains(&voucher.0)
+                        && line
+                            .pre_import_mark
+                            .value
+                            .is_some_and(|mark| voucher.1.alter_id.is_some_and(|id| id > mark))
                 })
                 .collect::<Vec<_>>();
             (
                 attributable,
                 "accounting_fingerprint",
-                !fingerprint_matches.is_empty() && line.pre_import_mark.value.is_some(),
+                fingerprint_matches
+                    .iter()
+                    .any(|voucher| !consumed_fingerprint_matches.contains(&voucher.0))
+                    && line.pre_import_mark.value.is_some(),
+                true,
             )
         };
-        let value = if not_attributable && matches.is_empty() {
+        let mut value = if not_attributable && matches.is_empty() {
             counts
                 .entry("not_attributable")
                 .and_modify(|count| *count += 1);
@@ -1095,29 +1129,39 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
                 .and_modify(|count| *count += 1);
             json!({"bridge_txn_id":expected.bridge_txn_id,"status":"duplicate_fingerprint","marker":marker,"matches":matches.len()})
         } else {
-            let diffs = voucher_diffs(expected, matches[0]);
-            if diffs.is_empty() && voucher_is_accounting_effective(matches[0])? {
+            let matched = if fingerprint_fallback {
+                consumed_fingerprint_matches.insert(matches[0].0);
+                matches[0].1
+            } else {
+                matches[0].1
+            };
+            let diffs = voucher_diffs(expected, matched);
+            if diffs.is_empty() && voucher_is_accounting_effective(matched)? {
                 counts
                     .entry("posted_verified")
                     .and_modify(|count| *count += 1);
-                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_verified","marker":marker,"voucher_number":matches[0].voucher_number,"guid":matches[0].guid,"master_id":matches[0].master_id,"alter_id":matches[0].alter_id})
+                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_verified","marker":marker,"voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id,"alter_id":matched.alter_id})
             } else if diffs.is_empty() {
                 counts
                     .entry("posted_not_effective")
                     .and_modify(|count| *count += 1);
-                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_not_effective","marker":marker,"reason":"voucher_cancelled_or_optional","voucher_number":matches[0].voucher_number,"guid":matches[0].guid,"master_id":matches[0].master_id,"alter_id":matches[0].alter_id})
+                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_not_effective","marker":marker,"reason":"voucher_cancelled_or_optional","voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id,"alter_id":matched.alter_id})
             } else {
                 counts
                     .entry("posted_divergent")
                     .and_modify(|count| *count += 1);
-                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_divergent","marker":marker,"diffs":diffs,"voucher_number":matches[0].voucher_number,"guid":matches[0].guid,"master_id":matches[0].master_id})
+                json!({"bridge_txn_id":expected.bridge_txn_id,"status":"posted_divergent","marker":marker,"diffs":diffs,"voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id})
             }
         };
+        if fingerprint_fallback && fingerprint_ambiguous_within_batch {
+            value["ambiguous_within_batch"] = Value::Bool(true);
+            ambiguous_within_batch.push(expected.bridge_txn_id.clone());
+        }
         rows.push(value);
     }
     let (batch_duplicates, unrelated_duplicates_in_window) = batch_duplicate_sets(line, observed);
     Ok(
-        json!({"counts":counts,"vouchers":rows,"duplicates":batch_duplicates,"unrelated_duplicates_in_window":unrelated_duplicates_in_window}),
+        json!({"counts":counts,"vouchers":rows,"duplicates":batch_duplicates,"unrelated_duplicates_in_window":unrelated_duplicates_in_window,"ambiguous_within_batch":ambiguous_within_batch}),
     )
 }
 
@@ -1883,6 +1927,63 @@ mod tests {
             verify_batch(&line, &[observed(11)]).expect("verification result")["vouchers"][0]
                 ["status"],
             "posted_verified"
+        );
+    }
+
+    #[test]
+    fn fingerprint_fallback_consumes_an_observed_voucher_once_per_batch() {
+        let input = payload();
+        let mut duplicate = input.vouchers[0].clone();
+        duplicate.bridge_txn_id = "txn-duplicate".to_string();
+        let line = ImportLedgerLine {
+            batch_id: "batch-fingerprint-once".to_string(),
+            company_guid: GUID.to_string(),
+            company: None,
+            txn_ids: vec!["txn-001".to_string(), "txn-duplicate".to_string()],
+            date_from: "20260901".to_string(),
+            date_to: "20260901".to_string(),
+            sha256: "hash".to_string(),
+            built_at: now(),
+            status: "built".to_string(),
+            pre_import_mark: PreImportMark {
+                kind: "company_high_water".to_string(),
+                value: Some(10),
+                master_value: Some(10),
+            },
+            vouchers: vec![input.vouchers[0].clone(), duplicate],
+        };
+        let observed = ReadVoucher {
+            remote_id: None,
+            guid: Some("posted-guid".to_string()),
+            alter_id: Some(11),
+            date: Some("20260901".to_string()),
+            voucher_type: Some("Payment".to_string()),
+            narration: None,
+            voucher_number: None,
+            master_id: None,
+            cancelled: Some(false),
+            optional: Some(false),
+            entries: vec![
+                ReadEntry {
+                    ledger: "Expense".to_string(),
+                    amount: "-12.50".to_string(),
+                    is_deemed_positive: "Yes".to_string(),
+                },
+                ReadEntry {
+                    ledger: "Bank".to_string(),
+                    amount: "12.50".to_string(),
+                    is_deemed_positive: "No".to_string(),
+                },
+            ],
+        };
+        let result = verify_batch(&line, &[observed]).expect("verification result");
+        assert_eq!(result["counts"]["posted_verified"], 1);
+        assert_eq!(result["counts"]["not_found"], 1);
+        assert_eq!(result["vouchers"][0]["ambiguous_within_batch"], true);
+        assert_eq!(result["vouchers"][1]["status"], "not_found");
+        assert_eq!(
+            result["ambiguous_within_batch"],
+            json!(["txn-001", "txn-duplicate"])
         );
     }
 
