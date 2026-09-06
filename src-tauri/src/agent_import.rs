@@ -2212,10 +2212,16 @@ mod tests {
                 company.clone(),
                 status.clone(),
                 company.clone(),
+                ledgers.clone(),
+                status.clone(),
                 ledgers,
+                status.clone(),
                 company.clone(),
                 company.clone(),
+                premark.clone(),
+                status.clone(),
                 premark,
+                status.clone(),
                 company.clone(),
                 company.clone(),
                 status.clone(),
@@ -2223,15 +2229,21 @@ mod tests {
                 status.clone(),
                 company.clone(),
                 readback.clone(),
+                status.clone(),
+                readback.clone(),
+                status.clone(),
                 company.clone(),
                 company.clone(),
+                readback.clone(),
+                status.clone(),
                 readback,
+                status.clone(),
                 company,
             ]
             .into_iter()
             .enumerate()
             .map(|(index, xml)| {
-                if matches!(index, 1 | 3 | 11 | 13) {
+                if matches!(index, 1 | 3 | 6 | 8 | 12 | 14 | 17 | 19 | 22 | 24 | 28 | 30) {
                     ScenarioPlan::new(Fixture::ProductStatus(
                         tally_protocol_simulator::ProductStatus::TallyPrime,
                     ))
@@ -2284,6 +2296,6 @@ mod tests {
                 proof.0["result"]["batch_id"].as_str().expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 20);
+        assert_eq!(simulator.finish().expect("requests").len(), 32);
     }
 }
