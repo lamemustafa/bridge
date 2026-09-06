@@ -35,6 +35,9 @@ pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), St
                     .as_str()
                     .ok_or_else(|| format!("argument_invalid:{key}"))?;
                 validate_string_bounds(text, property, key)?;
+                if key == "company_guid" {
+                    parse_native_company_guid(text)?;
+                }
                 if matches!(key.as_str(), "from" | "to" | "as_of") {
                     normalized_date(text)?;
                 }

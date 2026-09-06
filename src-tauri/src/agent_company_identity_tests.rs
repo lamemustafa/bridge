@@ -16,7 +16,7 @@ fn server(address: std::net::SocketAddr, path: &std::path::Path) -> Server {
         max_rows: 500,
         max_bytes: 200_000,
         redaction: Redaction::None,
-        import_enabled: false,
+        import_enabled: true,
     })
 }
 
@@ -90,8 +90,31 @@ async fn malformed_or_non_native_guid_selectors_refuse_before_network() {
         format!("{{{GUID}}}"),
         format!("urn:uuid:{GUID}"),
     ] {
-        let error = server.verified_company(&guid).await.unwrap_err();
-        assert_eq!(error.code, "company_guid_invalid");
-        assert!(error.evidence.is_none());
+        for (tool, args) in [
+            ("ledger_masters", json!({"company_guid":guid})),
+            (
+                "verify_import",
+                json!({"company_guid":guid,"batch_id":"unread-batch"}),
+            ),
+            (
+                "build_import_xml",
+                json!({"company_guid":guid,"vouchers":[{
+                    "bridge_txn_id":"uuid-admission", "date":"2026-09-01", "voucher_type":"Journal",
+                    "entries":[{"ledger":"Cash","amount":"1.00","side":"Dr"},
+                    {"ledger":"Sales","amount":"1.00","side":"Cr"}]
+                }]}),
+            ),
+        ] {
+            let response = server.call_tool(tool, args).await;
+            assert_eq!(response["isError"], true, "{tool}");
+            assert_eq!(
+                response["structuredContent"]["result"]["error"]["code"], "company_guid_invalid",
+                "{tool}"
+            );
+            assert_eq!(
+                response["structuredContent"]["evidence"]["bytes"], 0,
+                "{tool}"
+            );
+        }
     }
 }

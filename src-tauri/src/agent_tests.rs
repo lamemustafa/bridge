@@ -198,27 +198,27 @@ async fn invalid_scope_arguments_are_rejected_before_any_tally_probe() {
     for (tool, args, code) in [
         (
             "outstandings",
-            json!({"company_guid":"book", "direction":"receivble"}),
+            json!({"company_guid":"00000000-0000-4000-8000-000000000001", "direction":"receivble"}),
             "argument_invalid:direction",
         ),
         (
             "ledger_masters",
-            json!({"company_guid":"book", "fields":"complaince"}),
+            json!({"company_guid":"00000000-0000-4000-8000-000000000001", "fields":"complaince"}),
             "argument_invalid:fields",
         ),
         (
             "ledger_movement",
-            json!({"company_guid":"book", "from":"2026-09-01", "to":"2026-09-02", "limit":0}),
+            json!({"company_guid":"00000000-0000-4000-8000-000000000001", "from":"2026-09-01", "to":"2026-09-02", "limit":0}),
             "pagination_invalid",
         ),
         (
             "vouchers",
-            json!({"company_guid":"book", "from":"2026-09-01", "to":"2026-09-02", "ledger":42}),
+            json!({"company_guid":"00000000-0000-4000-8000-000000000001", "from":"2026-09-01", "to":"2026-09-02", "ledger":42}),
             "argument_invalid:ledger",
         ),
         (
             "changed_since",
-            json!({"company_guid":"book", "master_snapshot_alter_id":-1}),
+            json!({"company_guid":"00000000-0000-4000-8000-000000000001", "master_snapshot_alter_id":-1}),
             "changed_since_unqualified",
         ),
     ] {

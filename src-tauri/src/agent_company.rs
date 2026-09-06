@@ -70,29 +70,28 @@ impl Server {
         if guid.trim().is_empty() {
             return Err("company_guid_required".to_string().into());
         }
-        let requested_guid = parse_native_company_guid(guid)?;
         let (companies, evidence) = self.companies().await?;
         let result: Result<(TallyCompany, VerifiedCompanyIdentity, Evidence), ToolFailure> =
             async {
-                for company in &companies {
-                    if let Some(guid) = company
+                let observed_companies = companies.clone();
+                let mut matches = Vec::new();
+                for company in companies {
+                    let observed_guid = company
                         .guid
                         .as_deref()
                         .filter(|guid| !guid.trim().is_empty())
+                        .map(parse_native_company_guid)
+                        .transpose()?;
+                    if company
+                        .guid
+                        .as_deref()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(guid))
                     {
-                        parse_native_company_guid(guid)?;
+                        if let Some(observed_guid) = observed_guid {
+                            matches.push((company, observed_guid));
+                        }
                     }
                 }
-                let observed_companies = companies.clone();
-                let matches = companies
-                    .into_iter()
-                    .filter(|company| {
-                        company
-                            .guid
-                            .as_deref()
-                            .is_some_and(|value| value.eq_ignore_ascii_case(guid))
-                    })
-                    .collect::<Vec<_>>();
                 if matches.len() != 1 {
                     return Err(if matches.is_empty() {
                         "company_identity_not_found".to_string()
@@ -101,7 +100,8 @@ impl Server {
                     }
                     .into());
                 }
-                let company = matches.into_iter().next().expect("one checked above");
+                let (company, observed_guid) =
+                    matches.into_iter().next().expect("one checked above");
                 let company_number = company
                     .company_number
                     .clone()
@@ -114,7 +114,7 @@ impl Server {
                     .ok_or_else(|| "company_identity_incomplete".to_string())?;
                 let identity = VerifiedCompanyIdentity::from_observed_companies(
                     company.name.clone(),
-                    requested_guid.hyphenated().to_string(),
+                    observed_guid.hyphenated().to_string(),
                     company_number,
                     books_from,
                     &observed_companies,
@@ -140,7 +140,7 @@ impl Server {
     }
 }
 
-fn parse_native_company_guid(value: &str) -> Result<uuid::Uuid, String> {
+pub(super) fn parse_native_company_guid(value: &str) -> Result<uuid::Uuid, String> {
     // Native company GUIDs use hyphenated UUID spelling. Preserve case-insensitive
     // matching without adding UUID aliases that the native identity bracket rejects.
     let invalid = || "company_guid_invalid".to_string();

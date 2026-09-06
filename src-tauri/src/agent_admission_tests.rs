@@ -14,7 +14,7 @@ async fn voucher_type_selector_is_bounded_before_any_tally_read() {
         redaction: Redaction::None,
         import_enabled: false,
     });
-    let mut args = json!({"company_guid":"synthetic-company",
+    let mut args = json!({"company_guid":"00000000-0000-4000-8000-000000000001",
         "from":"20260901","to":"20260902","voucher_type":"名".repeat(1025)});
     let response = server.call_tool_response("vouchers", args.clone()).await;
     assert_eq!(response.value["isError"], true);
@@ -50,7 +50,7 @@ async fn unqualified_change_feed_is_hidden_and_direct_calls_refuse_before_tally(
     });
     // A dispatched read against this unavailable endpoint would return a
     // transport/company failure, not the explicit admission refusal.
-    for arguments in [json!({}), json!({"company_guid":"synthetic-company"})] {
+    for arguments in [json!({}), json!({"company_guid":"00000000-0000-4000-8000-000000000001"})] {
         let result = server.call_tool_response("changed_since", arguments).await;
         assert_eq!(result.value["isError"], true);
         assert_eq!(
@@ -86,7 +86,7 @@ async fn master_validation_rejects_unbounded_and_blank_names_before_tally() {
             .call_tool_response(
                 "validate_masters",
                 json!({
-                    "company_guid":"synthetic-company", "ledgers":ledgers,
+                    "company_guid":"00000000-0000-4000-8000-000000000001", "ledgers":ledgers,
                 }),
             )
             .await;
@@ -100,7 +100,7 @@ async fn master_validation_rejects_unbounded_and_blank_names_before_tally() {
     assert!(validate_tool_arguments(
         "validate_masters",
         &json!({
-            "company_guid":"synthetic-company", "ledgers":vec!["Valid Ledger"; 100],
+            "company_guid":"00000000-0000-4000-8000-000000000001", "ledgers":vec!["Valid Ledger"; 100],
         })
     )
     .is_ok());
@@ -133,7 +133,7 @@ async fn ledger_selectors_are_bounded_before_company_or_catalogue_reads() {
         }
         assert!(validate_tool_arguments(
             tool,
-            &json!({"company_guid":"synthetic-company",
+            &json!({"company_guid":"00000000-0000-4000-8000-000000000001",
             "from":"20260901","to":"20260902","ledger":"名".repeat(1024)})
         )
         .is_ok());
