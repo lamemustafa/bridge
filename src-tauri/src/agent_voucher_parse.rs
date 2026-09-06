@@ -153,6 +153,8 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                         {
                             return Err("change_row_identity_invalid".to_string());
                         }
+                        bridge_tally_core::TallyDate::parse(row["DATE"].clone())
+                            .map_err(|_| "voucher_date_invalid".to_string())?;
                         let amounts = std::mem::take(&mut entries);
                         let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": row.get("ALTERID").and_then(|v| v.trim().parse::<u64>().ok()), "master_id": row.get("MASTERID"), "amounts": amounts});
                         if require_accounting_state {
@@ -219,6 +221,28 @@ pub(super) fn required_tally_bool(value: Option<&String>) -> Result<bool, String
 #[cfg(test)]
 mod amount_tests {
     use super::*;
+
+    #[test]
+    fn invalid_calendar_dates_in_captured_vouchers_are_refused_before_filtering() {
+        let bytes = include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+        );
+        let words = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        let captured = String::from_utf16(&words).unwrap();
+        for invalid in ["2026080A", "20260230", "20261301"] {
+            let damaged = captured.replacen("20260801", invalid, 1);
+            assert_ne!(damaged, captured);
+            for accounting_state in [false, true] {
+                assert_eq!(
+                    parse_agent_rows_with_accounting_state(&damaged, accounting_state),
+                    Err("voucher_date_invalid".to_string())
+                );
+            }
+        }
+    }
 
     #[test]
     fn malformed_polarity_in_captured_voucher_is_refused_at_the_parse_boundary() {
