@@ -77,6 +77,23 @@ accounting-domain validation before any verdict. Fully attributed expected
 multiplicity is allowed while one observed identity can satisfy only one
 transaction and unexpected duplicates remain blocking.
 
+The voucher and import paths now share one XML parser. It admits successful
+export status, complete scalar text (including entities and CDATA), singleton
+fields, exact sign/polarity agreement, and valid numeric identifiers before
+selectors or verification can use a row. Import source admission then rejects
+duplicate GUIDs or numeric master IDs and multiple or malformed reserved
+transaction markers across the whole collection, before attribution narrows it.
+Company checkpoints preserve fragmented text and require one matching identity.
+Voucher and ledger collections reject duplicate GUIDs or numeric master IDs
+before returning complete reads or calculating movement.
+
+Receipt records distinguish `response_prepared` from `stdio_write_completed`,
+linked by receipt ID and frame hash. Preparation records use `*_prepared` fields;
+completion records confirm successful stdout write and flush, not client
+consumption. A missing completion leaves delivery unconfirmed. Failure to append
+a completion stops further dispatch. The archive smoke and client checks verify
+both records, and failed-writer regressions preserve persisted import recovery.
+
 Movement also repeats its voucher source after the final opening-ledger read.
 An unchanged opening cannot hide an in-window posting, edit, or deletion between
 those reads. Captured-source replay covers stable reads and each drift case.
@@ -156,7 +173,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **906 Rust workspace tests**, **166 agent tests
+Local candidate verification: **926 Rust workspace tests**, **184 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -172,7 +189,8 @@ from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. Status, master
 validation, filtered and unfiltered vouchers, compliance masters, outstandings,
 restored-batch verification, and egress-log readback also completed.
-Every emitted frame matched its receipt and text/structured representations.
+Every emitted frame matched its linked preparation/completion receipts and
+text/structured representations.
 Status, filtered-voucher, and compliance-master commitments and source byte counts
 were independently recomputed from the captured transport request/response files.
 The voucher-type filter and a nonmatching ledger selection both completed.
@@ -187,22 +205,22 @@ commitments and byte count, retrievable through `read_evidence`; omitted egress
 rows set `truncated`. The recording proxy passed an explicit readiness check
 before these calls. An earlier candidate run had a proxy startup failure; those
 failed observations and its successful repeat remain retained separately.
-A separate process check confirmed port zero fails
-at startup before creating the data directory.
+Separate release-process checks confirmed port zero and a non-loopback host
+fail at startup before creating the data directory.
 That same binary passed eight checks using official MCP
 JavaScript SDK 1.30.0, negotiating 2025-11-25 down to 2025-06-18. Official MCPB
 CLI 2.1.2 validated and packed the archive. Its extracted executable and all four
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `212f68dbb3a4d1be5eb356250d4fee31512db29066e7f40ce4bfde1e3f330901`.
-- MCPB archive SHA-256: `7058f8a41a0816598c01f9bc396658041ec9e84a4fad5ed7b649ffae9e76ec37`.
-- Source fingerprint (317 build-input files, unchanged through the settled-source rebuild): `8ccd363c516748771c21cd9b0a09251829de1e6b22aec1af0caec1cd05ecaddc`.
+- Release executable SHA-256: `8a4f237d60338491fe6d23db61b6ffc1aa3c6fcac18624906d0d6592ebe6e172`.
+- MCPB archive SHA-256: `b70f2812ffb6db3b1a3a4596a5218aeebdae5e5820c4627aaf216435f2ad7761`.
+- Source fingerprint (324 build-input files, unchanged through the settled-source rebuild): `9cba1b0bbeaaad1659fa73ebfe35705db110439aea3e85813cb86f4764d62d2c`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
-voucher schema, and its persisted egress receipt with bounded execution and
-output. Five harness regressions and the final local archive passed this check.
+voucher schema, and its linked preparation/completion receipts with bounded execution and
+output. Six harness regressions and the final local archive passed this check.
 Hosted results must confirm the same check for the published candidate; desktop
 client installation remains separate. The local archive is unsigned and is not
 a production release.
@@ -213,10 +231,10 @@ checks. None substitutes for the others. Graphify data and its refresh script
 were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
-The 163-entry sealed surface was audited before each reseal. This correction
-updates six existing pins for request commitments, runtime admission, and the
-internal report-source field and its test constructors; the earlier changes also
-covered CI packaging and the period-opening protocol reference. The existing pin
+The 163-entry sealed surface was audited before each reseal. The latest reseal
+updates the existing runtime pin for duplicate ledger-identity admission. Earlier
+changes covered request commitments, report-source fields, CI packaging, and
+the period-opening protocol reference. The existing pin
 set was rehashed, sealed, and repointed using the release-process commands.
 No compatibility cell was promoted.
 
