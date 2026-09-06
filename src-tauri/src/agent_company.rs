@@ -1,5 +1,6 @@
 //! Company for the local MCP adapter.
 use super::*;
+use bridge_tally_core::{CapabilityFeatureId, CapabilityState, EvidenceConfidence};
 
 impl Server {
     pub(super) async fn status(&self) -> Result<(Value, Evidence), String> {
@@ -9,9 +10,23 @@ impl Server {
             .probe_with_wire_evidence(self.tally_config())
             .await
             .map_err(|_| "status_probe_unavailable".to_string())?;
+        // Product identity comes from the gateway observation, not the optional
+        // status page's heuristic banner. Unknown capability stays explicit.
+        let product = if probe
+            .profile
+            .features
+            .get(&CapabilityFeatureId::ProductAndMode)
+            .is_some_and(|feature| {
+                feature.state == CapabilityState::Supported
+                    && feature.confidence == EvidenceConfidence::Observed
+            }) {
+            probe.profile.product.as_str()
+        } else {
+            "not_observed"
+        };
         Ok((
             json!({
-                "product": serde_json::to_value(&probe.connection.product).unwrap_or_else(|_| json!("not_observed")),
+                "product": product,
                 "release": probe.profile.release,
                 "education_mode": probe.profile.mode,
                 "endpoint": endpoint,
@@ -137,3 +152,7 @@ pub(super) fn company_json(company: &TallyCompany, all: &[TallyCompany]) -> Valu
     });
     json!({"name": company.name, "guid": guid, "company_number": company.company_number, "books_from": company.books_from, "identity_state": if duplicate_guid {"ambiguous_duplicate_guid"} else if missing.is_some() {"incomplete_tuple"} else {"verified_tuple"}, "missing_field": missing})
 }
+
+#[cfg(test)]
+#[path = "agent_status_tests.rs"]
+mod status_tests;

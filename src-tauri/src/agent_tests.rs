@@ -1587,7 +1587,7 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
 }
 
 #[tokio::test]
-async fn tally_status_uses_the_runtime_probe_observation() {
+async fn tally_status_does_not_infer_product_from_status_banner() {
     let simulator = SequenceSimulator::spawn(vec![
         ScenarioPlan::new(Fixture::ProductStatus(
             tally_protocol_simulator::ProductStatus::TallyPrime,
@@ -1605,7 +1605,7 @@ async fn tally_status_uses_the_runtime_probe_observation() {
     let response = server.call_tool("tally_status", json!({})).await;
     assert_eq!(
         response["structuredContent"]["result"]["product"],
-        "TallyPrime"
+        "not_observed"
     );
     assert_eq!(
         response["structuredContent"]["evidence"]["state"],
