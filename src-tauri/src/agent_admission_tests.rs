@@ -50,7 +50,10 @@ async fn unqualified_change_feed_is_hidden_and_direct_calls_refuse_before_tally(
     });
     // A dispatched read against this unavailable endpoint would return a
     // transport/company failure, not the explicit admission refusal.
-    for arguments in [json!({}), json!({"company_guid":"00000000-0000-4000-8000-000000000001"})] {
+    for arguments in [
+        json!({}),
+        json!({"company_guid":"00000000-0000-4000-8000-000000000001"}),
+    ] {
         let result = server.call_tool_response("changed_since", arguments).await;
         assert_eq!(result.value["isError"], true);
         assert_eq!(
