@@ -68,6 +68,10 @@ impl VoucherType {
     }
 }
 
+// Other variants remain readable in historical batch records. New files require
+// the live import/readback evidence recorded in docs/agent/ASSESSMENT-2026-09-06.md.
+const LIVE_QUALIFIED_VOUCHER_TYPES: &[VoucherType] = &[VoucherType::Journal];
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 enum EntrySide {
     Dr,
@@ -192,6 +196,7 @@ impl Server {
         Ok(ToolOutcome {
             payload: json!({"result": {"schema": schema, "rules": [
                 "bridge_txn_id is client-supplied, unique, 1-64 ASCII characters from [A-Za-z0-9_-]",
+                "new files accept only Journal, the voucher type with recorded live import/readback evidence",
                 "each voucher has at least two entries and exact debit total equals credit total",
                 "amounts are positive decimal strings with exactly two fractional digits",
                 "dates must be within the selected company's BOOKSFROM through today",
@@ -237,6 +242,13 @@ impl Server {
         let mut payload = parse_payload(args)?;
         validate_payload(&payload)?;
         let (debit, credit) = totals(&payload.vouchers)?;
+        if payload
+            .vouchers
+            .iter()
+            .any(|voucher| !LIVE_QUALIFIED_VOUCHER_TYPES.contains(&voucher.voucher_type))
+        {
+            return Err("import_voucher_type_unqualified".to_string().into());
+        }
         normalize_payload_dates(&mut payload)?;
         let (company, identity, identity_evidence) =
             self.verified_company(&payload.company_guid).await?;
@@ -612,7 +624,7 @@ fn batch_guid_matches(stored: &str, supplied: &str) -> bool {
 pub(super) fn voucher_input_schema() -> Value {
     json!({"type":"object", "additionalProperties":false, "required":["company_guid","vouchers"], "properties": {
         "company_guid":{"type":"string","minLength":1}, "vouchers":{"type":"array","minItems":1,"maxItems":MAX_VOUCHERS,"description":"At most 100 distinct ledger names across the batch; repeated ledgers do not reduce the 1000-voucher limit.","items":{"type":"object","additionalProperties":false,"required":["bridge_txn_id","date","voucher_type","entries"],"properties": {
-        "bridge_txn_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}, "date":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}, "voucher_type":{"enum":["Payment","Receipt","Journal","Contra"]}, "narration":{"type":"string"}, "reference":{"type":"string"}, "voucher_number":{"type":"string","minLength":1,"maxLength":32}, "entries":{"type":"array","minItems":2,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount","side"],"properties":{"ledger":{"type":"string","minLength":1,"maxLength":MAX_MASTER_NAME_CHARS},"amount":{"type":"string","pattern":"^\\d+\\.\\d{2}$"},"side":{"enum":["Dr","Cr"]}}}} }}} }})
+        "bridge_txn_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}, "date":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}, "voucher_type":{"enum":LIVE_QUALIFIED_VOUCHER_TYPES}, "narration":{"type":"string"}, "reference":{"type":"string"}, "voucher_number":{"type":"string","minLength":1,"maxLength":32}, "entries":{"type":"array","minItems":2,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount","side"],"properties":{"ledger":{"type":"string","minLength":1,"maxLength":MAX_MASTER_NAME_CHARS},"amount":{"type":"string","pattern":"^\\d+\\.\\d{2}$"},"side":{"enum":["Dr","Cr"]}}}} }}} }})
 }
 
 fn parse_payload(args: &Value) -> Result<ImportPayload, String> {

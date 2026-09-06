@@ -143,7 +143,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
                         json!({"type":"object", "additionalProperties":false, "required":["company_guid","ledgers"], "properties":{"company_guid":{"type":"string"},"ledgers":{"type":"array","minItems":1,"maxItems":agent_import::MAX_MASTER_NAMES,"items":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"}}}}),
                     ),
                     "build_import_xml" => (
-                        "Validate and write a local Tally voucher import file. This never dispatches import XML to Tally.",
+                        "Validate and write a local Journal voucher import file. Other voucher types are not live-qualified. This never dispatches import XML to Tally.",
                         agent_import::voucher_input_schema(),
                     ),
                     "verify_import" => (
