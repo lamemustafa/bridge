@@ -19,6 +19,8 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 const MAX_VOUCHERS: usize = 1_000;
+pub(super) const MAX_MASTER_NAMES: usize = 100;
+pub(super) const MAX_MASTER_NAME_CHARS: usize = 1024;
 const MAX_TEXT_BYTES: usize = 2_000;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -148,7 +150,8 @@ impl Server {
                 "each voucher has at least two entries and exact debit total equals credit total",
                 "amounts are positive decimal strings with exactly two fractional digits",
                 "dates must be within the selected company's BOOKSFROM through today",
-                "ledger names must exactly match the live catalogue; validate_masters before build_import_xml"
+                "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
+                "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
             ], "limits": {"education_mode_date_restriction": "If the connected Tally is Education mode, only days 1, 2, and 31 are observed safe; this server does not infer licence mode."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
@@ -513,8 +516,8 @@ fn batch_guid_matches(stored: &str, supplied: &str) -> bool {
 
 pub(super) fn voucher_input_schema() -> Value {
     json!({"type":"object", "additionalProperties":false, "required":["company_guid","vouchers"], "properties": {
-        "company_guid":{"type":"string","minLength":1}, "vouchers":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["bridge_txn_id","date","voucher_type","entries"],"properties": {
-        "bridge_txn_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}, "date":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}, "voucher_type":{"enum":["Payment","Receipt","Journal","Contra"]}, "narration":{"type":"string"}, "reference":{"type":"string"}, "voucher_number":{"type":"string","minLength":1,"maxLength":32}, "entries":{"type":"array","minItems":2,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount","side"],"properties":{"ledger":{"type":"string","minLength":1},"amount":{"type":"string","pattern":"^\\d+\\.\\d{2}$"},"side":{"enum":["Dr","Cr"]}}}} }}} }})
+        "company_guid":{"type":"string","minLength":1}, "vouchers":{"type":"array","minItems":1,"maxItems":MAX_VOUCHERS,"description":"At most 100 distinct ledger names across the batch; repeated ledgers do not reduce the 1000-voucher limit.","items":{"type":"object","additionalProperties":false,"required":["bridge_txn_id","date","voucher_type","entries"],"properties": {
+        "bridge_txn_id":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"}, "date":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}, "voucher_type":{"enum":["Payment","Receipt","Journal","Contra"]}, "narration":{"type":"string"}, "reference":{"type":"string"}, "voucher_number":{"type":"string","minLength":1,"maxLength":32}, "entries":{"type":"array","minItems":2,"items":{"type":"object","additionalProperties":false,"required":["ledger","amount","side"],"properties":{"ledger":{"type":"string","minLength":1,"maxLength":MAX_MASTER_NAME_CHARS},"amount":{"type":"string","pattern":"^\\d+\\.\\d{2}$"},"side":{"enum":["Dr","Cr"]}}}} }}} }})
 }
 
 fn parse_payload(args: &Value) -> Result<ImportPayload, String> {
@@ -561,6 +564,7 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         return Err("voucher_count_invalid".to_string());
     }
     let mut txn_ids = BTreeSet::new();
+    let mut ledger_names = BTreeSet::new();
     for voucher in &payload.vouchers {
         if !valid_txn_id(&voucher.bridge_txn_id) || !txn_ids.insert(&voucher.bridge_txn_id) {
             return Err("bridge_txn_id_invalid_or_duplicate".to_string());
@@ -599,10 +603,15 @@ fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
         }
         for entry in &voucher.entries {
             if entry.ledger.trim().is_empty()
+                || entry.ledger.chars().count() > MAX_MASTER_NAME_CHARS
                 || entry.ledger.chars().any(char::is_control)
                 || !valid_2dp_amount(&entry.amount)
             {
                 return Err("voucher_entry_invalid".to_string());
+            }
+            ledger_names.insert(entry.ledger.as_str());
+            if ledger_names.len() > MAX_MASTER_NAMES {
+                return Err("voucher_unique_ledger_limit_exceeded".to_string());
             }
         }
         let (debit, credit) = totals(std::slice::from_ref(voucher))?;
@@ -698,21 +707,30 @@ fn master_match(wanted: &str, catalogue: &[String]) -> Value {
         return json!({"requested": party_name(wanted), "match_state":"exact", "exact_live_spelling":party_name(wanted)});
     }
     let key = master_key(wanted);
-    let mut candidates = catalogue
+    let candidates = catalogue
         .iter()
         .filter(|name| {
             let candidate = master_key(name);
             candidate == key || candidate.starts_with(&key) || key.starts_with(&candidate)
         })
-        .cloned()
-        .collect::<Vec<_>>();
-    candidates.sort();
-    candidates.dedup();
-    if candidates.is_empty() {
+        .collect::<BTreeSet<_>>();
+    let candidate_count = candidates.len();
+    if candidate_count == 0 {
         json!({"requested":party_name(wanted),"match_state":"missing"})
     } else {
-        let candidates = candidates.into_iter().map(party_name).collect::<Vec<_>>();
-        json!({"requested":party_name(wanted),"match_state":"near_miss","exact_live_spelling":candidates.first(),"candidates":candidates})
+        let mut bytes = 0_usize;
+        let candidates = candidates
+            .into_iter()
+            .take(25)
+            .take_while(|name| {
+                bytes = bytes.saturating_add(name.len());
+                bytes <= 8192
+            })
+            .map(|name| party_name(name.clone()))
+            .collect::<Vec<_>>();
+        json!({"requested":party_name(wanted),"match_state":"near_miss",
+            "exact_live_spelling":candidates.first(),"candidate_count":candidate_count,
+            "candidates_truncated":candidates.len() < candidate_count,"candidates":candidates})
     }
 }
 

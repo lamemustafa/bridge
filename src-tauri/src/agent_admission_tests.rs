@@ -33,3 +33,48 @@ async fn unqualified_change_feed_is_hidden_and_direct_calls_refuse_before_tally(
         assert_eq!(result.value["structuredContent"]["evidence"]["bytes"], 0);
     }
 }
+
+#[tokio::test]
+async fn master_validation_rejects_unbounded_and_blank_names_before_tally() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+    });
+    for ledgers in [
+        json!([""]),
+        json!([]),
+        json!([" \u{2003}\t"]),
+        json!(["x".repeat(1025)]),
+        json!(vec!["Ledger"; 101]),
+    ] {
+        let result = server
+            .call_tool_response(
+                "validate_masters",
+                json!({
+                    "company_guid":"synthetic-company", "ledgers":ledgers,
+                }),
+            )
+            .await;
+        assert_eq!(result.value["isError"], true);
+        assert_eq!(
+            result.value["structuredContent"]["result"]["error"]["code"],
+            "argument_invalid:ledgers"
+        );
+        assert_eq!(result.value["structuredContent"]["evidence"]["bytes"], 0);
+    }
+    assert!(validate_tool_arguments(
+        "validate_masters",
+        &json!({
+            "company_guid":"synthetic-company", "ledgers":vec!["Valid Ledger"; 100],
+        })
+    )
+    .is_ok());
+}

@@ -1295,3 +1295,72 @@ fn native_captured_import_readback_keeps_direct_amounts_and_padded_identifiers()
         assert_eq!(row.entries[0].amount, amount);
     }
 }
+
+#[test]
+fn master_match_bounds_suggestions_before_copying_names_and_preserves_ambiguity() {
+    let catalogue = (0..100)
+        .map(|index| format!("Ledger {index:03}"))
+        .collect::<Vec<_>>();
+    let matched = master_match("L", &catalogue);
+    assert_eq!(matched["match_state"], "near_miss");
+    assert_eq!(matched["candidate_count"], 100);
+    assert_eq!(matched["candidates_truncated"], true);
+    assert_eq!(matched["candidates"].as_array().unwrap().len(), 25);
+    assert_eq!(
+        master_match("Ledger 099", &catalogue)["match_state"],
+        "exact"
+    );
+    let huge = format!("Large{}", "x".repeat(8192));
+    let limited = master_match("L", std::slice::from_ref(&huge));
+    assert_eq!(limited["match_state"], "near_miss");
+    assert_eq!(limited["candidate_count"], 1);
+    assert_eq!(limited["candidates_truncated"], true);
+    assert!(limited["candidates"].as_array().unwrap().is_empty());
+    assert!(!limited.to_string().contains(&huge));
+}
+
+#[tokio::test]
+async fn import_bounds_distinct_ledger_names_before_tally_without_reducing_voucher_limit() {
+    let mut repeated = payload();
+    repeated.vouchers = (0..1000)
+        .map(|index| {
+            let mut voucher = repeated.vouchers[0].clone();
+            voucher.bridge_txn_id = format!("txn-{index}");
+            voucher
+        })
+        .collect();
+    assert_eq!(validate_payload(&repeated), Ok(()));
+    let mut unique = repeated.clone();
+    unique.vouchers.truncate(100);
+    for (index, voucher) in unique.vouchers.iter_mut().enumerate() {
+        voucher.entries[0].ledger = format!("Synthetic Ledger {index}");
+    }
+    let mut at_limit = unique.clone();
+    at_limit.vouchers.pop();
+    assert_eq!(validate_payload(&at_limit), Ok(()));
+    assert_eq!(
+        validate_payload(&unique),
+        Err("voucher_unique_ledger_limit_exceeded".into())
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(super::super::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: super::super::Redaction::None,
+        import_enabled: true,
+    });
+    let response = server
+        .call_tool_response("build_import_xml", serde_json::to_value(unique).unwrap())
+        .await;
+    assert_eq!(
+        response.value["structuredContent"]["result"]["error"]["code"],
+        "voucher_unique_ledger_limit_exceeded"
+    );
+    assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
+    assert!(!directory.path().join("imports").exists());
+}

@@ -34,12 +34,7 @@ pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), St
                 let text = value
                     .as_str()
                     .ok_or_else(|| format!("argument_invalid:{key}"))?;
-                if property["minLength"]
-                    .as_u64()
-                    .is_some_and(|min| text.chars().count() < min as usize)
-                {
-                    return Err(format!("argument_invalid:{key}"));
-                }
+                validate_string_bounds(text, property, key)?;
                 if matches!(key.as_str(), "from" | "to" | "as_of") {
                     normalized_date(text)?;
                 }
@@ -62,10 +57,22 @@ pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), St
                 let values = value
                     .as_array()
                     .ok_or_else(|| format!("argument_invalid:{key}"))?;
-                if property["items"]["type"] == "string"
-                    && values.iter().any(|value| !value.is_string())
+                if property["minItems"]
+                    .as_u64()
+                    .is_some_and(|min| values.len() < min as usize)
+                    || property["maxItems"]
+                        .as_u64()
+                        .is_some_and(|max| values.len() > max as usize)
                 {
                     return Err(format!("argument_invalid:{key}"));
+                }
+                if property["items"]["type"] == "string" {
+                    for value in values {
+                        let text = value
+                            .as_str()
+                            .ok_or_else(|| format!("argument_invalid:{key}"))?;
+                        validate_string_bounds(text, &property["items"], key)?;
+                    }
                 }
             }
             _ => {}
@@ -76,6 +83,21 @@ pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), St
         {
             return Err(format!("argument_invalid:{key}"));
         }
+    }
+    Ok(())
+}
+
+fn validate_string_bounds(text: &str, schema: &Value, key: &str) -> Result<(), String> {
+    let length = text.chars().count();
+    if schema["minLength"]
+        .as_u64()
+        .is_some_and(|min| length < min as usize)
+        || schema["maxLength"]
+            .as_u64()
+            .is_some_and(|max| length > max as usize)
+        || (schema["pattern"] == r"\S" && text.trim().is_empty())
+    {
+        return Err(format!("argument_invalid:{key}"));
     }
     Ok(())
 }
@@ -117,8 +139,8 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
                         json!({"type":"object", "additionalProperties":false}),
                     ),
                     "validate_masters" => (
-                        "Read the selected company's live ledger catalogue and report exact, near-miss, or missing names.",
-                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","ledgers"], "properties":{"company_guid":{"type":"string"},"ledgers":{"type":"array","items":{"type":"string"}}}}),
+                        "Validate 1–100 nonblank ledger names (at most 1024 characters each). Near-miss suggestions are bounded to 25 names and 8192 UTF-8 bytes per requested name, with total count and truncation reported.",
+                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","ledgers"], "properties":{"company_guid":{"type":"string"},"ledgers":{"type":"array","minItems":1,"maxItems":agent_import::MAX_MASTER_NAMES,"items":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"}}}}),
                     ),
                     "build_import_xml" => (
                         "Validate and write a local Tally voucher import file. This never dispatches import XML to Tally.",
