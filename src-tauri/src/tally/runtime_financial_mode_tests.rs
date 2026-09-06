@@ -471,3 +471,6 @@ async fn rejected_currency_retains_its_completed_pair_before_any_master_read() {
         assert_eq!(evidence.bytes, 2 * encoded.len());
     }
 }
+
+#[path = "runtime_outstandings_currency_tests.rs"]
+mod outstandings_currency_tests;

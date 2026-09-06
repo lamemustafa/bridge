@@ -20,21 +20,16 @@ impl Server {
                 "due_date" => OutstandingsAgeingAnchor::DueDate,
                 _ => return Err("invalid_ageing_basis".to_string().into()),
             };
-            let (currency, currency_evidence) = self
+            let currency = self
                 .runtime
-                .detect_base_currency_with_evidence(self.tally_config(), &identity)
+                .detect_base_currency_with_extent(self.tally_config(), &identity)
                 .await
                 .map_err(|error| ToolFailure::from_runtime("company_currency_probe_failed", error))?;
-            result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(currency_evidence));
-            let assertion = match (currency.currency_count, currency.is_inr) {
-                (1, true) => OutstandingsCurrencyAssertion::Inr,
-                (0, _) => return Err("company_currency_probe_failed".to_string().into()),
-                (1, false) => return Err("company_base_currency_not_inr".to_string().into()),
-                _ => return Err("company_base_currency_undetermined".to_string().into()),
-            };
+            result_evidence = combine_evidence(result_evidence.clone(), evidence_from_runtime_read(currency.evidence()));
+            let assertion = currency.admit_inr().map_err(str::to_string)?;
             let (load, outstandings_evidence) = self
                 .runtime
-                .fetch_outstandings_with_evidence(
+                .fetch_agent_outstandings_with_evidence(
                     self.tally_config(),
                     &identity,
                     to,

@@ -253,8 +253,8 @@ pub enum OutstandingsCurrencyAssertion {
 }
 
 /// An INR admission that is inseparable from the company extent observed
-/// during the currency read. Only the party/ledger master path consumes this:
-/// outstandings keeps its existing webview assertion contract.
+/// during the currency read. Party/ledger masters and MCP outstandings consume
+/// this witness; desktop outstandings retains its explicit operator assertion.
 #[derive(Debug, Clone)]
 pub(crate) struct PartyLedgerMasterCurrencyAssertion {
     assertion: OutstandingsCurrencyAssertion,
@@ -298,6 +298,21 @@ pub(crate) struct CompanyCurrencyRead {
 }
 
 impl CompanyCurrencyRead {
+    pub(crate) fn evidence(&self) -> RuntimeReadEvidence {
+        self.evidence.clone()
+    }
+
+    pub(crate) fn admit_inr(self) -> Result<PartyLedgerMasterCurrencyAssertion, &'static str> {
+        match (self.currency_count(), self.is_inr()) {
+            (1, true) => {
+                Ok(self.bind_party_ledger_master_assertion(OutstandingsCurrencyAssertion::Inr))
+            }
+            (0, _) => Err("company_currency_probe_failed"),
+            (1, false) => Err("company_base_currency_not_inr"),
+            _ => Err("company_base_currency_undetermined"),
+        }
+    }
+
     pub(crate) fn currency_count(&self) -> usize {
         self.currency.currency_count
     }
@@ -316,6 +331,12 @@ impl CompanyCurrencyRead {
             currency_read_extent: self.extent,
         }
     }
+}
+
+#[derive(Clone)]
+enum NativeOutstandingsCurrency {
+    Operator(OutstandingsCurrencyAssertion),
+    Observed(PartyLedgerMasterCurrencyAssertion),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1931,14 +1952,9 @@ impl TallyRuntime {
             .detect_base_currency_with_extent(config.clone(), identity)
             .await?;
         let currency_evidence = currency_read.evidence.clone();
-        let assertion = match (currency_read.currency_count(), currency_read.is_inr()) {
-            (1, true) => Ok(OutstandingsCurrencyAssertion::Inr),
-            (0, _) => Err(anyhow::anyhow!("company_currency_probe_failed")),
-            (1, false) => Err(anyhow::anyhow!("company_base_currency_not_inr")),
-            _ => Err(anyhow::anyhow!("company_base_currency_undetermined")),
-        }
-        .map_err(|error| with_read_evidence(error, currency_evidence.clone()))?;
-        let assertion = currency_read.bind_party_ledger_master_assertion(assertion);
+        let assertion = currency_read
+            .admit_inr()
+            .map_err(|code| with_read_evidence(anyhow::anyhow!(code), currency_evidence.clone()))?;
         let (source, source_evidence) = self
             .fetch_party_ledger_master_source_with_evidence(config, identity, assertion)
             .await
@@ -2151,6 +2167,48 @@ impl TallyRuntime {
         currency_assertion: OutstandingsCurrencyAssertion,
         ageing_anchor: OutstandingsAgeingAnchor,
     ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
+        self.fetch_outstandings_native_with_currency(
+            config,
+            identity,
+            as_of,
+            NativeOutstandingsCurrency::Operator(currency_assertion),
+            ageing_anchor,
+        )
+        .await
+    }
+
+    /// MCP monetary reads require the observed currency's company extent;
+    /// the desktop operator assertion cannot be supplied through this entry point.
+    pub(crate) async fn fetch_agent_outstandings_with_evidence(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        as_of: TallyDate,
+        currency_assertion: PartyLedgerMasterCurrencyAssertion,
+        ageing_anchor: OutstandingsAgeingAnchor,
+    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
+        #[cfg(feature = "voucher-scan")]
+        if self.outstandings_segment_policy.is_some() {
+            anyhow::bail!("outstandings_read_evidence_unavailable");
+        }
+        self.fetch_outstandings_native_with_currency(
+            config,
+            identity,
+            as_of,
+            NativeOutstandingsCurrency::Observed(currency_assertion),
+            ageing_anchor,
+        )
+        .await
+    }
+
+    async fn fetch_outstandings_native_with_currency(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        as_of: TallyDate,
+        currency_assertion: NativeOutstandingsCurrency,
+        ageing_anchor: OutstandingsAgeingAnchor,
+    ) -> anyhow::Result<(OutstandingsLoadResult, RuntimeReadEvidence)> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -2160,6 +2218,7 @@ impl TallyRuntime {
             move |client| {
                 let identity = identity.clone();
                 let as_of = as_of.clone();
+                let currency_assertion = currency_assertion.clone();
                 async move {
                     let mut read_evidence = RuntimeReadEvidence::empty();
                     let outcome = async {
@@ -2172,6 +2231,12 @@ impl TallyRuntime {
                         let extent = client
                             .fetch_company_book_extent(company, expected_company_guid)
                             .await?;
+                        let currency_assertion = match &currency_assertion {
+                            NativeOutstandingsCurrency::Operator(assertion) => *assertion,
+                            NativeOutstandingsCurrency::Observed(witness) => {
+                                witness.require_opening_extent(&extent)?.assertion
+                            }
+                        };
                         if &as_of < extent.books_from() {
                             return Ok((
                                 partial_result("as_of_precedes_books_from"),
@@ -2415,7 +2480,7 @@ impl TallyRuntime {
             .await
     }
 
-    async fn detect_base_currency_with_extent(
+    pub(crate) async fn detect_base_currency_with_extent(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
