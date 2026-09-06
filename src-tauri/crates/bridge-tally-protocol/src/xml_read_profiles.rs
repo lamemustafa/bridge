@@ -1126,7 +1126,7 @@ mod tests {
             ),
             (
                 ReadOnlyProfileId::CompanyListV2,
-                "5d0688c7863837094a8ceecb98983c8e80b09220cee332d1da5d95be36e3109b",
+                "9df2a53f085dac2636e9435462b612c1487ec6f903677815036c9f39163f7dd8",
             ),
             (
                 ReadOnlyProfileId::CompanyBookExtentV1,
