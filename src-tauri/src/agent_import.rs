@@ -540,6 +540,7 @@ impl Server {
         let path = self.settings.data_dir.join("imports");
         super::ensure_private_directory(&path).map_err(|error| match error {
             super::DirectoryAdmissionError::Unavailable => "imports_dir_unavailable".to_string(),
+            #[cfg(unix)]
             super::DirectoryAdmissionError::Permissions => {
                 "import_file_permissions_failed".to_string()
             }

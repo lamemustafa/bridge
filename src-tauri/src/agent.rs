@@ -238,6 +238,7 @@ impl Settings {
             .unwrap_or_else(default_data_dir);
         ensure_private_directory(&data_dir).map_err(|error| match error {
             DirectoryAdmissionError::Unavailable => "agent_data_dir_unavailable".to_string(),
+            #[cfg(unix)]
             DirectoryAdmissionError::Permissions => "agent_data_dir_permissions_failed".to_string(),
         })?;
         Ok(Self {

@@ -4,6 +4,7 @@ use std::{fs, path::Path};
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum DirectoryAdmissionError {
     Unavailable,
+    #[cfg(unix)]
     Permissions,
 }
 
