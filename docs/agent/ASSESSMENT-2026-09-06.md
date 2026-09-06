@@ -118,7 +118,7 @@ The final date-admission audit traced every MCP route:
 | Read family | Admission evidence |
 | --- | --- |
 | Basic/compliance ledger balances, movement openings, native outstandings | Fresh recognized mode, typed permitted period, closing mode observation. |
-| Voucher reads and import readback | Literal date predicates, returned-row window validation, and empty-result corroboration or a non-posted verdict. |
+| Voucher reads and import readback | Literal date predicates and returned-row window validation; corroborated empty reads, with fresh licensed-mode qualification before import absence is persisted. |
 | Catalogue, currency, company identity, import high-water | Metadata only; no period-dependent balance is released. |
 | Legacy calibrated scan and change enumeration | Unavailable through the MCP evidence path. |
 
@@ -135,6 +135,26 @@ before any file or batch record is published. Education, unknown modes, ERP9 and
 EditLog have no new-file qualification. This does not assert an observed release
 number or qualify future changes to Tally. Unknown argument names produce a fixed
 error code so large property names cannot expand responses or retained evidence.
+
+Existing caller-selected data directories are admitted without changing their
+permissions. Newly created Unix directories use private creation permissions;
+shared Unix leaves, wrong owners, and symlink/reparse leaves are refused. Windows
+directories retain their inherited ACLs. Import-file
+builds repeat the ledger catalogue before publication and require its full source
+commitment to match, covering changes to identities and parents as well as names.
+This is repeated-observation stability, not an atomic guarantee at later import.
+Duplicate detection hashes the structured accounting fingerprint, so ledger names
+containing punctuation cannot collide through delimiter concatenation.
+
+Import absence has a separate qualification requirement. A result containing
+`not_found` requires licensed TallyPrime observations before and after readback;
+an unqualified observation withholds the negative verdict and preserves prior
+proof/status. Positive historical postings remain directly observable. The
+Education-mode variable-predicate failure does not describe the connector's
+literal predicates; [protocol reference §5.3](../tally/TALLY_PROTOCOL_REFERENCE.md#53-rejected-period-boundaries-widen-silently--the-key-trap)
+records the actual counter-observation and its limits. The negative-verdict guard
+addresses the unqualified absence case, without claiming that Education mode was
+observed to reject the connector's literal request.
 
 Receipt records distinguish `response_prepared` from `stdio_write_completed`,
 linked by receipt ID and frame hash. Preparation records use `*_prepared` fields;
@@ -223,7 +243,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **949 Rust workspace tests**, **194 agent tests
+Local candidate verification: **957 Rust workspace tests**, **202 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -244,7 +264,8 @@ restored-batch verification, and egress-log readback also completed.
 Every emitted frame matched its linked preparation/completion receipts and
 text/structured representations.
 Status, filtered-voucher, compliance-master, basic-ledger, native-outstandings,
-and licensed Journal-file build commitments and source byte counts
+licensed Journal-file build, and qualified import-readback commitments and source
+byte counts
 were independently recomputed from the captured transport request/response files.
 The voucher-type filter and a nonmatching ledger selection both completed.
 Ordinary voucher rows exposed observed boolean cancellation and optional flags.
@@ -253,7 +274,7 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.53` after both licensed-mode observations, and
+additional Journal file for `12.54` after repeated catalogue and licensed-mode observations, and
 readback confirmed `not_found`; that file was not imported. No additional Tally
 posting was performed. The expected read refusal retained its actual completed source
 commitments and byte count, retrievable through `read_evidence`; omitted egress
@@ -262,16 +283,17 @@ and explicitly reported the omitted history as truncated. The recording proxy pa
 before these calls. An earlier candidate run had a proxy startup failure; those
 failed observations and its successful repeat remain retained separately.
 Separate release-process checks confirmed port zero and a non-loopback host
-fail at startup before creating the data directory.
+fail at startup before creating the data directory. An existing shared directory
+was refused without changing its mode or creating files.
 That same binary passed eight checks using official MCP
 JavaScript SDK 1.30.0, negotiating 2025-11-25 down to 2025-06-18. Official MCPB
 CLI 2.1.2 validated and packed the archive. Its extracted executable and all four
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `851e2599c4acb2ead804d906373ab563afba1ff16ee37a9edc6230ca0b36d4b9`.
-- MCPB archive SHA-256: `fba5f1941a948adb6cf3a1458f025756256c4d82f9ebbb891ec10986b3406f08`.
-- Source fingerprint (344 build-input files, unchanged through the settled-source rebuild): `12c281b8e3f0261cb38e96eec6f12e2f88085cf817b87097719186d2e11bafe1`.
+- Release executable SHA-256: `0ca9ad2c687791024a2229915911160e0e0592ae4b80e20cfe62adb425a01e01`.
+- MCPB archive SHA-256: `c2d52ec0796cef73b0ce792cefb57b12da0e41c2ecb502bc5b74e0f3deaddd8d`.
+- Source fingerprint (346 build-input files, unchanged through the settled-source rebuild): `fd643210f2ab1b1f560f83e3da064b71b3bf9bb7f1d260b850600853f627ed9c`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -288,9 +310,10 @@ were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
 The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates the existing runtime and Cargo dependency pins for the currency witness
-and standard-library file locking. Previous seals cover fresh financial mode
-admission and retained refusal evidence. Earlier
+updates the existing protocol-reference pin for the literal-date counter-observation
+and negative-verdict qualification limit. Previous seals cover the currency witness,
+standard-library file locking, fresh financial mode admission and retained refusal
+evidence. Earlier
 changes covered request commitments, report-source fields, CI packaging, and
 the period-opening protocol reference. The existing pin
 set was rehashed, sealed, and repointed using the release-process commands.

@@ -17,6 +17,11 @@ platform application-data directory by default), `BRIDGE_AGENT_MAX_ROWS`
 (default `500`), `BRIDGE_AGENT_MAX_BYTES` (default `200000`), and
 `BRIDGE_AGENT_REDACTION` (`none`, `mask_parties`, or `drop_narration`). The
 host is validated by `bridge-tally-transport`; non-loopback hosts are refused.
+On Unix, new data directories use mode `0700`; an existing data directory
+must belong to the current user and have that mode. Otherwise startup refuses
+it without changing its permissions. Select a new dedicated leaf under a shared
+parent rather than using the shared directory itself. Windows directories retain
+their inherited ACLs; symlink and reparse-point leaves are refused.
 
 Claude Desktop example:
 
@@ -111,7 +116,7 @@ type, host, licence mode, or manually imported file, so the feature remains opt-
    with the exact live spelling; Bridge never creates masters.
 3. Call `build_import_xml` with the payload. It checks exact decimal balance,
    company date extent, live masters, and previously built transaction IDs,
-   then writes `<data_dir>/imports/<batch_id>.xml` and records an append-only
+   repeats the full catalogue to reject intervening changes, then writes `<data_dir>/imports/<batch_id>.xml` and records an append-only
    `agent-import-ledger.jsonl` line. `voucher_number` is optional: when absent,
    Tally applies the voucher type's own numbering configuration; when supplied,
    it is validated and sent so a Manual-type duplicate policy can reject it.
@@ -123,10 +128,13 @@ type, host, licence mode, or manually imported file, so the feature remains opt-
    appends the verification status to the local import ledger.
 
 The file path is deliberately not a direct-posting path. Masters must already
-exist and match exactly. On the observed Education-mode Tally profile, voucher
-dates were only accepted for day 1, 2, or 31; Bridge does not infer a connected
-installation's licence mode, so an accountant must account for that restriction
-before manual import.
+exist and match exactly. File generation requires observed licensed TallyPrime;
+the checks do not make a later manual import atomic with the earlier reads.
+If verification would report any `not_found`, licensed TallyPrime must have been
+observed before and after readback. Otherwise `verification_mode_unqualified`
+withholds the negative verdict and leaves the previous proof and status intact.
+Positive historical readback remains available in an observed unqualified mode.
+A failed mode probe remains a read failure.
 
 Safety boundary: local loopback only, bounded responses, verified company tuple
 selection, append-only receipts, and no agent import dispatch. Unsupported:
