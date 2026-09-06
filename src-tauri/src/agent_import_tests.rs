@@ -1258,7 +1258,7 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
                     .expect("batch id")
             ))
             .exists());
-        assert_eq!(simulator.finish().expect("requests").len(), 44);
+        assert_eq!(simulator.finish().expect("requests").len(), 50);
     }
 }
 
@@ -1526,12 +1526,40 @@ fn qualified_import_cycle_plans() -> Vec<ScenarioPlan> {
         probe.clone(),
         cycle[..16].to_vec(),
         cycle[4..10].to_vec(),
+        build_preflight_plans(),
         probe.clone(),
         probe,
         cycle[16..].to_vec(),
     ]
     .concat()
 }
+
+fn build_preflight_plans() -> Vec<ScenarioPlan> {
+    let captured = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
+    );
+    let empty = String::from_utf16(
+        &captured
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let mut plans = import_cycle_plans()[4..10].to_vec();
+    for index in [1, 3] {
+        plans[index].fixture = Fixture::SyntheticXml(empty.clone());
+        plans[index].encoding = WireEncoding::Utf16LeNoBom;
+        assert!(
+            tally_protocol_simulator::encode(&plans[index].fixture.body(), plans[index].encoding)
+                == captured,
+            "preflight response must preserve the captured bytes"
+        );
+    }
+    plans
+}
+
+#[path = "agent_import_preflight_tests.rs"]
+mod preflight_tests;
 
 #[path = "agent_import_mode_tests.rs"]
 mod mode_tests;

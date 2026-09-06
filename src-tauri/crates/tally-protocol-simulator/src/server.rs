@@ -508,7 +508,9 @@ fn response_headers(plan: &ScenarioPlan, body_len: usize) -> String {
         _ => "Synthetic Status",
     };
     let charset = match plan.encoding {
-        WireEncoding::Utf16Le | WireEncoding::Utf16Be => "; charset=utf-16",
+        WireEncoding::Utf16Le | WireEncoding::Utf16LeNoBom | WireEncoding::Utf16Be => {
+            "; charset=utf-16"
+        }
         WireEncoding::Utf8 | WireEncoding::Utf8Bom
             if plan.fixture.content_type() == "application/json" =>
         {

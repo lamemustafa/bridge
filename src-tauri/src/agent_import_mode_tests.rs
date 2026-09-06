@@ -107,6 +107,7 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
                 licensed.clone(),
                 import_cycle_plans()[..16].to_vec(),
                 import_cycle_plans()[4..10].to_vec(),
+                build_preflight_plans(),
                 invalid,
             ]
             .concat()
@@ -138,6 +139,14 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
             assert_eq!(
                 result.payload["result"]["live_evidence"],
                 "synthetic_lab_readback"
+            );
+            assert_eq!(
+                result.payload["result"]["verification_preflight"],
+                json!({
+                    "state":"current_window_readable", "from":"20260901", "to":"20260902",
+                    "source_rows":0, "paired_source_bytes":responses[25].len() * 2,
+                    "response_sha256":sha256_hex(&responses[25])
+                })
             );
             let batch = result.payload["result"]["batch_id"].as_str().unwrap();
             assert!(directory
@@ -171,15 +180,15 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
         let mut response_hash = join(&response(0), &response(1));
         let mut bytes = responses[0].len() + responses[1].len();
         if closing {
-            assert_eq!(observed.len(), 26);
-            for i in [2, 7, 13, 19] {
+            assert_eq!(observed.len(), 32);
+            for i in [2, 7, 13, 19, 25] {
                 request_hash = join(&request_hash, &request(i));
                 response_hash = join(&response_hash, &response(i));
                 bytes += 2 * responses[i].len();
             }
-            request_hash = join(&request_hash, &join(&request(24), &request(25)));
-            response_hash = join(&response_hash, &join(&response(24), &response(25)));
-            bytes += responses[24].len() + responses[25].len();
+            request_hash = join(&request_hash, &join(&request(30), &request(31)));
+            response_hash = join(&response_hash, &join(&response(30), &response(31)));
+            bytes += responses[30].len() + responses[31].len();
         } else {
             assert_eq!(observed.len(), 2);
         }
@@ -192,7 +201,7 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
 #[tokio::test]
 async fn import_build_rechecks_captured_catalogue_before_persistence() {
     for fault in ["none", "rename", "identity", "parent", "delete"] {
-        let mut plans = qualified_import_cycle_plans()[..26].to_vec();
+        let mut plans = qualified_import_cycle_plans()[..32].to_vec();
         if fault != "none" {
             for index in [19, 21] {
                 let xml = plans[index].fixture.body().into_owned();
@@ -248,7 +257,7 @@ async fn import_build_rechecks_captured_catalogue_before_persistence() {
             *error.evidence.unwrap()
         };
         let observed = simulator.finish().unwrap();
-        assert_eq!(observed.len(), if fault == "none" { 26 } else { 24 });
+        assert_eq!(observed.len(), if fault == "none" { 32 } else { 24 });
         let join = |a: &str, b: &str| sha256_hex(format!("{a}:{b}").as_bytes());
         let mut request = join(
             &observed[0].request_body_sha256,
@@ -266,18 +275,21 @@ async fn import_build_rechecks_captured_catalogue_before_persistence() {
             observed[19].request_body_sha256
         );
         if fault == "none" {
+            request = join(&request, &observed[25].request_body_sha256);
+            response = join(&response, &sha256_hex(&responses[25]));
+            bytes += responses[25].len() * 2;
             request = join(
                 &request,
                 &join(
-                    &observed[24].request_body_sha256,
-                    &observed[25].request_body_sha256,
+                    &observed[30].request_body_sha256,
+                    &observed[31].request_body_sha256,
                 ),
             );
             response = join(
                 &response,
-                &join(&sha256_hex(&responses[24]), &sha256_hex(&responses[25])),
+                &join(&sha256_hex(&responses[30]), &sha256_hex(&responses[31])),
             );
-            bytes += responses[24].len() + responses[25].len();
+            bytes += responses[30].len() + responses[31].len();
         }
         assert_eq!(evidence.request_sha256, request);
         assert_eq!(evidence.response_sha256, response);

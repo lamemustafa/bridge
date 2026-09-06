@@ -369,11 +369,6 @@ impl Server {
             if catalogue_evidence.response_sha256 != repeated_catalogue_evidence.response_sha256 {
                 return Err("import_catalogue_changed".to_string().into());
             }
-            let closing_mode_evidence = self.qualified_import_profile().await?;
-            accumulated = combine_evidence(accumulated.clone(), closing_mode_evidence);
-            let batch_id = format!("bridge-{}", Uuid::new_v4());
-            let xml = render_import_xml(&company.name, &payload.vouchers);
-            let sha256 = sha256_hex(xml.as_bytes());
             let date_from = payload
                 .vouchers
                 .iter()
@@ -386,6 +381,28 @@ impl Server {
                 .map(|voucher| voucher.date.clone())
                 .max()
                 .unwrap_or_default();
+            // Exercise the exact future readback projection before publishing a file.
+            // This observes today's source, not a bound on later Tally mutations.
+            let (preflight_xml, preflight_evidence) = self
+                .post_read(
+                    &identity,
+                    render_import_verification_read(&company.name, &date_from, &date_to),
+                )
+                .await?;
+            accumulated = combine_evidence(accumulated.clone(), preflight_evidence.clone());
+            let preflight = parse_import_vouchers(&preflight_xml, identity.company_guid())?;
+            validate_import_window(&preflight, &date_from, &date_to)?;
+            let verification_preflight = json!({
+                "state":"current_window_readable", "from":date_from, "to":date_to,
+                "source_rows":preflight.rows.len(),
+                "paired_source_bytes":preflight_evidence.bytes,
+                "response_sha256":preflight_evidence.response_sha256
+            });
+            let closing_mode_evidence = self.qualified_import_profile().await?;
+            accumulated = combine_evidence(accumulated.clone(), closing_mode_evidence);
+            let batch_id = format!("bridge-{}", Uuid::new_v4());
+            let xml = render_import_xml(&company.name, &payload.vouchers);
+            let sha256 = sha256_hex(xml.as_bytes());
             let line = ImportLedgerLine {
                 batch_id: batch_id.clone(),
                 company_guid: canonical_batch_guid(&payload.company_guid),
@@ -425,9 +442,10 @@ impl Server {
                     "batch_id": batch_id, "path": path, "sha256": sha256,
                     "voucher_count": line.vouchers.len(), "total_debit": debit.as_str(), "total_credit": credit.as_str(),
                     "live_evidence": "synthetic_lab_readback",
+                    "verification_preflight": verification_preflight,
                     "qualified_profile": {"product":"TallyPrime","release":LIVE_QUALIFIED_IMPORT_RELEASE,"license_tier":"silver"},
                     "live_evidence_report": "docs/agent/ASSESSMENT-2026-09-06.md",
-                    "warnings": ["No XML was sent to Tally. Import the written file manually, then use verify_import."],
+                    "warnings": ["No import XML was sent to Tally. Import the written file manually, then use verify_import.", "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits."],
                     "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
                 }}),
                 evidence: accumulated.clone(),
@@ -1096,9 +1114,8 @@ fn parse_import_vouchers(xml: &str, company_guid: &str) -> Result<ImportReadSour
     ImportReadSource::admit(rows)
 }
 
-fn corroborate_verification_window(
+fn validate_import_window(
     observed: &ImportReadSource,
-    corroboration: &ImportReadSource,
     from: &str,
     to: &str,
 ) -> Result<(), String> {
@@ -1110,6 +1127,17 @@ fn corroborate_verification_window(
     }) {
         return Err("window_not_honoured".to_string());
     }
+    Ok(())
+}
+
+fn corroborate_verification_window(
+    observed: &ImportReadSource,
+    corroboration: &ImportReadSource,
+    from: &str,
+    to: &str,
+) -> Result<(), String> {
+    validate_import_window(observed, from, to)?;
+    validate_import_window(corroboration, from, to)?;
     // This collection request has no row limit. The MCP output-page setting
     // cannot establish source truncation; corroborate the observed identity set
     // independently of that presentation cap.

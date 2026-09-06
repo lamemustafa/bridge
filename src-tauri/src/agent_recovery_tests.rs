@@ -7,7 +7,7 @@ async fn persisted_build(cap: usize) -> (tempfile::TempDir, Server, ToolResponse
     let simulator = SequenceSimulator::spawn(
         qualified_import_cycle_plans()
             .into_iter()
-            .take(26)
+            .take(32)
             .collect(),
     )
     .unwrap();
@@ -59,7 +59,7 @@ async fn persisted_build(cap: usize) -> (tempfile::TempDir, Server, ToolResponse
     assert_eq!(ledger["batch_id"], *batch_id);
     assert_eq!(ledger["status"], "built");
     assert_eq!(ledger["sha256"], sha256_hex(&xml));
-    assert_eq!(simulator.finish().unwrap().len(), 26);
+    assert_eq!(simulator.finish().unwrap().len(), 32);
     (directory, server, tool)
 }
 

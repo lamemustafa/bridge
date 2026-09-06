@@ -146,7 +146,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
                         json!({"type":"object", "additionalProperties":false, "required":["company_guid","ledgers"], "properties":{"company_guid":{"type":"string"},"ledgers":{"type":"array","minItems":1,"maxItems":agent_import::MAX_MASTER_NAMES,"items":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"}}}}),
                     ),
                     "build_import_xml" => (
-                        "Validate and write a local Journal voucher import file. Other voucher types are not live-qualified. This never dispatches import XML to Tally.",
+                        "Validate a Journal batch and read its current verification window before writing a local import file. Later changes may exceed read limits. Other voucher types are unqualified. This never dispatches import XML to Tally.",
                         agent_import::voucher_input_schema(),
                     ),
                     "verify_import" => (
@@ -170,11 +170,11 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
                         json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"group":{"type":"string"},"fields":{"type":"string","enum":["basic","compliance"],"default":"basic"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "ledger_movement" => (
-                        "Return literal-window ledger opening, exact debit/credit movement, closing, and touched-voucher count.",
+                        "Return literal-window ledger opening, exact debit/credit movement, closing, and touched-voucher count. Reads the full voucher window before filtering or pagination; use narrow dates. Dense windows are unqualified and can fail source limits.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ledger":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "vouchers" => (
-                        "Return bounded, literal-window voucher evidence with curated metadata and redaction applied.",
+                        "Return literal-window voucher evidence with curated metadata and redaction. Reads the full source window before selectors and output pagination; limit does not reduce Tally work. Use narrow dates; dense windows are unqualified and can fail source limits.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"voucher_type":{"type":"string","maxLength":agent_import::MAX_MASTER_NAME_CHARS},"ledger":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "changed_since" => (
