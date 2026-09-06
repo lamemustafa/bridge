@@ -64,17 +64,21 @@ impl NativeCollectionScope {
     }
 }
 
-pub(super) fn parse_agent_rows(xml: &str) -> Result<Vec<Value>, String> {
-    parse_agent_rows_with_accounting_state(xml, false)
+pub(super) fn parse_agent_rows(xml: &str, company_guid: &str) -> Result<Vec<Value>, String> {
+    parse_agent_rows_with_accounting_state(xml, false, company_guid)
 }
 
-pub(super) fn parse_agent_changed_rows(xml: &str) -> Result<Vec<Value>, String> {
-    parse_agent_rows_with_accounting_state(xml, true)
+pub(super) fn parse_agent_changed_rows(
+    xml: &str,
+    company_guid: &str,
+) -> Result<Vec<Value>, String> {
+    parse_agent_rows_with_accounting_state(xml, true, company_guid)
 }
 
 pub(super) fn parse_agent_rows_with_accounting_state(
     xml: &str,
     require_change_identity: bool,
+    company_guid: &str,
 ) -> Result<Vec<Value>, String> {
     // Tally's collection XML varies by release; use a deliberately conservative
     // extractor and never infer a missing field. Malformed rows fail before
@@ -193,17 +197,13 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                             }
                             .to_string());
                         }
-                        if require_change_identity
-                            && row
-                                .get("GUID")
-                                .filter(|value| !value.trim().is_empty())
-                                .is_none()
-                            && row
-                                .get("MASTERID")
-                                .filter(|value| !value.trim().is_empty())
-                                .is_none()
-                        {
-                            return Err("change_row_identity_invalid".to_string());
+                        if !row.get("GUID").is_some_and(|guid| {
+                            bridge_tally_protocol::master_guid_belongs_to_company(
+                                guid,
+                                company_guid,
+                            )
+                        }) {
+                            return Err("voucher_company_identity_invalid".to_string());
                         }
                         bridge_tally_core::TallyDate::parse(row["DATE"].clone())
                             .map_err(|_| "voucher_date_invalid".to_string())?;

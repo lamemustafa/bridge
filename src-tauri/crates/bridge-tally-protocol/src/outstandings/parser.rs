@@ -1,6 +1,7 @@
 use bridge_tally_primitives::{ExactDecimal, TallyDate};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::master_guid_belongs_to_company;
 use crate::outstandings_shared::{OutstandingsError, PinnedCompany};
 use crate::tolerant_xml::sanitize_invalid_numeric_references;
 
@@ -180,31 +181,6 @@ pub(super) fn parse_segment(
         vouchers,
         raw_row_count,
     })
-}
-
-fn master_guid_belongs_to_company(master_guid: &str, company_guid: &str) -> bool {
-    // Bind the response to the pinned company, not just the request.
-    //
-    // `SVCURRENTCOMPANY` selects by NAME. If a second loaded company shares the
-    // selected name, or the name binding shifts mid-scan, Tally can return that
-    // other company's vouchers while the paired company collection still finds
-    // the expected GUID among all loaded companies -- so date checks, AlterID
-    // range checks, and the closing extent all pass, and another company's
-    // financial data is published under the pinned name.
-    //
-    // TALLY_PROTOCOL_REFERENCE.md:632 records that every master GUID begins
-    // with its company GUID; require the documented `-<master-id>` delimiter
-    // as response identity evidence instead of accepting the bare company GUID.
-    let Some(prefix) = master_guid.get(..company_guid.len()) else {
-        return false;
-    };
-    let Some(suffix) = master_guid.get(company_guid.len()..) else {
-        return false;
-    };
-    prefix.eq_ignore_ascii_case(company_guid)
-        && suffix
-            .strip_prefix('-')
-            .is_some_and(|master_id| !master_id.is_empty())
 }
 
 pub(super) fn parse_witness_segment(

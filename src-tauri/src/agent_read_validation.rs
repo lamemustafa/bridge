@@ -56,7 +56,7 @@ mod tests {
                 Err("agent_read_protocol_invalid".into())
             );
             assert_eq!(
-                crate::agent::parse_agent_rows(&faulty),
+                crate::agent::parse_agent_rows(&faulty, "unused-empty-source-company"),
                 Err("agent_read_protocol_invalid".into())
             );
         }

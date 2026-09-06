@@ -29,7 +29,7 @@ impl Server {
             let (xml, evidence) = self.post_read(&identity, request).await?;
             accumulated = combine_evidence(accumulated.clone(), evidence);
             let mut rows =
-                validate_then_filter_voucher_rows(parse_agent_rows(&xml)?, &from, &to, None)?;
+                validate_then_filter_voucher_rows(parse_agent_rows(&xml, identity.company_guid())?, &from, &to, None)?;
             let mut result_state = "complete";
             let mut corroboration_reason = None;
             if rows.is_empty() {
@@ -105,7 +105,7 @@ impl Server {
         let mut evidence = wider_evidence;
         let outcome = async {
             let wider_rows = validate_then_filter_voucher_rows(
-                parse_agent_rows(&wider_xml)?,
+                parse_agent_rows(&wider_xml, identity.company_guid())?,
                 &wider_from,
                 &wider_to,
                 ledger,

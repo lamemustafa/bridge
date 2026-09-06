@@ -68,7 +68,12 @@ impl Server {
         let request =
             render_agent_changed_vouchers(&company.name, voucher_alter_id, voucher_snapshot);
         let (xml, evidence) = self.post_read(&identity, request).await?;
-        let all_rows = parse_agent_changed_rows(&xml)?;
+        let all_rows = parse_agent_changed_rows(&xml, identity.company_guid()).map_err(|code| {
+            ToolFailure::from(code).with_prior_evidence(combine_evidence(
+                combine_evidence(identity_evidence.clone(), snapshot_evidence.clone()),
+                evidence.clone(),
+            ))
+        })?;
         let (rows, voucher_truncated, truncated_voucher_cursor) = stable_change_page(
             all_rows,
             voucher_alter_id,

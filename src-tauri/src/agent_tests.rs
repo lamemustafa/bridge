@@ -18,16 +18,18 @@ fn voucher_collection_xml() -> String {
 #[test]
 fn movement_native_parser_rejects_missing_flags_and_out_of_window_cancelled_rows() {
     let xml = voucher_collection_xml();
-    assert!(parse_movement_vouchers(&xml, "20260901", "20260902").is_err());
+    assert!(parse_movement_vouchers(&xml, "20260901", "20260902", "voucher").is_err());
     let cancelled = xml.replace(
         "<GUID>",
         "<ISCANCELLED>Yes</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><GUID>",
     );
-    assert!(parse_movement_vouchers(&cancelled, "20260901", "20260902")
-        .unwrap()
-        .is_empty());
+    assert!(
+        parse_movement_vouchers(&cancelled, "20260901", "20260902", "voucher")
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
-        parse_movement_vouchers(&cancelled, "20260902", "20260902")
+        parse_movement_vouchers(&cancelled, "20260902", "20260902", "voucher")
             .err()
             .as_deref(),
         Some("window_not_honoured")
@@ -45,7 +47,7 @@ fn ordinary_vouchers_reject_missing_or_empty_core_fields_before_selection() {
             let xml = voucher_collection_xml()
                 .replace(&format!("<{field}>{value}</{field}>"), &replacement);
             assert_eq!(
-                parse_agent_rows(&xml),
+                parse_agent_rows(&xml, "voucher"),
                 Err("agent_read_protocol_invalid".into()),
                 "{field}"
             );
@@ -77,13 +79,15 @@ fn movement_profile_fetches_the_flags_required_by_accounting_admission() {
         "<GUID>",
         "<ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><GUID>",
     );
-    let vouchers = parse_movement_vouchers(&xml, "20260901", "20260902").unwrap();
+    let vouchers = parse_movement_vouchers(&xml, "20260901", "20260902", "voucher").unwrap();
     assert_eq!(vouchers.len(), 1);
     assert_eq!(vouchers[0].ledger_entries.len(), 2);
     let cancelled = xml.replace("<ISCANCELLED>No", "<ISCANCELLED>Yes");
-    assert!(parse_movement_vouchers(&cancelled, "20260901", "20260902")
-        .unwrap()
-        .is_empty());
+    assert!(
+        parse_movement_vouchers(&cancelled, "20260901", "20260902", "voucher")
+            .unwrap()
+            .is_empty()
+    );
 }
 
 fn settings(address: std::net::SocketAddr, data_dir: PathBuf) -> Settings {
@@ -134,9 +138,11 @@ fn agent_voucher_profile_uses_literal_filters_and_redaction_never_reveals_party(
     assert_eq!(recursively_redacted["changed"]["ledger"], "Ca…er");
     assert_eq!(negotiate_protocol("2024-11-05"), Ok("2024-11-05"));
     assert_eq!(negotiate_protocol("2023-01-01"), Ok("2025-06-18"));
-    assert!(
-        parse_agent_rows("<ENVELOPE><BODY><RESPONSE>bad</RESPONSE></BODY></ENVELOPE>").is_err()
-    );
+    assert!(parse_agent_rows(
+        "<ENVELOPE><BODY><RESPONSE>bad</RESPONSE></BODY></ENVELOPE>",
+        "voucher"
+    )
+    .is_err());
 }
 
 #[test]
@@ -616,8 +622,8 @@ fn egress_tail_waits_for_an_exclusive_append_lock() {
 
 #[test]
 fn voucher_parser_keeps_pipe_characters_inside_structured_ledger_names() {
-    let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><ALLLEDGERENTRIES.LIST><LEDGERNAME>A|B</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
-    let rows = parse_agent_rows(xml).expect("voucher rows");
+    let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-1</GUID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><ALLLEDGERENTRIES.LIST><LEDGERNAME>A|B</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+    let rows = parse_agent_rows(xml, "voucher").expect("voucher rows");
     assert_eq!(rows[0]["amounts"][0]["ledger"], "A|B");
     assert_eq!(rows[0]["amounts"][0]["amount"], "-10");
 }
@@ -633,11 +639,11 @@ fn voucher_and_changed_parsers_reject_incomplete_ledger_entries() {
             "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>voucher-guid</GUID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST>{entry}</ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
         );
         assert_eq!(
-            parse_agent_rows(&xml),
+            parse_agent_rows(&xml, "voucher"),
             Err("agent_read_protocol_invalid".to_string())
         );
         assert_eq!(
-            parse_agent_changed_rows(&xml),
+            parse_agent_changed_rows(&xml, "voucher"),
             Err("agent_read_protocol_invalid".to_string())
         );
     }
@@ -646,10 +652,10 @@ fn voucher_and_changed_parsers_reject_incomplete_ledger_entries() {
 #[test]
 fn voucher_parsers_decode_entities_in_vouchers_and_change_feeds() {
     let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>voucher-guid</GUID><VOUCHERNUMBER>R&amp;D</VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
-    let vouchers = parse_agent_rows(xml).expect("voucher rows");
+    let vouchers = parse_agent_rows(xml, "voucher").expect("voucher rows");
     assert_eq!(vouchers[0]["voucher_number"], "R&D");
     assert_eq!(vouchers[0]["amounts"][0]["ledger"], "R&D");
-    let changed = parse_agent_changed_rows(xml).expect("changed voucher rows");
+    let changed = parse_agent_changed_rows(xml, "voucher").expect("changed voucher rows");
     assert_eq!(changed[0]["voucher_number"], "R&D");
     assert_eq!(changed[0]["amounts"][0]["ledger"], "R&D");
 }
@@ -657,18 +663,18 @@ fn voucher_parsers_decode_entities_in_vouchers_and_change_feeds() {
 #[test]
 fn voucher_parsers_preserve_entity_adjacent_whitespace() {
     let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>voucher-guid</GUID><VOUCHERNUMBER> before&amp;after </VOUCHERNUMBER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME> Input&amp;CGST </LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
-    let vouchers = parse_agent_rows(xml).expect("voucher rows");
+    let vouchers = parse_agent_rows(xml, "voucher").expect("voucher rows");
     assert_eq!(vouchers[0]["voucher_number"], " before&after ");
     assert_eq!(vouchers[0]["amounts"][0]["ledger"], " Input&CGST ");
-    let changed = parse_agent_changed_rows(xml).expect("changed voucher rows");
+    let changed = parse_agent_changed_rows(xml, "voucher").expect("changed voucher rows");
     assert_eq!(changed[0]["voucher_number"], " before&after ");
     assert_eq!(changed[0]["amounts"][0]["ledger"], " Input&CGST ");
 }
 
 #[test]
 fn voucher_ledger_filter_drops_mixed_response_rows_that_do_not_match_live_spelling() {
-    let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><VOUCHERNUMBER>keep</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>R and D</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><VOUCHERNUMBER>drop</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
-    let rows = parse_agent_rows(xml).expect("mixed voucher rows");
+    let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-keep</GUID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><VOUCHERNUMBER>keep</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>R and D</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER><VOUCHER><GUID>voucher-drop</GUID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><VOUCHERNUMBER>drop</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>10</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+    let rows = parse_agent_rows(xml, "voucher").expect("mixed voucher rows");
     let rows = filter_voucher_rows_for_ledger(rows, "R and D");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["voucher_number"], "keep");
@@ -720,13 +726,13 @@ fn client_side_ledger_filter_accepts_unquoted_tdl_ledger_names() {
 #[test]
 fn changed_voucher_rows_require_typed_accounting_state() {
     let complete = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>voucher-guid</GUID><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>Yes</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
-    let rows = parse_agent_changed_rows(complete).expect("changed voucher rows");
+    let rows = parse_agent_changed_rows(complete, "voucher").expect("changed voucher rows");
     assert_eq!(rows[0]["cancelled"], false);
     assert_eq!(rows[0]["optional"], true);
 
     let absent = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>voucher-guid</GUID><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
     assert_eq!(
-        parse_agent_changed_rows(absent),
+        parse_agent_changed_rows(absent, "voucher"),
         Err("voucher_accounting_state_not_observed".to_string())
     );
 }
@@ -735,12 +741,15 @@ fn changed_voucher_rows_require_typed_accounting_state() {
 fn changed_voucher_rows_require_a_stable_identity() {
     let missing = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
     assert_eq!(
-        parse_agent_changed_rows(missing),
-        Err("change_row_identity_invalid".to_string())
+        parse_agent_changed_rows(missing, "voucher"),
+        Err("voucher_company_identity_invalid".to_string())
     );
 
     let master_id = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><MASTERID>3</MASTERID><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
-    assert!(parse_agent_changed_rows(master_id).is_ok());
+    assert_eq!(
+        parse_agent_changed_rows(master_id, "voucher"),
+        Err("voucher_company_identity_invalid".into())
+    );
 }
 
 #[test]
@@ -753,7 +762,7 @@ fn changed_voucher_rows_require_date_and_voucher_type() {
             "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-guid</GUID>{missing}<ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
         );
         assert_eq!(
-            parse_agent_changed_rows(&xml),
+            parse_agent_changed_rows(&xml, "voucher"),
             Err("change_row_core_field_invalid".to_string())
         );
     }
@@ -1519,8 +1528,16 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
     let captured_vouchers = include_str!(
         "../crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml"
     );
+    let company_bytes = include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml");
+    let company_xml = String::from_utf16(
+        &company_bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
     let company_plan = || {
-        ScenarioPlan::new(Fixture::SyntheticXml(company_collection_xml()))
+        ScenarioPlan::new(Fixture::SyntheticXml(company_xml.clone()))
             .with_encoding(WireEncoding::Utf16Le)
             .with_framing(ResponseFraming::ContentLength)
     };
@@ -1556,7 +1573,7 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
     let response = server
         .call_tool(
             "vouchers",
-            json!({"company_guid":"00000000-0000-4000-8000-000000000001","from":"2026-04-01","to":"2026-04-01"}),
+            json!({"company_guid":"bb8ad19e-6aef-4239-a917-87fec0c6215e","from":"2026-04-01","to":"2026-04-01"}),
         )
         .await;
     assert_eq!(
@@ -1572,16 +1589,16 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
     assert!(rows
         .iter()
         .all(|row| row["cancelled"].is_boolean() && row["optional"].is_boolean()));
-    let expected_bytes =
-        bridge_tally_protocol::encode_tally_xml_request_utf16le(&company_collection_xml()).len()
-            + bridge_tally_protocol::encode_tally_xml_request_utf16le(captured_vouchers).len();
+    let expected_bytes = bridge_tally_protocol::encode_tally_xml_request_utf16le(&company_xml)
+        .len()
+        + bridge_tally_protocol::encode_tally_xml_request_utf16le(captured_vouchers).len();
     assert_eq!(
         response["structuredContent"]["evidence"]["bytes"],
         expected_bytes * 2
     );
     assert_ne!(
         response["structuredContent"]["evidence"]["bytes"],
-        company_collection_xml().len() + captured_vouchers.len()
+        company_xml.len() + captured_vouchers.len()
     );
     assert_eq!(simulator.finish().expect("simulator result").len(), 10);
 }
@@ -1624,10 +1641,10 @@ fn native_cmpinfo_counters_are_not_voucher_or_master_rows() {
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect::<Vec<_>>();
     let xml = String::from_utf16(&words).expect("captured UTF-16LE response");
-    assert!(parse_agent_rows(&xml)
+    assert!(parse_agent_rows(&xml, "voucher")
         .expect("native empty vouchers")
         .is_empty());
-    assert!(parse_agent_changed_rows(&xml)
+    assert!(parse_agent_changed_rows(&xml, "voucher")
         .expect("native empty changed vouchers")
         .is_empty());
     assert!(parse_agent_changed_masters(&xml)
@@ -1650,7 +1667,8 @@ fn native_captured_vouchers_keep_direct_amounts_and_padded_identifiers() {
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect::<Vec<_>>();
     let xml = String::from_utf16(&words).expect("captured UTF-16LE response");
-    let rows = parse_agent_changed_rows(&xml).expect("captured native vouchers");
+    let rows = parse_agent_changed_rows(&xml, "61c6de69-1748-461c-ad3f-162cb949df9f")
+        .expect("captured native vouchers");
     assert_eq!(rows.len(), 3);
     for (row, (id, amount)) in rows
         .iter()
@@ -1661,9 +1679,14 @@ fn native_captured_vouchers_keep_direct_amounts_and_padded_identifiers() {
         assert_eq!(row["amounts"][0]["amount"], amount);
     }
     assert_eq!(
-        parse_movement_vouchers(&xml, "20260801", "20260801")
-            .unwrap()
-            .len(),
+        parse_movement_vouchers(
+            &xml,
+            "20260801",
+            "20260801",
+            "61c6de69-1748-461c-ad3f-162cb949df9f"
+        )
+        .unwrap()
+        .len(),
         3
     );
 }

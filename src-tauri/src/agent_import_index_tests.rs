@@ -4,7 +4,7 @@ use super::*;
 fn captured_derived_large_verification_preserves_tag_and_fallback_multiplicity() {
     // An in-memory workload derived from a captured accounting row. Repeated
     // identities, tags and Journal type below are synthetic, not live evidence.
-    let mut template = parse_import_vouchers(&boundary_tests::captured_vouchers())
+    let mut template = parse_import_vouchers(&boundary_tests::captured_vouchers(), CAPTURED_GUID)
         .unwrap()
         .rows
         .remove(0);
@@ -98,7 +98,7 @@ fn captured_derived_large_verification_preserves_tag_and_fallback_multiplicity()
 #[test]
 fn delimiter_bearing_ledger_names_do_not_create_accounting_duplicates() {
     // Pure matching fault case; these rows do not claim a live Tally capture.
-    let mut first = parse_import_vouchers(&boundary_tests::captured_vouchers())
+    let mut first = parse_import_vouchers(&boundary_tests::captured_vouchers(), CAPTURED_GUID)
         .unwrap()
         .rows
         .remove(0);

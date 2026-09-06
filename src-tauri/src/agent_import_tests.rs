@@ -570,11 +570,11 @@ fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
     assert_eq!(result["counts"]["not_found"], 1);
     assert_eq!(result["duplicates"].as_array().map(Vec::len), Some(1));
     assert_eq!(
-        parse_import_vouchers(""),
+        parse_import_vouchers("", CAPTURED_GUID),
         Err("import_verification_protocol_invalid".to_string())
     );
     assert_eq!(
-        parse_import_vouchers("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><RESPONSE>error</RESPONSE></BODY></ENVELOPE>"),
+        parse_import_vouchers("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><RESPONSE>error</RESPONSE></BODY></ENVELOPE>", CAPTURED_GUID),
         Err("import_verification_protocol_invalid".to_string())
     );
 }
@@ -627,7 +627,7 @@ fn verification_window_corroboration_rejects_each_unsafe_branch() {
 #[test]
 fn verification_narration_with_truncated_text_is_not_a_completeness_marker() {
     let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>guid-1</GUID><ALTERID>3</ALTERID><NARRATION>truncated payment</NARRATION></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
-    let observed = parse_import_vouchers(xml).expect("verification response");
+    let observed = parse_import_vouchers(xml, "guid").expect("verification response");
     assert_eq!(
         corroborate_verification_window(&observed, &observed, "20260901", "20260902"),
         Ok(())
@@ -1144,7 +1144,7 @@ fn company_high_water_mark_refuses_voucher_scan_shapes_and_preserves_attribution
 #[test]
 fn verification_unescapes_every_record_text_node_before_fingerprinting() {
     let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><GUID>guid-escape</GUID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><NARRATION>Party &amp; Co &lt;quoted&gt; &quot;name&quot; &#x26;</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D &lt;Lab&gt; &quot;A&quot; &#38;</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
-    let observed = parse_import_vouchers(xml).expect("escaped export parses");
+    let observed = parse_import_vouchers(xml, "guid").expect("escaped export parses");
     assert_eq!(
         observed.rows[0].narration.as_deref(),
         Some("Party & Co <quoted> \"name\" &")
@@ -1159,7 +1159,7 @@ fn verification_rejects_unknown_entities_in_ledger_and_narration_fragments() {
         "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><NARRATION>A&bogus;B</NARRATION></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>",
     ] {
         assert_eq!(
-            parse_import_vouchers(xml),
+            parse_import_vouchers(xml, CAPTURED_GUID),
             Err("import_verification_export_invalid".to_string())
         );
     }
@@ -1176,7 +1176,7 @@ fn verification_rejects_incomplete_ledger_entries() {
             "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST>{entry}</ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
         );
         assert_eq!(
-            parse_import_vouchers(&xml),
+            parse_import_vouchers(&xml, CAPTURED_GUID),
             Err("import_verification_export_invalid".to_string())
         );
     }
@@ -1277,8 +1277,8 @@ fn import_cycle_plans() -> Vec<ScenarioPlan> {
     let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>".to_string();
     let readback = concat!(
         "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>",
-        "<VOUCHER REMOTEID=\"tally-assigned-1\"><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><GUID>g-1</GUID><MASTERID>1</MASTERID><ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bridge Nested Debtor WR4</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER>",
-        "<VOUCHER REMOTEID=\"tally-assigned-2\"><DATE>20260902</DATE><VOUCHERNUMBER>RV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><GUID>g-2</GUID><MASTERID>2</MASTERID><ALTERID>13</ALTERID><NARRATION>[BRIDGE:txn-002]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>WR2 Sales</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+        "<VOUCHER REMOTEID=\"tally-assigned-1\"><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><GUID>61c6de69-1748-461c-ad3f-162cb949df9f-00000001</GUID><MASTERID>1</MASTERID><ALTERID>12</ALTERID><NARRATION>Paid &amp; settled [BRIDGE:txn-001]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bridge Nested Debtor WR4</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER>",
+        "<VOUCHER REMOTEID=\"tally-assigned-2\"><DATE>20260902</DATE><VOUCHERNUMBER>RV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><GUID>61c6de69-1748-461c-ad3f-162cb949df9f-00000002</GUID><MASTERID>2</MASTERID><ALTERID>13</ALTERID><NARRATION>[BRIDGE:txn-002]</NARRATION><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-7.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>WR2 Sales</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>7.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
     )
     .to_string();
     vec![
@@ -1367,7 +1367,7 @@ fn native_cmpinfo_counter_does_not_become_an_import_verification_voucher() {
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect::<Vec<_>>();
     let xml = String::from_utf16(&words).expect("captured UTF-16LE response");
-    assert!(parse_import_vouchers(&xml)
+    assert!(parse_import_vouchers(&xml, CAPTURED_GUID)
         .expect("native empty verification collection")
         .rows
         .is_empty());
@@ -1383,7 +1383,7 @@ fn native_captured_import_readback_keeps_direct_amounts_and_padded_identifiers()
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect::<Vec<_>>();
     let xml = String::from_utf16(&words).expect("captured UTF-16LE response");
-    let rows = parse_import_vouchers(&xml).expect("captured native readback");
+    let rows = parse_import_vouchers(&xml, CAPTURED_GUID).expect("captured native readback");
     assert_eq!(rows.rows.len(), 3);
     for (row, (id, amount)) in
         rows.rows

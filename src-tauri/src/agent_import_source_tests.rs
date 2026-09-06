@@ -1,7 +1,7 @@
 use super::*;
 
 fn source_rows() -> Vec<ReadVoucher> {
-    parse_import_vouchers(&boundary_tests::captured_vouchers())
+    parse_import_vouchers(&boundary_tests::captured_vouchers(), CAPTURED_GUID)
         .unwrap()
         .rows
 }
@@ -89,6 +89,11 @@ fn captured_import_sources_reject_failed_exports_duplicate_fields_and_invalid_sc
     // Mutate captured bytes only to test refusal; these are not new fixtures.
     for (needle, replacement, code) in [
         (
+            "<GUID>61c6de69-1748-461c-ad3f-162cb949df9f-00000001</GUID>",
+            "<GUID>71c6de69-1748-461c-ad3f-162cb949df9f-00000001</GUID>",
+            "import_verification_identity_invalid",
+        ),
+        (
             "<STATUS>1</STATUS>",
             "<STATUS>0</STATUS>",
             "import_verification_protocol_invalid",
@@ -138,7 +143,7 @@ fn captured_import_sources_reject_failed_exports_duplicate_fields_and_invalid_sc
         let invalid = captured.replace(needle, replacement);
         assert_ne!(invalid, captured, "fault must reach {needle}");
         assert_eq!(
-            parse_import_vouchers(&invalid),
+            parse_import_vouchers(&invalid, CAPTURED_GUID),
             Err(code.into()),
             "{needle}"
         );
@@ -149,7 +154,7 @@ fn captured_import_sources_reject_failed_exports_duplicate_fields_and_invalid_sc
         rows[0].guid.as_deref().unwrap(),
     );
     assert_eq!(
-        parse_import_vouchers(&duplicate_guid),
+        parse_import_vouchers(&duplicate_guid, CAPTURED_GUID),
         Err("import_verification_identity_invalid".into())
     );
     let multi_tag = captured.replace(
@@ -157,7 +162,7 @@ fn captured_import_sources_reject_failed_exports_duplicate_fields_and_invalid_sc
         "[BRIDGE:current] &#91;BRIDGE:other-batch&#93;",
     );
     assert_eq!(
-        parse_import_vouchers(&multi_tag),
+        parse_import_vouchers(&multi_tag, CAPTURED_GUID),
         Err("import_verification_tag_ambiguous".into())
     );
 }
@@ -165,33 +170,36 @@ fn captured_import_sources_reject_failed_exports_duplicate_fields_and_invalid_sc
 #[test]
 fn captured_import_scalar_content_is_preserved_or_refused_without_silent_loss() {
     let captured = boundary_tests::captured_vouchers();
-    let baseline = parse_import_vouchers(&captured).unwrap();
+    let baseline = parse_import_vouchers(&captured, CAPTURED_GUID).unwrap();
     let valid = captured.replace(">-101.01</AMOUNT>", ">-101.<![CDATA[01]]></AMOUNT>");
     assert_ne!(valid, captured);
-    assert_eq!(parse_import_vouchers(&valid).unwrap(), baseline);
+    assert_eq!(
+        parse_import_vouchers(&valid, CAPTURED_GUID).unwrap(),
+        baseline
+    );
     for content in ["-101.01<EXTRA/>", "-101.01<EXTRA>9</EXTRA>"] {
         let malformed = captured.replace(">-101.01</AMOUNT>", &format!(">{content}</AMOUNT>"));
         assert_eq!(
-            parse_import_vouchers(&malformed),
+            parse_import_vouchers(&malformed, CAPTURED_GUID),
             Err("import_verification_export_invalid".into())
         );
     }
     let invalid = captured.replace(">-101.01</AMOUNT>", ">-101.01<![CDATA[invalid]]></AMOUNT>");
     assert_eq!(
-        parse_import_vouchers(&invalid),
+        parse_import_vouchers(&invalid, CAPTURED_GUID),
         Err("import_verification_amount_invalid".into())
     );
     let narration = baseline.rows[0].narration.as_deref().unwrap();
     let literal = captured.replace(narration, "<![CDATA[literal &amp; text]]>");
     assert_eq!(
-        parse_import_vouchers(&literal).unwrap().rows[0]
+        parse_import_vouchers(&literal, CAPTURED_GUID).unwrap().rows[0]
             .narration
             .as_deref(),
         Some("literal &amp; text")
     );
     let multi_tag = captured.replace(narration, "[BRIDGE:current]<![CDATA[ [BRIDGE:other]]]>");
     assert_eq!(
-        parse_import_vouchers(&multi_tag),
+        parse_import_vouchers(&multi_tag, CAPTURED_GUID),
         Err("import_verification_tag_ambiguous".into())
     );
 }
@@ -203,7 +211,7 @@ fn import_readback_refuses_unexpected_collection_rows_through_shared_parser() {
         let mismatched = captured.replace("</COLLECTION>", &format!("{row}</COLLECTION>"));
         assert_ne!(mismatched, captured);
         assert_eq!(
-            parse_import_vouchers(&mismatched),
+            parse_import_vouchers(&mismatched, CAPTURED_GUID),
             Err("import_verification_export_invalid".into())
         );
     }

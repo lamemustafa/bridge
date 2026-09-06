@@ -466,11 +466,11 @@ impl Server {
                 render_import_verification_read(&company.name, &line.date_from, &line.date_to);
             let (xml, evidence) = self.post_read(&identity, request.clone()).await?;
             accumulated = combine_evidence(accumulated.clone(), evidence.clone());
-            let observed = parse_import_vouchers(&xml)?;
+            let observed = parse_import_vouchers(&xml, identity.company_guid())?;
             let (corroboration_xml, corroboration_evidence) =
                 self.post_read(&identity, request).await?;
             accumulated = combine_evidence(accumulated.clone(), corroboration_evidence.clone());
-            let corroboration = parse_import_vouchers(&corroboration_xml)?;
+            let corroboration = parse_import_vouchers(&corroboration_xml, identity.company_guid())?;
             corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)?;
             let result = verify_batch(&line, &observed)?;
             let mut closing_mode_evidence = None;
@@ -1061,8 +1061,8 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn parse_import_vouchers(xml: &str) -> Result<ImportReadSource, String> {
-    let parsed = super::parse_agent_changed_rows(xml).map_err(|code| {
+fn parse_import_vouchers(xml: &str, company_guid: &str) -> Result<ImportReadSource, String> {
+    let parsed = super::parse_agent_changed_rows(xml, company_guid).map_err(|code| {
         match code.as_str() {
             // Preserve the import error contract while sharing scalar admission.
             "agent_read_protocol_invalid" if super::validate_agent_envelope(xml).is_err() => {
@@ -1072,9 +1072,9 @@ fn parse_import_vouchers(xml: &str) -> Result<ImportReadSource, String> {
             | "change_row_core_field_invalid"
             | "voucher_date_invalid"
             | "voucher_accounting_state_not_observed" => "import_verification_export_invalid",
-            "change_row_identity_invalid" | "voucher_source_identity_invalid" => {
-                "import_verification_identity_invalid"
-            }
+            "change_row_identity_invalid"
+            | "voucher_source_identity_invalid"
+            | "voucher_company_identity_invalid" => "import_verification_identity_invalid",
             "voucher_amount_invalid" => "import_verification_amount_invalid",
             "voucher_master_id_invalid" => "import_verification_master_id_invalid",
             _ => return code,

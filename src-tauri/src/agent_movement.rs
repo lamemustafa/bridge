@@ -186,7 +186,7 @@ impl Server {
             .await?;
         let result: Result<(MovementPage, Evidence), ToolFailure> = async {
             let page = parse_movement_rows(
-                parse_agent_changed_rows(&xml)?,
+                parse_agent_changed_rows(&xml, identity.company_guid())?,
                 range.from_yyyymmdd(),
                 range.to_yyyymmdd(),
             )?;
@@ -270,8 +270,9 @@ pub(super) fn parse_movement_vouchers(
     xml: &str,
     from: &str,
     to: &str,
+    company_guid: &str,
 ) -> Result<Vec<MovementVoucher>, String> {
-    Ok(parse_movement_rows(parse_agent_changed_rows(xml)?, from, to)?.rows)
+    Ok(parse_movement_rows(parse_agent_changed_rows(xml, company_guid)?, from, to)?.rows)
 }
 
 struct MovementPage {

@@ -16,13 +16,16 @@ pub(super) fn captured_vouchers() -> String {
 #[test]
 fn import_boundary_rejects_malformed_accounting_scalars_in_captured_vouchers() {
     let captured = captured_vouchers();
-    let baseline = parse_import_vouchers(&captured).unwrap();
+    let baseline = parse_import_vouchers(&captured, CAPTURED_GUID).unwrap();
     assert_eq!(baseline.rows.len(), 3);
     let escaped_flags = captured
         .replace(">No</ISCANCELLED>", ">N&#111;</ISCANCELLED>")
         .replace(">No</ISOPTIONAL>", ">N&#111;</ISOPTIONAL>")
         .replace(">Yes</ISDEEMEDPOSITIVE>", "> Y&#101;s </ISDEEMEDPOSITIVE>");
-    assert_eq!(parse_import_vouchers(&escaped_flags).unwrap(), baseline);
+    assert_eq!(
+        parse_import_vouchers(&escaped_flags, CAPTURED_GUID).unwrap(),
+        baseline
+    );
     // Fault injection into existing captured responses, not new Tally fixtures.
     for (field, original, invalid, code) in [
         (
@@ -62,7 +65,7 @@ fn import_boundary_rejects_malformed_accounting_scalars_in_captured_vouchers() {
         );
         assert_ne!(invalid, captured, "fault injection for {field}");
         assert_eq!(
-            parse_import_vouchers(&invalid),
+            parse_import_vouchers(&invalid, CAPTURED_GUID),
             Err(code.to_string()),
             "{field}"
         );

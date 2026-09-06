@@ -22,6 +22,11 @@ async fn voucher_boundary_refusals_retain_exact_source_commitments() {
             "\n      <ISDEEMEDPOSITIVE TYPE=\"Logical\">Maybe</ISDEEMEDPOSITIVE>",
             "voucher_accounting_state_not_observed",
         ),
+        (
+            "<GUID>61c6de69-1748-461c-ad3f-162cb949df9f-00000001</GUID>",
+            "<GUID>71c6de69-1748-461c-ad3f-162cb949df9f-00000001</GUID>",
+            "voucher_company_identity_invalid",
+        ),
         ("20260801", "2026080A", "voucher_date_invalid"),
         ("20260801", "20260803", "window_not_honoured"),
     ] {
@@ -172,10 +177,14 @@ async fn empty_ledger_selection_does_not_replace_source_emptiness() {
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
     ));
     assert_eq!(
-        parse_agent_rows(&populated.fixture.body()).unwrap().len(),
+        parse_agent_rows(&populated.fixture.body(), CAPTURED_GUID)
+            .unwrap()
+            .len(),
         3
     );
-    assert!(parse_agent_rows(&empty.fixture.body()).unwrap().is_empty());
+    assert!(parse_agent_rows(&empty.fixture.body(), CAPTURED_GUID)
+        .unwrap()
+        .is_empty());
     for source_is_empty in [false, true] {
         let cycle = import_cycle_plans();
         let mut plans = cycle[..10].to_vec();

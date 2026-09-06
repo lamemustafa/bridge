@@ -129,9 +129,19 @@ async fn movement_read_preserves_observed_count_after_accounting_exclusions() {
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect::<Vec<_>>();
     let captured = String::from_utf16(&words).unwrap();
-    let company = crate::agent::tests::company_collection_xml();
+    let company_bytes = include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml");
+    let company = String::from_utf16(
+        &company_bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
     let companies = bridge_tally_protocol::parse_companies_from_collection(&company).unwrap();
-    let observed = &companies[0];
+    let observed = companies
+        .iter()
+        .find(|row| row.guid.as_deref() == Some("61c6de69-1748-461c-ad3f-162cb949df9f"))
+        .unwrap();
     let identity = VerifiedCompanyIdentity::from_observed_companies(
         observed.name.clone(),
         observed.guid.clone().unwrap(),
@@ -148,7 +158,7 @@ async fn movement_read_preserves_observed_count_after_accounting_exclusions() {
             &format!("<{flag} TYPE=\"Logical\">Yes</{flag}>"),
         );
         assert_ne!(xml, captured);
-        let date = parse_agent_changed_rows(&xml).unwrap()[0]["date"]
+        let date = parse_agent_changed_rows(&xml, identity.company_guid()).unwrap()[0]["date"]
             .as_str()
             .unwrap()
             .to_string();

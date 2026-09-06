@@ -5,7 +5,10 @@ use super::*;
 #[tokio::test]
 async fn verification_qualifies_absence_without_hiding_positive_historical_rows() {
     let captured = boundary_tests::captured_vouchers();
-    let row = parse_import_vouchers(&captured).unwrap().rows.remove(0);
+    let row = parse_import_vouchers(&captured, CAPTURED_GUID)
+        .unwrap()
+        .rows
+        .remove(0);
     // Preserve captured accounting fields; change the type and first narration
     // only to correlate a synthetic historical batch with this captured row.
     let positive = captured
