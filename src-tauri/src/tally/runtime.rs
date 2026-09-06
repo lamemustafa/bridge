@@ -66,6 +66,16 @@ pub struct AgentCompanyList {
     pub response_sha256: String,
 }
 
+/// A custom agent read bound to the stable paired transport response that
+/// produced it. The decoded body is only for parsing; evidence remains tied to
+/// the original encoded wire bytes.
+#[derive(Debug, Clone)]
+pub struct AgentRead {
+    pub body: String,
+    pub encoded_bytes: usize,
+    pub encoded_sha256: String,
+}
+
 /// Wire evidence for a runtime read. The response hash and byte count are
 /// taken from the paired transport response, while the request hash is taken
 /// from the exact XML dispatched to Tally.
@@ -1840,7 +1850,7 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         request: String,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<AgentRead> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -1852,9 +1862,20 @@ impl TallyRuntime {
                 let request = request.clone();
                 async move {
                     bracket_verified_company_identity(&client, &identity).await?;
-                    let response = client.post_xml(request).await?;
+                    let NativePairedRead::Stable {
+                        body,
+                        encoded_bytes,
+                        encoded_sha256,
+                    } = client.fetch_native_report_paired(request).await?
+                    else {
+                        anyhow::bail!("agent custom read drifted between paired responses");
+                    };
                     bracket_verified_company_identity(&client, &identity).await?;
-                    Ok(response)
+                    Ok(AgentRead {
+                        body,
+                        encoded_bytes,
+                        encoded_sha256,
+                    })
                 }
             },
         )

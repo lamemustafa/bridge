@@ -329,14 +329,14 @@ impl Server {
             .map_err(|_| "agent_runtime_read_failed".to_string())?;
         let evidence = Evidence {
             request_sha256,
-            response_sha256: sha256_hex(response.as_bytes()),
-            bytes: response.len(),
+            response_sha256: response.encoded_sha256,
+            bytes: response.encoded_bytes,
             state: "complete",
             read_at: None,
             duration_ms: None,
             reason_code: None,
         };
-        Ok((response, evidence))
+        Ok((response.body, evidence))
     }
 
     async fn status(&self) -> Result<(Value, Evidence), String> {
@@ -2952,6 +2952,10 @@ mod tests {
         "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"BRIDGE SYNTHETIC BOOK\"><GUID>00000000-0000-4000-8000-000000000001</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>".to_string()
     }
 
+    fn voucher_collection_xml() -> String {
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><DATE>20260901</DATE><VOUCHERNUMBER>PV-1</VOUCHERNUMBER><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><GUID>voucher-guid</GUID><ALLLEDGERENTRIES.LIST><LEDGERNAME>Expense</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST><ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>".to_string()
+    }
+
     fn settings(address: std::net::SocketAddr, data_dir: PathBuf) -> Settings {
         Settings {
             endpoint: TallyEndpointConfig {
@@ -4441,6 +4445,71 @@ mod tests {
         });
         let down_response = down.call_tool("tally_status", json!({})).await;
         assert!(down_response["structuredContent"]["result"]["error"]["code"].is_string());
+    }
+
+    #[tokio::test]
+    async fn voucher_read_evidence_uses_utf16_transport_bytes() {
+        let company_plan = || {
+            ScenarioPlan::new(Fixture::SyntheticXml(company_collection_xml()))
+                .with_encoding(WireEncoding::Utf16Le)
+                .with_framing(ResponseFraming::ContentLength)
+        };
+        let voucher_plan = || {
+            ScenarioPlan::new(Fixture::SyntheticXml(voucher_collection_xml()))
+                .with_encoding(WireEncoding::Utf16Le)
+                .with_framing(ResponseFraming::ContentLength)
+        };
+        let status_plan = || {
+            ScenarioPlan::new(Fixture::ProductStatus(
+                tally_protocol_simulator::ProductStatus::TallyPrime,
+            ))
+            .with_framing(ResponseFraming::ContentLength)
+        };
+        let simulator = SequenceSimulator::spawn(vec![
+            company_plan(),
+            status_plan(),
+            company_plan(),
+            status_plan(),
+            company_plan(),
+            voucher_plan(),
+            status_plan(),
+            voucher_plan(),
+            status_plan(),
+            company_plan(),
+        ])
+        .expect("synthetic loopback server");
+        let directory = tempfile::tempdir().expect("temporary agent directory");
+        let server = Server::new(settings(
+            simulator.address(),
+            directory.path().to_path_buf(),
+        ));
+        let response = server
+            .call_tool(
+                "vouchers",
+                json!({"company_guid":"00000000-0000-4000-8000-000000000001","from":"2026-09-01","to":"2026-09-01"}),
+            )
+            .await;
+        assert_eq!(
+            response["structuredContent"]["result"]["items"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        let expected_bytes = bridge_tally_protocol::encode_tally_xml_request_utf16le(
+            &company_collection_xml(),
+        )
+        .len()
+            + bridge_tally_protocol::encode_tally_xml_request_utf16le(&voucher_collection_xml())
+                .len();
+        assert_eq!(
+            response["structuredContent"]["evidence"]["bytes"],
+            expected_bytes
+        );
+        assert_ne!(
+            response["structuredContent"]["evidence"]["bytes"],
+            company_collection_xml().len() + voucher_collection_xml().len()
+        );
+        assert_eq!(simulator.finish().expect("simulator result").len(), 10);
     }
 
     #[tokio::test]
