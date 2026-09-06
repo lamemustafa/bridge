@@ -13,7 +13,13 @@ async fn tally_status_uses_observed_gateway_product_and_preserves_wire_evidence(
             .collect::<Vec<_>>(),
     )
     .unwrap();
-    for fault in ["unrecognized", "conflicting", "unavailable", "unobserved"] {
+    for fault in [
+        "unrecognized",
+        "conflicting",
+        "unavailable",
+        "unobserved",
+        "education",
+    ] {
         let status = ScenarioPlan::new(Fixture::ProductStatus(match fault {
             "conflicting" => ProductStatus::TallyErp9,
             "unrecognized" => ProductStatus::Unknown,
@@ -25,6 +31,15 @@ async fn tally_status_uses_observed_gateway_product_and_preserves_wire_evidence(
             let altered = captured.replace(
                 "<SILVER TYPE=\"Logical\">Yes</SILVER>",
                 "<SILVER TYPE=\"Logical\">No</SILVER>",
+            );
+            assert_ne!(altered, captured);
+            altered
+        } else if fault == "education" {
+            // A single metadata fault exercises the flag mapping, not live
+            // qualification of an Education-mode Tally endpoint.
+            let altered = captured.replace(
+                "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
+                "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",
             );
             assert_ne!(altered, captured);
             altered
@@ -57,6 +72,15 @@ async fn tally_status_uses_observed_gateway_product_and_preserves_wire_evidence(
                 "not_observed"
             } else {
                 "TallyPrime"
+            },
+            "{fault}"
+        );
+        assert_eq!(
+            result["education_mode"],
+            match fault {
+                "education" => json!(true),
+                "unobserved" => Value::Null,
+                _ => json!(false),
             },
             "{fault}"
         );

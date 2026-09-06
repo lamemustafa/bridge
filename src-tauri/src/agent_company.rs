@@ -12,23 +12,29 @@ impl Server {
             .map_err(|_| "status_probe_unavailable".to_string())?;
         // Product identity comes from the gateway observation, not the optional
         // status page's heuristic banner. Unknown capability stays explicit.
-        let product = if probe
+        let observed = probe
             .profile
             .features
             .get(&CapabilityFeatureId::ProductAndMode)
             .is_some_and(|feature| {
                 feature.state == CapabilityState::Supported
                     && feature.confidence == EvidenceConfidence::Observed
-            }) {
+            });
+        let product = if observed {
             probe.profile.product.as_str()
         } else {
             "not_observed"
+        };
+        let education_mode = match (observed, probe.profile.mode.as_deref()) {
+            (true, Some("Education")) => Some(true),
+            (true, Some("Licensed")) => Some(false),
+            _ => None,
         };
         Ok((
             json!({
                 "product": product,
                 "release": probe.profile.release,
-                "education_mode": probe.profile.mode,
+                "education_mode": education_mode,
                 "endpoint": endpoint,
                 "loaded_companies": probe.companies,
                 "refusal_reason": Value::Null,
