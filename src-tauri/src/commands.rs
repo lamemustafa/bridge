@@ -2239,6 +2239,14 @@ fn verify_observed_company_tuple_from_companies(
         &companies,
     )
     .map_err(|error| match error {
+        VerifiedCompanyIdentityError::InvalidBooksFrom => tally_command_error(
+            "company_books_from_invalid",
+            "Tally application",
+            "Tally returned an invalid books-from calendar date for the selected company.",
+            "not_recommended",
+            false,
+            "Check the company's books-from date in Tally, then probe again.",
+        ),
         VerifiedCompanyIdentityError::Missing => tally_command_error(
             "reviewed_company_scope_changed",
             "Tally application",

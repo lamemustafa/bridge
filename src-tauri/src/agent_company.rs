@@ -122,6 +122,9 @@ impl Server {
                 )
                 .map_err(|error| {
                     match error {
+                        crate::tally::VerifiedCompanyIdentityError::InvalidBooksFrom => {
+                            "company_books_from_invalid"
+                        }
                         crate::tally::VerifiedCompanyIdentityError::Missing => {
                             "company_identity_not_found"
                         }
@@ -184,7 +187,11 @@ pub(super) fn company_json(company: &TallyCompany, all: &[TallyCompany]) -> Valu
     let invalid_guid = guid
         .as_deref()
         .is_some_and(|guid| parse_native_company_guid(guid).is_err());
-    json!({"name": company.name, "guid": guid, "company_number": company.company_number, "books_from": company.books_from, "identity_state": if duplicate_guid {"ambiguous_duplicate_guid"} else if missing.is_some() {"incomplete_tuple"} else if invalid_guid {"invalid_guid"} else {"verified_tuple"}, "missing_field": missing})
+    let invalid_books_from = company
+        .books_from
+        .as_ref()
+        .is_some_and(|value| bridge_tally_core::TallyDate::parse(value.clone()).is_err());
+    json!({"name": company.name, "guid": guid, "company_number": company.company_number, "books_from": company.books_from, "identity_state": if duplicate_guid {"ambiguous_duplicate_guid"} else if missing.is_some() {"incomplete_tuple"} else if invalid_guid {"invalid_guid"} else if invalid_books_from {"invalid_books_from"} else {"verified_tuple"}, "missing_field": missing})
 }
 
 #[cfg(test)]

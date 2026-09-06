@@ -396,6 +396,9 @@ impl RuntimeTallyConnector {
         )
         .map(|_| ())
         .map_err(|error| match error {
+            VerifiedCompanyIdentityError::InvalidBooksFrom => {
+                protocol_error("company_books_from_invalid")
+            }
             VerifiedCompanyIdentityError::Missing => protocol_error("company_identity_not_found"),
             VerifiedCompanyIdentityError::DuplicateTuple => {
                 protocol_error("company_identity_ambiguous")

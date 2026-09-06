@@ -42,11 +42,12 @@ pub struct VerifiedCompanyIdentity {
     display_name: String,
     company_guid: String,
     company_number: String,
-    books_from_yyyymmdd: String,
+    books_from_yyyymmdd: bridge_tally_core::TallyDate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerifiedCompanyIdentityError {
+    InvalidBooksFrom,
     Missing,
     DuplicateTuple,
     DisplayScopeAmbiguous,
@@ -65,6 +66,8 @@ impl VerifiedCompanyIdentity {
         books_from_yyyymmdd: String,
         companies: &[TallyCompany],
     ) -> Result<Self, VerifiedCompanyIdentityError> {
+        let books_from_yyyymmdd = bridge_tally_core::TallyDate::parse(books_from_yyyymmdd)
+            .map_err(|_| VerifiedCompanyIdentityError::InvalidBooksFrom)?;
         let identity = Self {
             display_name,
             company_guid,
@@ -97,7 +100,8 @@ impl VerifiedCompanyIdentity {
             display_name: display_name.into(),
             company_guid: company_guid.into(),
             company_number: "1".to_string(),
-            books_from_yyyymmdd: "20260401".to_string(),
+            books_from_yyyymmdd: bridge_tally_core::TallyDate::parse("20260401")
+                .expect("fixed fixture date is valid"),
         }
     }
 

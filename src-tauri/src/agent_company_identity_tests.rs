@@ -118,3 +118,100 @@ async fn malformed_or_non_native_guid_selectors_refuse_before_network() {
         }
     }
 }
+
+#[tokio::test]
+async fn observed_books_from_requires_a_calendar_date_before_company_scoped_reads() {
+    let bytes = include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml");
+    let captured = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    for date in [
+        "20260401",
+        "not-a-date",
+        "20260230",
+        "20261301",
+        "2026-04-01",
+    ] {
+        // Change only the observed date scalar; the recorded company tuple and
+        // response shape remain the source of the identity test.
+        let xml = captured.replace(
+            "<BOOKSFROM TYPE=\"Date\">20260401</BOOKSFROM>",
+            &format!("<BOOKSFROM TYPE=\"Date\">{date}</BOOKSFROM>"),
+        );
+        let companies = bridge_tally_protocol::parse_companies_from_collection(&xml).unwrap();
+        let selected = companies
+            .iter()
+            .find(|company| company.guid.as_deref() == Some(GUID))
+            .unwrap();
+        let valid = date == "20260401";
+        assert_eq!(
+            company_json(selected, &companies)["identity_state"],
+            if valid {
+                "verified_tuple"
+            } else {
+                "invalid_books_from"
+            }
+        );
+        let identity = VerifiedCompanyIdentity::from_observed_companies(
+            selected.name.clone(),
+            GUID.into(),
+            selected.company_number.clone().unwrap(),
+            selected.books_from.clone().unwrap(),
+            &companies,
+        );
+        assert_eq!(
+            identity.err(),
+            if valid {
+                None
+            } else {
+                Some(crate::tally::VerifiedCompanyIdentityError::InvalidBooksFrom)
+            }
+        );
+        if valid {
+            continue;
+        }
+        for (tool, args) in [
+            (
+                "vouchers",
+                json!({"company_guid":GUID,"from":"20260801","to":"20260801"}),
+            ),
+            (
+                "validate_masters",
+                json!({"company_guid":GUID,"ledgers":["Cash"]}),
+            ),
+        ] {
+            let plan = ScenarioPlan::new(Fixture::SyntheticXml(xml.clone()))
+                .with_encoding(WireEncoding::Utf16Le);
+            let response_bytes = encode(&plan.fixture.body(), plan.encoding);
+            let status = ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime));
+            let simulator =
+                SequenceSimulator::spawn(vec![plan.clone(), status.clone(), plan, status]).unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let response = server(simulator.address(), directory.path())
+                .call_tool(tool, args)
+                .await;
+            assert_eq!(response["isError"], true, "{tool}:{date}");
+            let content = &response["structuredContent"];
+            assert_eq!(
+                content["result"]["error"]["code"],
+                "company_books_from_invalid"
+            );
+            let observed = simulator.finish().unwrap();
+            assert_eq!(observed.len(), 4);
+            assert_eq!(content["evidence"]["state"], "partial");
+            assert_eq!(
+                content["evidence"]["request_sha256"],
+                observed[0].request_body_sha256
+            );
+            assert_eq!(
+                content["evidence"]["response_sha256"],
+                sha256_hex(&response_bytes)
+            );
+            assert_eq!(content["evidence"]["bytes"], 2 * response_bytes.len());
+        }
+    }
+}
