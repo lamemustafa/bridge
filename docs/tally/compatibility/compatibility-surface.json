@@ -167,7 +167,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "0d108606209df007573121204bb92d5510ffaf677acfa00efefde9202096ee27"
+      "sha256": "8f917ab1403035da75a055987f199a0540a7e0d57d2870f35fe42fb3149fe787"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/compute.rs",
@@ -211,7 +211,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/parser.rs",
-      "sha256": "ad6f2c7b033947bdc476f94c917abe9b018bb821ce9f6b12f883bf8784488732"
+      "sha256": "ba9f474a4a34b07eae5459959f1043fecb3a490851720cf97d6067e439607a9d"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings/request.rs",
@@ -275,11 +275,11 @@
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/src/fixtures.rs",
-      "sha256": "28ccbb51a939e54d212647a2ec67af7d570e991c072eedd92d93988fff12d0a6"
+      "sha256": "2ee8371d428b18a39e6c17aab2b9139f1b1135132a1efa3ccfb9cc9108898623"
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/src/server.rs",
-      "sha256": "2689bb1c1b96cbf76b1360ef43253b1dd7bbd27be3cbdcdf0257fb9514e563cb"
+      "sha256": "3180f755f4343bcdf8cc68eb7313f7334a29d20158a5d83650a67f6641326fbd"
     },
     {
       "path": "src-tauri/crates/tally-protocol-simulator/tests/protocol_simulator.rs",
@@ -479,7 +479,7 @@
     },
     {
       "path": "src-tauri/src/tally/connection.rs",
-      "sha256": "dd49cb3dbccfd17b6c95c151ef1742ebac3fcc51048c43ee10ddd88bf4bbb719"
+      "sha256": "a780a0f054c6e528f5a57a0acc73795967db553b104e246047eb867bf47eb29d"
     },
     {
       "path": "src-tauri/src/tally/connector.rs",
@@ -495,7 +495,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "d507f8b09cc81f6db3bb9a3dcb5ab6dc0e5853e9e9cbcfa95aeb95248a58dd86"
+      "sha256": "a7380c247861ca2e9155346205ce265d5af3e8510e14d84d36f43d7460dce143"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -654,5 +654,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "9bf35a51b7caf56c1b364834aa8f785d28394ba92bff964bd14ccec68a56f516"
+  "manifest_sha256": "072c366c886ce2c2546776c1a724652a40c6bbc4eaaacd2d1291853d51556457"
 }
