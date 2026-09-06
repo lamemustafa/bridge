@@ -268,6 +268,12 @@ Evidence-history and egress-log reads use the smallest of the requested limit,
 `truncated`; egress-log reads also report omissions from the bounded tail scan. Missing terminal newlines, invalid
 UTF-8, or invalid JSON in retained complete rows return `egress_log_incomplete`.
 
+Verification captures the batch journal generation before readback and checks it
+under the exclusive publication lock. If another process published the same batch
+in the meantime, `import_verification_conflict_retry` preserves the newer proof
+and status; repeat verification to obtain a fresh observation. Unrelated batches
+do not conflict, and no file lock is held during network reads.
+
 Verification rejects malformed accounting fields before matching. Distinct,
 fully attributed expected vouchers may have identical accounting contents; each
 observed identity can satisfy only one expected transaction, and unexpected

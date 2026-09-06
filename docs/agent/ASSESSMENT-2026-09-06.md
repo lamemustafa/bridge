@@ -151,6 +151,12 @@ This is repeated-observation stability, not an atomic guarantee at later import.
 Duplicate detection hashes the structured accounting fingerprint, so ledger names
 containing punctuation cannot collide through delimiter concatenation.
 
+Concurrent verification uses a per-batch journal generation captured at admission.
+Publication compares it under the existing exclusive lock before staging proofs;
+a competing same-batch publication causes an explicit retry refusal. Identical
+status appends still advance the generation, while unrelated batches remain
+independent. No persisted schema change or network-held file lock is introduced.
+
 Import absence has a separate qualification requirement. A result containing
 `not_found` requires licensed TallyPrime observations before and after readback;
 an unqualified observation withholds the negative verdict and preserves prior
@@ -248,7 +254,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **961 Rust workspace tests**, **206 agent tests
+Local candidate verification: **962 Rust workspace tests**, **207 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -279,7 +285,7 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.56` after repeated catalogue and licensed-mode observations, and
+additional Journal file for `12.57` after repeated catalogue and licensed-mode observations, and
 readback confirmed `not_found`; that file was not imported. No additional Tally
 posting was performed. The expected read refusal retained its actual completed source
 commitments and byte count, retrievable through `read_evidence`; omitted egress
@@ -293,15 +299,21 @@ was refused without changing its mode or creating files. At the minimum 256-byte
 cap, control refusals and malformed-request errors fit and a subsequent ping
 succeeded. Both diagnostic tools returned one truncated row under a global
 one-row cap despite a larger requested limit.
+A two-process release test replayed retained transport responses and delayed the
+first verifier at its final corroboration response. The old executable overwrote
+the newer proof and status; this executable returned the retry conflict, preserved
+both proof files and the ledger byte-for-byte, retained its read evidence, and
+succeeded on retry. This is controlled replay evidence, not a concurrent live
+Tally mutation experiment.
 That same binary passed eight checks using official MCP
 JavaScript SDK 1.30.0, negotiating 2025-11-25 down to 2025-06-18. Official MCPB
 CLI 2.1.2 validated and packed the archive. Its extracted executable and all four
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `e7c87084c755e95868ca599e5487941f0d3425061cf8e7f3461a64f7739cdd79`.
-- MCPB archive SHA-256: `4c90c9c23d989635a3e3dcce11317ac54dbdb39e1b898cd614afe796e9724e9f`.
-- Source fingerprint (348 build-input files, unchanged through the settled-source rebuild): `e972be225ff049ea6d6292314b2a49ea89abe035cb491661b069f8dade37f459`.
+- Release executable SHA-256: `482587f492f1f8b3ce3b46d7a614d25325216d75639b9680b7c8fd4e71582075`.
+- MCPB archive SHA-256: `e262e9cfe0014d700211fb3c3838e687ca2c5bac027f52cc251f66d584802a0f`.
+- Source fingerprint (348 build-input files, unchanged through the settled-source rebuild): `e0e6647cb3b45848ebad03091c418325521fa51702945955112cbf32803ebff7`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
