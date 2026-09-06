@@ -64,9 +64,19 @@ impl Server {
         if guid.trim().is_empty() {
             return Err("company_guid_required".to_string().into());
         }
+        let requested_guid = parse_native_company_guid(guid)?;
         let (companies, evidence) = self.companies().await?;
         let result: Result<(TallyCompany, VerifiedCompanyIdentity, Evidence), ToolFailure> =
             async {
+                for company in &companies {
+                    if let Some(guid) = company
+                        .guid
+                        .as_deref()
+                        .filter(|guid| !guid.trim().is_empty())
+                    {
+                        parse_native_company_guid(guid)?;
+                    }
+                }
                 let observed_companies = companies.clone();
                 let matches = companies
                     .into_iter()
@@ -98,7 +108,7 @@ impl Server {
                     .ok_or_else(|| "company_identity_incomplete".to_string())?;
                 let identity = VerifiedCompanyIdentity::from_observed_companies(
                     company.name.clone(),
-                    guid.to_string(),
+                    requested_guid.hyphenated().to_string(),
                     company_number,
                     books_from,
                     &observed_companies,
@@ -122,6 +132,20 @@ impl Server {
             .await;
         result.map_err(|failure| failure.with_prior_evidence(evidence))
     }
+}
+
+fn parse_native_company_guid(value: &str) -> Result<uuid::Uuid, String> {
+    // Native company GUIDs use hyphenated UUID spelling. Preserve case-insensitive
+    // matching without adding UUID aliases that the native identity bracket rejects.
+    let invalid = || "company_guid_invalid".to_string();
+    if value.len() != 36 {
+        return Err(invalid());
+    }
+    let guid = uuid::Uuid::parse_str(value).map_err(|_| invalid())?;
+    if !guid.hyphenated().to_string().eq_ignore_ascii_case(value) {
+        return Err(invalid());
+    }
+    Ok(guid)
 }
 
 pub(super) fn company_json(company: &TallyCompany, all: &[TallyCompany]) -> Value {
@@ -150,9 +174,16 @@ pub(super) fn company_json(company: &TallyCompany, all: &[TallyCompany]) -> Valu
             .is_none()
             .then_some(field)
     });
-    json!({"name": company.name, "guid": guid, "company_number": company.company_number, "books_from": company.books_from, "identity_state": if duplicate_guid {"ambiguous_duplicate_guid"} else if missing.is_some() {"incomplete_tuple"} else {"verified_tuple"}, "missing_field": missing})
+    let invalid_guid = guid
+        .as_deref()
+        .is_some_and(|guid| parse_native_company_guid(guid).is_err());
+    json!({"name": company.name, "guid": guid, "company_number": company.company_number, "books_from": company.books_from, "identity_state": if duplicate_guid {"ambiguous_duplicate_guid"} else if missing.is_some() {"incomplete_tuple"} else if invalid_guid {"invalid_guid"} else {"verified_tuple"}, "missing_field": missing})
 }
 
 #[cfg(test)]
 #[path = "agent_status_tests.rs"]
 mod status_tests;
+
+#[cfg(test)]
+#[path = "agent_company_identity_tests.rs"]
+mod identity_tests;
