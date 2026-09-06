@@ -1515,13 +1515,16 @@ async fn simulator_company_read_records_evidence_while_down_endpoint_is_typed() 
 
 #[tokio::test]
 async fn voucher_read_evidence_uses_utf16_transport_bytes() {
+    let captured_vouchers = include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml"
+    );
     let company_plan = || {
         ScenarioPlan::new(Fixture::SyntheticXml(company_collection_xml()))
             .with_encoding(WireEncoding::Utf16Le)
             .with_framing(ResponseFraming::ContentLength)
     };
     let voucher_plan = || {
-        ScenarioPlan::new(Fixture::SyntheticXml(voucher_collection_xml()))
+        ScenarioPlan::new(Fixture::SyntheticXml(captured_vouchers.to_string()))
             .with_encoding(WireEncoding::Utf16Le)
             .with_framing(ResponseFraming::ContentLength)
     };
@@ -1552,26 +1555,32 @@ async fn voucher_read_evidence_uses_utf16_transport_bytes() {
     let response = server
         .call_tool(
             "vouchers",
-            json!({"company_guid":"00000000-0000-4000-8000-000000000001","from":"2026-09-01","to":"2026-09-01"}),
+            json!({"company_guid":"00000000-0000-4000-8000-000000000001","from":"2026-04-01","to":"2026-04-01"}),
         )
         .await;
     assert_eq!(
         response["structuredContent"]["result"]["items"]
             .as_array()
             .map(Vec::len),
-        Some(1)
+        Some(2)
     );
+    let rows = response["structuredContent"]["result"]["items"]
+        .as_array()
+        .unwrap();
+    assert!(rows.iter().any(|row| row["optional"] == true));
+    assert!(rows
+        .iter()
+        .all(|row| row["cancelled"].is_boolean() && row["optional"].is_boolean()));
     let expected_bytes =
         bridge_tally_protocol::encode_tally_xml_request_utf16le(&company_collection_xml()).len()
-            + bridge_tally_protocol::encode_tally_xml_request_utf16le(&voucher_collection_xml())
-                .len();
+            + bridge_tally_protocol::encode_tally_xml_request_utf16le(captured_vouchers).len();
     assert_eq!(
         response["structuredContent"]["evidence"]["bytes"],
         expected_bytes * 2
     );
     assert_ne!(
         response["structuredContent"]["evidence"]["bytes"],
-        company_collection_xml().len() + voucher_collection_xml().len()
+        company_collection_xml().len() + captured_vouchers.len()
     );
     assert_eq!(simulator.finish().expect("simulator result").len(), 10);
 }

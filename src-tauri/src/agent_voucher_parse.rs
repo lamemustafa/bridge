@@ -62,7 +62,7 @@ pub(super) fn parse_agent_changed_rows(xml: &str) -> Result<Vec<Value>, String> 
 
 pub(super) fn parse_agent_rows_with_accounting_state(
     xml: &str,
-    require_accounting_state: bool,
+    require_change_identity: bool,
 ) -> Result<Vec<Value>, String> {
     // Tally's collection XML varies by release; use a deliberately conservative
     // extractor and never infer a missing field. Malformed rows fail before
@@ -134,14 +134,14 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                         if ["DATE", "VOUCHERTYPENAME"].iter().any(|field| {
                             row.get(*field).is_none_or(|value| value.trim().is_empty())
                         }) {
-                            return Err(if require_accounting_state {
+                            return Err(if require_change_identity {
                                 "change_row_core_field_invalid"
                             } else {
                                 "agent_read_protocol_invalid"
                             }
                             .to_string());
                         }
-                        if require_accounting_state
+                        if require_change_identity
                             && row
                                 .get("GUID")
                                 .filter(|value| !value.trim().is_empty())
@@ -157,12 +157,10 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                             .map_err(|_| "voucher_date_invalid".to_string())?;
                         let amounts = std::mem::take(&mut entries);
                         let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": row.get("ALTERID").and_then(|v| v.trim().parse::<u64>().ok()), "master_id": row.get("MASTERID"), "amounts": amounts});
-                        if require_accounting_state {
-                            parsed["cancelled"] =
-                                Value::Bool(required_tally_bool(row.get("ISCANCELLED"))?);
-                            parsed["optional"] =
-                                Value::Bool(required_tally_bool(row.get("ISOPTIONAL"))?);
-                        }
+                        parsed["cancelled"] =
+                            Value::Bool(required_tally_bool(row.get("ISCANCELLED"))?);
+                        parsed["optional"] =
+                            Value::Bool(required_tally_bool(row.get("ISOPTIONAL"))?);
                         rows.push(parsed);
                     }
                 }
@@ -219,90 +217,5 @@ pub(super) fn required_tally_bool(value: Option<&String>) -> Result<bool, String
 }
 
 #[cfg(test)]
-mod amount_tests {
-    use super::*;
-
-    #[test]
-    fn invalid_calendar_dates_in_captured_vouchers_are_refused_before_filtering() {
-        let bytes = include_bytes!(
-            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
-        );
-        let words = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        let captured = String::from_utf16(&words).unwrap();
-        for invalid in ["2026080A", "20260230", "20261301"] {
-            let damaged = captured.replacen("20260801", invalid, 1);
-            assert_ne!(damaged, captured);
-            for accounting_state in [false, true] {
-                assert_eq!(
-                    parse_agent_rows_with_accounting_state(&damaged, accounting_state),
-                    Err("voucher_date_invalid".to_string())
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn malformed_polarity_in_captured_voucher_is_refused_at_the_parse_boundary() {
-        let bytes = include_bytes!(
-            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
-        );
-        let words = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        let captured = String::from_utf16(&words).unwrap();
-        let rows = parse_agent_rows(&captured).unwrap();
-        assert_eq!(rows[0]["amounts"][0]["is_deemed_positive"], "Yes");
-        assert_eq!(rows[0]["amounts"][1]["is_deemed_positive"], "No");
-        for invalid in ["Maybe", "true", "1"] {
-            // Mutate only the captured ledger-entry polarity for negative testing.
-            let damaged = captured.replacen(
-                "\n      <ISDEEMEDPOSITIVE TYPE=\"Logical\">Yes</ISDEEMEDPOSITIVE>",
-                &format!("\n      <ISDEEMEDPOSITIVE TYPE=\"Logical\">{invalid}</ISDEEMEDPOSITIVE>"),
-                1,
-            );
-            assert_ne!(damaged, captured);
-            for accounting_state in [false, true] {
-                assert_eq!(
-                    parse_agent_rows_with_accounting_state(&damaged, accounting_state),
-                    Err("voucher_accounting_state_not_observed".to_string())
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn malformed_amount_in_captured_voucher_is_refused_at_the_parse_boundary() {
-        let bytes = include_bytes!(
-            "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
-        );
-        let words = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        let captured = String::from_utf16(&words).unwrap();
-        let rows = parse_agent_rows(&captured).unwrap();
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0]["amounts"][0]["amount"], "-101.01");
-        for invalid in ["not-observed", "NaN", "101.01 INR", "1.2.3"] {
-            // Negative fault injection into a captured response, not a new
-            // fixture or evidence of a live Tally response shape.
-            let damaged = captured.replacen(
-                "<AMOUNT TYPE=\"Amount\">-101.01</AMOUNT>",
-                &format!("<AMOUNT TYPE=\"Amount\">{invalid}</AMOUNT>"),
-                1,
-            );
-            assert_ne!(damaged, captured);
-            for accounting_state in [false, true] {
-                assert_eq!(
-                    parse_agent_rows_with_accounting_state(&damaged, accounting_state),
-                    Err("voucher_amount_invalid".to_string()),
-                    "{invalid} must not be released as complete accounting evidence"
-                );
-            }
-        }
-    }
-}
+#[path = "agent_voucher_parse_tests.rs"]
+mod boundary_tests;
