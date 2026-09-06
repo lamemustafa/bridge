@@ -194,6 +194,16 @@ catalogue that cannot fit returns `agent_response_too_large`; the session remain
 usable. Text content contains the same
 serialized, redacted JSON as `structuredContent` for older clients.
 
+`tally_status.education_mode` is a boolean: `true` for observed Education mode,
+`false` for observed Licensed mode, and `null` when mode is unobserved. Product
+identity uses the observed gateway capability; an optional status-page banner
+cannot override it. Clients of the earlier string-valued field must update.
+
+Company selectors accept native hyphenated UUID spelling, case-insensitively.
+Malformed selectors refuse before network reads. A malformed observed GUID cannot
+construct a verified identity; discovery reports `identity_state: "invalid_guid"`
+instead of `verified_tuple`.
+
 Port zero and ports above 65535 are rejected at startup.
 Unknown arguments, wrong selector types, and invalid enums are rejected before
 any Tally request. Checkpoint numeric strings are no longer accepted at the tool

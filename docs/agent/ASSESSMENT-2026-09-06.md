@@ -103,6 +103,9 @@ byte cap. Oversized controls return a bounded refusal without invalidating the
 session. Status product identity comes from an observed gateway capability; an
 unrecognized, conflicting, or unavailable status-page banner cannot override it.
 An unobserved gateway capability returns `not_observed`.
+The education-mode flag is boolean for observed modes and null otherwise. Caller
+company UUIDs are admitted before any read, and malformed observed GUIDs cannot
+produce verified identities or complete unscoped receipts.
 
 Both book-start and explicit-date ledger openings now obtain a fresh mode probe
 before date admission and bracket the read with a closing mode observation. A
@@ -254,7 +257,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **962 Rust workspace tests**, **207 agent tests
+Local candidate verification: **965 Rust workspace tests**, **210 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -285,7 +288,7 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.57` after repeated catalogue and licensed-mode observations, and
+additional Journal file for `12.58` after repeated catalogue and licensed-mode observations, and
 readback confirmed `not_found`; that file was not imported. No additional Tally
 posting was performed. The expected read refusal retained its actual completed source
 commitments and byte count, retrievable through `read_evidence`; omitted egress
@@ -311,9 +314,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `482587f492f1f8b3ce3b46d7a614d25325216d75639b9680b7c8fd4e71582075`.
-- MCPB archive SHA-256: `e262e9cfe0014d700211fb3c3838e687ca2c5bac027f52cc251f66d584802a0f`.
-- Source fingerprint (348 build-input files, unchanged through the settled-source rebuild): `e0e6647cb3b45848ebad03091c418325521fa51702945955112cbf32803ebff7`.
+- Release executable SHA-256: `7a810c1128b7339a71679b32b93f7b736aa000459e0f29afbf421d8e09240a7e`.
+- MCPB archive SHA-256: `20acd7ed158769d751b69aaed1ea9341693effec3654d3003d75dfb8e8dece41`.
+- Source fingerprint (349 build-input files, unchanged through the settled-source rebuild): `d4c4dea0f86d30b707fa214dac2429ebe71effe741828897505911d92c2f09a6`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -330,14 +333,24 @@ were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
 The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates the existing protocol-reference pin for the literal-date counter-observation
-and negative-verdict qualification limit. Previous seals cover the currency witness,
+updates the existing protocol-reference pin for the qualified file-identity and
+numbering clarification. Previous seals cover the literal-date counter-observation,
+negative-verdict qualification limit, currency witness,
 standard-library file locking, fresh financial mode admission and retained refusal
 evidence. Earlier
 changes covered request commitments, report-source fields, CI packaging, and
 the period-opening protocol reference. The existing pin
 set was rehashed, sealed, and repointed using the release-process commands.
 No compatibility cell was promoted.
+
+The numbering review was adjudicated against the actual generated request and
+retained import/readback bytes. Failed `Alter` behavior does not establish a
+duplicate on this `Create` + client-`REMOTEID` workflow. The earlier exact-file
+repeat omitted `VOUCHERNUMBER` and retained one voucher with stable GUID, numeric
+master ID and assigned number. The renderer regression preserves that request
+identity with or without an optional number. [Protocol reference §9.8](../tally/TALLY_PROTOCOL_REFERENCE.md#98-voucher-numbering-method-changes-everything--use-manual)
+records the scoped exception and its limits; no unobserved voucher-type preflight
+was added.
 
 ## Migration, rollback, and security impact
 
