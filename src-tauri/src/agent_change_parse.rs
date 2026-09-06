@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) fn parse_company_high_water(xml: &str, expected_guid: &str) -> Result<Value, String> {
-    validate_agent_envelope(xml, "COMPANY")?;
+    validate_agent_envelope(xml)?;
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut rows = Vec::<BTreeMap<String, String>>::new();
@@ -65,7 +65,7 @@ pub(super) fn parse_company_high_water(xml: &str, expected_guid: &str) -> Result
 }
 
 pub(super) fn parse_master_domain_high_water(xml: &str) -> Result<u64, String> {
-    validate_agent_envelope(xml, "LEDGER")?;
+    validate_agent_envelope(xml)?;
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut in_domain_row = false;
@@ -154,7 +154,7 @@ pub(super) fn observed_checkpoint(value: Option<&String>, axis: &str) -> Result<
 }
 
 pub(super) fn parse_agent_changed_masters(xml: &str) -> Result<Vec<Value>, String> {
-    validate_agent_envelope(xml, "LEDGER")?;
+    validate_agent_envelope(xml)?;
     let mut reader = quick_xml::Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut rows = Vec::new();

@@ -36,6 +36,9 @@ use responses::*;
 #[path = "agent_voucher_parse.rs"]
 mod voucher_parse;
 use voucher_parse::*;
+#[path = "agent_read_validation.rs"]
+mod read_validation;
+use read_validation::validate_agent_envelope;
 #[path = "agent_change_parse.rs"]
 mod change_parse;
 use change_parse::*;
@@ -206,8 +209,19 @@ struct Settings {
 
 impl Settings {
     fn from_env() -> Result<Self, String> {
-        let host = env::var("BRIDGE_TALLY_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let port = tally_port(env::var("BRIDGE_TALLY_PORT").ok())?;
+        let host = match env::var("BRIDGE_TALLY_HOST") {
+            Ok(host) => host,
+            Err(env::VarError::NotPresent) => "localhost".to_string(),
+            Err(_) => return Err("host_setting_invalid".to_string()),
+        };
+        let port = tally_port(match env::var("BRIDGE_TALLY_PORT") {
+            Ok(port) => Some(port),
+            Err(env::VarError::NotPresent) => None,
+            Err(_) => return Err("port_setting_invalid".to_string()),
+        })?;
+        let endpoint = TallyEndpointConfig { host, port };
+        canonical_loopback_origin(&endpoint).map_err(|_| "host_setting_invalid".to_string())?;
+        let redaction = Redaction::from_env()?;
         let max_rows = bounded_env("BRIDGE_AGENT_MAX_ROWS", 500, 1, 10_000)?;
         let max_bytes = bounded_env("BRIDGE_AGENT_MAX_BYTES", 200_000, 256, 5_000_000)?;
         // The transport remains the authoritative hard cap.  The agent cap only
@@ -223,11 +237,11 @@ impl Settings {
                 .map_err(|_| "agent_data_dir_permissions_failed".to_string())?;
         }
         Ok(Self {
-            endpoint: TallyEndpointConfig { host, port },
+            endpoint,
             data_dir,
             max_rows,
             max_bytes,
-            redaction: Redaction::from_env()?,
+            redaction,
             import_enabled: env::var("BRIDGE_AGENT_ENABLE_IMPORT").as_deref() == Ok("1"),
         })
     }
@@ -1007,23 +1021,6 @@ fn mask(value: &str) -> String {
         chars[chars.len() - 2],
         chars[chars.len() - 1]
     )
-}
-
-/// New agent-only profile. The literal `$Date` filter is intentionally
-/// separate from SVFROMDATE/SVTODATE: those variables do not restrict
-/// collection membership on every supported Tally build.
-fn validate_agent_envelope(xml: &str, expected_row: &str) -> Result<(), String> {
-    let trimmed = xml.trim();
-    if trimmed.is_empty()
-        || !trimmed.starts_with("<ENVELOPE")
-        || trimmed.contains("<LINEERROR")
-        || trimmed.contains("<ERROR")
-        || trimmed.contains("<RESPONSE")
-        || (!trimmed.contains(&format!("<{expected_row}")) && !trimmed.contains("<COLLECTION"))
-    {
-        return Err("agent_read_protocol_invalid".to_string());
-    }
-    Ok(())
 }
 
 fn xml_escape(value: &str) -> String {
