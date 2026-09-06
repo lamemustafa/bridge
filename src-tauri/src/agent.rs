@@ -2077,10 +2077,20 @@ fn response_row_count(response: &Value) -> Option<usize> {
     if let Some(vouchers) = result["vouchers"].as_array() {
         return Some(vouchers.len() + result["masters"].as_array().map_or(0, Vec::len));
     }
+    // Receipts count each released outstandings row collection: open bills and
+    // unallocated parties. Top parties are a derived ranking summary, not a
+    // separately paged row collection, so they are intentionally excluded.
+    if result["open_bills"].is_array() || result["unallocated"]["parties"].is_array() {
+        return Some(
+            result["open_bills"].as_array().map_or(0, Vec::len)
+                + result["unallocated"]["parties"]
+                    .as_array()
+                    .map_or(0, Vec::len),
+        );
+    }
     ["items", "ledgers", "records", "companies", "open_bills"]
         .into_iter()
         .find_map(|key| result[key].as_array().map(Vec::len))
-        .or_else(|| result["unallocated"]["parties"].as_array().map(Vec::len))
 }
 
 fn set_mcp_content_summary(mcp_response: &mut Value, name: &str, fallback_rows: usize) {
@@ -4126,6 +4136,18 @@ mod tests {
     fn paginated_egress_rows_returned_is_the_final_page_length() {
         assert_eq!(page_length_after_offset(11, 10, 500), 1);
         assert_eq!(page_length_after_offset(11, 11, 500), 0);
+    }
+
+    #[test]
+    fn outstandings_receipt_counts_wholly_unallocated_party_rows() {
+        let response = json!({
+            "result": {
+                "top_parties": [{"party":"On-account"}],
+                "open_bills": [],
+                "unallocated": {"parties": [{"party":"On-account"}]},
+            }
+        });
+        assert_eq!(response_row_count(&response), Some(1));
     }
 
     #[test]
