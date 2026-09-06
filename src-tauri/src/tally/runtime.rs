@@ -567,6 +567,8 @@ fn partial_result(reason: impl Into<OutstandingsPartialReason>) -> OutstandingsL
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 enum OpeningBoundaryObservationError {
+    #[error("opening_period_not_honoured")]
+    Period(NativeLedgerExportPeriodError),
     #[error("opening_boundary_profile_not_observed")]
     Unobserved,
     #[error("opening_boundary_profile_changed")]
@@ -1728,10 +1730,6 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         opening_date: Option<TallyDate>,
     ) -> anyhow::Result<(Vec<TallyLedger>, RuntimeReadEvidence)> {
-        let default_boundary_profile = opening_date
-            .is_none()
-            .then(|| self.master_ledger_export_boundary_profile(&config))
-            .transpose()?;
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
         self.execute(
@@ -1744,15 +1742,8 @@ impl TallyRuntime {
                 async move {
                     // A prior status call is not admission: the gateway's current
                     // licence mode can differ from the cached observation.
-                    let (boundary_profile, mode_evidence) = if opening_date.is_some() {
-                        let (probe, evidence) = client.probe_with_wire_evidence().await?;
-                        (observed_opening_boundary(&probe.profile)?, evidence)
-                    } else {
-                        (
-                            default_boundary_profile.expect("unscoped boundary"),
-                            RuntimeReadEvidence::empty(),
-                        )
-                    };
+                    let (probe, mode_evidence) = client.probe_with_wire_evidence().await?;
+                    let boundary_profile = observed_opening_boundary(&probe.profile)?;
                     bracket_verified_company_identity(&client, &identity).await?;
                     let opening_extent = client
                         .fetch_company_book_extent(identity.display_name(), identity.company_guid())
@@ -1763,7 +1754,7 @@ impl TallyRuntime {
                         opening_extent.last_voucher_date(),
                         opening_date.as_ref(),
                     )
-                    .map_err(|_| anyhow::anyhow!("opening_period_not_honoured"))?;
+                    .map_err(OpeningBoundaryObservationError::Period)?;
                     let request =
                         render_native_ledger_export_request(identity.display_name(), &period);
                     let paired = client.fetch_native_report_paired(request.clone()).await?;
@@ -1787,19 +1778,17 @@ impl TallyRuntime {
                         ));
                     }
                     bracket_verified_company_identity(&client, &identity).await?;
-                    let mut evidence = mode_evidence.combine(RuntimeReadEvidence::paired(
-                        &request,
-                        encoded_sha256,
-                        encoded_bytes,
-                    ));
-                    if opening_date.is_some() {
-                        let (probe, closing_mode_evidence) =
-                            client.probe_with_wire_evidence().await?;
-                        if observed_opening_boundary(&probe.profile)? != boundary_profile {
-                            return Err(OpeningBoundaryObservationError::Changed.into());
-                        }
-                        evidence = evidence.combine(closing_mode_evidence);
+                    let (probe, closing_mode_evidence) = client.probe_with_wire_evidence().await?;
+                    if observed_opening_boundary(&probe.profile)? != boundary_profile {
+                        return Err(OpeningBoundaryObservationError::Changed.into());
                     }
+                    let evidence = mode_evidence
+                        .combine(RuntimeReadEvidence::paired(
+                            &request,
+                            encoded_sha256,
+                            encoded_bytes,
+                        ))
+                        .combine(closing_mode_evidence);
                     Ok((ledgers, evidence))
                 }
             },
