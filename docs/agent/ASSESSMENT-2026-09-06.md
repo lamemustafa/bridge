@@ -85,7 +85,10 @@ duplicate GUIDs or numeric master IDs and multiple or malformed reserved
 transaction markers across the whole collection, before attribution narrows it.
 Company checkpoints preserve fragmented text and require one matching identity.
 Voucher and ledger collections reject duplicate GUIDs or numeric master IDs
-before returning complete reads or calculating movement.
+before returning complete reads or calculating movement. Wrong object types in
+a voucher collection are refused instead of becoming an empty observation.
+Evidence-history reads mark omissions from both requested limits and retention
+eviction as truncated.
 
 Receipt records distinguish `response_prepared` from `stdio_write_completed`,
 linked by receipt ID and frame hash. Preparation records use `*_prepared` fields;
@@ -173,7 +176,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **926 Rust workspace tests**, **184 agent tests
+Local candidate verification: **929 Rust workspace tests**, **187 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -182,8 +185,8 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed eighteen live checks with party masking:
-seventeen complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed nineteen live checks with party masking:
+eighteen complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. Status, master
@@ -202,7 +205,8 @@ result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. No additional Tally posting
 was performed. The expected read refusal retained its actual completed source
 commitments and byte count, retrievable through `read_evidence`; omitted egress
-rows set `truncated`. The recording proxy passed an explicit readiness check
+rows set `truncated`. A one-record `read_evidence` call returned one observation
+and explicitly reported the omitted history as truncated. The recording proxy passed an explicit readiness check
 before these calls. An earlier candidate run had a proxy startup failure; those
 failed observations and its successful repeat remain retained separately.
 Separate release-process checks confirmed port zero and a non-loopback host
@@ -213,9 +217,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `8a4f237d60338491fe6d23db61b6ffc1aa3c6fcac18624906d0d6592ebe6e172`.
-- MCPB archive SHA-256: `b70f2812ffb6db3b1a3a4596a5218aeebdae5e5820c4627aaf216435f2ad7761`.
-- Source fingerprint (324 build-input files, unchanged through the settled-source rebuild): `9cba1b0bbeaaad1659fa73ebfe35705db110439aea3e85813cb86f4764d62d2c`.
+- Release executable SHA-256: `fbd1a1b73762cb7b53ce0a804574aa58795a1f82cd71a2cbdeb56103e170dc8b`.
+- MCPB archive SHA-256: `e820a426c42dc1caaacd320ffef9df0d1b387993d5234f063573870e582bebf5`.
+- Source fingerprint (324 build-input files, unchanged through the settled-source rebuild): `ec47fd2b3f98ee2915b48abd66e7eb5a5a0bf13d7731e1505b542a92b7c19800`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
