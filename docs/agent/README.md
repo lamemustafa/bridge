@@ -97,7 +97,9 @@ optional rows establish response presence while contributing no accounting movem
 `build_import_xml` and `verify_import` are hidden unless the operator sets
 `BRIDGE_AGENT_ENABLE_IMPORT=1`. A licensed synthetic-lab Journal file cycle and
 exact-file repeat import were observed on 2026-09-06. New file generation accepts
-only `Journal`; `Payment`, `Receipt`, and `Contra` are refused until each has
+only `Journal`, with freshly observed licensed TallyPrime before and after build
+reads. Other products, Education and unknown modes are refused before publishing
+a file. `Payment`, `Receipt`, and `Contra` are refused until each has
 live import/readback evidence. Historical batch records remain readable. The response records
 `live_evidence: "synthetic_lab_readback"` and links to
 [the assessment](ASSESSMENT-2026-09-06.md). This does not qualify every voucher

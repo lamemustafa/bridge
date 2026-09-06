@@ -20,7 +20,11 @@ A wholesale SDK replacement would change dependencies and transport behavior
 without establishing any Tally semantics. The official Rust SDK remains a
 reasonable future integration option. For this candidate, enforce the small
 protocol surface explicitly and test it with the official JavaScript client.
-No new production dependency is required. [Official Rust SDK](https://github.com/modelcontextprotocol/rust-sdk)
+The PR adds `unicode-normalization` as a direct production dependency for NFC
+ledger-name near-miss suggestions. Its version and dependencies already existed
+in the baseline lockfile; the generated license inventory includes their use.
+Exact live spelling remains required for import admission. File locking uses
+the Rust standard library; no separate locking crate remains. [Official Rust SDK](https://github.com/modelcontextprotocol/rust-sdk)
 
 The stdio transport uses newline-delimited JSON-RPC and reserves stdout for
 protocol messages. Initialization negotiates a supported protocol version;
@@ -49,7 +53,10 @@ the protocol's transport, lifecycle, and tool requirements.
 
 Receipt writes use a readable and writable handle, seek to the end under an
 exclusive lock, and restore the original length if appending or syncing fails.
-The access rights support both Windows locking and failed-write rollback.
+The access rights support both Windows locking and failed-write rollback. Shared
+readers and exclusive writers use the standard-library file-lock API, available
+within the pinned Rust 1.96 toolchain.
+[Rust file locking](https://doc.rust-lang.org/1.96.0/std/fs/struct.File.html#method.lock)
 [Microsoft file-lock contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex)
 
 MCPB staging follows the actual manifest 0.1 schema, including executable command,
@@ -83,6 +90,8 @@ fields, exact sign/polarity agreement, and valid numeric identifiers before
 selectors or verification can use a row. Import source admission then rejects
 duplicate GUIDs or numeric master IDs and multiple or malformed reserved
 transaction markers across the whole collection, before attribution narrows it.
+The same reserved transaction ID on two distinct vouchers is rejected even when
+one voucher predates the batch high-water mark; filtering cannot hide a collision.
 Company checkpoints preserve fragmented text and require one matching identity.
 Voucher and ledger collections reject duplicate GUIDs or numeric master IDs
 before returning complete reads or calculating movement. Wrong object types in
@@ -99,7 +108,10 @@ The same fresh-mode requirement covers compliance ledgers and native
 outstandings, whose balance fields also lack an independently returned period.
 The corrected boundary is the runtime source, rather than a requirement that a
 client call status first. Mode/date refusals retain completed wire observations
-through the runtime and adapter error mappings.
+through the runtime and adapter error mappings. MCP outstandings also binds the
+INR observation to its company and master extent and requires that witness to
+match the opening financial extent. Closing extent drift remains partial. The
+desktop operator-assertion contract remains separate.
 
 The final date-admission audit traced every MCP route:
 
@@ -118,6 +130,11 @@ to 0.39 seconds with markers. These are local comparison measurements, not Tally
 response-time claims. New voucher-file generation and its schema admit only
 Journal, the type established by live import/readback. Payment, Receipt, and
 Contra fail before network or file effects; historical records remain readable.
+Fresh observed licensed TallyPrime is required before and after the build reads,
+before any file or batch record is published. Education, unknown modes, ERP9 and
+EditLog have no new-file qualification. This does not assert an observed release
+number or qualify future changes to Tally. Unknown argument names produce a fixed
+error code so large property names cannot expand responses or retained evidence.
 
 Receipt records distinguish `response_prepared` from `stdio_write_completed`,
 linked by receipt ID and frame hash. Preparation records use `*_prepared` fields;
@@ -206,7 +223,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **943 Rust workspace tests**, **190 agent tests
+Local candidate verification: **949 Rust workspace tests**, **194 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -215,8 +232,8 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed twenty-two live checks with party masking:
-twenty-one complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed twenty-four live checks with party masking:
+twenty-three complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. A separate fresh process
@@ -226,8 +243,8 @@ validation, filtered and unfiltered vouchers, compliance masters, outstandings,
 restored-batch verification, and egress-log readback also completed.
 Every emitted frame matched its linked preparation/completion receipts and
 text/structured representations.
-Status, filtered-voucher, compliance-master, basic-ledger, and native-outstandings
-commitments and source byte counts
+Status, filtered-voucher, compliance-master, basic-ledger, native-outstandings,
+and licensed Journal-file build commitments and source byte counts
 were independently recomputed from the captured transport request/response files.
 The voucher-type filter and a nonmatching ledger selection both completed.
 Ordinary voucher rows exposed observed boolean cancellation and optional flags.
@@ -235,8 +252,10 @@ Movement completed with repeated voucher-source corroboration after the final
 opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
-staged file still correctly reported as not imported. No additional Tally posting
-was performed. The expected read refusal retained its actual completed source
+staged file still correctly reported as not imported. A fresh process built one
+additional Journal file for `12.53` after both licensed-mode observations, and
+readback confirmed `not_found`; that file was not imported. No additional Tally
+posting was performed. The expected read refusal retained its actual completed source
 commitments and byte count, retrievable through `read_evidence`; omitted egress
 rows set `truncated`. A one-record `read_evidence` call returned one observation
 and explicitly reported the omitted history as truncated. The recording proxy passed an explicit readiness check
@@ -250,9 +269,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `12873acd72002abe36b2865412f44e7cb4aa9f5a63724787d250f068cad4f2d4`.
-- MCPB archive SHA-256: `7594e54675eb1b0315f6ff74725eec8ac36a61a03a7b0fcc5d6cb08f55254289`.
-- Source fingerprint (342 build-input files, unchanged through the settled-source rebuild): `b552f6d6b93a2946e771026337f372d331825d3e043d0fcfd78a6cfd9dd6e2a4`.
+- Release executable SHA-256: `851e2599c4acb2ead804d906373ab563afba1ff16ee37a9edc6230ca0b36d4b9`.
+- MCPB archive SHA-256: `fba5f1941a948adb6cf3a1458f025756256c4d82f9ebbb891ec10986b3406f08`.
+- Source fingerprint (344 build-input files, unchanged through the settled-source rebuild): `12c281b8e3f0261cb38e96eec6f12e2f88085cf817b87097719186d2e11bafe1`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -269,8 +288,9 @@ were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
 The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates the existing runtime, connection, command-mapping, and protocol-reference
-pins for fresh financial mode admission and retained refusal evidence. Earlier
+updates the existing runtime and Cargo dependency pins for the currency witness
+and standard-library file locking. Previous seals cover fresh financial mode
+admission and retained refusal evidence. Earlier
 changes covered request commitments, report-source fields, CI packaging, and
 the period-opening protocol reference. The existing pin
 set was rehashed, sealed, and repointed using the release-process commands.
