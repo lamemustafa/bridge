@@ -195,3 +195,16 @@ fn captured_import_scalar_content_is_preserved_or_refused_without_silent_loss() 
         Err("import_verification_tag_ambiguous".into())
     );
 }
+
+#[test]
+fn import_readback_refuses_unexpected_collection_rows_through_shared_parser() {
+    let captured = boundary_tests::captured_vouchers();
+    for row in ["<LEDGER/>", "<GROUP/>", "<UNEXPECTED></UNEXPECTED>"] {
+        let mismatched = captured.replace("</COLLECTION>", &format!("{row}</COLLECTION>"));
+        assert_ne!(mismatched, captured);
+        assert_eq!(
+            parse_import_vouchers(&mismatched),
+            Err("import_verification_export_invalid".into())
+        );
+    }
+}

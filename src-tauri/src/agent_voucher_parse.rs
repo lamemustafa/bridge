@@ -93,7 +93,7 @@ pub(super) fn parse_agent_rows_with_accounting_state(
         match reader.read_event() {
             Ok(quick_xml::events::Event::Start(event)) => {
                 let tag = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
-                if scope.voucher_scalar() {
+                if scope.voucher_scalar() || (scope.collection() && tag != "VOUCHER") {
                     return Err("agent_read_protocol_invalid".into());
                 }
                 if tag == "VOUCHER" && scope.collection() {
@@ -232,7 +232,7 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                 if scope.voucher_scalar() {
                     return Err("agent_read_protocol_invalid".into());
                 }
-                if scope.collection() && name == "VOUCHER" {
+                if scope.collection() {
                     return Err("agent_read_protocol_invalid".to_string());
                 }
                 claim_voucher_scalar(&scope, &name, current.as_mut(), entry.as_mut())?;

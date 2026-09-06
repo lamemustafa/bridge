@@ -377,3 +377,46 @@ fn repeated_captured_voucher_identities_are_refused_before_selection_or_movement
     // Distinct accounting contents are not an identity; preserve distinct rows.
     assert_eq!(parse_agent_changed_rows(&captured).unwrap().len(), 3);
 }
+
+#[test]
+fn unexpected_direct_collection_rows_are_not_empty_voucher_reads() {
+    let captured = captured_native_vouchers();
+    for row_type in ["LEDGER", "GROUP", "UNEXPECTED"] {
+        let mismatched = captured
+            .replace("<VOUCHER ", &format!("<{row_type} "))
+            .replace("</VOUCHER>", &format!("</{row_type}>"));
+        assert_ne!(mismatched, captured);
+        for require_identity in [false, true] {
+            assert_eq!(
+                parse_agent_rows_with_accounting_state(&mismatched, require_identity),
+                Err("agent_read_protocol_invalid".into())
+            );
+        }
+    }
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-empty-collection.utf16le.xml"
+    );
+    let empty = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(parse_agent_rows(&empty).unwrap().is_empty());
+    for row in [
+        "<LEDGER/>",
+        "<GROUP/>",
+        "<UNEXPECTED/>",
+        "<LEDGER></LEDGER>",
+    ] {
+        let mismatched = empty.replace("</COLLECTION>", &format!("{row}</COLLECTION>"));
+        assert_ne!(mismatched, empty);
+        for require_identity in [false, true] {
+            assert_eq!(
+                parse_agent_rows_with_accounting_state(&mismatched, require_identity),
+                Err("agent_read_protocol_invalid".into())
+            );
+        }
+    }
+}
