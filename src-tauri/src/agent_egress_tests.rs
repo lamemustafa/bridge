@@ -12,7 +12,7 @@ fn failed_partial_write_and_sync_restore_the_original_receipts() {
             .write(true)
             .open(&path)
             .unwrap();
-        file.lock_exclusive().unwrap();
+        file.lock().unwrap();
         let result = append_locked(&mut file, r#"{"tool":"failed"}"#, |file, bytes| {
             file.write_all(if partial_write { &bytes[..7] } else { bytes })?;
             Err(std::io::Error::other("injected append or sync failure"))
@@ -270,4 +270,47 @@ async fn egress_log_rejects_unterminated_and_malformed_receipts_in_band() {
             "reads never repair damaged receipts"
         );
     }
+}
+
+#[test]
+fn receipt_append_waits_until_all_shared_readers_release_the_file() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("agent-egress.jsonl");
+    append_egress_line(&path, r#"{"tool":"first"}"#).unwrap();
+    let reader = File::open(&path).unwrap();
+    let other_reader = File::open(&path).unwrap();
+    reader.lock_shared().unwrap();
+    other_reader.try_lock_shared().unwrap();
+    let contender = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    assert!(matches!(
+        contender.try_lock(),
+        Err(std::fs::TryLockError::WouldBlock)
+    ));
+    let (started, ready) = mpsc::channel();
+    let writer_path = path.clone();
+    let writer = std::thread::spawn(move || {
+        started.send(()).unwrap();
+        append_egress_line(&writer_path, r#"{"tool":"second"}"#)
+    });
+    ready.recv_timeout(Duration::from_secs(2)).unwrap();
+    reader.unlock().unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    assert!(
+        !writer.is_finished(),
+        "remaining reader must exclude the append"
+    );
+    other_reader.unlock().unwrap();
+    writer.join().unwrap().unwrap();
+    contender.try_lock().unwrap();
+    contender.unlock().unwrap();
+    assert_eq!(
+        read_egress_tail(&path, 2).unwrap().records,
+        [r#"{"tool":"second"}"#, r#"{"tool":"first"}"#]
+    );
 }

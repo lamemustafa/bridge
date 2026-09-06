@@ -1,5 +1,4 @@
 //! Locked append-only egress receipts and bounded tail reads.
-use fs2::FileExt;
 #[cfg(any(unix, test))]
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -35,7 +34,7 @@ pub(super) fn append_egress_line(path: &Path, line: &str) -> Result<(), String> 
         .map_err(|_| "egress_record_write_failed".to_string())?;
     // Read/write access permits LockFileEx and rollback truncation on Windows.
     // Every append seeks to EOF while holding this exclusive lock.
-    file.lock_exclusive()
+    file.lock()
         .map_err(|_| "egress_record_write_failed".to_string())?;
     #[cfg(unix)]
     let permission_result = {

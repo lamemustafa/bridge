@@ -7,7 +7,6 @@ use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::parse_standard_ledger_catalog;
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
 use chrono::{SecondsFormat, Utc};
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -484,7 +483,7 @@ impl Server {
             .truncate(false)
             .open(path)
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
-        file.lock_exclusive()
+        file.lock()
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
         persistence::require_settled(&self.settings.data_dir.join("imports"))?;
         Ok(file)

@@ -1,6 +1,5 @@
 use super::egress::EGRESS_TAIL_CHUNK_BYTES;
 use super::*;
-use fs2::FileExt;
 use std::fs::OpenOptions;
 use std::io::Write;
 use tally_protocol_simulator::{
@@ -597,7 +596,7 @@ fn egress_tail_waits_for_an_exclusive_append_lock() {
         .read(true)
         .open(&path)
         .expect("writer");
-    writer.lock_exclusive().expect("writer lock");
+    writer.lock().expect("writer lock");
     writer
         .write_all(b"{\"tool\":\"complete\"}\n")
         .expect("complete row");
