@@ -303,6 +303,8 @@ struct Evidence {
 struct EgressReceipt<'a> {
     ts: String,
     tool: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_name_sha256: Option<String>,
     args_sha256: String,
     company_guid: Option<String>,
     rows_returned: usize,
@@ -312,6 +314,17 @@ struct EgressReceipt<'a> {
     response_sha256: String,
     truncated: bool,
     redaction_preset: &'a str,
+}
+
+fn receipt_tool_identity(tool: &str) -> (&str, Option<String>) {
+    if registered_tool_definitions(true)
+        .as_array()
+        .is_some_and(|tools| tools.iter().any(|definition| definition["name"] == tool))
+    {
+        (tool, None)
+    } else {
+        ("unknown", Some(sha256_hex(tool.as_bytes())))
+    }
 }
 
 struct EgressContext {
@@ -546,11 +559,16 @@ impl Server {
             .map(agent_receipt_fields::released_fields)
             .unwrap_or_default();
         let path = self.settings.data_dir.join("agent-egress.jsonl");
+        let (tool, tool_name_sha256) = receipt_tool_identity(&context.tool);
         let receipt = EgressReceipt {
             ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            tool: &context.tool,
+            tool,
+            tool_name_sha256,
             args_sha256: context.args_sha256,
-            company_guid: context.company_guid,
+            company_guid: context
+                .company_guid
+                .as_deref()
+                .and_then(egress::canonical_company_guid),
             rows_returned,
             fields_returned,
             bytes_returned: serialized_response.len(),
@@ -566,14 +584,16 @@ impl Server {
 
     fn append_notification_refusal_egress(&self, tool: &str, args: &Value) -> Result<(), String> {
         let refusal = "tools_call_notification_forbidden";
+        let (tool, tool_name_sha256) = receipt_tool_identity(tool);
         let receipt = EgressReceipt {
             ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             tool,
+            tool_name_sha256,
             args_sha256: sha256_json(args),
             company_guid: args
                 .get("company_guid")
                 .and_then(Value::as_str)
-                .map(str::to_string),
+                .and_then(egress::canonical_company_guid),
             rows_returned: 0,
             fields_returned: Vec::new(),
             bytes_returned: 0,

@@ -32,7 +32,7 @@ where
             recovery_error(
                 id.clone(),
                 Some("bridge-00000000-0000-0000-0000-000000000000"),
-                "egress_record_write_failed",
+                "egress_record_rollback_failed",
             )
             .to_string()
             .len()
@@ -156,19 +156,19 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
         );
     }
     let mut serialized_response = format!("{response}\n");
+    let mut terminal_egress_error = None;
     if let Some(egress) = egress {
-        if server
-            .append_framed_egress(egress, &response, &serialized_response)
-            .is_err()
-        {
+        if let Err(error) = server.append_framed_egress(egress, &response, &serialized_response) {
+            if matches!(
+                error.as_str(),
+                "egress_record_rollback_failed" | "egress_log_incomplete"
+            ) {
+                terminal_egress_error = Some(error.clone());
+            }
             if recovery_batch_id.is_some() {
-                response = recovery_error(
-                    id,
-                    recovery_batch_id.as_deref(),
-                    "egress_record_write_failed",
-                );
+                response = recovery_error(id, recovery_batch_id.as_deref(), &error);
             } else if !attach_build_egress_failure(&mut response) {
-                return Err("egress_record_write_failed".to_string());
+                return Err(error);
             }
             enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes)?;
             serialized_response = format!("{response}\n");
@@ -182,7 +182,10 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
         .flush()
         .await
         .map_err(|_| "stdio_flush_failed".to_string())?;
-    Ok(())
+    match terminal_egress_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 fn recovery_error(id: Value, batch_id: Option<&str>, message: &str) -> Value {

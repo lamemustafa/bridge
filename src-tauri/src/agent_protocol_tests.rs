@@ -154,9 +154,108 @@ async fn unknown_tools_and_methods_return_protocol_errors_with_exact_refusal_rec
     )
     .unwrap();
     assert_eq!(receipt["rows_returned"], 0);
+    assert_eq!(receipt["tool"], "unknown");
+    assert_eq!(receipt["tool_name_sha256"], sha256_hex(b"absent_tool"));
     assert_eq!(receipt["fields_returned"], json!([]));
     assert_eq!(
         receipt["response_sha256"],
         sha256_hex(format!("{}\n", responses[1]).as_bytes())
     );
+}
+
+#[tokio::test]
+async fn oversized_untrusted_names_and_selectors_never_expand_receipts() {
+    let directory = tempfile::tempdir().unwrap();
+    let name = "unrecognized".repeat(100_000);
+    let selector = "unverified".repeat(100_000);
+    let args = json!({"company_guid":selector});
+    let responses = session(server(directory.path()), &[
+        initialize("2025-06-18"),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":args}}),
+        json!({"jsonrpc":"2.0","method":"tools/call","params":{"name":name,"arguments":args}}),
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"voucher_schema","arguments":args}}),
+        json!({"jsonrpc":"2.0","method":"tools/call","params":{"name":"voucher_schema","arguments":args}}),
+        json!({"jsonrpc":"2.0","id":4,"method":"ping"}),
+    ]).await;
+    assert_eq!(responses[1]["error"]["message"], "tool_not_found");
+    assert_eq!(responses.last().unwrap()["result"], json!({}));
+    assert_eq!(responses[2]["result"]["isError"], true);
+    assert_eq!(
+        responses[2]["result"]["structuredContent"]["result"]["error"]["code"],
+        "argument_unknown:company_guid"
+    );
+    let path = directory.path().join("agent-egress.jsonl");
+    let bytes = fs::read(&path).unwrap();
+    assert!(bytes.len() < 16_384);
+    let receipts: Vec<Value> = std::str::from_utf8(&bytes)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(receipts.len(), 4);
+    for (index, receipt) in receipts.iter().enumerate() {
+        assert_eq!(receipt["args_sha256"], sha256_json(&args));
+        assert!(receipt["company_guid"].is_null());
+        if index < 2 {
+            assert_eq!(receipt["tool"], "unknown");
+            assert_eq!(receipt["tool_name_sha256"], sha256_hex(name.as_bytes()));
+        } else {
+            assert_eq!(receipt["tool"], "voucher_schema");
+            assert!(receipt.get("tool_name_sha256").is_none());
+        }
+    }
+    assert_eq!(egress::read_egress_tail(&path, 4).unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn incomplete_receipt_log_stops_session_but_preserves_durable_batch_recovery() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("agent-egress.jsonl");
+    fs::write(&path, b"{\"partial").unwrap();
+    let server = server(directory.path());
+    let batch_id = "12345678-abcd-4abc-8abc-123456789012";
+    let mut output = Vec::new();
+    let result = finish_response(
+        &server,
+        &mut output,
+        json!(2),
+        Ok(json!({})),
+        Some(EgressContext {
+            tool: "build_import_xml".into(),
+            args_sha256: sha256_json(&json!({})),
+            company_guid: None,
+        }),
+        Some(batch_id.into()),
+        true,
+    )
+    .await;
+    assert_eq!(result, Err("egress_log_incomplete".into()));
+    let response: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(response["error"]["message"], "egress_log_incomplete");
+    assert_eq!(response["error"]["data"]["batch_id"], batch_id);
+    assert_eq!(fs::read(&path).unwrap(), b"{\"partial");
+
+    // The stdio loop propagates the terminal receipt error before another call.
+    let requests = [
+        initialize("2025-06-18"),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"voucher_schema"}}),
+        json!({"jsonrpc":"2.0","id":3,"method":"ping"}),
+    ];
+    let input = requests
+        .iter()
+        .map(|value| format!("{value}\n"))
+        .collect::<String>();
+    let mut output = Vec::new();
+    assert_eq!(
+        serve_stdio(server, BufReader::new(input.as_bytes()), &mut output).await,
+        Err("egress_log_incomplete".into())
+    );
+    let responses: Vec<Value> = std::str::from_utf8(&output)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0]["id"], 1);
+    assert_eq!(fs::read(path).unwrap(), b"{\"partial");
 }
