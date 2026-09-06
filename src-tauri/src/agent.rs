@@ -2283,7 +2283,6 @@ fn mask(value: &str) -> String {
 /// New agent-only profile. The literal `$Date` filter is intentionally
 /// separate from SVFROMDATE/SVTODATE: those variables do not restrict
 /// collection membership on every supported Tally build.
-
 fn render_agent_vouchers(
     company: &str,
     from: &str,
