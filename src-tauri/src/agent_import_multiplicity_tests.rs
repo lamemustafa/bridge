@@ -93,11 +93,28 @@ fn identical_expected_vouchers_verify_only_with_unique_full_attribution() {
     assert_eq!(verification_status(&result, 2), "verification_incomplete");
     let mut repeated_identity = observed.clone();
     repeated_identity[1].guid = repeated_identity[0].guid.clone();
-    let result = verify_batch(&line, &repeated_identity).unwrap();
-    assert_eq!(result["counts"]["posted_verified"], 1);
-    assert_eq!(verification_status(&result, 2), "verification_incomplete");
     assert_eq!(
-        result["vouchers"][1]["reason"],
-        "observed_voucher_already_attributed"
+        verify_batch(&line, &repeated_identity),
+        Err("import_verification_tag_ambiguous".into())
     );
+}
+
+#[test]
+fn overlapping_expected_tags_remain_ambiguous_in_both_payload_orders() {
+    let (mut line, mut observed) = identical_batch();
+    observed[0].narration = Some(format!(
+        "[BRIDGE:{}] [BRIDGE:{}]",
+        line.vouchers[0].bridge_txn_id, line.vouchers[1].bridge_txn_id
+    ));
+    for source in [&observed[..1], &observed[..]] {
+        for reverse in [false, true] {
+            if reverse {
+                line.vouchers.reverse();
+            }
+            assert_eq!(
+                verify_batch(&line, source),
+                Err("import_verification_tag_ambiguous".into())
+            );
+        }
+    }
 }

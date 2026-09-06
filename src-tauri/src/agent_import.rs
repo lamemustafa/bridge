@@ -1143,6 +1143,22 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
         .iter()
         .map(observed_voucher_identity)
         .collect::<Result<Vec<_>, _>>()?;
+    // One stable source identity cannot claim two expected transactions,
+    // whether the tags share one row or appear on repeated rows for that identity.
+    // Reject attribution ambiguity before consumption can make order matter.
+    let mut identity_claims = BTreeMap::<&str, &str>::new();
+    for (index, voucher) in observed.iter().enumerate() {
+        for expected in &line.vouchers {
+            if voucher.narration.as_deref().is_some_and(|narration| {
+                narration.contains(&format!("[BRIDGE:{}]", expected.bridge_txn_id))
+            }) && identity_claims
+                .insert(&observed_identities[index], &expected.bridge_txn_id)
+                .is_some_and(|prior| prior != expected.bridge_txn_id)
+            {
+                return Err("import_verification_tag_ambiguous".to_string());
+            }
+        }
+    }
     let mut fully_verified_identities = BTreeSet::new();
     let mut rows = Vec::new();
     let fingerprint_key = |voucher: &ImportVoucher| {
