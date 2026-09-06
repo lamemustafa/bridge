@@ -2,17 +2,6 @@
 //! not evidence that Education mode actually returns an empty literal-date read.
 use super::*;
 
-fn mode_probe(licensed: bool) -> Vec<ScenarioPlan> {
-    let mut plans = mode_tests::licensed_import_probe();
-    if !licensed {
-        plans[1].fixture = Fixture::SyntheticXml(plans[1].fixture.body().replace(
-            "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
-            "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",
-        ));
-    }
-    plans
-}
-
 #[tokio::test]
 async fn verification_qualifies_absence_without_hiding_positive_historical_rows() {
     let captured = boundary_tests::captured_vouchers();
@@ -60,14 +49,36 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             .collect::<Vec<_>>(),
     )
     .unwrap();
-    for (case, opening_licensed, closing_licensed, has_rows, missing_expected) in [
-        ("education_positive", false, false, true, false),
-        ("education_empty", false, false, false, false),
-        ("education_mixed", false, false, true, true),
-        ("licensed_empty", true, true, false, false),
-        ("mode_changed", true, false, false, false),
-        ("closing_http_failure", true, false, false, false),
+    let mut cases = vec![
+        ("education_positive", "education", "education", true, false),
+        ("education_empty", "education", "education", false, false),
+        ("education_mixed", "education", "education", true, true),
+        ("licensed_empty", "none", "none", false, false),
+        ("mode_changed", "none", "education", false, false),
+        ("closing_http_failure", "none", "education", false, false),
+        (
+            "unknown_profile_positive",
+            "release_and_tier_unknown",
+            "none",
+            true,
+            false,
+        ),
+    ];
+    for fault in [
+        "release_missing",
+        "release_unknown",
+        "license_gold",
+        "license_ambiguous",
     ] {
+        cases.extend([
+            (fault, fault, "none", true, false),
+            (fault, fault, "none", false, false),
+            (fault, fault, "none", true, true),
+            (fault, "none", fault, false, false),
+            (fault, "none", fault, true, true),
+        ]);
+    }
+    for (case, opening_fault, closing_fault, has_rows, missing_expected) in cases {
         let cycle = import_cycle_plans();
         let mut reads = cycle[16..].to_vec();
         for index in [5, 7, 11, 13] {
@@ -78,10 +89,10 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             });
         }
         let negative = !has_rows || missing_expected;
-        let close = negative && opening_licensed;
+        let close = negative && opening_fault == "none";
         let closing_http_failure = case == "closing_http_failure";
         let mut closing = if close {
-            mode_probe(closing_licensed)
+            mode_tests::import_profile_probe(closing_fault)
         } else {
             vec![]
         };
@@ -90,7 +101,12 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
                 plan.http_status = 503;
             }
         }
-        let plans = [mode_probe(opening_licensed), reads, closing].concat();
+        let plans = [
+            mode_tests::import_profile_probe(opening_fault),
+            reads,
+            closing,
+        ]
+        .concat();
         let responses = plans
             .iter()
             .map(|plan| tally_protocol_simulator::encode(&plan.fixture.body(), plan.encoding))
@@ -165,13 +181,22 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             )
             .await;
         let content = &response.value["structuredContent"];
-        let refused = negative && (!opening_licensed || !closing_licensed);
+        let refused = negative && (opening_fault != "none" || closing_fault != "none");
+        let refusal_fault = if opening_fault != "none" {
+            opening_fault
+        } else {
+            closing_fault
+        };
         assert_eq!(response.value["isError"], refused, "{case}: {content}");
         if refused {
             assert_eq!(
                 content["result"]["error"]["code"],
                 if closing_http_failure {
                     "import_mode_probe_failed"
+                } else if refusal_fault.starts_with("release_") {
+                    "verification_release_unqualified"
+                } else if refusal_fault.starts_with("license_") {
+                    "verification_license_tier_unqualified"
                 } else {
                     "verification_mode_unqualified"
                 },

@@ -224,6 +224,38 @@ simply what a custom report emits when its fields are named `Company Name Field`
 
 ---
 
+### 3.1 Observing the running release and licence tier
+
+**VERIFIED 2026-09-06; one synthetic TallyPrime Silver 7.1 endpoint.** Adding
+only `<COMPUTE>BridgeRelease : @@VersionReleaseString</COMPUTE>` to the existing
+native `CompanyListV2` collection returned `BRIDGERELEASE` = `7.1` for all 16
+loaded companies. The same rows returned `PRODUCTNAME` = `TallyPrime`,
+`EDUMODE` = `No`, `SILVER` = `Yes`, and `GOLD` = `No`. Two independent calls
+returned identical 20,412-byte UTF-16LE bodies, SHA-256
+`998280fac5b6b40b23ee3879dcb35780bc439083a4d1a3a3fb9a64231adbaa50`.
+The 2,524-byte request SHA-256 was
+`9df2a53f085dac2636e9435462b612c1487ec6f903677815036c9f39163f7dd8`.
+The unchanged captured response and metadata are retained in
+`src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.*`.
+
+The expression was a discovery lead from the upstream
+[TallyConnector implementation](https://github.com/Accounting-Companion/TallyConnector/blob/03c7f4f53914bcbf017849c8e268154cffcfd76e/src/TallyConnector/Services/BaseTallyService.cs).
+The live bytes establish this observation; the upstream code is not proof of
+Bridge compatibility. No licence serial, account identifier, machine path,
+report definition, or new dispatch path was needed.
+
+**Admission boundary.** Preserve an unobserved release as unknown. A missing,
+empty, or disagreeing release across company rows cannot identify a release.
+Silver or Gold is known only when Education is false and exactly one tier flag
+is true. The observed label does not establish other releases, customised TDL,
+Gold, ERP9, Edit Log, or every voucher configuration. It does not promote any
+compatibility-matrix claim. New Journal files and persisted import-absence
+verdicts require the observed TallyPrime Silver 7.1 profile before and
+after the relevant reads; positive historical rows remain directly observable
+on other profiles.
+
+---
+
 ## 4. Object types
 
 **VERIFIED** — all readable via collection export, all returning `STATUS=1`, all sub-40 ms
@@ -321,7 +353,7 @@ and does not establish that repeating an empty response proves absence. A regres
 protects the literal predicates in both agent renderers; it is not additional live evidence.
 
 **Import verification qualification policy:** persisting any `not_found` verdict requires an
-observed licensed TallyPrime profile before the voucher reads and a qualified closing observation.
+observed TallyPrime Silver 7.1 profile (§3.1) before the voucher reads and a qualified closing observation.
 An unqualified negative verdict must leave the prior proof and batch status unchanged. Positive
 historical readback remains available. This is a conservative qualification limit on negative
 verdicts, not a claim that Education was observed to reject a literal day-15 predicate.

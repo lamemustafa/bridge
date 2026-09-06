@@ -21,9 +21,34 @@ use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
-struct ImportModeObservation {
-    qualified_licensed_prime: bool,
+struct ImportProfileObservation {
+    qualification: Result<(), ImportProfileRefusal>,
     evidence: Evidence,
+}
+
+#[derive(Clone, Copy)]
+enum ImportProfileRefusal {
+    Mode,
+    Release,
+    LicenseTier,
+}
+
+impl ImportProfileRefusal {
+    fn build_code(self) -> &'static str {
+        match self {
+            Self::Mode => "import_mode_unqualified",
+            Self::Release => "import_release_unqualified",
+            Self::LicenseTier => "import_license_tier_unqualified",
+        }
+    }
+
+    fn verification_code(self) -> &'static str {
+        match self {
+            Self::Mode => "verification_mode_unqualified",
+            Self::Release => "verification_release_unqualified",
+            Self::LicenseTier => "verification_license_tier_unqualified",
+        }
+    }
 }
 
 const MAX_VOUCHERS: usize = 1_000;
@@ -75,6 +100,7 @@ impl VoucherType {
 // Other variants remain readable in historical batch records. New files require
 // the live import/readback evidence recorded in docs/agent/ASSESSMENT-2026-09-06.md.
 const LIVE_QUALIFIED_VOUCHER_TYPES: &[VoucherType] = &[VoucherType::Journal];
+const LIVE_QUALIFIED_IMPORT_RELEASE: &str = "7.1";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 enum EntrySide {
@@ -210,7 +236,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed licensed TallyPrime before and after the build reads; Education and unknown modes are unqualified."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed TallyPrime Silver release 7.1 before and after the build reads. Other or unobserved releases, tiers and modes are unqualified."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -246,16 +272,16 @@ impl Server {
         })
     }
 
-    async fn qualified_import_mode(&self) -> Result<Evidence, ToolFailure> {
-        let observation = self.observe_import_mode().await?;
-        if !observation.qualified_licensed_prime {
-            return Err(ToolFailure::from("import_mode_unqualified".to_string())
+    async fn qualified_import_profile(&self) -> Result<Evidence, ToolFailure> {
+        let observation = self.observe_import_profile().await?;
+        if let Err(refusal) = observation.qualification {
+            return Err(ToolFailure::from(refusal.build_code().to_string())
                 .with_prior_evidence(observation.evidence));
         }
         Ok(observation.evidence)
     }
 
-    async fn observe_import_mode(&self) -> Result<ImportModeObservation, ToolFailure> {
+    async fn observe_import_profile(&self) -> Result<ImportProfileObservation, ToolFailure> {
         use bridge_tally_core::{CapabilityFeatureId, CapabilityState, EvidenceConfidence};
         let (probe, wire) = self
             .runtime
@@ -277,8 +303,19 @@ impl Server {
                     feature.state == CapabilityState::Supported
                         && feature.confidence == EvidenceConfidence::Observed
                 });
-        Ok(ImportModeObservation {
-            qualified_licensed_prime: qualified,
+        // See docs/tally/TALLY_PROTOCOL_REFERENCE.md §3.1 for the observed profile.
+        // A release label alone does not promote any compatibility-matrix claim.
+        let qualification = if !qualified {
+            Err(ImportProfileRefusal::Mode)
+        } else if probe.profile.release.as_deref() != Some(LIVE_QUALIFIED_IMPORT_RELEASE) {
+            Err(ImportProfileRefusal::Release)
+        } else if probe.profile.license_tier != Some(bridge_tally_core::LicenseTier::Silver) {
+            Err(ImportProfileRefusal::LicenseTier)
+        } else {
+            Ok(())
+        };
+        Ok(ImportProfileObservation {
+            qualification,
             evidence,
         })
     }
@@ -295,7 +332,7 @@ impl Server {
             return Err("import_voucher_type_unqualified".to_string().into());
         }
         normalize_payload_dates(&mut payload)?;
-        let mode_evidence = self.qualified_import_mode().await?;
+        let mode_evidence = self.qualified_import_profile().await?;
         let (company, identity, identity_evidence) = self
             .verified_company(&payload.company_guid)
             .await
@@ -332,7 +369,7 @@ impl Server {
             if catalogue_evidence.response_sha256 != repeated_catalogue_evidence.response_sha256 {
                 return Err("import_catalogue_changed".to_string().into());
             }
-            let closing_mode_evidence = self.qualified_import_mode().await?;
+            let closing_mode_evidence = self.qualified_import_profile().await?;
             accumulated = combine_evidence(accumulated.clone(), closing_mode_evidence);
             let batch_id = format!("bridge-{}", Uuid::new_v4());
             let xml = render_import_xml(&company.name, &payload.vouchers);
@@ -388,6 +425,7 @@ impl Server {
                     "batch_id": batch_id, "path": path, "sha256": sha256,
                     "voucher_count": line.vouchers.len(), "total_debit": debit.as_str(), "total_credit": credit.as_str(),
                     "live_evidence": "synthetic_lab_readback",
+                    "qualified_profile": {"product":"TallyPrime","release":LIVE_QUALIFIED_IMPORT_RELEASE,"license_tier":"silver"},
                     "live_evidence_report": "docs/agent/ASSESSMENT-2026-09-06.md",
                     "warnings": ["No XML was sent to Tally. Import the written file manually, then use verify_import."],
                     "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
@@ -413,7 +451,7 @@ impl Server {
         if !batch_guid_matches(&line.company_guid, guid) {
             return Err("import_batch_company_mismatch".to_string().into());
         }
-        let opening_mode = self.observe_import_mode().await?;
+        let opening_mode = self.observe_import_profile().await?;
         let (company, identity, identity_evidence) = self
             .verified_company(guid)
             .await
@@ -438,14 +476,14 @@ impl Server {
             let mut closing_mode_evidence = None;
             if result["counts"]["not_found"].as_u64().unwrap_or(0) > 0 {
                 // Positive rows are direct observations. Absence additionally requires
-                // the licensed TallyPrime mode qualified by the retained live slice.
-                if !opening_mode.qualified_licensed_prime {
-                    return Err("verification_mode_unqualified".to_string().into());
+                // the product, release and licence tier qualified by the live slice.
+                if let Err(refusal) = opening_mode.qualification {
+                    return Err(refusal.verification_code().to_string().into());
                 }
-                let closing_mode = self.observe_import_mode().await?;
+                let closing_mode = self.observe_import_profile().await?;
                 accumulated = combine_evidence(accumulated.clone(), closing_mode.evidence.clone());
-                if !closing_mode.qualified_licensed_prime {
-                    return Err("verification_mode_unqualified".to_string().into());
+                if let Err(refusal) = closing_mode.qualification {
+                    return Err(refusal.verification_code().to_string().into());
                 }
                 closing_mode_evidence = Some(closing_mode.evidence);
             }

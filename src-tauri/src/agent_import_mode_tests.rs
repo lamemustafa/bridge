@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) fn licensed_import_probe() -> Vec<ScenarioPlan> {
-    let bytes = include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml");
+    let bytes = include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml");
     let xml = String::from_utf16(
         &bytes
             .chunks_exact(2)
@@ -21,48 +21,88 @@ pub(super) fn licensed_import_probe() -> Vec<ScenarioPlan> {
     ]
 }
 
+// Change only observed profile fields in memory; these are refusal cases,
+// never qualification evidence for another product, release or licence tier.
+pub(super) fn import_profile_probe(fault: &str) -> Vec<ScenarioPlan> {
+    let mut plans = licensed_import_probe();
+    let xml = plans[1].fixture.body().into_owned();
+    let release = "<BRIDGERELEASE TYPE=\"String\">7.1</BRIDGERELEASE>";
+    let damaged = match fault {
+        "education" => xml.replace(
+            "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
+            "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",
+        ),
+        "unknown" => xml.replace(
+            "<SILVER TYPE=\"Logical\">Yes</SILVER>",
+            "<SILVER TYPE=\"Logical\">No</SILVER>",
+        ),
+        "product" => xml.replace(
+            "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>",
+            "<PRODUCTNAME TYPE=\"String\">Tally ERP 9</PRODUCTNAME>",
+        ),
+        "editlog" => xml.replace(
+            "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>",
+            "<PRODUCTNAME TYPE=\"String\">TallyPrime Edit Log</PRODUCTNAME>",
+        ),
+        "unknown_product" => xml.replace(
+            "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>",
+            "<PRODUCTNAME TYPE=\"String\">UnknownProduct</PRODUCTNAME>",
+        ),
+        "release_missing" => xml.replace(release, ""),
+        "release_unknown" => xml.replace(
+            release,
+            "<BRIDGERELEASE TYPE=\"String\">unknown</BRIDGERELEASE>",
+        ),
+        "license_gold" => xml
+            .replace(
+                "<SILVER TYPE=\"Logical\">Yes</SILVER>",
+                "<SILVER TYPE=\"Logical\">No</SILVER>",
+            )
+            .replace(
+                "<GOLD TYPE=\"Logical\">No</GOLD>",
+                "<GOLD TYPE=\"Logical\">Yes</GOLD>",
+            ),
+        "license_ambiguous" => xml.replace(
+            "<GOLD TYPE=\"Logical\">No</GOLD>",
+            "<GOLD TYPE=\"Logical\">Yes</GOLD>",
+        ),
+        "release_and_tier_unknown" => xml.replace(release, "").replace(
+            "<GOLD TYPE=\"Logical\">No</GOLD>",
+            "<GOLD TYPE=\"Logical\">Yes</GOLD>",
+        ),
+        "none" => xml.clone(),
+        _ => panic!("unrecognized profile fault: {fault}"),
+    };
+    if fault != "none" {
+        assert_ne!(damaged, xml, "{fault}");
+    }
+    plans[1].fixture = Fixture::SyntheticXml(damaged);
+    plans
+}
+
 #[tokio::test]
 async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence() {
     let licensed = licensed_import_probe();
+    let mut cases = vec![
+        ("education", false),
+        ("unknown", false),
+        ("product", false),
+        ("editlog", false),
+        ("unknown_product", false),
+        ("education", true),
+        ("none", true),
+    ];
     for fault in [
-        "education",
-        "unknown",
-        "product",
-        "editlog",
-        "unknown_product",
-        "closing",
-        "none",
+        "release_missing",
+        "release_unknown",
+        "license_gold",
+        "license_ambiguous",
     ] {
-        let mut invalid = licensed.clone();
-        let xml = invalid[1].fixture.body().into_owned();
-        let damaged = match fault {
-            "education" | "closing" => xml.replace(
-                "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
-                "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",
-            ),
-            "unknown" => xml.replace(
-                "<SILVER TYPE=\"Logical\">Yes</SILVER>",
-                "<SILVER TYPE=\"Logical\">No</SILVER>",
-            ),
-            "product" => xml.replace(
-                "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>",
-                "<PRODUCTNAME TYPE=\"String\">Tally ERP 9</PRODUCTNAME>",
-            ),
-            "editlog" => xml.replace(
-                "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>",
-                "<PRODUCTNAME TYPE=\"String\">TallyPrime Edit Log</PRODUCTNAME>",
-            ),
-            "unknown_product" => xml.replace(
-                "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>",
-                "<PRODUCTNAME TYPE=\"String\">UnknownProduct</PRODUCTNAME>",
-            ),
-            _ => xml.clone(),
-        };
-        if fault != "none" {
-            assert_ne!(damaged, xml);
-        }
-        invalid[1].fixture = Fixture::SyntheticXml(damaged);
-        let plans = if matches!(fault, "closing" | "none") {
+        cases.extend([(fault, false), (fault, true)]);
+    }
+    for (fault, closing) in cases {
+        let invalid = import_profile_probe(fault);
+        let plans = if closing {
             [
                 licensed.clone(),
                 import_cycle_plans()[..16].to_vec(),
@@ -108,7 +148,17 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
             result.evidence
         } else {
             let error = result.err().unwrap();
-            assert_eq!(error.code, "import_mode_unqualified", "{fault}");
+            assert_eq!(
+                error.code,
+                if fault.starts_with("release_") {
+                    "import_release_unqualified"
+                } else if fault.starts_with("license_") {
+                    "import_license_tier_unqualified"
+                } else {
+                    "import_mode_unqualified"
+                },
+                "{fault}, closing={closing}"
+            );
             assert!(!directory.path().join("imports").exists());
             assert!(!directory.path().join("agent-import-ledger.jsonl").exists());
             *error.evidence.unwrap()
@@ -120,7 +170,7 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
         let mut request_hash = join(&request(0), &request(1));
         let mut response_hash = join(&response(0), &response(1));
         let mut bytes = responses[0].len() + responses[1].len();
-        if matches!(fault, "closing" | "none") {
+        if closing {
             assert_eq!(observed.len(), 26);
             for i in [2, 7, 13, 19] {
                 request_hash = join(&request_hash, &request(i));

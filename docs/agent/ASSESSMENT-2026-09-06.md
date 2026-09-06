@@ -126,7 +126,7 @@ The final date-admission audit traced every MCP route:
 | Read family | Admission evidence |
 | --- | --- |
 | Basic/compliance ledger balances, movement openings, native outstandings | Fresh recognized mode, typed permitted period, closing mode observation. |
-| Voucher reads and import readback | Literal date predicates and returned-row window validation; corroborated empty reads, with fresh licensed-mode qualification before import absence is persisted. |
+| Voucher reads and import readback | Literal date predicates and returned-row window validation; corroborated empty reads, with fresh Silver 7.1 profile qualification before import absence is persisted. |
 | Catalogue, currency, company identity, import high-water | Metadata only; no period-dependent balance is released. |
 | Legacy calibrated scan and change enumeration | Unavailable through the MCP evidence path. |
 
@@ -138,10 +138,14 @@ to 0.39 seconds with markers. These are local comparison measurements, not Tally
 response-time claims. New voucher-file generation and its schema admit only
 Journal, the type established by live import/readback. Payment, Receipt, and
 Contra fail before network or file effects; historical records remain readable.
-Fresh observed licensed TallyPrime is required before and after the build reads,
-before any file or batch record is published. Education, unknown modes, ERP9 and
-EditLog have no new-file qualification. This does not assert an observed release
-number or qualify future changes to Tally. Unknown argument names produce a fixed
+Fresh observed TallyPrime Silver 7.1 is required before and after the build
+reads, before any file or batch record is published. The fixed native company
+collection observes the release label and exclusive licence-tier flags; two
+identical 16-company captures establish 7.1/Silver (§3.1 of the protocol reference).
+A missing, conflicting or different release, Gold or ambiguous tier, Education,
+ERP9 and Edit Log have no new-file qualification. Persisted `not_found` import
+verdicts require the same opening and closing profile; positive historical rows
+remain directly observable. This does not qualify future changes to Tally. Unknown argument names produce a fixed
 error code so large property names cannot expand responses or retained evidence.
 
 Existing caller-selected data directories are admitted without changing their
@@ -233,7 +237,7 @@ XML interface, but returned bytes and readback establish the behavior above.
 
 The protocol fixture tree contains unchanged UTF-16LE captures for an empty
 native collection, a three-voucher response, the ledger catalogue, licensed
-company discovery, book extents, native period opening, compliance master/balance/group
+company discovery with and without the later release field, book extents, native period opening, compliance master/balance/group
 sources, and the four native ageing sources. The
 simulator adopts the catalogue's captured synthetic identities; it does not
 rewrite the captured response. Metadata records the exact original wire hash.

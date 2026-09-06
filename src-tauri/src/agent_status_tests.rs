@@ -6,7 +6,7 @@ use tally_protocol_simulator::{
 
 #[tokio::test]
 async fn tally_status_uses_observed_gateway_product_and_preserves_wire_evidence() {
-    let raw = include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml");
+    let raw = include_bytes!("../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml");
     let captured = String::from_utf16(
         &raw.chunks_exact(2)
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
@@ -19,6 +19,7 @@ async fn tally_status_uses_observed_gateway_product_and_preserves_wire_evidence(
         "unavailable",
         "unobserved",
         "education",
+        "release_missing",
     ] {
         let status = ScenarioPlan::new(Fixture::ProductStatus(match fault {
             "conflicting" => ProductStatus::TallyErp9,
@@ -43,6 +44,8 @@ async fn tally_status_uses_observed_gateway_product_and_preserves_wire_evidence(
             );
             assert_ne!(altered, captured);
             altered
+        } else if fault == "release_missing" {
+            captured.replace("<BRIDGERELEASE TYPE=\"String\">7.1</BRIDGERELEASE>", "")
         } else {
             captured.clone()
         };
@@ -81,6 +84,24 @@ async fn tally_status_uses_observed_gateway_product_and_preserves_wire_evidence(
                 "education" => json!(true),
                 "unobserved" => Value::Null,
                 _ => json!(false),
+            },
+            "{fault}"
+        );
+        assert_eq!(
+            result["release"],
+            if fault == "release_missing" {
+                Value::Null
+            } else {
+                json!("7.1")
+            },
+            "{fault}"
+        );
+        assert_eq!(
+            result["license_tier"],
+            if matches!(fault, "education" | "unobserved") {
+                Value::Null
+            } else {
+                json!("silver")
             },
             "{fault}"
         );

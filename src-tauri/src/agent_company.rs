@@ -34,6 +34,7 @@ impl Server {
             json!({
                 "product": product,
                 "release": probe.profile.release,
+                "license_tier": probe.profile.license_tier,
                 "education_mode": education_mode,
                 "endpoint": endpoint,
                 "loaded_companies": probe.companies,

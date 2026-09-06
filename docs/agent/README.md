@@ -102,9 +102,10 @@ optional rows establish response presence while contributing no accounting movem
 `build_import_xml` and `verify_import` are hidden unless the operator sets
 `BRIDGE_AGENT_ENABLE_IMPORT=1`. A licensed synthetic-lab Journal file cycle and
 exact-file repeat import were observed on 2026-09-06. New file generation accepts
-only `Journal`, with freshly observed licensed TallyPrime before and after build
-reads. Other products, Education and unknown modes are refused before publishing
-a file. `Payment`, `Receipt`, and `Contra` are refused until each has
+only `Journal`, with freshly observed **TallyPrime Silver 7.1** before and after
+build reads. Other or unobserved products, releases, licence tiers and modes are
+refused before publishing a file. `tally_status` reports the observed release and
+licence tier; the optional status-page banner cannot supply these facts. `Payment`, `Receipt`, and `Contra` are refused until each has
 live import/readback evidence. Historical batch records remain readable. The response records
 `live_evidence: "synthetic_lab_readback"` and links to
 [the assessment](ASSESSMENT-2026-09-06.md). This does not qualify every voucher
@@ -128,13 +129,14 @@ type, host, licence mode, or manually imported file, so the feature remains opt-
    appends the verification status to the local import ledger.
 
 The file path is deliberately not a direct-posting path. Masters must already
-exist and match exactly. File generation requires observed licensed TallyPrime;
+exist and match exactly. File generation requires the observed TallyPrime Silver 7.1 profile;
 the checks do not make a later manual import atomic with the earlier reads.
-If verification would report any `not_found`, licensed TallyPrime must have been
-observed before and after readback. Otherwise `verification_mode_unqualified`
-withholds the negative verdict and leaves the previous proof and status intact.
-Positive historical readback remains available in an observed unqualified mode.
-A failed mode probe remains a read failure.
+If verification would report any `not_found`, TallyPrime Silver 7.1 must have been
+observed before and after readback. Otherwise `verification_mode_unqualified`,
+`verification_release_unqualified`, or `verification_license_tier_unqualified`
+withholds the absence verdict and leaves the previous proof and status intact.
+Positive historical readback remains available on an unqualified profile.
+A failed profile probe remains a read failure.
 
 Safety boundary: local loopback only, bounded responses, verified company tuple
 selection, append-only receipts, and no agent import dispatch. Unsupported:
