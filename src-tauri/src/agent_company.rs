@@ -3,13 +3,13 @@ use super::*;
 use bridge_tally_core::{CapabilityFeatureId, CapabilityState, EvidenceConfidence};
 
 impl Server {
-    pub(super) async fn status(&self) -> Result<(Value, Evidence), String> {
+    pub(super) async fn status(&self) -> Result<(Value, Evidence), ToolFailure> {
         let endpoint = endpoint_origin(&self.settings.endpoint)?;
         let (probe, wire_evidence) = self
             .runtime
             .probe_with_wire_evidence(self.tally_config())
             .await
-            .map_err(|_| "status_probe_unavailable".to_string())?;
+            .map_err(|error| ToolFailure::from_runtime("status_probe_unavailable", error))?;
         // Product identity comes from the gateway observation, not the optional
         // status page's heuristic banner. Unknown capability stays explicit.
         let observed = probe
@@ -122,6 +122,9 @@ impl Server {
                 )
                 .map_err(|error| {
                     match error {
+                        crate::tally::VerifiedCompanyIdentityError::InvalidCompanyNumber => {
+                            "company_number_invalid"
+                        }
                         crate::tally::VerifiedCompanyIdentityError::InvalidBooksFrom => {
                             "company_books_from_invalid"
                         }
@@ -191,7 +194,11 @@ pub(super) fn company_json(company: &TallyCompany, all: &[TallyCompany]) -> Valu
         .books_from
         .as_ref()
         .is_some_and(|value| bridge_tally_core::TallyDate::parse(value.clone()).is_err());
-    json!({"name": company.name, "guid": guid, "company_number": company.company_number, "books_from": company.books_from, "identity_state": if duplicate_guid {"ambiguous_duplicate_guid"} else if missing.is_some() {"incomplete_tuple"} else if invalid_guid {"invalid_guid"} else if invalid_books_from {"invalid_books_from"} else {"verified_tuple"}, "missing_field": missing})
+    let invalid_number = company
+        .company_number
+        .as_deref()
+        .is_some_and(|value| !crate::tally::validators::is_valid_company_number(value));
+    json!({"name": company.name, "guid": guid, "company_number": company.company_number, "books_from": company.books_from, "identity_state": if duplicate_guid {"ambiguous_duplicate_guid"} else if missing.is_some() {"incomplete_tuple"} else if invalid_guid {"invalid_guid"} else if invalid_number {"invalid_company_number"} else if invalid_books_from {"invalid_books_from"} else {"verified_tuple"}, "missing_field": missing})
 }
 
 #[cfg(test)]
@@ -201,3 +208,7 @@ mod status_tests;
 #[cfg(test)]
 #[path = "agent_company_identity_tests.rs"]
 mod identity_tests;
+
+#[cfg(test)]
+#[path = "agent_company_tuple_tests.rs"]
+mod tuple_tests;

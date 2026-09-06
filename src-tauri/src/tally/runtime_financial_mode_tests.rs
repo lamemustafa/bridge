@@ -475,3 +475,6 @@ async fn rejected_currency_retains_its_completed_pair_before_any_master_read() {
 
 #[path = "runtime_outstandings_currency_tests.rs"]
 mod outstandings_currency_tests;
+
+#[path = "runtime_failure_evidence_inventory_tests.rs"]
+mod failure_evidence_inventory_tests;

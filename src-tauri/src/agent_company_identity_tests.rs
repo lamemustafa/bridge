@@ -6,7 +6,7 @@ use tally_protocol_simulator::{
 
 const GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
 
-fn server(address: std::net::SocketAddr, path: &std::path::Path) -> Server {
+pub(super) fn server(address: std::net::SocketAddr, path: &std::path::Path) -> Server {
     Server::new(Settings {
         endpoint: TallyEndpointConfig {
             host: address.ip().to_string(),

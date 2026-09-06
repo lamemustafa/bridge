@@ -41,16 +41,33 @@ pub use xml_parser::{TallyCompany, TallyImportResult, TallyLedger, TallyVoucher}
 pub struct VerifiedCompanyIdentity {
     display_name: String,
     company_guid: String,
-    company_number: String,
+    company_number: ObservedCompanyNumber,
     books_from_yyyymmdd: bridge_tally_core::TallyDate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerifiedCompanyIdentityError {
+    InvalidCompanyNumber,
     InvalidBooksFrom,
     Missing,
     DuplicateTuple,
     DisplayScopeAmbiguous,
+}
+
+#[derive(Debug, Clone)]
+struct ObservedCompanyNumber(String);
+
+impl ObservedCompanyNumber {
+    fn parse(value: String) -> Result<Self, VerifiedCompanyIdentityError> {
+        if !validators::is_valid_company_number(&value) {
+            return Err(VerifiedCompanyIdentityError::InvalidCompanyNumber);
+        }
+        Ok(Self(value))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl VerifiedCompanyIdentity {
@@ -66,6 +83,7 @@ impl VerifiedCompanyIdentity {
         books_from_yyyymmdd: String,
         companies: &[TallyCompany],
     ) -> Result<Self, VerifiedCompanyIdentityError> {
+        let company_number = ObservedCompanyNumber::parse(company_number)?;
         let books_from_yyyymmdd = bridge_tally_core::TallyDate::parse(books_from_yyyymmdd)
             .map_err(|_| VerifiedCompanyIdentityError::InvalidBooksFrom)?;
         let identity = Self {
@@ -99,7 +117,8 @@ impl VerifiedCompanyIdentity {
         Self {
             display_name: display_name.into(),
             company_guid: company_guid.into(),
-            company_number: "1".to_string(),
+            company_number: ObservedCompanyNumber::parse("1".to_string())
+                .expect("fixed fixture company number is valid"),
             books_from_yyyymmdd: bridge_tally_core::TallyDate::parse("20260401")
                 .expect("fixed fixture date is valid"),
         }

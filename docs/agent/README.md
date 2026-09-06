@@ -214,6 +214,9 @@ construct a verified identity; discovery reports `identity_state: "invalid_guid"
 instead of `verified_tuple`.
 Nonempty `BOOKSFROM` must also parse as a valid Tally date before scoped access;
 discovery reports `invalid_books_from` for a malformed value.
+Observed company numbers must contain 1–16 ASCII digits, using the same rule as
+desktop selection. Discovery labels malformed values `invalid_company_number`;
+scoped access refuses them before any company report is read.
 
 Port zero and ports above 65535 are rejected at startup.
 Unknown arguments, wrong selector types, and invalid enums are rejected before

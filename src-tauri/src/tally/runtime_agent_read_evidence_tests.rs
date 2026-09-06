@@ -129,7 +129,7 @@ async fn agent_pair_failures_retain_each_completed_source_body_and_transport_cau
                         .fetch_native_report_paired(request.clone())
                         .await
                         .unwrap(),
-                    NativePairedRead::Drifted
+                    NativePairedRead::Drifted(_)
                 ));
                 assert_eq!(simulator.finish().unwrap().len(), 4);
             }

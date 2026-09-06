@@ -1605,12 +1605,17 @@ impl TallyRuntime {
             .await?;
         let observed_at_unix_ms = chrono::Utc::now().timestamp_millis();
         let review_id = uuid::Uuid::new_v4().to_string();
-        let mut cache = session
-            .cached_probe
-            .write()
-            .map_err(|_| anyhow::anyhow!("Tally capability cache is unavailable"))?;
+        let mut cache = session.cached_probe.write().map_err(|_| {
+            with_read_evidence(
+                anyhow::anyhow!("Tally capability cache is unavailable"),
+                evidence.clone(),
+            )
+        })?;
         if cache.as_ref().is_some_and(|probe| probe.reserved) {
-            anyhow::bail!("Tally reviewed setup save is in progress");
+            return Err(with_read_evidence(
+                anyhow::anyhow!("Tally reviewed setup save is in progress"),
+                evidence,
+            ));
         }
         *cache = Some(CachedProbe {
             review_id: review_id.clone(),
@@ -1852,16 +1857,8 @@ impl TallyRuntime {
                         let request =
                             render_native_ledger_export_request(identity.display_name(), &period);
                         let paired = client.fetch_native_report_paired(request.clone()).await?;
-                        let NativePairedRead::Stable {
-                            body,
-                            encoded_bytes,
-                            encoded_sha256,
-                        } = paired
-                        else {
-                            return Err(anyhow::Error::new(
-                                PairedReadValidationError::NativeLedgerCollection,
-                            ));
-                        };
+                        let (body, encoded_bytes, encoded_sha256) = paired
+                            .require_stable(PairedReadValidationError::NativeLedgerCollection)?;
                         evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
                             &request,
                             encoded_sha256,
@@ -2282,16 +2279,19 @@ impl TallyRuntime {
                         let receivable = client
                             .fetch_native_report_paired(receivable_request.clone())
                             .await?;
-                        let NativePairedRead::Stable {
-                            body: receivable_body,
-                            encoded_bytes,
-                            encoded_sha256,
-                        } = receivable
-                        else {
-                            return Ok((
-                                partial_result("native_bills_report_drifted"),
-                                read_evidence.clone(),
-                            ));
+                        let (receivable_body, encoded_bytes, encoded_sha256) = match receivable {
+                            NativePairedRead::Stable {
+                                body,
+                                encoded_bytes,
+                                encoded_sha256,
+                            } => (body, encoded_bytes, encoded_sha256),
+                            NativePairedRead::Drifted(evidence) => {
+                                read_evidence = read_evidence.clone().combine(evidence);
+                                return Ok((
+                                    partial_result("native_bills_report_drifted"),
+                                    read_evidence.clone(),
+                                ));
+                            }
                         };
                         total_bytes += encoded_bytes;
                         read_evidence = read_evidence.clone().combine(RuntimeReadEvidence::paired(
@@ -2308,16 +2308,19 @@ impl TallyRuntime {
                         let groups = client
                             .fetch_native_report_paired(group_request.clone())
                             .await?;
-                        let NativePairedRead::Stable {
-                            body: group_body,
-                            encoded_bytes,
-                            encoded_sha256,
-                        } = groups
-                        else {
-                            return Ok((
-                                partial_result("native_group_snapshot_drifted"),
-                                read_evidence.clone(),
-                            ));
+                        let (group_body, encoded_bytes, encoded_sha256) = match groups {
+                            NativePairedRead::Stable {
+                                body,
+                                encoded_bytes,
+                                encoded_sha256,
+                            } => (body, encoded_bytes, encoded_sha256),
+                            NativePairedRead::Drifted(evidence) => {
+                                read_evidence = read_evidence.clone().combine(evidence);
+                                return Ok((
+                                    partial_result("native_group_snapshot_drifted"),
+                                    read_evidence.clone(),
+                                ));
+                            }
                         };
                         total_bytes += encoded_bytes;
                         read_evidence = read_evidence.clone().combine(RuntimeReadEvidence::paired(
@@ -2330,16 +2333,19 @@ impl TallyRuntime {
                         let payable = client
                             .fetch_native_report_paired(payable_request.clone())
                             .await?;
-                        let NativePairedRead::Stable {
-                            body: payable_body,
-                            encoded_bytes,
-                            encoded_sha256,
-                        } = payable
-                        else {
-                            return Ok((
-                                partial_result("native_bills_report_drifted"),
-                                read_evidence.clone(),
-                            ));
+                        let (payable_body, encoded_bytes, encoded_sha256) = match payable {
+                            NativePairedRead::Stable {
+                                body,
+                                encoded_bytes,
+                                encoded_sha256,
+                            } => (body, encoded_bytes, encoded_sha256),
+                            NativePairedRead::Drifted(evidence) => {
+                                read_evidence = read_evidence.clone().combine(evidence);
+                                return Ok((
+                                    partial_result("native_bills_report_drifted"),
+                                    read_evidence.clone(),
+                                ));
+                            }
                         };
                         total_bytes += encoded_bytes;
                         read_evidence = read_evidence.clone().combine(RuntimeReadEvidence::paired(
@@ -2353,16 +2359,19 @@ impl TallyRuntime {
                         let ledgers = client
                             .fetch_native_report_paired(ledger_request.clone())
                             .await?;
-                        let NativePairedRead::Stable {
-                            body: ledger_body,
-                            encoded_bytes,
-                            encoded_sha256,
-                        } = ledgers
-                        else {
-                            return Ok((
-                                partial_result("native_ledger_snapshot_drifted"),
-                                read_evidence.clone(),
-                            ));
+                        let (ledger_body, encoded_bytes, encoded_sha256) = match ledgers {
+                            NativePairedRead::Stable {
+                                body,
+                                encoded_bytes,
+                                encoded_sha256,
+                            } => (body, encoded_bytes, encoded_sha256),
+                            NativePairedRead::Drifted(evidence) => {
+                                read_evidence = read_evidence.clone().combine(evidence);
+                                return Ok((
+                                    partial_result("native_ledger_snapshot_drifted"),
+                                    read_evidence.clone(),
+                                ));
+                            }
                         };
                         total_bytes += encoded_bytes;
                         read_evidence = read_evidence.clone().combine(RuntimeReadEvidence::paired(
@@ -2528,16 +2537,8 @@ impl TallyRuntime {
                             .await?;
                         let request = render_company_currency_request(identity.display_name());
                         let body = client.fetch_native_report_paired(request.clone()).await?;
-                        let NativePairedRead::Stable {
-                            body,
-                            encoded_bytes,
-                            encoded_sha256,
-                        } = body
-                        else {
-                            return Err(anyhow::Error::new(
-                                PairedReadValidationError::CurrencyMaster,
-                            ));
-                        };
+                        let (body, encoded_bytes, encoded_sha256) =
+                            body.require_stable(PairedReadValidationError::CurrencyMaster)?;
                         evidence =
                             RuntimeReadEvidence::paired(&request, encoded_sha256, encoded_bytes);
                         let closing_extent = client

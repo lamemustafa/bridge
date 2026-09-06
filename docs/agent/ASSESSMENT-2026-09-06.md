@@ -309,7 +309,20 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **989 Rust workspace tests**, **227 agent tests
+The final failure-path inventory covers completed status observations before
+company discovery or fallback fails, and both differing bodies at every legacy
+financial pair stage: four outstandings reports, three party-ledger reports,
+currency and basic-ledger reads. Thirteen captured-source fault scenarios retain
+exact commitments and preserve their existing typed error or partial verdict.
+Two additional MCP status cases check the final response, text/structured parity
+and retained `read_evidence` history. A failed child with no completed source
+leaves earlier commitments unchanged; a real zero-byte response retains its
+hashes. Company-number fault injection checks the
+shared 1–16 ASCII-digit rule at discovery, verified identity and scoped tools;
+malformed values release no company report. Existing source-parser name admission
+remains in place.
+
+Local candidate verification: **997 Rust workspace tests**, **231 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -340,7 +353,7 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.62` after catalogue, verification-window and
+additional Journal file for `12.63` after catalogue, verification-window and
 Silver 7.1 profile observations. Its preflight observed the existing Journal;
 readback correctly reported the new file as `not_found`. The file was not imported.
 A separate narration-redaction process preserved the schema's narration property
@@ -376,9 +389,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `647ded543fa92594456203e90304dd3da2fa4dc7cea8212be32489cc71d77425`.
-- MCPB archive SHA-256: `a85ee1527a72c3e084382f6e06649f4babf1f90814a4d9c83b0937cde8132716`.
-- Source fingerprint (361 build-input files, unchanged through the settled-source rebuild): `d179a989252a08d751a83cf562e70c49c2eee55c957a38b51a9ab819d6865bf6`.
+- Release executable SHA-256: `45907fc17d1fd97a3d11534c9816280746419c481bed805820134bd0d038a5bc`.
+- MCPB archive SHA-256: `d9c025162b5819c810d0772b746e6ca9d107c35df3ecf07afb99a719bdad8142`.
+- Source fingerprint (363 build-input files, unchanged through the settled-source rebuild): `bf82c83f214ae0eef0ecaa1c269c4fa831eb56d73b9029413d60f17b8f3ce0c7`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -395,8 +408,8 @@ were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
 The 163-entry sealed surface was audited before each reseal. The latest reseal
-updates four existing paths for typed company book-date admission and the
-observed batch-identity protocol note. No paths were added or
+updates six existing paths for shared company-number admission and retained
+probe/drift evidence across financial readers. No paths were added or
 removed. Previous seals cover observed release/tier profile version 4, typed
 native-ledger validation, the protocol observation, and the qualified file-identity
 and numbering clarification, literal-date counter-observation,

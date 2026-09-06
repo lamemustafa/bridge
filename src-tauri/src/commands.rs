@@ -2214,12 +2214,7 @@ fn verify_observed_company_tuple_from_companies(
             "Probe again and choose an observed company identity.",
         )
     })?;
-    if selected.company_number.is_empty()
-        || selected.company_number.len() > 16
-        || !selected
-            .company_number
-            .bytes()
-            .all(|byte| byte.is_ascii_digit())
+    if !crate::tally::validators::is_valid_company_number(&selected.company_number)
         || TallyDate::parse(selected.books_from_yyyymmdd.clone()).is_err()
     {
         return Err(tally_command_error(
@@ -2239,6 +2234,14 @@ fn verify_observed_company_tuple_from_companies(
         &companies,
     )
     .map_err(|error| match error {
+        VerifiedCompanyIdentityError::InvalidCompanyNumber => tally_command_error(
+            "company_selection_invalid",
+            "Tally application",
+            "The observed company number is invalid.",
+            "after_change",
+            false,
+            "Probe again and choose a valid observed company identity.",
+        ),
         VerifiedCompanyIdentityError::InvalidBooksFrom => tally_command_error(
             "company_books_from_invalid",
             "Tally application",

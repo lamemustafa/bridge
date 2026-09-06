@@ -197,7 +197,25 @@ pub(crate) enum NativePairedRead {
         encoded_bytes: usize,
         encoded_sha256: String,
     },
-    Drifted,
+    Drifted(RuntimeReadEvidence),
+}
+
+impl NativePairedRead {
+    pub(crate) fn require_stable(
+        self,
+        error: PairedReadValidationError,
+    ) -> anyhow::Result<(String, usize, String)> {
+        match self {
+            Self::Stable {
+                body,
+                encoded_bytes,
+                encoded_sha256,
+            } => Ok((body, encoded_bytes, encoded_sha256)),
+            Self::Drifted(evidence) => {
+                Err(super::runtime::with_read_evidence(error.into(), evidence))
+            }
+        }
+    }
 }
 
 #[cfg(feature = "voucher-scan")]
@@ -509,7 +527,8 @@ impl TallyClient {
                 &mut gateway_product_mode,
                 &mut wire_evidence,
             )
-            .await?;
+            .await
+            .map_err(|error| super::runtime::with_read_evidence(error, wire_evidence.clone()))?;
         transports.insert(TransportId::XmlHttp, xml_evidence.clone());
         transports.insert(
             TransportId::JsonEx,
@@ -982,11 +1001,8 @@ impl TallyClient {
         let paired = self
             .fetch_native_report_paired(render_native_ledger_export_request(company, &period))
             .await?;
-        let NativePairedRead::Stable { body, .. } = paired else {
-            return Err(anyhow::Error::new(
-                PairedReadValidationError::NativeLedgerCollection,
-            ));
-        };
+        let (body, _, _) =
+            paired.require_stable(PairedReadValidationError::NativeLedgerCollection)?;
         let parsed =
             parse_native_ledger_source_records_with_evidence(&body, expected_company_guid)?;
         let closing_extent = self
@@ -1047,16 +1063,8 @@ impl TallyClient {
             let master_pair = self
                 .fetch_native_report_paired(master_request.clone())
                 .await?;
-            let NativePairedRead::Stable {
-                body: master_body,
-                encoded_bytes: master_response_bytes,
-                encoded_sha256: master_response_sha256,
-            } = master_pair
-            else {
-                return Err(anyhow::Error::new(
-                    PairedReadValidationError::PartyLedgerMaster,
-                ));
-            };
+            let (master_body, master_response_bytes, master_response_sha256) =
+                master_pair.require_stable(PairedReadValidationError::PartyLedgerMaster)?;
             evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
                 &master_request,
                 master_response_sha256.clone(),
@@ -1075,16 +1083,8 @@ impl TallyClient {
             let balance_pair = self
                 .fetch_native_report_paired(balance_request.clone())
                 .await?;
-            let NativePairedRead::Stable {
-                body: balance_body,
-                encoded_bytes: balance_response_bytes,
-                encoded_sha256: balance_response_sha256,
-            } = balance_pair
-            else {
-                return Err(anyhow::Error::new(
-                    PairedReadValidationError::PartyLedgerBalance,
-                ));
-            };
+            let (balance_body, balance_response_bytes, balance_response_sha256) =
+                balance_pair.require_stable(PairedReadValidationError::PartyLedgerBalance)?;
             evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
                 &balance_request,
                 balance_response_sha256.clone(),
@@ -1096,16 +1096,8 @@ impl TallyClient {
             let group_pair = self
                 .fetch_native_report_paired(group_request.clone())
                 .await?;
-            let NativePairedRead::Stable {
-                body: group_body,
-                encoded_bytes: group_response_bytes,
-                encoded_sha256: group_response_sha256,
-            } = group_pair
-            else {
-                return Err(anyhow::Error::new(
-                    PairedReadValidationError::PartyLedgerGroup,
-                ));
-            };
+            let (group_body, group_response_bytes, group_response_sha256) =
+                group_pair.require_stable(PairedReadValidationError::PartyLedgerGroup)?;
             evidence = evidence.clone().combine(RuntimeReadEvidence::paired(
                 &group_request,
                 group_response_sha256.clone(),
@@ -1334,14 +1326,15 @@ impl TallyClient {
                     .chain()
                     .any(|cause| cause.is::<NativeReportPairDrift>()) =>
             {
-                Ok(NativePairedRead::Drifted)
+                let failure = error.downcast::<super::runtime::RuntimeReadFailure>()?;
+                Ok(NativePairedRead::Drifted(failure.evidence))
             }
             Err(error) => Err(error),
         }
     }
 
-    // The adapter needs the completed source commitments even on pair drift;
-    // the legacy verdict wrapper above deliberately keeps its existing API.
+    // Both adapters and the financial verdict wrapper retain completed source
+    // commitments on pair drift; the wrapper preserves its Partial classification.
     pub(crate) async fn fetch_native_report_paired_with_evidence(
         &self,
         request_xml: String,

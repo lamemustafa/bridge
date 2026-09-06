@@ -384,6 +384,12 @@ impl ToolFailure {
         let evidence = error.chain().find_map(|cause| {
             cause
                 .downcast_ref::<crate::tally::runtime::RuntimeReadFailure>()
+                // Empty hashes are the runtime's absent-source sentinel. A real
+                // zero-byte response still has commitments and must survive.
+                .filter(|failure| {
+                    !failure.evidence.request_sha256.is_empty()
+                        || !failure.evidence.response_sha256.is_empty()
+                })
                 .map(|failure| Box::new(evidence_from_runtime_read(failure.evidence.clone())))
         });
         Self {

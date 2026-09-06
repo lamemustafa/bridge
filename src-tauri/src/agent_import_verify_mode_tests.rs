@@ -60,6 +60,13 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
         ("mode_changed", "none", "education", false, false),
         ("closing_http_failure", "none", "education", false, false),
         (
+            "closing_all_http_failure",
+            "none",
+            "education",
+            false,
+            false,
+        ),
+        (
             "unknown_profile_positive",
             "release_and_tier_unknown",
             "none",
@@ -93,15 +100,17 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
         }
         let negative = !has_rows || missing_expected;
         let close = negative && opening_fault == "none";
-        let closing_http_failure = case == "closing_http_failure";
+        let closing_http_failure =
+            matches!(case, "closing_http_failure" | "closing_all_http_failure");
         let mut closing = if close {
             mode_tests::import_profile_probe(closing_fault)
         } else {
             vec![]
         };
         if closing_http_failure {
-            for plan in &mut closing {
-                plan.http_status = 503;
+            closing.last_mut().unwrap().http_status = 503;
+            if case == "closing_all_http_failure" {
+                closing[0].http_status = 503;
             }
         }
         let plans = [
@@ -254,6 +263,12 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
                 &join(&sha256_hex(&responses[18]), &sha256_hex(&responses[19])),
             );
             bytes += responses[18].len() + responses[19].len();
+        } else if case == "closing_http_failure" {
+            // The closing GET completed before the failing company POST. Keep
+            // exactly that source, without counting the rejected POST body.
+            request = join(&request, &observed[18].request_body_sha256);
+            response = join(&response, &sha256_hex(&responses[18]));
+            bytes += responses[18].len();
         }
         assert_eq!(content["evidence"]["request_sha256"], request, "{case}");
         assert_eq!(content["evidence"]["response_sha256"], response, "{case}");
