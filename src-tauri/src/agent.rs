@@ -238,7 +238,9 @@ fn tally_port(value: Option<String>) -> Result<u16, String> {
         None => Ok(9000),
         Some(value) => value
             .parse::<u16>()
-            .map_err(|_| "port_setting_invalid".to_string()),
+            .ok()
+            .filter(|port| *port > 0)
+            .ok_or_else(|| "port_setting_invalid".to_string()),
     }
 }
 

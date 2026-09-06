@@ -842,10 +842,16 @@ fn ledger_lookup_prefers_exact_live_spelling_and_rejects_ambiguous_matches() {
 fn tally_port_defaults_only_when_the_environment_value_is_absent() {
     assert_eq!(tally_port(None), Ok(9000));
     assert_eq!(tally_port(Some("9001".to_string())), Ok(9001));
-    assert_eq!(
-        tally_port(Some("not-a-port".to_string())),
-        Err("port_setting_invalid".to_string())
-    );
+    for port in [1, u16::MAX] {
+        assert_eq!(tally_port(Some(port.to_string())), Ok(port));
+    }
+    for value in ["0", "65536", "-1", "", "not-a-port"] {
+        assert_eq!(
+            tally_port(Some(value.to_string())),
+            Err("port_setting_invalid".to_string()),
+            "{value} must fail at settings admission"
+        );
+    }
 }
 
 #[test]
