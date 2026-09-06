@@ -1,68 +1,9 @@
 //! Change parse for the local MCP adapter.
 use super::*;
 
-pub(super) fn parse_company_high_water(xml: &str, expected_guid: &str) -> Result<Value, String> {
-    validate_agent_envelope(xml)?;
-    let mut reader = quick_xml::Reader::from_str(xml);
-    reader.config_mut().trim_text(false);
-    let mut rows = Vec::<BTreeMap<String, String>>::new();
-    let mut current: Option<BTreeMap<String, String>> = None;
-    let mut tag = String::new();
-    let mut scope = NativeCollectionScope::default();
-    loop {
-        match reader.read_event() {
-            Ok(quick_xml::events::Event::Start(event)) => {
-                let name = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
-                if name == "COMPANY" && scope.collection() {
-                    current = Some(BTreeMap::new());
-                }
-                scope.start(name.clone());
-                tag = name;
-            }
-            Ok(quick_xml::events::Event::Text(text)) => {
-                if let (Some(row), Ok(value)) = (
-                    current.as_mut().filter(|_| scope.field("COMPANY")),
-                    text.decode(),
-                ) {
-                    row.insert(tag.clone(), value.into_owned());
-                }
-            }
-            Ok(quick_xml::events::Event::End(event)) => {
-                let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
-                if scope.row("COMPANY") {
-                    if let Some(row) = current.take() {
-                        rows.push(row);
-                    }
-                }
-                scope.end(&end)?;
-                tag.clear();
-            }
-            Ok(quick_xml::events::Event::Empty(event)) => {
-                let name = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
-                if scope.collection() && matches!(name.as_str(), "COMPANY" | "LEDGER" | "GROUP") {
-                    return Err("agent_read_protocol_invalid".to_string());
-                }
-                scope.start(name.clone());
-                scope.end(&name)?;
-            }
-            Ok(quick_xml::events::Event::Eof) => break,
-            Err(_) => return Err("agent_read_protocol_invalid".to_string()),
-            _ => {}
-        }
-    }
-    scope.finish()?;
-    let row = rows
-        .into_iter()
-        .find(|row| {
-            row.get("GUID")
-                .is_some_and(|guid| guid.eq_ignore_ascii_case(expected_guid))
-        })
-        .ok_or_else(|| "company_high_water_identity_absent".to_string())?;
-    Ok(json!({
-        "altvchid": observed_checkpoint(row.get("ALTVCHID"), "voucher")?,
-        "altmstid": observed_checkpoint(row.get("ALTMSTID"), "master")?,
-    }))
-}
+#[path = "agent_company_checkpoint.rs"]
+mod company_checkpoint;
+pub(super) use company_checkpoint::parse_company_high_water;
 
 pub(super) fn parse_master_domain_high_water(xml: &str) -> Result<u64, String> {
     validate_agent_envelope(xml)?;
