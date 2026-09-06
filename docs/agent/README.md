@@ -166,6 +166,7 @@ requests. Frames are limited to 5 MB; tool responses obey the configured byte
 cap including the JSON-RPC wrapper and newline. Text content contains the same
 serialized, redacted JSON as `structuredContent` for older clients.
 
+Port zero and ports above 65535 are rejected at startup.
 Unknown arguments, wrong selector types, and invalid enums are rejected before
 any Tally request. Checkpoint numeric strings are no longer accepted at the tool
 boundary. `changed_since` is unavailable; existing clients must stop calling it.
@@ -175,8 +176,8 @@ Near-miss suggestions are limited to 25 names and 8192 UTF-8 bytes per requested
 name; `candidate_count` and `candidates_truncated` preserve ambiguity. Import
 planning allows 1000 vouchers but at most 100 distinct ledger names per batch.
 Repeated uses of a ledger do not consume additional distinct-name slots.
-Voucher and movement ledger selectors share the 1024-character bound; their
-normalized lookup key is computed once before scanning live names.
+Voucher-type and ledger selectors share the 1024-character bound; ledger
+lookup keys are computed once before scanning live names.
 
 Byte-limited pages retain forward progress or return `agent_response_too_large`;
 they never advertise the same offset after removing every row. Outstandings
@@ -205,7 +206,8 @@ If a build persists a file but the response or receipt fails, the JSON-RPC error
 contains `error.data.batch_id`. Retain it and use `verify_import` or inspect the
 local import ledger; do not blindly rebuild or import another batch. Proof JSON,
 Markdown, and ledger status are published under one admission lock. Handled
-publication failures restore the prior proof pair and ledger state. An interrupted
+publication failures restore the prior proof pair and ledger state. Builds create
+the journal first, write and sync staged XML, then expose the importable filename. An interrupted
 publication or failed rollback leaves a recovery journal and blocks further import
 admission until the local files and ledger are reconciled. Preserve the journal,
 its backups, and generated XML; do not delete it merely to retry. This is explicit

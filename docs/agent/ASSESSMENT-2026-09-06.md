@@ -130,7 +130,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **884 Rust workspace tests**, **144 agent tests
+Local candidate verification: **888 Rust workspace tests**, **148 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -139,8 +139,8 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed twelve live checks with party masking:
-eleven complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed sixteen live checks with party masking:
+fifteen complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. Status, master
@@ -149,15 +149,19 @@ restored-batch verification, and egress-log readback also completed.
 Every emitted frame matched its receipt and text/structured representations.
 Status, filtered-voucher, and compliance-master commitments and source byte counts
 were independently recomputed from the captured transport request/response files.
+The voucher-type filter also completed. A new staged file was generated, its
+journal was cleaned up, and readback correctly reported it as not imported; no
+additional Tally posting was performed. A separate process check confirmed port
+zero fails at startup before creating the data directory.
 That same binary passed eight checks using official MCP
 JavaScript SDK 1.30.0, negotiating 2025-11-25 down to 2025-06-18. Official MCPB
 CLI 2.1.2 validated and packed the archive. Its extracted executable and all four
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `e20bbcfc4a9629c615452c883b70b11d29e0ace77957958411d7ac0a80b6c8d4`.
-- MCPB archive SHA-256: `434162d79592e6430baa76999b29b8fcef211c91b6f3d6eb0c588ebada253da0`.
-- Source fingerprint (303 build-input files, unchanged through the settled-source rebuild): `21675a40648d24397fc7e6ca12a8b97ea7fa327f3822ce1d8244ca1bd3d9a13e`.
+- Release executable SHA-256: `88ea543bacbc359d74b07c4400464dabe4a4086b675d63ed29f2be3c42a4063d`.
+- MCPB archive SHA-256: `bfa7a2ed179974956ec24914ad35d23077fff0d783dd3897ee85c3971a493b7b`.
+- Source fingerprint (303 build-input files, unchanged through the settled-source rebuild): `654f109a80197a92ac95f040b9c81522980016401b9828bd9c17b01e079c88cd`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
