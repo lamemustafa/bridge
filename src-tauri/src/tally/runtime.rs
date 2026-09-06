@@ -3463,6 +3463,9 @@ mod tests {
 
     #[tokio::test]
     async fn single_company_read_returns_the_forex_capture_partial() {
+        const LICENSED_DISCOVERY_CAPTURE: &[u8] = include_bytes!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml"
+        );
         const EXTENT: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
         );
@@ -3491,7 +3494,8 @@ mod tests {
         let address = listener.local_addr().expect("synthetic server address");
         let server = tokio::spawn(async move {
             let mut source_post_index = 0;
-            for index in 0..26 {
+            let mut company_post_index = 0;
+            for index in 0..30 {
                 let (mut socket, _) =
                     tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
                         .await
@@ -3516,7 +3520,15 @@ mod tests {
                     if xml.contains("<ID>BridgeCompanyExtent</ID>")
                         && !xml.contains("<SVCURRENTCOMPANY>")
                     {
-                        utf16_xml_response(company_list)
+                        // The first/last global discovery reads observe mode;
+                        // the two inner reads pin this test's single-company tuple.
+                        let response = if matches!(company_post_index, 0 | 3) {
+                            utf16_xml_response_bytes(LICENSED_DISCOVERY_CAPTURE)
+                        } else {
+                            utf16_xml_response(company_list)
+                        };
+                        company_post_index += 1;
+                        response
                     } else {
                         let response = match source_post_index {
                             0 | 1 | 10 | 11 => utf16_xml_response(&extent),
@@ -3530,6 +3542,8 @@ mod tests {
                 };
                 socket.write_all(&response).await.expect("write response");
             }
+            assert_eq!(company_post_index, 4);
+            assert_eq!(source_post_index, 12);
         });
 
         let result = TallyRuntime::default()
