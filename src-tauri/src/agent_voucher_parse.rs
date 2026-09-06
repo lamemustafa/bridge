@@ -96,7 +96,25 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                     return Err("agent_read_protocol_invalid".into());
                 }
                 if tag == "VOUCHER" && scope.collection() {
-                    current = Some(BTreeMap::new());
+                    let mut row = BTreeMap::new();
+                    for attribute in event.attributes() {
+                        let attribute =
+                            attribute.map_err(|_| "agent_read_protocol_invalid".to_string())?;
+                        if attribute.key.as_ref().eq_ignore_ascii_case(b"REMOTEID") {
+                            claim_agent_scalar(&mut row, "REMOTEID")?;
+                            row.insert(
+                                "REMOTEID".into(),
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        quick_xml::XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|_| "agent_read_protocol_invalid".to_string())?
+                                    .into_owned(),
+                            );
+                        }
+                    }
+                    current = Some(row);
                     entries.clear();
                 }
                 if tag == "ALLLEDGERENTRIES.LIST" && scope.row("VOUCHER") {
@@ -191,6 +209,9 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                         )?;
                         let amounts = std::mem::take(&mut entries);
                         let mut parsed = json!({"date": row.get("DATE"), "voucher_number": row.get("VOUCHERNUMBER"), "voucher_type": row.get("VOUCHERTYPENAME"), "party": row.get("PARTYLEDGERNAME"), "narration": row.get("NARRATION"), "guid": row.get("GUID"), "alter_id": parse_optional_tally_alter_id(row.get("ALTERID").map(String::as_str))?, "master_id": row.get("MASTERID"), "amounts": amounts});
+                        if require_change_identity {
+                            parsed["remote_id"] = json!(row.get("REMOTEID"));
+                        }
                         parsed["cancelled"] =
                             Value::Bool(required_tally_bool(row.get("ISCANCELLED"))?);
                         parsed["optional"] =

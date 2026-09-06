@@ -1,6 +1,6 @@
 use super::*;
 
-fn captured_vouchers() -> String {
+pub(super) fn captured_vouchers() -> String {
     let bytes = include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
     );
@@ -17,7 +17,7 @@ fn captured_vouchers() -> String {
 fn import_boundary_rejects_malformed_accounting_scalars_in_captured_vouchers() {
     let captured = captured_vouchers();
     let baseline = parse_import_vouchers(&captured).unwrap();
-    assert_eq!(baseline.len(), 3);
+    assert_eq!(baseline.rows.len(), 3);
     let escaped_flags = captured
         .replace(">No</ISCANCELLED>", ">N&#111;</ISCANCELLED>")
         .replace(">No</ISOPTIONAL>", ">N&#111;</ISOPTIONAL>")
@@ -45,13 +45,13 @@ fn import_boundary_rejects_malformed_accounting_scalars_in_captured_vouchers() {
         ),
         (
             "DATE",
-            baseline[0].date.as_deref().unwrap(),
+            baseline.rows[0].date.as_deref().unwrap(),
             "20260230",
             "import_verification_export_invalid",
         ),
         (
             "AMOUNT",
-            baseline[0].entries[0].amount.as_str(),
+            baseline.rows[0].entries[0].amount.as_str(),
             "not-a-number",
             "import_verification_amount_invalid",
         ),

@@ -61,7 +61,7 @@ fn identical_expected_vouchers_verify_only_with_unique_full_attribution() {
             line.vouchers.reverse();
             observed.reverse();
         }
-        let result = verify_batch(&line, &observed).unwrap();
+        let result = verify_observed_batch(&line, &observed).unwrap();
         assert_eq!(result["counts"]["posted_verified"], 2);
         assert_eq!(result["duplicates"], json!([]));
         assert_eq!(result["unrelated_duplicates_in_window"], json!([]));
@@ -70,21 +70,23 @@ fn identical_expected_vouchers_verify_only_with_unique_full_attribution() {
     for extra_tag in [None, observed[0].narration.clone()] {
         let mut extra = observed[0].clone();
         extra.guid = Some("unexpected-guid".into());
+        extra.master_id = Some("999".into());
         extra.remote_id = Some("unexpected-remote".into());
         extra.narration = extra_tag;
-        let result = verify_batch(&line, &[observed.clone(), vec![extra]].concat()).unwrap();
+        let result =
+            verify_observed_batch(&line, &[observed.clone(), vec![extra]].concat()).unwrap();
         assert!(!result["duplicates"].as_array().unwrap().is_empty());
         assert_eq!(verification_status(&result, 2), "verification_incomplete");
     }
     let mut untagged = observed.clone();
     untagged[1].narration = None;
-    let result = verify_batch(&line, &untagged).unwrap();
+    let result = verify_observed_batch(&line, &untagged).unwrap();
     assert_eq!(result["counts"]["posted_verified"], 1);
     assert_eq!(verification_status(&result, 2), "verification_incomplete");
     assert!(!result["duplicates"].as_array().unwrap().is_empty());
     let mut duplicate_remote = observed.clone();
     duplicate_remote[1].remote_id = duplicate_remote[0].remote_id.clone();
-    let result = verify_batch(&line, &duplicate_remote).unwrap();
+    let result = verify_observed_batch(&line, &duplicate_remote).unwrap();
     assert!(result["duplicates"]
         .as_array()
         .unwrap()
@@ -94,8 +96,8 @@ fn identical_expected_vouchers_verify_only_with_unique_full_attribution() {
     let mut repeated_identity = observed.clone();
     repeated_identity[1].guid = repeated_identity[0].guid.clone();
     assert_eq!(
-        verify_batch(&line, &repeated_identity),
-        Err("import_verification_tag_ambiguous".into())
+        verify_observed_batch(&line, &repeated_identity),
+        Err("import_verification_identity_invalid".into())
     );
 }
 
@@ -112,7 +114,7 @@ fn overlapping_expected_tags_remain_ambiguous_in_both_payload_orders() {
                 line.vouchers.reverse();
             }
             assert_eq!(
-                verify_batch(&line, source),
+                verify_observed_batch(&line, source),
                 Err("import_verification_tag_ambiguous".into())
             );
         }

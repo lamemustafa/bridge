@@ -438,7 +438,8 @@ fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
     let mut unrelated_duplicate = unrelated.clone();
     unrelated_duplicate.guid = Some("synthetic-guid-4".into());
     let result =
-        verify_batch(&line, &[voucher, duplicate, unrelated, unrelated_duplicate]).unwrap();
+        verify_observed_batch(&line, &[voucher, duplicate, unrelated, unrelated_duplicate])
+            .unwrap();
     assert_eq!(result["counts"]["posted_divergent"], 1);
     assert_eq!(result["duplicates"].as_array().unwrap().len(), 1);
     assert_eq!(
@@ -548,7 +549,7 @@ fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
             ],
         },
     ];
-    let result = verify_batch(&line, &observed).expect("verification result");
+    let result = verify_observed_batch(&line, &observed).expect("verification result");
     assert_eq!(result["counts"]["posted_divergent"], 1);
     assert_eq!(result["counts"]["not_found"], 1);
     assert_eq!(result["duplicates"].as_array().map(Vec::len), Some(1));
@@ -557,7 +558,7 @@ fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
         Err("import_verification_protocol_invalid".to_string())
     );
     assert_eq!(
-        parse_import_vouchers("<ENVELOPE><BODY><RESPONSE>error</RESPONSE></BODY></ENVELOPE>"),
+        parse_import_vouchers("<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><RESPONSE>error</RESPONSE></BODY></ENVELOPE>"),
         Err("import_verification_protocol_invalid".to_string())
     );
 }
@@ -579,7 +580,7 @@ fn verification_window_corroboration_rejects_each_unsafe_branch() {
     };
     let inside = voucher("guid-1", 3, "20260901");
     assert_eq!(
-        corroborate_verification_window(
+        corroborate_observed_window(
             &[voucher("guid-1", 3, "20260903")],
             std::slice::from_ref(&inside),
             "20260901",
@@ -588,7 +589,7 @@ fn verification_window_corroboration_rejects_each_unsafe_branch() {
         Err("window_not_honoured".to_string())
     );
     assert_eq!(
-        corroborate_verification_window(
+        corroborate_observed_window(
             std::slice::from_ref(&inside),
             &[voucher("guid-2", 3, "20260901")],
             "20260901",
@@ -597,7 +598,7 @@ fn verification_window_corroboration_rejects_each_unsafe_branch() {
         Err("verification_incomplete:window_not_corroborated".to_string())
     );
     assert_eq!(
-        corroborate_verification_window(
+        corroborate_observed_window(
             std::slice::from_ref(&inside),
             std::slice::from_ref(&inside),
             "20260901",
@@ -731,7 +732,7 @@ fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
             is_deemed_positive: "No".to_string(),
         }],
     };
-    let result = verify_batch(&line, &[posted, unrelated("u-1"), unrelated("u-2")])
+    let result = verify_observed_batch(&line, &[posted, unrelated("u-1"), unrelated("u-2")])
         .expect("verification result");
     assert_eq!(result["counts"]["posted_verified"], 1);
     assert!(result["duplicates"].as_array().is_some_and(Vec::is_empty));
@@ -792,12 +793,13 @@ fn fingerprint_only_verification_requires_a_post_mark_voucher() {
         ],
     };
     assert_eq!(
-        verify_batch(&line, &[observed(10)]).expect("verification result")["vouchers"][0]["status"],
+        verify_observed_batch(&line, &[observed(10)]).expect("verification result")["vouchers"][0]
+            ["status"],
         "not_attributable"
     );
     // A concurrent manual voucher can have the same accounting contents
     // after the build mark without ever importing this batch's file.
-    let after = verify_batch(&line, &[observed(11)]).expect("verification result");
+    let after = verify_observed_batch(&line, &[observed(11)]).expect("verification result");
     assert_eq!(after["vouchers"][0]["status"], "matching_content_observed");
     assert_eq!(after["vouchers"][0]["attribution"], "not_established");
     assert_eq!(after["counts"]["posted_verified"], 0);
@@ -850,7 +852,7 @@ fn fingerprint_fallback_consumes_an_observed_voucher_once_per_batch() {
             },
         ],
     };
-    let result = verify_batch(&line, &[observed]).expect("verification result");
+    let result = verify_observed_batch(&line, &[observed]).expect("verification result");
     assert_eq!(result["counts"]["matching_content_observed"], 1);
     assert_eq!(result["counts"]["posted_verified"], 0);
     assert_eq!(result["counts"]["not_found"], 1);
@@ -912,8 +914,8 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
         if reverse {
             line.vouchers.reverse();
         }
-        let result =
-            verify_batch(&line, std::slice::from_ref(&observed)).expect("verification result");
+        let result = verify_observed_batch(&line, std::slice::from_ref(&observed))
+            .expect("verification result");
         assert_eq!(result["counts"]["posted_verified"], 1);
         assert_eq!(verification_status(&result, 2), "verification_incomplete");
         for row in result["vouchers"].as_array().expect("voucher results") {
@@ -973,14 +975,15 @@ fn narration_tag_verification_requires_a_post_mark_voucher() {
             },
         ],
     };
-    let before = verify_batch(&line, &[observed(10)]).expect("pre-mark tag");
+    let before = verify_observed_batch(&line, &[observed(10)]).expect("pre-mark tag");
     assert_eq!(before["vouchers"][0]["status"], "not_attributable");
     assert_eq!(
         before["vouchers"][0]["reason"],
         "tag_precedes_pre_import_voucher_mark"
     );
     assert_eq!(
-        verify_batch(&line, &[observed(11)]).expect("post-mark tag")["vouchers"][0]["status"],
+        verify_observed_batch(&line, &[observed(11)]).expect("post-mark tag")["vouchers"][0]
+            ["status"],
         "posted_verified"
     );
 }
@@ -1034,12 +1037,12 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
         ],
     };
     let matching = observed(11);
-    let result =
-        verify_batch(&line, std::slice::from_ref(&matching)).expect("numeric verification");
+    let result = verify_observed_batch(&line, std::slice::from_ref(&matching))
+        .expect("numeric verification");
     assert_eq!(result["vouchers"][0]["status"], "posted_verified");
     let mut divergent = matching;
     divergent.entries[0].amount = "-12.51".to_string();
-    let result = verify_batch(&line, &[divergent]).expect("numeric divergence");
+    let result = verify_observed_batch(&line, &[divergent]).expect("numeric divergence");
     assert_eq!(result["vouchers"][0]["status"], "posted_divergent");
 }
 
@@ -1088,7 +1091,7 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
         ],
     };
     assert_eq!(
-        verify_batch(&line, std::slice::from_ref(&observed)).expect("effective voucher")
+        verify_observed_batch(&line, std::slice::from_ref(&observed)).expect("effective voucher")
             ["vouchers"][0]["status"],
         "posted_verified"
     );
@@ -1096,14 +1099,15 @@ fn verified_import_vouchers_require_observed_effective_accounting_flags() {
         let mut ineffective = observed.clone();
         ineffective.cancelled = cancelled;
         ineffective.optional = optional;
-        let result = verify_batch(&line, &[ineffective]).expect("ineffective voucher result");
+        let result =
+            verify_observed_batch(&line, &[ineffective]).expect("ineffective voucher result");
         assert_eq!(result["vouchers"][0]["status"], "posted_not_effective");
         assert_eq!(result["counts"]["posted_not_effective"], 1);
     }
     let mut missing = observed;
     missing.optional = None;
     assert_eq!(
-        verify_batch(&line, &[missing]),
+        verify_observed_batch(&line, &[missing]),
         Err("voucher_accounting_state_not_observed".to_string())
     );
 }
@@ -1123,20 +1127,20 @@ fn company_high_water_mark_refuses_voucher_scan_shapes_and_preserves_attribution
 
 #[test]
 fn verification_unescapes_every_record_text_node_before_fingerprinting() {
-    let xml = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><NARRATION>Party &amp; Co &lt;quoted&gt; &quot;name&quot; &#x26;</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D &lt;Lab&gt; &quot;A&quot; &#38;</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
+    let xml = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><GUID>guid-escape</GUID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL><DATE>20260901</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><NARRATION>Party &amp; Co &lt;quoted&gt; &quot;name&quot; &#x26;</NARRATION><ALLLEDGERENTRIES.LIST><LEDGERNAME>R&amp;D &lt;Lab&gt; &quot;A&quot; &#38;</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-12.50</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
     let observed = parse_import_vouchers(xml).expect("escaped export parses");
     assert_eq!(
-        observed[0].narration.as_deref(),
+        observed.rows[0].narration.as_deref(),
         Some("Party & Co <quoted> \"name\" &")
     );
-    assert_eq!(observed[0].entries[0].ledger, "R&D <Lab> \"A\" &");
+    assert_eq!(observed.rows[0].entries[0].ledger, "R&D <Lab> \"A\" &");
 }
 
 #[test]
 fn verification_rejects_unknown_entities_in_ledger_and_narration_fragments() {
     for xml in [
-        "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST><LEDGERNAME>A&bogus;B</LEDGERNAME></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>",
-        "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><NARRATION>A&bogus;B</NARRATION></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>",
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST><LEDGERNAME>A&bogus;B</LEDGERNAME></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>",
+        "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><NARRATION>A&bogus;B</NARRATION></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>",
     ] {
         assert_eq!(
             parse_import_vouchers(xml),
@@ -1153,7 +1157,7 @@ fn verification_rejects_incomplete_ledger_entries() {
         "<LEDGERNAME>Expense</LEDGERNAME><AMOUNT>-12.50</AMOUNT>",
     ] {
         let xml = format!(
-            "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST>{entry}</ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><VOUCHER><ALLLEDGERENTRIES.LIST>{entry}</ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
         );
         assert_eq!(
             parse_import_vouchers(&xml),
@@ -1348,6 +1352,7 @@ fn native_cmpinfo_counter_does_not_become_an_import_verification_voucher() {
     let xml = String::from_utf16(&words).expect("captured UTF-16LE response");
     assert!(parse_import_vouchers(&xml)
         .expect("native empty verification collection")
+        .rows
         .is_empty());
 }
 
@@ -1362,10 +1367,11 @@ fn native_captured_import_readback_keeps_direct_amounts_and_padded_identifiers()
         .collect::<Vec<_>>();
     let xml = String::from_utf16(&words).expect("captured UTF-16LE response");
     let rows = parse_import_vouchers(&xml).expect("captured native readback");
-    assert_eq!(rows.len(), 3);
-    for (row, (id, amount)) in rows
-        .iter()
-        .zip([(1, "-101.01"), (2, "-102.02"), (3, "-103.03")])
+    assert_eq!(rows.rows.len(), 3);
+    for (row, (id, amount)) in
+        rows.rows
+            .iter()
+            .zip([(1, "-101.01"), (2, "-102.02"), (3, "-103.03")])
     {
         assert_eq!(row.alter_id, Some(id));
         assert_eq!(row.entries.len(), 2);
@@ -1456,3 +1462,24 @@ mod boundary_tests;
 
 #[path = "agent_import_multiplicity_tests.rs"]
 mod multiplicity_tests;
+
+fn verify_observed_batch(line: &ImportLedgerLine, rows: &[ReadVoucher]) -> Result<Value, String> {
+    verify_batch(line, &ImportReadSource::admit(rows.to_vec())?)
+}
+
+fn corroborate_observed_window(
+    observed: &[ReadVoucher],
+    corroboration: &[ReadVoucher],
+    from: &str,
+    to: &str,
+) -> Result<(), String> {
+    corroborate_verification_window(
+        &ImportReadSource::admit(observed.to_vec())?,
+        &ImportReadSource::admit(corroboration.to_vec())?,
+        from,
+        to,
+    )
+}
+
+#[path = "agent_import_source_tests.rs"]
+mod source_tests;

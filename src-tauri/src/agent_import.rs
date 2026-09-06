@@ -8,7 +8,6 @@ use bridge_tally_protocol::parse_standard_ledger_catalog;
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
 use chrono::{SecondsFormat, Utc};
 use fs2::FileExt;
-use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -124,14 +123,14 @@ struct PreImportMark {
     master_value: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct ReadEntry {
     ledger: String,
     amount: String,
     is_deemed_positive: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct ReadVoucher {
     remote_id: Option<String>,
     guid: Option<String>,
@@ -143,7 +142,52 @@ struct ReadVoucher {
     master_id: Option<String>,
     cancelled: Option<bool>,
     optional: Option<bool>,
+    #[serde(rename = "amounts")]
     entries: Vec<ReadEntry>,
+}
+
+/// A complete collection admitted before either corroboration or attribution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ImportReadSource {
+    rows: Vec<ReadVoucher>,
+}
+
+impl ImportReadSource {
+    fn admit(mut rows: Vec<ReadVoucher>) -> Result<Self, String> {
+        let mut guids = BTreeSet::new();
+        let mut master_ids = BTreeSet::new();
+        for row in &mut rows {
+            if let Some(guid) = row.guid.as_mut() {
+                *guid = guid.trim().to_ascii_lowercase();
+                if guid.is_empty() || !guids.insert(guid.clone()) {
+                    return Err("import_verification_identity_invalid".into());
+                }
+            }
+            let master_id = super::parse_optional_tally_u64(
+                row.master_id.as_deref(),
+                "import_verification_master_id_invalid",
+            )?;
+            if master_id.is_some_and(|id| !master_ids.insert(id)) {
+                return Err("import_verification_identity_invalid".into());
+            }
+            row.master_id = master_id.map(|id| id.to_string());
+            if row.guid.is_none() && row.master_id.is_none() {
+                return Err("import_verification_identity_invalid".into());
+            }
+            let narration = row.narration.as_deref().unwrap_or_default();
+            for (index, (start, _)) in narration.match_indices("[BRIDGE").enumerate() {
+                if index > 0 {
+                    return Err("import_verification_tag_ambiguous".into());
+                }
+                narration[start..]
+                    .strip_prefix("[BRIDGE:")
+                    .and_then(|tail| tail.split_once(']').map(|(id, _)| id))
+                    .filter(|id| valid_txn_id(id))
+                    .ok_or_else(|| "import_verification_tag_invalid".to_string())?;
+            }
+        }
+        Ok(Self { rows })
+    }
 }
 
 impl Server {
@@ -327,7 +371,7 @@ impl Server {
                 "company": company_json(&company, std::slice::from_ref(&company)),
                 "batch_id": line.batch_id, "batch_sha256": line.sha256,
                 "built_at": line.built_at, "verified_at": now(),
-                "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed),
+                "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed.rows),
                 "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
                 "evidence": {"company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
@@ -871,220 +915,46 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn parse_import_vouchers(xml: &str) -> Result<Vec<ReadVoucher>, String> {
-    validate_verification_envelope(xml)?;
-    let mut reader = quick_xml::Reader::from_str(xml);
-    // Keep text fragments intact: quick-xml emits entity references separately,
-    // and trimming the neighbouring fragments would turn `Party & Co` into
-    // `Party&Co` before the fingerprint is built.
-    reader.config_mut().trim_text(false);
-    let mut vouchers = Vec::new();
-    let mut voucher: Option<ReadVoucher> = None;
-    let mut entry: Option<ReadEntry> = None;
-    let mut flags = BTreeMap::new();
-    let mut tag = String::new();
-    let mut scope = super::NativeCollectionScope::default();
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(start)) => {
-                let name = String::from_utf8_lossy(start.name().as_ref()).to_ascii_uppercase();
-                if name == "VOUCHER" && scope.collection() {
-                    flags.clear();
-                    let remote_id = start
-                        .attributes()
-                        .flatten()
-                        .find(|attribute| attribute.key.as_ref().eq_ignore_ascii_case(b"REMOTEID"))
-                        .and_then(|attribute| {
-                            attribute
-                                .decoded_and_normalized_value(
-                                    quick_xml::XmlVersion::Implicit1_0,
-                                    reader.decoder(),
-                                )
-                                .ok()
-                        })
-                        .map(|value| value.into_owned());
-                    voucher = Some(ReadVoucher {
-                        remote_id,
-                        guid: None,
-                        alter_id: None,
-                        date: None,
-                        voucher_type: None,
-                        narration: None,
-                        voucher_number: None,
-                        master_id: None,
-                        cancelled: None,
-                        optional: None,
-                        entries: Vec::new(),
-                    });
-                } else if name == "ALLLEDGERENTRIES.LIST" && scope.row("VOUCHER") {
-                    entry = Some(ReadEntry {
-                        ledger: String::new(),
-                        amount: String::new(),
-                        is_deemed_positive: String::new(),
-                    });
-                }
-                scope.start(name.clone());
-                tag = name;
+fn parse_import_vouchers(xml: &str) -> Result<ImportReadSource, String> {
+    let parsed = super::parse_agent_changed_rows(xml).map_err(|code| {
+        match code.as_str() {
+            // Preserve the import error contract while sharing scalar admission.
+            "agent_read_protocol_invalid" if super::validate_agent_envelope(xml).is_err() => {
+                "import_verification_protocol_invalid"
             }
-            Ok(Event::Text(text)) => {
-                let value = decoded_tally_text(text)?;
-                if let Some(current) = voucher
-                    .as_mut()
-                    .filter(|_| scope.field("VOUCHER") || scope.entry_field())
-                {
-                    append_import_text(current, entry.as_mut(), &mut flags, &tag, value);
-                }
-            }
-            Ok(Event::GeneralRef(reference)) => {
-                let value = decoded_tally_reference(reference)?;
-                if let Some(current) = voucher
-                    .as_mut()
-                    .filter(|_| scope.field("VOUCHER") || scope.entry_field())
-                {
-                    append_import_text(current, entry.as_mut(), &mut flags, &tag, value);
-                }
-            }
-            Ok(Event::End(end)) => {
-                let name = String::from_utf8_lossy(end.name().as_ref()).to_ascii_uppercase();
-                if scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST") {
-                    if let (Some(current), Some(mut item)) = (voucher.as_mut(), entry.take()) {
-                        if item.ledger.trim().is_empty()
-                            || item.amount.trim().is_empty()
-                            || item.is_deemed_positive.trim().is_empty()
-                        {
-                            return Err("import_verification_export_invalid".to_string());
-                        }
-                        let positive =
-                            super::required_tally_bool(Some(&item.is_deemed_positive))
-                                .map_err(|_| "import_verification_export_invalid".to_string())?;
-                        item.is_deemed_positive = if positive { "Yes" } else { "No" }.to_string();
-                        ExactDecimal::parse(item.amount.clone())
-                            .map_err(|_| "import_verification_amount_invalid".to_string())?;
-                        current.entries.push(item);
-                    }
-                } else if scope.row("VOUCHER") {
-                    if let Some(mut current) = voucher.take() {
-                        bridge_tally_core::TallyDate::parse(
-                            current
-                                .date
-                                .clone()
-                                .ok_or_else(|| "import_verification_export_invalid".to_string())?,
-                        )
-                        .map_err(|_| "import_verification_export_invalid".to_string())?;
-                        current.cancelled = Some(
-                            super::required_tally_bool(flags.get("ISCANCELLED"))
-                                .map_err(|_| "import_verification_export_invalid".to_string())?,
-                        );
-                        current.optional = Some(
-                            super::required_tally_bool(flags.get("ISOPTIONAL"))
-                                .map_err(|_| "import_verification_export_invalid".to_string())?,
-                        );
-                        vouchers.push(current);
-                    }
-                }
-                scope
-                    .end(&name)
-                    .map_err(|_| "import_verification_export_invalid".to_string())?;
-                tag.clear();
-            }
-            Ok(Event::Empty(event)) => {
-                let name = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
-                if scope.collection() && name == "VOUCHER" {
-                    return Err("import_verification_export_invalid".to_string());
-                }
-                scope.start(name.clone());
-                scope
-                    .end(&name)
-                    .map_err(|_| "import_verification_export_invalid".to_string())?;
-            }
-            Ok(Event::Eof) => break,
-            Err(_) => return Err("import_verification_export_invalid".to_string()),
-            _ => {}
+            "agent_read_protocol_invalid"
+            | "change_row_core_field_invalid"
+            | "voucher_date_invalid"
+            | "voucher_accounting_state_not_observed" => "import_verification_export_invalid",
+            "change_row_identity_invalid" => "import_verification_identity_invalid",
+            "voucher_amount_invalid" => "import_verification_amount_invalid",
+            "voucher_master_id_invalid" => "import_verification_master_id_invalid",
+            _ => return code,
         }
+        .to_string()
+    })?;
+    let mut rows: Vec<ReadVoucher> = parsed
+        .into_iter()
+        .map(|row| {
+            serde_json::from_value(row)
+                .map_err(|_| "import_verification_export_invalid".to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    // The shared parser has validated these lexemes; comparisons use canonical
+    // Yes/No while preserving original amount strings for proof output.
+    for entry in rows.iter_mut().flat_map(|row| &mut row.entries) {
+        entry.is_deemed_positive = entry.is_deemed_positive.trim().to_string();
     }
-    scope
-        .finish()
-        .map_err(|_| "import_verification_export_invalid".to_string())?;
-    Ok(vouchers)
-}
-
-/// Tally exports XML-escaped names. Decode entities before a name becomes part
-/// of the accounting fingerprint or a proof response, otherwise a successful
-/// import with names such as `R&D` is falsely reported as divergent.
-fn decoded_tally_text(text: quick_xml::events::BytesText<'_>) -> Result<String, String> {
-    let decoded = text
-        .decode()
-        .map_err(|_| "import_verification_export_invalid".to_string())?;
-    quick_xml::escape::unescape(&decoded)
-        .map(|value| value.into_owned())
-        .map_err(|_| "import_verification_export_invalid".to_string())
-}
-
-fn append_read_text(slot: &mut Option<String>, value: String) {
-    slot.get_or_insert_with(String::new).push_str(&value);
-}
-
-fn decoded_tally_reference(reference: quick_xml::events::BytesRef<'_>) -> Result<String, String> {
-    let reference = reference
-        .decode()
-        .map_err(|_| "import_verification_export_invalid".to_string())?;
-    quick_xml::escape::unescape(&format!("&{reference};"))
-        .map(|value| value.into_owned())
-        .map_err(|_| "import_verification_export_invalid".to_string())
-}
-
-fn append_import_text(
-    current: &mut ReadVoucher,
-    entry: Option<&mut ReadEntry>,
-    flags: &mut BTreeMap<String, String>,
-    tag: &str,
-    value: String,
-) {
-    if let Some(item) = entry {
-        match tag {
-            "LEDGERNAME" => item.ledger.push_str(&value),
-            "AMOUNT" => item.amount.push_str(&value),
-            "ISDEEMEDPOSITIVE" => item.is_deemed_positive.push_str(&value),
-            _ => {}
-        }
-        return;
-    }
-    match tag {
-        "DATE" => append_read_text(&mut current.date, value),
-        "VOUCHERTYPENAME" => append_read_text(&mut current.voucher_type, value),
-        "GUID" => append_read_text(&mut current.guid, value),
-        "MASTERID" => append_read_text(&mut current.master_id, value),
-        "VOUCHERNUMBER" => append_read_text(&mut current.voucher_number, value),
-        "ALTERID" => current.alter_id = value.trim().parse().ok(),
-        "NARRATION" => append_read_text(&mut current.narration, value),
-        "ISCANCELLED" | "ISOPTIONAL" => super::append_agent_text(flags, tag, value),
-        _ => {}
-    }
-}
-
-fn validate_verification_envelope(xml: &str) -> Result<(), String> {
-    let trimmed = xml.trim();
-    if trimmed.is_empty()
-        || !trimmed.starts_with("<ENVELOPE")
-        || trimmed.contains("<LINEERROR")
-        || trimmed.contains("<ERROR")
-        || trimmed.contains("<RESPONSE")
-    {
-        return Err("import_verification_protocol_invalid".to_string());
-    }
-    if !trimmed.contains("<COLLECTION") {
-        return Err("import_verification_protocol_invalid".to_string());
-    }
-    Ok(())
+    ImportReadSource::admit(rows)
 }
 
 fn corroborate_verification_window(
-    observed: &[ReadVoucher],
-    corroboration: &[ReadVoucher],
+    observed: &ImportReadSource,
+    corroboration: &ImportReadSource,
     from: &str,
     to: &str,
 ) -> Result<(), String> {
-    if observed.iter().any(|voucher| {
+    if observed.rows.iter().any(|voucher| {
         voucher
             .date
             .as_deref()
@@ -1109,7 +979,7 @@ fn corroborate_verification_window(
             })
             .collect::<Result<BTreeSet<_>, String>>()
     };
-    if pairs(observed)? != pairs(corroboration)? {
+    if pairs(&observed.rows)? != pairs(&corroboration.rows)? {
         return Err("verification_incomplete:window_not_corroborated".to_string());
     }
     Ok(())
@@ -1122,7 +992,7 @@ fn canonical_verification_amount(value: &str) -> Result<String, String> {
         .map_err(|_| "import_verification_amount_invalid".to_string())
 }
 
-fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Value, String> {
+fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<Value, String> {
     // Normalize only the comparison copies. Persisted batches and generated XML
     // retain their original amount lexemes and remain backward compatible.
     let mut comparison_line = line.clone();
@@ -1133,7 +1003,7 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
     {
         entry.amount = canonical_verification_amount(&entry.amount)?;
     }
-    let mut comparison_observed = observed.to_vec();
+    let mut comparison_observed = observed.rows.clone();
     for entry in comparison_observed.iter_mut().flat_map(|v| &mut v.entries) {
         entry.amount = canonical_verification_amount(&entry.amount)?;
     }
@@ -1143,22 +1013,6 @@ fn verify_batch(line: &ImportLedgerLine, observed: &[ReadVoucher]) -> Result<Val
         .iter()
         .map(observed_voucher_identity)
         .collect::<Result<Vec<_>, _>>()?;
-    // One stable source identity cannot claim two expected transactions,
-    // whether the tags share one row or appear on repeated rows for that identity.
-    // Reject attribution ambiguity before consumption can make order matter.
-    let mut identity_claims = BTreeMap::<&str, &str>::new();
-    for (index, voucher) in observed.iter().enumerate() {
-        for expected in &line.vouchers {
-            if voucher.narration.as_deref().is_some_and(|narration| {
-                narration.contains(&format!("[BRIDGE:{}]", expected.bridge_txn_id))
-            }) && identity_claims
-                .insert(&observed_identities[index], &expected.bridge_txn_id)
-                .is_some_and(|prior| prior != expected.bridge_txn_id)
-            {
-                return Err("import_verification_tag_ambiguous".to_string());
-            }
-        }
-    }
     let mut fully_verified_identities = BTreeSet::new();
     let mut rows = Vec::new();
     let fingerprint_key = |voucher: &ImportVoucher| {

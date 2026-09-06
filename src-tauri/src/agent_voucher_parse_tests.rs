@@ -90,7 +90,10 @@ fn ordinary_vouchers_preserve_captured_nonposting_state_and_reject_unknown_flags
         "../crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml"
     );
     let ordinary = parse_agent_rows(optional_capture).unwrap();
-    let accounting = parse_agent_changed_rows(optional_capture).unwrap();
+    let mut accounting = parse_agent_changed_rows(optional_capture).unwrap();
+    for row in &mut accounting {
+        row.as_object_mut().unwrap().remove("remote_id");
+    }
     assert_eq!(ordinary, accounting);
     assert!(ordinary.iter().any(|row| row["optional"] == true));
     assert!(ordinary
@@ -123,7 +126,11 @@ fn ordinary_vouchers_preserve_captured_nonposting_state_and_reject_unknown_flags
         // drop the row or conceal its non-posting state.
         let changed = captured.replacen(&original, &format!("<{field}>Yes</{field}>"), 1);
         let ordinary = parse_agent_rows(&changed).unwrap();
-        assert_eq!(ordinary, parse_agent_changed_rows(&changed).unwrap());
+        let mut accounting = parse_agent_changed_rows(&changed).unwrap();
+        for row in &mut accounting {
+            row.as_object_mut().unwrap().remove("remote_id");
+        }
+        assert_eq!(ordinary, accounting);
         assert_eq!(ordinary.len(), 3);
         let flag = if field == "ISCANCELLED" {
             "cancelled"
@@ -312,5 +319,30 @@ fn scalar_content_preserves_cdata_and_rejects_nested_markup() {
             parse_agent_rows(&nested),
             Err("agent_read_protocol_invalid".into())
         );
+    }
+}
+
+#[test]
+fn captured_remote_id_is_validated_once_and_exposed_only_to_changed_rows() {
+    let captured = captured_native_vouchers();
+    let ordinary = parse_agent_rows(&captured).unwrap();
+    let changed = parse_agent_changed_rows(&captured).unwrap();
+    assert!(ordinary.iter().all(|row| row.get("remote_id").is_none()));
+    assert!(changed.iter().all(|row| row["remote_id"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty())));
+    for replacement in [
+        "REMOTEID=\"duplicate\" REMOTEID=\"",
+        "remoteid=\"duplicate\" REMOTEID=\"",
+        "REMOTEID=\"&invalid;\" OTHER=\"",
+    ] {
+        let invalid = captured.replacen("REMOTEID=\"", replacement, 1);
+        assert_ne!(invalid, captured);
+        for require_identity in [false, true] {
+            assert_eq!(
+                parse_agent_rows_with_accounting_state(&invalid, require_identity),
+                Err("agent_read_protocol_invalid".into())
+            );
+        }
     }
 }
