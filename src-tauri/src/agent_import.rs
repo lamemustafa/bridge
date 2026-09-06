@@ -990,6 +990,36 @@ fn canonical_verification_amount(value: &str) -> Result<String, String> {
         .map_err(|_| "import_verification_amount_invalid".to_string())
 }
 
+type VerificationFingerprint = (Option<String>, Option<String>, Vec<String>);
+
+#[derive(Default)]
+struct VerificationCandidates {
+    remaining: BTreeSet<usize>,
+    after_mark: BTreeSet<usize>,
+    consumed: bool,
+}
+
+impl VerificationCandidates {
+    fn insert(&mut self, index: usize, after_mark: bool) {
+        self.remaining.insert(index);
+        if after_mark {
+            self.after_mark.insert(index);
+        }
+    }
+    fn consume(&mut self, index: usize) {
+        self.consumed |= self.remaining.remove(&index);
+        self.after_mark.remove(&index);
+    }
+}
+
+fn observed_fingerprint(voucher: &ReadVoucher) -> VerificationFingerprint {
+    (
+        voucher.date.clone(),
+        voucher.voucher_type.clone(),
+        actual_entry_fingerprint(voucher),
+    )
+}
+
 fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<Value, String> {
     // Normalize only the comparison copies. Persisted batches and generated XML
     // retain their original amount lexemes and remain backward compatible.
@@ -1013,37 +1043,62 @@ fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<
         .collect::<Result<Vec<_>, _>>()?;
     let mut fully_verified_identities = BTreeSet::new();
     let mut rows = Vec::new();
-    let fingerprint_key = |voucher: &ImportVoucher| {
-        format!(
-            "{}:{}:{}",
-            normalized_date(&voucher.date).unwrap_or_default(),
-            voucher.voucher_type.as_str(),
-            expected_entry_fingerprint(voucher).join("\u{1f}"),
-        )
-    };
-    let expected_fingerprint_counts =
-        line.vouchers
-            .iter()
-            .fold(BTreeMap::new(), |mut counts, voucher| {
-                let key = fingerprint_key(voucher);
-                *counts.entry(key).or_insert(0_usize) += 1;
-                counts
-            });
-    // Explicit batch markers reserve their rows before fallback matching, so
-    // input order cannot let an earlier untagged transaction steal a later tag.
-    let tagged_indexes = observed
+    let expected_fingerprints = line
+        .vouchers
         .iter()
-        .enumerate()
-        .filter(|(_, voucher)| {
-            voucher.narration.as_deref().is_some_and(|narration| {
-                line.vouchers.iter().any(|expected| {
-                    narration.contains(&format!("[BRIDGE:{}]", expected.bridge_txn_id))
-                })
-            })
+        .map(|voucher| {
+            (
+                normalized_date(&voucher.date).ok(),
+                Some(voucher.voucher_type.as_str().to_string()),
+                expected_entry_fingerprint(voucher),
+            )
         })
-        .map(|(index, _)| index)
+        .collect::<Vec<VerificationFingerprint>>();
+    let observed_fingerprints = observed
+        .iter()
+        .map(observed_fingerprint)
+        .collect::<Vec<_>>();
+    let mut expected_fingerprint_counts = BTreeMap::new();
+    for fingerprint in &expected_fingerprints {
+        *expected_fingerprint_counts
+            .entry(fingerprint)
+            .or_insert(0_usize) += 1;
+    }
+    let expected_tags = line
+        .vouchers
+        .iter()
+        .map(|voucher| voucher.bridge_txn_id.as_str())
         .collect::<BTreeSet<_>>();
-    let mut consumed_identities = BTreeSet::new();
+    // Source admission permits at most one well-formed reserved marker. Parse it
+    // once, then reserve expected tags before any fingerprint fallback is used.
+    let observed_tags = observed
+        .iter()
+        .map(|voucher| {
+            voucher
+                .narration
+                .as_deref()?
+                .split_once("[BRIDGE:")?
+                .1
+                .split_once(']')
+                .map(|(tag, _)| tag)
+        })
+        .collect::<Vec<_>>();
+    let mut tagged = BTreeMap::<&str, VerificationCandidates>::new();
+    let mut fallback = BTreeMap::<&VerificationFingerprint, VerificationCandidates>::new();
+    for (index, voucher) in observed.iter().enumerate() {
+        let after_mark = line
+            .pre_import_mark
+            .value
+            .is_some_and(|mark| voucher.alter_id.is_some_and(|id| id > mark));
+        if let Some(tag) = observed_tags[index].filter(|tag| expected_tags.contains(tag)) {
+            tagged.entry(tag).or_default().insert(index, after_mark);
+        } else {
+            fallback
+                .entry(&observed_fingerprints[index])
+                .or_default()
+                .insert(index, after_mark);
+        }
+    }
     let mut ambiguous_within_batch = Vec::new();
     let mut counts = BTreeMap::from([
         ("posted_verified", 0_u64),
@@ -1054,85 +1109,26 @@ fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<
         ("not_attributable", 0),
         ("duplicate_fingerprint", 0),
     ]);
-    for expected in &line.vouchers {
-        let tag = format!("[BRIDGE:{}]", expected.bridge_txn_id);
-        let tagged = observed
-            .iter()
-            .enumerate()
-            .filter(|voucher| {
-                voucher
-                    .1
-                    .narration
-                    .as_deref()
-                    .is_some_and(|value| value.contains(&tag))
-            })
-            .collect::<Vec<_>>();
-        let fingerprint = expected_entry_fingerprint(expected);
-        let expected_key = fingerprint_key(expected);
-        let fingerprint_ambiguous_within_batch = expected_fingerprint_counts
-            .get(&expected_key)
-            .copied()
-            .unwrap_or_default()
-            > 1;
-        let fingerprint_matches = observed
-            .iter()
-            .enumerate()
-            .filter(|voucher| {
-                !tagged_indexes.contains(&voucher.0)
-                    && !consumed_identities.contains(&observed_identities[voucher.0])
-                    && voucher.1.date.as_deref() == normalized_date(&expected.date).ok().as_deref()
-                    && voucher.1.voucher_type.as_deref() == Some(expected.voucher_type.as_str())
-                    && actual_entry_fingerprint(voucher.1) == fingerprint
-            })
-            .collect::<Vec<_>>();
-        let (matches, marker, not_attributable, fingerprint_fallback) = if !tagged.is_empty() {
-            let attributable = tagged
-                .iter()
-                .copied()
-                .filter(|voucher| {
-                    !consumed_identities.contains(&observed_identities[voucher.0])
-                        && line
-                            .pre_import_mark
-                            .value
-                            .is_some_and(|mark| voucher.1.alter_id.is_some_and(|id| id > mark))
-                })
-                .collect::<Vec<_>>();
-            (
-                attributable,
-                "narration_tag",
-                !tagged.is_empty() && line.pre_import_mark.value.is_some(),
-                false,
-            )
+    for (expected, expected_key) in line.vouchers.iter().zip(&expected_fingerprints) {
+        let fingerprint_ambiguous_within_batch = expected_fingerprint_counts[expected_key] > 1;
+        let tagged_group = tagged.get(expected.bridge_txn_id.as_str());
+        let fingerprint_fallback = tagged_group.is_none();
+        let group = tagged_group.or_else(|| fallback.get(expected_key));
+        let marker = if fingerprint_fallback {
+            "accounting_fingerprint"
         } else {
-            let attributable = fingerprint_matches
-                .iter()
-                .copied()
-                .filter(|voucher| {
-                    !consumed_identities.contains(&observed_identities[voucher.0])
-                        && line
-                            .pre_import_mark
-                            .value
-                            .is_some_and(|mark| voucher.1.alter_id.is_some_and(|id| id > mark))
-                })
-                .collect::<Vec<_>>();
-            (
-                attributable,
-                "accounting_fingerprint",
-                fingerprint_matches
-                    .iter()
-                    .any(|voucher| !consumed_identities.contains(&observed_identities[voucher.0]))
-                    && line.pre_import_mark.value.is_some(),
-                true,
-            )
+            "narration_tag"
         };
-        let mut value = if not_attributable && matches.is_empty() {
+        let not_attributable = line.pre_import_mark.value.is_some()
+            && group.is_some_and(|group| !fingerprint_fallback || !group.remaining.is_empty());
+        let match_count = group.map_or(0, |group| group.after_mark.len());
+        let matched_index = group.and_then(|group| group.after_mark.first().copied());
+        let already_consumed = tagged_group.is_some_and(|group| group.consumed);
+        let mut value = if not_attributable && match_count == 0 {
             counts
                 .entry("not_attributable")
                 .and_modify(|count| *count += 1);
-            let reason = if tagged
-                .iter()
-                .any(|voucher| consumed_identities.contains(&observed_identities[voucher.0]))
-            {
+            let reason = if already_consumed {
                 "observed_voucher_already_attributed"
             } else if marker == "narration_tag" {
                 "tag_precedes_pre_import_voucher_mark"
@@ -1140,25 +1136,37 @@ fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<
                 "fingerprint_precedes_pre_import_voucher_mark"
             };
             json!({"bridge_txn_id":expected.bridge_txn_id,"status":"not_attributable","marker":marker,"reason":reason})
-        } else if matches.is_empty() {
+        } else if match_count == 0 {
             counts.entry("not_found").and_modify(|count| *count += 1);
             json!({"bridge_txn_id":expected.bridge_txn_id,"status":"not_found"})
-        } else if matches.len() > 1 {
+        } else if match_count > 1 {
             counts
                 .entry("duplicate_fingerprint")
                 .and_modify(|count| *count += 1);
-            json!({"bridge_txn_id":expected.bridge_txn_id,"status":"duplicate_fingerprint","marker":marker,"matches":matches.len()})
+            json!({"bridge_txn_id":expected.bridge_txn_id,"status":"duplicate_fingerprint","marker":marker,"matches":match_count})
         } else {
-            consumed_identities.insert(observed_identities[matches[0].0].clone());
-            let matched = matches[0].1;
-            let diffs = voucher_diffs(expected, matched);
+            let matched_index = matched_index.expect("one indexed candidate");
+            if let Some(tag) = observed_tags[matched_index] {
+                if let Some(group) = tagged.get_mut(tag) {
+                    group.consume(matched_index);
+                }
+            }
+            if let Some(group) = fallback.get_mut(&observed_fingerprints[matched_index]) {
+                group.consume(matched_index);
+            }
+            let matched = &observed[matched_index];
+            let diffs = voucher_diffs(
+                expected,
+                matched,
+                expected_key.2 == observed_fingerprints[matched_index].2,
+            );
             if fingerprint_fallback {
                 counts
                     .entry("matching_content_observed")
                     .and_modify(|count| *count += 1);
                 json!({"bridge_txn_id":expected.bridge_txn_id,"status":"matching_content_observed","marker":marker,"attribution":"not_established","accounting_effective":voucher_is_accounting_effective(matched)?,"diffs":diffs,"voucher_number":matched.voucher_number,"guid":matched.guid,"master_id":matched.master_id,"alter_id":matched.alter_id})
             } else if diffs.is_empty() && voucher_is_accounting_effective(matched)? {
-                fully_verified_identities.insert(observed_identities[matches[0].0].clone());
+                fully_verified_identities.insert(observed_identities[matched_index].clone());
                 counts
                     .entry("posted_verified")
                     .and_modify(|count| *count += 1);
@@ -1181,8 +1189,15 @@ fn verify_batch(line: &ImportLedgerLine, observed: &ImportReadSource) -> Result<
         }
         rows.push(value);
     }
-    let (batch_duplicates, unrelated_duplicates_in_window) =
-        batch_duplicate_sets(line, observed, &fully_verified_identities)?;
+    let (batch_duplicates, unrelated_duplicates_in_window) = batch_duplicate_sets(
+        observed,
+        &observed_identities,
+        &observed_fingerprints,
+        &expected_fingerprint_counts,
+        &observed_tags,
+        &expected_tags,
+        &fully_verified_identities,
+    );
     Ok(
         json!({"counts":counts,"vouchers":rows,"duplicates":batch_duplicates,"unrelated_duplicates_in_window":unrelated_duplicates_in_window,"ambiguous_within_batch":ambiguous_within_batch}),
     )
@@ -1207,58 +1222,62 @@ fn verification_status(result: &Value, expected_voucher_count: usize) -> &'stati
 }
 
 fn batch_duplicate_sets(
-    line: &ImportLedgerLine,
     observed: &[ReadVoucher],
+    identities: &[String],
+    fingerprints: &[VerificationFingerprint],
+    expected_fingerprints: &BTreeMap<&VerificationFingerprint, usize>,
+    tags: &[Option<&str>],
+    expected_tags: &BTreeSet<&str>,
     fully_verified_identities: &BTreeSet<String>,
-) -> Result<(Vec<Value>, Vec<Value>), String> {
-    // Identical contents are permitted when every distinct source identity in
-    // the group was verified against its own expected tagged transaction. Any
-    // additional, untagged or divergent identity keeps the group ambiguous.
-    // REMOTEID reuse remains independently reportable.
-    let all_duplicates = duplicates(observed)?
+) -> (Vec<Value>, Vec<Value>) {
+    // Keep the existing opaque digest input stable; canonical entry sorting was
+    // already done once for matching above.
+    let duplicate_keys = fingerprints
+        .iter()
+        .map(|key| {
+            format!(
+                "{}|{}|{}",
+                key.0.as_deref().unwrap_or(""),
+                key.1.as_deref().unwrap_or(""),
+                key.2.join(",")
+            )
+        })
+        .collect::<Vec<_>>();
+    let all_duplicates = duplicates(observed, identities, &duplicate_keys)
         .into_iter()
         .filter(|duplicate| {
             duplicate["kind"] != "accounting_fingerprint"
-                || !duplicate["voucher_ids"]
-                    .as_array()
-                    .is_some_and(|identities| {
-                        identities.iter().all(|identity| {
-                            identity.as_str().is_some_and(|identity| {
-                                fully_verified_identities.contains(identity)
-                            })
-                        })
+                || !duplicate["voucher_ids"].as_array().is_some_and(|ids| {
+                    ids.iter().all(|id| {
+                        id.as_str()
+                            .is_some_and(|id| fully_verified_identities.contains(id))
                     })
+                })
+        });
+    let batch_indexes = (0..observed.len())
+        .filter(|&index| {
+            tags[index].is_some_and(|tag| expected_tags.contains(tag))
+                || expected_fingerprints.contains_key(&fingerprints[index])
         })
         .collect::<Vec<_>>();
-    let batch_vouchers = observed
+    let batch_remote_ids = batch_indexes
         .iter()
-        .filter(|voucher| voucher_belongs_to_batch(line, voucher))
-        .collect::<Vec<_>>();
-    let batch_remote_ids = batch_vouchers
-        .iter()
-        .filter_map(|voucher| voucher.remote_id.as_deref())
+        .filter_map(|&index| observed[index].remote_id.as_deref())
         .collect::<BTreeSet<_>>();
-    let batch_fingerprints = batch_vouchers
+    let batch_fingerprints = batch_indexes
         .iter()
-        .map(|voucher| voucher_fingerprint_key(voucher))
+        .map(|&index| duplicate_keys[index].as_str())
         .collect::<BTreeSet<_>>();
-    let batch_duplicates = all_duplicates
-        .iter()
-        .filter(|duplicate| match duplicate["kind"].as_str() {
+    let (batch, unrelated): (Vec<_>, Vec<_>) =
+        all_duplicates.partition(|duplicate| match duplicate["kind"].as_str() {
             Some("remote_id") => duplicate["remote_id"]
                 .as_str()
                 .is_some_and(|id| batch_remote_ids.contains(id)),
             Some("accounting_fingerprint") => duplicate["fingerprint"]
                 .as_str()
-                .is_some_and(|fingerprint| batch_fingerprints.contains(fingerprint)),
+                .is_some_and(|key| batch_fingerprints.contains(key)),
             _ => false,
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let unrelated = all_duplicates
-        .into_iter()
-        .filter(|duplicate| !batch_duplicates.contains(duplicate))
-        .collect::<Vec<_>>();
+        });
     let safe_duplicate = |mut duplicate: Value| {
         if let Some(fields) = duplicate.as_object_mut() {
             if let Some(Value::String(fingerprint)) = fields.remove("fingerprint") {
@@ -1270,23 +1289,17 @@ fn batch_duplicate_sets(
         }
         duplicate
     };
-    Ok((
-        batch_duplicates.into_iter().map(safe_duplicate).collect(),
+    (
+        batch.into_iter().map(safe_duplicate).collect(),
         unrelated.into_iter().map(safe_duplicate).collect(),
-    ))
+    )
 }
 
-fn voucher_belongs_to_batch(line: &ImportLedgerLine, voucher: &ReadVoucher) -> bool {
-    line.vouchers.iter().any(|expected| {
-        voucher.narration.as_deref().is_some_and(|narration| {
-            narration.contains(&format!("[BRIDGE:{}]", expected.bridge_txn_id))
-        }) || (voucher.date.as_deref() == normalized_date(&expected.date).ok().as_deref()
-            && voucher.voucher_type.as_deref() == Some(expected.voucher_type.as_str())
-            && actual_entry_fingerprint(voucher) == expected_entry_fingerprint(expected))
-    })
-}
-
-fn voucher_diffs(expected: &ImportVoucher, actual: &ReadVoucher) -> Vec<Value> {
+fn voucher_diffs(
+    expected: &ImportVoucher,
+    actual: &ReadVoucher,
+    entries_match: bool,
+) -> Vec<Value> {
     let mut diffs = Vec::new();
     if actual.date.as_deref() != normalized_date(&expected.date).ok().as_deref() {
         diffs.push(json!("date"));
@@ -1299,9 +1312,7 @@ fn voucher_diffs(expected: &ImportVoucher, actual: &ReadVoucher) -> Vec<Value> {
     {
         diffs.push(json!("voucher_number"));
     }
-    let expected_entries = expected_entry_fingerprint(expected);
-    let actual_entries = actual_entry_fingerprint(actual);
-    if expected_entries != actual_entries {
+    if !entries_match {
         let expected_entries = expected
             .entries
             .iter()
@@ -1357,15 +1368,6 @@ fn actual_entry_fingerprint(voucher: &ReadVoucher) -> Vec<String> {
     result
 }
 
-fn voucher_fingerprint_key(voucher: &ReadVoucher) -> String {
-    format!(
-        "{}|{}|{}",
-        voucher.date.as_deref().unwrap_or(""),
-        voucher.voucher_type.as_deref().unwrap_or(""),
-        actual_entry_fingerprint(voucher).join(",")
-    )
-}
-
 fn observed_voucher_identity(voucher: &ReadVoucher) -> Result<String, String> {
     voucher
         .guid
@@ -1382,11 +1384,16 @@ fn observed_voucher_identity(voucher: &ReadVoucher) -> Result<String, String> {
         .ok_or_else(|| "import_verification_identity_invalid".to_string())
 }
 
-fn duplicates(observed: &[ReadVoucher]) -> Result<Vec<Value>, String> {
+fn duplicates(
+    observed: &[ReadVoucher],
+    identities: &[String],
+    cached_fingerprints: &[String],
+) -> Vec<Value> {
     let mut remote = BTreeMap::<String, BTreeSet<String>>::new();
     let mut fingerprints = BTreeMap::<String, BTreeMap<String, Option<String>>>::new();
-    for voucher in observed {
-        let identity = observed_voucher_identity(voucher)?;
+    for ((voucher, identity), fingerprint) in
+        observed.iter().zip(identities).zip(cached_fingerprints)
+    {
         if let Some(id) = voucher
             .remote_id
             .as_ref()
@@ -1398,9 +1405,9 @@ fn duplicates(observed: &[ReadVoucher]) -> Result<Vec<Value>, String> {
                 .insert(identity.clone());
         }
         fingerprints
-            .entry(voucher_fingerprint_key(voucher))
+            .entry(fingerprint.clone())
             .or_default()
-            .insert(identity, voucher.remote_id.clone());
+            .insert(identity.clone(), voucher.remote_id.clone());
     }
     let mut result = remote.into_iter().filter(|(_, identities)| identities.len() > 1)
         .map(|(remote_id, identities)| json!({"kind":"remote_id","remote_id":remote_id,"count":identities.len()}))
@@ -1410,7 +1417,7 @@ fn duplicates(observed: &[ReadVoucher]) -> Result<Vec<Value>, String> {
             let remote_ids = identities.values().flatten().collect::<BTreeSet<_>>();
             json!({"kind":"accounting_fingerprint","fingerprint":fingerprint,"voucher_ids":identities.keys().collect::<Vec<_>>(),"remote_ids":remote_ids})
         }));
-    Ok(result)
+    result
 }
 
 fn company_high_water_mark(high_water: &Value) -> Result<PreImportMark, String> {

@@ -364,7 +364,8 @@ fn duplicate_detection_uses_stable_voucher_identity_independently_of_remote_id()
             };
             let first = row("1");
             let second = row("2");
-            let found = duplicates(&[first.clone(), second.clone()]).expect("identified vouchers");
+            let found =
+                test_duplicates(&[first.clone(), second.clone()]).expect("identified vouchers");
             assert!(found
                 .iter()
                 .any(|item| item["kind"] == "accounting_fingerprint"));
@@ -373,14 +374,14 @@ fn duplicate_detection_uses_stable_voucher_identity_independently_of_remote_id()
                 remote_id.is_some()
             );
             assert!(
-                duplicates(&[first.clone(), first])
+                test_duplicates(&[first.clone(), first])
                     .expect("same identity")
                     .is_empty(),
                 "repeated wire rows do not establish separate posted vouchers"
             );
             let mut different = second;
             different.entries[0].amount = "-13.00".into();
-            let found = duplicates(&[row("1"), different]).expect("different contents");
+            let found = test_duplicates(&[row("1"), different]).expect("different contents");
             assert!(!found
                 .iter()
                 .any(|item| item["kind"] == "accounting_fingerprint"));
@@ -1483,3 +1484,26 @@ fn corroborate_observed_window(
 
 #[path = "agent_import_source_tests.rs"]
 mod source_tests;
+
+#[path = "agent_import_index_tests.rs"]
+mod index_tests;
+
+fn test_duplicates(observed: &[ReadVoucher]) -> Result<Vec<Value>, String> {
+    let identities = observed
+        .iter()
+        .map(observed_voucher_identity)
+        .collect::<Result<Vec<_>, _>>()?;
+    let fingerprints = observed
+        .iter()
+        .map(|voucher| {
+            let key = observed_fingerprint(voucher);
+            format!(
+                "{}|{}|{}",
+                key.0.as_deref().unwrap_or(""),
+                key.1.as_deref().unwrap_or(""),
+                key.2.join(",")
+            )
+        })
+        .collect::<Vec<_>>();
+    Ok(duplicates(observed, &identities, &fingerprints))
+}
