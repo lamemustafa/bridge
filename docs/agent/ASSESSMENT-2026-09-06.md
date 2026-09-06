@@ -261,7 +261,7 @@ node scripts/check-tally-live-read-boundary.mjs
 node scripts/check-tally-request-builder-hazards.mjs
 ```
 
-Local candidate verification: **965 Rust workspace tests**, **210 agent tests
+Local candidate verification: **974 Rust workspace tests**, **213 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -270,13 +270,13 @@ and matrix-Markdown checks passed. Compatibility gate: 11 unknown claims,
 zero evidenced claims. These counts describe the settled local source; fresh
 hosted checks are still required for its published commit.
 
-The final macOS arm64 release binary passed twenty-four live checks with party masking:
-twenty-three complete responses and one expected `empty_uncorroborated` refusal for a
+The final macOS arm64 release binary passed twenty-seven live checks with party masking:
+twenty-six complete responses and one expected `empty_uncorroborated` refusal for a
 window with no nearby voucher evidence. A fresh process then completed movement
 from August 3 through September 1 without any prior status call, and a second
 window correctly carried the test Journal's Cash opening. A separate fresh process
 read all nine basic ledgers without a preceding status call. Separate fresh
-processes also completed compliance ledgers and native outstandings. Status, master
+processes also completed compliance ledgers and native outstandings. Status reported the observed release `7.1` and licence tier `silver`. Master
 validation, filtered and unfiltered vouchers, compliance masters, outstandings,
 restored-batch verification, and egress-log readback also completed.
 Every emitted frame matched its linked preparation/completion receipts and
@@ -292,10 +292,15 @@ opening read.
 Two verifications with a one-row output cap retained an attributed complete
 result and appended 408 bytes total to the local ledger. A previously generated
 staged file still correctly reported as not imported. A fresh process built one
-additional Journal file for `12.58` after repeated catalogue and licensed-mode observations, and
-readback confirmed `not_found`; that file was not imported. No additional Tally
-posting was performed. The expected read refusal retained its actual completed source
-commitments and byte count, retrievable through `read_evidence`; omitted egress
+additional Journal file for `12.59` after repeated catalogue and Silver 7.1 profile observations, and
+readback confirmed `not_found`; that file was not imported. A controlled exact-file repeat, bracketed by observed Silver 7.1 status,
+returned zero created and one altered. Readback retained the same GUID, master ID,
+assigned number and exact signed amount; only its AlterID advanced from 7 to 8.
+No additional voucher was created. The expected read refusal retained its actual completed source
+commitments and byte count, retrievable through `read_evidence`. A captured-source regression also proves that
+a final JSON-RPC frame refusal records partial evidence with the cap reason while
+retaining the original source commitments. Nonpageable company/master/history
+responses refuse at all cap layers without inventing continuation offsets; omitted egress
 rows set `truncated`. A one-record `read_evidence` call returned one observation
 and explicitly reported the omitted history as truncated. The recording proxy passed an explicit readiness check
 before these calls. An earlier candidate run had a proxy startup failure; those
@@ -318,9 +323,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `7a810c1128b7339a71679b32b93f7b736aa000459e0f29afbf421d8e09240a7e`.
-- MCPB archive SHA-256: `20acd7ed158769d751b69aaed1ea9341693effec3654d3003d75dfb8e8dece41`.
-- Source fingerprint (349 build-input files, unchanged through the settled-source rebuild): `d4c4dea0f86d30b707fa214dac2429ebe71effe741828897505911d92c2f09a6`.
+- Release executable SHA-256: `fd2793cb1b7e941f90cffa59bcb4c0010b501978f0d1321abdd4018368259fa1`.
+- MCPB archive SHA-256: `5722b810b79c86e8ccf35101e3edca23352ac59f8a25f76189be78bd14ce9526`.
+- Source fingerprint (354 build-input files, unchanged through the settled-source rebuild): `9260e92cd3c04eb44119f10bee4e43bd50fa02733039613f88b55297f5eb22c7`.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
