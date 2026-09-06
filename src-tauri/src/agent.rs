@@ -2646,6 +2646,18 @@ fn parse_agent_rows_with_accounting_state(
                 } else if end == "VOUCHER" {
                     if let Some(row) = current.take() {
                         if require_accounting_state
+                            && (row
+                                .get("DATE")
+                                .filter(|value| !value.trim().is_empty())
+                                .is_none()
+                                || row
+                                    .get("VOUCHERTYPENAME")
+                                    .filter(|value| !value.trim().is_empty())
+                                    .is_none())
+                        {
+                            return Err("change_row_core_field_invalid".to_string());
+                        }
+                        if require_accounting_state
                             && row
                                 .get("GUID")
                                 .filter(|value| !value.trim().is_empty())
@@ -3535,6 +3547,22 @@ mod tests {
 
         let master_id = "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><MASTERID>3</MASTERID><ALTERID>3</ALTERID><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>";
         assert!(parse_agent_changed_rows(master_id).is_ok());
+    }
+
+    #[test]
+    fn changed_voucher_rows_require_date_and_voucher_type() {
+        for missing in [
+            "<VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>",
+            "<DATE>20260901</DATE>",
+        ] {
+            let xml = format!(
+                "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><GUID>voucher-guid</GUID>{missing}<ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"
+            );
+            assert_eq!(
+                parse_agent_changed_rows(&xml),
+                Err("change_row_core_field_invalid".to_string())
+            );
+        }
     }
 
     #[tokio::test]
