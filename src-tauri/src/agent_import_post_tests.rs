@@ -195,6 +195,49 @@ fn previous_attempt_needs_clean_persisted_counters_as_well_as_exact_readback() {
 }
 
 #[test]
+fn post_date_refusal_retains_the_completed_profile_probe_evidence() {
+    let (mut line, _) = batch();
+    line.vouchers[0].date = "20260907".into();
+    let payload = ImportPayload {
+        company_guid: line.company_guid.clone(),
+        vouchers: line.vouchers,
+    };
+    let profile_evidence = Evidence {
+        request_sha256: "profile-request".into(),
+        response_sha256: "profile-response".into(),
+        bytes: 42,
+        state: "complete",
+        read_at: None,
+        duration_ms: None,
+        reason_code: None,
+    };
+    let profile = ImportProfileObservation {
+        qualification: Ok(()),
+        evidence: profile_evidence.clone(),
+        observed_profile: json!({}),
+        admission_key: ("tallyprime".into(), "education".into()),
+    };
+    let mut accumulated = Evidence {
+        request_sha256: String::new(),
+        response_sha256: String::new(),
+        bytes: 0,
+        state: "complete",
+        read_at: None,
+        duration_ms: None,
+        reason_code: None,
+    };
+    let expected = combine_evidence(accumulated.clone(), profile_evidence);
+    accumulate_post_profile_evidence(&mut accumulated, &profile);
+    assert_eq!(
+        validate_import_dates_for_profile(&payload, &profile).unwrap_err(),
+        "education_voucher_date_unsupported"
+    );
+    assert_eq!(accumulated.request_sha256, expected.request_sha256);
+    assert_eq!(accumulated.response_sha256, expected.response_sha256);
+    assert_eq!(accumulated.bytes, expected.bytes);
+}
+
+#[test]
 fn absence_is_required_before_a_first_attempt() {
     for payload in [
         json!({}),

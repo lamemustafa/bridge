@@ -42,9 +42,9 @@ impl Server {
             // No Tally mutation can occur while the separate approval dialog is open.
             let request = ApprovedImport::confirm(xml, &preview).await?;
             let mode = self.qualified_import_profile().await?;
+            accumulate_post_profile_evidence(&mut accumulated, &mode);
             let payload = ImportPayload { company_guid: line.company_guid.clone(), vouchers: line.vouchers.clone() };
             validate_import_dates_for_profile(&payload, &mode)?;
-            accumulated = combine_evidence(accumulated.clone(), mode.evidence);
             let (company, identity, identity_evidence) = self.verified_company(guid).await?;
             accumulated = combine_evidence(accumulated.clone(), identity_evidence);
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
@@ -152,6 +152,13 @@ fn persisted_response_state(response: Option<&ledger::DispatchResponse>) -> &'st
         Some(response) if import_outcome_is_clean(response.outcome.as_ref()) => "response_clean",
         Some(_) => "response_not_clean",
     }
+}
+
+fn accumulate_post_profile_evidence(
+    accumulated: &mut Evidence,
+    profile: &ImportProfileObservation,
+) {
+    *accumulated = combine_evidence(accumulated.clone(), profile.evidence.clone());
 }
 
 fn require_absent(payload: &Value) -> Result<(), String> {
