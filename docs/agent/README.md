@@ -58,9 +58,10 @@ Cursor uses the same server object in `.cursor/mcp.json`:
 
 The read tools are `tally_status`, `list_companies`, `outstandings`,
 `ledger_masters`, `ledger_movement`, `vouchers`,
-`read_evidence`, and `egress_log`; `voucher_schema` and `validate_masters` are also
-available by default (ten read/schema tools). The MCPB extension adds the three
-Journal workflow tools by default, for thirteen total. Each call returns compact JSON with the
+`read_evidence`, `egress_log`, and `verify_import`; `voucher_schema` and
+`validate_masters` are also available by default (eleven read/schema tools).
+The MCPB extension adds Journal building and posting by default, for thirteen
+total. Each call returns compact JSON with the
 company identity where scoped, a read timestamp, request/response commitments,
 byte count, completeness reason, and truncation state. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
