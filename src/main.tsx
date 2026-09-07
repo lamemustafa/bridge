@@ -36,6 +36,7 @@ import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
+import { JournalPostingScreen } from "./JournalPostingScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import "./styles.css";
 
@@ -277,7 +278,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "companies" | "settings" | "gst" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "companies" | "settings" | "journal" | "gst" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -292,6 +293,7 @@ const VIEW_TITLES: Record<View, string> = {
   outstandings: "Overview",
   companies: "Companies",
   settings: "Settings",
+  journal: "Review Journal",
   gst: "GST return readiness",
   dsc: "DSC token",
   documents: "Documents",
@@ -1556,7 +1558,7 @@ function App() {
         />
         <header>
           <div>
-            {view !== "companies" && view !== "settings" && (
+            {view !== "companies" && view !== "settings" && view !== "journal" && (
               <p className="eyebrow">
                 {view === "outstandings"
                   ? "Receivables and payables"
@@ -1567,6 +1569,16 @@ function App() {
             )}
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
+          {(view === "dashboard" || view === "outstandings") && (
+            <button className="secondary-action" type="button" onClick={() => setView("journal")}>
+              <FileText size={18} aria-hidden="true" /> Review Journal file
+            </button>
+          )}
+          {view === "journal" && (
+            <button className="secondary-action" type="button" onClick={() => setView("outstandings")}>
+              Back to Overview
+            </button>
+          )}
           {view === "dashboard" && (
             <button className="primary" onClick={checkTally} disabled={tallyAction !== null || childTallyReadCount > 0}>
               <Cable size={18} />
@@ -1800,6 +1812,12 @@ function App() {
             liveReadNavigationLocked={childTallyReadCount > 0}
             onTallyReadActivityChange={changeChildTallyReadActivity}
           />
+          </ErrorBoundary>
+        )}
+
+        {view === "journal" && (
+          <ErrorBoundary key="journal" label="Review Journal">
+            <JournalPostingScreen config={config} />
           </ErrorBoundary>
         )}
 
