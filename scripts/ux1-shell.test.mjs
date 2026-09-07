@@ -78,7 +78,7 @@ test("UI keeps client selection searchable and exposes only source-backed shell 
   const mirrorProof = await readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url), "utf8");
   assert.match(mirrorProof, /liveReadActionsLocked: boolean;/);
   assert.match(mirrorProof, /disabled=\{!selectedCompanyRecord\?\.mirror_company_id \|\| !selectedCompanyLive \|\| snapshotActive \|\| snapshotStartOutcomeUnknown \|\| liveReadActionsLocked \|\| tallyAction !== null\}/);
-  assert.match(mirrorProof, /disabled=\{liveReadActionsLocked \|\| tallyAction !== null\}/);
+  assert.match(mirrorProof, /disabled=\{snapshotStartOutcomeUnknown \|\| liveReadActionsLocked \|\| tallyAction !== null\}/);
   assert.match(mirrorProof, /Wait before starting or resuming a Core Accounting read\./);
 });
 

@@ -4,8 +4,8 @@ import { deriveJournalActionState } from "../src/journal-posting-state.ts";
 
 const freshReview = { dispatched: false, responseRecorded: false };
 
-test("admission refusal permits a new file review but never bypasses known attempt recovery", () => {
-  const action = { state: "admission_refused", hasError: true };
+test("admission refusal permits a new file review only with explicit no-attempt evidence", () => {
+  const action = { state: "admission_refused", attemptRecorded: false, hasError: true };
   const refused = deriveJournalActionState(freshReview, action, false);
   assert.equal(refused.canChooseAnother, true);
   assert.equal(refused.canPost, false);
@@ -19,6 +19,18 @@ test("admission refusal permits a new file review but never bypasses known attem
     assert.equal(priorAttempt.canPost, false);
     assert.equal(priorAttempt.canReconcile, true);
   }
+});
+
+test("admission refusal with unknown history requires reconciliation", () => {
+  const state = deriveJournalActionState(freshReview, {
+    state: "admission_refused",
+    attemptRecorded: undefined,
+    hasError: true,
+  }, false);
+
+  assert.equal(state.canPost, false);
+  assert.equal(state.canReconcile, true);
+  assert.equal(state.canChooseAnother, false);
 });
 
 test("approval cancellation keeps Post Journal available", () => {
@@ -54,6 +66,7 @@ test("verified posting never exposes a second Post button", () => {
 test("no-dispatch reconciliation returns to safe retry", () => {
   const state = deriveJournalActionState(freshReview, {
     state: "not_dispatched",
+    attemptRecorded: false,
     hasError: true,
   }, false);
 

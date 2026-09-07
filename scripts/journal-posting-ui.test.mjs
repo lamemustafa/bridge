@@ -7,8 +7,13 @@ test("Journal review is reachable from Overview without becoming a top-level nav
 
   assert.match(app, /import \{ JournalPostingScreen \} from "\.\/JournalPostingScreen";/);
   assert.match(app, /type View = .*"journal"/);
-  assert.match(app, /<button[^>]*disabled=\{shellNavigationLocked \|\| snapshotActive \|\| snapshotStartOutcomeUnknown\}[^>]*onClick=\{\(\) => setView\("journal"\)\}/);
-  assert.match(app, /<JournalPostingScreen config=\{config\} postingBlocked=\{snapshotActive \|\| snapshotStartOutcomeUnknown\} onBusyChange=\{setJournalActionBusy\} \/>/);
+  assert.match(app, /const snapshotTransitionPending = tallyAction === "start" \|\| tallyAction === "resume";/);
+  assert.match(app, /const snapshotPostingBlocked = snapshotActive \|\| snapshotStartOutcomeUnknown \|\| snapshotTransitionPending;/);
+  assert.match(app, /<button[^>]*disabled=\{shellNavigationLocked \|\| snapshotPostingBlocked\}[^>]*onClick=\{\(\) => setView\("journal"\)\}/);
+  assert.match(app, /<JournalPostingScreen config=\{config\} postingBlocked=\{snapshotPostingBlocked\} onBusyChange=\{setJournalActionBusy\} \/>/);
+  assert.match(app, /if \(snapshotTransitionPending\) return;[\s\S]*setEvidenceDrawerOpen\(false\);/);
+  assert.match(app, /onClick=\{closeEvidenceDrawer\} disabled=\{snapshotTransitionPending\}>Close<\/button>/);
+  assert.match(app, /async function resumeCoreSnapshot\(runId: string\) \{[\s\S]*?catch \(error\) \{[\s\S]*?await refreshRecentSnapshots\(\);[\s\S]*?setSnapshotStartOutcomeUnknown\(true\);/);
   assert.match(app, /disabled=\{shellNavigationLocked\}/);
   assert.match(app, /journal-action-busy-note/);
   const discoveryNotice = app.slice(app.indexOf('className="company-discovery-notice"'), app.indexOf('{discoveredCompanyPrompt.actionLabel}'));

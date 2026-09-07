@@ -630,7 +630,7 @@ export function MirrorProofScreen({
             <Play size={16} /> {tallyAction === "start" ? "Starting..." : "Run read-only Core Accounting evidence read"}
           </button>
           {snapshotJob?.resume_available && (
-            <button className="secondary-action" onClick={() => void resumeCoreSnapshot(snapshotJob.run_id)} disabled={liveReadActionsLocked || tallyAction !== null}>
+            <button className="secondary-action" onClick={() => void resumeCoreSnapshot(snapshotJob.run_id)} disabled={snapshotStartOutcomeUnknown || liveReadActionsLocked || tallyAction !== null}>
               <Play size={16} /> {tallyAction === "resume" ? "Resuming..." : "Resume interrupted run"}
             </button>
           )}
@@ -651,8 +651,8 @@ export function MirrorProofScreen({
       )}
       {snapshotStartOutcomeUnknown && (
         <section className="status-strip" role="alert">
-          <span>A previous start outcome is unknown. Inspect the refreshed durable runs before allowing another start.</span>
-          <button className="secondary-action" type="button" onClick={() => setSnapshotStartOutcomeUnknown(false)}>I reviewed the runs; allow a new start</button>
+          <span>Bridge could not confirm whether the read started or resumed. Review the saved runs before continuing.</span>
+          <button className="secondary-action" type="button" onClick={() => setSnapshotStartOutcomeUnknown(false)}>I reviewed the saved runs</button>
         </section>
       )}
 

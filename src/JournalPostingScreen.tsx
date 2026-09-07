@@ -31,7 +31,7 @@ type JournalActionResponse = {
   result: {
     result?: {
       dispatch?: { state?: string; resent?: boolean };
-      attempt_recorded?: boolean;
+      attempt_recorded?: boolean | null;
       dispatch_response?: {
         request_sha256: string;
         response_sha256: string;

@@ -273,7 +273,7 @@ for (const [code, expected] of [
   });
 }
 
-test("pre-dispatch admission refusal returns to file review without suggesting a resend", async () => {
+test("pre-dispatch admission refusal with explicit no-attempt evidence returns to file review without suggesting a resend", async () => {
   mocks.invoke.mockResolvedValueOnce(review);
   const host = document.createElement("div");
   document.body.append(host);
@@ -283,6 +283,7 @@ test("pre-dispatch admission refusal returns to file review without suggesting a
   mocks.invoke.mockResolvedValueOnce({
     result: { result: {
       dispatch: { state: "admission_refused", resent: false },
+      attempt_recorded: false,
       error: { code: "import_batch_not_found", message: "This request stopped before approval or posting." },
     } },
   });
@@ -290,6 +291,27 @@ test("pre-dispatch admission refusal returns to file review without suggesting a
   expect(host.textContent).toContain("This request stopped before approval or posting.");
   expect(button(host, "Choose another file").disabled).toBe(false);
   expect([...host.querySelectorAll("button")].some((item) => /Post Journal|Reconcile original/.test(item.textContent ?? ""))).toBe(false);
+  root.unmount();
+});
+
+test("admission refusal with unavailable history keeps the original Journal for reconciliation", async () => {
+  mocks.invoke.mockResolvedValueOnce(review).mockResolvedValueOnce({
+    result: { result: {
+      dispatch: { state: "admission_refused", resent: false },
+      attempt_recorded: null,
+      error: { code: "import_ledger_unavailable", message: "Saved history is unavailable." },
+    } },
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<JournalPostingScreen config={config} />); });
+  await act(async () => { button(host, "Choose Journal file").click(); });
+  await act(async () => { button(host, "Post Journal").click(); });
+
+  expect(host.textContent).toContain("The original batch needs reconciliation.");
+  expect(button(host, "Reconcile original batch")).toBeTruthy();
+  expect([...host.querySelectorAll("button")].some((item) => item.textContent?.includes("Choose another file"))).toBe(false);
   root.unmount();
 });
 

@@ -487,6 +487,7 @@ function App() {
   );
   const [busy, setBusy] = React.useState(false);
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
+  const snapshotTransitionPending = tallyAction === "start" || tallyAction === "resume";
   const [journalActionBusy, setJournalActionBusy] = React.useState(false);
   const tallyResultsVersion = React.useRef(0);
   const persistedCompanyProfileLoadVersion = React.useRef(0);
@@ -505,9 +506,10 @@ function App() {
     setEvidenceDrawerOpen(true);
   }, [evidenceDrawerFocusLifecycle]);
   const closeEvidenceDrawer = React.useCallback(() => {
+    if (snapshotTransitionPending) return;
     setEvidenceDrawerOpen(false);
     setEvidenceDrawerRestorePending(true);
-  }, []);
+  }, [snapshotTransitionPending]);
 
   const refreshRuntime = React.useCallback(async () => {
     try {
@@ -632,6 +634,7 @@ function App() {
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
     && !["completed", "partial", "failed", "cancelled"].includes(snapshotJob.phase);
+  const snapshotPostingBlocked = snapshotActive || snapshotStartOutcomeUnknown || snapshotTransitionPending;
   const savedCompanySelectionLocked = snapshotActive
     || snapshotStartOutcomeUnknown
     || tallyAction !== null
@@ -1327,6 +1330,7 @@ function App() {
       void refreshRecentSnapshots();
     } catch (error) {
       await refreshRecentSnapshots();
+      setSnapshotStartOutcomeUnknown(true);
       setSnapshotError(`Resume outcome was not confirmed. Run status was refreshed before another resume is allowed. ${toErrorMessage(error)}`);
     } finally {
       setTallyAction(null);
@@ -1580,7 +1584,7 @@ function App() {
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
           {(view === "dashboard" || view === "outstandings") && (
-            <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotActive || snapshotStartOutcomeUnknown} onClick={() => setView("journal")}>
+            <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotPostingBlocked} onClick={() => setView("journal")}>
               <FileText size={18} aria-hidden="true" /> Review Journal file
             </button>
           )}
@@ -1829,7 +1833,7 @@ function App() {
 
         {view === "journal" && (
           <ErrorBoundary key="journal" label="Review Journal">
-            <JournalPostingScreen config={config} postingBlocked={snapshotActive || snapshotStartOutcomeUnknown} onBusyChange={setJournalActionBusy} />
+            <JournalPostingScreen config={config} postingBlocked={snapshotPostingBlocked} onBusyChange={setJournalActionBusy} />
           </ErrorBoundary>
         )}
 
@@ -2056,7 +2060,7 @@ function App() {
                   <h2 id="evidence-drawer-title">{evidenceDrawerEntry.kind === "local-only" ? "Local evidence and limits" : "Report evidence and limits"}</h2>
                   <p>{evidenceDrawerEntry.kind === "local-only" ? "This local evidence review is not attached to a current Outstandings report." : "The report-bound read is shown first. Core Accounting history is separate below."}</p>
                 </div>
-                <button className="secondary-action" type="button" ref={evidenceDrawerCloseRef} onClick={closeEvidenceDrawer}>Close</button>
+                <button className="secondary-action" type="button" ref={evidenceDrawerCloseRef} onClick={closeEvidenceDrawer} disabled={snapshotTransitionPending}>Close</button>
               </header>
               <div className="evidence-drawer-content">
           <OutstandingsEvidencePanel entry={evidenceDrawerEntry} />
