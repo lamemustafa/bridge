@@ -38,17 +38,10 @@ where
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
         // Reserve the largest recovery envelope before a tool can persist a
         // batch. Batch IDs are generated locally as bridge-<UUID> (42 bytes).
-        if id.as_ref().is_some_and(|id| {
-            recovery_error(
-                id.clone(),
-                Some("bridge-00000000-0000-0000-0000-000000000000"),
-                "import_publication_recovery_required",
-            )
-            .to_string()
-            .len()
-                + 1
-                > server.settings.max_bytes
-        }) {
+        if id
+            .as_ref()
+            .is_some_and(|id| !request_id_fits_response_cap(id, server.settings.max_bytes))
+        {
             write_response(stdout, &json!({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"request_id_too_large"}}), server.settings.max_bytes).await?;
             continue;
         }
@@ -98,7 +91,9 @@ where
                         await_post(
                             server.call_tool_response(name, arguments.clone()),
                             id.as_ref().expect("tool requests have IDs"),
+                            &server,
                             &mut reader, &mut framer, &mut pending,
+                            stdout,
                         ).await?
                     } else { Some(server.call_tool_response(name, arguments.clone()).await) };
                     match response {
@@ -268,6 +263,18 @@ fn recovery_error(id: Value, batch_id: Option<&str>, message: &str) -> Value {
     response
 }
 
+fn request_id_fits_response_cap(id: &Value, max_bytes: usize) -> bool {
+    recovery_error(
+        id.clone(),
+        Some("bridge-00000000-0000-0000-0000-000000000000"),
+        "import_publication_recovery_required",
+    )
+    .to_string()
+    .len()
+        + 1
+        <= max_bytes
+}
+
 // Independently bounds caller-controlled memory; response caps cannot bound stdin.
 const MAX_REQUEST_BYTES: usize = 5_000_000;
 type Frame = Result<String, (i32, &'static str)>;
@@ -318,21 +325,25 @@ impl Framer {
 
 // Keep receiving cancellation and disconnect while a native approval or write
 // is pending. Other requests wait in a bounded queue, without concurrent writes.
-async fn await_post<R, F>(
+async fn await_post<R, W, F>(
     future: F,
     id: &Value,
+    server: &Server,
     reader: &mut R,
     framer: &mut Framer,
     pending: &mut std::collections::VecDeque<Frame>,
+    stdout: &mut W,
 ) -> Result<Option<ToolResponse>, String>
 where
     R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
     F: std::future::Future<Output = ToolResponse>,
 {
     tokio::pin!(future);
     loop {
         tokio::select! {
-            biased;
+            // Do not let a continuously readable stdin starve the pending
+            // approval/write future. Cancellation remains visible on every turn.
             frame = framer.read(reader, MAX_REQUEST_BYTES) => {
                 let frame = frame?.ok_or("stdio_client_disconnected")?;
                 let cancelled = frame.as_ref().ok().and_then(|text| serde_json::from_str::<Value>(text).ok())
@@ -342,13 +353,100 @@ where
                 let queued_bytes: usize = pending.iter().filter_map(|frame| frame.as_ref().ok()).map(String::len).sum();
                 let size = frame.as_ref().map_or(0, String::len);
                 if pending.len() >= 8 || queued_bytes.saturating_add(size) > MAX_REQUEST_BYTES {
-                    return Err("stdio_pending_requests_exceeded".into());
+                    refuse_pending_frame(server, stdout, frame).await?;
+                    continue;
                 }
                 pending.push_back(frame);
             }
             response = &mut future => return Ok(Some(response)),
         }
     }
+}
+
+async fn refuse_pending_frame<W: AsyncWrite + Unpin>(
+    server: &Server,
+    stdout: &mut W,
+    frame: Frame,
+) -> Result<(), String> {
+    let request = match frame {
+        Ok(frame) => match parse_request(frame) {
+            Ok(request) => request,
+            Err((code, message)) => {
+                return write_response(
+                    stdout,
+                    &json!({"jsonrpc":"2.0","id":null,"error":{"code":code,"message":message}}),
+                    server.settings.max_bytes,
+                )
+                .await;
+            }
+        },
+        Err((code, message)) => {
+            return write_response(
+                stdout,
+                &json!({"jsonrpc":"2.0","id":null,"error":{"code":code,"message":message}}),
+                server.settings.max_bytes,
+            )
+            .await;
+        }
+    };
+    let Some(id) = request.get("id").cloned() else {
+        if request["method"] == "tools/call" {
+            let tool = request["params"]["name"].as_str().unwrap_or("unknown");
+            let arguments = request["params"]
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            server.append_notification_refusal_egress(tool, &arguments)?;
+        }
+        return Ok(());
+    };
+    let response = if request_id_fits_response_cap(&id, server.settings.max_bytes) {
+        json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"stdio_pending_requests_exceeded"}})
+    } else {
+        json!({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"request_id_too_large"}})
+    };
+    if request["method"] == "tools/call" {
+        let tool = request["params"]["name"].as_str().unwrap_or("unknown");
+        let arguments = request["params"]
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        return write_refusal_with_egress(
+            server,
+            stdout,
+            EgressContext {
+                evidence: None,
+                tool: tool.to_string(),
+                args_sha256: sha256_json(&arguments),
+                company_guid: arguments
+                    .get("company_guid")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            },
+            response,
+        )
+        .await;
+    }
+    write_response(stdout, &response, server.settings.max_bytes).await
+}
+
+async fn write_refusal_with_egress<W: AsyncWrite + Unpin>(
+    server: &Server,
+    stdout: &mut W,
+    context: EgressContext,
+    response: Value,
+) -> Result<(), String> {
+    let serialized = serialize_response(&response, server.settings.max_bytes)?;
+    let receipt = server.append_framed_egress(context, &response, &serialized)?;
+    stdout
+        .write_all(serialized.as_bytes())
+        .await
+        .map_err(|_| "stdio_write_failed".to_string())?;
+    stdout
+        .flush()
+        .await
+        .map_err(|_| "stdio_flush_failed".to_string())?;
+    server.append_stdio_write_completed(receipt)
 }
 
 fn parse_request(line: String) -> Result<Value, (i32, &'static str)> {
