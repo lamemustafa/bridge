@@ -354,6 +354,115 @@ fn recovery_failure_retains_the_saved_dispatch_response() {
     assert_eq!(result["error"]["code"], "verification_transport_failed");
 }
 
+#[test]
+fn endpoint_lease_contention_keeps_negative_post_and_cancellation_results_uncertain() {
+    let directory = tempfile::tempdir().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let (mut line, mut endpoint) = batch();
+    endpoint.port = listener.local_addr().unwrap().port();
+    line.endpoint_origin = Some(super::super::super::canonical_loopback_origin(&endpoint).unwrap());
+    let server = Server::new(crate::agent::Settings {
+        endpoint,
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+    });
+    server.append_import_ledger_while_admitted(&line).unwrap();
+    let args = json!({"batch_id":&line.batch_id,"company_guid":&line.company_guid});
+    let snapshot = server
+        .latest_import_snapshot(&line.batch_id)
+        .unwrap()
+        .unwrap();
+    let lease = dispatch_lease::acquire(&server.settings.endpoint).unwrap();
+
+    assert_eq!(server.recorded_import_attempt(&args).unwrap(), Some(false));
+    assert_eq!(
+        server.post_failure_attempt_observation(&line.batch_id, &line.company_guid, None, None),
+        None
+    );
+    let attempted = server.post_failure_attempt_observation(
+        &line.batch_id,
+        &line.company_guid,
+        Some(&snapshot),
+        None,
+    );
+    assert_eq!(attempted, None);
+    for code in ["import_admission_busy", "import_approval_declined"] {
+        let outcome = post_failure_outcome(
+            &line.batch_id,
+            &line.company_guid,
+            ToolFailure::from(code.to_string()),
+            crate::agent::evidence_from_runtime_read(
+                crate::tally::runtime::RuntimeReadEvidence::empty(),
+            ),
+            Some(&snapshot),
+            None,
+            attempted,
+        );
+        assert!(outcome.payload["result"]["attempt_recorded"].is_null());
+        assert!(outcome.payload["result"]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("never rebuild it to retry"));
+    }
+    let cancellation = server.cancelled_import_for_response(&args).unwrap();
+    assert!(cancellation.payload["result"]["attempt_recorded"].is_null());
+
+    drop(lease);
+    assert_eq!(
+        server.post_failure_attempt_observation(
+            &line.batch_id,
+            &line.company_guid,
+            Some(&snapshot),
+            None,
+        ),
+        Some(false)
+    );
+
+    let mut wrong_endpoint = snapshot;
+    wrong_endpoint.batch.endpoint_origin = Some("http://127.0.0.1:9".into());
+    assert_eq!(
+        server.post_failure_attempt_observation(
+            &line.batch_id,
+            &line.company_guid,
+            Some(&wrong_endpoint),
+            None,
+        ),
+        None
+    );
+
+    let lease = dispatch_lease::acquire(&server.settings.endpoint).unwrap();
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&line))
+        .unwrap();
+    let intent_snapshot = server
+        .latest_import_snapshot(&line.batch_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        server.post_failure_attempt_observation(
+            &line.batch_id,
+            &line.company_guid,
+            Some(&intent_snapshot),
+            None,
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        server.post_failure_attempt_observation(
+            &line.batch_id,
+            &line.company_guid,
+            None,
+            Some(&dispatch_response("success", 1, 0)),
+        ),
+        Some(true)
+    );
+    drop(lease);
+}
+
 #[tokio::test]
 async fn received_response_survives_an_injected_response_journal_failure() {
     let directory = tempfile::tempdir().unwrap();
@@ -397,6 +506,7 @@ async fn received_response_survives_an_injected_response_journal_failure() {
         ),
         None,
         Some(&response),
+        Some(true),
     );
     let formatted = server.finish_tool_response(
         "post_import",

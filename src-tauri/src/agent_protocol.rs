@@ -107,7 +107,7 @@ where
                         }
                         None => {
                             let cancelled = server.finish_tool_response(name, &arguments, Utc::now(),
-                                server.cancelled_import(&arguments));
+                                server.cancelled_import_for_response(&arguments));
                             recovery_batch_id = cancelled.recovery_batch_id;
                             egress = Some(cancelled.egress);
                             Ok(cancelled.value)
@@ -546,10 +546,8 @@ enum PostPhase {
 }
 
 fn post_dispatch_state(server: &Server, args: &Value) -> PostDispatchState {
-    match server.cancelled_import(args) {
-        Ok(outcome) if outcome.payload["result"]["attempt_recorded"] == Value::Bool(false) => {
-            PostDispatchState::NotDispatched
-        }
+    match server.recorded_import_attempt(args) {
+        Ok(Some(false)) => PostDispatchState::NotDispatched,
         Ok(_) => PostDispatchState::MayHaveDispatched,
         Err(ToolFailure { code, .. }) if code == "import_admission_busy" => {
             PostDispatchState::AdmissionBusy
@@ -638,8 +636,12 @@ async fn cancel_queued_request<W: AsyncWrite + Unpin>(
         .unwrap_or_else(|| json!({}));
     let name = request["params"]["name"].as_str().unwrap_or("unknown");
     if is_tool && name == "post_import" {
-        let response =
-            server.finish_tool_response(name, &args, Utc::now(), server.cancelled_import(&args));
+        let response = server.finish_tool_response(
+            name,
+            &args,
+            Utc::now(),
+            server.cancelled_import_for_response(&args),
+        );
         return finish_response(
             server,
             stdout,
