@@ -63,20 +63,9 @@ fn action_ipc_keeps_bounded_response_evidence_and_drops_invalid_metadata() {
         "request_sha256": "a".repeat(64),
         "response_sha256": "b".repeat(64),
         "bytes": 538,
-        "outcome": {
-            "application_status": "success",
-            "counters": {
-                "created": 1,
-                "altered": 0,
-                "deleted": 0,
-                "ignored": 0,
-                "errors": 0,
-                "cancelled": 0,
-                "exceptions": 0,
-                "line_error_count": 0,
-            },
-            "exceptions_were_reported": true,
-        },
+        "outcome": bridge_tally_protocol::parse_import_outcome(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/live_education_w4_voucher_sanitized.xml"
+        )).unwrap(),
     });
     let mut payload = json!({"result":{
         "dispatch": {"state":"reconciliation_required","resent":false},
@@ -101,6 +90,10 @@ fn action_ipc_keeps_bounded_response_evidence_and_drops_invalid_metadata() {
     });
     let result = &operation.result["result"];
     assert_eq!(
+        result["dispatch_response"]["outcome"]["counters"]["counter_presence"]["deleted"],
+        true
+    );
+    assert_eq!(
         result["dispatch_response"]["request_sha256"],
         "a".repeat(64)
     );
@@ -111,7 +104,7 @@ fn action_ipc_keeps_bounded_response_evidence_and_drops_invalid_metadata() {
     assert_eq!(result["dispatch_response"]["bytes"], 538);
     assert_eq!(
         result["dispatch_response"]["outcome"]["application_status"],
-        "success"
+        "not_reported"
     );
     assert_eq!(
         result["dispatch_response"]["outcome"]["counters"]["created"],
