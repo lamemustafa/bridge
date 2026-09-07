@@ -41,6 +41,14 @@ for the native attempt; the selected XML file stays unchanged. Do not manually
 import a file and then post it through Bridge: if the original Journal was edited,
 Bridge may be unable to recognize that earlier business event.
 
+While posting, pause other imports and ledger changes in the selected company
+and leave Tally's product/licence mode unchanged. Bridge's checks do not lock
+out changes made directly in Tally or by other software.
+
+Stop Bridge and every client running its connector before upgrading, then restart
+them with the updated version. On Windows, dispatch coordination now uses the
+operating system's local app-data folder even when launcher environment variables
+are absent or overridden; older processes may use a different coordination path.
 Keep the recovery data when upgrading. New posting attempts add a native request
 commitment to the journal; older connector builds cannot read that new record.
 Use this version or a newer compatible build to reconcile it rather than removing
