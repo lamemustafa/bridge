@@ -38,7 +38,7 @@ export function TallyReadinessFlow({
 
   return (
     <section className="tally-readiness" aria-label="Connect Tally">
-      <p className="tally-readiness-intro">Connect the company that is currently open in Tally. Bridge does not change data in Tally.</p>
+      <p className="tally-readiness-intro">Connect the company that is currently open in Tally. Checking the connection does not change data in Tally.</p>
       <div className="tally-readiness-action">
         <div className="tally-readiness-fields">
           <label>
