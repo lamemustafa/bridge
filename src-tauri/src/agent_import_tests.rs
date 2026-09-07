@@ -1710,10 +1710,13 @@ mod text_tests;
 
 #[tokio::test]
 async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads() {
-    let simulator = SequenceSimulator::spawn(Vec::new()).expect("simulator");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking listener");
     let endpoint = TallyEndpointConfig {
         host: "127.0.0.1".into(),
-        port: simulator.address().port(),
+        port: listener.local_addr().expect("listener address").port(),
     };
     let directory = tempfile::tempdir().expect("temporary data directory");
     let server = Server::new(super::super::Settings {
@@ -1751,12 +1754,18 @@ async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads(
         .expect("durable dispatch intent");
     drop(admission);
 
-    let failure = server
+    let failure = match server
         .verify_import(&json!({"company_guid":GUID,"batch_id":line.batch_id}))
         .await
-        .expect_err("mismatched dispatched endpoint must be refused");
+    {
+        Err(failure) => failure,
+        Ok(_) => panic!("mismatched dispatched endpoint must be refused"),
+    };
     assert_eq!(failure.code, "import_post_endpoint_mismatch");
-    assert!(simulator.finish().expect("no Tally reads").is_empty());
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
 
     let matching = ImportLedgerLine {
         endpoint_origin: Some(super::super::canonical_loopback_origin(&endpoint).unwrap()),

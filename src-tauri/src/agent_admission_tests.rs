@@ -68,7 +68,8 @@ async fn unqualified_change_feed_is_hidden_and_direct_calls_refuse_before_tally(
 
 #[tokio::test]
 async fn verification_remains_catalogued_and_admitted_when_import_and_writes_are_disabled() {
-    let names = tool_definitions(false, false)
+    let definitions = tool_definitions(false, false);
+    let names = definitions
         .as_array()
         .unwrap()
         .iter()
@@ -95,7 +96,7 @@ async fn verification_remains_catalogued_and_admitted_when_import_and_writes_are
     assert_eq!(response.value["isError"], true);
     assert_eq!(
         response.value["structuredContent"]["result"]["error"]["code"],
-        "argument_missing:company_guid"
+        "company_guid_required"
     );
     assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
 }
