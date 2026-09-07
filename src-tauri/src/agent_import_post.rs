@@ -214,9 +214,7 @@ impl Server {
         // Keep the exact same batch, endpoint and native-review admission as
         // the initial path, but do not construct an approval request here.
         let _ = admit_saved_journal(&snapshot.batch, &self.settings.endpoint)?;
-        let mut result = self.verify_import(args).await?;
-        finalize_previous_attempt_reconciliation(&mut result.payload, snapshot.response.as_ref());
-        Ok(result)
+        self.verify_import(args).await
     }
 }
 
