@@ -340,7 +340,9 @@ impl Server {
         }
         normalize_payload_dates(&mut payload)?;
         let opening_profile = self.qualified_import_profile().await?;
-        validate_import_dates_for_profile(&payload, &opening_profile)?;
+        validate_import_dates_for_profile(&payload, &opening_profile).map_err(|code| {
+            ToolFailure::from(code).with_prior_evidence(opening_profile.evidence.clone())
+        })?;
         let mode_evidence = opening_profile.evidence.clone();
         let (company, identity, identity_evidence) = self
             .verified_company(&payload.company_guid)

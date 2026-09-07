@@ -393,6 +393,14 @@ impl ToolFailure {
                 cause.downcast_ref::<crate::tally::runtime::OpeningBoundaryObservationError>(),
                 Some(crate::tally::runtime::OpeningBoundaryObservationError::Period(_))
             )
+        }) || error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>(),
+                Some(
+                    crate::tally::connection::PartyLedgerMasterSourceValidationError::MasterPeriod
+                        | crate::tally::connection::PartyLedgerMasterSourceValidationError::BalancePeriod
+                )
+            )
         }) {
             "opening_period_not_honoured"
         } else if error.chain().any(|cause| {

@@ -191,6 +191,10 @@ async fn import_build_requires_an_observed_mode_bracket_and_retains_probe_eviden
 #[tokio::test]
 async fn education_build_refuses_an_unsupported_voucher_date_before_any_catalogue_read() {
     let plans = import_profile_probe("education");
+    let responses = plans
+        .iter()
+        .map(|plan| tally_protocol_simulator::encode(&plan.fixture.body(), plan.encoding))
+        .collect::<Vec<_>>();
     let simulator = SequenceSimulator::spawn(plans).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let server = Server::new(super::super::super::Settings {
@@ -214,10 +218,35 @@ async fn education_build_refuses_an_unsupported_voucher_date_before_any_catalogu
         Err(error) => error,
     };
     assert_eq!(error.code, "education_voucher_date_unsupported");
-    assert!(error.evidence.is_none());
+    let evidence = *error
+        .evidence
+        .expect("completed Education profile probe is retained on date refusal");
     assert!(!directory.path().join("imports").exists());
     assert!(!directory.path().join("agent-import-ledger.jsonl").exists());
-    assert_eq!(simulator.finish().unwrap().len(), 2);
+    let observed = simulator.finish().unwrap();
+    assert_eq!(observed.len(), 2);
+    assert_eq!(
+        evidence.request_sha256,
+        sha256_hex(
+            format!(
+                "{}:{}",
+                observed[0].request_body_sha256, observed[1].request_body_sha256
+            )
+            .as_bytes()
+        )
+    );
+    assert_eq!(
+        evidence.response_sha256,
+        sha256_hex(
+            format!(
+                "{}:{}",
+                sha256_hex(&responses[0]),
+                sha256_hex(&responses[1])
+            )
+            .as_bytes()
+        )
+    );
+    assert_eq!(evidence.bytes, responses[0].len() + responses[1].len());
 }
 
 #[tokio::test]
