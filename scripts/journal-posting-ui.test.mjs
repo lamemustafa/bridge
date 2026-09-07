@@ -7,7 +7,7 @@ test("Journal review is reachable from Overview without becoming a top-level nav
 
   assert.match(app, /import \{ JournalPostingScreen \} from "\.\/JournalPostingScreen";/);
   assert.match(app, /type View = .*"journal"/);
-  assert.match(app, /setView\("journal"\)/);
+  assert.match(app, /<button[^>]*disabled=\{shellNavigationLocked\}[^>]*onClick=\{\(\) => setView\("journal"\)\}/);
   assert.match(app, /<JournalPostingScreen config=\{config\} onBusyChange=\{setJournalActionBusy\} \/>/);
   assert.match(app, /disabled=\{shellNavigationLocked\}/);
   assert.match(app, /journal-action-busy-note/);
@@ -41,7 +41,7 @@ test("Journal review uses the bounded native commands and preserves reconciliati
   assert.match(screen, /onBusyChange\?\.\(true\)/);
   assert.match(screen, /onBusyChange\?\.\(false\)/);
   assert.match(screen, /dispatch_response/);
-assert.match(screen, /only confirms posting after a matching Journal readback/);
+  assert.match(screen, /only confirms posting after a matching Journal readback/);
 });
 
 test("Journal entries stay bounded and scrollable at narrow widths", async () => {

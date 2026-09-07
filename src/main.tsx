@@ -1580,7 +1580,7 @@ function App() {
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
           {(view === "dashboard" || view === "outstandings") && (
-            <button className="secondary-action" type="button" onClick={() => setView("journal")}>
+            <button className="secondary-action" type="button" disabled={shellNavigationLocked} onClick={() => setView("journal")}>
               <FileText size={18} aria-hidden="true" /> Review Journal file
             </button>
           )}
