@@ -350,7 +350,20 @@ advertisements match and narration redaction preserves the complete schema.
 Calendar/company/master/balance and decoded-marker checks remain runtime domain
 admission. [JSON Schema string constraints](https://github.com/json-schema-org/json-schema-spec/blob/main/specs/jsonschema-validation.md#maxlength)
 
-Local candidate verification: **1,007 Rust workspace tests**, **241 agent tests
+Movement now rejects each active voucher whose signed entries do not sum
+exactly to zero, before ledger selection or arithmetic. A captured-response
+regression omits one balancing side from both paired reads and checks the
+`voucher_entries_unbalanced` refusal with retained source evidence. Cancelling
+imbalances across separate vouchers do not pass. This is a necessary integrity
+check, not proof that no balanced subset was omitted. Tally itself rejects
+unequal voucher debit/credit totals. [Official XML examples](https://help.tallysolutions.com/sample-xml/)
+
+Storage paths are also
+admitted as Unicode before state creation, preventing JSON path serialization
+from failing after publication. Startup regressions cover native invalid encoding
+and exact preservation of multilingual paths; Windows runtime checks are required.
+
+Local candidate verification: **1,011 Rust workspace tests**, **242 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,

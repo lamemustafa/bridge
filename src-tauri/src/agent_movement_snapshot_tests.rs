@@ -66,7 +66,7 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
     let end = start + original[start..].find("</VOUCHER>").unwrap() + "</VOUCHER>".len();
     let mut reduced = original.to_string();
     reduced.replace_range(start..end, "");
-    for change in ["stable", "edit", "posting", "deletion"] {
+    for change in ["stable", "edit", "posting", "deletion", "incomplete"] {
         let changed = change != "stable";
         let mut before = voucher.clone();
         let mut after = voucher.clone();
@@ -74,12 +74,26 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
         // captures stay byte-exact; no live concurrency experiment is claimed.
         match change {
             "edit" => {
-                let altered = original.replacen("-101.01", "-201.01", 1);
+                let altered = original.replace("-101.01", "-201.01").replace(
+                    "<AMOUNT TYPE=\"Amount\">101.01</AMOUNT>",
+                    "<AMOUNT TYPE=\"Amount\">201.01</AMOUNT>",
+                );
                 assert_ne!(altered, original);
                 after.fixture = Fixture::SyntheticXml(altered);
             }
             "posting" => before.fixture = Fixture::SyntheticXml(reduced.clone()),
             "deletion" => after.fixture = Fixture::SyntheticXml(reduced.clone()),
+            "incomplete" => {
+                // Omit one balancing side in both paired responses. Keep the
+                // selected WR2 Sales entry, so selection cannot hide refusal.
+                let mut omitted = original.to_string();
+                let start = omitted.find("<ALLLEDGERENTRIES.LIST>").unwrap();
+                let end = start
+                    + omitted[start..].find("</ALLLEDGERENTRIES.LIST>").unwrap()
+                    + "</ALLLEDGERENTRIES.LIST>".len();
+                omitted.replace_range(start..end, "");
+                before.fixture = Fixture::SyntheticXml(omitted);
+            }
             _ => {}
         }
         let mut plans = vec![
@@ -90,8 +104,10 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
         ];
         plans.extend(opening());
         plans.extend(voucher_read(before));
-        plans.extend(opening());
-        plans.extend(voucher_read(after));
+        if change != "incomplete" {
+            plans.extend(opening());
+            plans.extend(voucher_read(after));
+        }
         let simulator = SequenceSimulator::spawn(plans).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let server = Server::new(Settings {
@@ -118,7 +134,11 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
             assert_eq!(response["isError"], true, "{response}");
             assert_eq!(
                 response["structuredContent"]["result"]["error"]["code"],
-                "voucher_snapshot_drifted",
+                if change == "incomplete" {
+                    "voucher_entries_unbalanced"
+                } else {
+                    "voucher_snapshot_drifted"
+                },
                 "{response}"
             );
             assert_eq!(
@@ -143,6 +163,9 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
             );
         }
         let observations = simulator.finish().unwrap();
-        assert_eq!(observations.len(), 52);
+        assert_eq!(
+            observations.len(),
+            if change == "incomplete" { 28 } else { 52 }
+        );
     }
 }

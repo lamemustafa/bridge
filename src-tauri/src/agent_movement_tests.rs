@@ -74,6 +74,64 @@ fn active_entryless_movement_voucher_is_refused() {
 }
 
 #[test]
+fn movement_balance_is_exact_per_active_voucher() {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-three-vouchers.utf16le.xml"
+    );
+    let xml = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|p| u16::from_le_bytes([p[0], p[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let rows = parse_agent_changed_rows(&xml, "61c6de69-1748-461c-ad3f-162cb949df9f").unwrap();
+    assert_eq!(
+        parse_movement_rows(rows.clone(), "20260801", "20260802")
+            .unwrap()
+            .rows
+            .len(),
+        3
+    );
+    // Faults are injected into parsed captures, never promoted as new wire fixtures.
+    let mut scaled = rows.clone();
+    scaled[0]["amounts"][0]["amount"] = json!("-0.30000000000000000000000000000000000001");
+    scaled[0]["amounts"][1]["amount"] = json!("0.300000000000000000000000000000000000010");
+    assert!(parse_movement_rows(scaled.clone(), "20260801", "20260802").is_ok());
+    scaled[0]["amounts"][1]["amount"] = json!("0.30000000000000000000000000000000000002");
+    assert_eq!(
+        parse_movement_rows(scaled, "20260801", "20260802")
+            .err()
+            .as_deref(),
+        Some("voucher_entries_unbalanced")
+    );
+
+    let mut offsetting = rows.clone();
+    offsetting[0]["amounts"][0]["amount"] = json!("-100.01");
+    offsetting[1]["amounts"][0]["amount"] = json!("-103.02");
+    assert_eq!(
+        parse_movement_rows(offsetting, "20260801", "20260802")
+            .err()
+            .as_deref(),
+        Some("voucher_entries_unbalanced")
+    );
+    for excluded in ["cancelled", "optional"] {
+        let mut omitted = rows.clone();
+        omitted[0]["amounts"].as_array_mut().unwrap().remove(0);
+        assert_eq!(
+            parse_movement_rows(omitted.clone(), "20260801", "20260802")
+                .err()
+                .as_deref(),
+            Some("voucher_entries_unbalanced")
+        );
+        omitted[0][excluded] = json!(true);
+        let page = parse_movement_rows(omitted, "20260801", "20260802").unwrap();
+        assert_eq!(page.observed_rows, 3);
+        assert_eq!(page.rows.len(), 2);
+    }
+}
+
+#[test]
 fn movement_snapshot_rejects_renames_even_when_the_selected_name_returns() {
     let ledger = |name: &str| TallyLedger {
         name: name.into(),

@@ -17,6 +17,10 @@ platform application-data directory by default), `BRIDGE_AGENT_MAX_ROWS`
 (default `500`), `BRIDGE_AGENT_MAX_BYTES` (default `200000`), and
 `BRIDGE_AGENT_REDACTION` (`none`, `mask_parties`, or `drop_narration`). The
 host is validated by `bridge-tally-transport`; non-loopback hosts are refused.
+The resolved data path must be valid Unicode so saved artifact paths can be
+returned exactly in JSON. Invalid platform encoding is refused before state
+creation with `agent_data_dir_encoding_invalid`; no lossy path alias is used.
+
 On Unix, new data directories use mode `0700`; an existing data directory
 must belong to the current user and have that mode. Otherwise startup refuses
 it without changing its permissions. Select a new dedicated leaf under a shared
@@ -322,6 +326,10 @@ non-posting amounts are not presented without that state. Movement repeats the
 voucher source after its final opening snapshot and refuses changes to either
 source before calculating balances. This establishes stability across repeated
 observations, not an atomic Tally snapshot.
+Each active voucher must also have nonempty entries whose signed amounts sum
+exactly to zero before movement arithmetic or ledger selection. An unequal
+projection returns `voucher_entries_unbalanced`, retaining source evidence.
+This necessary check cannot detect an omitted subset that itself balances.
 
 Evidence-history and egress-log reads use the smallest of the requested limit,
 `BRIDGE_AGENT_MAX_ROWS`, and the 256-record ceiling. Omitted history sets

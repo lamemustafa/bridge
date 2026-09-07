@@ -238,6 +238,11 @@ impl Settings {
         let data_dir = env::var_os("BRIDGE_AGENT_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(default_data_dir);
+        // Published artifact paths must be representable in the JSON response.
+        // Admit the resolved override or default before creating any local state.
+        if data_dir.to_str().is_none() {
+            return Err("agent_data_dir_encoding_invalid".to_string());
+        }
         ensure_private_directory(&data_dir).map_err(|error| match error {
             DirectoryAdmissionError::Unavailable => "agent_data_dir_unavailable".to_string(),
             #[cfg(unix)]

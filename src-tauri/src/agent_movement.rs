@@ -296,11 +296,24 @@ fn parse_movement_rows(rows: Vec<Value>, from: &str, to: &str) -> Result<Movemen
     {
         return Err("window_not_honoured".to_string());
     }
-    if vouchers
+    for voucher in vouchers
         .iter()
-        .any(|voucher| !voucher.cancelled && !voucher.optional && voucher.ledger_entries.is_empty())
+        .filter(|voucher| !voucher.cancelled && !voucher.optional)
     {
-        return Err("ledger_movement_entries_not_observed".to_string());
+        if voucher.ledger_entries.is_empty() {
+            return Err("ledger_movement_entries_not_observed".to_string());
+        }
+        let total = voucher.ledger_entries.iter().try_fold(
+            bridge_tally_core::ExactDecimal::zero(),
+            |total, entry| {
+                bridge_tally_core::ExactDecimal::parse(entry.amount.clone())
+                    .and_then(|amount| total.checked_add(&amount))
+                    .map_err(|_| "voucher_amount_invalid".to_string())
+            },
+        )?;
+        if !total.is_zero() {
+            return Err("voucher_entries_unbalanced".to_string());
+        }
     }
     Ok(MovementPage {
         rows: vouchers
