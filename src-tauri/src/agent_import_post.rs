@@ -438,8 +438,8 @@ fn admit_saved_journal(
     if review_text.clone().any(has_unsafe_review_layout_character) {
         return Err("import_review_layout_text".into());
     }
-    if review_text.any(has_directional_review_character) {
-        return Err("import_review_directional_text".into());
+    if review_text.any(has_unreviewable_format_character) {
+        return Err("import_review_format_text".into());
     }
     let xml = render_import_xml(&company.name, &line.vouchers, &line.batch_id);
     if sha256_hex(xml.as_bytes()) != line.sha256 {
@@ -490,16 +490,17 @@ fn has_unsafe_review_layout_character(value: &str) -> bool {
         .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
 }
 
-fn has_directional_review_character(value: &str) -> bool {
+fn has_unreviewable_format_character(value: &str) -> bool {
+    use icu_properties::{
+        props::{DefaultIgnorableCodePoint, GeneralCategory},
+        CodePointMapData, CodePointSetData,
+    };
+    // Unicode UAX #44: General_Category=Cf and Default_Ignorable_Code_Point.
+    // Native approval must not hide characters that distinguish exact XML names.
+    let ignorable = CodePointSetData::new::<DefaultIgnorableCodePoint>();
+    let category = CodePointMapData::<GeneralCategory>::new();
     value.chars().any(|character| {
-        matches!(
-            character,
-            '\u{061c}'
-                | '\u{200e}'
-                | '\u{200f}'
-                | '\u{202a}'..='\u{202e}'
-                | '\u{2066}'..='\u{2069}'
-        )
+        ignorable.contains(character) || category.get(character) == GeneralCategory::Format
     })
 }
 
