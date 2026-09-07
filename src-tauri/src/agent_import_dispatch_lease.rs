@@ -211,3 +211,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "agent_import_dispatch_lease_macos_tests.rs"]
+mod macos_tests;

@@ -30,18 +30,71 @@ pub(super) fn default_data_dir() -> PathBuf {
 ///
 /// This deliberately ignores `BRIDGE_AGENT_DATA_DIR`: callers may choose
 /// separate recoverable journals, but they must still serialize a dispatch to
-/// the same local Tally listener. Windows uses the shell's per-user known
-/// folder directly so launcher environment filtering cannot move the lease.
+/// the same local Tally listener. Supported platforms resolve an OS-owned
+/// per-user root directly so launcher environment filtering cannot move the
+/// lease.
 pub(super) fn default_dispatch_coordination_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         stable_coordination_dir(windows_local_app_data_dir())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos_coordination_dir(macos_account_home_dir())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let root = default_data_dir();
         root.is_absolute().then_some(root)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_coordination_dir(account_home: Option<PathBuf>) -> Option<PathBuf> {
+    account_home.filter(|path| path.is_absolute()).map(|home| {
+        home.join("Library")
+            .join("Application Support")
+            .join("Bridge")
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_account_home_dir() -> Option<PathBuf> {
+    use std::ffi::{CStr, OsStr};
+    use std::mem::MaybeUninit;
+    use std::os::unix::ffi::OsStrExt;
+    use std::ptr;
+
+    // macOS has no specified bound for a passwd entry; this covers normal
+    // directory-service records while keeping an anomalous lookup fail-closed.
+    const PASSWD_BUFFER_BYTES: usize = 16 * 1024;
+    let mut passwd = MaybeUninit::<libc::passwd>::uninit();
+    let mut result = ptr::null_mut();
+    let mut buffer = vec![0u8; PASSWD_BUFFER_BYTES];
+    // SAFETY: the output struct and buffer are live and writable for the call;
+    // `geteuid` reads only the effective user identity.
+    let status = unsafe {
+        libc::getpwuid_r(
+            libc::geteuid(),
+            passwd.as_mut_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    if status != 0 || result.is_null() {
+        return None;
+    }
+    // SAFETY: a successful getpwuid_r result points at the initialized passwd
+    // structure and supplies a nul-terminated directory string in `pw_dir`.
+    let home = unsafe {
+        let directory = (*result).pw_dir;
+        if directory.is_null() {
+            return None;
+        }
+        PathBuf::from(OsStr::from_bytes(CStr::from_ptr(directory).to_bytes()))
+    };
+    home.is_absolute().then_some(home)
 }
 
 #[cfg(any(windows, test))]
@@ -96,81 +149,5 @@ pub(super) fn windows_local_app_data_dir() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[cfg(windows)]
-    use std::process::Command;
-
-    #[test]
-    fn native_dispatch_coordination_dir_requires_an_absolute_os_root() {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().to_path_buf();
-        assert_eq!(
-            stable_coordination_dir(Some(root.clone())),
-            Some(root.join("Bridge").join("agent"))
-        );
-        assert_eq!(stable_coordination_dir(None), None);
-        assert_eq!(stable_coordination_dir(Some(PathBuf::from("Bridge"))), None);
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn native_dispatch_coordination_dir_matches_the_existing_default_data_dir() {
-        assert_eq!(
-            default_dispatch_coordination_dir(),
-            Some(default_data_dir())
-        );
-    }
-
-    #[cfg(windows)]
-    const COORDINATION_TEST_EXPECTED_ROOT: &str = "BRIDGE_COORDINATION_TEST_EXPECTED_ROOT";
-    #[cfg(windows)]
-    const COORDINATION_TEST_CUSTOM_DATA_ROOT: &str = "BRIDGE_COORDINATION_TEST_CUSTOM_DATA_ROOT";
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_native_dispatch_coordination_dir_ignores_filtered_environment_and_custom_data_dir() {
-        let expected_root = default_dispatch_coordination_dir()
-            .expect("Windows local app-data known folder")
-            .into_os_string();
-        let directory = tempfile::tempdir().unwrap();
-        let custom_data_root = directory.path().join("separate-agent-data");
-        let module = module_path!()
-            .strip_prefix(concat!(env!("CARGO_CRATE_NAME"), "::"))
-            .expect("crate module prefix");
-        let status = Command::new(std::env::current_exe().expect("test executable"))
-            .arg("--exact")
-            .arg(format!(
-                "{module}::windows_native_dispatch_coordination_dir_child"
-            ))
-            .arg("--nocapture")
-            .env_remove("LOCALAPPDATA")
-            .env_remove("APPDATA")
-            .env("BRIDGE_AGENT_DATA_DIR", &custom_data_root)
-            .env(COORDINATION_TEST_EXPECTED_ROOT, expected_root)
-            .env(COORDINATION_TEST_CUSTOM_DATA_ROOT, &custom_data_root)
-            .status()
-            .expect("coordination child");
-        assert!(status.success());
-        assert!(custom_data_root.with_extension("observed").is_file());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_native_dispatch_coordination_dir_child() {
-        let Some(expected_root) = std::env::var_os(COORDINATION_TEST_EXPECTED_ROOT) else {
-            return;
-        };
-        let custom_data_root = PathBuf::from(
-            std::env::var_os(COORDINATION_TEST_CUSTOM_DATA_ROOT).expect("custom data root"),
-        );
-        assert!(std::env::var_os("LOCALAPPDATA").is_none());
-        assert!(std::env::var_os("APPDATA").is_none());
-        assert_ne!(PathBuf::from(&expected_root), custom_data_root);
-        assert_eq!(
-            default_dispatch_coordination_dir(),
-            Some(PathBuf::from(expected_root))
-        );
-        std::fs::write(custom_data_root.with_extension("observed"), b"checked").unwrap();
-    }
-}
+#[path = "agent_path_tests.rs"]
+mod tests;
