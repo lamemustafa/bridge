@@ -165,7 +165,9 @@ type, host, licence mode, or manually imported file.
    Tally applies the voucher type's own numbering configuration; when supplied,
    it is validated and sent so a Manual-type duplicate policy can reject it.
 4. In Tally, with the intended company open, use **Gateway of Tally → Import →
-   Vouchers** to import the file. Bridge does not dispatch this step.
+   Vouchers** to import the file. Bridge does not dispatch this manual step.
+   Alternatively, use the separately approved MCP or desktop Journal posting
+   flow below instead of importing the file manually.
 5. Call `verify_import` with the company GUID and batch ID. It reads the date
    window back, compares the exact signed ledger entries, reports missing or
    divergent rows and duplicates, writes `.proof.json` and `.proof.md`, and
@@ -256,6 +258,31 @@ This is a bounded first posting slice, not blanket host/licence qualification.
 A ledger mapper is unnecessary for exact existing names: `validate_masters`
 returns exact matches and bounded near matches. Resolve ambiguity with the
 user rather than silently creating or choosing a ledger.
+
+## Review and post from the Bridge app
+
+1. Build one Journal with `build_import_xml` as above. Keep its original XML
+   file and local batch history on the same computer. The desktop app and MCP
+   use the same default data directory; a custom `BRIDGE_AGENT_DATA_DIR` must
+   be the same for both processes.
+2. In Bridge, set the same Tally host and HTTP port used to build the file.
+   Open **Review Journal file** from the overview and choose the original XML.
+   Selection is local: it does not contact Tally. Bridge accepts only bytes
+   matching a single saved, admitted batch and its original private file.
+3. Review the company, date, reference, narration, ledger entries and totals.
+   Choose **Post Journal**, then review and approve the independent native
+   dialog. The app uses the same validation, dispatch and readback service as
+   MCP. Changing app connection settings cannot redirect an open review.
+4. If an attempt is already recorded or its outcome is uncertain, use
+   **Reconcile original batch**. This action only reads and cannot open an
+   approval dialog or send an import. Confirmation needs both the original
+   clean response and matching readback. Keep the original batch when recovery
+   is inconclusive; do not rebuild it as a retry.
+
+An XML file alone is not portable posting authorization. Files generated
+elsewhere, edited files, legacy unbound batches and unsupported voucher types
+are refused. This first desktop flow has no Journal editor or arbitrary XML
+importer. It adds no persisted format beyond the shared posting service.
 
 ## Evidence-shaped outputs
 
