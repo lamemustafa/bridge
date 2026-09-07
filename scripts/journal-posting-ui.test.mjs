@@ -8,7 +8,11 @@ test("Journal review is reachable from Overview without becoming a top-level nav
   assert.match(app, /import \{ JournalPostingScreen \} from "\.\/JournalPostingScreen";/);
   assert.match(app, /type View = .*"journal"/);
   assert.match(app, /setView\("journal"\)/);
-  assert.match(app, /<JournalPostingScreen config=\{config\} \/>/);
+  assert.match(app, /<JournalPostingScreen config=\{config\} onBusyChange=\{setJournalActionBusy\} \/>/);
+  assert.match(app, /disabled=\{shellNavigationLocked\}/);
+  assert.match(app, /journal-action-busy-note/);
+  assert.doesNotMatch(app, /Bridge only reads from Tally/);
+  assert.match(app, /posting a Journal always requires your explicit approval/);
   const nav = app.slice(app.indexOf('<nav aria-label="Bridge operations">'), app.indexOf("</nav>"));
   assert.doesNotMatch(nav, /Review Journal/);
 });
@@ -34,6 +38,8 @@ test("Journal review uses the bounded native commands and preserves reconciliati
   assert.match(screen, /will not rebuild or resend it/);
   assert.doesNotMatch(screen, /<textarea/);
   assert.doesNotMatch(screen, /build_import_xml|render_import_xml/);
+  assert.match(screen, /onBusyChange\?\.\(true\)/);
+  assert.match(screen, /onBusyChange\?\.\(false\)/);
 });
 
 test("Journal entries stay bounded and scrollable at narrow widths", async () => {

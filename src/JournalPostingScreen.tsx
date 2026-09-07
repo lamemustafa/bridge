@@ -78,7 +78,12 @@ function displayJournalDate(value: string) {
   return /^\d{8}$/.test(value) ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}` : value;
 }
 
-export function JournalPostingScreen({ config }: { config: TallyConfig }) {
+type JournalPostingScreenProps = {
+  config: TallyConfig;
+  onBusyChange?: (busy: boolean) => void;
+};
+
+export function JournalPostingScreen({ config, onBusyChange }: JournalPostingScreenProps) {
   const [review, setReview] = React.useState<JournalReview | null>(null);
   const [actionResult, setActionResult] = React.useState<JournalActionResponse | null>(null);
   const [action, setAction] = React.useState<Action>(null);
@@ -89,6 +94,7 @@ export function JournalPostingScreen({ config }: { config: TallyConfig }) {
 
   async function chooseJournal() {
     if (actionRef.current !== null) return;
+    onBusyChange?.(true);
     actionRef.current = "pick";
     setAction("pick");
     try {
@@ -105,12 +111,14 @@ export function JournalPostingScreen({ config }: { config: TallyConfig }) {
     } finally {
       actionRef.current = null;
       setAction(null);
+      onBusyChange?.(false);
     }
   }
 
   async function runAction(kind: "post" | "reconcile") {
     if (!review || actionRef.current !== null) return;
     const requestedConfig = reviewConfig ?? config;
+    onBusyChange?.(true);
     actionRef.current = kind;
     setAction(kind);
     setError(null);
@@ -133,6 +141,7 @@ export function JournalPostingScreen({ config }: { config: TallyConfig }) {
     } finally {
       actionRef.current = null;
       setAction(null);
+      onBusyChange?.(false);
     }
   }
 

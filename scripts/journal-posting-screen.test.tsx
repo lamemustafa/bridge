@@ -114,6 +114,45 @@ test("renders the review flow and keeps safe recovery actions after each backend
   root.unmount();
 });
 
+test("reports a busy Journal action until the native post result is rendered", async () => {
+  const busyStates: boolean[] = [];
+  let resolvePost!: (value: unknown) => void;
+  const pendingPost = new Promise((resolve) => {
+    resolvePost = resolve;
+  });
+  mocks.invoke.mockResolvedValueOnce(review);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+
+  await act(async () => {
+    root.render(<JournalPostingScreen config={config} onBusyChange={(busy) => busyStates.push(busy)} />);
+  });
+  await act(async () => {
+    button(host, "Choose Journal file").click();
+  });
+
+  mocks.invoke.mockReturnValueOnce(pendingPost);
+  await act(async () => {
+    button(host, "Post Journal").click();
+    await Promise.resolve();
+  });
+  expect(busyStates.at(-1)).toBe(true);
+  expect(button(host, "Review approval dialog").disabled).toBe(true);
+
+  await act(async () => {
+    resolvePost({
+      batchId: review.batchId,
+      result: { result: { dispatch: { state: "posted_verified", resent: false } } },
+    });
+    await pendingPost;
+  });
+  expect(busyStates.at(-1)).toBe(false);
+  expect(host.textContent).toContain("Bridge confirmed the original Journal and its saved batch.");
+  expect([...host.querySelectorAll("button")].some((item) => item.textContent?.includes("Post Journal"))).toBe(false);
+  root.unmount();
+});
+
 for (const [code, expected] of [
   ["import_approval_timed_out", "The approval dialog expired before Bridge could post this Journal."],
   ["import_approval_declined", "The Journal was not posted because approval was declined."],

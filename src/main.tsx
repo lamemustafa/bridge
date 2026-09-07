@@ -487,6 +487,7 @@ function App() {
   );
   const [busy, setBusy] = React.useState(false);
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
+  const [journalActionBusy, setJournalActionBusy] = React.useState(false);
   const tallyResultsVersion = React.useRef(0);
   const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
@@ -640,6 +641,12 @@ function App() {
     : childTallyReadCount > 0
     ? "Endpoint settings are locked while a Tally read is in progress."
     : null;
+  const shellNavigationLocked = childTallyReadCount > 0 || journalActionBusy;
+  const shellNavigationDescription = journalActionBusy
+    ? "journal-action-busy-note"
+    : childTallyReadCount > 0
+      ? "active-tally-read-note"
+      : undefined;
 
   React.useEffect(() => {
     if (!tallyAction && !snapshotActive) {
@@ -1516,21 +1523,24 @@ function App() {
           <button
             aria-current={view === "outstandings" ? "page" : undefined}
             className={view === "outstandings" ? "active" : ""}
-            disabled={childTallyReadCount > 0}
-            aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined}
+            disabled={shellNavigationLocked}
+            aria-describedby={shellNavigationDescription}
             onClick={() => setView("outstandings")}
           >
             <Cable size={18} /> Overview
           </button>
-          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("companies")}>
+          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("companies")}>
             <Building2 size={18} /> Companies
           </button>
-          <button aria-current={view === "settings" ? "page" : undefined} className={view === "settings" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("settings")}>
+          <button aria-current={view === "settings" ? "page" : undefined} className={view === "settings" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("settings")}>
             <Settings2 size={18} /> Settings
           </button>
         </nav>
         {childTallyReadCount > 0 && (
           <p className="future-sections-note" id="active-tally-read-note" role="status">A Tally read is still in progress. Wait before opening another live read.</p>
+        )}
+        {journalActionBusy && (
+          <p className="future-sections-note" id="journal-action-busy-note" role="status">A Journal action is still in progress. Wait for Bridge to finish before leaving this review.</p>
         )}
       </aside>
 
@@ -1545,7 +1555,7 @@ function App() {
           clients={clientSwitcherClients}
           selectedClientKey={selectedCompany}
           activeView={view}
-          selectionLocked={savedCompanySelectionLocked}
+          selectionLocked={savedCompanySelectionLocked || journalActionBusy}
           endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
           loadError={persistedCompanyProfileError ? toErrorMessage(persistedCompanyProfileError) : null}
@@ -1575,7 +1585,7 @@ function App() {
             </button>
           )}
           {view === "journal" && (
-            <button className="secondary-action" type="button" onClick={() => setView("outstandings")}>
+            <button className="secondary-action" type="button" disabled={journalActionBusy} aria-describedby={journalActionBusy ? "journal-action-busy-note" : undefined} onClick={() => setView("outstandings")}>
               Back to Overview
             </button>
           )}
@@ -1817,7 +1827,7 @@ function App() {
 
         {view === "journal" && (
           <ErrorBoundary key="journal" label="Review Journal">
-            <JournalPostingScreen config={config} />
+            <JournalPostingScreen config={config} onBusyChange={setJournalActionBusy} />
           </ErrorBoundary>
         )}
 
@@ -1887,7 +1897,7 @@ function App() {
               <section className="setup-company" id="company-profile" aria-labelledby="company-profile-heading">
                 <div>
                   <h2 id="company-profile-heading">Choose a company</h2>
-                  <p>Choose the company that is open in Tally. Bridge only reads from Tally.</p>
+                  <p>Choose the company that is open in Tally. Bridge reads for setup and review; posting a Journal always requires your explicit approval.</p>
                 </div>
                 {companyError && <TallyErrorNotice message={companyError} />}
                 {currentProbeCompanyList.length > 0 ? (
