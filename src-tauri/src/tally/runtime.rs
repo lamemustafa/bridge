@@ -647,12 +647,7 @@ fn observed_opening_boundary(
             feature.state == CapabilityState::Supported
                 && feature.confidence == EvidenceConfidence::Observed
         });
-    if !observed
-        || !matches!(
-            product.as_str(),
-            "tallyprime" | "tallyprimeeditlog" | "tallyerp9"
-        )
-    {
+    if !observed || product != "tallyprime" {
         return Err(OpeningBoundaryObservationError::Unobserved);
     }
     match profile.mode.as_deref() {

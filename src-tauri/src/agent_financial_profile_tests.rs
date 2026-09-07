@@ -33,7 +33,8 @@ fn join(left: &str, right: &str) -> String {
 }
 
 #[tokio::test]
-async fn monetary_tools_refuse_unobserved_mode_or_unsupported_product_with_completed_wire_evidence() {
+async fn monetary_tools_refuse_unobserved_mode_or_unsupported_product_with_completed_wire_evidence()
+{
     let companies = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
     ));
@@ -42,11 +43,14 @@ async fn monetary_tools_refuse_unobserved_mode_or_unsupported_product_with_compl
     // cannot admit: an unsupported product, or no observed licence mode.
     // These mutate captured metadata only; they are not positive evidence for
     // another product, Gold, or Education behavior.
-    let unsupported_product = companies.replace(
-        "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>",
-        "<PRODUCTNAME TYPE=\"String\">UnsupportedTallyProduct</PRODUCTNAME>",
-    );
-    assert_ne!(unsupported_product, companies);
+    let unsupported_products = ["TallyPrime Edit Log", "Tally.ERP 9"].map(|product| {
+        let altered = companies.replace(
+            "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>",
+            &format!("<PRODUCTNAME TYPE=\"String\">{product}</PRODUCTNAME>"),
+        );
+        assert_ne!(altered, companies);
+        altered
+    });
     let extents = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"
     ));
@@ -58,7 +62,10 @@ async fn monetary_tools_refuse_unobserved_mode_or_unsupported_product_with_compl
         "<SILVER TYPE=\"Logical\">No</SILVER>",
     );
     assert_ne!(unobserved_mode, companies);
-    for unqualified in [unsupported_product, unobserved_mode] {
+    for unqualified in unsupported_products
+        .into_iter()
+        .chain(std::iter::once(unobserved_mode))
+    {
         for (tool, args, reads_currency) in [
             (
                 "ledger_masters",
