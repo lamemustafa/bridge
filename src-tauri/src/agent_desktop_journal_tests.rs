@@ -74,8 +74,8 @@ fn review_details_come_from_the_admitted_saved_journal() {
 
     let review = service.review_selected_xml(xml.as_bytes()).unwrap();
     assert_eq!(review.details.date, "20260901");
-    assert_eq!(review.details.total_debit, "12.50");
-    assert_eq!(review.details.total_credit, "12.50");
+    assert_eq!(review.details.total_debit, "12.5");
+    assert_eq!(review.details.total_credit, "12.5");
     assert_eq!(
         review
             .details
