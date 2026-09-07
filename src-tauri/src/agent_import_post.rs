@@ -24,16 +24,7 @@ impl Server {
             let (xml, preview) = admit_saved_journal(&line, &self.settings.endpoint)?;
             if snapshot.dispatched {
                 let mut result = self.verify_import(args).await?;
-                let readback_verified = verification_status(&result.payload["result"], 1) == "posted_verified";
-                let response_state = persisted_response_state(snapshot.response.as_ref());
-                let reconciled = readback_verified && persisted_response_is_clean(snapshot.response.as_ref());
-                result.payload["result"]["dispatch"] = json!({
-                    "state":if reconciled { "previous_attempt_reconciled" } else { "reconciliation_required" },
-                    "resent":false,
-                    "response_state":response_state,
-                    "response":snapshot.response,
-                });
-                if !reconciled { mark_reconciliation_required(&mut result.payload); }
+                finalize_previous_attempt_reconciliation(&mut result.payload, snapshot.response.as_ref());
                 return Ok(result);
             }
             let before = self.verify_import(args).await?;
@@ -42,9 +33,8 @@ impl Server {
             // No Tally mutation can occur while the separate approval dialog is open.
             let request = ApprovedImport::confirm(xml, &preview).await?;
             let mode = self.qualified_import_profile().await?;
-            accumulate_post_profile_evidence(&mut accumulated, &mode);
             let payload = ImportPayload { company_guid: line.company_guid.clone(), vouchers: line.vouchers.clone() };
-            validate_import_dates_for_profile(&payload, &mode)?;
+            validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
             let (company, identity, identity_evidence) = self.verified_company(guid).await?;
             accumulated = combine_evidence(accumulated.clone(), identity_evidence);
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
@@ -154,11 +144,30 @@ fn persisted_response_state(response: Option<&ledger::DispatchResponse>) -> &'st
     }
 }
 
-fn accumulate_post_profile_evidence(
-    accumulated: &mut Evidence,
-    profile: &ImportProfileObservation,
+fn finalize_previous_attempt_reconciliation(
+    payload: &mut Value,
+    response: Option<&ledger::DispatchResponse>,
 ) {
+    let reconciled = verification_status(&payload["result"], 1) == "posted_verified"
+        && persisted_response_is_clean(response);
+    payload["result"]["dispatch"] = json!({
+        "state": if reconciled { "previous_attempt_reconciled" } else { "reconciliation_required" },
+        "resent": false,
+        "response_state": persisted_response_state(response),
+        "response": response,
+    });
+    if !reconciled {
+        mark_reconciliation_required(payload);
+    }
+}
+
+fn validate_post_profile_with_evidence(
+    payload: &ImportPayload,
+    profile: &ImportProfileObservation,
+    accumulated: &mut Evidence,
+) -> Result<(), String> {
     *accumulated = combine_evidence(accumulated.clone(), profile.evidence.clone());
+    validate_import_dates_for_profile(payload, profile)
 }
 
 fn require_absent(payload: &Value) -> Result<(), String> {

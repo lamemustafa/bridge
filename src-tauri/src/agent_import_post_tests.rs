@@ -173,25 +173,40 @@ fn dispatch_response(
 }
 
 #[test]
-fn previous_attempt_needs_clean_persisted_counters_as_well_as_exact_readback() {
+fn exact_readback_requires_a_clean_persisted_response_to_reconcile() {
     let clean = dispatch_response("success", 1, 0);
     let altered = dispatch_response("success", 0, 1);
-    let failed = dispatch_response("failure", 1, 0);
-
-    assert!(persisted_response_is_clean(Some(&clean)));
-    assert_eq!(persisted_response_state(Some(&clean)), "response_clean");
-    assert!(!persisted_response_is_clean(Some(&altered)));
-    assert_eq!(
-        persisted_response_state(Some(&altered)),
-        "response_not_clean"
-    );
-    assert!(!persisted_response_is_clean(Some(&failed)));
-    assert_eq!(
-        persisted_response_state(Some(&failed)),
-        "response_not_clean"
-    );
-    assert!(!persisted_response_is_clean(None));
-    assert_eq!(persisted_response_state(None), "response_missing");
+    for (response, response_state, expected_state) in [
+        (
+            Some(&clean),
+            "response_clean",
+            "previous_attempt_reconciled",
+        ),
+        (
+            Some(&altered),
+            "response_not_clean",
+            "reconciliation_required",
+        ),
+        (None, "response_missing", "reconciliation_required"),
+    ] {
+        let mut payload = json!({
+            "result": {"counts": {"posted_verified": 1}, "duplicates": []}
+        });
+        finalize_previous_attempt_reconciliation(&mut payload, response);
+        assert_eq!(payload["result"]["dispatch"]["state"], expected_state);
+        assert_eq!(
+            payload["result"]["dispatch"]["response_state"],
+            response_state
+        );
+        if expected_state == "previous_attempt_reconciled" {
+            assert!(payload["result"].get("error").is_none());
+        } else {
+            assert_eq!(
+                payload["result"]["error"]["code"],
+                "import_reconciliation_required"
+            );
+        }
+    }
 }
 
 #[test]
@@ -227,9 +242,8 @@ fn post_date_refusal_retains_the_completed_profile_probe_evidence() {
         reason_code: None,
     };
     let expected = combine_evidence(accumulated.clone(), profile_evidence);
-    accumulate_post_profile_evidence(&mut accumulated, &profile);
     assert_eq!(
-        validate_import_dates_for_profile(&payload, &profile).unwrap_err(),
+        validate_post_profile_with_evidence(&payload, &profile, &mut accumulated).unwrap_err(),
         "education_voucher_date_unsupported"
     );
     assert_eq!(accumulated.request_sha256, expected.request_sha256);
