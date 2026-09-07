@@ -103,9 +103,11 @@ where
                             Ok(tool_response.value)
                         }
                         None => {
-                            egress = Some(EgressContext { evidence:None, tool:name.into(),
-                                args_sha256:sha256_json(&arguments), company_guid:None });
-                            Err("request_cancelled".into())
+                            let cancelled = server.finish_tool_response(name, &arguments, Utc::now(),
+                                server.cancelled_import(&arguments));
+                            recovery_batch_id = cancelled.recovery_batch_id;
+                            egress = Some(cancelled.egress);
+                            Ok(cancelled.value)
                         }
                     }
                 } else {
@@ -179,6 +181,11 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
         }
         // Tools may reduce an explicitly paged result. Control messages (including
         // the tool catalogue) must either fit intact or return a bounded refusal.
+        let recovery_code = recovery_batch_id.as_ref().and_then(|_| {
+            response["result"]["structuredContent"]["result"]["error"]["code"]
+                .as_str()
+                .map(str::to_string)
+        });
         let fits = if is_tool {
             enforce_jsonrpc_response_byte_cap(&mut response, server.settings.max_bytes).is_ok()
         } else {
@@ -188,7 +195,9 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
             response = recovery_error(
                 id.clone(),
                 recovery_batch_id.as_deref(),
-                "agent_response_too_large",
+                recovery_code
+                    .as_deref()
+                    .unwrap_or("agent_response_too_large"),
             );
         }
         let mut serialized_response = serialize_response(&response, server.settings.max_bytes)?;
@@ -345,10 +354,11 @@ where
             // approval/write future. Cancellation remains visible on every turn.
             frame = framer.read(reader, MAX_REQUEST_BYTES) => {
                 let frame = frame?.ok_or("stdio_client_disconnected")?;
-                let cancelled = frame.as_ref().ok().and_then(|text| serde_json::from_str::<Value>(text).ok())
-                    .is_some_and(|message| message["jsonrpc"] == "2.0" && message.get("id").is_none()
-                        && message["method"] == "notifications/cancelled" && message["params"]["requestId"] == *id);
-                if cancelled { return Ok(None); }
+                if let Some(target) = cancellation_target(&frame) {
+                    if target == *id { return Ok(None); }
+                    cancel_queued_request(server, stdout, pending, &target).await?;
+                    continue;
+                }
                 let queued_bytes: usize = pending.iter().filter_map(|frame| frame.as_ref().ok()).map(String::len).sum();
                 let size = frame.as_ref().map_or(0, String::len);
                 if pending.len() >= 8 || queued_bytes.saturating_add(size) > MAX_REQUEST_BYTES {
@@ -360,6 +370,81 @@ where
             response = &mut future => return Ok(Some(response)),
         }
     }
+}
+
+fn cancellation_target(frame: &Frame) -> Option<Value> {
+    let request = parse_request(frame.as_ref().ok()?.clone()).ok()?;
+    if request.get("id").is_none() && request["method"] == "notifications/cancelled" {
+        request["params"].get("requestId").cloned()
+    } else {
+        None
+    }
+}
+
+// Consume a queued cancellation while the current request is still pending.
+// Leaving the notification behind its request would start that request first.
+async fn cancel_queued_request<W: AsyncWrite + Unpin>(
+    server: &Server,
+    stdout: &mut W,
+    pending: &mut std::collections::VecDeque<Frame>,
+    target: &Value,
+) -> Result<(), String> {
+    let position = pending.iter().position(|frame| {
+        frame
+            .as_ref()
+            .ok()
+            .and_then(|text| parse_request(text.clone()).ok())
+            .is_some_and(|request| request.get("id") == Some(target))
+    });
+    let Some(position) = position else {
+        return Ok(());
+    };
+    let frame = pending.remove(position).expect("located pending frame");
+    if !request_id_fits_response_cap(target, server.settings.max_bytes) {
+        return refuse_pending_frame(server, stdout, frame).await;
+    }
+    let Ok(request) = frame.and_then(parse_request) else {
+        return Ok(());
+    };
+    let is_tool = request["method"] == "tools/call";
+    let args = request["params"]
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let name = request["params"]["name"].as_str().unwrap_or("unknown");
+    if is_tool && name == "post_import" {
+        let response =
+            server.finish_tool_response(name, &args, Utc::now(), server.cancelled_import(&args));
+        return finish_response(
+            server,
+            stdout,
+            target.clone(),
+            Ok(response.value),
+            Some(response.egress),
+            response.recovery_batch_id,
+            true,
+        )
+        .await;
+    }
+    let egress = is_tool.then(|| EgressContext {
+        evidence: None,
+        tool: name.into(),
+        args_sha256: sha256_json(&args),
+        company_guid: args
+            .get("company_guid")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    });
+    finish_response(
+        server,
+        stdout,
+        target.clone(),
+        Err("request_cancelled".into()),
+        egress,
+        None,
+        is_tool,
+    )
+    .await
 }
 
 async fn refuse_pending_frame<W: AsyncWrite + Unpin>(
@@ -495,3 +580,7 @@ mod tests;
 #[cfg(test)]
 #[path = "agent_post_cancellation_tests.rs"]
 mod post_cancellation_tests;
+
+#[cfg(test)]
+#[path = "agent_post_recovery_tests.rs"]
+mod post_recovery_tests;

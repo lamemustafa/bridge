@@ -193,8 +193,8 @@ pub(super) fn response_row_count(response: &Value) -> Option<usize> {
 pub(super) fn set_mcp_content_json(mcp_response: &mut Value) {
     // MCP 2025-06-18 Tools: preserve the complete payload for clients that only
     // consume TextContent, including the supported 2024-11-05 protocol.
-    mcp_response["content"][0]["text"] =
-        Value::String(mcp_response["structuredContent"].to_string());
+    mcp_response["content"] =
+        json!([{"type":"text","text":mcp_response["structuredContent"].to_string()}]);
 }
 
 pub(super) fn enforce_mcp_result_byte_cap(

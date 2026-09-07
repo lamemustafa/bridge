@@ -516,9 +516,19 @@ impl Server {
     }
 
     async fn call_tool_response(&self, name: &str, args: Value) -> ToolResponse {
-        let args_sha256 = sha256_json(&args);
         let started = Utc::now();
         let result = self.tool_payload(name, &args).await;
+        self.finish_tool_response(name, &args, started, result)
+    }
+
+    fn finish_tool_response(
+        &self,
+        name: &str,
+        args: &Value,
+        started: chrono::DateTime<Utc>,
+        result: Result<ToolOutcome, ToolFailure>,
+    ) -> ToolResponse {
+        let args_sha256 = sha256_json(args);
         let ToolOutcome {
             payload,
             mut evidence,

@@ -5,6 +5,47 @@ use crate::tally::approved_import::ApprovedImport;
 use bridge_tally_protocol::{parse_import_outcome, TallyImportApplicationStatus};
 
 impl Server {
+    /// Called only after dropping a cancelled posting future. A missing or
+    /// unreadable snapshot is unknown, never proof that dispatch did not occur.
+    pub(in crate::agent) fn cancelled_import(
+        &self,
+        args: &Value,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        let batch_id = required_string(args, "batch_id")?;
+        let guid = required_string(args, "company_guid")?;
+        let uuid = batch_id
+            .strip_prefix("bridge-")
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            .ok_or_else(|| "import_batch_identifier_invalid".to_string())?;
+        if batch_id != format!("bridge-{uuid}") {
+            return Err("import_batch_identifier_invalid".to_string().into());
+        }
+        let attempted = self
+            .latest_import_snapshot(batch_id)
+            .ok()
+            .flatten()
+            .filter(|snapshot| batch_guid_matches(&snapshot.batch.company_guid, guid))
+            .map(|snapshot| snapshot.dispatched);
+        let mut evidence =
+            evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
+        evidence.state = "partial";
+        evidence.reason_code = Some("request_cancelled".into());
+        Ok(ToolOutcome {
+            payload: json!({"result":{
+                "batch_id":batch_id,"attempt_recorded":attempted,
+                "dispatch":{"state":if attempted == Some(false) { "not_dispatched" } else { "reconciliation_required" },"resent":false},
+                "error":{"code":"request_cancelled","message":if attempted == Some(false) {
+                    "The request was cancelled. No posting attempt is recorded for this saved batch."
+                } else {
+                    "The request was cancelled with an uncertain outcome. Reconcile this original batch with verify_import; never rebuild or resend it."
+                }}
+            }}),
+            evidence,
+            company_guid: Some(guid.to_string()),
+            truncated: false,
+        })
+    }
+
     pub(in crate::agent) async fn post_import(
         &self,
         args: &Value,
