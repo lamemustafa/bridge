@@ -1580,7 +1580,7 @@ function App() {
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
           {(view === "dashboard" || view === "outstandings") && (
-            <button className="secondary-action" type="button" disabled={shellNavigationLocked} onClick={() => setView("journal")}>
+            <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotActive || snapshotStartOutcomeUnknown} onClick={() => setView("journal")}>
               <FileText size={18} aria-hidden="true" /> Review Journal file
             </button>
           )}
@@ -1829,7 +1829,7 @@ function App() {
 
         {view === "journal" && (
           <ErrorBoundary key="journal" label="Review Journal">
-            <JournalPostingScreen config={config} onBusyChange={setJournalActionBusy} />
+            <JournalPostingScreen config={config} postingBlocked={snapshotActive || snapshotStartOutcomeUnknown} onBusyChange={setJournalActionBusy} />
           </ErrorBoundary>
         )}
 

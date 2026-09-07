@@ -314,3 +314,29 @@ test.each([
   expect(labels.some((label) => label?.includes("Reconcile original batch"))).toBe(!retryable);
   root.unmount();
 });
+
+
+test("an active or unresolved snapshot blocks posting from an already-open review", async () => {
+  mocks.invoke.mockResolvedValueOnce(review);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<JournalPostingScreen config={config} />); });
+  await act(async () => { button(host, "Choose Journal file").click(); });
+  expect(button(host, "Post Journal").disabled).toBe(false);
+  await act(async () => { root.render(<JournalPostingScreen config={config} postingBlocked />); });
+  expect(button(host, "Post Journal").disabled).toBe(true);
+  expect(host.textContent).toContain("Finish or reconcile the snapshot before posting this Journal.");
+  await act(async () => { button(host, "Post Journal").click(); });
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  await act(async () => { root.render(<JournalPostingScreen config={config} postingBlocked={false} />); });
+  expect(button(host, "Post Journal").disabled).toBe(false);
+  mocks.invoke.mockResolvedValueOnce({
+    batchId: review.batchId,
+    result: { result: { dispatch: { state: "posted_verified", resent: false } } },
+  });
+  await act(async () => { button(host, "Post Journal").click(); });
+  expect(mocks.invoke.mock.calls[1][0]).toBe("desktop_post_reviewed_journal");
+  expect(host.textContent).toContain("Bridge confirmed the original Journal and its saved batch.");
+  root.unmount();
+});

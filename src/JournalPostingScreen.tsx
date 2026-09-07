@@ -104,9 +104,10 @@ function displayJournalDate(value: string) {
 type JournalPostingScreenProps = {
   config: TallyConfig;
   onBusyChange?: (busy: boolean) => void;
+  postingBlocked?: boolean;
 };
 
-export function JournalPostingScreen({ config, onBusyChange }: JournalPostingScreenProps) {
+export function JournalPostingScreen({ config, onBusyChange, postingBlocked = false }: JournalPostingScreenProps) {
   const [review, setReview] = React.useState<JournalReview | null>(null);
   const [actionResult, setActionResult] = React.useState<JournalActionResponse | null>(null);
   const [action, setAction] = React.useState<Action>(null);
@@ -139,7 +140,7 @@ export function JournalPostingScreen({ config, onBusyChange }: JournalPostingScr
   }
 
   async function runAction(kind: "post" | "reconcile") {
-    if (!review || actionRef.current !== null) return;
+    if (!review || actionRef.current !== null || (kind === "post" && postingBlocked)) return;
     const requestedConfig = reviewConfig ?? config;
     onBusyChange?.(true);
     actionRef.current = kind;
@@ -266,7 +267,8 @@ export function JournalPostingScreen({ config, onBusyChange }: JournalPostingScr
           {verified && <p className="journal-status" role="status"><FileCheck2 size={18} aria-hidden="true" /> Bridge confirmed the original Journal and its saved batch.</p>}
           {reconciliationRequired && !verified && <p className="journal-status journal-status-warning" role="alert">The original batch needs reconciliation. Bridge will use this same review and will not rebuild or resend it.</p>}
           {actionErrorOf(actionResult) && <p className="journal-status journal-status-warning" role="alert">{actionErrorOf(actionResult)}</p>}
-          {!verified && !reconciliationRequired && <p className="journal-action-note">Review the approval dialog; Bridge then checks and posts this saved batch.</p>}
+          {postingBlocked && journalState.canPost && <p className="journal-status journal-status-warning" role="status">Finish or reconcile the snapshot before posting this Journal.</p>}
+          {!postingBlocked && !verified && !reconciliationRequired && <p className="journal-action-note">Review the approval dialog; Bridge then checks and posts this saved batch.</p>}
           <div className="journal-actions">
             {journalState.canReconcile ? (
               <button className="primary" type="button" onClick={() => void runAction("reconcile")} disabled={action !== null}>
@@ -274,7 +276,7 @@ export function JournalPostingScreen({ config, onBusyChange }: JournalPostingScr
                 {action === "reconcile" ? "Reconciling original batch…" : "Reconcile original batch"}
               </button>
             ) : journalState.canPost ? (
-              <button className="primary" type="button" onClick={() => void runAction("post")} disabled={action !== null}>
+              <button className="primary" type="button" onClick={() => void runAction("post")} disabled={action !== null || postingBlocked}>
                 <ShieldCheck size={18} aria-hidden="true" />
                 {action === "post" ? "Review approval dialog…" : "Post Journal"}
               </button>
