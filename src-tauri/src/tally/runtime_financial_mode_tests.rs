@@ -110,18 +110,16 @@ fn join(left: &str, right: &str) -> String {
     sha256_hex(format!("{left}:{right}").as_bytes())
 }
 
-// Refusal-only metadata mutations of the captured qualified profile.
-const PROFILE_FAULTS: [&str; 10] = [
-    "education",
-    "erp9",
-    "editlog",
+// These mutations alter profile metadata in captured bodies. They exercise
+// admission behavior only; they are not live evidence for another product,
+// release, or licence tier.
+const REFUSAL_PROFILE_FAULTS: [&str; 2] = ["mode_unknown", "product_unknown"];
+const ADMITTED_PROFILE_VARIANTS: [&str; 5] = [
+    "none",
     "release_old",
     "release_missing",
     "release_unknown",
     "gold",
-    "tier_ambiguous",
-    "mode_unknown",
-    "product_unknown",
 ];
 fn fault_company(fault: &str) -> String {
     let source = companies();
@@ -164,16 +162,11 @@ fn fault_company(fault: &str) -> String {
     changed
 }
 fn assert_profile_refusal(error: &anyhow::Error, fault: &str) {
-    let expected = if matches!(fault, "mode_unknown" | "product_unknown") {
-        OpeningBoundaryObservationError::Unobserved
-    } else {
-        OpeningBoundaryObservationError::Unqualified
-    };
     assert_eq!(
         error
             .chain()
             .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
-        Some(&expected),
+        Some(&OpeningBoundaryObservationError::Unobserved),
         "{fault}: {error:?}"
     );
 }
@@ -182,10 +175,7 @@ fn assert_profile_refusal(error: &anyhow::Error, fault: &str) {
 async fn financial_reads_refuse_unqualified_profiles_before_reports_despite_stale_cache() {
     for party in [false, true] {
         for cached in [false, true] {
-            for fault in PROFILE_FAULTS {
-                if cached && fault != "education" {
-                    continue;
-                }
+            for fault in REFUSAL_PROFILE_FAULTS {
                 let plans = vec![status(), xml(fault_company(fault))];
                 let response_bytes = plans
                     .iter()
@@ -256,8 +246,8 @@ async fn financial_reads_refuse_unqualified_profiles_before_reports_despite_stal
 fn pair(plans: &mut Vec<ScenarioPlan>, response: ScenarioPlan) {
     plans.extend([response.clone(), status(), response, status()]);
 }
-fn compliance_plans(closing_fault: &str) -> Vec<ScenarioPlan> {
-    let company = xml(companies());
+fn compliance_plans(profile_fault: &str) -> Vec<ScenarioPlan> {
+    let company = xml(fault_company(profile_fault));
     let extent = xml(extents());
     let mut plans = vec![status(), company.clone(), company.clone()];
     pair(&mut plans, extent.clone());
@@ -267,13 +257,13 @@ fn compliance_plans(closing_fault: &str) -> Vec<ScenarioPlan> {
         include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-groups.utf16le.xml").as_slice(),
     ] { pair(&mut plans,xml(decode(bytes))); }
     pair(&mut plans, extent);
-    plans.extend([company, status(), xml(fault_company(closing_fault))]);
+    plans.extend([company.clone(), status(), company]);
     plans
 }
 
 #[tokio::test]
 async fn compliance_source_requires_closing_mode_and_preserves_source_commitments() {
-    for fault in std::iter::once("none").chain(PROFILE_FAULTS) {
+    for fault in ADMITTED_PROFILE_VARIANTS {
         let plans = compliance_plans(fault);
         let responses = plans
             .iter()
@@ -291,20 +281,11 @@ async fn compliance_source_requires_closing_mode_and_preserves_source_commitment
                 assertion(&extents(), &identity),
             )
             .await;
-        let evidence = if fault != "none" {
-            let error = result.unwrap_err();
-            assert_profile_refusal(&error, fault);
-            error
-                .downcast_ref::<RuntimeReadFailure>()
-                .unwrap()
-                .evidence
-                .clone()
-        } else {
-            let (source, evidence) = result.unwrap();
-            assert_eq!(source.rows.len(), 9);
-            evidence
-        };
-        let observed = simulator.finish().unwrap();
+        let (source, evidence) = result.unwrap();
+        assert_eq!(source.rows.len(), 9);
+        let observed = simulator
+            .finish()
+            .unwrap_or_else(|error| panic!("{fault}: {error}"));
         assert_eq!(observed.len(), 26);
         let req = |i: usize| observed[i].request_body_sha256.clone();
         let res = |i: usize| sha256_hex(&responses[i]);
@@ -336,8 +317,9 @@ async fn compliance_source_requires_closing_mode_and_preserves_source_commitment
 
 #[tokio::test]
 async fn outstandings_requires_closing_mode_and_retains_sources_on_refusal() {
-    for fault in ["none", "amount"].into_iter().chain(PROFILE_FAULTS) {
-        let company = xml(companies());
+    for fault in std::iter::once("amount").chain(ADMITTED_PROFILE_VARIANTS) {
+        let profile_fault = if fault == "amount" { "none" } else { fault };
+        let company = xml(fault_company(profile_fault));
         let extent = xml(extents());
         let mut plans = vec![status(), company.clone(), company.clone()];
         pair(&mut plans, extent.clone());
@@ -356,15 +338,7 @@ async fn outstandings_requires_closing_mode_and_retains_sources_on_refusal() {
             pair(&mut plans, xml(source));
         }
         pair(&mut plans, extent);
-        plans.extend([
-            company,
-            status(),
-            xml(fault_company(if fault == "amount" {
-                "none"
-            } else {
-                fault
-            })),
-        ]);
+        plans.extend([company, status(), xml(fault_company(profile_fault))]);
         let responses = plans
             .iter()
             .map(|plan| encode(&plan.fixture.body(), plan.encoding))
@@ -383,7 +357,7 @@ async fn outstandings_requires_closing_mode_and_retains_sources_on_refusal() {
                 OutstandingsAgeingAnchor::DueDate,
             )
             .await;
-        let evidence = if fault == "none" {
+        let evidence = if ADMITTED_PROFILE_VARIANTS.contains(&fault) {
             let (result, evidence) = result.unwrap();
             assert!(matches!(result, OutstandingsLoadResult::Complete { .. }));
             evidence

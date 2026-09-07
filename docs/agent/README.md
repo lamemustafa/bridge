@@ -102,18 +102,19 @@ groups and instances; it is not a claim of universal ledger-report parity.
 
 The runtime retains its paired read, verified company and book-extent checks.
 Native ledger openings, basic/compliance ledger balances, and native outstandings
-require freshly observed **TallyPrime, Licensed mode, release 7.1, Silver tier**
-before and after the reads. Other or unobserved profiles return
-`financial_read_profile_unqualified` without releasing monetary results. This
-shared runtime gate also affects native desktop consumers, including those with
-an operator-supplied currency assertion. A prior status call or cached profile
-does not grant admission.
+require a freshly observed supported product and licence mode before and after
+the reads. The operation then uses that mode's date-boundary profile: Education
+accepts only its observed day-1/day-2/day-31 native boundaries, while Licensed
+mode uses ordinary boundaries. An unsupported Education boundary returns the
+operation-specific period refusal before its report is dispatched; Bridge never
+rounds it. Release and licence tier remain observed facts, not blanket monetary
+read exclusions. This shared runtime gate also affects native desktop consumers,
+including those with an operator-supplied currency assertion. A prior status call
+or cached profile does not grant admission.
 
-This qualification boundary was narrowed on 2026-09-07. The retained Education
-observations in protocol sections 5.3, 5.5 and 12a remain valid within their
-recorded scope; they do not qualify every release or the current financial read
-workflow. Those profiles are withheld here. Ordinary voucher reads retain their
-separate literal-date and returned-row validation contract.
+The retained Education observations in protocol sections 5.3, 5.5 and 12a remain
+valid within their recorded scope. Ordinary voucher reads retain their separate
+literal-date and returned-row validation contract.
 A genuinely empty voucher response uses the same wider-window
 corroboration as `vouchers` before zero movement can be reported. Cancelled and
 optional rows establish response presence while contributing no accounting movement.
@@ -134,10 +135,11 @@ valid empty collection remains distinguishable from invalid discovery.
 `build_import_xml` and `verify_import` are hidden unless the operator sets
 `BRIDGE_AGENT_ENABLE_IMPORT=1`. A licensed synthetic-lab Journal file cycle and
 exact-file repeat import were observed on 2026-09-06. New file generation accepts
-only `Journal`, with freshly observed **TallyPrime Silver 7.1** before and after
-build reads. Other or unobserved products, releases, licence tiers and modes are
-refused before publishing a file. `tally_status` reports the observed release and
-licence tier; the optional status-page banner cannot supply these facts. `Payment`, `Receipt`, and `Contra` are refused until each has
+only `Journal`, with freshly observed supported TallyPrime product and licence mode
+before and after build reads. Release and licence tier are returned as observed
+facts; they do not independently refuse a Journal file. `tally_status` reports
+the observed release and licence tier; the optional status-page banner cannot
+supply these facts. `Payment`, `Receipt`, and `Contra` are refused until each has
 live import/readback evidence. Historical batch records remain readable. The response records
 `live_evidence: "synthetic_lab_readback"` and links to
 [the assessment](ASSESSMENT-2026-09-06.md). This does not qualify every voucher
@@ -161,17 +163,19 @@ type, host, licence mode, or manually imported file, so the feature remains opt-
    appends the verification status to the local import ledger.
 
 The file path is deliberately not a direct-posting path. Masters must already
-exist and match exactly. File generation requires the observed TallyPrime Silver 7.1 profile;
-the checks do not make a later manual import atomic with the earlier reads.
+exist and match exactly. File generation requires fresh supported product/mode
+observations; the checks do not make a later manual import atomic with the earlier reads.
+Education-mode Journal dates must be on day 1, 2, or 31. A different requested
+date is refused as `education_voucher_date_unsupported`; Bridge does not move it.
 Optional narration and reference must contain 1–2,000 Unicode characters when
 supplied; omit them when unused. Control characters and the reserved attribution
 marker are refused, including XML entity-encoded marker spellings. Voucher
 numbers contain 1–32 characters and cannot contain controls or `$`. Lengths match
 JSON Schema's character semantics; the 5 MB request-frame limit remains separate.
-If verification would report any `not_found`, TallyPrime Silver 7.1 must have been
-observed before and after readback. Otherwise `verification_mode_unqualified`,
-`verification_release_unqualified`, or `verification_license_tier_unqualified`
-withholds the absence verdict and leaves the previous proof and status intact.
+If verification would report any `not_found`, the supported TallyPrime product and
+licence mode must have been observed before and after readback. Otherwise
+`verification_mode_unqualified` withholds the absence verdict and leaves the
+previous proof and status intact.
 Positive historical readback remains available on an unqualified profile.
 A failed profile probe remains a read failure.
 
@@ -281,8 +285,9 @@ Active vouchers without observed accounting entries are refused before movement
 filtering; cancelled and optional vouchers remain excluded from movement totals.
 Movement corroborates the complete opening-ledger snapshot after voucher reads
 and rejects unknown entry names before selecting a ledger. Caller-specified
-opening dates require the freshly observed Licensed TallyPrime Silver 7.1 profile
-before and after the read; a prior status call or cached profile does not grant admission.
+opening dates require a freshly observed supported product/mode and a valid native
+boundary before and after the read; a prior status call or cached profile does not
+grant admission.
 
 Top-party ranking uses `gross_exposure`, with billed and unallocated receivable
 and payable fields kept separate. `totals.scope` is `open_bills_only`.

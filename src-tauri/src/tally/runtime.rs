@@ -626,8 +626,8 @@ pub(crate) enum OpeningBoundaryObservationError {
     Period(NativeLedgerExportPeriodError),
     #[error("opening_boundary_profile_not_observed")]
     Unobserved,
-    #[error("financial_read_profile_unqualified")]
-    Unqualified,
+    #[error("opening_boundary_profile_changed")]
+    Changed,
 }
 
 fn observed_opening_boundary(
@@ -655,20 +655,18 @@ fn observed_opening_boundary(
     {
         return Err(OpeningBoundaryObservationError::Unobserved);
     }
-    // Protocol reference §5.3 records this licensed slice, not universal
-    // release/tier parity. Historical Education boundary evidence remains
-    // valid but does not qualify this runtime's complete monetary results.
-    if product != "tallyprime"
-        || profile.release.as_deref() != Some("7.1")
-        || profile.license_tier != Some(bridge_tally_core::LicenseTier::Silver)
-        || !profile
-            .mode
-            .as_deref()
-            .is_some_and(|mode| mode.eq_ignore_ascii_case("licensed"))
-    {
-        return Err(OpeningBoundaryObservationError::Unqualified);
+    match profile.mode.as_deref() {
+        Some(mode)
+            if mode.eq_ignore_ascii_case("education")
+                || mode.eq_ignore_ascii_case("educational") =>
+        {
+            Ok(DateBoundaryProfile::EducationRestricted)
+        }
+        Some(mode) if mode.eq_ignore_ascii_case("licensed") => {
+            Ok(DateBoundaryProfile::ModeAgnostic)
+        }
+        _ => Err(OpeningBoundaryObservationError::Unobserved),
     }
-    Ok(DateBoundaryProfile::ModeAgnostic)
 }
 
 async fn observe_read_boundary(
@@ -680,10 +678,20 @@ async fn observe_read_boundary(
     Ok((boundary, evidence))
 }
 
-async fn confirm_read_boundary(client: &TallyClient) -> anyhow::Result<RuntimeReadEvidence> {
-    // Repeat full profile admission: a change to another licensed release or
-    // tier must fail even though both would have the same date-boundary kind.
-    let (_, evidence) = observe_read_boundary(client).await?;
+async fn confirm_read_boundary(
+    client: &TallyClient,
+    opening_profile: DateBoundaryProfile,
+) -> anyhow::Result<RuntimeReadEvidence> {
+    // Repeat the observed product/mode admission. A change to Education changes
+    // the boundary rules for the same operation; release and licence tier are
+    // retained as observed facts and do not categorically refuse the read.
+    let (closing_profile, evidence) = observe_read_boundary(client).await?;
+    if closing_profile != opening_profile {
+        return Err(with_read_evidence(
+            OpeningBoundaryObservationError::Changed.into(),
+            evidence,
+        ));
+    }
     Ok(evidence)
 }
 
@@ -1873,7 +1881,8 @@ impl TallyRuntime {
                             ));
                         }
                         bracket_verified_company_identity(&client, &identity).await?;
-                        let closing_evidence = confirm_read_boundary(&client).await?;
+                        let closing_evidence =
+                            confirm_read_boundary(&client, boundary_profile).await?;
                         evidence = evidence.clone().combine(closing_evidence);
                         Ok((ledgers, evidence.clone()))
                     }
@@ -1929,7 +1938,8 @@ impl TallyRuntime {
                         evidence =
                             Self::party_ledger_master_source_evidence(&source, evidence.clone());
                         bracket_verified_company_identity(&client, &identity).await?;
-                        let closing_evidence = confirm_read_boundary(&client).await?;
+                        let closing_evidence =
+                            confirm_read_boundary(&client, boundary_profile).await?;
                         evidence = evidence.clone().combine(closing_evidence);
                         Ok((source, evidence.clone()))
                     }
@@ -2388,7 +2398,8 @@ impl TallyRuntime {
                         }
                         bracket_verified_company_identity(&client, &identity).await?;
 
-                        let closing_evidence = confirm_read_boundary(&client).await?;
+                        let closing_evidence =
+                            confirm_read_boundary(&client, boundary_profile).await?;
                         read_evidence = read_evidence.clone().combine(closing_evidence);
                         let receivable_rows =
                             parse_native_bill_rows(&receivable_body, &books_from, &as_of)?;

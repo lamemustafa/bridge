@@ -3387,7 +3387,7 @@ mod tests {
         use crate::tally::runtime::{with_read_evidence, RuntimeReadEvidence};
         for (source, code) in [
             (anyhow::Error::new(crate::tally::runtime::OpeningBoundaryObservationError::Unobserved), "response_validation_failed"),
-            (anyhow::Error::new(crate::tally::runtime::OpeningBoundaryObservationError::Unqualified), "response_validation_failed"),
+            (anyhow::Error::new(crate::tally::runtime::OpeningBoundaryObservationError::Changed), "response_validation_failed"),
             (anyhow::Error::new(crate::tally::connection::PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed), "response_validation_failed"),
             (anyhow::Error::new(crate::tally::connection::PairedReadValidationError::PartyLedgerMaster), "response_validation_failed"),
             (anyhow::Error::new(crate::tally::runtime::TallyRuntimeControlError::QueueDeadline), "tally_runtime_temporarily_unavailable"),
