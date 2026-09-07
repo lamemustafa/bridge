@@ -296,8 +296,8 @@ impl Server {
         if !batch_guid_matches(&snapshot.batch.company_guid, guid) {
             return Err("import_batch_company_mismatch".to_string().into());
         }
-        // Keep the exact same batch, endpoint and native-review admission as
-        // the initial path, but do not construct an approval request here.
+        // Retain batch and endpoint integrity without applying approval-only
+        // display restrictions or constructing an approval request.
         let _ = admit_saved_journal_integrity(&snapshot.batch, &self.settings.endpoint)?;
         self.verify_import(args).await
     }

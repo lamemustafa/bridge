@@ -175,10 +175,21 @@ fn service_with_voucher_number(
     root: PathBuf,
     voucher_number: Option<&str>,
 ) -> (DesktopJournalService, ImportLedgerLine) {
-    let endpoint = TallyEndpointConfig {
-        host: "127.0.0.1".into(),
-        port: 9001,
-    };
+    service_at_endpoint(
+        root,
+        voucher_number,
+        TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9001,
+        },
+    )
+}
+
+fn service_at_endpoint(
+    root: PathBuf,
+    voucher_number: Option<&str>,
+    endpoint: TallyEndpointConfig,
+) -> (DesktopJournalService, ImportLedgerLine) {
     let mut line: ImportLedgerLine = serde_json::from_value(json!({
         "batch_id":"bridge-00000000-0000-4000-8000-000000000001", "identity_scheme":"batch_v1", "company_guid":"00000000-0000-4000-8000-000000000002", "endpoint_origin":super::super::canonical_loopback_origin(&endpoint).unwrap(),
         "company":{"name":"Synthetic Accounts","guid":"00000000-0000-4000-8000-000000000002","company_number":"100001","books_from":"20260401"}, "txn_ids":["journal-test"],"date_from":"20260901","date_to":"20260901","sha256":"","built_at":"2026-09-07T00:00:00Z","status":"built","pre_import_mark":{"kind":"company_high_water","value":1,"master_value":1},
@@ -336,7 +347,18 @@ fn review_refuses_fresh_numbered_journal_but_retains_dispatched_reconciliation()
 #[tokio::test]
 async fn review_refuses_fresh_unreviewable_text_but_retains_dispatched_reconciliation() {
     let directory = tempfile::tempdir().unwrap();
-    let (service, mut line) = service(directory.path().join("agent"));
+    // Reserve a port without listening: recovery must reach a read failure,
+    // independently of any live Tally instance or reusable free-port race.
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let (service, mut line) = service_at_endpoint(
+        directory.path().join("agent"),
+        None,
+        TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: socket.local_addr().unwrap().port(),
+        },
+    );
     std::fs::remove_file(
         service
             .server
@@ -379,8 +401,8 @@ async fn review_refuses_fresh_unreviewable_text_but_retains_dispatched_reconcili
     let reconciliation = service
         .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
         .await;
-    assert_ne!(
+    assert_eq!(
         reconciliation.result["result"]["error"]["code"],
-        "import_review_format_text"
+        "import_mode_probe_failed"
     );
 }
