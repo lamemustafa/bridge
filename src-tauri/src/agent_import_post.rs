@@ -286,6 +286,11 @@ impl Server {
             return Err("import_batch_changed".to_string().into());
         }
         if !snapshot.dispatched {
+            let origin = super::super::canonical_loopback_origin(&self.settings.endpoint)
+                .map_err(|_| "host_setting_invalid".to_string())?;
+            if snapshot.batch.endpoint_origin.as_deref() != Some(origin.as_str()) {
+                return Err("import_post_endpoint_mismatch".to_string().into());
+            }
             return Err("import_not_dispatched".to_string().into());
         }
         self.reconcile_dispatched_import(args, snapshot).await

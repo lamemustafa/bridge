@@ -265,7 +265,7 @@ async fn reconcile_without_durable_intent_requires_an_idle_dispatch_lane() {
         host: "127.0.0.1".into(),
         port: listener.local_addr().unwrap().port(),
     };
-    let (service, line) = service_at_endpoint(directory.path().join("agent"), None, endpoint);
+    let (mut service, line) = service_at_endpoint(directory.path().join("agent"), None, endpoint);
     let journal = service
         .server
         .settings
@@ -291,6 +291,17 @@ async fn reconcile_without_durable_intent_requires_an_idle_dispatch_lane() {
         "import_not_dispatched"
     );
     assert_eq!(operation.result["result"]["attempt_recorded"], false);
+    let other_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    service.server.settings.endpoint.port = other_listener.local_addr().unwrap().port();
+    let changed = service
+        .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
+        .await;
+    assert_eq!(
+        changed.result["result"]["error"]["code"],
+        "import_post_endpoint_mismatch"
+    );
+    assert!(changed.result["result"]["attempt_recorded"].is_null());
+    assert_eq!(std::fs::read(&journal).unwrap(), before);
 }
 
 #[test]
