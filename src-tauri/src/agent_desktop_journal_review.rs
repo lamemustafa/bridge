@@ -75,6 +75,10 @@ impl DesktopJournalError {
                 "This Journal is too large for Bridge's one-Journal desktop review.",
                 "Use the manual workflow for this file; Bridge will not truncate the review.",
             ),
+            "import_post_numbered_journal_unsupported" => (
+                "Bridge cannot post a Journal file that specifies a voucher number.",
+                "Import it manually, or choose an unnumbered Journal. A previously dispatched Journal remains available only for reconciliation.",
+            ),
             "file_picker_failed" => (
                 "Bridge could not open the native file picker.",
                 "Close any modal dialogs and choose the Journal file again.",

@@ -153,7 +153,7 @@ test("reports a busy Journal action until the native post result is rendered", a
   root.unmount();
 });
 
-test("shows retained response evidence only inside collapsed recovery details", async () => {
+test("retains an attempted Journal and response evidence through failed reconciliation", async () => {
   mocks.invoke.mockResolvedValueOnce(review).mockResolvedValueOnce({
     batchId: review.batchId,
     result: {
@@ -204,6 +204,36 @@ test("shows retained response evidence only inside collapsed recovery details", 
   expect(details?.textContent).toContain("Line errors 0");
   expect(details?.textContent).toContain("a".repeat(64));
   expect(host.textContent).toContain("Reconcile original batch");
+  for (const failure of [
+    new Error("Reconciliation connection lost"),
+    { code: "journal_review_refused", tally_state_may_have_changed: false, message: "Saved history unavailable" },
+  ]) {
+    let rejectReconcile!: (error: unknown) => void;
+    const pendingReconcile = new Promise((_, reject) => { rejectReconcile = reject; });
+    mocks.invoke.mockReturnValueOnce(pendingReconcile);
+    await act(async () => { button(host, "Reconcile original batch").click(); });
+    expect(button(host, "Reconciling original batch").disabled).toBe(true);
+    expect(details?.textContent).toContain("b".repeat(64));
+    await act(async () => { rejectReconcile(failure); });
+    expect(button(host, "Reconcile original batch").disabled).toBe(false);
+    expect(host.querySelectorAll("button")).toHaveLength(1);
+    expect(host.textContent).not.toContain("Post Journal");
+    expect(host.textContent).not.toContain("Choose another file");
+    expect(details?.textContent).toContain("b".repeat(64));
+    expect(details?.textContent).toContain("Created 1");
+  }
+  expect(mocks.invoke.mock.calls.map(([command]) => command)).toEqual([
+    "desktop_pick_journal_for_review", "desktop_post_reviewed_journal",
+    "desktop_reconcile_reviewed_journal", "desktop_reconcile_reviewed_journal",
+  ]);
+  mocks.invoke.mockResolvedValueOnce({
+    batchId: review.batchId,
+    result: { result: { dispatch: { state: "previous_attempt_reconciled", resent: false } } },
+  });
+  await act(async () => { button(host, "Reconcile original batch").click(); });
+  expect(host.textContent).toContain("Bridge confirmed the original Journal and its saved batch.");
+  expect(button(host, "Choose another file")).toBeTruthy();
+  expect(host.textContent).not.toContain("Post Journal");
   root.unmount();
 });
 

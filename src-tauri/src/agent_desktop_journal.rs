@@ -6,7 +6,7 @@ use super::super::{
 use super::desktop_journal_review::{
     DesktopJournalCompany, DesktopJournalDetails, DesktopJournalEntry, DesktopJournalReview,
 };
-use super::post::admit_saved_journal;
+use super::post::{admit_saved_journal, require_native_numbering};
 use super::*;
 use crate::tally::{TallyConfig, TallyRuntime};
 use bridge_tally_transport::canonical_loopback_origin;
@@ -118,15 +118,18 @@ impl DesktopJournalService {
         snapshot: ledger::BatchSnapshot,
     ) -> Result<DesktopJournalReview, String> {
         let _ = admit_saved_journal(&snapshot.batch, &self.server.settings.endpoint)?;
-        let company = snapshot
-            .batch
-            .company
-            .ok_or_else(|| "import_post_company_missing".to_string())?;
         let voucher = snapshot
             .batch
             .vouchers
             .first()
             .ok_or_else(|| "import_post_requires_one_journal".to_string())?;
+        if !snapshot.dispatched {
+            require_native_numbering(voucher)?;
+        }
+        let company = snapshot
+            .batch
+            .company
+            .ok_or_else(|| "import_post_company_missing".to_string())?;
         let (total_debit, total_credit) = totals(&snapshot.batch.vouchers)?;
         let details = DesktopJournalDetails {
             date: voucher.date.clone(),

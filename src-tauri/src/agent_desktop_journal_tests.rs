@@ -168,6 +168,13 @@ fn action_ipc_keeps_bounded_response_evidence_and_drops_invalid_metadata() {
 }
 
 fn service(root: PathBuf) -> (DesktopJournalService, ImportLedgerLine) {
+    service_with_voucher_number(root, None)
+}
+
+fn service_with_voucher_number(
+    root: PathBuf,
+    voucher_number: Option<&str>,
+) -> (DesktopJournalService, ImportLedgerLine) {
     let endpoint = TallyEndpointConfig {
         host: "127.0.0.1".into(),
         port: 9001,
@@ -175,7 +182,7 @@ fn service(root: PathBuf) -> (DesktopJournalService, ImportLedgerLine) {
     let mut line: ImportLedgerLine = serde_json::from_value(json!({
         "batch_id":"bridge-00000000-0000-4000-8000-000000000001", "identity_scheme":"batch_v1", "company_guid":"00000000-0000-4000-8000-000000000002", "endpoint_origin":super::super::canonical_loopback_origin(&endpoint).unwrap(),
         "company":{"name":"Synthetic Accounts","guid":"00000000-0000-4000-8000-000000000002","company_number":"100001","books_from":"20260401"}, "txn_ids":["journal-test"],"date_from":"20260901","date_to":"20260901","sha256":"","built_at":"2026-09-07T00:00:00Z","status":"built","pre_import_mark":{"kind":"company_high_water","value":1,"master_value":1},
-        "vouchers":[{"bridge_txn_id":"journal-test","date":"20260901","voucher_type":"Journal","entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},{"ledger":"Cash","amount":"12.50","side":"Cr"}]}]
+        "vouchers":[{"bridge_txn_id":"journal-test","date":"20260901","voucher_type":"Journal","voucher_number":voucher_number,"entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},{"ledger":"Cash","amount":"12.50","side":"Cr"}]}]
     })).unwrap();
     line.sha256 = sha256_hex(
         render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id).as_bytes(),
@@ -293,4 +300,35 @@ fn review_details_come_from_the_admitted_saved_journal() {
             (&"Cash".to_string(), &"Cr".to_string(), &"12.50".to_string())
         ]
     );
+}
+
+#[test]
+fn review_refuses_fresh_numbered_journal_but_retains_dispatched_reconciliation() {
+    let directory = tempfile::tempdir().unwrap();
+    let (service, line) = service_with_voucher_number(directory.path().join("agent"), Some("JV-1"));
+    let xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    std::fs::write(
+        service
+            .server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        &xml,
+    )
+    .unwrap();
+
+    assert_eq!(
+        service.review_selected_xml(xml.as_bytes()).unwrap_err(),
+        "import_post_numbered_journal_unsupported"
+    );
+
+    service
+        .server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_native(
+            &line,
+            "a".repeat(64),
+        ))
+        .unwrap();
+    let review = service.review_selected_xml(xml.as_bytes()).unwrap();
+    assert!(review.dispatched);
 }

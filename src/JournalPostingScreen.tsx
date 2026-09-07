@@ -145,7 +145,8 @@ export function JournalPostingScreen({ config, onBusyChange }: JournalPostingScr
     actionRef.current = kind;
     setAction(kind);
     setError(null);
-    setActionResult(null);
+    // Reconciliation must retain the prior attempt and response if IPC fails.
+    if (kind === "post") setActionResult(null);
     try {
       const command = kind === "post" ? "desktop_post_reviewed_journal" : "desktop_reconcile_reviewed_journal";
       const result = await invoke<JournalActionResponse>(command, {

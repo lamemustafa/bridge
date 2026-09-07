@@ -411,7 +411,7 @@ fn recheck_import_absence(
     })
 }
 
-fn require_native_numbering(voucher: &ImportVoucher) -> Result<(), String> {
+pub(super) fn require_native_numbering(voucher: &ImportVoucher) -> Result<(), String> {
     if voucher.voucher_number.is_some() {
         return Err("import_post_numbered_journal_unsupported".into());
     }
