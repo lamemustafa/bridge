@@ -135,7 +135,10 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
     Value::Array(
         names
             .into_iter()
-            .filter(|name| import_enabled || !matches!(*name, "build_import_xml" | "verify_import"))
+            // Verification is a read-only recovery capability. Keep it
+            // available when Journal generation/posting is disabled so an
+            // uncertain saved batch can still be checked safely.
+            .filter(|name| import_enabled || *name != "build_import_xml")
             .filter(|name| writes_enabled || *name != "post_import")
             .map(|name| {
                 let (description, input_schema) = match name {

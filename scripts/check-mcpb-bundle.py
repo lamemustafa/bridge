@@ -16,7 +16,7 @@ import zipfile
 RESOURCES = ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt", "THIRD_PARTY_LICENSES_RUST.txt")
 DEFAULT_TOOLS = {
     "tally_status", "list_companies", "voucher_schema", "validate_masters", "outstandings",
-    "ledger_masters", "ledger_movement", "vouchers", "read_evidence", "egress_log",
+    "ledger_masters", "ledger_movement", "vouchers", "read_evidence", "egress_log", "verify_import",
 }
 MAX_BUNDLE_BYTES = 128 * 1024 * 1024
 MAX_OUTPUT_BYTES = 512 * 1024
@@ -196,11 +196,12 @@ def smoke(archive, repository):
         require(replies[0]["result"]["protocolVersion"] == "2025-06-18", "protocol_mismatch")
         server_version = validate_server_version(replies[0], manifest)
         names = [tool["name"] for tool in replies[1]["result"]["tools"]]
-        expected_tools = DEFAULT_TOOLS | ({"build_import_xml", "verify_import", "post_import"}
+        expected_tools = DEFAULT_TOOLS | ({"build_import_xml", "post_import"}
                                           if environment["BRIDGE_AGENT_ENABLE_WRITES"] == "true" else set())
         require(len(names) == len(expected_tools) and set(names) == expected_tools,
                 "default_tools_mismatch")
-        # The user's read-only opt-out must still hide all write/planning tools.
+        # The user's read-only opt-out hides generation and posting while
+        # retaining verify_import for safe recovery of saved batches.
         disabled_environment = dict(environment, BRIDGE_AGENT_ENABLE_WRITES="false")
         catalogue_payload = b"".join(json.dumps(request).encode() + b"\n" for request in requests[:-1])
         disabled_output, disabled_diagnostics = run_bounded([command], catalogue_payload, disabled_environment)

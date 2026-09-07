@@ -138,9 +138,10 @@ valid empty collection remains distinguishable from invalid discovery.
 
 ## Voucher-file preparation and verification
 
-The MCPB extension exposes `build_import_xml` and `verify_import` by default.
-For a command-line installation, set `BRIDGE_AGENT_ENABLE_IMPORT=1` for the
-manual file workflow, or enable Journal posting as described below. A licensed synthetic-lab Journal file cycle and
+The MCPB extension exposes `verify_import` by default as a read-only recovery
+tool. `build_import_xml` remains behind `BRIDGE_AGENT_ENABLE_IMPORT=1` for a
+command-line installation, or is enabled with Journal posting as described
+below. A licensed synthetic-lab Journal file cycle and
 exact-file repeat import were observed on 2026-09-06. New file generation accepts
 only `Journal`, with freshly observed supported TallyPrime product and licence mode
 before and after build reads. Release and licence tier are returned as observed
@@ -198,10 +199,11 @@ licence mode has been qualified.
 The MCPB extension makes **Allow Journal posting** available by default.
 Turn it off for a read-only connector; existing saved settings remain respected.
 For command-line installation, set `BRIDGE_AGENT_ENABLE_WRITES=true`.
-This also enables `build_import_xml` and `verify_import`.
-`BRIDGE_AGENT_ENABLE_IMPORT=true` alone continues to expose only the manual
-file workflow. Both switches accept `true`/`false` or `1`/`0`; invalid values
-stop startup. No model-supplied argument can grant approval. Claude controls
+This enables `build_import_xml` and `post_import`; `verify_import` remains
+available so an uncertain saved batch can be checked after posting is turned
+off. `BRIDGE_AGENT_ENABLE_IMPORT=true` alone exposes the manual file workflow,
+while verification remains available without either switch. Both switches
+accept `true`/`false` or `1`/`0`; invalid values stop startup. No model-supplied argument can grant approval. Claude controls
 its own tool-call permission prompts: Bridge cannot preselect **Always allow**
 for the user. That client permission does not approve an accounting entry.
 

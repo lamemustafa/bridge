@@ -640,7 +640,7 @@ impl Server {
         if name == "changed_since" {
             return Err("changed_since_unqualified".to_string().into());
         }
-        if matches!(name, "build_import_xml" | "verify_import") {
+        if name == "build_import_xml" {
             self.import_enabled()?;
         }
         if name == "post_import" && !self.settings.writes_enabled {
@@ -677,10 +677,7 @@ impl Server {
                 self.import_enabled()?;
                 self.build_import_xml(args).await
             }
-            "verify_import" => {
-                self.import_enabled()?;
-                self.verify_import(args).await
-            }
+            "verify_import" => self.verify_import(args).await,
             "ledger_masters" => self.ledger_masters(args).await,
             "vouchers" => self.vouchers(args).await,
             "changed_since" => self.changed_since(args).await,

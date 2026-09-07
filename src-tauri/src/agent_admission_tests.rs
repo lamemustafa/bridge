@@ -67,6 +67,40 @@ async fn unqualified_change_feed_is_hidden_and_direct_calls_refuse_before_tally(
 }
 
 #[tokio::test]
+async fn verification_remains_catalogued_and_admitted_when_import_and_writes_are_disabled() {
+    let names = tool_definitions(false, false)
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"verify_import"));
+    assert!(!names.contains(&"build_import_xml"));
+    assert!(!names.contains(&"post_import"));
+
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        writes_enabled: false,
+    });
+    let response = server.call_tool_response("verify_import", json!({})).await;
+    assert_eq!(response.value["isError"], true);
+    assert_eq!(
+        response.value["structuredContent"]["result"]["error"]["code"],
+        "argument_missing:company_guid"
+    );
+    assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
+}
+
+#[tokio::test]
 async fn master_validation_rejects_unbounded_and_blank_names_before_tally() {
     let directory = tempfile::tempdir().unwrap();
     let server = Server::new(Settings {
