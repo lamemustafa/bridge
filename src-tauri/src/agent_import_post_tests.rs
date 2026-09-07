@@ -41,6 +41,7 @@ fn native_preview_contains_all_accounting_inputs_and_pinned_destination() {
         "Cr",
         "REF-1",
         "Synthetic test only",
+        "Pause other edits/imports; keep this company and Tally mode unchanged until Bridge finishes.",
         &line.batch_id,
     ] {
         assert!(preview.contains(field), "missing {field}");
