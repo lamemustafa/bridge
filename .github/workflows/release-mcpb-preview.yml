@@ -68,6 +68,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: 1.96.0
+      - name: Set up Windows native prerequisites
+        id: windows-mcpb-prerequisites
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-native
       - name: Verify the runner architecture before packaging
         shell: bash
         env:

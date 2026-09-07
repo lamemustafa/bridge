@@ -65,6 +65,14 @@ class BundleSmokeTests(unittest.TestCase):
                     smoke.SmokeError, "endpoint_environment_mapping_mismatch"):
                 smoke.resolve_environment(broken)
 
+    def test_initialize_server_version_must_match_the_archived_manifest(self):
+        manifest = {"version": "0.2.0"}
+        response = {"result": {"serverInfo": {"version": "0.2.0"}}}
+        self.assertEqual(smoke.validate_server_version(response, manifest), "0.2.0")
+        with self.assertRaisesRegex(smoke.SmokeError, "server_version_mismatch"):
+            smoke.validate_server_version(
+                {"result": {"serverInfo": {"version": "0.2.1"}}}, manifest)
+
     def test_server_output_is_bounded(self):
         command = [sys.executable, "-c", "import sys; sys.stdout.write('x' * 1048576); sys.stdout.flush()"]
         with self.assertRaisesRegex(smoke.SmokeError, "server_output_limit"):
