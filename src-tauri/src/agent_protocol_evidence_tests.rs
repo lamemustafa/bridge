@@ -63,3 +63,83 @@ async fn admitted_long_id_cap_refusal_finalizes_retained_source_evidence() {
     assert_eq!(receipts[3]["receipt_id"], receipts[2]["receipt_id"]);
     assert_eq!(simulator.finish().unwrap().len(), 4);
 }
+
+#[test]
+fn recovery_fallback_preserves_reported_and_missing_import_counters() {
+    let live = include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/live_education_w4_voucher_sanitized.xml"
+    );
+    for omitted in [None, Some("DELETED"), Some("CANCELLED"), Some("EXCEPTIONS")] {
+        let xml = match omitted {
+            Some(name) => {
+                let field = format!("<{name}>0</{name}>");
+                assert!(live.contains(&field));
+                live.replace(&field, "")
+            }
+            None => live.to_string(),
+        };
+        let outcome =
+            serde_json::to_value(bridge_tally_protocol::parse_import_outcome(&xml).unwrap())
+                .unwrap();
+        let original = json!({"result":{"structuredContent":{"result":{
+            "attempt_recorded":true,
+            "dispatch_response":{
+                "request_sha256":"a".repeat(64), "response_sha256":"b".repeat(64),
+                "bytes":xml.len(), "outcome":outcome
+            }
+        }}}});
+        let response = recovery_error_with_dispatch(
+            json!(1),
+            Some("saved-batch"),
+            "egress_record_write_failed",
+            &original,
+            4096,
+        );
+        let data = &response["error"]["data"];
+        assert_eq!(
+            data["dispatch_response"]["outcome"], outcome,
+            "omitted {omitted:?}"
+        );
+        assert_eq!(data["dispatch_response"]["request_sha256"], "a".repeat(64));
+        assert_eq!(data["dispatch"]["resent"], false);
+        assert_eq!(data["attempt_recorded"], true);
+    }
+}
+
+#[test]
+fn compact_legacy_or_malformed_presence_keeps_commitments_without_an_outcome() {
+    let live = include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/live_education_w4_voucher_sanitized.xml"
+    );
+    let outcome =
+        serde_json::to_value(bridge_tally_protocol::parse_import_outcome(live).unwrap()).unwrap();
+    let original = &outcome["counters"]["counter_presence"];
+    let mut invalid = vec![Value::Null];
+    for name in [
+        "created",
+        "altered",
+        "deleted",
+        "ignored",
+        "errors",
+        "cancelled",
+        "exceptions",
+    ] {
+        let mut missing = original.clone();
+        missing.as_object_mut().unwrap().remove(name);
+        invalid.push(missing);
+        let mut malformed = original.clone();
+        malformed[name] = json!("true");
+        invalid.push(malformed);
+    }
+    for presence in invalid {
+        let mut outcome = outcome.clone();
+        outcome["counters"]["counter_presence"] = presence;
+        let response = compact_dispatch_response(&json!({
+            "request_sha256":"a".repeat(64), "response_sha256":"b".repeat(64),
+            "bytes":live.len(), "outcome":outcome
+        }))
+        .unwrap();
+        assert!(response["outcome"].is_null());
+        assert_eq!(response["response_sha256"], "b".repeat(64));
+    }
+}
