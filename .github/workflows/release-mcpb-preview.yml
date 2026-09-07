@@ -141,8 +141,42 @@ jobs:
             echo "refusing to replace existing release assets for $RELEASE_TAG"
             exit 1
           fi
+
+          tag_ref_file="$(mktemp)"
+          if ! git ls-remote --tags --refs origin "refs/tags/$RELEASE_TAG" >"$tag_ref_file"; then
+            rm -f "$tag_ref_file"
+            echo "could not verify whether $RELEASE_TAG already exists; refusing to publish"
+            exit 1
+          fi
+          existing_tag_sha="$(awk 'NR == 1 { print $1 }' "$tag_ref_file")"
+          rm -f "$tag_ref_file"
+
+          if [[ -n "$existing_tag_sha" ]]; then
+            if [[ "$existing_tag_sha" != "$SOURCE_SHA" ]]; then
+              echo "refusing to publish: existing tag $RELEASE_TAG does not identify $SOURCE_SHA"
+              exit 1
+            fi
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f "ref=refs/tags/$RELEASE_TAG" \
+              -f "sha=$SOURCE_SHA" >/dev/null
+          fi
+
+          tag_ref_file="$(mktemp)"
+          if ! git ls-remote --tags --refs origin "refs/tags/$RELEASE_TAG" >"$tag_ref_file"; then
+            rm -f "$tag_ref_file"
+            echo "could not verify the tag created for $RELEASE_TAG; refusing to publish"
+            exit 1
+          fi
+          verified_tag_sha="$(awk 'NR == 1 { print $1 }' "$tag_ref_file")"
+          rm -f "$tag_ref_file"
+          if [[ "$verified_tag_sha" != "$SOURCE_SHA" ]]; then
+            echo "refusing to publish: $RELEASE_TAG does not identify $SOURCE_SHA"
+            exit 1
+          fi
+
           gh release create "$RELEASE_TAG" release-assets/* \
-            --target "$SOURCE_SHA" \
+            --verify-tag \
             --title "Bridge MCPB unsigned preview: $RELEASE_TAG" \
             --notes-file packaging/mcpb/UNSIGNED_PREVIEW_RELEASE.md \
             --prerelease

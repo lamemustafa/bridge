@@ -10,6 +10,12 @@ test("MCPB release workflow publishes only an explicit unsigned preview with bot
   assert.match(workflow, /windows-x64/);
   assert.match(workflow, /macos-arm64/);
   assert.match(workflow, /refusing to replace existing release assets/);
+  assert.match(workflow, /git ls-remote --tags --refs origin "refs\/tags\/\$RELEASE_TAG"/);
+  assert.match(workflow, /could not verify whether \$RELEASE_TAG already exists; refusing to publish/);
+  assert.match(workflow, /existing tag \$RELEASE_TAG does not identify \$SOURCE_SHA/);
+  assert.match(workflow, /gh api --method POST "repos\/\$GH_REPO\/git\/refs"/);
+  assert.match(workflow, /--verify-tag/);
+  assert.doesNotMatch(workflow, /--target "\$SOURCE_SHA"/);
   assert.match(workflow, /scripts\/check-mcpb-bundle\.py/);
   assert.match(workflow, /--prerelease/);
   assert.match(workflow, /GH_REPO: \$\{\{ github\.repository \}\}/);
