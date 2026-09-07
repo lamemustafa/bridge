@@ -1,6 +1,60 @@
-use super::desktop_journal::DesktopJournalService;
+use super::desktop_journal::{DesktopJournalOperation, DesktopJournalService};
 use super::*;
 use bridge_tally_transport::TallyEndpointConfig;
+
+#[test]
+fn action_ipc_keeps_recovery_state_without_unbounded_voucher_details() {
+    let large = "x".repeat(5_000_001);
+    for state in [
+        "posted_verified",
+        "previous_attempt_reconciled",
+        "reconciliation_required",
+    ] {
+        let mut payload = json!({"result":{
+            "dispatch":{"state":state,"resent":false,"response":{"unused":large}},
+            "attempt_recorded":true,
+            "unrelated_duplicates_in_window":[large],
+        }});
+        if state == "reconciliation_required" {
+            payload["result"]["error"] = json!({
+                "code":"import_reconciliation_required",
+                "message":"Reconcile the original batch without resending it.",
+                "remediation":large,
+            });
+        }
+        let operation = DesktopJournalOperation::from_outcome(ToolOutcome {
+            payload,
+            evidence: Evidence {
+                request_sha256: "a".repeat(64),
+                response_sha256: "b".repeat(64),
+                bytes: large.len(),
+                state: "complete",
+                read_at: None,
+                duration_ms: None,
+                reason_code: None,
+            },
+            company_guid: None,
+            truncated: false,
+        });
+        let result = &operation.result["result"];
+        assert_eq!(result["dispatch"]["state"], state);
+        assert_eq!(result["dispatch"]["resent"], false);
+        assert_eq!(result["attempt_recorded"], true);
+        assert!(result.get("unrelated_duplicates_in_window").is_none());
+        assert!(result["dispatch"].get("response").is_none());
+        if state == "reconciliation_required" {
+            assert_eq!(result["error"]["code"], "import_reconciliation_required");
+            assert_eq!(
+                result["error"]["message"],
+                "Reconcile the original batch without resending it."
+            );
+            assert!(result["error"]["remediation"].is_null());
+        } else {
+            assert!(result["error"].is_null());
+        }
+        assert!(serde_json::to_vec(&operation.result).unwrap().len() < 1024);
+    }
+}
 
 fn service(root: PathBuf) -> (DesktopJournalService, ImportLedgerLine) {
     let endpoint = TallyEndpointConfig {

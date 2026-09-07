@@ -61,7 +61,6 @@ impl DesktopJournalService {
         match self.server.post_import_checked(&args, Some(sha256)).await {
             Ok(outcome) => Ok(DesktopJournalOperation::from_outcome(outcome)),
             Err(failure) => Ok(DesktopJournalOperation::from_failure(
-                batch_id,
                 failure,
                 "The original Journal remains available for reconciliation; do not rebuild or resend it.",
             )),
@@ -86,8 +85,7 @@ impl DesktopJournalService {
                 } else {
                     "Bridge could not confirm this original Journal. Reconcile it again after the underlying condition changes."
                 };
-                let mut operation =
-                    DesktopJournalOperation::from_failure(batch_id, failure, message);
+                let mut operation = DesktopJournalOperation::from_failure(failure, message);
                 if no_attempt_recorded {
                     operation.result["result"]["attempt_recorded"] = Value::Bool(false);
                 }
@@ -190,25 +188,44 @@ impl DesktopJournalService {
 
 pub(super) struct DesktopJournalOperation {
     pub(super) result: Value,
-    pub(super) evidence: Option<Value>,
 }
 
 impl DesktopJournalOperation {
-    fn from_outcome(outcome: ToolOutcome) -> Self {
+    pub(super) fn from_outcome(outcome: ToolOutcome) -> Self {
+        // The desktop consumes action state, not the potentially large voucher
+        // proof. Keep the full proof in the saved batch and out of webview IPC.
+        let result = &outcome.payload["result"];
+        let error = &result["error"];
         Self {
-            result: outcome.payload,
-            evidence: serde_json::to_value(outcome.evidence).ok(),
+            result: json!({"result":{
+                "dispatch": {
+                    "state": bounded_action_text(&result["dispatch"]["state"], 128),
+                    "resent": result["dispatch"]["resent"].as_bool(),
+                },
+                "attempt_recorded": result["attempt_recorded"].as_bool(),
+                "error": (!error.is_null()).then(|| json!({
+                    "code": bounded_action_text(&error["code"], 256).unwrap_or("journal_action_error"),
+                    "message": bounded_action_text(&error["message"], 4096).unwrap_or("Bridge could not confirm the Journal. Reconcile the original batch without resending it."),
+                    "remediation": bounded_action_text(&error["remediation"], 4096),
+                })),
+            }}),
         }
     }
 
-    fn from_failure(batch_id: &str, failure: ToolFailure, message: &'static str) -> Self {
+    fn from_failure(failure: ToolFailure, message: &'static str) -> Self {
+        let code = if failure.code.len() <= 256 {
+            failure.code.as_str()
+        } else {
+            "journal_action_error"
+        };
         Self {
-            result: json!({"result":{"batch_id":batch_id,"error":{"code":failure.code,"message":message}}}),
-            evidence: failure
-                .evidence
-                .and_then(|evidence| serde_json::to_value(*evidence).ok()),
+            result: json!({"result":{"error":{"code":code,"message":message}}}),
         }
     }
+}
+
+fn bounded_action_text(value: &Value, max_bytes: usize) -> Option<&str> {
+    value.as_str().filter(|text| text.len() <= max_bytes)
 }
 
 impl Settings {

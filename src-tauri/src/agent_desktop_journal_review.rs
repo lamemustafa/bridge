@@ -106,15 +106,12 @@ pub struct DesktopJournalDescriptorRequest {
 pub struct DesktopJournalActionResponse {
     pub(crate) batch_id: String,
     pub(crate) result: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) evidence: Option<Value>,
 }
 
 fn action(batch_id: String, operation: DesktopJournalOperation) -> DesktopJournalActionResponse {
     DesktopJournalActionResponse {
         batch_id,
         result: operation.result,
-        evidence: operation.evidence,
     }
 }
 
