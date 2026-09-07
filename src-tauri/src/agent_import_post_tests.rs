@@ -517,15 +517,19 @@ fn post_date_refusal_retains_the_completed_profile_probe_evidence() {
 fn absence_is_required_before_a_first_attempt() {
     for payload in [
         json!({}),
-        json!({"result":{"counts":{"posted_verified":1},"vouchers":[{}]}}),
-        json!({"result":{"counts":{"not_found":1},"vouchers":[]}}),
+        json!({"counts":{"posted_verified":1},"vouchers":[{}]}),
+        json!({"counts":{"not_found":1},"vouchers":[]}),
+        json!({"result":{"counts":{"not_found":1},"vouchers":[{}]}}),
     ] {
         assert_eq!(
-            require_absent(&payload).unwrap_err(),
+            require_absent_verification_result(&payload).unwrap_err(),
             "import_preexisting_identity"
         );
     }
-    assert!(require_absent(&json!({"result":{"counts":{"not_found":1},"vouchers":[{}]}})).is_ok());
+    assert!(
+        require_absent_verification_result(&json!({"counts":{"not_found":1},"vouchers":[{}]}))
+            .is_ok()
+    );
 }
 
 #[test]
@@ -593,7 +597,7 @@ fn native_post_refuses_supplied_numbers_without_disabling_manual_files() {
 }
 
 #[test]
-fn queued_absence_recheck_refuses_the_captured_attributed_journal() {
+fn queued_absence_recheck_distinguishes_an_attributed_journal_from_a_new_candidate() {
     let company_guid = "61c6de69-1748-461c-ad3f-162cb949df9f";
     let bytes = include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml"
@@ -654,4 +658,22 @@ fn queued_absence_recheck_refuses_the_captured_attributed_journal() {
         error.downcast_ref::<ApprovedImportAdmissionError>(),
         Some(ApprovedImportAdmissionError::PreexistingIdentity)
     ));
+
+    // Change the expected local batch, not the captured Tally source. Neither
+    // attribution nor accounting content now matches the captured Journal.
+    let mut absent = line;
+    absent.batch_id = "bridge-00000000-0000-4000-8000-000000000003".into();
+    for entry in &mut absent.vouchers[0].entries {
+        entry.amount = "12.62".into();
+    }
+    recheck_import_admission(
+        &absent,
+        company_guid,
+        "WR2 Unicode Lab",
+        &captured,
+        &captured,
+        &catalogue,
+        &ledger_binding,
+    )
+    .expect("paired captured source establishes absence of the new candidate");
 }

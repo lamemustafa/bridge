@@ -83,7 +83,7 @@ impl Server {
             require_native_numbering(&line.vouchers[0])?;
             let before = self.verify_import(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
-            require_absent(&before.payload)?;
+            require_absent_verification_result(&before.payload["result"])?;
             let payload = ImportPayload {
                 company_guid: line.company_guid.clone(),
                 vouchers: line.vouchers.clone(),
@@ -410,8 +410,7 @@ fn validate_post_profile_with_evidence(
     validate_import_dates_for_profile(payload, profile)
 }
 
-fn require_absent(payload: &Value) -> Result<(), String> {
-    let result = &payload["result"];
+fn require_absent_verification_result(result: &Value) -> Result<(), String> {
     if result["counts"]["not_found"].as_u64() != Some(1)
         || result["vouchers"].as_array().map(Vec::len) != Some(1)
     {
@@ -434,7 +433,7 @@ fn recheck_import_admission(
     corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)
         .map_err(anyhow::Error::msg)?;
     let result = verify_batch(line, &observed).map_err(anyhow::Error::msg)?;
-    require_absent(&result).map_err(|code| match code.as_str() {
+    require_absent_verification_result(&result).map_err(|code| match code.as_str() {
         "import_preexisting_identity" => ApprovedImportAdmissionError::PreexistingIdentity.into(),
         _ => anyhow::Error::msg(code),
     })?;
