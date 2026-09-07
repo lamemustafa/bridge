@@ -82,7 +82,6 @@ impl Server {
             let preview = admit_fresh_saved_journal(&line, &self.settings.endpoint)?;
             // Number matching precedence is not qualified for native Create.
             // Previously dispatched numbered batches remain reconcilable above.
-            require_native_numbering(&line.vouchers[0])?;
             let before = self.verify_import(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
             require_absent_verification_result(&before.payload["result"])?;
@@ -497,9 +496,9 @@ fn admit_fresh_saved_journal(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
 ) -> Result<String, String> {
+    let company = line.company.as_ref().ok_or("import_post_company_missing")?;
     let origin =
         super::super::canonical_loopback_origin(endpoint).map_err(|_| "host_setting_invalid")?;
-    let company = line.company.as_ref().ok_or("import_post_company_missing")?;
     let (debit, credit) = totals(&line.vouchers)?;
     let voucher = &line.vouchers[0];
     let mut review_text = std::iter::once(company.name.as_str())
@@ -513,6 +512,7 @@ fn admit_fresh_saved_journal(
     if review_text.any(has_unreviewable_format_character) {
         return Err("import_review_format_text".into());
     }
+    require_native_numbering(voucher)?;
     let quoted = |text: &str| serde_json::to_string(text).expect("string serialization");
     let optional = |value: &Option<String>| {
         value

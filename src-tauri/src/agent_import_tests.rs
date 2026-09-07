@@ -1567,6 +1567,53 @@ fn verify_observed_batch(line: &ImportLedgerLine, rows: &[ReadVoucher]) -> Resul
     verify_batch(line, &ImportReadSource::admit(rows.to_vec())?)
 }
 
+#[tokio::test]
+async fn built_batch_guidance_matches_the_saved_native_admission() {
+    for (writes_enabled, voucher_count, numbered, native) in [
+        (true, 1, false, true),
+        (true, 2, false, false),
+        (true, 1, true, false),
+        (false, 1, false, false),
+    ] {
+        let simulator = SequenceSimulator::spawn(qualified_import_cycle_plans()[..32].to_vec())
+            .expect("captured build plan");
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(crate::agent::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: crate::agent::Redaction::None,
+            import_enabled: true,
+            writes_enabled,
+        });
+        let mut input = captured_catalogue_payload();
+        input.vouchers.truncate(voucher_count);
+        if numbered {
+            input.vouchers[0].voucher_number = Some("TEST-1".into());
+        }
+        let built = server
+            .build_import_xml(&serde_json::to_value(input).unwrap())
+            .await
+            .unwrap();
+        let result = &built.payload["result"];
+        assert_eq!(result["voucher_count"], voucher_count);
+        let next_step = result["next_step"].as_str().unwrap();
+        assert_eq!(next_step.starts_with("Call post_import"), native);
+        assert_eq!(next_step.starts_with("Import this file in Tally"), !native);
+        if writes_enabled {
+            assert!(result["warnings"][0]
+                .as_str()
+                .unwrap()
+                .contains("do not call post_import"));
+        }
+        assert_eq!(simulator.finish().unwrap().len(), 32);
+    }
+}
+
 fn corroborate_observed_window(
     observed: &[ReadVoucher],
     corroboration: &[ReadVoucher],

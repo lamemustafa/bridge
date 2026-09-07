@@ -6,7 +6,7 @@ use super::super::{
 use super::desktop_journal_review::{
     DesktopJournalCompany, DesktopJournalDetails, DesktopJournalEntry, DesktopJournalReview,
 };
-use super::post::{admit_saved_journal, admit_saved_journal_integrity, require_native_numbering};
+use super::post::{admit_saved_journal, admit_saved_journal_integrity};
 use super::*;
 use crate::tally::{TallyConfig, TallyRuntime};
 use bridge_tally_transport::canonical_loopback_origin;
@@ -127,9 +127,6 @@ impl DesktopJournalService {
             .vouchers
             .first()
             .ok_or_else(|| "import_post_requires_one_journal".to_string())?;
-        if !snapshot.dispatched {
-            require_native_numbering(voucher)?;
-        }
         let company = snapshot
             .batch
             .company

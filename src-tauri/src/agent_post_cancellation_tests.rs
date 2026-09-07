@@ -1,11 +1,12 @@
 //! MCP input lifecycle tests; no simulated Tally protocol is needed.
 use super::*;
+use crate::agent::agent_import::{ledger, ImportLedgerLine};
 use std::{
     path::Path,
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, ReadBuf};
 
 fn server(path: &Path) -> Server {
     Server::new(Settings {
@@ -20,6 +21,165 @@ fn server(path: &Path) -> Server {
         import_enabled: true,
         writes_enabled: true,
     })
+}
+
+fn saved_batch(server: &Server) -> (ImportLedgerLine, Value) {
+    let line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":"bridge-00000000-0000-4000-8000-000000000001", "identity_scheme":"batch_v1",
+        "company_guid":"00000000-0000-4000-8000-000000000002",
+        "endpoint_origin":"http://127.0.0.1:9",
+        "company":{"name":"Synthetic Accounts","guid":"00000000-0000-4000-8000-000000000002","company_number":"100001","books_from":"20260401"},
+        "txn_ids":["journal-test"],"date_from":"20260901","date_to":"20260901",
+        "sha256":"test", "built_at":"2026-09-07T00:00:00Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":1,"master_value":1},
+        "vouchers":[{"bridge_txn_id":"journal-test","date":"20260901","voucher_type":"Journal",
+            "narration":"Synthetic test only","reference":"REF-1","entries":[
+                {"ledger":"Expense","amount":"12.50","side":"Dr"},
+                {"ledger":"Cash","amount":"12.50","side":"Cr"}]}]
+    }))
+    .unwrap();
+    let args = json!({
+        "company_guid":"00000000-0000-4000-8000-000000000002",
+        "batch_id":"bridge-00000000-0000-4000-8000-000000000001"
+    });
+    server.append_import_ledger(&line).unwrap();
+    (line, args)
+}
+
+#[tokio::test]
+async fn contended_cancellation_answers_ping_and_suspends_the_post() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server(directory.path());
+    let (_, args) = saved_batch(&server);
+    let admission = server.lock_import_admission().unwrap();
+    assert_eq!(
+        post_dispatch_state(&server, &args),
+        PostDispatchState::AdmissionBusy
+    );
+    let polls = std::cell::Cell::new(0);
+    let (client, source) = tokio::io::duplex(4096);
+    let (client_read, mut client_write) = tokio::io::split(client);
+    let (source_read, mut source_write) = tokio::io::split(source);
+    let mut reader = BufReader::new(source_read);
+    let (finished, mut completion) = tokio::sync::oneshot::channel();
+    let serve = async {
+        let result = await_post(
+            std::future::poll_fn(|_| {
+                polls.set(polls.get() + 1);
+                Poll::<ToolResponse>::Pending
+            }),
+            PostRequest {
+                id: &json!(7),
+                args: &args,
+            },
+            &server,
+            &mut reader,
+            &mut Framer::default(),
+            &mut std::collections::VecDeque::new(),
+            &mut source_write,
+        )
+        .await;
+        finished.send(()).unwrap();
+        result
+    };
+    let client = async {
+        client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":7}}\n{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}\n").await.unwrap();
+        let mut response = String::new();
+        BufReader::new(client_read)
+            .read_line(&mut response)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&response).unwrap(),
+            json!({"jsonrpc":"2.0","id":8,"result":{}})
+        );
+        let polls_after_cancellation = polls.get();
+        drop(admission);
+        // Keep stdin active more often than the classifier retry period. This
+        // catches a retry sleep that restarts after every incoming frame.
+        let mut traffic = tokio::time::interval(std::time::Duration::from_millis(1));
+        loop {
+            tokio::select! {
+                result = &mut completion => { result.unwrap(); break; }
+                _ = traffic.tick() => {
+                    client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n").await.unwrap();
+                }
+            }
+        }
+        assert_eq!(polls.get(), polls_after_cancellation);
+    };
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::join!(serve, client)
+    })
+    .await
+    .unwrap();
+    assert!(result.unwrap().is_none());
+    assert_eq!(
+        post_dispatch_state(&server, &args),
+        PostDispatchState::NotDispatched
+    );
+}
+
+#[tokio::test]
+async fn cancellation_after_intent_keeps_answering_ping_until_post_completes() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server(directory.path());
+    let (line, args) = saved_batch(&server);
+    let admission = server.lock_import_admission().unwrap();
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&line))
+        .unwrap();
+    drop(admission);
+    let (client, source) = tokio::io::duplex(4096);
+    let (client_read, mut client_write) = tokio::io::split(client);
+    let (source_read, mut source_write) = tokio::io::split(source);
+    let mut reader = BufReader::new(source_read);
+    let mut pending = std::collections::VecDeque::new();
+    let (complete, wait_for_completion) = tokio::sync::oneshot::channel();
+    let id = json!(7);
+    let mut framer = Framer::default();
+    let serve = await_post(
+        async move { wait_for_completion.await.unwrap() },
+        PostRequest {
+            id: &id,
+            args: &args,
+        },
+        &server,
+        &mut reader,
+        &mut framer,
+        &mut pending,
+        &mut source_write,
+    );
+    let client = async {
+        client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":7}}\n{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}\n").await.unwrap();
+        let mut response = String::new();
+        BufReader::new(client_read)
+            .read_line(&mut response)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&response).unwrap(),
+            json!({"jsonrpc":"2.0","id":8,"result":{}})
+        );
+        assert!(complete
+            .send(ToolResponse {
+                value: json!({}),
+                egress: EgressContext {
+                    evidence: None,
+                    tool: "post_import".into(),
+                    args_sha256: sha256_hex(b"post"),
+                    company_guid: None
+                },
+                recovery_batch_id: None
+            })
+            .is_ok());
+    };
+    let (outcome, ()) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        tokio::join!(serve, client)
+    })
+    .await
+    .unwrap();
+    assert!(outcome.unwrap().is_some());
 }
 
 #[tokio::test]
