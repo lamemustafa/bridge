@@ -3,9 +3,8 @@ use super::super::{
     default_data_dir, ensure_private_directory, DirectoryAdmissionError, EvidenceStore, Redaction,
     Settings,
 };
-use super::desktop_journal_review::{
-    DesktopJournalCompany, DesktopJournalOperation, DesktopJournalReview,
-};
+use super::desktop_journal_review::{DesktopJournalCompany, DesktopJournalReview};
+use super::post::admit_saved_journal;
 use super::*;
 use crate::tally::{TallyConfig, TallyRuntime};
 use bridge_tally_transport::canonical_loopback_origin;
@@ -147,7 +146,7 @@ impl DesktopJournalService {
             return Err("import_persisted_file_too_large".into());
         }
         let mut bytes = Vec::with_capacity(length as usize);
-        file.by_ref()
+        std::io::Read::by_ref(&mut file)
             .take((MAX_SELECTED_JOURNAL_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|_| "import_persisted_file_unavailable".to_string())?;

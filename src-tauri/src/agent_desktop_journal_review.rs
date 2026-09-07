@@ -136,7 +136,7 @@ pub(crate) async fn pick_for_review(
             return Err("import_selected_file_too_large".to_string());
         }
         let mut bytes = Vec::with_capacity(length as usize);
-        file.by_ref()
+        std::io::Read::by_ref(&mut file)
             .take((MAX_SELECTED_JOURNAL_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|_| "import_selected_file_unavailable".to_string())?;
