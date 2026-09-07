@@ -56,7 +56,7 @@ fn assert_alias_refused(symbolic: bool) {
                     Err("import_ledger_unavailable".into())
                 );
                 assert_eq!(
-                    server.import_snapshots_while_admitted().err(),
+                    server.import_snapshot_while_admitted(None).err(),
                     Some("import_ledger_unavailable".into())
                 );
             }
@@ -115,7 +115,10 @@ fn absent_artifact_target_is_not_created_through_an_alias() {
 fn regular_artifacts_keep_read_append_lock_and_replace_behavior() {
     let directory = tempfile::tempdir().unwrap();
     let server = server(directory.path());
-    assert!(server.import_snapshots_while_admitted().unwrap().is_empty());
+    assert!(server
+        .import_snapshot_while_admitted(None)
+        .unwrap()
+        .is_none());
     let guard = server.lock_import_admission().unwrap();
     let journal = directory.path().join("agent-import-ledger.jsonl");
     append_private_import_ledger(&journal, b"first\n", set_private_file).unwrap();

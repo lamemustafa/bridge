@@ -30,6 +30,22 @@ impl Server {
             (true, Some("Licensed")) => Some(false),
             _ => None,
         };
+        let refusal_reason = probe
+            .profile
+            .features
+            .get(&CapabilityFeatureId::LoadedCompanies)
+            .filter(|feature| feature.state == CapabilityState::Unknown)
+            .map(|feature| {
+                feature
+                    .safe_reason_code
+                    .clone()
+                    .unwrap_or_else(|| "company_list_not_established".to_string())
+            });
+        let mut evidence = evidence_from_runtime_read(wire_evidence);
+        if refusal_reason.is_some() {
+            evidence.state = "partial";
+            evidence.reason_code = refusal_reason.clone();
+        }
         Ok((
             json!({
                 "product": product,
@@ -38,9 +54,9 @@ impl Server {
                 "education_mode": education_mode,
                 "endpoint": endpoint,
                 "loaded_companies": probe.companies,
-                "refusal_reason": Value::Null,
+                "refusal_reason": refusal_reason,
             }),
-            evidence_from_runtime_read(wire_evidence),
+            evidence,
         ))
     }
 
@@ -204,6 +220,10 @@ pub(super) fn company_json(company: &TallyCompany, all: &[TallyCompany]) -> Valu
 #[cfg(test)]
 #[path = "agent_status_tests.rs"]
 mod status_tests;
+
+#[cfg(test)]
+#[path = "agent_status_identity_tests.rs"]
+mod status_identity_tests;
 
 #[cfg(test)]
 #[path = "agent_company_identity_tests.rs"]

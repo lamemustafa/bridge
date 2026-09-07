@@ -1307,6 +1307,7 @@ mod tests {
                 profile_version: 1,
                 product: "TallyPrime".to_string(),
                 release: Some("synthetic".to_string()),
+                license_tier: None,
                 mode: Some("Education".to_string()),
                 mode_confidence: Confidence::Observed,
                 items: Vec::new(),

@@ -120,8 +120,14 @@ optional rows establish response presence while contributing no accounting movem
 
 Capability profile version 4 adds the observed licence tier alongside the release.
 Older serialized profiles remain readable with an unknown tier, but saved profile
-reuse requires a fresh matching version-4 observation. No database migration is
-required.
+reuse requires a fresh matching version-4 observation. Additive database migration
+26 stores the observed tier as nullable `silver` or `gold`; historical snapshots,
+including earlier version-4 rows, stay null. A tier change changes the reviewed
+setup commitment. Historical commitments without a tier retain their exact bytes.
+
+If discovery rejects company identity fields, `tally_status` reports the profile
+refusal reason and partial evidence with the completed source commitments. A
+valid empty collection remains distinguishable from invalid discovery.
 
 ## Voucher-file loop (manual Tally import only; disabled by default)
 
@@ -377,11 +383,26 @@ response commitment. It proves that the current window was readable; the new
 import or later changes can still make subsequent verification exceed the
 transport limits. It is not a future-capacity reservation.
 
-No database migration is required. Older binaries cannot read the new compact
-status records. Preserve the data directory, import ledger, and proofs; use the
+Migration 26 adds a nullable, constrained capability-tier column without
+backfilling observations or deleting historical rows. Existing immutable-snapshot
+triggers remain active. Local migration tests preserve historical columns and
+review hashes and exercise the previous named-column insertion shape. An older
+executable has not been tested against the migrated database; older binaries
+cannot reproduce new tier-bound review commitments and require a fresh review.
+Keep the additive column on rollback; no downgrade SQL is required.
+
+Older binaries cannot read the new compact status records. Preserve the data directory, import ledger, and proofs; use the
 new binary for the import workflow or disable imports after a binary downgrade.
 Do not truncate the ledger to force downgrade compatibility. A binary rollback
 does not undo a separately imported Tally voucher. Existing files and transaction
 IDs remain local recovery evidence. Downgrading to a binary predating the
 financial-read profile gate restores broader monetary admission and is not a
 recommended way to access an unqualified endpoint.
+
+Journal admission streams every record and checks even unrelated compact-record
+hash bindings. Builds retain no historical voucher payloads; verification retains
+only its requested batch. Each record is limited to 32 MiB. Memory still grows
+with distinct batch IDs and hashes, and scan time grows with total journal bytes;
+there is no automatic truncation. Reserved narration markers begin exactly with
+`[BRIDGE:`. Unrelated text such as `[BRIDGE CLUB]` is ordinary narration, while
+malformed or multiple reserved markers still refuse verification.

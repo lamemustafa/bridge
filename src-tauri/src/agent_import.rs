@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write};
 
 #[path = "agent_import_identity.rs"]
 mod identity;
@@ -214,7 +214,7 @@ impl ImportReadSource {
                 return Err("import_verification_identity_invalid".into());
             }
             let narration = row.narration.as_deref().unwrap_or_default();
-            for (index, (start, _)) in narration.match_indices("[BRIDGE").enumerate() {
+            for (index, (start, _)) in narration.match_indices("[BRIDGE:").enumerate() {
                 if index > 0 {
                     return Err("import_verification_tag_ambiguous".into());
                 }
@@ -367,7 +367,7 @@ impl Server {
             let _admission_lock = self.lock_import_admission()?;
             // Admit the journal before publication; labels in older batches do not
             // collide with this build's independently generated wire identities.
-            self.import_ledger_while_admitted()?;
+            self.import_snapshot_while_admitted(None)?;
             let (mark, mark_evidence) = self.pre_import_mark(&company, &identity).await?;
             accumulated = combine_evidence(accumulated.clone(), mark_evidence.clone());
             let (_, repeated_catalogue_evidence) =
@@ -547,10 +547,7 @@ impl Server {
         expected_generation: ledger::VerificationGeneration,
     ) -> Result<(), String> {
         let _admission_lock = self.lock_import_admission()?;
-        let current = self
-            .import_snapshots_while_admitted()?
-            .into_iter()
-            .rfind(|snapshot| snapshot.batch.batch_id == update.batch_id);
+        let current = self.import_snapshot_while_admitted(Some(&update.batch_id))?;
         if current.map(|snapshot| snapshot.generation) != Some(expected_generation) {
             return Err("import_verification_conflict_retry".into());
         }
@@ -649,28 +646,33 @@ impl Server {
     #[cfg(test)]
     fn import_ledger(&self) -> Result<Vec<ImportLedgerLine>, String> {
         let _admission_lock = self.lock_import_admission_shared()?;
-        self.import_ledger_while_admitted()
+        let history = match self.import_journal_while_admitted()? {
+            Some(reader) => ledger::read_history(reader)?,
+            None => Vec::new(),
+        };
+        Ok(history.into_iter().map(|snapshot| snapshot.batch).collect())
     }
 
-    fn import_ledger_while_admitted(&self) -> Result<Vec<ImportLedgerLine>, String> {
-        Ok(self
-            .import_snapshots_while_admitted()?
-            .into_iter()
-            .map(|snapshot| snapshot.batch)
-            .collect())
-    }
-
-    fn import_snapshots_while_admitted(&self) -> Result<Vec<ledger::BatchSnapshot>, String> {
+    fn import_journal_while_admitted(
+        &self,
+    ) -> Result<Option<std::io::BufReader<std::fs::File>>, String> {
         let path = self.settings.data_dir.join("agent-import-ledger.jsonl");
-        let mut file = match super::local_file::open_local_file(&path, false) {
+        let file = match super::local_file::open_local_file(&path, false) {
             Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err("import_ledger_unavailable".to_string()),
         };
-        let mut text = String::new();
-        file.read_to_string(&mut text)
-            .map_err(|_| "import_ledger_unavailable".to_string())?;
-        ledger::parse_snapshots(&text)
+        Ok(Some(std::io::BufReader::new(file)))
+    }
+
+    fn import_snapshot_while_admitted(
+        &self,
+        batch_id: Option<&str>,
+    ) -> Result<Option<ledger::BatchSnapshot>, String> {
+        match self.import_journal_while_admitted()? {
+            Some(reader) => ledger::read_snapshot(reader, batch_id),
+            None => Ok(None),
+        }
     }
 
     fn latest_import_snapshot(
@@ -678,10 +680,7 @@ impl Server {
         batch_id: &str,
     ) -> Result<Option<ledger::BatchSnapshot>, String> {
         let _admission_lock = self.lock_import_admission_shared()?;
-        Ok(self
-            .import_snapshots_while_admitted()?
-            .into_iter()
-            .rfind(|snapshot| snapshot.batch.batch_id == batch_id))
+        self.import_snapshot_while_admitted(Some(batch_id))
     }
 
     #[cfg(test)]
@@ -699,6 +698,9 @@ impl Server {
         let encoded = serde_json::to_string(line)
             .map_err(|_| "import_ledger_serialization_failed".to_string())?;
         let encoded = format!("{encoded}\n");
+        if encoded.len() > ledger::MAX_RECORD_BYTES {
+            return Err("import_ledger_record_too_large".into());
+        }
         append_private_import_ledger(&path, encoded.as_bytes(), set_private_file)
     }
 }

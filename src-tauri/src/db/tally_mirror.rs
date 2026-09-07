@@ -54,6 +54,9 @@ const MIRROR_MIGRATION_V24: &str = include_str!("migrations/0024_tally_selected_
 const MIRROR_MIGRATION_V25: &str =
     include_str!("migrations/0025_tally_observed_company_identity_constraint.sql");
 
+const MIRROR_MIGRATION_V26: &str =
+    include_str!("migrations/0026_tally_capability_license_tier.sql");
+
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
 const WINDOW_MEMBERSHIP_DIGEST_PAGE_SIZE: i64 = 512;
@@ -203,6 +206,7 @@ pub struct CapabilitySnapshotInput {
     pub profile_version: u16,
     pub product: String,
     pub release: Option<String>,
+    pub license_tier: Option<bridge_tally_core::LicenseTier>,
     pub mode: Option<String>,
     pub mode_confidence: Confidence,
     pub items: Vec<CapabilityItemInput>,
@@ -2452,9 +2456,19 @@ impl TallyMirrorRepository {
             )
             .await?;
         }
+        let license_tier_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 26",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if license_tier_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V26)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -2512,22 +2526,30 @@ impl TallyMirrorRepository {
         };
 
         let snapshot_id = Uuid::new_v4().to_string();
-        sqlx::query(
+        let mut insert = QueryBuilder::<Sqlite>::new(
             "INSERT INTO tally_capability_snapshots(\
                id, endpoint_id, observed_at_unix_ms, profile_version, product, release, mode, \
-               mode_confidence\
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        )
-        .bind(&snapshot_id)
-        .bind(&endpoint_id)
-        .bind(input.observed_at_unix_ms)
-        .bind(i64::from(input.profile_version))
-        .bind(input.product)
-        .bind(input.release)
-        .bind(input.mode)
-        .bind(input.mode_confidence.as_str())
-        .execute(&mut **transaction)
-        .await?;
+               mode_confidence",
+        );
+        // Absent observations retain the historical column set and SQL NULL default.
+        if input.license_tier.is_some() {
+            insert.push(", license_tier");
+        }
+        insert.push(") VALUES (");
+        let mut values = insert.separated(", ");
+        values
+            .push_bind(&snapshot_id)
+            .push_bind(&endpoint_id)
+            .push_bind(input.observed_at_unix_ms)
+            .push_bind(i64::from(input.profile_version))
+            .push_bind(input.product)
+            .push_bind(input.release)
+            .push_bind(input.mode)
+            .push_bind(input.mode_confidence.as_str());
+        if let Some(tier) = input.license_tier {
+            values.push_bind(license_tier_key(tier));
+        }
+        insert.push(")").build().execute(&mut **transaction).await?;
 
         for item in input.items {
             sqlx::query(
@@ -4928,6 +4950,13 @@ fn generic_company_confidence(identity: &SourceIdentityInput) -> Confidence {
     }
 }
 
+fn license_tier_key(tier: bridge_tally_core::LicenseTier) -> &'static str {
+    match tier {
+        bridge_tally_core::LicenseTier::Silver => "silver",
+        bridge_tally_core::LicenseTier::Gold => "gold",
+    }
+}
+
 fn validate_capability_snapshot(input: &CapabilitySnapshotInput) -> Result<(), MirrorError> {
     validate_nonempty(&input.canonical_origin, 512, "canonical_origin")?;
     validate_nonempty(&input.product, 128, "product")?;
@@ -5009,7 +5038,7 @@ fn reviewed_setup_payload_sha256(input: &ReviewedSetupInput) -> Result<String, M
             "observations": observations,
         })
     });
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "schema": "bridge.tally.reviewed-setup-payload/2",
         "capability": {
             "canonical_origin": input.capability.canonical_origin,
@@ -5033,6 +5062,10 @@ fn reviewed_setup_payload_sha256(input: &ReviewedSetupInput) -> Result<String, M
         },
         "selected_read_scope": selected_read_scope,
     });
+    // Missing historical observations retain their original commitment bytes.
+    if let Some(tier) = input.capability.license_tier {
+        payload["capability"]["license_tier"] = serde_json::json!(license_tier_key(tier));
+    }
     let canonical = canonical_json(&payload)?;
     Ok(hex_digest(Sha256::digest(canonical.as_bytes())))
 }
@@ -5843,7 +5876,7 @@ mod tests {
     const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const HASH_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-    async fn repository() -> TallyMirrorRepository {
+    pub(super) async fn repository() -> TallyMirrorRepository {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .after_connect(|connection, _| {
@@ -5980,7 +6013,7 @@ mod tests {
         TallyMirrorRepository::new(pool)
     }
 
-    async fn repository_through_v24() -> TallyMirrorRepository {
+    pub(super) async fn repository_through_v24() -> TallyMirrorRepository {
         let repository = repository_through_v21().await;
         let mut transaction = repository.pool.begin().await.expect("begin v24 migration");
         sqlx::raw_sql(MIRROR_MIGRATION_V22)
@@ -6047,6 +6080,7 @@ mod tests {
                 profile_version: 1,
                 product: "TallyPrime".to_string(),
                 release: None,
+                license_tier: None,
                 mode: Some("Education".to_string()),
                 mode_confidence: Confidence::Observed,
                 items: vec![
@@ -6112,7 +6146,7 @@ mod tests {
         seed_repository_with_core_evidence(repository().await, state, confidence, reason).await
     }
 
-    fn reviewed_setup_input(review_commitment_sha256: &str) -> ReviewedSetupInput {
+    pub(super) fn reviewed_setup_input(review_commitment_sha256: &str) -> ReviewedSetupInput {
         ReviewedSetupInput {
             review_commitment_sha256: review_commitment_sha256.to_string(),
             capability: CapabilitySnapshotInput {
@@ -6121,6 +6155,7 @@ mod tests {
                 profile_version: 2,
                 product: "TallyPrime".to_string(),
                 release: Some("synthetic".to_string()),
+                license_tier: None,
                 mode: Some("Education".to_string()),
                 mode_confidence: Confidence::Observed,
                 items: vec![CapabilityItemInput {
@@ -6174,6 +6209,7 @@ mod tests {
                     profile_version: 2,
                     product: "Unknown".to_string(),
                     release: None,
+                    license_tier: None,
                     mode: None,
                     mode_confidence: Confidence::Unknown,
                     items: vec![CapabilityItemInput {
@@ -7057,6 +7093,7 @@ mod tests {
                     profile_version: 3,
                     product: "Unknown".to_string(),
                     release: None,
+                    license_tier: None,
                     mode: None,
                     mode_confidence: Confidence::Unknown,
                     items: vec![
@@ -7154,8 +7191,8 @@ mod tests {
         let repository = repository().await;
         sqlx::raw_sql(
             "INSERT INTO tally_endpoints VALUES ('ep', 'http://127.0.0.1:9000', 1, 2);\
-             INSERT INTO tally_capability_snapshots VALUES ('snap-a', 'ep', 1, 3, 'Unknown', NULL, NULL, 'unknown');\
-             INSERT INTO tally_capability_snapshots VALUES ('snap-b', 'ep', 2, 3, 'Unknown', NULL, NULL, 'unknown');\
+             INSERT INTO tally_capability_snapshots(id, endpoint_id, observed_at_unix_ms, profile_version, product, release, mode, mode_confidence) VALUES ('snap-a', 'ep', 1, 3, 'Unknown', NULL, NULL, 'unknown');\
+             INSERT INTO tally_capability_snapshots(id, endpoint_id, observed_at_unix_ms, profile_version, product, release, mode, mode_confidence) VALUES ('snap-b', 'ep', 2, 3, 'Unknown', NULL, NULL, 'unknown');\
              INSERT INTO tally_capability_items VALUES ('snap-b', 'feature', 'selected_ledger_read', 'unknown', 'unknown', 'qualification_prerequisite_failed');\
              INSERT INTO tally_companies(\
                id, endpoint_id, display_name, company_guid, remote_id, master_id, fallback_fingerprint,\
@@ -8150,13 +8187,13 @@ mod tests {
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25)",
+             WHERE version IN (2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 22);
+        assert_eq!(migration_count, 23);
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 7",
@@ -8313,6 +8350,7 @@ mod tests {
                 profile_version: 1,
                 product: "TallyPrime".to_string(),
                 release: None,
+                license_tier: None,
                 mode: Some("Education".to_string()),
                 mode_confidence: Confidence::Observed,
                 items: vec![],
@@ -8938,7 +8976,7 @@ mod tests {
             .expect("compute historic v1 scope commitment");
         sqlx::raw_sql(
             "INSERT INTO tally_endpoints VALUES ('ep', 'http://127.0.0.1:9000', 1, 2);\
-             INSERT INTO tally_capability_snapshots VALUES ('snap', 'ep', 1, 3, 'Unknown', NULL, NULL, 'unknown');\
+             INSERT INTO tally_capability_snapshots(id, endpoint_id, observed_at_unix_ms, profile_version, product, release, mode, mode_confidence) VALUES ('snap', 'ep', 1, 3, 'Unknown', NULL, NULL, 'unknown');\
              INSERT INTO tally_capability_items VALUES (\
                'snap', 'feature', 'selected_ledger_read', 'supported', 'observed',\
                'selected_ledger_read_non_empty_observed'\
@@ -9773,6 +9811,7 @@ mod tests {
                 profile_version: 1,
                 product: "TallyPrime".to_string(),
                 release: None,
+                license_tier: None,
                 mode: None,
                 mode_confidence: Confidence::Unknown,
                 items: vec![],
@@ -10178,3 +10217,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tally_capability_license_tests.rs"]
+mod capability_license_tests;

@@ -1130,6 +1130,7 @@ pub async fn save_tally_setup(
                     profile_version: probe.profile.profile_version,
                     product: probe.profile.product.clone(),
                     release: probe.profile.release.clone(),
+                    license_tier: probe.profile.license_tier,
                     mode: probe.profile.mode.clone(),
                     mode_confidence: if probe.profile.mode.is_some() {
                         Confidence::Observed
@@ -1829,6 +1830,7 @@ pub async fn start_tally_core_snapshot(
             profile_version: canary.profile.profile_version,
             product: canary.profile.product.clone(),
             release: canary.profile.release.clone(),
+            license_tier: canary.profile.license_tier,
             mode: canary.profile.mode.clone(),
             mode_confidence: if canary.profile.mode.is_some() {
                 Confidence::Observed

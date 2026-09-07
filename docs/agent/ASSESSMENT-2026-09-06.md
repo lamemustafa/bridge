@@ -371,7 +371,23 @@ admitted as Unicode before state creation, preventing JSON path serialization
 from failing after publication. Startup regressions cover native invalid encoding
 and exact preservation of multilingual paths; Windows runtime checks are required.
 
-Local candidate verification: **1,012 Rust workspace tests**, **243 agent tests
+Status now retains `company_identity_invalid` when discovery normalization rejects
+a collection, with partial evidence and the completed source hashes/bytes. A
+valid empty collection stays distinct. A captured-source regression covers both
+cases and invalid GUID encoding, company number and calendar date.
+
+Import journal reads stream all records, validate unrelated status/hash bindings,
+and retain only the requested batch payload plus the latest hash per distinct
+batch ID. Each record is capped at 32 MiB on read and append; memory still grows
+with distinct IDs, and scanning remains proportional to total history. Existing
+compact and full records, physical generation checks, corruption refusal and
+publication recovery remain intact. Local tests generate over 32 MiB of journal
+history without materializing it all and check oversized-record refusal. No
+history is truncated. Source narration admission reserves exactly `[BRIDGE:`;
+ordinary `[BRIDGE CLUB]` text is accepted, and malformed or multiple reserved
+markers remain refused.
+
+Local candidate verification: **1,019 Rust workspace tests**, **247 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -442,9 +458,9 @@ CLI 2.1.2 validated and packed the archive. Its extracted executable and all fou
 legal resources matched the staged bytes; executable mode survived extraction;
 the manifest command initialized and listed ten default tools successfully.
 
-- Release executable SHA-256: `45907fc17d1fd97a3d11534c9816280746419c481bed805820134bd0d038a5bc`.
-- MCPB archive SHA-256: `d9c025162b5819c810d0772b746e6ca9d107c35df3ecf07afb99a719bdad8142`.
-- Source fingerprint (363 build-input files, unchanged through the settled-source rebuild): `bf82c83f214ae0eef0ecaa1c269c4fa831eb56d73b9029413d60f17b8f3ce0c7`.
+Exact-source fingerprints and executable/archive SHA-256 values are retained in
+the validation record and the published PR body. Each new source commit requires
+fresh hosted checks and review.
 
 CI builds, validates, packs, extracts, and launches the actual MCPB on Windows
 and macOS. The portable smoke checks initialization, ten default tools, the local
@@ -460,19 +476,11 @@ checks. None substitutes for the others. Graphify data and its refresh script
 were unavailable in this checkout; structural discovery used focused source
 tracing instead.
 
-The 163-entry sealed surface was audited before each reseal. No sealed path changed in the final artifact/schema correction. The preceding reseal
-updated six existing paths for shared company-number admission and retained
-probe/drift evidence across financial readers. No paths were added or
-removed. Previous seals cover observed release/tier profile version 4, typed
-native-ledger validation, the protocol observation, and the qualified file-identity
-and numbering clarification, literal-date counter-observation,
-negative-verdict qualification limit, currency witness,
-standard-library file locking, fresh financial mode admission and retained refusal
-evidence. Earlier
-changes covered request commitments, report-source fields, CI packaging, and
-the period-opening protocol reference. The existing pin
-set was rehashed, sealed, and repointed using the release-process commands.
-No compatibility cell was promoted.
+The sealed surface now has 164 entries: the existing 163 paths are retained and
+migration 26 is explicitly added to the production migration inventory. Four
+existing paths changed for durable tier propagation and local storage fixtures.
+The surface was rehashed, sealed and repointed using the release-process commands.
+All 11 compatibility claims remain unknown; no cell was promoted.
 
 The numbering review was adjudicated against the actual generated request and
 retained import/readback bytes. Failed `Alter` behavior does not establish a
@@ -487,7 +495,19 @@ was added.
 
 See [README migration notes](README.md#protocol-and-migration-notes) for output
 field changes, unavailable change enumeration, strict argument admission, and
-fingerprint-only attribution. There is no database migration. The new reader
+fingerprint-only attribution. Additive migration 26 preserves the observed licence
+tier in capability snapshots as nullable `silver` or `gold`, without inferring a
+tier for historical rows. The tier also enters new reviewed-setup commitments;
+absent historical tiers retain their exact payload hashes. Immutable-snapshot
+triggers remain active. Three storage regressions cover persistence, tier-only
+review mismatch, idempotent migration, historical replay and previous named-column
+insert compatibility. The previous executable itself has not been exercised
+against the migrated database; it cannot reproduce new tier-bound commitments
+and requires fresh review. Leave the additive column in place on rollback.
+SQLite checks existing rows when adding the constraint, so migration work grows
+with snapshot history. [SQLite ADD COLUMN](https://www.sqlite.org/lang_altertable.html#alter_table_add_column)
+
+The new reader
 accepts legacy full batch records and compact hash-bound verification status
 records; older binaries refuse the compact format. Preserve the ledger and
 proofs, and disable imports after a binary downgrade instead of truncating

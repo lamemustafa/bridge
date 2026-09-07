@@ -63,12 +63,7 @@ fn import_source_admits_only_one_well_formed_bridge_marker_without_batch_scope()
             Err("import_verification_tag_ambiguous".into())
         );
     }
-    for narration in [
-        "[BRIDGE:]",
-        "[BRIDGE:open",
-        "[BRIDGE bad]",
-        "[BRIDGE:bad id]",
-    ] {
+    for narration in ["[BRIDGE:]", "[BRIDGE:open", "[BRIDGE:bad id]"] {
         let mut row = template.clone();
         row.narration = Some(narration.into());
         assert_eq!(
@@ -76,7 +71,13 @@ fn import_source_admits_only_one_well_formed_bridge_marker_without_batch_scope()
             Err("import_verification_tag_invalid".into())
         );
     }
-    for narration in ["ordinary narration", "[BRIDGE:another-batch]"] {
+    for narration in [
+        "ordinary narration",
+        "[BRIDGE:another-batch]",
+        "[BRIDGE CLUB]",
+        "[BRIDGE bad] [BRIDGE CLUB]",
+        "[BRIDGE CLUB] [BRIDGE:current] [BRIDGE OTHER]",
+    ] {
         let mut row = template.clone();
         row.narration = Some(narration.into());
         assert!(ImportReadSource::admit(vec![row]).is_ok());
