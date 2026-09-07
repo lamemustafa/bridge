@@ -1,6 +1,7 @@
 use bridge_tally_protocol::{
+    TallyImportApplicationStatus, TallyImportCounterPresence, TallyImportResult,
     parse_import_evidence, parse_import_outcome, parse_import_result,
-    parse_ledger_write_readback_with_evidence, TallyImportApplicationStatus, TallyImportResult,
+    parse_ledger_write_readback_with_evidence,
 };
 
 const LIVE_EDUCATION_W1_LEDGER: &str =
@@ -9,6 +10,18 @@ const LIVE_EDUCATION_W4_VOUCHER: &str =
     include_str!("fixtures/live_education_w4_voucher_sanitized.xml");
 const LIVE_EDUCATION_W7_BADDATE: &str =
     include_str!("fixtures/live_education_w7_baddate_sanitized.xml");
+
+fn all_counters_reported() -> TallyImportCounterPresence {
+    TallyImportCounterPresence {
+        created: true,
+        altered: true,
+        deleted: true,
+        ignored: true,
+        errors: true,
+        cancelled: true,
+        exceptions: true,
+    }
+}
 
 #[test]
 fn live_education_import_counter_shapes_are_clean_only_when_the_intended_write_applied() {
@@ -52,6 +65,7 @@ fn clean_import_success_requires_each_live_evidence_condition_independently() {
         cancelled: 0,
         exceptions: 0,
         line_error_count: 0,
+        counter_presence: all_counters_reported(),
     };
     assert!(clean.is_clean_success_for(1, 0, 0));
     assert!(!clean.is_clean_success_for(0, 1, 0));
@@ -85,6 +99,42 @@ fn clean_import_success_requires_each_live_evidence_condition_independently() {
         .expect("an empty LINEERROR is still evidence of a reported line error");
     assert_eq!(empty_line_error.counters().line_error_count, 1);
     assert!(!empty_line_error.counters().is_clean_success_for(1, 0, 0));
+}
+
+#[test]
+fn captured_success_requires_every_clean_counter_to_be_observed() {
+    // Start with an ignored live capture, then remove one counter at a time.
+    // A missing counter remains auditably absent; it is never promoted to a
+    // parser-defaulted clean zero.
+    for counter in [
+        "CREATED",
+        "ALTERED",
+        "DELETED",
+        "IGNORED",
+        "ERRORS",
+        "CANCELLED",
+        "EXCEPTIONS",
+    ] {
+        let tag = format!("<{counter}>0</{counter}>");
+        let xml = if counter == "CREATED" {
+            LIVE_EDUCATION_W4_VOUCHER.replace("<CREATED>1</CREATED>", "")
+        } else {
+            LIVE_EDUCATION_W4_VOUCHER.replace(&tag, "")
+        };
+        let clean = parse_import_outcome(&xml)
+            .is_ok_and(|outcome| outcome.counters().is_clean_success_for(1, 0, 0));
+        assert!(!clean, "omitted {counter} must not prove a clean success");
+    }
+}
+
+#[test]
+fn legacy_persisted_counts_deserialize_but_cannot_prove_a_clean_import() {
+    let legacy: TallyImportResult = serde_json::from_str(
+        r#"{"created":1,"altered":0,"deleted":0,"ignored":0,"errors":0,"cancelled":0,"exceptions":0,"line_error_count":0}"#,
+    )
+    .expect("pre-presence saved records remain readable");
+    assert!(!legacy.counter_presence.all_reported());
+    assert!(!legacy.is_clean_success_for(1, 0, 0));
 }
 
 #[test]
