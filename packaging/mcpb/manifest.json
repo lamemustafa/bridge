@@ -3,7 +3,7 @@
   "name": "bridge-tally",
   "display_name": "Bridge Tally",
   "version": "0.2.0",
-  "description": "Read local Tally data; optionally enable experimental Journal posting with a separate native approval for each voucher.",
+  "description": "Read local Tally data and prepare Journals. Each new Journal posting requires a separate native approval.",
   "author": {
     "name": "Bridge contributors"
   },
@@ -45,8 +45,8 @@
     "enable_writes": {
       "type": "boolean",
       "title": "Allow Journal posting",
-      "description": "Experimental. Enables Journal preparation and posting. Every new posting requires separate approval in a native dialog; existing ledgers only. Disabled by default.",
-      "default": false
+      "description": "Journal preparation and posting are available by default. Every new posting requires approval in a native dialog; existing ledgers only. Turn off to use reads only.",
+      "default": true
     }
   }
 }

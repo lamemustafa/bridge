@@ -59,6 +59,7 @@ test("every host manifest launches its bundled binary and maps user settings to 
     assert.equal(manifest.server.entry_point, entryPoint);
     assert.equal(manifest.server.mcp_config.command, `${"${__dirname}"}/${entryPoint}`);
     assert.deepEqual(manifest.compatibility.platforms, [platform]);
+    assert.equal(manifest.user_config.enable_writes.default, true);
     assert.deepEqual(manifest.server.mcp_config.env, {
       BRIDGE_TALLY_HOST: "${user_config.host}",
       BRIDGE_TALLY_PORT: "${user_config.port}",

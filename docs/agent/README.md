@@ -6,8 +6,9 @@ The developer configuration below remains for supported client integrations.
 
 `bridge_mcp` is Bridge's newline-delimited JSON-RPC 2.0 MCP server. It uses
 Bridge's loopback-only Tally XML transport. Reads are enabled by default.
-An operator can also enable local voucher-file preparation and experimental
-posting of one Journal, with separate native approval for each new attempt.
+The MCPB extension also exposes Journal preparation and posting by default,
+with separate native approval for each new attempt. Command-line installations
+retain explicit environment switches.
 
 Build and run it with Rust 1.96:
 
@@ -58,7 +59,8 @@ Cursor uses the same server object in `.cursor/mcp.json`:
 The read tools are `tally_status`, `list_companies`, `outstandings`,
 `ledger_masters`, `ledger_movement`, `vouchers`,
 `read_evidence`, and `egress_log`; `voucher_schema` and `validate_masters` are also
-available by default (ten tools total). Each call returns compact JSON with the
+available by default (ten read/schema tools). The MCPB extension adds the three
+Journal workflow tools by default, for thirteen total. Each call returns compact JSON with the
 company identity where scoped, a read timestamp, request/response commitments,
 byte count, completeness reason, and truncation state. Before a tool response is written, Bridge appends a metadata-only
 `response_prepared` record to `agent-egress.jsonl`, including a unique `receipt_id`.
@@ -134,10 +136,11 @@ If discovery rejects company identity fields, `tally_status` reports the profile
 refusal reason and partial evidence with the completed source commitments. A
 valid empty collection remains distinguishable from invalid discovery.
 
-## Voucher-file loop (manual Tally import only; disabled by default)
+## Voucher-file preparation and verification
 
-`build_import_xml` and `verify_import` are hidden unless the operator sets
-`BRIDGE_AGENT_ENABLE_IMPORT=1`. A licensed synthetic-lab Journal file cycle and
+The MCPB extension exposes `build_import_xml` and `verify_import` by default.
+For a command-line installation, set `BRIDGE_AGENT_ENABLE_IMPORT=1` for the
+manual file workflow, or enable Journal posting as described below. A licensed synthetic-lab Journal file cycle and
 exact-file repeat import were observed on 2026-09-06. New file generation accepts
 only `Journal`, with freshly observed supported TallyPrime product and licence mode
 before and after build reads. Release and licence tier are returned as observed
@@ -147,7 +150,7 @@ supply these facts. `Payment`, `Receipt`, and `Contra` are refused until each ha
 live import/readback evidence. Historical batch records remain readable. The response records
 `live_evidence: "synthetic_lab_readback"` and links to
 [the assessment](ASSESSMENT-2026-09-06.md). This does not qualify every voucher
-type, host, licence mode, or manually imported file, so the feature remains opt-in.
+type, host, licence mode, or manually imported file.
 
 1. Call `voucher_schema` and produce a payload matching its schema. Transaction
    IDs are client-supplied, unique within the batch, and retained in the local import ledger.
@@ -184,19 +187,27 @@ Positive historical readback remains available on an unqualified profile.
 A failed profile probe remains a read failure.
 
 Safety boundary: local loopback only, bounded responses, verified company tuple
-selection, append-only receipts, and separately approved, opt-in Journal dispatch. Unsupported:
+selection, append-only receipts, and separately approved Journal dispatch. Unsupported:
 Tally Cloud Access, every non-loopback Tally host, and change enumeration. A
 `posted_verified` result is a readback comparison of the selected date window,
 not live-Tally qualification or a claim that every Tally configuration or
 licence mode has been qualified.
 
-## Approved Journal posting (experimental; disabled by default)
+## Approved Journal posting
 
-Set `BRIDGE_AGENT_ENABLE_WRITES=true` (or enable **Allow Journal posting** in
-an MCPB client). This also enables `build_import_xml` and `verify_import`.
+The MCPB extension makes **Allow Journal posting** available by default.
+Turn it off for a read-only connector; existing saved settings remain respected.
+For command-line installation, set `BRIDGE_AGENT_ENABLE_WRITES=true`.
+This also enables `build_import_xml` and `verify_import`.
 `BRIDGE_AGENT_ENABLE_IMPORT=true` alone continues to expose only the manual
 file workflow. Both switches accept `true`/`false` or `1`/`0`; invalid values
-stop startup. No model-supplied argument can grant approval.
+stop startup. No model-supplied argument can grant approval. Claude controls
+its own tool-call permission prompts: Bridge cannot preselect **Always allow**
+for the user. That client permission does not approve an accounting entry.
+
+One native-approved Journal and restart reconciliation have been observed on
+macOS against a synthetic Silver 7.1 instance. This remains a preview: Windows
+interactive approval and Gold/Education live posting have not been established.
 
 1. Validate the exact existing ledger names and build **one Journal** using the
    file workflow above. A Journal is a voucher; Payment, Receipt, Contra,
