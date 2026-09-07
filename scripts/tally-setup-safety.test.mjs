@@ -200,7 +200,8 @@ test("party ledger export disables the concurrent outstandings refresh through t
   const switcherManage = switcher.slice(switcher.indexOf('onManageTally();') - 180, switcher.indexOf('onManageTally();') + 80);
   assert.match(switcherManage, /disabled=\{selectionLocked\}/);
   const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge navigation">'), frontend.indexOf("</nav>"));
-  assert.match(nav, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Settings/);
+  assert.match(frontend, /const shellNavigationLocked = childTallyReadCount > 0 \|\| journalActionBusy;/);
+  assert.match(nav, /<button aria-current=\{view === "settings" \? "page" : undefined\}[\s\S]*?disabled=\{shellNavigationLocked\}/);
 });
 
 test("a ledger-master export notice survives unmounting the outstandings screen", async () => {
