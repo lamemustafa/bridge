@@ -18,7 +18,7 @@ const MAX_SELECTED_JOURNAL_BYTES: usize = 5_000_000;
 /// A command-scoped facade. Its cloned runtime retains the desktop application's
 /// endpoint session and queue; it never constructs a second runtime.
 pub(crate) struct DesktopJournalService {
-    server: Server,
+    pub(super) server: Server,
 }
 
 impl DesktopJournalService {

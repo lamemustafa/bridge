@@ -18,7 +18,7 @@ pub(crate) struct DesktopJournalCompany {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct DesktopJournalReview {
+pub struct DesktopJournalReview {
     pub(crate) batch_id: String,
     pub(crate) sha256: String,
     pub(crate) company: DesktopJournalCompany,
@@ -71,26 +71,11 @@ impl DesktopJournalError {
             remediation,
         }
     }
-    fn unavailable() -> Self {
-        Self {
-            code: "journal_review_unavailable",
-            message: "This Journal review is no longer available in this desktop session.".into(),
-            remediation: "Choose the saved Bridge Journal again before posting or reconciling it.",
-        }
-    }
-    fn posting() -> Self {
-        Self {
-            code: "journal_post_in_progress",
-            message: "Bridge is already processing this reviewed Journal.".into(),
-            remediation:
-                "Wait for that attempt to finish, then use Reconcile with the same review.",
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct DesktopJournalDescriptorRequest {
+pub struct DesktopJournalDescriptorRequest {
     pub(crate) batch_id: String,
     pub(crate) sha256: String,
     pub(crate) company_guid: String,
@@ -99,7 +84,7 @@ pub(crate) struct DesktopJournalDescriptorRequest {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct DesktopJournalActionResponse {
+pub struct DesktopJournalActionResponse {
     pub(crate) batch_id: String,
     pub(crate) result: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
