@@ -31,6 +31,10 @@ downloaded bytes and source commit.
 4. Save the extension settings and restart Claude Desktop if its tools are not
    visible. In a new chat, use **Connectors** to confirm Bridge is connected.
 
+Journal preparation and posting are available by default. Every new posting
+requires your approval in a separate dialog. Turn off **Allow Journal posting**
+in the extension settings for a read-only connector.
+
 Bridge only accepts loopback Tally endpoints. Do not open a port to the
 internet or use a remote host to make this work.
 
