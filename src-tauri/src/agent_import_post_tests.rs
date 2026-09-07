@@ -545,3 +545,38 @@ fn native_post_refuses_supplied_numbers_without_disabling_manual_files() {
         Some("import_post_numbered_journal_unsupported")
     );
 }
+
+#[test]
+fn queued_absence_recheck_refuses_the_captured_attributed_journal() {
+    let company_guid = "61c6de69-1748-461c-ad3f-162cb949df9f";
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml"
+    );
+    let captured = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":"bridge-6c79872c-aab6-4be5-a181-18182c8148be",
+        "identity_scheme":"batch_v1", "company_guid":company_guid,
+        "txn_ids":["BRIDGE_MCP_LIVE_20260906_A1"],
+        "date_from":"20260907", "date_to":"20260907", "sha256":"e39eb3c0bfe53144bdd9c0f4afcb88c3d63a2050214233ee77465d42a54245ef",
+        "built_at":"2026-09-06T21:40:26.641Z", "status":"built",
+        "pre_import_mark":{"kind":"company_high_water","value":8,"master_value":219},
+        "vouchers":[{"bridge_txn_id":"BRIDGE_MCP_LIVE_20260906_A1","date":"20260907",
+            "voucher_type":"Journal","narration":"Bridge MCP batch namespace qualification",
+            "reference":null,"voucher_number":null,
+            "entries":[{"ledger":"Bridge Nested Debtor WR4","amount":"12.61","side":"Dr"},
+                {"ledger":"Cash","amount":"12.61","side":"Cr"}]}]
+    }))
+    .unwrap();
+    let error = recheck_import_absence(&line, company_guid, &captured, &captured)
+        .expect_err("captured attributed Journal must block the queued native attempt");
+    assert!(matches!(
+        error.downcast_ref::<ApprovedImportAdmissionError>(),
+        Some(ApprovedImportAdmissionError::PreexistingIdentity)
+    ));
+}

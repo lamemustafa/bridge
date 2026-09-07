@@ -1,7 +1,7 @@
 //! One user-approved Journal attempt; subsequent calls only reconcile its identity.
 use super::*;
 use crate::agent::evidence_from_runtime_read;
-use crate::tally::approved_import::ApprovedImport;
+use crate::tally::approved_import::{ApprovedImport, ApprovedImportAdmissionError};
 use bridge_tally_protocol::{parse_import_outcome, TallyImportApplicationStatus};
 
 impl Server {
@@ -92,7 +92,20 @@ impl Server {
             let request_sha256 = sha256_hex(
                 &bridge_tally_protocol::encode_tally_xml_request_utf16le(&xml),
             );
-            let request = ApprovedImport::confirm(xml, &preview, voucher_date).await?;
+            let verification_request = crate::tally::agent_read_request::AgentReadRequest::parse(
+                render_import_verification_read(
+                    &line
+                        .company
+                        .as_ref()
+                        .ok_or_else(|| "import_post_company_missing".to_string())?
+                        .name,
+                    &line.date_from,
+                    &line.date_to,
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            let request =
+                ApprovedImport::confirm(xml, &preview, voucher_date, verification_request).await?;
             let (company, identity, identity_evidence) = self.verified_company(guid).await?;
             accumulated = combine_evidence(accumulated.clone(), identity_evidence);
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
@@ -115,25 +128,33 @@ impl Server {
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
             let posted = self
                 .runtime
-                .post_approved_import(self.tally_config(), &identity, request, || {
-                    // The file lock covers only the admission+synced append. It is not
-                    // held over approval or network I/O. A competing process loses here.
-                    let _lock = self.lock_import_admission()?;
-                    let current = self
-                        .import_snapshot_while_admitted(Some(batch_id))?
-                        .ok_or_else(|| "import_batch_not_found".to_string())?;
-                    if current.dispatched {
-                        return Err("import_already_attempted".into());
-                    }
-                    if current.batch.sha256 != line.sha256
-                        || current.batch.endpoint_origin != line.endpoint_origin
-                    {
-                        return Err("import_batch_changed".into());
-                    }
-                    self.append_import_record_while_admitted(
-                        &ledger::StatusRecord::dispatch_native(&line, request_sha256.clone()),
-                    )
-                })
+                .post_approved_import(
+                    self.tally_config(),
+                    &identity,
+                    request,
+                    |first, second| {
+                        recheck_import_absence(&line, identity.company_guid(), first, second)
+                    },
+                    || {
+                        // The file lock covers only the admission+synced append. It is not
+                        // held over approval or network I/O. A competing process loses here.
+                        let _lock = self.lock_import_admission()?;
+                        let current = self
+                            .import_snapshot_while_admitted(Some(batch_id))?
+                            .ok_or_else(|| "import_batch_not_found".to_string())?;
+                        if current.dispatched {
+                            return Err("import_already_attempted".into());
+                        }
+                        if current.batch.sha256 != line.sha256
+                            || current.batch.endpoint_origin != line.endpoint_origin
+                        {
+                            return Err("import_batch_changed".into());
+                        }
+                        self.append_import_record_while_admitted(
+                            &ledger::StatusRecord::dispatch_native(&line, request_sha256.clone()),
+                        )
+                    },
+                )
                 .await;
             let posted = posted.map_err(|error| {
                 let code = if error.chain().any(|cause| {
@@ -141,9 +162,19 @@ impl Server {
                 }) {
                     "import_company_scope_ambiguous"
                 } else if error.chain().any(|cause| {
-                    cause.is::<crate::tally::approved_import::ApprovedImportAdmissionError>()
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::EducationVoucherDateUnsupported)
+                    )
                 }) {
                     "education_voucher_date_unsupported"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::PreexistingIdentity)
+                    )
+                }) {
+                    "import_preexisting_identity"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
@@ -314,6 +345,23 @@ fn require_absent(payload: &Value) -> Result<(), String> {
         return Err("import_preexisting_identity".into());
     }
     Ok(())
+}
+
+fn recheck_import_absence(
+    line: &ImportLedgerLine,
+    company_guid: &str,
+    first: &str,
+    second: &str,
+) -> anyhow::Result<()> {
+    let observed = parse_import_vouchers(first, company_guid).map_err(anyhow::Error::msg)?;
+    let corroboration = parse_import_vouchers(second, company_guid).map_err(anyhow::Error::msg)?;
+    corroborate_verification_window(&observed, &corroboration, &line.date_from, &line.date_to)
+        .map_err(anyhow::Error::msg)?;
+    let result = verify_batch(line, &observed).map_err(anyhow::Error::msg)?;
+    require_absent(&result).map_err(|code| match code.as_str() {
+        "import_preexisting_identity" => ApprovedImportAdmissionError::PreexistingIdentity.into(),
+        _ => anyhow::Error::msg(code),
+    })
 }
 
 fn require_native_numbering(voucher: &ImportVoucher) -> Result<(), String> {

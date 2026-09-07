@@ -1,4 +1,5 @@
 //! Independent local approval. The model never supplies an approval boolean.
+use super::agent_read_request::AgentReadRequest;
 use bridge_tally_core::TallyDate;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use std::{io::Read, process::Stdio, time::Duration};
@@ -12,6 +13,7 @@ const POST_LABEL: &str = "Post Journal";
 pub(crate) struct ApprovedImport {
     xml: String,
     voucher_date: TallyDate,
+    verification_request: AgentReadRequest,
 }
 
 impl ApprovedImport {
@@ -19,13 +21,22 @@ impl ApprovedImport {
         xml: String,
         preview: &str,
         voucher_date: TallyDate,
+        verification_request: AgentReadRequest,
     ) -> Result<Self, String> {
         confirm(preview).await?;
-        Ok(Self { xml, voucher_date })
+        Ok(Self {
+            xml,
+            voucher_date,
+            verification_request,
+        })
     }
 
     pub(super) fn xml(&self) -> &str {
         &self.xml
+    }
+
+    pub(super) fn verification_request(&self) -> AgentReadRequest {
+        self.verification_request.clone()
     }
 
     /// Recheck the operator-approved dates after the endpoint queue admits this
@@ -43,7 +54,14 @@ impl ApprovedImport {
 
     #[cfg(test)]
     pub(super) fn approved_for_test(xml: String, voucher_date: TallyDate) -> Self {
-        Self { xml, voucher_date }
+        Self {
+            xml,
+            voucher_date,
+            verification_request: AgentReadRequest::parse(
+                bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile::CompanyListV2.render(),
+            )
+            .expect("static read profile is admitted"),
+        }
     }
 }
 
@@ -51,6 +69,8 @@ impl ApprovedImport {
 pub(crate) enum ApprovedImportAdmissionError {
     #[error("education_voucher_date_unsupported")]
     EducationVoucherDateUnsupported,
+    #[error("import_preexisting_identity")]
+    PreexistingIdentity,
 }
 
 async fn confirm(preview: &str) -> Result<(), String> {
