@@ -436,9 +436,9 @@ where
     tokio::pin!(future);
     let mut phase = PostPhase::Running;
     let mut classifier_retry = tokio::time::interval(std::time::Duration::from_millis(10));
+    classifier_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
-            biased;
             // Do not let a continuously readable stdin starve the pending
             // approval/write future. Cancellation remains visible on every turn.
             frame = framer.read(reader, MAX_REQUEST_BYTES) => {
@@ -464,10 +464,8 @@ where
                             PostDispatchState::MayHaveDispatched if phase == PostPhase::Running => {
                                 phase = PostPhase::Draining;
                             }
-                            PostDispatchState::AdmissionBusy => {
-                                if phase == PostPhase::Running {
-                                    phase = PostPhase::Classifying;
-                                }
+                            PostDispatchState::AdmissionBusy if phase == PostPhase::Running => {
+                                phase = PostPhase::Classifying;
                             }
                             _ => {}
                         }

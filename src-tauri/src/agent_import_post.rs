@@ -450,7 +450,6 @@ fn admit_fresh_saved_journal(
     endpoint: &super::super::TallyEndpointConfig,
 ) -> Result<String, String> {
     let company = line.company.as_ref().ok_or("import_post_company_missing")?;
-    require_native_numbering(&line.vouchers[0])?;
     let origin =
         super::super::canonical_loopback_origin(endpoint).map_err(|_| "host_setting_invalid")?;
     let (debit, credit) = totals(&line.vouchers)?;
@@ -466,6 +465,7 @@ fn admit_fresh_saved_journal(
     if review_text.any(has_unreviewable_format_character) {
         return Err("import_review_format_text".into());
     }
+    require_native_numbering(voucher)?;
     let quoted = |text: &str| serde_json::to_string(text).expect("string serialization");
     let optional = |value: &Option<String>| {
         value

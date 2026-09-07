@@ -47,6 +47,80 @@ fn saved_batch(server: &Server) -> (ImportLedgerLine, Value) {
 }
 
 #[tokio::test]
+async fn contended_cancellation_answers_ping_and_suspends_the_post() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server(directory.path());
+    let (_, args) = saved_batch(&server);
+    let admission = server.lock_import_admission().unwrap();
+    assert_eq!(
+        post_dispatch_state(&server, &args),
+        PostDispatchState::AdmissionBusy
+    );
+    let polls = std::cell::Cell::new(0);
+    let (client, source) = tokio::io::duplex(4096);
+    let (client_read, mut client_write) = tokio::io::split(client);
+    let (source_read, mut source_write) = tokio::io::split(source);
+    let mut reader = BufReader::new(source_read);
+    let (finished, mut completion) = tokio::sync::oneshot::channel();
+    let serve = async {
+        let result = await_post(
+            std::future::poll_fn(|_| {
+                polls.set(polls.get() + 1);
+                Poll::<ToolResponse>::Pending
+            }),
+            PostRequest {
+                id: &json!(7),
+                args: &args,
+            },
+            &server,
+            &mut reader,
+            &mut Framer::default(),
+            &mut std::collections::VecDeque::new(),
+            &mut source_write,
+        )
+        .await;
+        finished.send(()).unwrap();
+        result
+    };
+    let client = async {
+        client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":7}}\n{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}\n").await.unwrap();
+        let mut response = String::new();
+        BufReader::new(client_read)
+            .read_line(&mut response)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&response).unwrap(),
+            json!({"jsonrpc":"2.0","id":8,"result":{}})
+        );
+        let polls_after_cancellation = polls.get();
+        drop(admission);
+        // Keep stdin active more often than the classifier retry period. This
+        // catches a retry sleep that restarts after every incoming frame.
+        let mut traffic = tokio::time::interval(std::time::Duration::from_millis(1));
+        loop {
+            tokio::select! {
+                result = &mut completion => { result.unwrap(); break; }
+                _ = traffic.tick() => {
+                    client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n").await.unwrap();
+                }
+            }
+        }
+        assert_eq!(polls.get(), polls_after_cancellation);
+    };
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::join!(serve, client)
+    })
+    .await
+    .unwrap();
+    assert!(result.unwrap().is_none());
+    assert_eq!(
+        post_dispatch_state(&server, &args),
+        PostDispatchState::NotDispatched
+    );
+}
+
+#[tokio::test]
 async fn cancellation_after_intent_keeps_answering_ping_until_post_completes() {
     let directory = tempfile::tempdir().unwrap();
     let server = server(directory.path());
