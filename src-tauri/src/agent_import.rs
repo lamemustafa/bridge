@@ -486,6 +486,7 @@ impl Server {
             batch: line,
             generation,
             response: dispatch_response,
+            dispatched,
             ..
         } = self
             .latest_import_snapshot(batch_id)?
@@ -493,6 +494,7 @@ impl Server {
         if !batch_guid_matches(&line.company_guid, guid) {
             return Err("import_batch_company_mismatch".to_string().into());
         }
+        validate_dispatched_import_endpoint(&line, dispatched, &self.settings.endpoint)?;
         let opening_mode = self.observe_import_profile().await?;
         let (company, identity, identity_evidence) = self
             .verified_company(guid)
@@ -720,6 +722,24 @@ impl Server {
         }
         append_private_import_ledger(&path, encoded.as_bytes(), set_private_file)
     }
+}
+
+/// A native-dispatched batch is tied to the Tally endpoint used for its saved
+/// admission. Older manual imports retain their original verification path.
+fn validate_dispatched_import_endpoint(
+    line: &ImportLedgerLine,
+    dispatched: bool,
+    endpoint: &super::TallyEndpointConfig,
+) -> Result<(), String> {
+    if !dispatched {
+        return Ok(());
+    }
+    let origin = super::canonical_loopback_origin(endpoint)
+        .map_err(|_| "host_setting_invalid".to_string())?;
+    if line.endpoint_origin.as_deref() != Some(origin.as_str()) {
+        return Err("import_post_endpoint_mismatch".into());
+    }
+    Ok(())
 }
 
 fn append_private_import_ledger(

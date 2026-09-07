@@ -713,9 +713,18 @@ master ID, and assigned voucher number. The file SHA-256 was
 This qualifies that exact-file repeat on the observed licensed Journal path. It
 does not establish voucher-number-based identity, the configured numbering
 method, other request shapes or voucher types, restart behavior, or universal
-REMOTEID semantics. The connector neither dispatches imports nor retries them.
-A mandatory manual-numbering preflight would require a separately observed
-voucher-type read contract; it cannot be inferred from the failed-`Alter` case.
+REMOTEID semantics.
+
+Bridge can dispatch only a locally built, saved one-Journal batch on this
+source-specific path: it binds the saved endpoint, requires an independent
+native approval, records one durable attempt before sending, persists any
+response, and reads the original batch back. It does not automatically retry.
+A timeout, missing response, dirty counters, or incomplete readback stays with
+the original saved batch for read-only reconciliation. This operational guard
+is not evidence for a different product, licence mode, voucher type, endpoint,
+or request shape. A mandatory manual-numbering preflight would require a
+separately observed voucher-type read contract; it cannot be inferred from the
+failed-`Alter` case.
 
 **Batch identity qualification — verified 2026-09-06, recorded 2026-09-07.**
 A new synthetic Journal reused the earlier caller transaction label in a separate

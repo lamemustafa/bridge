@@ -1707,3 +1707,71 @@ mod identity_tests;
 
 #[path = "agent_import_text_tests.rs"]
 mod text_tests;
+
+#[tokio::test]
+async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads() {
+    let simulator = SequenceSimulator::spawn(Vec::new()).expect("simulator");
+    let endpoint = TallyEndpointConfig {
+        host: "127.0.0.1".into(),
+        port: simulator.address().port(),
+    };
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let server = Server::new(super::super::Settings {
+        endpoint: endpoint.clone(),
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: super::super::Redaction::None,
+        import_enabled: true,
+        writes_enabled: false,
+    });
+    let line = ImportLedgerLine {
+        batch_id: "batch-dispatched-endpoint".into(),
+        identity_scheme: Some(ImportIdentityScheme::BatchV1),
+        company_guid: GUID.into(),
+        endpoint_origin: Some("http://127.0.0.1:9002".into()),
+        company: None,
+        txn_ids: vec![],
+        date_from: "20260901".into(),
+        date_to: "20260901".into(),
+        sha256: "hash".into(),
+        built_at: now(),
+        status: "built".into(),
+        pre_import_mark: PreImportMark {
+            kind: "company_high_water".into(),
+            value: Some(1),
+            master_value: Some(1),
+        },
+        vouchers: vec![],
+    };
+    server.append_import_ledger(&line).expect("saved batch");
+    let admission = server.lock_import_admission().expect("admission lock");
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&line))
+        .expect("durable dispatch intent");
+    drop(admission);
+
+    let failure = server
+        .verify_import(&json!({"company_guid":GUID,"batch_id":line.batch_id}))
+        .await
+        .expect_err("mismatched dispatched endpoint must be refused");
+    assert_eq!(failure.code, "import_post_endpoint_mismatch");
+    assert!(simulator.finish().expect("no Tally reads").is_empty());
+
+    let matching = ImportLedgerLine {
+        endpoint_origin: Some(super::super::canonical_loopback_origin(&endpoint).unwrap()),
+        ..line.clone()
+    };
+    assert_eq!(
+        validate_dispatched_import_endpoint(&matching, true, &endpoint),
+        Ok(())
+    );
+    let manual = ImportLedgerLine {
+        endpoint_origin: None,
+        ..line
+    };
+    assert_eq!(
+        validate_dispatched_import_endpoint(&manual, false, &endpoint),
+        Ok(())
+    );
+}
