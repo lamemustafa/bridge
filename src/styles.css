@@ -736,6 +736,45 @@ h2 {
   backdrop-filter: blur(8px);
 }
 
+.company-connection-summary {
+  margin-bottom: 18px;
+}
+
+.company-connection-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.company-connection-details > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border-top: 1px solid #dce4de;
+  padding-top: 10px;
+}
+
+.company-connection-details dt {
+  color: #61756a;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.company-connection-details dd {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.tally-readiness-fields small {
+  color: #61756a;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
 .skip-link {
   position: fixed;
   top: 8px;
@@ -2133,7 +2172,8 @@ summary:focus-visible,
   .company-context-bar,
   .company-discovery-notice,
   .company-profile-grid,
-  .gap-item {
+  .gap-item,
+  .company-connection-details {
     grid-template-columns: 1fr;
   }
 

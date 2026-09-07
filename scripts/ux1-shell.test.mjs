@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("UX1 keeps client selection searchable, truthful about read readiness, and explicit about unavailable sections", async () => {
+test("UI keeps client selection searchable and exposes only source-backed shell destinations", async () => {
   const [app, switcher, outstandings, allClients] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/ClientSwitcher.tsx", import.meta.url), "utf8"),
@@ -13,25 +13,19 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
     readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
   ]);
 
-  assert.match(app, /const NON_TALLY_SECTIONS_ENABLED = false/);
-  assert.match(app, /disabled=\{!NON_TALLY_SECTIONS_ENABLED\}/);
-  assert.match(app, /onClick=\{\(\) => setView\("gst"\)\}/);
-  assert.match(app, /onClick=\{\(\) => setView\("dsc"\)\}/);
-  assert.match(app, /onClick=\{\(\) => setView\("documents"\)\}/);
-  assert.match(app, /onClick=\{\(\) => setView\("axal"\)\}/);
-  assert.match(app, /\{!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available<\/small>\}/);
-  assert.match(app, /Not yet available/);
-  assert.match(app, /if \(!NON_TALLY_SECTIONS_ENABLED\) \{\s*setDashboardError\("GST availability is unavailable until end-to-end workflow evidence is complete\."\);\s*return;/s);
-  const dashboard = app.slice(app.indexOf('{view === "dashboard" && ('), app.indexOf('{view === "gst" && ('));
-  assert.match(dashboard, /\{NON_TALLY_SECTIONS_ENABLED \? \([\s\S]*?Check GST Availability[\s\S]*?: \(\s*<p className="future-sections-note" role="status">GST availability is unavailable until end-to-end workflow evidence is complete\.<\/p>/);
-  assert.match(app, /\{!NON_TALLY_SECTIONS_ENABLED && \(\s*<p className="future-sections-note" id="future-sections-note">Unavailable until their workflow evidence is complete\.<\/p>\s*\)\}/);
+  assert.match(app, /type View = .*"settings"/);
+  assert.match(app, /const \[view, setView\] = React\.useState<View>\("outstandings"\)/);
+  assert.match(app, /<TallyReadinessFlow/);
+  assert.match(app, /Overview/);
+  assert.match(app, /Companies/);
+  assert.match(app, /Settings/);
+  const nav = app.slice(app.indexOf('<nav aria-label="Bridge navigation">'), app.indexOf("</nav>"));
+  assert.doesNotMatch(nav, /GST Returns|DSC Token|Documents|AXAL Backend|Evidence dashboard/);
   assert.match(app, /port: 9000/);
   assert.match(app, /currentProbeCanonicalOrigin/);
   assert.match(app, /company\.canonical_endpoint === currentProbeCanonicalOrigin/);
   assert.doesNotMatch(app, /function configuredTallyEndpoint/);
-  assert.match(app, /const selectedCompanyReadable = selectedCompanyReady/);
-  assert.match(app, /const \[view, setView\] = React\.useState<View>\("dashboard"\)/);
-  assert.match(app, /if \(view !== "companies" && view !== "outstandings" && view !== "clients"\) return;/);
+  assert.match(app, /if \(view !== "companies" && view !== "clients"\) return;/);
   assert.match(app, /<OutstandingsScreen\s+key=\{selectedCompany \|\| "unselected"\}/);
   assert.match(app, /setOpenCompanyNames\(\[\]\);\s*setUntrustedDiscoveredCompanies\(\[\]\);/);
   assert.match(app, /correlation_key: company\.correlation_key/);
@@ -71,9 +65,9 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(app, /Books from \$\{booksFrom\}/);
   assert.match(app, /GUID \$\{company\.guid \?\? "not observed"\}/);
   assert.match(app, /Endpoint \$\{company\.canonical_endpoint \?\? "not observed"\}/);
-  assert.match(app, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Outstandings/);
-  assert.match(app, /aria-current=\{view === "clients" \? "page" : undefined\}[\s\S]*?disabled=\{childTallyReadCount > 0\}[\s\S]*?Compare clients/);
-  assert.match(app, /onClick=\{\(\) => setView\("outstandings"\)\} disabled=\{childTallyReadCount > 0\} aria-describedby=\{childTallyReadCount > 0 \? "active-tally-read-note" : undefined\}>Open outstandings/);
+  assert.match(app, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Overview/);
+  assert.match(app, /aria-current=\{view === "companies" \? "page" : undefined\}[\s\S]*?Companies/);
+  assert.match(app, /onClick=\{\(\) => setView\("outstandings"\)\} disabled=\{childTallyReadCount > 0\} aria-describedby=\{childTallyReadCount > 0 \? "active-tally-read-note" : undefined\}>Open Overview/);
   assert.match(app, /A Tally read is still in progress\. Wait before opening another live read\./);
   assert.match(app, /liveReadActionsLocked=\{childTallyReadCount > 0\}/);
   assert.match(outstandings, /liveReadNavigationLocked: boolean;/);
@@ -88,16 +82,16 @@ test("UX1 keeps client selection searchable, truthful about read readiness, and 
   assert.match(mirrorProof, /Wait before starting or resuming a Core Accounting read\./);
 });
 
-test("UX1 nav sends unreadable outstandings and client requests to Manage Tally", async () => {
+test("simplified nav has explicit Overview, Companies, and Settings destinations", async () => {
   const app = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
-  const nav = app.slice(app.indexOf('<nav aria-label="Bridge operations">'), app.indexOf("</nav>"));
+  const nav = app.slice(app.indexOf('<nav aria-label="Bridge navigation">'), app.indexOf("</nav>"));
 
-  assert.match(nav, /Outstandings/);
-  assert.match(nav, /Compare clients/);
-  assert.match(nav, /Manage Tally/);
-  assert.match(nav, /Evidence dashboard/);
-  assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "outstandings" : "companies"\)\}/);
-  assert.match(nav, /onClick=\{\(\) => setView\(selectedCompanyReadable \? "clients" : "companies"\)\}/);
+  assert.match(nav, /Overview/);
+  assert.match(nav, /Companies/);
+  assert.match(nav, /Settings/);
+  assert.match(nav, /onClick=\{\(\) => setView\("outstandings"\)\}/);
+  assert.match(nav, /onClick=\{\(\) => setView\("companies"\)\}/);
+  assert.match(nav, /onClick=\{\(\) => setView\("settings"\)\}/);
 });
 
 test("UX2 keeps report evidence distinct from Core Accounting history and hides operator tools behind Advanced", async () => {
@@ -108,7 +102,7 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
     readFile(new URL("../src/OutstandingsEvidencePanel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/evidence-drawer-focus.ts", import.meta.url), "utf8"),
   ]);
-  const nav = app.slice(app.indexOf('<nav aria-label="Bridge operations">'), app.indexOf("</nav>"));
+  const nav = app.slice(app.indexOf('<nav aria-label="Bridge navigation">'), app.indexOf("</nav>"));
   const advanced = mirrorProof.slice(
     mirrorProof.indexOf('<details className="evidence-advanced">'),
     mirrorProof.lastIndexOf("</details>"),
