@@ -50,7 +50,11 @@ fn native_preview_contains_all_accounting_inputs_and_pinned_destination() {
 #[test]
 fn contended_post_returns_without_waiting_or_recording_a_dispatch() {
     let directory = tempfile::tempdir().unwrap();
-    let (line, endpoint) = batch();
+    let (line, mut endpoint) = batch();
+    // A regressed blocking lock is released below to let the worker exit.
+    // Keep its endpoint different from the saved batch so that fallback path
+    // fails local admission before any network access or native approval.
+    endpoint.port = 9;
     let server = Server::new(crate::agent::Settings {
         endpoint,
         data_dir: directory.path().to_path_buf(),
