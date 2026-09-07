@@ -10,6 +10,7 @@ mod local_file;
 #[path = "agent_import.rs"]
 mod agent_import;
 pub use crate::tally::approved_import::run_confirmation;
+pub(crate) use agent_import::desktop_journal_review as desktop_journal;
 
 #[path = "agent_catalog.rs"]
 mod catalog;

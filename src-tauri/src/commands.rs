@@ -113,6 +113,19 @@ fn tally_command_error(
     }
 }
 
+fn desktop_journal_command_error(
+    error: crate::agent::desktop_journal::DesktopJournalError,
+) -> TallyCommandError {
+    tally_command_error(
+        error.code,
+        "Journal review",
+        error.message,
+        "after_change",
+        false,
+        error.remediation,
+    )
+}
+
 #[cfg(test)]
 #[path = "commands_native_ledger_tests.rs"]
 mod native_ledger_tests;
@@ -2896,6 +2909,36 @@ pub fn revoke_document_authorizations(
 ) -> Result<(), String> {
     crate::documents::revoke_document_authorizations(&selection_ids, scan_session_id.as_deref())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn desktop_pick_journal_for_review(
+    config: TallyConfig,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<Option<crate::agent::desktop_journal::DesktopJournalReview>, TallyCommandError> {
+    crate::agent::desktop_journal::pick_for_review(config, runtime.inner().clone())
+        .await
+        .map_err(desktop_journal_command_error)
+}
+
+#[tauri::command]
+pub async fn desktop_post_reviewed_journal(
+    request: crate::agent::desktop_journal::DesktopJournalDescriptorRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<crate::agent::desktop_journal::DesktopJournalActionResponse, TallyCommandError> {
+    crate::agent::desktop_journal::post_reviewed(request, runtime.inner().clone())
+        .await
+        .map_err(desktop_journal_command_error)
+}
+
+#[tauri::command]
+pub async fn desktop_reconcile_reviewed_journal(
+    request: crate::agent::desktop_journal::DesktopJournalDescriptorRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<crate::agent::desktop_journal::DesktopJournalActionResponse, TallyCommandError> {
+    crate::agent::desktop_journal::reconcile_reviewed(request, runtime.inner().clone())
+        .await
+        .map_err(desktop_journal_command_error)
 }
 
 #[tauri::command]

@@ -121,6 +121,36 @@ pub(super) fn read_snapshot(
     Ok(selected)
 }
 
+/// Finds the sole batch identity bound to a persisted XML digest.  The caller
+/// still reads that batch's snapshot afterwards, so status updates remain part
+/// of the normal snapshot admission path.
+pub(super) fn find_batch_id_by_sha256(
+    reader: impl BufRead,
+    wanted_sha256: &str,
+) -> Result<Option<String>, String> {
+    let mut batch_id = None;
+    scan_records(reader, |record, _| {
+        if let Record::Batch(batch) = record {
+            if batch.sha256 == wanted_sha256 {
+                match &batch_id {
+                    Some(existing) if existing != &batch.batch_id => {
+                        // A digest is an identity only while it identifies one
+                        // local batch. Do not choose between two history entries.
+                        batch_id = Some(String::new());
+                    }
+                    Some(_) => {}
+                    None => batch_id = Some(batch.batch_id),
+                }
+            }
+        }
+    })?;
+    match batch_id.as_deref() {
+        Some("") => Err("import_batch_digest_ambiguous".into()),
+        Some(id) => Ok(Some(id.to_string())),
+        None => Ok(None),
+    }
+}
+
 fn scan_records(
     mut reader: impl BufRead,
     mut visit: impl FnMut(Record, VerificationGeneration),

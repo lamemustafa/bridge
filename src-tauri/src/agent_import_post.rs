@@ -50,12 +50,23 @@ impl Server {
         &self,
         args: &Value,
     ) -> Result<ToolOutcome, ToolFailure> {
+        self.post_import_checked(args, None).await
+    }
+
+    pub(in crate::agent) async fn post_import_checked(
+        &self,
+        args: &Value,
+        expected_sha256: Option<&str>,
+    ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
         let snapshot = self
             .latest_import_snapshot(batch_id)?
             .ok_or_else(|| "import_batch_not_found".to_string())?;
-        let line = snapshot.batch;
+        if expected_sha256.is_some_and(|expected| snapshot.batch.sha256 != expected) {
+            return Err("import_batch_changed".to_string().into());
+        }
+        let line = snapshot.batch.clone();
         if !batch_guid_matches(&line.company_guid, guid) {
             return Err("import_batch_company_mismatch".to_string().into());
         }
@@ -168,6 +179,44 @@ impl Server {
                 ))
             }
         }
+    }
+
+    /// Reconciliation is read-only. Unlike `post_import`, it never reaches the
+    /// approval dialog or dispatch path when a concurrent history change means
+    /// there is no durable attempt to reconcile.
+    pub(in crate::agent) async fn reconcile_import(
+        &self,
+        args: &Value,
+        expected_sha256: &str,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        let batch_id = required_string(args, "batch_id")?;
+        let snapshot = self
+            .latest_import_snapshot(batch_id)?
+            .ok_or_else(|| "import_batch_not_found".to_string())?;
+        if snapshot.batch.sha256 != expected_sha256 {
+            return Err("import_batch_changed".to_string().into());
+        }
+        if !snapshot.dispatched {
+            return Err("import_not_dispatched".to_string().into());
+        }
+        self.reconcile_dispatched_import(args, snapshot).await
+    }
+
+    async fn reconcile_dispatched_import(
+        &self,
+        args: &Value,
+        snapshot: ledger::BatchSnapshot,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        let guid = required_string(args, "company_guid")?;
+        if !batch_guid_matches(&snapshot.batch.company_guid, guid) {
+            return Err("import_batch_company_mismatch".to_string().into());
+        }
+        // Keep the exact same batch, endpoint and native-review admission as
+        // the initial path, but do not construct an approval request here.
+        let _ = admit_saved_journal(&snapshot.batch, &self.settings.endpoint)?;
+        let mut result = self.verify_import(args).await?;
+        finalize_previous_attempt_reconciliation(&mut result.payload, snapshot.response.as_ref());
+        Ok(result)
     }
 }
 
@@ -289,7 +338,7 @@ fn require_absent(payload: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn admit_saved_journal(
+pub(super) fn admit_saved_journal(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
 ) -> Result<(String, String), String> {
@@ -351,10 +400,25 @@ fn admit_saved_journal(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let preview = format!("Create ONE Journal in {}\nCompany GUID: {}\nCompany number: {}  Books from: {}\nTally: {origin}\nDate: {}  Voucher number: {}\nReference: {}\nNarration: {}\n\n{}\n\nTotal debit: {}  Total credit: {}\nBatch: {}\n\nBridge adds its batch reference for readback.\nCheck every ledger, date and amount. This changes your accounts.\nAfter a timeout, reconcile this batch; do not rebuild or resend it.",
-        quoted(&company.name), company.guid, company.company_number, company.books_from,
-        voucher.date, voucher.voucher_number.as_deref().map(quoted).unwrap_or_else(|| "Tally assigns it".into()),
-        optional(&voucher.reference), optional(&voucher.narration), entries, debit.as_str(), credit.as_str(), line.batch_id);
+    let preview = format!(
+        "Create ONE Journal in {}\nCompany GUID: {}\nCompany number: {}  Books from: {}\nTally: {origin}\nDate: {}  Voucher number: {}\nReference: {}\nNarration: {}\n\n{}\n\nTotal debit: {}  Total credit: {}\nBatch: {}\n\nBridge adds its batch reference for readback.\nCheck every ledger, date and amount. This changes your accounts.\nAfter a timeout, reconcile this batch; do not rebuild or resend it.",
+        quoted(&company.name),
+        company.guid,
+        company.company_number,
+        company.books_from,
+        voucher.date,
+        voucher
+            .voucher_number
+            .as_deref()
+            .map(quoted)
+            .unwrap_or_else(|| "Tally assigns it".into()),
+        optional(&voucher.reference),
+        optional(&voucher.narration),
+        entries,
+        debit.as_str(),
+        credit.as_str(),
+        line.batch_id
+    );
     // Native message boxes have no portable scrollable review surface. Keep this
     // first posting slice reviewable; longer batches retain the manual file path.
     if preview.chars().count() > 1_600

@@ -20,6 +20,13 @@ use identity::{import_identity, ImportIdentityScheme};
 #[path = "agent_import_schema.rs"]
 mod schema;
 pub(super) use schema::voucher_input_schema;
+#[path = "agent_desktop_journal.rs"]
+mod desktop_journal;
+#[path = "agent_desktop_journal_review.rs"]
+pub(crate) mod desktop_journal_review;
+#[cfg(test)]
+#[path = "agent_desktop_journal_tests.rs"]
+mod desktop_journal_tests;
 #[path = "agent_import_ledger.rs"]
 mod ledger;
 #[path = "agent_import_persistence.rs"]
