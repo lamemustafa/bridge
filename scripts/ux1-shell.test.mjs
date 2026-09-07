@@ -78,7 +78,7 @@ test("UI keeps client selection searchable and exposes only source-backed shell 
   const mirrorProof = await readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url), "utf8");
   assert.match(mirrorProof, /liveReadActionsLocked: boolean;/);
   assert.match(mirrorProof, /disabled=\{!selectedCompanyRecord\?\.mirror_company_id \|\| !selectedCompanyLive \|\| snapshotActive \|\| snapshotStartOutcomeUnknown \|\| liveReadActionsLocked \|\| tallyAction !== null\}/);
-  assert.match(mirrorProof, /disabled=\{snapshotStartOutcomeUnknown \|\| liveReadActionsLocked \|\| tallyAction !== null\}/);
+  assert.match(mirrorProof, /disabled=\{snapshotActive \|\| snapshotStartOutcomeUnknown \|\| liveReadActionsLocked \|\| tallyAction !== null\}/);
   assert.match(mirrorProof, /const runs = await refreshRecentSnapshots\(\);[\s\S]*?if \(!runs \|\| selectionVersion !== snapshotSelectionVersion\.current\) return;[\s\S]*?const hasActiveRun = runs\.some/);
   assert.match(mirrorProof, /if \(hasActiveRun \|\| \(snapshotOutcomeUnknownRunId !== null && \(!knownRun \|\| \(!knownRun\.requires_resume && !terminal\(knownRun\)\)\)\)\) return;/);
   assert.doesNotMatch(mirrorProof, /setSnapshotJob\(run\); setSnapshotStartOutcomeUnknown\(false\)/);
