@@ -715,6 +715,19 @@ does not establish voucher-number-based identity, the configured numbering
 method, other request shapes or voucher types, restart behavior, or universal
 REMOTEID semantics.
 
+**Automatic Journal dispatch — verified 2026-09-07, bounded observation.**
+On the synthetic TallyPrime Silver 7.1 instance, a macOS MCP host obtained
+explicit native approval and sent one saved Journal with `ACTION="Create"`
+and its generated `REMOTEID`. The response reported `CREATED=1`, with all
+other import counters zero. Independent effective-voucher readback matched
+the date, ledger entries and amounts. A fresh MCP process then reconciled
+the original batch: the voucher identity, number and AlterID were unchanged,
+and the local journal still contained one dispatch intent and one response.
+The observed executable SHA-256 was
+`208e6c95fb5f2a18aba4592767f6eeee9121922e02bb55371792925d42114a54`.
+This establishes that single dispatch and restart reconciliation; it does
+not qualify interactive Windows approval or Gold/Education live posting.
+
 Bridge can dispatch only a locally built, saved one-Journal batch on this
 source-specific path: it binds the saved endpoint, requires an independent
 native approval, records one durable attempt before sending, persists any
