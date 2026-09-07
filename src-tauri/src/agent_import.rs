@@ -6,10 +6,8 @@ use super::{
 use crate::tally::agent_read_request::AgentReadRequest;
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
+use bridge_tally_protocol::parse_standard_ledger_catalog_with_identities;
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
-use bridge_tally_protocol::{
-    parse_standard_ledger_catalog, parse_standard_ledger_catalog_with_identities,
-};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -634,23 +632,10 @@ impl Server {
         identity: &super::VerifiedCompanyIdentity,
         company_name: &str,
     ) -> Result<(Vec<String>, Evidence), ToolFailure> {
-        let name = ValidatedCompanyName::new(company_name.to_string())
-            .map_err(|_| "company_name_invalid".to_string())?;
-        let (xml, evidence) = self
-            .post_read(
-                identity,
-                ReadOnlyProfile::StandardLedgerCatalogV1 { company: &name }.render(),
-            )
+        let (names, _, _, evidence) = self
+            .read_import_ledger_catalogue(identity, company_name)
             .await?;
-        let ledgers = parse_standard_ledger_catalog(&xml, company_name, identity.company_guid())
-            .map_err(|_| {
-                ToolFailure::from("ledger_export_invalid".to_string())
-                    .with_prior_evidence(evidence.clone())
-            })?;
-        Ok((
-            ledgers.into_iter().map(|ledger| ledger.name).collect(),
-            evidence,
-        ))
+        Ok((names, evidence))
     }
 
     async fn read_import_ledger_catalogue(
