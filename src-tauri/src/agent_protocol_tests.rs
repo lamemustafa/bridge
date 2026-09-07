@@ -144,6 +144,48 @@ async fn oversized_request_id_is_refused_before_a_tool_or_receipt() {
 }
 
 #[tokio::test]
+async fn structured_reconciliation_error_keeps_the_saved_batch_and_readback_payload() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server(directory.path());
+    let batch_id = "bridge-00000000-0000-0000-0000-000000000001";
+    let result = json!({
+        "content": [{"type":"text","text":"reconciliation required"}],
+        "structuredContent": {
+            "result": {
+                "batch_id": batch_id,
+                "dispatch": {"state":"reconciliation_required", "resent":false},
+                "counters": {"created":1,"altered":0,"deleted":0},
+                "error": {"code":"import_reconciliation_required","message":"reconcile"}
+            },
+            "evidence": {"state":"partial"}
+        },
+        "isError": true
+    });
+    let mut output = Vec::new();
+    finish_response(
+        &server,
+        &mut output,
+        json!(17),
+        Ok(result),
+        None,
+        Some(batch_id.to_string()),
+        true,
+    )
+    .await
+    .unwrap();
+    let response: Value = serde_json::from_slice(&output).unwrap();
+    assert!(response.get("error").is_none());
+    let structured = &response["result"]["structuredContent"]["result"];
+    assert_eq!(structured["batch_id"], batch_id);
+    assert_eq!(structured["dispatch"]["state"], "reconciliation_required");
+    assert_eq!(structured["counters"]["created"], 1);
+    assert_eq!(
+        structured["error"]["code"],
+        "import_reconciliation_required"
+    );
+}
+
+#[tokio::test]
 async fn unknown_tools_and_methods_return_protocol_errors_with_exact_refusal_receipts() {
     let directory = tempfile::tempdir().unwrap();
     let responses = session(server(directory.path()), &[

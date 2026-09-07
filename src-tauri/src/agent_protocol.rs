@@ -169,7 +169,13 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
                 json!({"jsonrpc":"2.0","id":id.clone(),"error":{"code":error_code,"message":code}})
             }
         };
-        if recovery_batch_id.is_some() && response["result"]["isError"] == true {
+        // A reconciliation result is an intentional, structured tool payload:
+        // callers need its saved batch ID, counters, readback state and evidence.
+        // Only replace cap-stage errors, whose structured content has no result.
+        if recovery_batch_id.is_some()
+            && response["result"]["isError"] == true
+            && response["result"]["structuredContent"]["result"]["error"].is_null()
+        {
             let code = response["result"]["structuredContent"]["result"]["error"]["code"]
                 .as_str()
                 .or_else(|| response["result"]["structuredContent"]["error"]["code"].as_str())
