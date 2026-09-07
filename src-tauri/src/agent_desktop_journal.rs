@@ -135,8 +135,8 @@ impl DesktopJournalService {
                     amount: entry.amount.clone(),
                 })
                 .collect(),
-            total_debit: total_debit.as_str(),
-            total_credit: total_credit.as_str(),
+            total_debit: total_debit.as_str().to_owned(),
+            total_credit: total_credit.as_str().to_owned(),
         };
         Ok(DesktopJournalReview {
             batch_id: snapshot.batch.batch_id,
