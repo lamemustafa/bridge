@@ -91,20 +91,32 @@ fn old_or_changed_batches_cannot_be_posted() {
     let (mut line, mut endpoint) = batch();
     endpoint.port = 9002;
     assert_eq!(
-        admit_saved_journal(&line, &endpoint).unwrap_err(),
+        admit_saved_journal_integrity(&line, &endpoint).unwrap_err(),
         "import_post_endpoint_mismatch"
     );
     endpoint.port = 9001;
     line.endpoint_origin = None;
     assert_eq!(
-        admit_saved_journal(&line, &endpoint).unwrap_err(),
+        admit_saved_journal_integrity(&line, &endpoint).unwrap_err(),
         "import_post_endpoint_mismatch"
     );
     let (mut line, endpoint) = batch();
     line.vouchers[0].narration = Some("Changed after build".into());
     assert_eq!(
-        admit_saved_journal(&line, &endpoint).unwrap_err(),
+        admit_saved_journal_integrity(&line, &endpoint).unwrap_err(),
         "import_batch_changed"
+    );
+}
+
+#[test]
+fn saved_integrity_allows_dispatched_recovery_without_reopening_native_preview_checks() {
+    let (mut line, endpoint) = batch();
+    line.vouchers[0].narration = Some("safe\u{200b}hidden".into());
+    refresh_batch_sha256(&mut line);
+    assert!(admit_saved_journal_integrity(&line, &endpoint).is_ok());
+    assert_eq!(
+        admit_saved_journal(&line, &endpoint).unwrap_err(),
+        "import_review_format_text"
     );
 }
 
