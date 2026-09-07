@@ -3,10 +3,13 @@ use super::{
     render_agent_company_high_water, required_string, sha256_hex, sha256_json, Evidence, Server,
     ToolFailure, ToolOutcome,
 };
+use crate::tally::agent_read_request::AgentReadRequest;
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
-use bridge_tally_protocol::parse_standard_ledger_catalog;
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
+use bridge_tally_protocol::{
+    parse_standard_ledger_catalog, parse_standard_ledger_catalog_with_identities,
+};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -27,6 +30,8 @@ pub(crate) mod desktop_journal_review;
 #[cfg(test)]
 #[path = "agent_desktop_journal_tests.rs"]
 mod desktop_journal_tests;
+#[path = "agent_import_dispatch_lease.rs"]
+mod dispatch_lease;
 #[path = "agent_import_ledger.rs"]
 mod ledger;
 #[path = "agent_import_persistence.rs"]
@@ -648,6 +653,42 @@ impl Server {
         ))
     }
 
+    async fn read_import_ledger_catalogue(
+        &self,
+        identity: &super::VerifiedCompanyIdentity,
+        company_name: &str,
+    ) -> Result<
+        (
+            Vec<String>,
+            bridge_tally_protocol::StandardLedgerCatalog,
+            AgentReadRequest,
+            Evidence,
+        ),
+        ToolFailure,
+    > {
+        let name = ValidatedCompanyName::new(company_name.to_string())
+            .map_err(|_| "company_name_invalid".to_string())?;
+        let request_xml = ReadOnlyProfile::StandardLedgerCatalogV1 { company: &name }.render();
+        let request = AgentReadRequest::parse(request_xml.clone())
+            .map_err(|_| "ledger_export_invalid".to_string())?;
+        let (xml, evidence) = self.post_read(identity, request_xml).await?;
+        let catalogue = parse_standard_ledger_catalog_with_identities(
+            &xml,
+            company_name,
+            identity.company_guid(),
+        )
+        .map_err(|_| {
+            ToolFailure::from("ledger_export_invalid".to_string())
+                .with_prior_evidence(evidence.clone())
+        })?;
+        Ok((
+            catalogue.names().map(str::to_string).collect(),
+            catalogue,
+            request,
+            evidence,
+        ))
+    }
+
     async fn pre_import_mark(
         &self,
         company: &bridge_tally_protocol::TallyCompany,
@@ -1051,13 +1092,20 @@ fn totals(vouchers: &[ImportVoucher]) -> Result<(ExactDecimal, ExactDecimal), St
 }
 
 fn masters_for_payload(payload: &ImportPayload, catalogue: &[String]) -> Vec<Value> {
-    let mut names = BTreeSet::new();
-    for entry in payload.vouchers.iter().flat_map(|voucher| &voucher.entries) {
-        names.insert(entry.ledger.as_str());
-    }
-    names
+    requested_ledger_names(payload)
         .into_iter()
-        .map(|name| master_match(name, catalogue))
+        .map(|name| master_match(&name, catalogue))
+        .collect()
+}
+
+fn requested_ledger_names(payload: &ImportPayload) -> Vec<String> {
+    payload
+        .vouchers
+        .iter()
+        .flat_map(|voucher| &voucher.entries)
+        .map(|entry| entry.ledger.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect()
 }
 

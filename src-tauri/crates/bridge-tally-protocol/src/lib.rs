@@ -1259,6 +1259,89 @@ pub fn parse_standard_ledger_identity_observation(
     })
 }
 
+/// Opaque identities from one validated standard catalog. GUIDs remain
+/// internal to the admission path and are never serialized into a tool result
+/// or desktop review.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardLedgerCatalog {
+    entries: Vec<(String, String)>,
+}
+
+impl StandardLedgerCatalog {
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().map(|(name, _)| name.as_str())
+    }
+
+    pub fn bind_selected(
+        &self,
+        requested_names: impl IntoIterator<Item = String>,
+    ) -> anyhow::Result<StandardLedgerCatalogBinding> {
+        let mut requested = requested_names.into_iter().collect::<Vec<_>>();
+        requested.sort();
+        requested.dedup();
+        let entries = requested
+            .into_iter()
+            .map(|name| {
+                let (_, guid) = self
+                    .entries
+                    .iter()
+                    .find(|(candidate, _)| candidate == &name)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("standard ledger catalog omitted requested ledger")
+                    })?;
+                Ok((name, guid.clone()))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(StandardLedgerCatalogBinding { entries })
+    }
+}
+
+/// Opaque selected-master identities from one validated standard catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardLedgerCatalogBinding {
+    entries: Vec<(String, String)>,
+}
+
+impl StandardLedgerCatalogBinding {
+    pub fn matches(
+        &self,
+        xml: &str,
+        expected_company_name: &str,
+        expected_company_guid: &str,
+    ) -> anyhow::Result<bool> {
+        let current = parse_standard_ledger_catalog_with_identities(
+            xml,
+            expected_company_name,
+            expected_company_guid,
+        )?;
+        // TALLY_PROTOCOL_REFERENCE.md §12a.9: Tally can retain a GUID while
+        // changing a visible ledger name, so admission binds the selected pair.
+        Ok(self.entries.iter().all(|(name, guid)| {
+            current.entries.iter().any(|(candidate, current_guid)| {
+                candidate == name && current_guid.eq_ignore_ascii_case(guid)
+            })
+        }))
+    }
+}
+
+/// Parses the standard catalog once, retaining source GUIDs only in an opaque
+/// in-memory value so an admission caller can select bindings without a second
+/// parse of the same response.
+pub fn parse_standard_ledger_catalog_with_identities(
+    xml: &str,
+    expected_company_name: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<StandardLedgerCatalog> {
+    let rows =
+        parse_standard_ledger_catalog_rows(xml, expected_company_name, expected_company_guid)?;
+    Ok(StandardLedgerCatalog {
+        entries: rows
+            .into_iter()
+            .map(|row| (row.ledger.name, row.guid))
+            .collect(),
+    })
+}
+
 /// Parses the documented `List of Ledgers` collection as a deliberately
 /// limited interactive catalog. The source GUIDs prove row uniqueness and
 /// company scope in memory only; callers receive no GUIDs or raw XML.
@@ -1267,6 +1350,24 @@ pub fn parse_standard_ledger_catalog(
     expected_company_name: &str,
     expected_company_guid: &str,
 ) -> anyhow::Result<Vec<TallyLedger>> {
+    Ok(
+        parse_standard_ledger_catalog_rows(xml, expected_company_name, expected_company_guid)?
+            .into_iter()
+            .map(|row| row.ledger)
+            .collect(),
+    )
+}
+
+struct StandardLedgerCatalogRow {
+    ledger: TallyLedger,
+    guid: String,
+}
+
+fn parse_standard_ledger_catalog_rows(
+    xml: &str,
+    expected_company_name: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<Vec<StandardLedgerCatalogRow>> {
     validate_export_response(xml)?;
     let expected_company_name = normalized_standard_value(expected_company_name, "company name")?;
     let expected_company_guid = normalized_standard_company_guid(expected_company_guid)?;
@@ -1302,11 +1403,14 @@ pub fn parse_standard_ledger_catalog(
                 {
                     anyhow::bail!("standard ledger catalog contained duplicate ledger identity");
                 }
-                rows.push(TallyLedger {
-                    name: ledger_name,
-                    parent: observed.parent,
-                    party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
-                    opening_balance: None,
+                rows.push(StandardLedgerCatalogRow {
+                    ledger: TallyLedger {
+                        name: ledger_name,
+                        parent: observed.parent,
+                        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
+                        opening_balance: None,
+                    },
+                    guid: ledger_guid,
                 });
             }
             Event::Start(element) => path.push(element.name().as_ref().to_ascii_uppercase()),

@@ -90,7 +90,10 @@ where
                     let response = if name == "post_import" {
                         await_post(
                             server.call_tool_response(name, arguments.clone()),
-                            id.as_ref().expect("tool requests have IDs"),
+                            PostRequest {
+                                id: id.as_ref().expect("tool requests have IDs"),
+                                args: &arguments,
+                            },
                             &server,
                             &mut reader, &mut framer, &mut pending,
                             stdout,
@@ -407,11 +410,18 @@ impl Framer {
     }
 }
 
+struct PostRequest<'a> {
+    id: &'a Value,
+    args: &'a Value,
+}
+
 // Keep receiving cancellation and disconnect while a native approval or write
-// is pending. Other requests wait in a bounded queue, without concurrent writes.
+// is pending. A durable dispatch intent makes cancellation observational: the
+// original future must finish its response journal and readback before we drop
+// it. Before an intent, cancellation remains prompt and does not start a post.
 async fn await_post<R, W, F>(
     future: F,
-    id: &Value,
+    request: PostRequest<'_>,
     server: &Server,
     reader: &mut R,
     framer: &mut Framer,
@@ -429,21 +439,38 @@ where
             // Do not let a continuously readable stdin starve the pending
             // approval/write future. Cancellation remains visible on every turn.
             frame = framer.read(reader, MAX_REQUEST_BYTES) => {
-                let frame = frame?.ok_or("stdio_client_disconnected")?;
+                let frame = match frame {
+                    Ok(Some(frame)) => frame,
+                    Ok(None) => return finish_interrupted_post(
+                        future.as_mut(),
+                        request,
+                        server,
+                        Some("stdio_client_disconnected".into()),
+                    )
+                    .await,
+                    Err(error) => return finish_interrupted_post(future.as_mut(), request, server, Some(error)).await,
+                };
                 if let Some(target) = cancellation_target(&frame) {
-                    if target == *id { return Ok(None); }
-                    cancel_queued_request(server, stdout, pending, &target).await?;
+                    if target == *request.id {
+                        return finish_interrupted_post(future.as_mut(), request, server, None).await;
+                    }
+                    if let Err(error) = cancel_queued_request(server, stdout, pending, &target).await {
+                        return finish_interrupted_post(future.as_mut(), request, server, Some(error)).await;
+                    }
                     continue;
                 }
-                if let Some(request) = frame.as_ref().ok()
+                if let Some(ping) = frame.as_ref().ok()
                     .and_then(|text| parse_request(text.clone()).ok())
                     .filter(|request| request["method"] == "ping")
                 {
-                    if let Some(ping_id) = request.get("id") {
-                        if request_id_fits_response_cap(ping_id, server.settings.max_bytes) {
-                            finish_response(server, stdout, ping_id.clone(), Ok(json!({})), None, None, false).await?;
+                    if let Some(ping_id) = ping.get("id") {
+                        let result = if request_id_fits_response_cap(ping_id, server.settings.max_bytes) {
+                            finish_response(server, stdout, ping_id.clone(), Ok(json!({})), None, None, false).await
                         } else {
-                            refuse_pending_frame(server, stdout, frame).await?;
+                            refuse_pending_frame(server, stdout, frame).await
+                        };
+                        if let Err(error) = result {
+                            return finish_interrupted_post(future.as_mut(), request, server, Some(error)).await;
                         }
                     }
                     continue;
@@ -451,13 +478,46 @@ where
                 let queued_bytes: usize = pending.iter().filter_map(|frame| frame.as_ref().ok()).map(String::len).sum();
                 let size = frame.as_ref().map_or(0, String::len);
                 if pending.len() >= 8 || queued_bytes.saturating_add(size) > MAX_REQUEST_BYTES {
-                    refuse_pending_frame(server, stdout, frame).await?;
+                    if let Err(error) = refuse_pending_frame(server, stdout, frame).await {
+                        return finish_interrupted_post(future.as_mut(), request, server, Some(error)).await;
+                    }
                     continue;
                 }
                 pending.push_back(frame);
             }
             response = &mut future => return Ok(Some(response)),
         }
+    }
+}
+
+/// A malformed request cannot have reached `post_import`; all valid requests
+/// fail closed. Missing or unreadable history is an uncertain durable boundary
+/// and therefore drains the existing future instead of dropping it.
+fn post_may_have_dispatched(server: &Server, args: &Value) -> bool {
+    match server.cancelled_import(args) {
+        Err(_) => false,
+        Ok(outcome) => outcome.payload["result"]["attempt_recorded"] != Value::Bool(false),
+    }
+}
+
+async fn finish_interrupted_post<F>(
+    mut future: std::pin::Pin<&mut F>,
+    request: PostRequest<'_>,
+    server: &Server,
+    interruption: Option<String>,
+) -> Result<Option<ToolResponse>, String>
+where
+    F: std::future::Future<Output = ToolResponse>,
+{
+    if post_may_have_dispatched(server, request.args) {
+        // The caller may be gone, but the original execution owns the only
+        // response wire. Let the ordinary response path publish it if stdout
+        // remains usable; no replacement post is created.
+        return Ok(Some(future.as_mut().await));
+    }
+    match interruption {
+        Some(error) => Err(error),
+        None => Ok(None),
     }
 }
 

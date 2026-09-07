@@ -573,8 +573,37 @@ fn queued_absence_recheck_refuses_the_captured_attributed_journal() {
                 {"ledger":"Cash","amount":"12.61","side":"Cr"}]}]
     }))
     .unwrap();
-    let error = recheck_import_absence(&line, company_guid, &captured, &captured)
-        .expect_err("captured attributed Journal must block the queued native attempt");
+    let catalogue_bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-ledger-catalogue.utf16le.xml"
+    );
+    let catalogue = String::from_utf16(
+        &catalogue_bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let ledger_binding = bridge_tally_protocol::parse_standard_ledger_catalog_with_identities(
+        &catalogue,
+        "WR2 Unicode Lab",
+        company_guid,
+    )
+    .unwrap()
+    .bind_selected(requested_ledger_names(&ImportPayload {
+        company_guid: company_guid.into(),
+        vouchers: line.vouchers.clone(),
+    }))
+    .unwrap();
+    let error = recheck_import_admission(
+        &line,
+        company_guid,
+        "WR2 Unicode Lab",
+        &captured,
+        &captured,
+        &catalogue,
+        &ledger_binding,
+    )
+    .expect_err("captured attributed Journal must block the queued native attempt");
     assert!(matches!(
         error.downcast_ref::<ApprovedImportAdmissionError>(),
         Some(ApprovedImportAdmissionError::PreexistingIdentity)

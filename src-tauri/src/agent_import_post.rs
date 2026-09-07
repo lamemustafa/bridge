@@ -5,8 +5,8 @@ use crate::tally::approved_import::{ApprovedImport, ApprovedImportAdmissionError
 use bridge_tally_protocol::{parse_import_outcome, TallyImportApplicationStatus};
 
 impl Server {
-    /// Called only after dropping a cancelled posting future. A missing or
-    /// unreadable snapshot is unknown, never proof that dispatch did not occur.
+    /// Describes the durable cancellation boundary without changing the batch.
+    /// Missing or unreadable history is unknown, never proof of no dispatch.
     pub(in crate::agent) fn cancelled_import(
         &self,
         args: &Value,
@@ -84,7 +84,6 @@ impl Server {
             let before = self.verify_import(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
             require_absent(&before.payload)?;
-            // No Tally mutation can occur while the separate approval dialog is open.
             let payload = ImportPayload {
                 company_guid: line.company_guid.clone(),
                 vouchers: line.vouchers.clone(),
@@ -115,16 +114,15 @@ impl Server {
                 ),
             )
             .map_err(|error| error.to_string())?;
-            let request =
-                ApprovedImport::confirm(xml, &preview, voucher_date, verification_request).await?;
             let (company, identity, identity_evidence) = self.verified_company(guid).await?;
             accumulated = combine_evidence(accumulated.clone(), identity_evidence);
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
                 return Err("company_identity_mismatch".to_string().into());
             }
             validate_dates(&payload, company.books_from.as_deref())?;
-            let (catalogue, evidence) =
-                self.read_ledger_catalogue(&identity, &company.name).await?;
+            let (catalogue, catalogue_identities, ledger_catalogue_request, evidence) = self
+                .read_import_ledger_catalogue(&identity, &company.name)
+                .await?;
             accumulated = combine_evidence(accumulated.clone(), evidence);
             if masters_for_payload(&payload, &catalogue)
                 .iter()
@@ -132,19 +130,40 @@ impl Server {
             {
                 return Err("import_masters_changed".to_string().into());
             }
-            let preflight = self.verify_import(args).await?;
-            accumulated = combine_evidence(accumulated.clone(), preflight.evidence);
-            require_absent(&preflight.payload)?;
+            let ledger_binding = catalogue_identities
+                .bind_selected(requested_ledger_names(&payload))
+                .map_err(|_| "import_masters_changed".to_string())?;
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
+            let request = ApprovedImport::confirm(
+                xml,
+                &preview,
+                voucher_date,
+                verification_request,
+                ledger_catalogue_request,
+                ledger_binding,
+            )
+            .await?;
+            // The cross-process lease starts only after the independent native
+            // approval. It covers intent, the one POST, its response append and
+            // immediate readback; recovery remains the durable batch journal.
+            let _endpoint_dispatch_lease = dispatch_lease::acquire(&self.settings.endpoint)?;
             let posted = self
                 .runtime
                 .post_approved_import(
                     self.tally_config(),
                     &identity,
                     request,
-                    |first, second| {
-                        recheck_import_absence(&line, identity.company_guid(), first, second)
+                    |first, second, catalogue, ledger_binding| {
+                        recheck_import_admission(
+                            &line,
+                            identity.company_guid(),
+                            &company.name,
+                            first,
+                            second,
+                            catalogue,
+                            ledger_binding,
+                        )
                     },
                     || {
                         // The file lock covers only the admission+synced append. It is not
@@ -186,6 +205,13 @@ impl Server {
                     )
                 }) {
                     "import_preexisting_identity"
+                } else if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+                        Some(ApprovedImportAdmissionError::LedgerIdentityChanged)
+                    )
+                }) {
+                    "import_masters_changed"
                 } else {
                     "import_dispatch_outcome_unknown"
                 };
@@ -394,11 +420,14 @@ fn require_absent(payload: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn recheck_import_absence(
+fn recheck_import_admission(
     line: &ImportLedgerLine,
     company_guid: &str,
+    company_name: &str,
     first: &str,
     second: &str,
+    catalogue: &str,
+    ledger_binding: &bridge_tally_protocol::StandardLedgerCatalogBinding,
 ) -> anyhow::Result<()> {
     let observed = parse_import_vouchers(first, company_guid).map_err(anyhow::Error::msg)?;
     let corroboration = parse_import_vouchers(second, company_guid).map_err(anyhow::Error::msg)?;
@@ -408,7 +437,14 @@ fn recheck_import_absence(
     require_absent(&result).map_err(|code| match code.as_str() {
         "import_preexisting_identity" => ApprovedImportAdmissionError::PreexistingIdentity.into(),
         _ => anyhow::Error::msg(code),
-    })
+    })?;
+    if !ledger_binding
+        .matches(catalogue, company_name, company_guid)
+        .map_err(|_| anyhow::Error::msg("ledger_export_invalid"))?
+    {
+        return Err(ApprovedImportAdmissionError::LedgerIdentityChanged.into());
+    }
+    Ok(())
 }
 
 pub(super) fn require_native_numbering(voucher: &ImportVoucher) -> Result<(), String> {
