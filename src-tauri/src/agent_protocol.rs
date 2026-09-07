@@ -271,8 +271,7 @@ fn request_id_fits_response_cap(id: &Value, max_bytes: usize) -> bool {
     )
     .to_string()
     .len()
-        + 1
-        <= max_bytes
+        < max_bytes
 }
 
 // Independently bounds caller-controlled memory; response caps cannot bound stdin.
