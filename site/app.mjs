@@ -52,7 +52,7 @@ port.addEventListener("input", () => {
   const valid = Number.isInteger(value) && value >= 1 && value <= 65535;
   port.setAttribute("aria-invalid", String(!valid));
   portGuidance.innerHTML = valid
-    ? `Use <strong>${value}</strong> in Bridge's Tally port setting. This does not change Tally's own gateway configuration.`
+    ? `When installing, enter <strong>${value}</strong> as Your Tally port in Claude Desktop. This page does not save it or change Tally.`
     : "Enter the local Tally HTTP gateway port, from 1 to 65535.";
 });
 

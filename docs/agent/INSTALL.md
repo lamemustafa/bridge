@@ -8,20 +8,23 @@ unavailable.
 ## Download the right package
 
 Download a `.mcpb` from the project's [GitHub Releases](https://github.com/lamemustafa/bridge/releases).
-Choose Windows x64 or Apple Silicon Mac (ARM64) for the computer where both
-Tally and Claude Desktop run. Intel Mac and other platforms are not qualified.
+Preview packages are available for Windows x64 and Apple Silicon Mac (ARM64).
+Intel Mac and other platforms are not qualified. Package availability is not a
+host-validation claim; read each release's notes for its current runtime gaps.
 
-Use a production download only when its release notes identify the signed,
-host-validated delivery path. An **unsigned preview** is labelled as a
-prerelease and is only for evaluation; it is not signed or notarized. Each
-archive has a same-named `.sha256` file and a small provenance record on its
-release so an organization can identify the downloaded bytes and source commit.
+An **unsigned preview** is labelled as a prerelease and is only for evaluation;
+it is not signed or notarized. Each archive has a same-named `.sha256` file and
+a small provenance record on its release so an organization can identify the
+downloaded bytes and source commit.
 
 ## Install and configure
 
 1. Open the `.mcpb` file. If it does not open Claude Desktop, use **Settings →
    Extensions → Advanced settings → Install Extension…** and choose the file.
-2. Keep **Tally host** as `localhost`.
+2. Keep **Tally host** as `localhost`. Bridge accepts only a local loopback
+   endpoint. On a Mac, Tally must already be available there through a local
+   Windows VM or organization-approved local forwarding. A separate PC or a
+   LAN-only Tally cannot be reached by entering its network address.
 3. Set **Tally port** to Tally's local HTTP gateway port. It defaults to `9000`.
    This is not a Tally licence port. Changing it changes only where Bridge calls
    Tally, not Tally's own HTTP setting.

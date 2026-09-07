@@ -19,7 +19,7 @@
         <p class="kicker">Local connector for Claude Desktop</p>
         <h1 id="page-title">Ask Claude about the Tally company on this computer.</h1>
         <p class="lede">Bridge installs as a local extension. Claude starts it on your computer, and Bridge calls Tally's local HTTP gateway over loopback.</p>
-        <p class="support-line"><strong>Supported today:</strong> Windows x64 and Apple Silicon Mac. Intel Mac and other platforms are not yet qualified.</p>
+        <p class="support-line"><strong>Preview packages:</strong> Windows x64 and Apple Silicon Mac. Intel Mac and other platforms are not yet qualified; read each release's notes for its host-validation status.</p>
       </section>
 
       <section class="release-panel" aria-labelledby="download-title">
@@ -56,15 +56,16 @@
         <ol>
           <li>Open the downloaded <code>.mcpb</code> file. In Claude Desktop, choose <strong>Settings → Extensions → Advanced settings → Install Extension…</strong> if your computer does not open it automatically.</li>
           <li>Keep the Tally host as <strong>localhost</strong>. Bridge accepts only a local loopback connection; it does not expose Tally to the internet.</li>
-          <li>Set <strong>Tally port</strong> to the port used by Tally's local HTTP gateway, then finish the extension setup.</li>
+          <li>On a Mac, Tally must already be available on <strong>localhost</strong> through a local Windows VM or organization-approved local forwarding. A separate PC or LAN-only Tally cannot be reached by entering its network address.</li>
+          <li>Set <strong>Your Tally port</strong> to the port used by Tally's local HTTP gateway, then finish the extension setup.</li>
           <li>Restart Claude Desktop if the extension is installed but its tools do not appear. Use <strong>Connectors</strong> in a new chat to check that Bridge is connected.</li>
         </ol>
 
         <div class="port-guide">
-          <label for="tally-port">Tally port</label>
+          <label for="tally-port">Port example (this page does not save settings)</label>
           <input id="tally-port" name="tally-port" type="number" min="1" max="65535" value="9000" inputmode="numeric" />
           <p id="port-guidance">Use <strong>9000</strong> unless Tally's local HTTP gateway is configured for another port.</p>
-          <p>This is Tally's HTTP gateway port, not a Tally licence port. Changing it tells Bridge where to call Tally; it does not change Tally's own setting. Save the extension setting and restart Claude Desktop after changing it.</p>
+          <p>This is Tally's HTTP gateway port, not a Tally licence port. This webpage does not save or change any setting. Enter the value in Claude Desktop's extension setup, then restart Claude Desktop after changing it.</p>
         </div>
       </section>
 
