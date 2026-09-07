@@ -44,7 +44,11 @@ Bridge may be unable to recognize that earlier business event.
 Keep the recovery data when upgrading. New posting attempts add a native request
 commitment to the journal; older connector builds cannot read that new record.
 Use this version or a newer compatible build to reconcile it rather than removing
-the journal to downgrade.
+the journal to downgrade. Older receipts may lack evidence that every result
+counter was actually reported. After upgrading, Bridge keeps those receipts but
+cannot confirm a clean response from them, even when the Journal matches in
+Tally. Preserve the original history for investigation; do not repost the Journal
+to replace its receipt.
 
 Bridge only accepts loopback Tally endpoints. Do not open a port to the
 internet or use a remote host to make this work.

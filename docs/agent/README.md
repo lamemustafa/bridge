@@ -238,9 +238,13 @@ work. A timeout, crash, malformed response or incomplete readback requires
 `post_import` only reconciles and never resends, including after process restart.
 If another process holds import admission, the call returns `import_admission_busy`
 without waiting for that process or scheduling a later post. Reconcile any
-recorded attempt before requesting another action. Confirmation requires an
-explicitly reported zero `EXCEPTIONS` counter; an omitted counter remains
-incomplete response evidence even when voucher readback matches.
+recorded attempt before requesting another action. Confirmation requires all seven
+result counters to be explicitly observed: `CREATED`, `ALTERED`, `DELETED`,
+`IGNORED`, `ERRORS`, `CANCELLED`, and `EXCEPTIONS`. Missing counters remain
+incomplete evidence even when voucher readback matches. Older saved responses
+without these presence records remain readable but cannot establish a clean
+response. Keep the original history for investigation; never guess missing
+presence records or resend a Journal to obtain a new receipt.
 An intent may exist even if the request never reached Tally: this is deliberately
 an unknown outcome, not permission to build a replacement voucher. The saved
 response metadata helps distinguish clean counters from readback alone.
