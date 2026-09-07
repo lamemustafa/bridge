@@ -80,14 +80,18 @@ impl DesktopJournalService {
         match self.server.reconcile_import(&args, sha256).await {
             Ok(outcome) => Ok(DesktopJournalOperation::from_outcome(outcome)),
             Err(failure) => {
-                let message = if failure.code == "import_not_dispatched" {
+                let no_attempt_recorded = failure.code == "import_not_dispatched";
+                let message = if no_attempt_recorded {
                     "No posting attempt is recorded for this original Journal."
                 } else {
                     "Bridge could not confirm this original Journal. Reconcile it again after the underlying condition changes."
                 };
-                Ok(DesktopJournalOperation::from_failure(
-                    batch_id, failure, message,
-                ))
+                let mut operation =
+                    DesktopJournalOperation::from_failure(batch_id, failure, message);
+                if no_attempt_recorded {
+                    operation.result["result"]["attempt_recorded"] = Value::Bool(false);
+                }
+                Ok(operation)
             }
         }
     }

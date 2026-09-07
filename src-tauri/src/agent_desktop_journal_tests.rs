@@ -55,6 +55,7 @@ async fn reconcile_without_durable_intent_never_enters_post_or_approval() {
         operation.result["result"]["error"]["code"],
         "import_not_dispatched"
     );
+    assert_eq!(operation.result["result"]["attempt_recorded"], false);
 }
 
 #[test]
