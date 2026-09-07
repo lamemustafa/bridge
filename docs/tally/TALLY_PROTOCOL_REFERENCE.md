@@ -739,6 +739,18 @@ or request shape. A mandatory manual-numbering preflight would require a
 separately observed voucher-type read contract; it cannot be inferred from the
 failed-`Alter` case.
 
+**Native mutation selector — implementation change 2026-09-07; live qualification pending.**
+A new native attempt uses a fresh private `REMOTEID`, separate from the selected
+public file's identity. The narration keeps the original batch attribution.
+The durable dispatch intent binds the exact UTF-16LE native request SHA-256 before
+sending; the response must match that commitment. Older intents without this
+field remain readable and are never resent. This prevents native posting from
+reusing the public file's mutation selector after a manual import. It does not
+prove semantic absence after arbitrary edits to an earlier business event.
+Native posting refuses a supplied `VOUCHERNUMBER` until its matching precedence
+is qualified. The prior live observations above apply to their recorded binaries;
+they do not establish the changed selector/attribution combination on live Tally.
+
 **Batch identity qualification — verified 2026-09-06, recorded 2026-09-07.**
 A new synthetic Journal reused the earlier caller transaction label in a separate
 local batch. Its `REMOTEID` and narration marker used the same batch-derived UUID;

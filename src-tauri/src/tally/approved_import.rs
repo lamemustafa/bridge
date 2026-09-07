@@ -1,4 +1,6 @@
 //! Independent local approval. The model never supplies an approval boolean.
+use bridge_tally_core::TallyDate;
+use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use std::{io::Read, process::Stdio, time::Duration};
 use tokio::io::AsyncWriteExt;
 
@@ -6,19 +8,49 @@ const MAX_PREVIEW_BYTES: usize = 8_000;
 #[cfg(not(windows))]
 const POST_LABEL: &str = "Post Journal";
 
+#[derive(Clone)]
 pub(crate) struct ApprovedImport {
     xml: String,
+    voucher_date: TallyDate,
 }
 
 impl ApprovedImport {
-    pub(crate) async fn confirm(xml: String, preview: &str) -> Result<Self, String> {
+    pub(crate) async fn confirm(
+        xml: String,
+        preview: &str,
+        voucher_date: TallyDate,
+    ) -> Result<Self, String> {
         confirm(preview).await?;
-        Ok(Self { xml })
+        Ok(Self { xml, voucher_date })
     }
 
     pub(super) fn xml(&self) -> &str {
         &self.xml
     }
+
+    /// Recheck the operator-approved dates after the endpoint queue admits this
+    /// request. The observed product/mode can change while native approval waits.
+    pub(super) fn require_boundary_profile(
+        &self,
+        profile: DateBoundaryProfile,
+    ) -> Result<(), ApprovedImportAdmissionError> {
+        if profile.accepts_boundary(&self.voucher_date) {
+            Ok(())
+        } else {
+            Err(ApprovedImportAdmissionError::EducationVoucherDateUnsupported)
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn approved_for_test(xml: String, voucher_date: TallyDate) -> Self {
+        Self { xml, voucher_date }
+    }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub(crate) enum ApprovedImportAdmissionError {
+    #[error("education_voucher_date_unsupported")]
+    EducationVoucherDateUnsupported,
 }
 
 async fn confirm(preview: &str) -> Result<(), String> {

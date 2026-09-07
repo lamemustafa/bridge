@@ -24,6 +24,8 @@ pub(super) struct StatusRecord {
     status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     response: Option<DispatchResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_request_sha256: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -36,13 +38,21 @@ pub(super) struct DispatchResponse {
 }
 
 impl StatusRecord {
+    #[cfg(test)]
     pub(super) fn dispatch(batch: &ImportLedgerLine) -> Self {
+        let mut record = Self::dispatch_native(batch, String::new());
+        record.native_request_sha256 = None;
+        record
+    }
+
+    pub(super) fn dispatch_native(batch: &ImportLedgerLine, request_sha256: String) -> Self {
         Self {
             record_type: StatusKind::DispatchIntent,
             batch_id: batch.batch_id.clone(),
             batch_sha256: batch.sha256.clone(),
             status: "dispatch_started".into(),
             response: None,
+            native_request_sha256: Some(request_sha256),
         }
     }
     pub(super) fn response(batch: &ImportLedgerLine, response: DispatchResponse) -> Self {
@@ -52,6 +62,7 @@ impl StatusRecord {
             batch_sha256: batch.sha256.clone(),
             status: "response_received".into(),
             response: Some(response),
+            native_request_sha256: None,
         }
     }
 }
@@ -64,6 +75,7 @@ impl From<&ImportLedgerLine> for StatusRecord {
             batch_sha256: batch.sha256.clone(),
             status: batch.status.clone(),
             response: None,
+            native_request_sha256: None,
         }
     }
 }
@@ -81,7 +93,7 @@ pub(super) struct BatchSnapshot {
 
 enum Record {
     Batch(Box<ImportLedgerLine>),
-    Status(StatusRecord),
+    Status(Box<StatusRecord>),
 }
 
 /// Validate the entire journal, retaining only the requested batch payload.
@@ -129,7 +141,7 @@ fn scan_records(
     // the latest hash per distinct ID, not every historical voucher payload.
     // Memory therefore still grows with distinct IDs, not with status history.
     let mut latest: BTreeMap<String, String> = BTreeMap::new();
-    let mut dispatched = BTreeSet::new();
+    let mut dispatched: BTreeMap<String, Option<String>> = BTreeMap::new();
     let mut line = Vec::new();
     let mut ordinal = 0_usize;
     while read_record(&mut reader, &mut line)? {
@@ -143,23 +155,43 @@ fn scan_records(
             if latest.get(&update.batch_id) != Some(&update.batch_sha256) {
                 return Err("import_ledger_invalid".into());
             }
+            if let Some(hash) = &update.native_request_sha256 {
+                if !matches!(update.record_type, StatusKind::DispatchIntent)
+                    || hash.len() != 64
+                    || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+                {
+                    return Err("import_ledger_invalid".into());
+                }
+            }
             if matches!(update.record_type, StatusKind::DispatchIntent)
-                && !dispatched.insert(update.batch_id.clone())
+                && dispatched
+                    .insert(
+                        update.batch_id.clone(),
+                        update.native_request_sha256.clone(),
+                    )
+                    .is_some()
             {
                 return Err("import_ledger_duplicate_dispatch".into());
             }
             if matches!(update.record_type, StatusKind::DispatchResponse) {
-                if !dispatched.contains(&update.batch_id) || update.response.is_none() {
+                let request_hash = dispatched
+                    .get(&update.batch_id)
+                    .ok_or("import_ledger_invalid")?;
+                let response = update.response.as_ref().ok_or("import_ledger_invalid")?;
+                if request_hash
+                    .as_ref()
+                    .is_some_and(|hash| hash != &response.request_sha256)
+                {
                     return Err("import_ledger_invalid".into());
                 }
             } else if update.response.is_some() {
                 return Err("import_ledger_invalid".into());
             }
-            Record::Status(update)
+            Record::Status(Box::new(update))
         } else {
             let batch: ImportLedgerLine =
                 serde_json::from_value(value).map_err(|_| "import_ledger_invalid".to_string())?;
-            if dispatched.contains(&batch.batch_id)
+            if dispatched.contains_key(&batch.batch_id)
                 && latest.get(&batch.batch_id) != Some(&batch.sha256)
             {
                 return Err("import_ledger_invalid".into());
