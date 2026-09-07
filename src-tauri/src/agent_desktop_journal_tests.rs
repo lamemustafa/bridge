@@ -333,25 +333,54 @@ fn review_refuses_fresh_numbered_journal_but_retains_dispatched_reconciliation()
     assert!(review.dispatched);
 }
 
-#[test]
-fn review_refuses_fresh_unreviewable_text_but_retains_dispatched_reconciliation() {
+#[tokio::test]
+async fn review_refuses_fresh_unreviewable_text_but_retains_dispatched_reconciliation() {
     let directory = tempfile::tempdir().unwrap();
     let (service, mut line) = service(directory.path().join("agent"));
-    std::fs::remove_file(service.server.settings.data_dir.join("agent-import-ledger.jsonl")).unwrap();
+    std::fs::remove_file(
+        service
+            .server
+            .settings
+            .data_dir
+            .join("agent-import-ledger.jsonl"),
+    )
+    .unwrap();
     line.vouchers[0].entries[0].ledger = "Cash\u{200d}".into();
     let xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(xml.as_bytes());
     service.server.append_import_ledger(&line).unwrap();
     std::fs::write(
-        service.server.imports_dir().unwrap().join(format!("{}.xml", line.batch_id)),
+        service
+            .server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
         &xml,
     )
     .unwrap();
 
-    assert_eq!(service.review_selected_xml(xml.as_bytes()).unwrap_err(), "import_review_format_text");
+    assert_eq!(
+        service.review_selected_xml(xml.as_bytes()).unwrap_err(),
+        "import_review_format_text"
+    );
     service
         .server
-        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_native(&line, "a".repeat(64)))
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_native(
+            &line,
+            "a".repeat(64),
+        ))
         .unwrap();
-    assert!(service.review_selected_xml(xml.as_bytes()).unwrap().dispatched);
+    assert!(
+        service
+            .review_selected_xml(xml.as_bytes())
+            .unwrap()
+            .dispatched
+    );
+    let reconciliation = service
+        .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
+        .await;
+    assert_ne!(
+        reconciliation.result["result"]["error"]["code"],
+        "import_review_format_text"
+    );
 }

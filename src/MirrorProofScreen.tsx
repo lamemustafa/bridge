@@ -616,7 +616,7 @@ export function MirrorProofScreen({
       setSnapshotStartOutcomeUnknown(false);
       setSnapshotOutcomeUnknownRunId(null);
     } finally {
-      if (selectionVersion === snapshotSelectionVersion.current) setAcknowledgingSnapshotOutcome(false);
+      setAcknowledgingSnapshotOutcome(false);
     }
   }
 

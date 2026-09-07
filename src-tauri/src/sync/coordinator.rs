@@ -222,6 +222,11 @@ impl SnapshotCoordinator {
         mirror: &TallyMirrorRepository,
         limit: u32,
     ) -> Result<Vec<SnapshotJobStatus>, &'static str> {
+        let store = SqliteSnapshotStateStore::new(mirror.pool_clone());
+        let states = store
+            .load_recent(limit)
+            .await
+            .map_err(|_| "snapshot_state_unavailable")?;
         let jobs = self
             .jobs
             .lock()
@@ -237,12 +242,6 @@ impl SnapshotCoordinator {
                 Ok((run_id.clone(), job.plan.clone(), terminal))
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
-        drop(jobs);
-        let store = SqliteSnapshotStateStore::new(mirror.pool_clone());
-        let states = store
-            .load_recent(limit)
-            .await
-            .map_err(|_| "snapshot_state_unavailable")?;
         let tracked_by_id = tracked
             .iter()
             .map(|(run_id, _, terminal)| (run_id.as_str(), terminal))
@@ -261,14 +260,14 @@ impl SnapshotCoordinator {
                 status
             })
             .collect::<Vec<_>>();
-        let mut missing = tracked
+        let missing = tracked
             .into_iter()
             .filter(|(run_id, _, _)| !seen.contains(run_id))
-            .collect::<Vec<_>>();
-        missing.sort_by(|left, right| left.0.cmp(&right.0));
-        statuses.extend(missing.into_iter().map(|(_, plan, terminal)| {
-            terminal.unwrap_or_else(|| status_from_plan(&plan))
-        }));
+            .map(|(run_id, plan, terminal)| {
+                (run_id, terminal.unwrap_or_else(|| status_from_plan(&plan)))
+            })
+            .collect();
+        append_missing_tracked_statuses(&mut statuses, missing);
         Ok(statuses)
     }
 
@@ -389,10 +388,67 @@ fn requested_bounds(plan: &SnapshotPlan) -> (Option<String>, Option<String>) {
     )
 }
 
+fn append_missing_tracked_statuses(
+    statuses: &mut Vec<SnapshotJobStatus>,
+    mut missing: Vec<(String, SnapshotJobStatus)>,
+) {
+    // Durable recency remains the operator-facing order. Only tracked runs
+    // that have not reached durable state are appended in stable ID order.
+    missing.sort_by(|left, right| left.0.cmp(&right.0));
+    statuses.extend(missing.into_iter().map(|(_, status)| status));
+}
+
 #[cfg(test)]
 pub(crate) fn status_from_state_for_test(
     state: DurableSnapshotState,
     requires_resume: bool,
 ) -> SnapshotJobStatus {
     status_from_state(state, requires_resume)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(run_id: &str) -> SnapshotJobStatus {
+        SnapshotJobStatus {
+            run_id: run_id.into(),
+            mirror_company_id: None,
+            pack_id: None,
+            requested_from_yyyymmdd: None,
+            requested_to_yyyymmdd: None,
+            phase: SnapshotPhase::Prepare,
+            active_window_id: None,
+            completed_windows: 0,
+            total_windows: 0,
+            verification: None,
+            proof_id: None,
+            proof_sha256: None,
+            gap_codes: Vec::new(),
+            warning_codes: Vec::new(),
+            failure_code: None,
+            requires_resume: false,
+            resume_available: false,
+        }
+    }
+
+    #[test]
+    fn recent_keeps_durable_order_and_appends_tracked_before_durable_runs() {
+        let mut statuses = vec![status("durable-newest"), status("durable-older")];
+        append_missing_tracked_statuses(
+            &mut statuses,
+            vec![
+                ("run-z".into(), status("run-z")),
+                ("run-a".into(), status("run-a")),
+            ],
+        );
+
+        assert_eq!(
+            statuses
+                .iter()
+                .map(|status| status.run_id.as_str())
+                .collect::<Vec<_>>(),
+            ["durable-newest", "durable-older", "run-a", "run-z"]
+        );
+    }
 }
