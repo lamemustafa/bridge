@@ -162,11 +162,22 @@ fn admit_saved_journal(
     };
     validate_payload(&payload)?;
     let (debit, credit) = totals(&line.vouchers)?;
+    let voucher = &line.vouchers[0];
+    let mut review_text = std::iter::once(company.name.as_str())
+        .chain(voucher.voucher_number.iter().map(String::as_str))
+        .chain(voucher.reference.iter().map(String::as_str))
+        .chain(voucher.narration.iter().map(String::as_str))
+        .chain(voucher.entries.iter().map(|entry| entry.ledger.as_str()));
+    if review_text.clone().any(has_unsafe_review_layout_character) {
+        return Err("import_review_layout_text".into());
+    }
+    if review_text.any(has_directional_review_character) {
+        return Err("import_review_directional_text".into());
+    }
     let xml = render_import_xml(&company.name, &line.vouchers, &line.batch_id);
     if sha256_hex(xml.as_bytes()) != line.sha256 {
         return Err("import_batch_changed".into());
     }
-    let voucher = &line.vouchers[0];
     let quoted = |text: &str| serde_json::to_string(text).expect("string serialization");
     let optional = |value: &Option<String>| {
         value
@@ -203,15 +214,26 @@ fn admit_saved_journal(
     {
         return Err("import_review_too_large".into());
     }
-    // Direction overrides could conceal amounts/names in a native plain-text dialog.
-    // Refuse those names, rather than normalize or silently change their identity.
-    if preview
-        .chars()
-        .any(|c| matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
-    {
-        return Err("import_review_directional_text".into());
-    }
     Ok((xml, preview))
+}
+
+fn has_unsafe_review_layout_character(value: &str) -> bool {
+    value
+        .chars()
+        .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
+}
+
+fn has_directional_review_character(value: &str) -> bool {
+    value.chars().any(|character| {
+        matches!(
+            character,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+    })
 }
 
 #[cfg(test)]

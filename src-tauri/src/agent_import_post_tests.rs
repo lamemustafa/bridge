@@ -85,6 +85,64 @@ fn multiple_or_unqualified_vouchers_require_manual_workflow() {
     );
 }
 
+fn refresh_batch_sha256(line: &mut ImportLedgerLine) {
+    line.sha256 = sha256_hex(
+        render_import_xml(
+            &line.company.as_ref().unwrap().name,
+            &line.vouchers,
+            &line.batch_id,
+        )
+        .as_bytes(),
+    );
+}
+
+#[test]
+fn native_preview_refuses_line_and_paragraph_separators_in_every_operator_text_field() {
+    for separator in ['\u{2028}', '\u{2029}'] {
+        for field in ["narration", "reference", "ledger"] {
+            let (mut line, endpoint) = batch();
+            let value = format!("safe{separator}hidden");
+            match field {
+                "narration" => line.vouchers[0].narration = Some(value),
+                "reference" => line.vouchers[0].reference = Some(value),
+                "ledger" => line.vouchers[0].entries[0].ledger = value,
+                _ => unreachable!(),
+            }
+            refresh_batch_sha256(&mut line);
+            assert_eq!(
+                admit_saved_journal(&line, &endpoint).unwrap_err(),
+                "import_review_layout_text",
+                "{field} {separator:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_preview_refuses_directional_marks_in_every_operator_text_field() {
+    for mark in [
+        '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
+        '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+    ] {
+        for field in ["narration", "reference", "ledger"] {
+            let (mut line, endpoint) = batch();
+            let value = format!("safe{mark}hidden");
+            match field {
+                "narration" => line.vouchers[0].narration = Some(value),
+                "reference" => line.vouchers[0].reference = Some(value),
+                "ledger" => line.vouchers[0].entries[0].ledger = value,
+                _ => unreachable!(),
+            }
+            refresh_batch_sha256(&mut line);
+            assert_eq!(
+                admit_saved_journal(&line, &endpoint).unwrap_err(),
+                "import_review_directional_text",
+                "{field} {mark:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn absence_is_required_before_a_first_attempt() {
     for payload in [
