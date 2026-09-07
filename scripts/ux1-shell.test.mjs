@@ -67,7 +67,7 @@ test("UI keeps client selection searchable and exposes only source-backed shell 
   assert.match(app, /Endpoint \$\{company\.canonical_endpoint \?\? "not observed"\}/);
   assert.match(app, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Overview/);
   assert.match(app, /aria-current=\{view === "companies" \? "page" : undefined\}[\s\S]*?Companies/);
-  assert.match(app, /onClick=\{\(\) => setView\("outstandings"\)\} disabled=\{childTallyReadCount > 0\} aria-describedby=\{childTallyReadCount > 0 \? "active-tally-read-note" : undefined\}>Open outstandings/);
+  assert.match(app, /onClick=\{\(\) => setView\("outstandings"\)\} disabled=\{childTallyReadCount > 0\} aria-describedby=\{childTallyReadCount > 0 \? "active-tally-read-note" : undefined\}>Open Overview/);
   assert.match(app, /A Tally read is still in progress\. Wait before opening another live read\./);
   assert.match(app, /liveReadActionsLocked=\{childTallyReadCount > 0\}/);
   assert.match(outstandings, /liveReadNavigationLocked: boolean;/);

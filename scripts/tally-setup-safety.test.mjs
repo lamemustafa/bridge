@@ -25,9 +25,11 @@ test("Tally setup does not expose unqualified legacy reads", async () => {
 });
 
 test("Tally nav keeps setup explicit while Overview remains reachable", async () => {
-  const [frontend, outstandings] = await Promise.all([
+  const [frontend, outstandings, readiness, settings] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/TallyReadinessFlow.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/SettingsScreen.tsx", import.meta.url), "utf8"),
   ]);
   const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge navigation">'), frontend.indexOf("</nav>"));
 
@@ -38,6 +40,9 @@ test("Tally nav keeps setup explicit while Overview remains reachable", async ()
   assert.match(frontend, /onClick=\{\(\) => setView\("companies"\)\}/);
   assert.match(frontend, /selectedCompanyRecord\?\.guid && selectedCompanyRecord\.company_number && selectedCompanyRecord\.books_from_yyyymmdd/);
   assert.match(outstandings, /Manage Tally/);
+  assert.match(readiness, /Connection checked\. Choose a company on Companies to continue\./);
+  assert.match(readiness, /Choose a company/);
+  assert.match(settings, /onOpenCompanies: \(\) => void;/);
 });
 
 test("saved pins remain selectable for local proof review without a Tally read", async () => {

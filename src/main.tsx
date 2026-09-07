@@ -1960,7 +1960,7 @@ function App() {
                   {selectedCompanyReady && (
                     <>
                       <p className="setup-complete" role="status"><Check size={18} /> {selectedCompanyRecord?.name} is ready.</p>
-                      <button className="primary" type="button" onClick={() => setView("outstandings")} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined}>Open outstandings</button>
+                      <button className="primary" type="button" onClick={() => setView("outstandings")} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined}>Open Overview</button>
                     </>
                   )}
                 </div>
@@ -1985,6 +1985,7 @@ function App() {
               onHostChange={updateTallyHost}
               onPortChange={updateTallyPort}
               onCheck={checkTally}
+              onOpenCompanies={() => setView("companies")}
             />
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
             {companyError && <TallyErrorNotice message={companyError} />}

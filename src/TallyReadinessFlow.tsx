@@ -11,6 +11,7 @@ type Props = {
   onHostChange: (value: string) => void;
   onPortChange: (value: number) => void;
   onCheck: () => void;
+  onOpenCompanies: () => void;
 };
 
 export function TallyReadinessFlow({
@@ -24,12 +25,13 @@ export function TallyReadinessFlow({
   onHostChange,
   onPortChange,
   onCheck,
+  onOpenCompanies,
 }: Props) {
   const endpointComplete = endpointReachable && passportObserved;
   const guidance = companyReady
-    ? "Tally matches your saved company. You can open outstandings."
+    ? "Tally matches your saved company. Open Overview to view outstandings."
     : endpointComplete
-    ? "Tally is connected. Choose the company you want to use below."
+    ? "Connection checked. Choose a company on Companies to continue."
     : "Enter the address where Tally is running, then check the connection.";
 
   return (
@@ -55,6 +57,11 @@ export function TallyReadinessFlow({
             {endpointComplete && !busy ? <Check size={18} /> : <Cable size={18} />}
             {busy ? "Checking Tally…" : endpointComplete ? "Check Tally again" : "Check Tally"}
           </button>
+          {endpointComplete && !companyReady && (
+            <button className="secondary-action" type="button" onClick={onOpenCompanies} disabled={busy || settingsLocked}>
+              Choose a company
+            </button>
+          )}
         </div>
       </div>
     </section>

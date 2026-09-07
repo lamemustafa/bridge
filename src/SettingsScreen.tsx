@@ -12,6 +12,7 @@ type Props = {
   onHostChange: (value: string) => void;
   onPortChange: (value: number) => void;
   onCheck: () => void;
+  onOpenCompanies: () => void;
 };
 
 export function SettingsScreen(props: Props) {
