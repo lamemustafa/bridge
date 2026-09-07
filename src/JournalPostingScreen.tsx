@@ -54,11 +54,15 @@ function outcomeOf(action: JournalActionResponse | null) {
   return action?.result?.result?.dispatch?.state ?? null;
 }
 
+function actionErrorCodeOf(action: JournalActionResponse | null) {
+  return action?.result?.result?.error?.code ?? null;
+}
+
 function actionErrorOf(action: JournalActionResponse | null) {
   const result = action?.result?.result;
   if (!result?.error) return null;
   if (result.attempt_recorded !== false) return result.error.message ?? null;
-  switch (result.error.code) {
+  switch (actionErrorCodeOf(action)) {
     case "import_approval_timed_out":
       return "The approval dialog expired before Bridge could post this Journal. Choose Post Journal to review it again.";
     case "import_approval_declined":
@@ -195,6 +199,7 @@ export function JournalPostingScreen({ config }: { config: TallyConfig }) {
               <div><dt>Company GUID</dt><dd>{review.company.guid}</dd></div>
               <div><dt>Saved batch</dt><dd>{review.batchId}</dd></div>
               <div><dt>File digest</dt><dd>{review.sha256}</dd></div>
+              {actionErrorCodeOf(actionResult) && <div><dt>Last result code</dt><dd>{actionErrorCodeOf(actionResult)}</dd></div>}
             </dl>
           </details>
           {verified && <p className="journal-status" role="status"><FileCheck2 size={18} aria-hidden="true" /> Bridge confirmed the original Journal and its saved batch.</p>}

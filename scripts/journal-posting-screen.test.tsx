@@ -144,6 +144,7 @@ for (const [code, expected] of [
     });
 
     expect(host.textContent).toContain(expected);
+    expect(host.textContent).toContain(code);
     expect(button(host, "Post Journal")).toBeTruthy();
     root.unmount();
   });
