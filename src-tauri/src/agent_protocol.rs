@@ -435,6 +435,19 @@ where
                     cancel_queued_request(server, stdout, pending, &target).await?;
                     continue;
                 }
+                if let Some(request) = frame.as_ref().ok()
+                    .and_then(|text| parse_request(text.clone()).ok())
+                    .filter(|request| request["method"] == "ping")
+                {
+                    if let Some(ping_id) = request.get("id") {
+                        if request_id_fits_response_cap(ping_id, server.settings.max_bytes) {
+                            finish_response(server, stdout, ping_id.clone(), Ok(json!({})), None, None, false).await?;
+                        } else {
+                            refuse_pending_frame(server, stdout, frame).await?;
+                        }
+                    }
+                    continue;
+                }
                 let queued_bytes: usize = pending.iter().filter_map(|frame| frame.as_ref().ok()).map(String::len).sum();
                 let size = frame.as_ref().map_or(0, String::len);
                 if pending.len() >= 8 || queued_bytes.saturating_add(size) > MAX_REQUEST_BYTES {

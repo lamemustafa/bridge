@@ -23,6 +23,53 @@ fn server(path: &Path) -> Server {
 }
 
 #[tokio::test]
+async fn ping_responds_before_pending_approval_and_keeps_tools_queued() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server(directory.path());
+    let (client, source) = tokio::io::duplex(4096);
+    let (client_read, mut client_write) = tokio::io::split(client);
+    let (source_read, mut source_write) = tokio::io::split(source);
+    let mut reader = BufReader::new(source_read);
+    let mut pending = std::collections::VecDeque::new();
+    let exchange = async {
+        let id = json!(7);
+        let mut framer = Framer::default();
+        let serve = await_post(
+            std::future::pending(),
+            &id,
+            &server,
+            &mut reader,
+            &mut framer,
+            &mut pending,
+            &mut source_write,
+        );
+        let client = async {
+            client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"tally_status\"}}\n{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"ping\"}\n").await.unwrap();
+            let mut response = String::new();
+            BufReader::new(client_read)
+                .read_line(&mut response)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&response).unwrap(),
+                json!({"jsonrpc":"2.0","id":9,"result":{}})
+            );
+            client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":7}}\n").await.unwrap();
+        };
+        let (result, _) = tokio::join!(serve, client);
+        assert!(result.unwrap().is_none());
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(2), exchange)
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        parse_request(pending.pop_front().unwrap().unwrap()).unwrap()["id"],
+        8
+    );
+}
+
+#[tokio::test]
 async fn cancellation_drops_pending_post_before_its_side_effect() {
     let (mut client, source) = tokio::io::duplex(1024);
     let mut reader = BufReader::new(source);
@@ -99,7 +146,7 @@ async fn interrupted_partial_frame_is_preserved() {
 async fn queue_overflow_is_refused_in_band_and_waits_for_cancellation() {
     let input = format!(
         "{}{{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{{\"requestId\":7}}}}\n",
-        "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}\n".repeat(9),
+        "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/list\"}\n".repeat(9),
     );
     let mut reader = BufReader::new(input.as_bytes());
     let mut pending = std::collections::VecDeque::new();
@@ -132,7 +179,7 @@ async fn queue_overflow_refuses_an_oversized_id_without_ending_the_post_wait() {
     let oversized = "é\"".repeat(100);
     let input = format!(
         "{}{{\"jsonrpc\":\"2.0\",\"id\":{},\"method\":\"ping\"}}\n{{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{{\"requestId\":7}}}}\n",
-        "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}\n".repeat(8),
+        "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/list\"}\n".repeat(8),
         serde_json::to_string(&oversized).unwrap(),
     );
     let mut reader = BufReader::new(input.as_bytes());
@@ -163,7 +210,7 @@ async fn queue_overflow_refuses_an_oversized_id_without_ending_the_post_wait() {
 async fn queue_overflow_tool_request_has_a_prepared_and_completed_refusal_receipt() {
     let input = format!(
         "{}{{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{{\"name\":\"voucher_schema\",\"arguments\":{{}}}}}}\n{{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{{\"requestId\":7}}}}\n",
-        "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}\n".repeat(8),
+        "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/list\"}\n".repeat(8),
     );
     let mut reader = BufReader::new(input.as_bytes());
     let mut pending = std::collections::VecDeque::new();

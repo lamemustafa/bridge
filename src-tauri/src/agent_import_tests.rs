@@ -1808,7 +1808,7 @@ fn persisted_dispatch_response(created: u64, altered: u64) -> ledger::DispatchRe
 async fn verify_saved_batch_after_dispatch(
     dispatched: bool,
     dispatch_response: Option<ledger::DispatchResponse>,
-) -> (ToolResponse, ledger::BatchSnapshot) {
+) -> (ToolResponse, ledger::BatchSnapshot, String) {
     let simulator = SequenceSimulator::spawn(qualified_import_cycle_plans()).expect("simulator");
     let directory = tempfile::tempdir().expect("temporary data directory");
     let server = Server::new(super::super::Settings {
@@ -1864,19 +1864,29 @@ async fn verify_saved_batch_after_dispatch(
         simulator.finish().expect("captured plan requests").len(),
         50
     );
-    (response, snapshot)
+    let markdown = fs::read_to_string(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{batch_id}.proof.md")),
+    )
+    .unwrap();
+    (response, snapshot, markdown)
 }
 
 #[tokio::test]
 async fn dispatched_verification_persists_reconciliation_for_missing_or_dirty_response() {
     for response in [None, Some(persisted_dispatch_response(0, 1))] {
-        let (outcome, snapshot) = verify_saved_batch_after_dispatch(true, response).await;
+        let (outcome, snapshot, markdown) = verify_saved_batch_after_dispatch(true, response).await;
         assert_eq!(outcome.value["isError"], true);
         assert_eq!(
             outcome.value["structuredContent"]["result"]["dispatch"]["state"],
             "reconciliation_required"
         );
         assert_eq!(snapshot.batch.status, "verification_incomplete");
+        assert!(markdown.contains("Dispatch verdict: `reconciliation_required`"));
+        assert!(markdown.contains("this report does not confirm posting"));
+        assert!(markdown.contains("Error: `import_reconciliation_required`"));
     }
 }
 

@@ -206,6 +206,19 @@ fn exact_readback_requires_a_clean_persisted_response_to_reconcile() {
                 "import_reconciliation_required"
             );
         }
+        let markdown = render_proof_markdown(&payload["result"]);
+        assert!(markdown.contains(&format!("Dispatch verdict: `{expected_state}`")));
+        assert!(markdown.contains(&format!("Response state: `{response_state}`")));
+        assert!(markdown.contains("Readback counts: matching 1"));
+        assert!(!markdown.contains("Proof-of-Post"));
+        assert_eq!(
+            markdown.contains("this report does not confirm posting"),
+            expected_state == "reconciliation_required"
+        );
+        assert_eq!(
+            markdown.contains("Error: `import_reconciliation_required`"),
+            expected_state == "reconciliation_required"
+        );
     }
 }
 

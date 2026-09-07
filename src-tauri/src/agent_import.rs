@@ -1689,7 +1689,32 @@ fn alter_id_delta(mark: &PreImportMark, observed: &[ReadVoucher]) -> Value {
 }
 
 fn render_proof_markdown(proof: &Value) -> String {
-    let mut output = format!("# Proof-of-Post — {}\n\n- Company: `{}`\n- Batch SHA-256: `{}`\n- Verified: `{}`\n- Counts: verified {}, divergent {}, not found {}\n- AlterID delta: `{}`\n- Unrelated duplicates in window: {}\n\n| Transaction | Status |\n| --- | --- |\n", proof["batch_id"].as_str().unwrap_or("unknown"), proof["company"]["name"].as_str().unwrap_or("unknown"), proof["batch_sha256"].as_str().unwrap_or("unknown"), proof["verified_at"].as_str().unwrap_or("unknown"), proof["counts"]["posted_verified"], proof["counts"]["posted_divergent"], proof["counts"]["not_found"], proof["alter_id_delta"], proof["unrelated_duplicates_in_window"].as_array().map_or(0, Vec::len));
+    let mut output = format!(
+        "# Journal verification — {}\n\n",
+        proof["batch_id"].as_str().unwrap_or("unknown")
+    );
+    let dispatch_state = proof["dispatch"]["state"].as_str();
+    if !proof["error"].is_null()
+        || (proof.get("dispatch").is_some()
+            && !matches!(
+                dispatch_state,
+                Some("posted_verified" | "previous_attempt_reconciled")
+            ))
+    {
+        output.push_str("**Reconciliation required — this report does not confirm posting.**\n\nA matching voucher readback alone is insufficient. Reconcile the original saved batch; do not rebuild or resend it.\n\n");
+    }
+    if let Some(state) = dispatch_state {
+        output.push_str(&format!(
+            "- Dispatch verdict: `{state}`\n- Response state: `{}`\n",
+            proof["dispatch"]["response_state"]
+                .as_str()
+                .unwrap_or("unknown")
+        ));
+    }
+    if let Some(code) = proof["error"]["code"].as_str() {
+        output.push_str(&format!("- Error: `{code}`\n"));
+    }
+    output.push_str(&format!("\n- Company: `{}`\n- Batch SHA-256: `{}`\n- Readback checked: `{}`\n- Readback counts: matching {}, divergent {}, not found {}\n- AlterID delta: `{}`\n- Unrelated duplicates in window: {}\n\n| Transaction | Readback status |\n| --- | --- |\n", proof["company"]["name"].as_str().unwrap_or("unknown"), proof["batch_sha256"].as_str().unwrap_or("unknown"), proof["verified_at"].as_str().unwrap_or("unknown"), proof["counts"]["posted_verified"], proof["counts"]["posted_divergent"], proof["counts"]["not_found"], proof["alter_id_delta"], proof["unrelated_duplicates_in_window"].as_array().map_or(0, Vec::len)));
     for row in proof["vouchers"].as_array().into_iter().flatten() {
         output.push_str(&format!(
             "| {} | {} |\n",
