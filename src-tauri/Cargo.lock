@@ -415,6 +415,7 @@ dependencies = [
  "chrono",
  "cryptoki",
  "getrandom 0.4.3",
+ "icu_properties",
  "keyring",
  "libc",
  "libsqlite3-sys",

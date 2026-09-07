@@ -158,15 +158,47 @@ fn native_preview_refuses_line_and_paragraph_separators_in_every_operator_text_f
 }
 
 #[test]
-fn native_preview_refuses_directional_marks_in_every_operator_text_field() {
+fn native_preview_refuses_unreviewable_formatting_in_every_operator_text_field() {
     for mark in [
-        '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
-        '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+        '\u{061c}',
+        '\u{200e}',
+        '\u{200f}',
+        '\u{202a}',
+        '\u{202b}',
+        '\u{202c}',
+        '\u{202d}',
+        '\u{202e}',
+        '\u{2066}',
+        '\u{2067}',
+        '\u{2068}',
+        '\u{2069}',
+        '\u{200b}',
+        '\u{200c}',
+        '\u{200d}',
+        '\u{2060}',
+        '\u{206a}',
+        '\u{206b}',
+        '\u{206c}',
+        '\u{206d}',
+        '\u{206e}',
+        '\u{206f}',
+        '\u{feff}',
+        '\u{00ad}',
+        '\u{034f}',
+        '\u{115f}',
+        '\u{180e}',
+        '\u{fe0f}',
+        '\u{e0100}',
+        '\u{e007f}',
+        '\u{0600}',
+        '\u{fff0}',
     ] {
-        for field in ["narration", "reference", "ledger"] {
+        for field in ["company", "number", "narration", "reference", "ledger"] {
             let (mut line, endpoint) = batch();
             let value = format!("safe{mark}hidden");
             match field {
+                "company" => line.company.as_mut().unwrap().name = value,
+                "number" => line.vouchers[0].voucher_number = Some(value),
                 "narration" => line.vouchers[0].narration = Some(value),
                 "reference" => line.vouchers[0].reference = Some(value),
                 "ledger" => line.vouchers[0].entries[0].ledger = value,
@@ -175,10 +207,24 @@ fn native_preview_refuses_directional_marks_in_every_operator_text_field() {
             refresh_batch_sha256(&mut line);
             assert_eq!(
                 admit_saved_journal(&line, &endpoint).unwrap_err(),
-                "import_review_directional_text",
+                "import_review_format_text",
                 "{field} {mark:?}"
             );
         }
+    }
+}
+
+#[test]
+fn native_preview_preserves_visible_multilingual_text() {
+    let (mut line, endpoint) = batch();
+    line.company.as_mut().unwrap().name = "मराठी खाते".into();
+    line.vouchers[0].entries[0].ledger = "किराया".into();
+    line.vouchers[0].narration = Some("Cafe\u{0301} – مصروف ₹12.50".into());
+    refresh_batch_sha256(&mut line);
+    let (_, preview) = admit_saved_journal(&line, &endpoint).unwrap();
+    for text in ["मराठी खाते", "किराया", "Cafe\u{0301} – مصروف ₹12.50"]
+    {
+        assert!(preview.contains(text));
     }
 }
 
