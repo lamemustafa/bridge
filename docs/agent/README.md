@@ -234,6 +234,11 @@ approval. If dispatch has already begun, cancellation cannot undo Tally's
 work. A timeout, crash, malformed response or incomplete readback requires
 `verify_import` on the **same original batch**. Once dispatch intent exists,
 `post_import` only reconciles and never resends, including after process restart.
+If another process holds import admission, the call returns `import_admission_busy`
+without waiting for that process or scheduling a later post. Reconcile any
+recorded attempt before requesting another action. Confirmation requires an
+explicitly reported zero `EXCEPTIONS` counter; an omitted counter remains
+incomplete response evidence even when voucher readback matches.
 An intent may exist even if the request never reached Tally: this is deliberately
 an unknown outcome, not permission to build a replacement voucher. The saved
 response metadata helps distinguish clean counters from readback alone.

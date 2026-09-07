@@ -217,6 +217,7 @@ fn mark_reconciliation_required(payload: &mut Value) {
 fn import_outcome_is_clean(outcome: Option<&bridge_tally_protocol::TallyImportOutcome>) -> bool {
     outcome.is_some_and(|outcome| {
         outcome.application_status() != TallyImportApplicationStatus::Failure
+            && outcome.exceptions_were_reported()
             && outcome.counters().is_clean_success_for(1, 0, 0)
     })
 }

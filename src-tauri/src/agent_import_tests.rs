@@ -127,7 +127,7 @@ fn import_ledger_append_rolls_back_a_partial_failing_write() {
 }
 
 #[test]
-fn external_import_ledger_read_waits_for_the_append_admission_lock() {
+fn external_import_ledger_read_refuses_busy_admission_without_waiting() {
     let directory = tempfile::tempdir().expect("temporary agent directory");
     let settings = super::super::Settings {
         endpoint: TallyEndpointConfig {
@@ -154,18 +154,13 @@ fn external_import_ledger_read_waits_for_the_append_admission_lock() {
             .expect("reader completed");
     });
     started_rx.recv().expect("reader started");
-    assert!(
-        done_rx
-            .recv_timeout(std::time::Duration::from_millis(100))
-            .is_err(),
-        "the external reader must wait while an append is admitted"
+    let result = done_rx.recv_timeout(std::time::Duration::from_secs(2));
+    drop(append_admission); // Release even if the assertion fails, so no reader is stranded.
+    assert_eq!(
+        result.expect("reader must not wait for the lock").err(),
+        Some("import_admission_busy".into())
     );
-    drop(append_admission);
-    assert!(done_rx
-        .recv()
-        .expect("reader result")
-        .expect("ledger read after append admission releases")
-        .is_empty());
+    assert!(server.import_ledger().unwrap().is_empty());
     reader.join().expect("reader thread");
 }
 
@@ -232,32 +227,33 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
     for _ in 0..2 {
         started_rx.recv().expect("both writers started");
     }
-    assert!(done_rx
-        .recv_timeout(std::time::Duration::from_millis(100))
-        .is_err());
+    let results: Vec<_> = (0..2)
+        .map(|_| done_rx.recv_timeout(std::time::Duration::from_secs(2)))
+        .collect();
     let json_path = directory.path().join("imports/batch-proof.proof.json");
     let md_path = directory.path().join("imports/batch-proof.proof.md");
-    let published_before_admission = json_path.exists() || md_path.exists();
+    assert!(!json_path.exists() && !md_path.exists());
     drop(admission);
     for writer in writers {
         writer.join().expect("publication writer");
     }
-    let results = (0..2)
-        .map(|_| done_rx.recv().expect("publication result"))
-        .collect::<Vec<_>>();
-    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
-    assert_eq!(
-        results
-            .iter()
-            .filter(|result| result.as_ref().err().map(String::as_str)
-                == Some("import_verification_conflict_retry"))
-            .count(),
-        1
-    );
-    assert!(
-        !published_before_admission,
-        "proof files must wait for publication admission"
-    );
+    for result in results {
+        assert_eq!(
+            result.expect("busy writer must return"),
+            Err("import_admission_busy".into())
+        );
+    }
+    for (index, state) in ["first", "second"].into_iter().enumerate() {
+        let mut update = initial.clone();
+        update.status = state.into();
+        let proof = json!({"batch_id":"batch-proof", "company":{"name":state}, "writer":state});
+        let result = server.persist_import_verification(&proof, &update, generation);
+        if index == 0 {
+            result.unwrap();
+        } else {
+            assert_eq!(result, Err("import_verification_conflict_retry".into()));
+        }
+    }
     let proof: Value =
         serde_json::from_slice(&fs::read(json_path).expect("JSON proof")).expect("parseable proof");
     let markdown = fs::read_to_string(md_path).expect("Markdown proof");
@@ -362,13 +358,17 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         std::thread::spawn(move || Server::new(first_settings).append_import_ledger(&first_line));
     let second =
         std::thread::spawn(move || Server::new(second_settings).append_import_ledger(&second_line));
-    first.join().expect("first writer").expect("first append");
-    second
-        .join()
-        .expect("second writer")
-        .expect("second append");
+    let results = [
+        first.join().expect("first writer"),
+        second.join().expect("second writer"),
+    ];
+    let accepted = results.iter().filter(|result| result.is_ok()).count();
+    assert!(accepted >= 1);
+    for result in results.into_iter().filter_map(Result::err) {
+        assert_eq!(result, "import_admission_busy");
+    }
     let lines = server.import_ledger().expect("parseable ledger lines");
-    assert_eq!(lines.len(), 3);
+    assert_eq!(lines.len(), 1 + accepted);
 }
 
 #[test]

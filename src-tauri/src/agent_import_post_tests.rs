@@ -48,6 +48,41 @@ fn native_preview_contains_all_accounting_inputs_and_pinned_destination() {
 }
 
 #[test]
+fn contended_post_returns_without_waiting_or_recording_a_dispatch() {
+    let directory = tempfile::tempdir().unwrap();
+    let (line, endpoint) = batch();
+    let server = Server::new(crate::agent::Settings {
+        endpoint,
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+    });
+    server.append_import_ledger(&line).unwrap();
+    let journal = directory.path().join("agent-import-ledger.jsonl");
+    let before = fs::read(&journal).unwrap();
+    let admission = server.lock_import_admission().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(server.post_import(&json!({
+            "company_guid":line.company_guid,"batch_id":line.batch_id
+        })));
+        tx.send(result.err().map(|failure| failure.code)).unwrap();
+    });
+    let result = rx.recv_timeout(std::time::Duration::from_secs(2));
+    drop(admission);
+    worker.join().unwrap();
+    assert_eq!(result.unwrap(), Some("import_admission_busy".into()));
+    assert_eq!(fs::read(journal).unwrap(), before);
+}
+
+#[test]
 fn old_or_changed_batches_cannot_be_posted() {
     let (mut line, mut endpoint) = batch();
     endpoint.port = 9002;
@@ -355,6 +390,35 @@ fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
     );
     assert_eq!(payload["result"]["dispatch"]["counters"]["created"], 1);
     assert!(payload["result"].get("error").is_none());
+}
+
+#[test]
+fn omitted_exceptions_cannot_confirm_current_or_previous_dispatch() {
+    // Mutate only the presence marker in saved response evidence. This tests
+    // classification, not a newly claimed live response profile.
+    let mut saved = serde_json::to_value(dispatch_response("success", 1, 0)).unwrap();
+    saved["outcome"]["exceptions_were_reported"] = json!(false);
+    let response: ledger::DispatchResponse = serde_json::from_value(saved).unwrap();
+    for finalize in [
+        finalize_current_dispatch,
+        finalize_previous_attempt_reconciliation,
+    ] {
+        let mut payload = json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
+        finalize(&mut payload, Some(&response));
+        assert_eq!(
+            payload["result"]["dispatch"]["state"],
+            "reconciliation_required"
+        );
+        assert_eq!(
+            payload["result"]["dispatch"]["response_state"],
+            "response_not_clean"
+        );
+        assert_eq!(
+            payload["result"]["error"]["code"],
+            "import_reconciliation_required"
+        );
+        assert!(render_proof_markdown(&payload["result"]).contains("does not confirm posting"));
+    }
 }
 
 #[test]

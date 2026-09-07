@@ -678,8 +678,9 @@ impl Server {
         let path = self.settings.data_dir.join("agent-import-admission.lock");
         let file = super::local_file::open_local_file(&path, true)
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
-        file.lock()
-            .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        // Never park the async request loop behind another process's network
+        // work. Contention is an in-band refusal, not a deferred posting request.
+        file.try_lock().map_err(import_admission_lock_error)?;
         persistence::require_settled(&self.settings.data_dir.join("imports"))?;
         Ok(file)
     }
@@ -688,8 +689,8 @@ impl Server {
         let path = self.settings.data_dir.join("agent-import-admission.lock");
         let file = super::local_file::open_local_file(&path, true)
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
-        file.lock_shared()
-            .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        file.try_lock_shared()
+            .map_err(import_admission_lock_error)?;
         persistence::require_settled(&self.settings.data_dir.join("imports"))?;
         Ok(file)
     }
@@ -754,6 +755,14 @@ impl Server {
         }
         append_private_import_ledger(&path, encoded.as_bytes(), set_private_file)
     }
+}
+
+fn import_admission_lock_error(error: std::fs::TryLockError) -> String {
+    match error {
+        std::fs::TryLockError::WouldBlock => "import_admission_busy",
+        std::fs::TryLockError::Error(_) => "import_admission_lock_unavailable",
+    }
+    .into()
 }
 
 /// A native-dispatched batch is tied to the Tally endpoint used for its saved
