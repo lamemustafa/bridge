@@ -56,3 +56,40 @@ async fn reconcile_without_durable_intent_never_enters_post_or_approval() {
         "import_not_dispatched"
     );
 }
+
+#[test]
+fn review_details_come_from_the_admitted_saved_journal() {
+    let directory = tempfile::tempdir().unwrap();
+    let (service, line) = service(directory.path().join("agent"));
+    let xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    std::fs::write(
+        service
+            .server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        &xml,
+    )
+    .unwrap();
+
+    let review = service.review_selected_xml(xml.as_bytes()).unwrap();
+    assert_eq!(review.details.date, "20260901");
+    assert_eq!(review.details.total_debit, "12.50");
+    assert_eq!(review.details.total_credit, "12.50");
+    assert_eq!(
+        review
+            .details
+            .entries
+            .iter()
+            .map(|entry| (&entry.ledger, &entry.side, &entry.amount))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                &"Expense".to_string(),
+                &"Dr".to_string(),
+                &"12.50".to_string()
+            ),
+            (&"Cash".to_string(), &"Cr".to_string(), &"12.50".to_string())
+        ]
+    );
+}

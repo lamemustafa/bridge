@@ -18,6 +18,25 @@ pub(crate) struct DesktopJournalCompany {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopJournalEntry {
+    pub(crate) ledger: String,
+    pub(crate) side: String,
+    pub(crate) amount: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopJournalDetails {
+    pub(crate) date: String,
+    pub(crate) reference: Option<String>,
+    pub(crate) narration: Option<String>,
+    pub(crate) entries: Vec<DesktopJournalEntry>,
+    pub(crate) total_debit: String,
+    pub(crate) total_credit: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesktopJournalReview {
     pub(crate) batch_id: String,
     pub(crate) sha256: String,
@@ -25,7 +44,7 @@ pub struct DesktopJournalReview {
     pub(crate) built_at: String,
     pub(crate) dispatched: bool,
     pub(crate) response_recorded: bool,
-    pub(crate) preview: String,
+    pub(crate) details: DesktopJournalDetails,
 }
 
 #[derive(Debug)]

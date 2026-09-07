@@ -3,7 +3,9 @@ use super::super::{
     default_data_dir, ensure_private_directory, DirectoryAdmissionError, EvidenceStore, Redaction,
     Settings,
 };
-use super::desktop_journal_review::{DesktopJournalCompany, DesktopJournalReview};
+use super::desktop_journal_review::{
+    DesktopJournalCompany, DesktopJournalDetails, DesktopJournalEntry, DesktopJournalReview,
+};
 use super::post::admit_saved_journal;
 use super::*;
 use crate::tally::{TallyConfig, TallyRuntime};
@@ -106,11 +108,36 @@ impl DesktopJournalService {
         &self,
         snapshot: ledger::BatchSnapshot,
     ) -> Result<DesktopJournalReview, String> {
-        let (_, preview) = admit_saved_journal(&snapshot.batch, &self.server.settings.endpoint)?;
+        let _ = admit_saved_journal(&snapshot.batch, &self.server.settings.endpoint)?;
         let company = snapshot
             .batch
             .company
             .ok_or_else(|| "import_post_company_missing".to_string())?;
+        let voucher = snapshot
+            .batch
+            .vouchers
+            .first()
+            .ok_or_else(|| "import_post_requires_one_journal".to_string())?;
+        let (total_debit, total_credit) = totals(&snapshot.batch.vouchers)?;
+        let details = DesktopJournalDetails {
+            date: voucher.date.clone(),
+            reference: voucher.reference.clone(),
+            narration: voucher.narration.clone(),
+            entries: voucher
+                .entries
+                .iter()
+                .map(|entry| DesktopJournalEntry {
+                    ledger: entry.ledger.clone(),
+                    side: match entry.side {
+                        EntrySide::Dr => "Dr".into(),
+                        EntrySide::Cr => "Cr".into(),
+                    },
+                    amount: entry.amount.clone(),
+                })
+                .collect(),
+            total_debit: total_debit.as_str(),
+            total_credit: total_credit.as_str(),
+        };
         Ok(DesktopJournalReview {
             batch_id: snapshot.batch.batch_id,
             sha256: snapshot.batch.sha256,
@@ -123,7 +150,7 @@ impl DesktopJournalService {
             built_at: snapshot.batch.built_at,
             dispatched: snapshot.dispatched,
             response_recorded: snapshot.response.is_some(),
-            preview,
+            details,
         })
     }
 
