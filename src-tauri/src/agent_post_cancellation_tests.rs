@@ -33,10 +33,14 @@ async fn ping_responds_before_pending_approval_and_keeps_tools_queued() {
     let mut pending = std::collections::VecDeque::new();
     let exchange = async {
         let id = json!(7);
+        let args = json!({});
         let mut framer = Framer::default();
         let serve = await_post(
             std::future::pending(),
-            &id,
+            PostRequest {
+                id: &id,
+                args: &args,
+            },
             &server,
             &mut reader,
             &mut framer,
@@ -85,7 +89,10 @@ async fn cancellation_drops_pending_post_before_its_side_effect() {
     };
     assert!(await_post(
         future,
-        &json!(7),
+        PostRequest {
+            id: &json!(7),
+            args: &json!({})
+        },
         &server,
         &mut reader,
         &mut framer,
@@ -104,7 +111,10 @@ async fn disconnect_drops_pending_post() {
     let server = server(directory.path());
     let result = await_post(
         std::future::pending(),
-        &json!(7),
+        PostRequest {
+            id: &json!(7),
+            args: &json!({}),
+        },
         &server,
         &mut reader,
         &mut Framer::default(),
@@ -155,7 +165,10 @@ async fn queue_overflow_is_refused_in_band_and_waits_for_cancellation() {
     let mut output = Vec::new();
     let result = await_post(
         std::future::pending(),
-        &json!(7),
+        PostRequest {
+            id: &json!(7),
+            args: &json!({}),
+        },
         &server,
         &mut reader,
         &mut Framer::default(),
@@ -190,7 +203,10 @@ async fn queue_overflow_refuses_an_oversized_id_without_ending_the_post_wait() {
     let mut output = Vec::new();
     let result = await_post(
         std::future::pending(),
-        &json!(7),
+        PostRequest {
+            id: &json!(7),
+            args: &json!({}),
+        },
         &server,
         &mut reader,
         &mut Framer::default(),
@@ -219,7 +235,10 @@ async fn queue_overflow_tool_request_has_a_prepared_and_completed_refusal_receip
     let mut output = Vec::new();
     assert!(await_post(
         std::future::pending(),
-        &json!(7),
+        PostRequest {
+            id: &json!(7),
+            args: &json!({})
+        },
         &server,
         &mut reader,
         &mut Framer::default(),
@@ -287,7 +306,10 @@ async fn readable_queue_traffic_cannot_starve_the_pending_post() {
                     recovery_batch_id: None,
                 }
             },
-            &json!(7),
+            PostRequest {
+                id: &json!(7),
+                args: &json!({}),
+            },
             &server,
             &mut reader,
             &mut Framer::default(),

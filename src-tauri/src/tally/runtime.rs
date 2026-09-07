@@ -2189,11 +2189,16 @@ impl TallyRuntime {
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         request: super::approved_import::ApprovedImport,
-        recheck_absence: A,
+        recheck_admission: A,
         before_dispatch: F,
     ) -> anyhow::Result<ApprovedImportDispatch>
     where
-        A: Fn(&str, &str) -> anyhow::Result<()>,
+        A: Fn(
+            &str,
+            &str,
+            &str,
+            &bridge_tally_protocol::StandardLedgerCatalogBinding,
+        ) -> anyhow::Result<()>,
         F: Fn() -> Result<(), String>,
     {
         let _lease = self.begin_ordinary_read(&config)?;
@@ -2206,24 +2211,37 @@ impl TallyRuntime {
                 let identity = identity.clone();
                 let request = request.clone();
                 let xml = request.xml().to_string();
-                let recheck_absence = &recheck_absence;
+                let recheck_admission = &recheck_admission;
                 let before_dispatch = &before_dispatch;
                 async move {
-                    let (profile, mode_evidence) = observe_read_boundary(&client).await?;
-                    let (companies, company_evidence) = client
+                    // Admit the initial observed product/mode and company scope before
+                    // any queued monetary source read. Those observations can become
+                    // stale during queued source reads, so the same admission is
+                    // repeated after the queued absence and catalogue reads below.
+                    let (opening_profile, opening_mode_evidence) =
+                        observe_read_boundary(&client).await?;
+                    let (opening_companies, opening_company_evidence) = client
                         .fetch_companies_with_wire_evidence()
                         .await
-                        .map_err(|error| with_read_evidence(error, mode_evidence.clone()))?;
-                    let admission_evidence = mode_evidence.combine(company_evidence);
-                    admit_company_identity(&companies, &identity)
+                        .map_err(|error| {
+                            with_read_evidence(error, opening_mode_evidence.clone())
+                        })?;
+                    let admission_evidence =
+                        opening_mode_evidence.combine(opening_company_evidence);
+                    admit_company_identity(&opening_companies, &identity)
                         .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    super::approved_import::require_unique_company_scope(&companies, &identity)
+                    super::approved_import::require_unique_company_scope(
+                        &opening_companies,
+                        &identity,
+                    )
+                    .map_err(|error| {
+                        with_read_evidence(error.into(), admission_evidence.clone())
+                    })?;
+                    request
+                        .require_boundary_profile(opening_profile)
                         .map_err(|error| {
                             with_read_evidence(error.into(), admission_evidence.clone())
                         })?;
-                    request.require_boundary_profile(profile).map_err(|error| {
-                        with_read_evidence(error.into(), admission_evidence.clone())
-                    })?;
                     let (first_read, first_evidence) = fetch_admitted_agent_read(
                         &client,
                         &identity,
@@ -2240,8 +2258,39 @@ impl TallyRuntime {
                     .await
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     let admission_evidence = admission_evidence.combine(second_evidence);
-                    recheck_absence(&first_read.body, &second_read.body)
+                    let (catalogue, catalogue_evidence) = fetch_admitted_agent_read(
+                        &client,
+                        &identity,
+                        request.ledger_catalogue_request(),
+                    )
+                    .await
+                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let admission_evidence = admission_evidence.combine(catalogue_evidence);
+                    recheck_admission(
+                        &first_read.body,
+                        &second_read.body,
+                        &catalogue.body,
+                        request.ledger_binding(),
+                    )
+                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let (profile, mode_evidence) = observe_read_boundary(&client)
+                        .await
                         .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let admission_evidence = admission_evidence.combine(mode_evidence);
+                    let (companies, company_evidence) = client
+                        .fetch_companies_with_wire_evidence()
+                        .await
+                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let admission_evidence = admission_evidence.combine(company_evidence);
+                    admit_company_identity(&companies, &identity)
+                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    super::approved_import::require_unique_company_scope(&companies, &identity)
+                        .map_err(|error| {
+                            with_read_evidence(error.into(), admission_evidence.clone())
+                        })?;
+                    request.require_boundary_profile(profile).map_err(|error| {
+                        with_read_evidence(error.into(), admission_evidence.clone())
+                    })?;
                     before_dispatch().map_err(|error| {
                         with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())
                     })?;

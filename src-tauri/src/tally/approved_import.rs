@@ -1,7 +1,9 @@
 //! Independent local approval. The model never supplies an approval boolean.
 use super::agent_read_request::AgentReadRequest;
 use bridge_tally_core::TallyDate;
-use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
+use bridge_tally_protocol::{
+    outstandings_shared::DateBoundaryProfile, StandardLedgerCatalogBinding,
+};
 use std::{io::Read, process::Stdio, time::Duration};
 use tokio::io::AsyncWriteExt;
 
@@ -14,6 +16,8 @@ pub(crate) struct ApprovedImport {
     xml: String,
     voucher_date: TallyDate,
     verification_request: AgentReadRequest,
+    ledger_catalogue_request: AgentReadRequest,
+    ledger_binding: StandardLedgerCatalogBinding,
 }
 
 impl ApprovedImport {
@@ -22,12 +26,16 @@ impl ApprovedImport {
         preview: &str,
         voucher_date: TallyDate,
         verification_request: AgentReadRequest,
+        ledger_catalogue_request: AgentReadRequest,
+        ledger_binding: StandardLedgerCatalogBinding,
     ) -> Result<Self, String> {
         confirm(preview).await?;
         Ok(Self {
             xml,
             voucher_date,
             verification_request,
+            ledger_catalogue_request,
+            ledger_binding,
         })
     }
 
@@ -37,6 +45,14 @@ impl ApprovedImport {
 
     pub(super) fn verification_request(&self) -> AgentReadRequest {
         self.verification_request.clone()
+    }
+
+    pub(super) fn ledger_catalogue_request(&self) -> AgentReadRequest {
+        self.ledger_catalogue_request.clone()
+    }
+
+    pub(super) fn ledger_binding(&self) -> &StandardLedgerCatalogBinding {
+        &self.ledger_binding
     }
 
     /// Recheck the operator-approved dates after the endpoint queue admits this
@@ -53,7 +69,12 @@ impl ApprovedImport {
     }
 
     #[cfg(test)]
-    pub(super) fn approved_for_test(xml: String, voucher_date: TallyDate) -> Self {
+    pub(super) fn approved_for_test(
+        xml: String,
+        voucher_date: TallyDate,
+        ledger_catalogue_request: AgentReadRequest,
+        ledger_binding: StandardLedgerCatalogBinding,
+    ) -> Self {
         Self {
             xml,
             voucher_date,
@@ -61,6 +82,8 @@ impl ApprovedImport {
                 bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile::CompanyListV2.render(),
             )
             .expect("static read profile is admitted"),
+            ledger_catalogue_request,
+            ledger_binding,
         }
     }
 }
@@ -71,6 +94,8 @@ pub(crate) enum ApprovedImportAdmissionError {
     EducationVoucherDateUnsupported,
     #[error("import_preexisting_identity")]
     PreexistingIdentity,
+    #[error("import_masters_changed")]
+    LedgerIdentityChanged,
 }
 
 async fn confirm(preview: &str) -> Result<(), String> {
