@@ -118,8 +118,13 @@ def run_bounded(command, payload, environment, timeout=15):
 
 def resolve_environment(manifest):
     mappings = manifest["server"]["mcp_config"]["env"]
-    require(set(mappings) == {"BRIDGE_TALLY_HOST", "BRIDGE_TALLY_PORT", "BRIDGE_AGENT_REDACTION"},
-            "unexpected_environment_mapping")
+    require(set(mappings) == {"BRIDGE_TALLY_HOST", "BRIDGE_TALLY_PORT", "BRIDGE_AGENT_REDACTION",
+                              "BRIDGE_AGENT_ENABLE_WRITES"}, "unexpected_environment_mapping")
+    writes = manifest["user_config"].get("enable_writes", {})
+    require(writes.get("type") == "boolean" and writes.get("default") is False,
+            "writes_must_default_to_disabled")
+    require(mappings["BRIDGE_AGENT_ENABLE_WRITES"] == "${user_config.enable_writes}",
+            "writes_environment_mapping_mismatch")
     # Supply isolated client settings through the manifest itself. Overwriting
     # the resulting environment would hide broken host/port substitutions.
     values = {name: option["default"] for name, option in manifest["user_config"].items()}
@@ -127,7 +132,8 @@ def resolve_environment(manifest):
     resolved = {}
     for key, value in mappings.items():
         for name, setting in values.items():
-            value = value.replace("${user_config." + name + "}", str(setting))
+            value = value.replace("${user_config." + name + "}",
+                                  json.dumps(setting) if isinstance(setting, bool) else str(setting))
         require("${" not in value, "unresolved_environment_mapping")
         resolved[key] = value
     require(resolved["BRIDGE_TALLY_HOST"] == values["host"]

@@ -58,6 +58,7 @@ class BundleSmokeTests(unittest.TestCase):
         resolved = smoke.resolve_environment(manifest)
         self.assertEqual(resolved["BRIDGE_TALLY_HOST"], "127.0.0.1")
         self.assertEqual(resolved["BRIDGE_TALLY_PORT"], "9")
+        self.assertEqual(resolved["BRIDGE_AGENT_ENABLE_WRITES"], "false")
         for key in ("BRIDGE_TALLY_HOST", "BRIDGE_TALLY_PORT"):
             broken = json.loads(template.read_text(encoding="utf-8"))
             broken["server"]["mcp_config"]["env"][key] = "${user_config.redaction}"
@@ -72,6 +73,24 @@ class BundleSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(smoke.SmokeError, "server_version_mismatch"):
             smoke.validate_server_version(
                 {"result": {"serverInfo": {"version": "0.2.1"}}}, manifest)
+
+    def test_write_setting_cannot_default_to_enabled(self):
+        template = Path(__file__).resolve().parents[1] / "packaging/mcpb/manifest.json"
+        for default in (True, "false", 0, None):
+            manifest = json.loads(template.read_text(encoding="utf-8"))
+            manifest["user_config"]["enable_writes"]["default"] = default
+            with self.subTest(default=default), self.assertRaisesRegex(
+                    smoke.SmokeError, "writes_must_default_to_disabled"):
+                smoke.resolve_environment(manifest)
+
+    def test_write_mapping_cannot_bypass_user_setting(self):
+        template = Path(__file__).resolve().parents[1] / "packaging/mcpb/manifest.json"
+        for mapping in ("true", "false", "${user_config.redaction}"):
+            manifest = json.loads(template.read_text(encoding="utf-8"))
+            manifest["server"]["mcp_config"]["env"]["BRIDGE_AGENT_ENABLE_WRITES"] = mapping
+            with self.subTest(mapping=mapping), self.assertRaisesRegex(
+                    smoke.SmokeError, "writes_environment_mapping_mismatch"):
+                smoke.resolve_environment(manifest)
 
     def test_server_output_is_bounded(self):
         command = [sys.executable, "-c", "import sys; sys.stdout.write('x' * 1048576); sys.stdout.flush()"]
