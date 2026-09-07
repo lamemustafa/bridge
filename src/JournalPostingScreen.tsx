@@ -32,6 +32,25 @@ type JournalActionResponse = {
     result?: {
       dispatch?: { state?: string; resent?: boolean };
       attempt_recorded?: boolean;
+      dispatch_response?: {
+        request_sha256: string;
+        response_sha256: string;
+        bytes: number;
+        outcome: {
+          application_status: "success" | "failure" | "not_reported";
+          counters: {
+            created: number;
+            altered: number;
+            deleted: number;
+            ignored: number;
+            errors: number;
+            cancelled: number;
+            exceptions: number;
+            line_error_count: number;
+          };
+          exceptions_were_reported: boolean;
+        } | null;
+      };
       error?: { code?: string; message?: string; remediation?: string };
     };
   };
@@ -56,6 +75,10 @@ function outcomeOf(action: JournalActionResponse | null) {
 
 function actionErrorCodeOf(action: JournalActionResponse | null) {
   return action?.result?.result?.error?.code ?? null;
+}
+
+function dispatchResponseOf(action: JournalActionResponse | null) {
+  return action?.result?.result?.dispatch_response ?? null;
 }
 
 function actionErrorOf(action: JournalActionResponse | null) {
@@ -158,6 +181,7 @@ export function JournalPostingScreen({ config, onBusyChange }: JournalPostingScr
     uncertainAttempt,
   );
   const { reconciliationRequired, verified } = journalState;
+  const dispatchResponse = dispatchResponseOf(actionResult);
 
   return (
     <section className="panel wide journal-review" aria-labelledby="journal-review-heading" aria-busy={action !== null}>
@@ -209,6 +233,30 @@ export function JournalPostingScreen({ config, onBusyChange }: JournalPostingScr
               <div><dt>Saved batch</dt><dd>{review.batchId}</dd></div>
               <div><dt>File digest</dt><dd>{review.sha256}</dd></div>
               {actionErrorCodeOf(actionResult) && <div><dt>Last result code</dt><dd>{actionErrorCodeOf(actionResult)}</dd></div>}
+              {dispatchResponse && (
+                <>
+                  <div>
+                    <dt>Received response evidence</dt>
+                    <dd>Tally&apos;s response is retained for reconciliation; Bridge only confirms posting after a matching Journal readback.</dd>
+                  </div>
+                  <div><dt>Response bytes</dt><dd>{dispatchResponse.bytes}</dd></div>
+                  <div><dt>Request digest</dt><dd><code>{dispatchResponse.request_sha256}</code></dd></div>
+                  <div><dt>Response digest</dt><dd><code>{dispatchResponse.response_sha256}</code></dd></div>
+                  {dispatchResponse.outcome ? (
+                    <>
+                      <div><dt>Response status</dt><dd>{dispatchResponse.outcome.application_status}</dd></div>
+                      <div>
+                        <dt>Response counters</dt>
+                        <dd>
+                          Created {dispatchResponse.outcome.counters.created} · Altered {dispatchResponse.outcome.counters.altered} · Deleted {dispatchResponse.outcome.counters.deleted} · Ignored {dispatchResponse.outcome.counters.ignored} · Errors {dispatchResponse.outcome.counters.errors} · Cancelled {dispatchResponse.outcome.counters.cancelled} · Exceptions {dispatchResponse.outcome.counters.exceptions} · Line errors {dispatchResponse.outcome.counters.line_error_count}
+                        </dd>
+                      </div>
+                    </>
+                  ) : (
+                    <div><dt>Response outcome</dt><dd>Not parsed</dd></div>
+                  )}
+                </>
+              )}
             </dl>
           </details>
           {verified && <p className="journal-status" role="status"><FileCheck2 size={18} aria-hidden="true" /> Bridge confirmed the original Journal and its saved batch.</p>}

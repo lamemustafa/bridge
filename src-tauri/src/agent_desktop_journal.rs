@@ -192,24 +192,30 @@ pub(super) struct DesktopJournalOperation {
 
 impl DesktopJournalOperation {
     pub(super) fn from_outcome(outcome: ToolOutcome) -> Self {
-        // The desktop consumes action state, not the potentially large voucher
-        // proof. Keep the full proof in the saved batch and out of webview IPC.
+        // The desktop consumes action state and a bounded Tally response
+        // witness. Keep proof, vouchers, duplicates, and read evidence out of
+        // webview IPC; a response witness is needed when proof persistence
+        // itself failed and the saved batch does not contain it.
         let result = &outcome.payload["result"];
         let error = &result["error"];
-        Self {
-            result: json!({"result":{
-                "dispatch": {
-                    "state": bounded_action_text(&result["dispatch"]["state"], 128),
-                    "resent": result["dispatch"]["resent"].as_bool(),
-                },
-                "attempt_recorded": result["attempt_recorded"].as_bool(),
-                "error": (!error.is_null()).then(|| json!({
-                    "code": bounded_action_text(&error["code"], 256).unwrap_or("journal_action_error"),
-                    "message": bounded_action_text(&error["message"], 4096).unwrap_or("Bridge could not confirm the Journal. Reconcile the original batch without resending it."),
-                    "remediation": bounded_action_text(&error["remediation"], 4096),
-                })),
-            }}),
+        let mut projected = json!({"result":{
+            "dispatch": {
+                "state": bounded_action_text(&result["dispatch"]["state"], 128),
+                "resent": result["dispatch"]["resent"].as_bool(),
+            },
+            "attempt_recorded": result["attempt_recorded"].as_bool(),
+            "error": (!error.is_null()).then(|| json!({
+                "code": bounded_action_text(&error["code"], 256).unwrap_or("journal_action_error"),
+                "message": bounded_action_text(&error["message"], 4096).unwrap_or("Bridge could not confirm the Journal. Reconcile the original batch without resending it."),
+                "remediation": bounded_action_text(&error["remediation"], 4096),
+            })),
+        }});
+        if let Some(dispatch_response) =
+            super::super::agent_protocol::compact_dispatch_response(&result["dispatch_response"])
+        {
+            projected["result"]["dispatch_response"] = dispatch_response;
         }
+        Self { result: projected }
     }
 
     fn from_failure(failure: ToolFailure, message: &'static str) -> Self {

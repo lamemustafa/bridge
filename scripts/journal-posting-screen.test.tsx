@@ -153,6 +153,60 @@ test("reports a busy Journal action until the native post result is rendered", a
   root.unmount();
 });
 
+test("shows retained response evidence only inside collapsed recovery details", async () => {
+  mocks.invoke.mockResolvedValueOnce(review).mockResolvedValueOnce({
+    batchId: review.batchId,
+    result: {
+      result: {
+        dispatch: { state: "reconciliation_required", resent: false },
+        attempt_recorded: true,
+        dispatch_response: {
+          request_sha256: "a".repeat(64),
+          response_sha256: "b".repeat(64),
+          bytes: 538,
+          outcome: {
+            application_status: "success",
+            counters: {
+              created: 1,
+              altered: 0,
+              deleted: 0,
+              ignored: 0,
+              errors: 0,
+              cancelled: 0,
+              exceptions: 0,
+              line_error_count: 0,
+            },
+            exceptions_were_reported: true,
+          },
+        },
+        error: { code: "import_ledger_append_failed", message: "Reconcile the original batch." },
+      },
+    },
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+
+  await act(async () => {
+    root.render(<JournalPostingScreen config={config} />);
+  });
+  await act(async () => {
+    button(host, "Choose Journal file").click();
+  });
+  await act(async () => {
+    button(host, "Post Journal").click();
+  });
+
+  const details = host.querySelector("details");
+  expect(details?.textContent).toContain("Tally's response is retained for reconciliation; Bridge only confirms posting after a matching Journal readback.");
+  expect(details?.textContent).toContain("success");
+  expect(details?.textContent).toContain("Created 1");
+  expect(details?.textContent).toContain("Line errors 0");
+  expect(details?.textContent).toContain("a".repeat(64));
+  expect(host.textContent).toContain("Reconcile original batch");
+  root.unmount();
+});
+
 for (const [code, expected] of [
   ["import_approval_timed_out", "The approval dialog expired before Bridge could post this Journal."],
   ["import_approval_declined", "The Journal was not posted because approval was declined."],

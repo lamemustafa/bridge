@@ -56,6 +56,117 @@ fn action_ipc_keeps_recovery_state_without_unbounded_voucher_details() {
     }
 }
 
+#[test]
+fn action_ipc_keeps_bounded_response_evidence_and_drops_invalid_metadata() {
+    let large = "x".repeat(5_000_001);
+    let response = json!({
+        "request_sha256": "a".repeat(64),
+        "response_sha256": "b".repeat(64),
+        "bytes": 538,
+        "outcome": {
+            "application_status": "success",
+            "counters": {
+                "created": 1,
+                "altered": 0,
+                "deleted": 0,
+                "ignored": 0,
+                "errors": 0,
+                "cancelled": 0,
+                "exceptions": 0,
+                "line_error_count": 0,
+            },
+            "exceptions_were_reported": true,
+        },
+    });
+    let mut payload = json!({"result":{
+        "dispatch": {"state":"reconciliation_required","resent":false},
+        "attempt_recorded":true,
+        "dispatch_response":response,
+        "proof":large.clone(),
+        "vouchers":[large],
+    }});
+    let operation = DesktopJournalOperation::from_outcome(ToolOutcome {
+        payload: payload.clone(),
+        evidence: Evidence {
+            request_sha256: "a".repeat(64),
+            response_sha256: "b".repeat(64),
+            bytes: 538,
+            state: "partial",
+            read_at: None,
+            duration_ms: None,
+            reason_code: Some("import_ledger_append_failed".into()),
+        },
+        company_guid: None,
+        truncated: false,
+    });
+    let result = &operation.result["result"];
+    assert_eq!(
+        result["dispatch_response"]["request_sha256"],
+        "a".repeat(64)
+    );
+    assert_eq!(
+        result["dispatch_response"]["response_sha256"],
+        "b".repeat(64)
+    );
+    assert_eq!(result["dispatch_response"]["bytes"], 538);
+    assert_eq!(
+        result["dispatch_response"]["outcome"]["application_status"],
+        "success"
+    );
+    assert_eq!(
+        result["dispatch_response"]["outcome"]["counters"]["created"],
+        1
+    );
+    assert_eq!(
+        result["dispatch_response"]["outcome"]["counters"]["line_error_count"],
+        0
+    );
+    assert!(result.get("proof").is_none());
+    assert!(result.get("vouchers").is_none());
+    assert!(serde_json::to_vec(&operation.result).unwrap().len() < 2_000);
+
+    let mut null_payload = json!({"result":{"dispatch_response":response.clone()}});
+    null_payload["result"]["dispatch_response"]["outcome"] = Value::Null;
+    let operation = DesktopJournalOperation::from_outcome(ToolOutcome {
+        payload: null_payload,
+        evidence: Evidence {
+            request_sha256: "a".repeat(64),
+            response_sha256: "b".repeat(64),
+            bytes: 538,
+            state: "partial",
+            read_at: None,
+            duration_ms: None,
+            reason_code: Some("import_ledger_append_failed".into()),
+        },
+        company_guid: None,
+        truncated: false,
+    });
+    assert_eq!(
+        operation.result["result"]["dispatch_response"]["bytes"],
+        538
+    );
+    assert!(operation.result["result"]["dispatch_response"]["outcome"].is_null());
+
+    payload["result"]["dispatch_response"]["request_sha256"] = json!("not-a-sha256");
+    let operation = DesktopJournalOperation::from_outcome(ToolOutcome {
+        payload,
+        evidence: Evidence {
+            request_sha256: "a".repeat(64),
+            response_sha256: "b".repeat(64),
+            bytes: 538,
+            state: "partial",
+            read_at: None,
+            duration_ms: None,
+            reason_code: Some("import_ledger_append_failed".into()),
+        },
+        company_guid: None,
+        truncated: false,
+    });
+    assert!(operation.result["result"]
+        .get("dispatch_response")
+        .is_none());
+}
+
 fn service(root: PathBuf) -> (DesktopJournalService, ImportLedgerLine) {
     let endpoint = TallyEndpointConfig {
         host: "127.0.0.1".into(),

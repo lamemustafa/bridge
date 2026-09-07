@@ -40,6 +40,8 @@ test("Journal review uses the bounded native commands and preserves reconciliati
   assert.doesNotMatch(screen, /build_import_xml|render_import_xml/);
   assert.match(screen, /onBusyChange\?\.\(true\)/);
   assert.match(screen, /onBusyChange\?\.\(false\)/);
+  assert.match(screen, /dispatch_response/);
+assert.match(screen, /only confirms posting after a matching Journal readback/);
 });
 
 test("Journal entries stay bounded and scrollable at narrow widths", async () => {
