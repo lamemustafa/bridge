@@ -104,5 +104,12 @@ test("renders the review flow and keeps safe recovery actions after each backend
   expect(button(host, "Choose another file")).toBeTruthy();
   expect([...host.querySelectorAll("button")].some((item) => item.textContent?.includes("Post Journal"))).toBe(false);
 
+  mocks.invoke.mockResolvedValueOnce(null);
+  await act(async () => {
+    button(host, "Choose another file").click();
+  });
+  expect(host.textContent).toContain("Bridge confirmed the original Journal and its saved batch.");
+  expect([...host.querySelectorAll("button")].some((item) => item.textContent?.includes("Post Journal"))).toBe(false);
+
   root.unmount();
 });

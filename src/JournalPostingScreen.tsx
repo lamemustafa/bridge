@@ -75,14 +75,14 @@ export function JournalPostingScreen({ config }: { config: TallyConfig }) {
     if (actionRef.current !== null) return;
     actionRef.current = "pick";
     setAction("pick");
-    setError(null);
-    setActionResult(null);
-    setUncertainAttempt(false);
     try {
       const selected = await invoke<JournalReview | null>("desktop_pick_journal_for_review", { config });
       if (selected) {
         setReview(selected);
         setReviewConfig(config);
+        setActionResult(null);
+        setUncertainAttempt(false);
+        setError(null);
       }
     } catch (cause) {
       setError(errorMessage(cause));
