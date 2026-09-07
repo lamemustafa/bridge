@@ -249,3 +249,19 @@ fn runtime_failure_conversion_distinguishes_absent_evidence_from_zero_byte_sourc
     assert_eq!(evidence.request_sha256, empty_body_hash);
     assert_eq!(evidence.response_sha256, empty_body_hash);
 }
+
+#[test]
+fn party_master_period_refusals_use_the_operation_specific_period_code() {
+    use crate::tally::connection::PartyLedgerMasterSourceValidationError;
+
+    for refusal in [
+        PartyLedgerMasterSourceValidationError::MasterPeriod,
+        PartyLedgerMasterSourceValidationError::BalancePeriod,
+    ] {
+        let failure = ToolFailure::from_runtime(
+            "party_ledger_master_read_failed",
+            anyhow::Error::new(refusal),
+        );
+        assert_eq!(failure.code, "opening_period_not_honoured");
+    }
+}

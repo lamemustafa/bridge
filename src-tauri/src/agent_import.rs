@@ -4,6 +4,7 @@ use super::{
     ToolFailure, ToolOutcome,
 };
 use bridge_tally_core::ExactDecimal;
+use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use bridge_tally_protocol::parse_standard_ledger_catalog;
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
 use chrono::{SecondsFormat, Utc};
@@ -30,29 +31,25 @@ use uuid::Uuid;
 struct ImportProfileObservation {
     qualification: Result<(), ImportProfileRefusal>,
     evidence: Evidence,
+    observed_profile: Value,
+    admission_key: (String, String),
 }
 
 #[derive(Clone, Copy)]
 enum ImportProfileRefusal {
     Mode,
-    Release,
-    LicenseTier,
 }
 
 impl ImportProfileRefusal {
     fn build_code(self) -> &'static str {
         match self {
             Self::Mode => "import_mode_unqualified",
-            Self::Release => "import_release_unqualified",
-            Self::LicenseTier => "import_license_tier_unqualified",
         }
     }
 
     fn verification_code(self) -> &'static str {
         match self {
             Self::Mode => "verification_mode_unqualified",
-            Self::Release => "verification_release_unqualified",
-            Self::LicenseTier => "verification_license_tier_unqualified",
         }
     }
 }
@@ -106,7 +103,6 @@ impl VoucherType {
 // Other variants remain readable in historical batch records. New files require
 // the live import/readback evidence recorded in docs/agent/ASSESSMENT-2026-09-06.md.
 const LIVE_QUALIFIED_VOUCHER_TYPES: &[VoucherType] = &[VoucherType::Journal];
-const LIVE_QUALIFIED_IMPORT_RELEASE: &str = "7.1";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 enum EntrySide {
@@ -244,7 +240,7 @@ impl Server {
                 "dates must be within the selected company's BOOKSFROM through today",
                 "ledger names must exactly match the live catalogue; validate_masters before build_import_xml",
                 "a batch may contain at most 100 distinct ledger names of at most 1024 characters each"
-            ], "limits": {"import_mode_qualification": "New files require freshly observed TallyPrime Silver release 7.1 before and after the build reads. Other or unobserved releases, tiers and modes are unqualified."}}}),
+            ], "limits": {"import_mode_qualification": "New files require freshly observed supported TallyPrime product and licence mode before and after the build reads. Release and licence tier are reported as observed facts; Journal is the only voucher type with recorded import/readback evidence."}}}),
             evidence: local_evidence("voucher_schema"),
             company_guid: None,
             truncated: false,
@@ -280,13 +276,13 @@ impl Server {
         })
     }
 
-    async fn qualified_import_profile(&self) -> Result<Evidence, ToolFailure> {
+    async fn qualified_import_profile(&self) -> Result<ImportProfileObservation, ToolFailure> {
         let observation = self.observe_import_profile().await?;
         if let Err(refusal) = observation.qualification {
             return Err(ToolFailure::from(refusal.build_code().to_string())
                 .with_prior_evidence(observation.evidence));
         }
-        Ok(observation.evidence)
+        Ok(observation)
     }
 
     async fn observe_import_profile(&self) -> Result<ImportProfileObservation, ToolFailure> {
@@ -297,12 +293,15 @@ impl Server {
             .await
             .map_err(|error| ToolFailure::from_runtime("import_mode_probe_failed", error))?;
         let evidence = super::evidence_from_runtime_read(wire);
-        let qualified = probe.profile.product.eq_ignore_ascii_case("TallyPrime")
-            && probe
-                .profile
-                .mode
-                .as_deref()
-                .is_some_and(|mode| mode.eq_ignore_ascii_case("Licensed"))
+        let product = probe.profile.product.to_ascii_lowercase();
+        let mode = probe
+            .profile
+            .mode
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let qualified = product == "tallyprime"
+            && matches!(mode.as_str(), "licensed" | "education" | "educational")
             && probe
                 .profile
                 .features
@@ -311,20 +310,20 @@ impl Server {
                     feature.state == CapabilityState::Supported
                         && feature.confidence == EvidenceConfidence::Observed
                 });
-        // See docs/tally/TALLY_PROTOCOL_REFERENCE.md §3.1 for the observed profile.
-        // A release label alone does not promote any compatibility-matrix claim.
-        let qualification = if !qualified {
-            Err(ImportProfileRefusal::Mode)
-        } else if probe.profile.release.as_deref() != Some(LIVE_QUALIFIED_IMPORT_RELEASE) {
-            Err(ImportProfileRefusal::Release)
-        } else if probe.profile.license_tier != Some(bridge_tally_core::LicenseTier::Silver) {
-            Err(ImportProfileRefusal::LicenseTier)
-        } else {
-            Ok(())
-        };
+        // The literal-date verification filter has its own returned-row and
+        // corroboration checks. Product/mode must be observed; a release or
+        // tier label is evidence, not a categorical import-file admission gate.
+        let qualification = qualified.then_some(()).ok_or(ImportProfileRefusal::Mode);
         Ok(ImportProfileObservation {
             qualification,
             evidence,
+            observed_profile: json!({
+                "product": probe.profile.product,
+                "release": probe.profile.release,
+                "license_tier": probe.profile.license_tier,
+                "mode": probe.profile.mode,
+            }),
+            admission_key: (product, mode),
         })
     }
 
@@ -340,7 +339,11 @@ impl Server {
             return Err("import_voucher_type_unqualified".to_string().into());
         }
         normalize_payload_dates(&mut payload)?;
-        let mode_evidence = self.qualified_import_profile().await?;
+        let opening_profile = self.qualified_import_profile().await?;
+        validate_import_dates_for_profile(&payload, &opening_profile).map_err(|code| {
+            ToolFailure::from(code).with_prior_evidence(opening_profile.evidence.clone())
+        })?;
+        let mode_evidence = opening_profile.evidence.clone();
         let (company, identity, identity_evidence) = self
             .verified_company(&payload.company_guid)
             .await
@@ -407,8 +410,11 @@ impl Server {
                 "paired_source_bytes":preflight_evidence.bytes,
                 "response_sha256":preflight_evidence.response_sha256
             });
-            let closing_mode_evidence = self.qualified_import_profile().await?;
-            accumulated = combine_evidence(accumulated.clone(), closing_mode_evidence);
+            let closing_profile = self.qualified_import_profile().await?;
+            accumulated = combine_evidence(accumulated.clone(), closing_profile.evidence);
+            if closing_profile.admission_key != opening_profile.admission_key {
+                return Err("import_mode_changed_during_build".to_string().into());
+            }
             let batch_id = format!("bridge-{}", Uuid::new_v4());
             let xml = render_import_xml(&company.name, &payload.vouchers, &batch_id);
             let sha256 = sha256_hex(xml.as_bytes());
@@ -454,7 +460,7 @@ impl Server {
                     "live_evidence": "synthetic_lab_readback",
                     "verification_preflight": verification_preflight,
                     "identity_scheme": line.identity_scheme,
-                    "qualified_profile": {"product":"TallyPrime","release":LIVE_QUALIFIED_IMPORT_RELEASE,"license_tier":"silver"},
+                    "observed_profile": opening_profile.observed_profile,
                     "live_evidence_report": "docs/agent/ASSESSMENT-2026-09-06.md",
                     "warnings": ["No import XML was sent to Tally. Import the written file manually, then use verify_import.", "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits."],
                     "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
@@ -513,6 +519,9 @@ impl Server {
                 accumulated = combine_evidence(accumulated.clone(), closing_mode.evidence.clone());
                 if let Err(refusal) = closing_mode.qualification {
                     return Err(refusal.verification_code().to_string().into());
+                }
+                if closing_mode.admission_key != opening_mode.admission_key {
+                    return Err("verification_mode_changed_during_read".to_string().into());
                 }
                 closing_mode_evidence = Some(closing_mode.evidence);
             }
@@ -897,6 +906,28 @@ fn validate_dates(payload: &ImportPayload, books_from: Option<&str>) -> Result<(
         let date = normalized_date(&voucher.date)?;
         if date < from || date > today {
             return Err("voucher_date_outside_company_extent".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_import_dates_for_profile(
+    payload: &ImportPayload,
+    profile: &ImportProfileObservation,
+) -> Result<(), String> {
+    let boundary_profile = if matches!(
+        profile.admission_key.1.as_str(),
+        "education" | "educational"
+    ) {
+        DateBoundaryProfile::EducationRestricted
+    } else {
+        DateBoundaryProfile::ModeAgnostic
+    };
+    for voucher in &payload.vouchers {
+        let date = bridge_tally_core::TallyDate::parse(voucher.date.clone())
+            .map_err(|_| "voucher_date_invalid".to_string())?;
+        if !boundary_profile.accepts_boundary(&date) {
+            return Err("education_voucher_date_unsupported".to_string());
         }
     }
     Ok(())

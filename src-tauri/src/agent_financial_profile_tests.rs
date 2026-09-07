@@ -33,28 +33,39 @@ fn join(left: &str, right: &str) -> String {
 }
 
 #[tokio::test]
-async fn monetary_tools_refuse_unqualified_profiles_with_completed_wire_evidence() {
+async fn monetary_tools_refuse_unobserved_mode_or_unsupported_product_with_completed_wire_evidence()
+{
     let companies = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
     ));
-    let unqualified = companies.replace(
-        "<BRIDGERELEASE TYPE=\"String\">7.1</BRIDGERELEASE>",
-        "<BRIDGERELEASE TYPE=\"String\">7.0</BRIDGERELEASE>",
-    );
-    assert_ne!(unqualified, companies);
+    // Release and licence tier are retained as observations, rather than
+    // admissions. Keep this negative coverage on conditions the read boundary
+    // cannot admit: an unsupported product, or no observed licence mode.
+    // These mutate captured metadata only; they are not positive evidence for
+    // another product, Gold, or Education behavior.
+    let unsupported_products = ["TallyPrime Edit Log", "Tally.ERP 9"].map(|product| {
+        let altered = companies.replace(
+            "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>",
+            &format!("<PRODUCTNAME TYPE=\"String\">{product}</PRODUCTNAME>"),
+        );
+        assert_ne!(altered, companies);
+        altered
+    });
     let extents = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"
     ));
     let currency = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
     ));
-    // Missing mode evidence must be withheld just like a known unqualified release.
-    let unobserved = companies.replace(
+    let unobserved_mode = companies.replace(
         "<SILVER TYPE=\"Logical\">Yes</SILVER>",
         "<SILVER TYPE=\"Logical\">No</SILVER>",
     );
-    assert_ne!(unobserved, companies);
-    for unqualified in [unqualified, unobserved] {
+    assert_ne!(unobserved_mode, companies);
+    for unqualified in unsupported_products
+        .into_iter()
+        .chain(std::iter::once(unobserved_mode))
+    {
         for (tool, args, reads_currency) in [
             (
                 "ledger_masters",

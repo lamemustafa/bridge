@@ -74,12 +74,7 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             false,
         ),
     ];
-    for fault in [
-        "release_missing",
-        "release_unknown",
-        "license_gold",
-        "license_ambiguous",
-    ] {
+    for fault in ["unknown", "product", "editlog", "unknown_product"] {
         cases.extend([
             (fault, fault, "none", true, false),
             (fault, fault, "none", false, false),
@@ -99,7 +94,11 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             });
         }
         let negative = !has_rows || missing_expected;
-        let close = negative && opening_fault == "none";
+        let opening_profile_is_observed = !matches!(
+            opening_fault,
+            "unknown" | "product" | "editlog" | "unknown_product"
+        );
+        let close = negative && opening_profile_is_observed;
         let closing_http_failure =
             matches!(case, "closing_http_failure" | "closing_all_http_failure");
         let mut closing = if close {
@@ -194,22 +193,22 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             )
             .await;
         let content = &response.value["structuredContent"];
-        let refused = negative && (opening_fault != "none" || closing_fault != "none");
-        let refusal_fault = if opening_fault != "none" {
-            opening_fault
-        } else {
-            closing_fault
-        };
+        let unobserved_profile =
+            |fault: &str| matches!(fault, "unknown" | "product" | "editlog" | "unknown_product");
+        let mode_changed = case == "mode_changed";
+        let refused = (negative
+            && (unobserved_profile(opening_fault)
+                || unobserved_profile(closing_fault)
+                || mode_changed))
+            || closing_http_failure;
         assert_eq!(response.value["isError"], refused, "{case}: {content}");
         if refused {
             assert_eq!(
                 content["result"]["error"]["code"],
                 if closing_http_failure {
                     "import_mode_probe_failed"
-                } else if refusal_fault.starts_with("release_") {
-                    "verification_release_unqualified"
-                } else if refusal_fault.starts_with("license_") {
-                    "verification_license_tier_unqualified"
+                } else if mode_changed {
+                    "verification_mode_changed_during_read"
                 } else {
                     "verification_mode_unqualified"
                 },

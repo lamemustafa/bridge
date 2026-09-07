@@ -244,15 +244,22 @@ The live bytes establish this observation; the upstream code is not proof of
 Bridge compatibility. No licence serial, account identifier, machine path,
 report definition, or new dispatch path was needed.
 
-**Admission boundary.** Preserve an unobserved release as unknown. A missing,
-empty, or disagreeing release across company rows cannot identify a release.
-Silver or Gold is known only when Education is false and exactly one tier flag
-is true. The observed label does not establish other releases, customised TDL,
-Gold, ERP9, Edit Log, or every voucher configuration. It does not promote any
-compatibility-matrix claim. New Journal files and persisted import-absence
-verdicts require the observed TallyPrime Silver 7.1 profile before and
-after the relevant reads; positive historical rows remain directly observable
-on other profiles.
+**Observed-profile boundary.** Preserve an unobserved release as unknown. A
+missing, empty, or disagreeing release across company rows cannot identify a
+release. Silver or Gold is known only when Education is false and exactly one
+tier flag is true. The observed label does not establish other releases,
+customised TDL, Gold, ERP9, Edit Log, or every voucher configuration. It does
+not promote any compatibility-matrix claim.
+
+The former TallyPrime Silver 7.1 admission rule was retired on 2026-09-07. The
+current runtime requires a fresh observed TallyPrime product and recognised
+mode for each operation; it retains release and tier as returned facts rather
+than categorical exclusions. Education uses its observed day-1/day-2/day-31
+native boundary profile and refuses an unsupported operation date. Licensed
+mode permits ordinary dates conditionally, while the paired reads, identity,
+strict amounts, literal voucher bounds and operation-specific validation remain
+mandatory. The limited Silver observation below does not qualify Gold or a
+different licensed release; a Gold live monetary read is still missing.
 
 ---
 
@@ -352,11 +359,16 @@ full-projection comparison, does not qualify every arbitrary-date window or mode
 and does not establish that repeating an empty response proves absence. A regression test
 protects the literal predicates in both agent renderers; it is not additional live evidence.
 
-**Import verification qualification policy:** persisting any `not_found` verdict requires an
-observed TallyPrime Silver 7.1 profile (§3.1) before the voucher reads and a qualified closing observation.
-An unqualified negative verdict must leave the prior proof and batch status unchanged. Positive
-historical readback remains available. This is a conservative qualification limit on negative
-verdicts, not a claim that Education was observed to reject a literal day-15 predicate.
+**Import verification admission policy:** persisting any `not_found` verdict
+requires a fresh observed TallyPrime product and recognised mode before and
+after the voucher reads. Release and licence tier are returned facts, not an
+independent refusal. An unqualified product or mode must leave the prior proof
+and batch status unchanged. Positive historical readback remains available.
+Education Journal construction retains its day-1/day-2/day-31 date refusal;
+verification uses literal voucher bounds and returned-row validation. This is
+not a claim that Gold or another licensed release has completed live import
+qualification, nor that Education was observed to reject a literal day-15
+predicate.
 
 **Bridge native-outstandings policy.** The paired ledger snapshot is the only exact money
 discriminator available after a zero-row Bills response: a book with no named bills and no

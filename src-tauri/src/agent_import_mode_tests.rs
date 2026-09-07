@@ -1,4 +1,4 @@
-//! Captured licensed-mode replay and refusal-only metadata fault injection.
+//! Captured-body replay; profile metadata mutations exercise admission only.
 use super::*;
 
 pub(super) fn licensed_import_probe() -> Vec<ScenarioPlan> {
@@ -21,8 +21,8 @@ pub(super) fn licensed_import_probe() -> Vec<ScenarioPlan> {
     ]
 }
 
-// Change only observed profile fields in memory; these are refusal cases,
-// never qualification evidence for another product, release or licence tier.
+// Change only observed profile fields in memory. These replays prove the
+// admission contract, not live compatibility for another release or tier.
 pub(super) fn import_profile_probe(fault: &str) -> Vec<ScenarioPlan> {
     let mut plans = licensed_import_probe();
     let xml = plans[1].fixture.body().into_owned();
@@ -81,38 +81,29 @@ pub(super) fn import_profile_probe(fault: &str) -> Vec<ScenarioPlan> {
 }
 
 #[tokio::test]
-async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence() {
-    let licensed = licensed_import_probe();
-    let mut cases = vec![
-        ("education", false),
-        ("unknown", false),
-        ("product", false),
-        ("editlog", false),
-        ("unknown_product", false),
-        ("education", true),
-        ("none", true),
-    ];
-    for fault in [
+async fn import_build_requires_an_observed_mode_bracket_and_retains_probe_evidence() {
+    let accepted = [
+        "none",
+        "education",
         "release_missing",
         "release_unknown",
         "license_gold",
         "license_ambiguous",
-    ] {
-        cases.extend([(fault, false), (fault, true)]);
-    }
-    for (fault, closing) in cases {
-        let invalid = import_profile_probe(fault);
-        let plans = if closing {
+    ];
+    let rejected = ["unknown", "product", "editlog", "unknown_product"];
+    for fault in accepted.into_iter().chain(rejected) {
+        let admitted = accepted.contains(&fault);
+        let plans = if admitted {
             [
-                licensed.clone(),
+                import_profile_probe(fault),
                 import_cycle_plans()[..16].to_vec(),
                 import_cycle_plans()[4..10].to_vec(),
                 build_preflight_plans(),
-                invalid,
+                import_profile_probe(fault),
             ]
             .concat()
         } else {
-            invalid
+            import_profile_probe(fault)
         };
         let responses = plans
             .iter()
@@ -134,7 +125,7 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
         let result = server
             .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).unwrap())
             .await;
-        let evidence = if fault == "none" {
+        let evidence = if admitted {
             let result = result.unwrap();
             assert_eq!(
                 result.payload["result"]["live_evidence"],
@@ -154,20 +145,19 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
                 .join("imports")
                 .join(format!("{batch}.xml"))
                 .is_file());
+            assert_eq!(
+                result.payload["result"]["observed_profile"]["license_tier"],
+                match fault {
+                    "license_gold" => json!("gold"),
+                    "education" | "license_ambiguous" => Value::Null,
+                    _ => json!("silver"),
+                },
+                "{fault}"
+            );
             result.evidence
         } else {
             let error = result.err().unwrap();
-            assert_eq!(
-                error.code,
-                if fault.starts_with("release_") {
-                    "import_release_unqualified"
-                } else if fault.starts_with("license_") {
-                    "import_license_tier_unqualified"
-                } else {
-                    "import_mode_unqualified"
-                },
-                "{fault}, closing={closing}"
-            );
+            assert_eq!(error.code, "import_mode_unqualified", "{fault}");
             assert!(!directory.path().join("imports").exists());
             assert!(!directory.path().join("agent-import-ledger.jsonl").exists());
             *error.evidence.unwrap()
@@ -179,7 +169,7 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
         let mut request_hash = join(&request(0), &request(1));
         let mut response_hash = join(&response(0), &response(1));
         let mut bytes = responses[0].len() + responses[1].len();
-        if closing {
+        if admitted {
             assert_eq!(observed.len(), 32);
             for i in [2, 7, 13, 19, 25] {
                 request_hash = join(&request_hash, &request(i));
@@ -196,6 +186,67 @@ async fn import_build_requires_qualified_mode_bracket_and_retains_probe_evidence
         assert_eq!(evidence.response_sha256, response_hash, "{fault}");
         assert_eq!(evidence.bytes, bytes, "{fault}");
     }
+}
+
+#[tokio::test]
+async fn education_build_refuses_an_unsupported_voucher_date_before_any_catalogue_read() {
+    let plans = import_profile_probe("education");
+    let responses = plans
+        .iter()
+        .map(|plan| tally_protocol_simulator::encode(&plan.fixture.body(), plan.encoding))
+        .collect::<Vec<_>>();
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(super::super::super::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().into(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: super::super::super::Redaction::None,
+        import_enabled: true,
+    });
+    let mut payload = captured_catalogue_payload();
+    payload.vouchers[0].date = "20260915".into();
+    let error = match server
+        .build_import_xml(&serde_json::to_value(payload).unwrap())
+        .await
+    {
+        Ok(_) => panic!("unsupported Education voucher date was admitted"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "education_voucher_date_unsupported");
+    let evidence = *error
+        .evidence
+        .expect("completed Education profile probe is retained on date refusal");
+    assert!(!directory.path().join("imports").exists());
+    assert!(!directory.path().join("agent-import-ledger.jsonl").exists());
+    let observed = simulator.finish().unwrap();
+    assert_eq!(observed.len(), 2);
+    assert_eq!(
+        evidence.request_sha256,
+        sha256_hex(
+            format!(
+                "{}:{}",
+                observed[0].request_body_sha256, observed[1].request_body_sha256
+            )
+            .as_bytes()
+        )
+    );
+    assert_eq!(
+        evidence.response_sha256,
+        sha256_hex(
+            format!(
+                "{}:{}",
+                sha256_hex(&responses[0]),
+                sha256_hex(&responses[1])
+            )
+            .as_bytes()
+        )
+    );
+    assert_eq!(evidence.bytes, responses[0].len() + responses[1].len());
 }
 
 #[tokio::test]

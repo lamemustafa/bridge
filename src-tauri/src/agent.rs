@@ -391,10 +391,29 @@ impl ToolFailure {
         let code = if error.chain().any(|cause| {
             matches!(
                 cause.downcast_ref::<crate::tally::runtime::OpeningBoundaryObservationError>(),
+                Some(crate::tally::runtime::OpeningBoundaryObservationError::Period(_))
+            )
+        }) || error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<crate::tally::connection::PartyLedgerMasterSourceValidationError>(),
                 Some(
-                    crate::tally::runtime::OpeningBoundaryObservationError::Unqualified
-                        | crate::tally::runtime::OpeningBoundaryObservationError::Unobserved
+                    crate::tally::connection::PartyLedgerMasterSourceValidationError::MasterPeriod
+                        | crate::tally::connection::PartyLedgerMasterSourceValidationError::BalancePeriod
                 )
+            )
+        }) {
+            "opening_period_not_honoured"
+        } else if error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<crate::tally::runtime::OpeningBoundaryObservationError>(),
+                Some(crate::tally::runtime::OpeningBoundaryObservationError::Changed)
+            )
+        }) {
+            "opening_boundary_profile_changed"
+        } else if error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<crate::tally::runtime::OpeningBoundaryObservationError>(),
+                Some(crate::tally::runtime::OpeningBoundaryObservationError::Unobserved)
             )
         }) {
             "financial_read_profile_unqualified"

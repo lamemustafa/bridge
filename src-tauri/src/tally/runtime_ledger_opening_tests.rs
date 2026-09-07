@@ -112,23 +112,30 @@ fn scoped_opening_requires_observed_mode_and_does_not_infer_unknown_as_licensed(
             safe_reason_code: None,
         },
     );
-    assert_eq!(
-        observed_opening_boundary(&profile),
-        Err(OpeningBoundaryObservationError::Unqualified)
-    );
-    profile.release = Some("7.1".into());
-    profile.license_tier = Some(bridge_tally_core::LicenseTier::Silver);
+    // Release and licence tier stay observed metadata. They do not determine
+    // whether the native operation can honor its date boundary.
     assert_eq!(
         observed_opening_boundary(&profile),
         Ok(DateBoundaryProfile::ModeAgnostic)
     );
-    for mode in [Some("Education"), Some("Educational"), None] {
+    profile.release = Some("unobserved-release".into());
+    profile.license_tier = Some(bridge_tally_core::LicenseTier::Gold);
+    assert_eq!(
+        observed_opening_boundary(&profile),
+        Ok(DateBoundaryProfile::ModeAgnostic)
+    );
+    for mode in [Some("Education"), Some("Educational")] {
         profile.mode = mode.map(str::to_string);
         assert_eq!(
             observed_opening_boundary(&profile),
-            Err(OpeningBoundaryObservationError::Unqualified)
+            Ok(DateBoundaryProfile::EducationRestricted)
         );
     }
+    profile.mode = None;
+    assert_eq!(
+        observed_opening_boundary(&profile),
+        Err(OpeningBoundaryObservationError::Unobserved)
+    );
 }
 
 #[tokio::test]
@@ -345,13 +352,18 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
             "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",
         )
     };
-    for (unsafe_book_start, mode_drift) in [(true, false), (false, true), (false, false)] {
+    for (unsafe_book_start, mode_drift, education_stable) in [
+        (true, false, false),
+        (false, true, false),
+        (false, false, false),
+        (false, false, true),
+    ] {
         // Fault injection into captured licensed metadata, not live Education
         // qualification: either an unsafe book date or a closing-mode change.
-        let company_xml = if unsafe_book_start {
-            education(&captured_company).replace("20260401", "20260415")
-        } else {
-            captured_company.clone()
+        let company_xml = match (unsafe_book_start, education_stable) {
+            (true, _) => education(&captured_company).replace("20260401", "20260415"),
+            (false, true) => education(&captured_company),
+            (false, false) => captured_company.clone(),
         };
         let extent_xml = if unsafe_book_start {
             captured_extent.replace("20260401", "20260415")
@@ -395,17 +407,17 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
                 status.clone(),
                 company,
                 status.clone(),
-                xml(if mode_drift {
-                    education(&captured_company)
-                } else {
-                    captured_company.clone()
+                xml(match (mode_drift, education_stable) {
+                    (true, _) => education(&captured_company),
+                    (false, true) => education(&captured_company),
+                    (false, false) => captured_company.clone(),
                 }),
             ]);
         }
         if unsafe_book_start {
-            // Current monetary qualification stops at the profile; lower-level
-            // Education boundary semantics remain covered by pure period tests.
-            plans.truncate(2);
+            // Education reaches the native period admission. Its invalid
+            // BOOKSFROM must refuse before the ledger report is dispatched.
+            plans.truncate(7);
         }
         let expected_requests = plans.len();
         let responses = plans
@@ -430,7 +442,9 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
                 error
                     .chain()
                     .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
-                Some(&OpeningBoundaryObservationError::Unqualified)
+                Some(&OpeningBoundaryObservationError::Period(
+                    NativeLedgerExportPeriodError::UnsupportedBoundary
+                ))
             );
         } else if mode_drift {
             assert_eq!(
@@ -438,7 +452,7 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
                     .unwrap_err()
                     .chain()
                     .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
-                Some(&OpeningBoundaryObservationError::Unqualified)
+                Some(&OpeningBoundaryObservationError::Changed)
             );
         } else {
             let (ledgers, evidence) = result.unwrap();
