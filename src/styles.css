@@ -740,16 +740,14 @@ h2 {
   margin-bottom: 18px;
 }
 
-.company-connection-details,
-.settings-help-grid {
+.company-connection-details {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin: 0;
 }
 
-.company-connection-details > div,
-.settings-help-grid > div {
+.company-connection-details > div {
   display: grid;
   gap: 4px;
   min-width: 0;
@@ -757,47 +755,24 @@ h2 {
   padding-top: 10px;
 }
 
-.company-connection-details dt,
-.settings-help-grid strong {
+.company-connection-details dt {
   color: #61756a;
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
 }
 
-.company-connection-details dd,
-.settings-help-grid span {
+.company-connection-details dd {
   margin: 0;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 
-.settings-help {
-  margin-top: 18px;
-}
-
-.settings-help .panel-heading > svg {
-  color: #0f766e;
-}
-
-.settings-help-grid small {
+.tally-readiness-fields small {
   color: #61756a;
-  line-height: 1.45;
-}
-
-.settings-help-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  color: #52645b;
-  font-size: 13px;
-  line-height: 1.45;
-  margin: 18px 0 0;
-}
-
-.settings-help-note svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .skip-link {
@@ -2198,8 +2173,7 @@ summary:focus-visible,
   .company-discovery-notice,
   .company-profile-grid,
   .gap-item,
-  .company-connection-details,
-  .settings-help-grid {
+  .company-connection-details {
     grid-template-columns: 1fr;
   }
 

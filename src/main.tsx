@@ -1,7 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import ReactDOM from "react-dom/client";
-import { Building2, Cable, Check, Cloud, FileText, FolderOpen, KeyRound, Play, ShieldCheck } from "lucide-react";
+import { Building2, Cable, Check, Cloud, FileText, FolderOpen, KeyRound, Play, Settings2, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyProbeCompanySelectionTransition,
@@ -1521,7 +1521,7 @@ function App() {
             <Building2 size={18} /> Companies
           </button>
           <button aria-current={view === "settings" ? "page" : undefined} className={view === "settings" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("settings")}>
-            <Cable size={18} /> Settings
+            <Settings2 size={18} /> Settings
           </button>
         </nav>
         {childTallyReadCount > 0 && (
@@ -1598,7 +1598,7 @@ function App() {
           </section>
         )}
 
-        {discoveredCompanyPrompt && view !== "companies" && (
+        {discoveredCompanyPrompt && view !== "companies" && view !== "settings" && (
           <section className="company-discovery-notice" role="status" aria-live="polite">
             <div>
               <strong>{discoveredCompanyPrompt.heading}</strong>
@@ -1986,6 +1986,7 @@ function App() {
               onPortChange={updateTallyPort}
               onCheck={checkTally}
               onOpenCompanies={() => setView("companies")}
+              onOpenOverview={() => setView("outstandings")}
             />
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
             {companyError && <TallyErrorNotice message={companyError} />}

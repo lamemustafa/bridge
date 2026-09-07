@@ -20,7 +20,7 @@ test("Tally setup does not expose unqualified legacy reads", async () => {
     assert.doesNotMatch(commands, new RegExp(`\\bcommands::${command}\\b`));
   }
 
-  assert.match(frontend, /discoveredCompanyPrompt && view !== "companies"/);
+  assert.match(frontend, /discoveredCompanyPrompt && view !== "companies" && view !== "settings"/);
   assert.match(frontend, /async function discoverUntrustedCompanies\(\) \{\s*if \(currentProbeCompanyList\.length > 0\) return;/s);
 });
 
@@ -35,14 +35,15 @@ test("Tally nav keeps setup explicit while Overview remains reachable", async ()
 
   assert.match(nav, /<Cable size=\{18\} \/> Overview/);
   assert.match(nav, /<Building2 size=\{18\} \/> Companies/);
-  assert.match(nav, /<Cable size=\{18\} \/> Settings/);
+  assert.match(nav, /<Settings2 size=\{18\} \/> Settings/);
   assert.match(frontend, /onClick=\{\(\) => setView\("outstandings"\)\}/);
   assert.match(frontend, /onClick=\{\(\) => setView\("companies"\)\}/);
   assert.match(frontend, /selectedCompanyRecord\?\.guid && selectedCompanyRecord\.company_number && selectedCompanyRecord\.books_from_yyyymmdd/);
   assert.match(outstandings, /Manage Tally/);
   assert.match(readiness, /Connection checked\. Choose a company on Companies to continue\./);
-  assert.match(readiness, /Choose a company/);
-  assert.match(settings, /onOpenCompanies: \(\) => void;/);
+  assert.match(readiness, /aria-describedby="tally-port-help"/);
+  assert.match(readiness, /companyReady \? onOpenOverview : onOpenCompanies/);
+  assert.match(settings, /type TallyReadinessFlowProps/);
 });
 
 test("saved pins remain selectable for local proof review without a Tally read", async () => {
