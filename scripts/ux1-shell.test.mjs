@@ -15,7 +15,7 @@ test("UI keeps client selection searchable and exposes only source-backed shell 
 
   assert.match(app, /type View = .*"settings"/);
   assert.match(app, /const \[view, setView\] = React\.useState<View>\("outstandings"\)/);
-  assert.match(app, /<SettingsScreen/);
+  assert.match(app, /<TallyReadinessFlow/);
   assert.match(app, /Overview/);
   assert.match(app, /Companies/);
   assert.match(app, /Settings/);

@@ -13,7 +13,7 @@ import {
   tallyReadinessState,
 } from "./tally-company-selection";
 import { classifyTallyError } from "./tally-error-copy";
-import { SettingsScreen } from "./SettingsScreen";
+import { TallyReadinessFlow } from "./TallyReadinessFlow";
 import {
   OutstandingsExportNotice,
   OutstandingsScreen,
@@ -1974,7 +1974,7 @@ function App() {
         {view === "settings" && (
           <ErrorBoundary key="settings" label="Settings">
           <>
-            <SettingsScreen
+            <TallyReadinessFlow
               config={config}
               endpointReachable={Boolean(status?.reachable)}
               passportObserved={Boolean(passport)}
