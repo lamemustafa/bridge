@@ -22,7 +22,17 @@ const review = {
   builtAt: "2026-09-07T00:00:00Z",
   dispatched: false,
   responseRecorded: false,
-  preview: "Create ONE Journal in Synthetic Accounts\nTotal debit: 12.50  Total credit: 12.50",
+  details: {
+    date: "20260901",
+    reference: "REF-1",
+    narration: "Synthetic test only",
+    entries: [
+      { ledger: "Expense", side: "Dr" as const, amount: "12.50" },
+      { ledger: "Cash", side: "Cr" as const, amount: "12.50" },
+    ],
+    totalDebit: "12.50",
+    totalCredit: "12.50",
+  },
 };
 
 const config = { host: "127.0.0.1", port: 9001 };
@@ -51,7 +61,11 @@ test("renders the review flow and keeps safe recovery actions after each backend
     button(host, "Choose Journal file").click();
   });
   expect(host.textContent).toContain("Synthetic Accounts");
-  expect(host.textContent).toContain("Total debit: 12.50");
+  expect(host.textContent).toContain("2026-09-01");
+  expect(host.textContent).toContain("Synthetic test only");
+  expect(host.textContent).toContain("Expense");
+  expect(host.textContent).toContain("Total debit");
+  expect(host.textContent).toContain("Total credit");
 
   mocks.invoke.mockResolvedValueOnce({
     batchId: review.batchId,

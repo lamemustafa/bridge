@@ -5,6 +5,17 @@ import { deriveJournalActionState } from "./journal-posting-state";
 
 type TallyConfig = { host: string; port: number };
 
+type JournalEntry = { ledger: string; side: "Dr" | "Cr"; amount: string };
+
+type JournalDetails = {
+  date: string;
+  reference: string | null;
+  narration: string | null;
+  entries: JournalEntry[];
+  totalDebit: string;
+  totalCredit: string;
+};
+
 type JournalReview = {
   batchId: string;
   sha256: string;
@@ -12,7 +23,7 @@ type JournalReview = {
   builtAt: string;
   dispatched: boolean;
   responseRecorded: boolean;
-  preview: string;
+  details: JournalDetails;
 };
 
 type JournalActionResponse = {
@@ -45,6 +56,10 @@ function outcomeOf(action: JournalActionResponse | null) {
 
 function actionErrorOf(action: JournalActionResponse | null) {
   return action?.result?.result?.error?.message ?? null;
+}
+
+function displayJournalDate(value: string) {
+  return /^\d{8}$/.test(value) ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}` : value;
 }
 
 export function JournalPostingScreen({ config }: { config: TallyConfig }) {
@@ -142,17 +157,34 @@ export function JournalPostingScreen({ config }: { config: TallyConfig }) {
         </div>
       ) : (
         <>
-          <dl className="journal-review-details">
-            <div><dt>Company</dt><dd>{review.company.name}</dd></div>
-            <div><dt>Company number</dt><dd>{review.company.companyNumber}</dd></div>
-            <div><dt>Books from</dt><dd>{review.company.booksFrom}</dd></div>
-            <div><dt>Saved batch</dt><dd>{review.batchId}</dd></div>
-            <div><dt>Review endpoint</dt><dd>{reviewConfig?.host}:{reviewConfig?.port}</dd></div>
-          </dl>
-          <div className="journal-preview" aria-label="Journal details">
-            <h3>Journal details</h3>
-            <pre>{review.preview}</pre>
-          </div>
+          <section className="journal-primary-details" aria-labelledby="journal-details-heading">
+            <h3 id="journal-details-heading">Journal</h3>
+            <dl className="journal-review-details">
+              <div><dt>Company</dt><dd>{review.company.name}</dd></div>
+              <div><dt>Date</dt><dd>{displayJournalDate(review.details.date)}</dd></div>
+              <div><dt>Reference</dt><dd>{review.details.reference || "None"}</dd></div>
+              <div className="journal-narration"><dt>Narration</dt><dd>{review.details.narration || "None"}</dd></div>
+            </dl>
+            <div className="journal-entry-table-wrap">
+              <table className="journal-entry-table">
+                <caption>Journal entries</caption>
+                <thead><tr><th scope="col">Ledger</th><th scope="col">Side</th><th scope="col">Amount</th></tr></thead>
+                <tbody>{review.details.entries.map((entry, index) => <tr key={index}><td>{entry.ledger}</td><td>{entry.side}</td><td>{entry.amount}</td></tr>)}</tbody>
+                <tfoot><tr><th scope="row" colSpan={2}>Total debit</th><td>{review.details.totalDebit}</td></tr><tr><th scope="row" colSpan={2}>Total credit</th><td>{review.details.totalCredit}</td></tr></tfoot>
+              </table>
+            </div>
+          </section>
+          <details className="journal-recovery-details">
+            <summary>Connection and recovery details</summary>
+            <dl className="journal-review-details">
+              <div><dt>Company number</dt><dd>{review.company.companyNumber}</dd></div>
+              <div><dt>Books from</dt><dd>{review.company.booksFrom}</dd></div>
+              <div><dt>Endpoint</dt><dd>{reviewConfig?.host}:{reviewConfig?.port}</dd></div>
+              <div><dt>Company GUID</dt><dd>{review.company.guid}</dd></div>
+              <div><dt>Saved batch</dt><dd>{review.batchId}</dd></div>
+              <div><dt>File digest</dt><dd>{review.sha256}</dd></div>
+            </dl>
+          </details>
           {verified && <p className="journal-status" role="status"><FileCheck2 size={18} aria-hidden="true" /> Bridge confirmed the original Journal and its saved batch.</p>}
           {reconciliationRequired && !verified && <p className="journal-status journal-status-warning" role="alert">The original batch needs reconciliation. Bridge will use this same review and will not rebuild or resend it.</p>}
           {actionErrorOf(actionResult) && <p className="journal-status journal-status-warning" role="alert">{actionErrorOf(actionResult)}</p>}

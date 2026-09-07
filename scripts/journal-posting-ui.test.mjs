@@ -36,10 +36,11 @@ test("Journal review uses the bounded native commands and preserves reconciliati
   assert.doesNotMatch(screen, /build_import_xml|render_import_xml/);
 });
 
-test("Journal preview stays bounded and scrollable at narrow widths", async () => {
+test("Journal entries stay bounded and scrollable at narrow widths", async () => {
   const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 
   assert.match(styles, /\.journal-review\s*\{[\s\S]*?min-width:\s*0;/);
-  assert.match(styles, /\.journal-preview pre\s*\{[\s\S]*?overflow:\s*auto;/);
+  assert.match(styles, /\.journal-entry-table-wrap\s*\{[\s\S]*?overflow-x:\s*auto;/);
+  assert.match(styles, /\.journal-recovery-details\s*\{[\s\S]*?border-top:/);
   assert.match(styles, /\.journal-review-details\s*\{[\s\S]*?repeat\(auto-fit/);
 });

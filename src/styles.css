@@ -1486,28 +1486,84 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.journal-preview {
+.journal-primary-details {
   border-top: 1px solid #e6ebe7;
   padding-top: 18px;
 }
 
-.journal-preview h3 {
+.journal-primary-details h3 {
   font-size: 15px;
   margin: 0 0 8px;
 }
 
-.journal-preview pre {
-  max-height: 420px;
-  overflow: auto;
-  margin: 0;
-  border: 1px solid #e0e7e2;
-  border-radius: 8px;
-  background: #f8faf8;
+.journal-primary-details .journal-review-details {
+  margin-bottom: 18px;
+}
+
+.journal-narration {
+  grid-column: 1 / -1;
+}
+
+.journal-entry-table-wrap {
+  overflow-x: auto;
+}
+
+.journal-entry-table {
+  border-collapse: collapse;
+  min-width: 520px;
+  width: 100%;
+}
+
+.journal-entry-table caption {
+  font-weight: 700;
+  padding-bottom: 8px;
+}
+
+.journal-entry-table th,
+.journal-entry-table td {
+  border-bottom: 1px solid #e6ebe7;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.journal-entry-table th:last-child,
+.journal-entry-table td:last-child {
+  text-align: right;
+}
+
+.journal-entry-table tfoot th,
+.journal-entry-table tfoot td {
+  font-weight: 700;
+}
+
+.journal-recovery-details {
+  border-top: 1px solid #e6ebe7;
+  margin-top: 18px;
+  padding-top: 16px;
+}
+
+.journal-recovery-details summary {
   color: #27352e;
-  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  padding: 14px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.journal-recovery-details[open] summary {
+  margin-bottom: 16px;
+}
+
+.journal-recovery-details .journal-review-details {
+  margin-bottom: 0;
+}
+
+.journal-recovery-details dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.journal-entry-table td:last-child,
+.journal-entry-table tfoot td {
+  font-variant-numeric: tabular-nums;
 }
 
 .journal-status {
