@@ -170,6 +170,29 @@ test("inspecting a terminal run leaves the active worker state untouched", async
   expect(fixture.result.setInspectedJob).toHaveBeenCalledWith(terminal);
   expect(fixture.result.snapshotJob).toBe(active);
   expect(fixture.result.snapshotSelectionVersion.current).toBe(1);
-  root.unmount();
+  await act(async () => root.unmount());
+  host.remove();
+});
+
+test("an inspected interrupted run can resume only while no worker is active", async () => {
+  const interrupted = run("interrupted", "extract", true);
+  const fixture = props(async () => [interrupted]);
+  fixture.result.inspectedJob = interrupted;
+  fixture.result.snapshotStartOutcomeUnknown = false;
+  fixture.result.resumeCoreSnapshot = vi.fn(async () => {});
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  for (const active of [true, false]) {
+    fixture.result.snapshotActive = active;
+    await act(async () => root.render(<MirrorProofScreen {...fixture.result} />));
+    const resume = [...host.querySelectorAll("button")].find((button) => button.textContent?.includes("Resume interrupted run"));
+    expect(resume).toBeDefined();
+    expect(resume!.disabled).toBe(active);
+    await act(async () => resume!.click());
+    expect(fixture.result.resumeCoreSnapshot).toHaveBeenCalledTimes(active ? 0 : 1);
+  }
+  expect(fixture.result.resumeCoreSnapshot).toHaveBeenCalledWith("interrupted");
+  await act(async () => root.unmount());
   host.remove();
 });

@@ -652,8 +652,8 @@ export function MirrorProofScreen({
           <button className="secondary-action" onClick={() => void startCoreSnapshot()} disabled={!selectedCompanyRecord?.mirror_company_id || !selectedCompanyLive || snapshotActive || snapshotStartOutcomeUnknown || liveReadActionsLocked || tallyAction !== null}>
             <Play size={16} /> {tallyAction === "start" ? "Starting..." : "Run read-only Core Accounting evidence read"}
           </button>
-          {snapshotJob?.resume_available && (
-            <button className="secondary-action" onClick={() => void resumeCoreSnapshot(snapshotJob.run_id)} disabled={snapshotStartOutcomeUnknown || liveReadActionsLocked || tallyAction !== null}>
+          {inspectedJob?.resume_available && (
+            <button className="secondary-action" onClick={() => void resumeCoreSnapshot(inspectedJob.run_id)} disabled={snapshotActive || snapshotStartOutcomeUnknown || liveReadActionsLocked || tallyAction !== null}>
               <Play size={16} /> {tallyAction === "resume" ? "Resuming..." : "Resume interrupted run"}
             </button>
           )}
