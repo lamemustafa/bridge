@@ -739,7 +739,7 @@ or request shape. A mandatory manual-numbering preflight would require a
 separately observed voucher-type read contract; it cannot be inferred from the
 failed-`Alter` case.
 
-**Native mutation selector — implementation change 2026-09-07; live qualification pending.**
+**Native mutation selector — verified 2026-09-07, bounded fresh-dispatch observation.**
 A new native attempt uses a fresh private `REMOTEID`, separate from the selected
 public file's identity. The narration keeps the original batch attribution.
 The durable dispatch intent binds the exact UTF-16LE native request SHA-256 before
@@ -748,8 +748,19 @@ field remain readable and are never resent. This prevents native posting from
 reusing the public file's mutation selector after a manual import. It does not
 prove semantic absence after arbitrary edits to an earlier business event.
 Native posting refuses a supplied `VOUCHERNUMBER` until its matching precedence
-is qualified. The prior live observations above apply to their recorded binaries;
-they do not establish the changed selector/attribution combination on live Tally.
+is qualified.
+
+A fresh synthetic Silver 7.1 Journal using this separate selector and attribution
+returned `CREATED=1`, all other counters zero, and explicit zero exceptions.
+Independent readback matched its original batch attribution, date and balanced
+entries. Restarting with both generation and posting disabled reconciled the same
+GUID, master ID, voucher number and AlterID with one intent and one response.
+The original earlier Journal was unchanged in before/after readback. The executable
+SHA-256 was `c2df9ffd76bf687e50b9b78916cb83fdacc6cddde2f317b53c46f538f1b2a96f`;
+the durable native request commitment matched the actual transport request hash.
+This qualifies a fresh dispatch and read-only restart for that binary and source.
+The separate public-file import/edit/native-post comparison remains pending;
+this observation does not establish preservation after that sequence.
 
 **Batch identity qualification — verified 2026-09-06, recorded 2026-09-07.**
 A new synthetic Journal reused the earlier caller transaction label in a separate

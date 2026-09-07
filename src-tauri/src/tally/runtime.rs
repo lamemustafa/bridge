@@ -76,6 +76,30 @@ pub struct AgentRead {
     pub encoded_sha256: String,
 }
 
+async fn fetch_admitted_agent_read(
+    client: &TallyClient,
+    identity: &VerifiedCompanyIdentity,
+    request: super::agent_read_request::AgentReadRequest,
+) -> anyhow::Result<(AgentRead, RuntimeReadEvidence)> {
+    bracket_verified_company_identity(client, identity).await?;
+    let request_xml = request.into_xml();
+    let (body, encoded_bytes, encoded_sha256) = client
+        .fetch_native_report_paired_with_evidence(request_xml.clone())
+        .await?;
+    let evidence = RuntimeReadEvidence::paired(&request_xml, encoded_sha256.clone(), encoded_bytes);
+    bracket_verified_company_identity(client, identity)
+        .await
+        .map_err(|error| with_read_evidence(error, evidence.clone()))?;
+    Ok((
+        AgentRead {
+            body,
+            encoded_bytes,
+            encoded_sha256,
+        },
+        evidence,
+    ))
+}
+
 /// An approved import response retains the import wire separately from the
 /// source observations that admitted it. The ledger's request/response hashes
 /// must remain the raw import bytes, not a composite admission digest.
@@ -2148,28 +2172,9 @@ impl TallyRuntime {
                 let identity = identity.clone();
                 let request = request.clone();
                 async move {
-                    bracket_verified_company_identity(&client, &identity).await?;
-                    let request_xml = request.into_xml();
-                    let (body, encoded_bytes, encoded_sha256) = client
-                        .fetch_native_report_paired_with_evidence(request_xml.clone())
-                        .await?;
-                    bracket_verified_company_identity(&client, &identity)
+                    fetch_admitted_agent_read(&client, &identity, request)
                         .await
-                        .map_err(|error| {
-                            with_read_evidence(
-                                error,
-                                RuntimeReadEvidence::paired(
-                                    &request_xml,
-                                    encoded_sha256.clone(),
-                                    encoded_bytes,
-                                ),
-                            )
-                        })?;
-                    Ok(AgentRead {
-                        body,
-                        encoded_bytes,
-                        encoded_sha256,
-                    })
+                        .map(|(read, _)| read)
                 }
             },
         )
@@ -2179,14 +2184,16 @@ impl TallyRuntime {
     /// One approved mutation through the shared endpoint queue. The durable
     /// intent is committed after identity admission and before any import bytes.
     /// Unlike paired reads, an import must never be repeated automatically.
-    pub(crate) async fn post_approved_import<F>(
+    pub(crate) async fn post_approved_import<A, F>(
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
         request: super::approved_import::ApprovedImport,
+        recheck_absence: A,
         before_dispatch: F,
     ) -> anyhow::Result<ApprovedImportDispatch>
     where
+        A: Fn(&str, &str) -> anyhow::Result<()>,
         F: Fn() -> Result<(), String>,
     {
         let _lease = self.begin_ordinary_read(&config)?;
@@ -2199,6 +2206,7 @@ impl TallyRuntime {
                 let identity = identity.clone();
                 let request = request.clone();
                 let xml = request.xml().to_string();
+                let recheck_absence = &recheck_absence;
                 let before_dispatch = &before_dispatch;
                 async move {
                     let (profile, mode_evidence) = observe_read_boundary(&client).await?;
@@ -2216,6 +2224,24 @@ impl TallyRuntime {
                     request.require_boundary_profile(profile).map_err(|error| {
                         with_read_evidence(error.into(), admission_evidence.clone())
                     })?;
+                    let (first_read, first_evidence) = fetch_admitted_agent_read(
+                        &client,
+                        &identity,
+                        request.verification_request(),
+                    )
+                    .await
+                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let admission_evidence = admission_evidence.combine(first_evidence);
+                    let (second_read, second_evidence) = fetch_admitted_agent_read(
+                        &client,
+                        &identity,
+                        request.verification_request(),
+                    )
+                    .await
+                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let admission_evidence = admission_evidence.combine(second_evidence);
+                    recheck_absence(&first_read.body, &second_read.body)
+                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     before_dispatch().map_err(|error| {
                         with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())
                     })?;

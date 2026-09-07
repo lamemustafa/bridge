@@ -35,6 +35,19 @@ fn status_plan() -> ScenarioPlan {
         .with_framing(ResponseFraming::ContentLength)
 }
 
+fn captured_journal() -> String {
+    let bytes = include_bytes!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml"
+    );
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
 fn identity(xml: &str) -> VerifiedCompanyIdentity {
     let companies = parse_companies_from_collection(xml).unwrap();
     let company = companies
@@ -70,6 +83,24 @@ fn expected_admission(
     }
 }
 
+fn expected_queued_admission(
+    observed: &[tally_protocol_simulator::ObservedRequest],
+    responses: &[Vec<u8>],
+) -> RuntimeReadEvidence {
+    let request = bridge_tally_protocol::xml_read_profiles::ReadOnlyProfile::CompanyListV2.render();
+    expected_admission(observed, responses)
+        .combine(RuntimeReadEvidence::paired(
+            &request,
+            sha256_hex(&responses[4]),
+            responses[4].len(),
+        ))
+        .combine(RuntimeReadEvidence::paired(
+            &request,
+            sha256_hex(&responses[10]),
+            responses[10].len(),
+        ))
+}
+
 #[tokio::test]
 async fn queued_education_date_refusal_retains_captured_mode_and_final_company_evidence() {
     let companies = captured_companies();
@@ -102,6 +133,7 @@ async fn queued_education_date_refusal_retains_captured_mode_and_final_company_e
                 "<ENVELOPE/>".into(),
                 bridge_tally_core::TallyDate::parse("20260915").unwrap(),
             ),
+            |_, _| Ok(()),
             move || {
                 guard.store(true, Ordering::Release);
                 Ok(())
@@ -159,6 +191,7 @@ async fn queued_company_refusal_retains_captured_mode_and_final_company_evidence
                 "<ENVELOPE/>".into(),
                 bridge_tally_core::TallyDate::parse("20260901").unwrap(),
             ),
+            |_, _| Ok(()),
             move || {
                 guard.store(true, Ordering::Release);
                 Ok(())
@@ -190,6 +223,18 @@ async fn queued_import_keeps_final_company_admission_separate_from_raw_import_wi
         status_plan(),
         company_plan(companies.clone()),
         company_plan(companies.clone()),
+        company_plan(companies.clone()),
+        company_plan(companies.clone()),
+        status_plan(),
+        company_plan(companies.clone()),
+        status_plan(),
+        company_plan(companies.clone()),
+        company_plan(companies.clone()),
+        company_plan(companies.clone()),
+        status_plan(),
+        company_plan(companies.clone()),
+        status_plan(),
+        company_plan(companies.clone()),
         company_plan(captured_non_import_response),
     ];
     let responses = plans
@@ -211,6 +256,7 @@ async fn queued_import_keeps_final_company_admission_separate_from_raw_import_wi
                 "<ENVELOPE/>".into(),
                 bridge_tally_core::TallyDate::parse("20260901").unwrap(),
             ),
+            |_, _| Ok(()),
             move || {
                 guard.store(true, Ordering::Release);
                 Ok(())
@@ -220,22 +266,92 @@ async fn queued_import_keeps_final_company_admission_separate_from_raw_import_wi
         .expect("captured admission permits a valid date");
     assert!(dispatched.load(Ordering::Acquire));
     let observed = simulator.finish().unwrap();
-    assert_eq!(observed.len(), 4);
+    assert_eq!(observed.len(), 16);
     assert_eq!(
         dispatch.admission_evidence,
-        expected_admission(&observed, &responses)
+        expected_queued_admission(&observed, &responses)
     );
     assert_eq!(
         dispatch.response_evidence.request_sha256,
-        observed[3].request_body_sha256
+        observed[15].request_body_sha256
     );
     assert_eq!(
         dispatch.response_evidence.response_sha256,
-        sha256_hex(&responses[3])
+        sha256_hex(&responses[15])
     );
-    assert_eq!(dispatch.response_evidence.bytes, responses[3].len());
+    assert_eq!(dispatch.response_evidence.bytes, responses[15].len());
     assert_ne!(
         dispatch.response_evidence.request_sha256, dispatch.admission_evidence.request_sha256,
         "raw import request commitment must not be replaced by the admission composite"
+    );
+}
+
+#[tokio::test]
+async fn queued_import_refuses_newly_attributed_source_before_intent_or_post() {
+    let companies = captured_companies();
+    let journal = captured_journal();
+    let plans = vec![
+        status_plan(),
+        company_plan(companies.clone()),
+        company_plan(companies.clone()),
+        company_plan(companies.clone()),
+        company_plan(journal.clone()),
+        status_plan(),
+        company_plan(journal.clone()),
+        status_plan(),
+        company_plan(companies.clone()),
+        company_plan(companies.clone()),
+        company_plan(journal.clone()),
+        status_plan(),
+        company_plan(journal.clone()),
+        status_plan(),
+        company_plan(companies.clone()),
+    ];
+    let responses = plans
+        .iter()
+        .map(ScenarioPlan::response_bytes)
+        .collect::<Vec<_>>();
+    let simulator = SequenceSimulator::spawn(plans).unwrap();
+    let runtime = TallyRuntime::default();
+    let dispatched = Arc::new(AtomicBool::new(false));
+    let guard = dispatched.clone();
+    let result = runtime
+        .post_approved_import(
+            TallyConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            &identity(&companies),
+            ApprovedImport::approved_for_test(
+                "<ENVELOPE/>".into(),
+                bridge_tally_core::TallyDate::parse("20260901").unwrap(),
+            ),
+            move |first, second| {
+                assert_eq!(first, journal.as_str());
+                assert_eq!(second, journal.as_str());
+                Err(ApprovedImportAdmissionError::PreexistingIdentity.into())
+            },
+            move || {
+                guard.store(true, Ordering::Release);
+                Ok(())
+            },
+        )
+        .await;
+    let error = result.expect_err("queue recheck must refuse the attributed Journal");
+    assert!(error.chain().any(|cause| matches!(
+        cause.downcast_ref::<ApprovedImportAdmissionError>(),
+        Some(ApprovedImportAdmissionError::PreexistingIdentity)
+    )));
+    assert!(
+        !dispatched.load(Ordering::Acquire),
+        "refusal precedes durable intent"
+    );
+    let observed = simulator.finish().unwrap();
+    assert_eq!(observed.len(), 15, "refusal must precede import POST");
+    let expected = expected_queued_admission(&observed, &responses);
+    assert_eq!(
+        error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
+        expected,
+        "mode, company and both queued verification reads survive the refusal"
     );
 }
