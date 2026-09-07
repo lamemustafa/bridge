@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Install the local Bridge connector for Claude Desktop." />
+    <title>Bridge for Claude Desktop</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="masthead">
+        <a class="wordmark" href="./" aria-label="Bridge installation home">Bridge</a>
+        <a class="quiet-link" href="https://github.com/lamemustafa/bridge/releases">All releases</a>
+      </header>
+
+      <section class="intro" aria-labelledby="page-title">
+        <p class="kicker">Local connector for Claude Desktop</p>
+        <h1 id="page-title">Ask Claude about the Tally company on this computer.</h1>
+        <p class="lede">Bridge installs as a local extension. Claude starts it on your computer, and Bridge calls Tally's local HTTP gateway over loopback.</p>
+        <p class="support-line"><strong>Supported today:</strong> Windows x64 and Apple Silicon Mac. Intel Mac and other platforms are not yet qualified.</p>
+      </section>
+
+      <section class="release-panel" aria-labelledby="download-title">
+        <div class="section-heading">
+          <div>
+            <p class="kicker">1. Download</p>
+            <h2 id="download-title">Choose your computer</h2>
+          </div>
+          <p id="release-status" class="release-status" role="status">Checking releases…</p>
+        </div>
+        <p id="channel-note" class="channel-note">Unsigned previews are for evaluation. Review the checksum and release notes before opening one.</p>
+        <div class="downloads">
+          <a class="download-option" data-platform="windows-x64" aria-disabled="true">
+            <span>Windows</span>
+            <strong>x64</strong>
+            <small>Download unavailable until a matching release is published.</small>
+          </a>
+          <a class="download-option" data-platform="macos-arm64" aria-disabled="true">
+            <span>Apple Silicon Mac</span>
+            <strong>ARM64</strong>
+            <small>Download unavailable until a matching release is published.</small>
+          </a>
+        </div>
+        <p class="verification-note">Each download has a matching <code>.sha256</code> file on the same release. Compare it before opening the package if your organization requires download verification.</p>
+      </section>
+
+      <section class="setup" aria-labelledby="setup-title">
+        <div class="section-heading">
+          <div>
+            <p class="kicker">2. Install and connect</p>
+            <h2 id="setup-title">No terminal or configuration file required</h2>
+          </div>
+        </div>
+        <ol>
+          <li>Open the downloaded <code>.mcpb</code> file. In Claude Desktop, choose <strong>Settings → Extensions → Advanced settings → Install Extension…</strong> if your computer does not open it automatically.</li>
+          <li>Keep the Tally host as <strong>localhost</strong>. Bridge accepts only a local loopback connection; it does not expose Tally to the internet.</li>
+          <li>Set <strong>Tally port</strong> to the port used by Tally's local HTTP gateway, then finish the extension setup.</li>
+          <li>Restart Claude Desktop if the extension is installed but its tools do not appear. Use <strong>Connectors</strong> in a new chat to check that Bridge is connected.</li>
+        </ol>
+
+        <div class="port-guide">
+          <label for="tally-port">Tally port</label>
+          <input id="tally-port" name="tally-port" type="number" min="1" max="65535" value="9000" inputmode="numeric" />
+          <p id="port-guidance">Use <strong>9000</strong> unless Tally's local HTTP gateway is configured for another port.</p>
+          <p>This is Tally's HTTP gateway port, not a Tally licence port. Changing it tells Bridge where to call Tally; it does not change Tally's own setting. Save the extension setting and restart Claude Desktop after changing it.</p>
+        </div>
+      </section>
+
+      <section class="plain-language" aria-labelledby="data-title">
+        <div>
+          <p class="kicker">What stays where</p>
+          <h2 id="data-title">Bridge is local. Your AI conversation is not necessarily local.</h2>
+        </div>
+        <p>Bridge runs on this computer and reads only the configured local Tally endpoint. When you ask Claude to use Bridge, the selected Tally results are sent to the AI provider you chose for that conversation. Choose a redaction setting during installation if you need it, and do not install a package from an untrusted source.</p>
+      </section>
+
+      <section class="aftercare" aria-labelledby="aftercare-title">
+        <h2 id="aftercare-title">Upgrade or remove it</h2>
+        <p>Private MCPB downloads do not update automatically. To upgrade, download a newer compatible release and install it from Claude Desktop's Extensions settings, then confirm its version and settings. To remove Bridge, use that same Extensions screen and choose uninstall. Removing the extension does not change Tally's gateway setting.</p>
+      </section>
+    </main>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

@@ -87,24 +87,41 @@ export function releaseMcpbBinaryPath(sourceRoot = root, binary) {
   return resolve(sourceRoot, "src-tauri", "target", "release", binary);
 }
 
+export function packageMcpbArguments(argumentsList) {
+  if (argumentsList.length === 0) return { binaryPath: undefined };
+  if (argumentsList.length === 2 && argumentsList[0] === "--binary" && argumentsList[1]) {
+    return { binaryPath: resolve(argumentsList[1]) };
+  }
+  throw new Error("usage: node scripts/package-mcpb.mjs [--binary /path/to/bridge_mcp]");
+}
+
 async function main() {
-  const manifest = resolve(root, "src-tauri", "Cargo.toml");
+  const { binaryPath } = packageMcpbArguments(process.argv.slice(2));
   const host = mcpbHostTarget();
-  const build = spawnSync("cargo", ["build", "--locked", "--release", "--manifest-path", manifest, "--bin", "bridge_mcp"], {
-    cwd: root,
-    stdio: "inherit",
-  });
-  if (build.status !== 0) process.exit(build.status ?? 1);
+  const sourceBinary = binaryPath ?? releaseMcpbBinaryPath(root, host.binary);
+  if (!binaryPath) {
+    const manifest = resolve(root, "src-tauri", "Cargo.toml");
+    const build = spawnSync("cargo", ["build", "--locked", "--release", "--manifest-path", manifest, "--bin", "bridge_mcp"], {
+      cwd: root,
+      stdio: "inherit",
+    });
+    if (build.status !== 0) process.exit(build.status ?? 1);
+  }
+  try {
+    await access(sourceBinary);
+  } catch {
+    throw new Error(`MCPB binary is missing: ${sourceBinary}`);
+  }
 
   const stageDirectory = resolve(root, "packaging", "mcpb", "stage");
   await rm(stageDirectory, { recursive: true, force: true });
   const entryPoint = await stageHostManifest(stageDirectory, root, host);
   const destination = resolve(stageDirectory, entryPoint);
   await mkdir(resolve(stageDirectory, "bin", host.target), { recursive: true });
-  await cp(releaseMcpbBinaryPath(root, host.binary), destination);
+  await cp(sourceBinary, destination);
   await stageMcpbResources(stageDirectory);
   await verifyMcpbStage(stageDirectory);
-  console.log(`Prepared ${destination} and verified the ${host.key} binary, launch manifest, and legal resources; do not commit host artifacts.`);
+  console.log(`Prepared ${destination} from ${sourceBinary} and verified the ${host.key} binary, launch manifest, and legal resources; do not commit host artifacts.`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

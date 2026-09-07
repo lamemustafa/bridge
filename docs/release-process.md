@@ -137,9 +137,34 @@ corepack pnpm run license:all
 - Do not create or move a `v*` tag until signed artifacts from both supported
   platforms pass the candidate gates. Release tags must be immutable.
 
-The repository intentionally does not auto-publish unsigned tag artifacts.
-CI bundle jobs produce short-lived smoke evidence only until signing and
-notarization ownership is configured.
+The repository intentionally does not auto-publish unsigned `v*` tag
+artifacts. CI bundle jobs produce short-lived smoke evidence only until signing
+and notarization ownership is configured.
+
+## MCPB previews and the install page
+
+`.github/workflows/release-mcpb-preview.yml` is a manually dispatched,
+two-platform preview lane. It produces the actual Windows x64 and macOS arm64
+MCPB archives, validates and launches each archive without contacting Tally,
+then publishes a durable **GitHub prerelease** only when every archive, checksum,
+payload-free smoke result, and source-provenance record is present. Preview tags
+must start with `mcp-preview-`; they cannot reuse a production `v*` tag. A
+preview is unsigned and must never be described as signed, notarized, or ready
+for production use.
+
+This workflow intentionally has no production-signed channel. A raw MCPB
+archive is not a notarization-and-stapling carrier for the enclosed macOS
+binary. Before adding one, maintainers need a separately reviewed signed
+distribution design, an organization-controlled Developer ID, notarization
+credentials, a timestamped Windows signing certificate, protected release
+environments, and host validation of the complete shipped carriers. Self-signed
+certificates and OS-warning bypass instructions are not acceptable substitutes.
+
+`site/` is a small static installer page. Its workflow is manual so publishing
+it remains an explicit maintainer action. Once GitHub Pages is configured for
+this repository, it resolves GitHub Release assets by exact release tag and
+labels prerelease downloads as unsigned previews. It does not proxy Tally,
+create an account, or run a cloud relay.
 
 ## Rollback
 
