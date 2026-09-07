@@ -518,7 +518,7 @@ type Props = {
   mirrorTruthState: string;
 
   snapshotJob: SnapshotJobStatus | null;
-  setSnapshotJob: (job: SnapshotJobStatus) => void;
+  setInspectedJob: (job: SnapshotJobStatus) => void;
   snapshotSelectionVersion: React.MutableRefObject<number>;
   snapshotActive: boolean;
   snapshotError: OperatorError | null;
@@ -573,7 +573,7 @@ export function MirrorProofScreen({
   latestProof,
   mirrorTruthState,
   snapshotJob,
-  setSnapshotJob,
+  setInspectedJob,
   snapshotSelectionVersion,
   snapshotActive,
   snapshotError,
@@ -715,7 +715,7 @@ export function MirrorProofScreen({
                     <td>{formatIdentifier(run.phase)}</td>
                     <td>{run.completed_windows}/{run.total_windows}</td>
                     <td>{run.resume_available ? "Resume available" : run.requires_resume ? "Inspect only" : run.phase === "completed" || run.phase === "partial" || run.phase === "failed" || run.phase === "cancelled" ? "Terminal" : "Active"}</td>
-                    <td><button className="secondary-action" disabled={tallyAction !== null} onClick={() => { snapshotSelectionVersion.current += 1; setSnapshotJob(run); }}>Inspect</button></td>
+                    <td><button className="secondary-action" disabled={tallyAction !== null} onClick={() => setInspectedJob(run)}>Inspect</button></td>
                   </tr>
                 ))}
               </tbody>

@@ -539,7 +539,7 @@
     },
     {
       "path": "src/MirrorProofScreen.tsx",
-      "sha256": "1c6af714e8be1ca397c5cc16b7b2d4bed6a7568c6118790ffa1b6e932233f5f7"
+      "sha256": "1215e456d54fe2e9819f6ef813cb45a68a8c132b283d1b6f1e7bfaf8b9dc1703"
     },
     {
       "path": "src/OutstandingsEvidencePanel.tsx",
@@ -571,7 +571,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "059d6420ff07b89fb4d4d743f51b4370cdd90ba5f32b8b9706b211c42e162c08"
+      "sha256": "a67ecc0bf01fcaf802f98604f1be17d9b611470ec1b39de3a7df03dbfabf17cd"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -658,5 +658,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "645869a543949c985696e221cad07af5a6f806552c64369e7b4055a51689af90"
+  "manifest_sha256": "8055959ddc2ca2223ca3c1bc1bd05355e25e65cabede2237a648bfbc4c652440"
 }

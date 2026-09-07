@@ -55,7 +55,7 @@ function props(
     latestProof: undefined,
     mirrorTruthState: "unknown",
     snapshotJob: null,
-    setSnapshotJob: vi.fn(),
+    setInspectedJob: vi.fn(),
     snapshotSelectionVersion,
     snapshotActive: false,
     snapshotError: null,
@@ -149,4 +149,27 @@ test("a stale response retains the block and re-enables acknowledgment", async (
 test("acknowledgment clears only after no active run, including a detached known resume", async () => {
   expect(await acknowledge([run("old", "completed")])).toHaveBeenCalledWith(false);
   expect(await acknowledge([run("resume", "extract", true)], "resume")).toHaveBeenCalledWith(false);
+});
+
+test("inspecting a terminal run leaves the active worker state untouched", async () => {
+  const active = run("active", "extract");
+  const terminal = run("terminal", "completed");
+  const fixture = props(async () => [active, terminal]);
+  fixture.result.snapshotJob = active;
+  fixture.result.snapshotActive = true;
+  fixture.result.selectedRecentSnapshotRuns = [active, terminal];
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+
+  await act(async () => root.render(<MirrorProofScreen {...fixture.result} />));
+  const inspect = [...host.querySelectorAll("button")].filter((candidate) => candidate.textContent === "Inspect").at(-1);
+  expect(inspect).toBeDefined();
+  await act(async () => inspect!.click());
+
+  expect(fixture.result.setInspectedJob).toHaveBeenCalledWith(terminal);
+  expect(fixture.result.snapshotJob).toBe(active);
+  expect(fixture.result.snapshotSelectionVersion.current).toBe(1);
+  root.unmount();
+  host.remove();
 });

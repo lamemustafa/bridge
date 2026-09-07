@@ -465,6 +465,7 @@ function App() {
   const [mirrorExplorer, setMirrorExplorer] = React.useState<MirrorExplorerPage | null>(null);
   const [mirrorExplorerError, setMirrorExplorerError] = React.useState<OperatorError | null>(null);
   const [snapshotJob, setSnapshotJob] = React.useState<SnapshotJobStatus | null>(null);
+  const [inspectedSnapshotJob, setInspectedSnapshotJob] = React.useState<SnapshotJobStatus | null>(null);
   const [recentSnapshotRuns, setRecentSnapshotRuns] = React.useState<SnapshotJobStatus[]>([]);
   const [snapshotError, setSnapshotError] = React.useState<OperatorError | null>(null);
   const [snapshotStartOutcomeUnknown, setSnapshotStartOutcomeUnknown] = React.useState(false);
@@ -527,6 +528,7 @@ function App() {
       const runs = await invoke<SnapshotJobStatus[]>("tally_recent_snapshot_runs");
       setRecentSnapshotRuns(runs);
       setSnapshotJob((current) => current ? runs.find((run) => run.run_id === current.run_id) ?? current : null);
+      setInspectedSnapshotJob((current) => current ? runs.find((run) => run.run_id === current.run_id) ?? current : null);
       return runs;
     } catch (error) {
       setSnapshotError(toOperatorError(error));
@@ -776,6 +778,7 @@ function App() {
       clearSnapshotState: () => {
         snapshotSelectionVersion.current += 1;
         setSnapshotJob(null);
+        setInspectedSnapshotJob(null);
         setSnapshotError(null);
         setSnapshotStartOutcomeUnknown(false);
         setSnapshotOutcomeUnknownRunId(null);
@@ -1286,6 +1289,7 @@ function App() {
       });
       if (selectionVersion === snapshotSelectionVersion.current) {
         setSnapshotJob(job);
+        setInspectedSnapshotJob(null);
         setRecentSnapshotRuns((current) => [
           job,
           ...current.filter((run) => run.run_id !== job.run_id),
@@ -1296,6 +1300,7 @@ function App() {
       void refreshRecentSnapshots();
     } catch (error) {
       setSnapshotJob(null);
+      setInspectedSnapshotJob(null);
       setSnapshotOutcomeUnknownRunId(null);
       await refreshRecentSnapshots();
       setSnapshotStartOutcomeUnknown(true);
@@ -1333,10 +1338,14 @@ function App() {
       const job = await invoke<SnapshotJobStatus>("resume_tally_core_snapshot", {
         request: { config, run_id: runId },
       });
-      if (selectionVersion === snapshotSelectionVersion.current) setSnapshotJob(job);
+      if (selectionVersion === snapshotSelectionVersion.current) {
+        setSnapshotJob(job);
+        setInspectedSnapshotJob(null);
+      }
       void refreshRecentSnapshots();
     } catch (error) {
       setSnapshotJob(null);
+      setInspectedSnapshotJob(null);
       setSnapshotOutcomeUnknownRunId(runId);
       await refreshRecentSnapshots();
       setSnapshotStartOutcomeUnknown(true);
@@ -1468,7 +1477,9 @@ function App() {
     : [];
   const latestProof = syncEvidence?.latest_proofs[0];
   const mirrorTruthState = latestProof?.verification_state ?? "unknown";
-  const inspectedJob = snapshotJob?.mirror_company_id === selectedCompanyRecord?.mirror_company_id ? snapshotJob : null;
+  const inspectedJob = (inspectedSnapshotJob ?? snapshotJob)?.mirror_company_id === selectedCompanyRecord?.mirror_company_id
+    ? inspectedSnapshotJob ?? snapshotJob
+    : null;
   const latestDurableJob = inspectedJob
     && !inspectedJob.requires_resume
     && !["completed", "partial", "failed", "cancelled"].includes(inspectedJob.phase)
@@ -2162,7 +2173,7 @@ function App() {
             latestProof={latestProof}
             mirrorTruthState={mirrorTruthState}
             snapshotJob={snapshotJob}
-            setSnapshotJob={setSnapshotJob}
+            setInspectedJob={setInspectedSnapshotJob}
             snapshotSelectionVersion={snapshotSelectionVersion}
             snapshotActive={snapshotActive}
             snapshotError={snapshotError}
