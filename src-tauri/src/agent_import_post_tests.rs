@@ -239,6 +239,95 @@ fn recovery_failure_retains_the_saved_dispatch_response() {
     assert_eq!(result["error"]["code"], "verification_transport_failed");
 }
 
+#[tokio::test]
+async fn received_response_survives_an_injected_response_journal_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let (line, endpoint) = batch();
+    let server = Server::new(crate::agent::Settings {
+        endpoint,
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: crate::agent::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+    });
+    server.append_import_ledger(&line).unwrap();
+    let admission = server.lock_import_admission().unwrap();
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&line))
+        .unwrap();
+    drop(admission);
+
+    let journal = directory.path().join("agent-import-ledger.jsonl");
+    std::fs::rename(&journal, directory.path().join("preserved-ledger.jsonl")).unwrap();
+    std::fs::create_dir(&journal).unwrap();
+    let response = dispatch_response("success", 1, 0);
+    let admission = server.lock_import_admission().unwrap();
+    assert_eq!(
+        server.append_import_record_while_admitted(&ledger::StatusRecord::response(
+            &line,
+            response.clone(),
+        )),
+        Err("import_ledger_unavailable".into())
+    );
+    drop(admission);
+
+    let outcome = post_failure_outcome(
+        &line.batch_id,
+        &line.company_guid,
+        ToolFailure::from("import_ledger_unavailable".to_string()),
+        crate::agent::evidence_from_runtime_read(
+            crate::tally::runtime::RuntimeReadEvidence::empty(),
+        ),
+        None,
+        Some(&response),
+    );
+    let formatted = server.finish_tool_response(
+        "post_import",
+        &json!({"batch_id":line.batch_id,"company_guid":line.company_guid}),
+        chrono::Utc::now(),
+        Ok(outcome),
+    );
+    let mut output = Vec::new();
+    std::fs::create_dir(server.settings.data_dir.join("agent-egress.jsonl")).unwrap();
+    crate::agent::agent_protocol::finish_response(
+        &server,
+        &mut output,
+        json!(7),
+        Ok(formatted.value),
+        Some(formatted.egress),
+        formatted.recovery_batch_id,
+        true,
+    )
+    .await
+    .unwrap();
+    let framed: Value = serde_json::from_slice(&output).unwrap();
+    assert!(output.len() <= server.settings.max_bytes);
+    assert_eq!(framed["error"]["message"], "egress_record_write_failed");
+    let payload = &framed["error"]["data"];
+    assert_eq!(payload["batch_id"], line.batch_id);
+    assert_eq!(payload["attempt_recorded"], true);
+    assert_eq!(payload["dispatch"]["state"], "reconciliation_required");
+    assert_eq!(payload["dispatch"]["resent"], false);
+    assert_eq!(
+        payload["dispatch_response"]["request_sha256"],
+        response.request_sha256
+    );
+    assert_eq!(
+        payload["dispatch_response"]["response_sha256"],
+        response.response_sha256
+    );
+    assert_eq!(
+        payload["dispatch_response"]["outcome"]["application_status"],
+        "success"
+    );
+    assert_eq!(
+        payload["dispatch_response"]["outcome"]["counters"]["created"],
+        1
+    );
+}
+
 #[test]
 fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
     let response = dispatch_response("success", 1, 0);

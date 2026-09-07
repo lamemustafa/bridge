@@ -185,6 +185,47 @@ async fn structured_reconciliation_error_keeps_the_saved_batch_and_readback_payl
     );
 }
 
+#[test]
+fn compact_dispatch_response_keeps_wire_commitments_when_outcome_is_unavailable() {
+    let response = compact_dispatch_response(&json!({
+        "request_sha256":"a".repeat(64),
+        "response_sha256":"b".repeat(64),
+        "bytes": 42,
+        "outcome": null
+    }))
+    .expect("valid wire commitments");
+    assert_eq!(response["request_sha256"], "a".repeat(64));
+    assert_eq!(response["response_sha256"], "b".repeat(64));
+    assert_eq!(response["bytes"], 42);
+    assert!(response["outcome"].is_null());
+}
+
+#[test]
+fn recovery_egress_error_falls_back_to_the_batch_when_the_compact_response_exceeds_the_cap() {
+    let batch_id = "bridge-00000000-0000-0000-0000-000000000001";
+    let original = json!({"result":{"structuredContent":{"result":{
+        "attempt_recorded":true,
+        "dispatch_response":{
+            "request_sha256":"a".repeat(64),
+            "response_sha256":"b".repeat(64),
+            "bytes":42,
+            "outcome":{
+                "application_status":"success",
+                "counters":{"created":1,"altered":0,"deleted":0,"ignored":0,"errors":0,"cancelled":0,"exceptions":0,"line_error_count":0},
+                "exceptions_were_reported":true
+            }
+        }
+    }}}});
+    let response = recovery_error_with_dispatch(
+        json!(1),
+        Some(batch_id),
+        "egress_record_write_failed",
+        &original,
+        200,
+    );
+    assert_eq!(response["error"]["data"], json!({"batch_id":batch_id}));
+}
+
 #[tokio::test]
 async fn unknown_tools_and_methods_return_protocol_errors_with_exact_refusal_receipts() {
     let directory = tempfile::tempdir().unwrap();

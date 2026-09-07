@@ -61,6 +61,7 @@ impl Server {
         }
         let mut accumulated =
             evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
+        let mut received_response = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
             let (xml, preview) = admit_saved_journal(&line, &self.settings.endpoint)?;
             if snapshot.dispatched {
@@ -130,16 +131,17 @@ impl Server {
                 evidence_from_runtime_read(wire.clone()),
             );
             let parsed_outcome = parse_import_outcome(&body).ok();
+            let response = ledger::DispatchResponse {
+                request_sha256: wire.request_sha256,
+                response_sha256: wire.response_sha256,
+                bytes: wire.bytes,
+                outcome: parsed_outcome,
+            };
+            received_response = Some(response.clone());
             {
                 let _lock = self.lock_import_admission()?;
                 self.append_import_record_while_admitted(&ledger::StatusRecord::response(
-                    &line,
-                    ledger::DispatchResponse {
-                        request_sha256: wire.request_sha256,
-                        response_sha256: wire.response_sha256,
-                        bytes: wire.bytes,
-                        outcome: parsed_outcome.clone(),
-                    },
+                    &line, response,
                 ))?;
             }
             // A valid counter response is evidence, never proof that Tally preserved
@@ -156,29 +158,44 @@ impl Server {
             Ok(result) => Ok(result),
             Err(failure) => {
                 let snapshot = self.latest_import_snapshot(batch_id).ok().flatten();
-                let attempted = snapshot.as_ref().map(|snapshot| snapshot.dispatched);
-                let response = snapshot
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.response.as_ref());
-                let mut evidence = failure
-                    .evidence
-                    .map(|item| combine_evidence(accumulated.clone(), *item))
-                    .unwrap_or(accumulated);
-                evidence.state = "partial";
-                evidence.reason_code = Some(failure.code.clone());
-                Ok(ToolOutcome {
-                    payload: reconciliation_failure_payload(
-                        batch_id,
-                        attempted,
-                        response,
-                        &failure.code,
-                    ),
-                    evidence,
-                    company_guid: Some(guid.to_string()),
-                    truncated: false,
-                })
+                Ok(post_failure_outcome(
+                    batch_id,
+                    guid,
+                    failure,
+                    accumulated,
+                    snapshot.as_ref(),
+                    received_response.as_ref(),
+                ))
             }
         }
+    }
+}
+
+fn post_failure_outcome(
+    batch_id: &str,
+    guid: &str,
+    failure: ToolFailure,
+    accumulated: Evidence,
+    snapshot: Option<&ledger::BatchSnapshot>,
+    received_response: Option<&ledger::DispatchResponse>,
+) -> ToolOutcome {
+    let attempted = received_response
+        .is_some()
+        .then_some(true)
+        .or_else(|| snapshot.map(|snapshot| snapshot.dispatched));
+    let persisted_response = snapshot.and_then(|snapshot| snapshot.response.as_ref());
+    let response = received_response.or(persisted_response);
+    let mut evidence = failure
+        .evidence
+        .map(|item| combine_evidence(accumulated.clone(), *item))
+        .unwrap_or(accumulated);
+    evidence.state = "partial";
+    evidence.reason_code = Some(failure.code.clone());
+    ToolOutcome {
+        payload: reconciliation_failure_payload(batch_id, attempted, response, &failure.code),
+        evidence,
+        company_guid: Some(guid.to_string()),
+        truncated: false,
     }
 }
 

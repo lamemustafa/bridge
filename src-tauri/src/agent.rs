@@ -17,7 +17,7 @@ mod catalog;
 use catalog::tool_definitions;
 use catalog::validate_tool_arguments;
 #[path = "agent_protocol.rs"]
-mod agent_protocol;
+pub(super) mod agent_protocol;
 #[path = "agent_receipt_fields.rs"]
 mod agent_receipt_fields;
 #[path = "agent_delivery.rs"]

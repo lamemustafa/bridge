@@ -218,7 +218,13 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
                         terminal_egress_error = Some(error.clone());
                     }
                     if recovery_batch_id.is_some() {
-                        response = recovery_error(id, recovery_batch_id.as_deref(), &error);
+                        response = recovery_error_with_dispatch(
+                            id,
+                            recovery_batch_id.as_deref(),
+                            &error,
+                            &response,
+                            server.settings.max_bytes,
+                        );
                     } else if !attach_build_egress_failure(&mut response) {
                         return Err(error);
                     }
@@ -270,6 +276,76 @@ fn recovery_error(id: Value, batch_id: Option<&str>, message: &str) -> Value {
         response["error"]["data"] = json!({"batch_id":batch_id});
     }
     response
+}
+
+fn recovery_error_with_dispatch(
+    id: Value,
+    batch_id: Option<&str>,
+    message: &str,
+    original: &Value,
+    max_bytes: usize,
+) -> Value {
+    let fallback = recovery_error(id.clone(), batch_id, message);
+    let mut response = fallback.clone();
+    let result = &original["result"]["structuredContent"]["result"];
+    let mut data = response["error"]["data"].take();
+    if let Some(attempted) = result["attempt_recorded"].as_bool() {
+        data["attempt_recorded"] = json!(attempted);
+    }
+    if let Some(dispatch) = compact_dispatch_response(&result["dispatch_response"]) {
+        data["dispatch"] = json!({"state":"reconciliation_required","resent":false});
+        data["dispatch_response"] = dispatch;
+    }
+    response["error"]["data"] = data;
+    if response.to_string().len() < max_bytes {
+        response
+    } else {
+        fallback
+    }
+}
+
+pub(super) fn compact_dispatch_response(response: &Value) -> Option<Value> {
+    let request_sha256 = response["request_sha256"].as_str()?;
+    let response_sha256 = response["response_sha256"].as_str()?;
+    if !is_sha256(request_sha256) || !is_sha256(response_sha256) {
+        return None;
+    }
+    let bytes = response["bytes"].as_u64()?;
+    let outcome = &response["outcome"];
+    let outcome = compact_dispatch_outcome(outcome);
+    Some(json!({
+        "request_sha256":request_sha256,
+        "response_sha256":response_sha256,
+        "bytes":bytes,
+        "outcome":outcome,
+    }))
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn compact_dispatch_outcome(outcome: &Value) -> Option<Value> {
+    let application_status = outcome["application_status"].as_str()?;
+    if !matches!(application_status, "success" | "failure" | "not_reported") {
+        return None;
+    }
+    let counters = outcome["counters"].as_object()?;
+    let counter = |name| counters.get(name).and_then(Value::as_u64);
+    Some(json!({
+        "application_status":application_status,
+        "counters":{
+            "created":counter("created")?,
+            "altered":counter("altered")?,
+            "deleted":counter("deleted")?,
+            "ignored":counter("ignored")?,
+            "errors":counter("errors")?,
+            "cancelled":counter("cancelled")?,
+            "exceptions":counter("exceptions")?,
+            "line_error_count":counter("line_error_count")?
+        },
+        "exceptions_were_reported":outcome["exceptions_were_reported"].as_bool()?
+    }))
 }
 
 fn request_id_fits_response_cap(id: &Value, max_bytes: usize) -> bool {
