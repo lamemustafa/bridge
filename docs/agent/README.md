@@ -1,5 +1,9 @@
 # Bridge MCP
 
+For ordinary Claude Desktop installation, start with the install page when it
+is deployed, or use the [fallback installation guide](./INSTALL.md).
+The developer configuration below remains for supported client integrations.
+
 `bridge_mcp` is Bridge's newline-delimited JSON-RPC 2.0 MCP server. It uses
 Bridge's loopback-only Tally XML transport for reads. It can render a local
 voucher import file, but it never sends that file—or any import request—to

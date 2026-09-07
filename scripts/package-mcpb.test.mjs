@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
-import { mcpbHostTarget, releaseMcpbBinaryPath, stageHostManifest, verifyMcpbStage } from "./package-mcpb.mjs";
+import { mcpbHostTarget, packageMcpbArguments, releaseMcpbBinaryPath, stageHostManifest, verifyMcpbStage } from "./package-mcpb.mjs";
 
 const resources = [
   "LICENSE",
@@ -38,6 +38,15 @@ test("MCPB stage verifier requires every license and inventory resource", async 
 
 test("MCPB packaging reads the release binary", () => {
   assert.equal(releaseMcpbBinaryPath("/fixture", "bridge_mcp"), resolve("/fixture", "src-tauri", "target", "release", "bridge_mcp"));
+});
+
+test("MCPB packaging can stage a reviewed prebuilt binary without rebuilding Rust", () => {
+  assert.deepEqual(packageMcpbArguments([]), { binaryPath: undefined });
+  assert.deepEqual(packageMcpbArguments(["--binary", "/fixture/bridge_mcp"]), {
+    binaryPath: "/fixture/bridge_mcp",
+  });
+  assert.throws(() => packageMcpbArguments(["--binary"]), /usage:/);
+  assert.throws(() => packageMcpbArguments(["--other", "/fixture/bridge_mcp"]), /usage:/);
 });
 
 test("every host manifest launches its bundled binary and maps user settings to environment", async (t) => {

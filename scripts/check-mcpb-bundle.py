@@ -155,6 +155,14 @@ def validate_schema_receipts(raw, response):
     return len(records)
 
 
+def validate_server_version(reply, manifest):
+    version = manifest.get("version")
+    require(isinstance(version, str)
+            and reply.get("result", {}).get("serverInfo", {}).get("version") == version,
+            "server_version_mismatch")
+    return version
+
+
 def smoke(archive, repository):
     with tempfile.TemporaryDirectory(prefix="bridge-mcpb-smoke-") as temporary:
         destination = Path(temporary) / "bundle"
@@ -180,6 +188,7 @@ def smoke(archive, repository):
         require(all(reply.get("jsonrpc") == "2.0" and "result" in reply for reply in replies),
                 "invalid_jsonrpc_response")
         require(replies[0]["result"]["protocolVersion"] == "2025-06-18", "protocol_mismatch")
+        server_version = validate_server_version(replies[0], manifest)
         names = [tool["name"] for tool in replies[1]["result"]["tools"]]
         require(len(names) == len(DEFAULT_TOOLS) and set(names) == DEFAULT_TOOLS,
                 "default_tools_mismatch")
@@ -196,6 +205,7 @@ def smoke(archive, repository):
             "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
             "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
             "platform": sys.platform, "archive_entries": 6, "legal_resources": len(RESOURCES),
+            "server_version": server_version,
             "response_ids": [reply["id"] for reply in replies], "response_bytes": len(output),
             "default_tool_count": len(names), "egress_receipts": receipts,
             "stderr_bytes": len(diagnostics), "stderr_sha256": hashlib.sha256(diagnostics).hexdigest(),

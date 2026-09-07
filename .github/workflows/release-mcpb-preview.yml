@@ -1,0 +1,201 @@
+name: Publish MCPB preview release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Immutable preview tag, for example mcp-preview-0.2.1"
+        required: true
+        type: string
+
+concurrency:
+  group: mcpb-preview-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-admission:
+    name: Admit immutable preview tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+      - name: Require reviewed source and a matching immutable preview version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          node scripts/check-mcpb-preview-admission.mjs "$RELEASE_TAG" "$SOURCE_REF" "$DEFAULT_BRANCH"
+
+  package:
+    name: Package ${{ matrix.platform }}
+    needs: release-admission
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+            binary: bridge_mcp.exe
+            architecture: x86_64
+          - os: macos-14
+            platform: macos-arm64
+            binary: bridge_mcp
+            architecture: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.96.0
+      - name: Set up Windows native prerequisites
+        id: windows-mcpb-prerequisites
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-native
+      - name: Verify the runner architecture before packaging
+        shell: bash
+        env:
+          EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          actual="$(uname -m)"
+          test "$actual" = "$EXPECTED_ARCHITECTURE"
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm run license:all
+      - name: Build the host Bridge MCP binary
+        run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin bridge_mcp
+      - name: Stage the reviewed release binary and legal resources
+        run: node scripts/package-mcpb.mjs --binary src-tauri/target/release/${{ matrix.binary }}
+      - name: Validate, archive, and exercise the real MCPB
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          asset="bridge-tally-${RELEASE_TAG}-${PLATFORM}.mcpb"
+          npx --yes @anthropic-ai/mcpb@2.1.2 validate packaging/mcpb/stage/manifest.json
+          npx --yes @anthropic-ai/mcpb@2.1.2 pack packaging/mcpb/stage "release-assets/$asset"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then python_command=python; else python_command=python3; fi
+          "$python_command" scripts/check-mcpb-bundle.test.py
+          "$python_command" scripts/check-mcpb-bundle.py "release-assets/$asset" --output "release-assets/$asset.smoke.json"
+          node scripts/write-mcpb-release-metadata.mjs "release-assets/$asset" "$RELEASE_TAG" "$PLATFORM" "$GITHUB_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcpb-preview-${{ matrix.platform }}
+          path: release-assets/**
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-preview:
+    name: Publish durable unsigned preview assets
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: mcpb-preview-*
+          path: release-assets
+          merge-multiple: true
+      - name: Require both platform archives and their release evidence
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          for platform in windows-x64 macos-arm64; do
+            asset="release-assets/bridge-tally-${RELEASE_TAG}-${platform}.mcpb"
+            test -f "$asset"
+            test -f "$asset.sha256"
+            test -f "$asset.provenance.json"
+            test -f "$asset.smoke.json"
+          done
+      - name: Create the immutable GitHub preview release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "refusing to replace existing release assets for $RELEASE_TAG"
+            exit 1
+          fi
+
+          resolve_preview_tag_commit() {
+            local tag_ref_file tag_sha peeled_sha ref_sha ref
+            tag_ref_file="$(mktemp)"
+            if ! git ls-remote --tags origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}" >"$tag_ref_file"; then
+              rm -f "$tag_ref_file"
+              return 1
+            fi
+            tag_sha=""
+            peeled_sha=""
+            while IFS=$'\t' read -r ref_sha ref; do
+              case "$ref" in
+                "refs/tags/$RELEASE_TAG") tag_sha="$ref_sha" ;;
+                "refs/tags/$RELEASE_TAG^{}") peeled_sha="$ref_sha" ;;
+              esac
+            done <"$tag_ref_file"
+            rm -f "$tag_ref_file"
+            printf '%s' "${peeled_sha:-$tag_sha}"
+          }
+
+          if ! existing_tag_commit="$(resolve_preview_tag_commit)"; then
+            echo "could not verify whether $RELEASE_TAG already exists; refusing to publish"
+            exit 1
+          fi
+          if [[ -n "$existing_tag_commit" ]]; then
+            if [[ "$existing_tag_commit" != "$SOURCE_SHA" ]]; then
+              echo "refusing to publish: existing tag $RELEASE_TAG does not identify $SOURCE_SHA"
+              exit 1
+            fi
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f "ref=refs/tags/$RELEASE_TAG" \
+              -f "sha=$SOURCE_SHA" >/dev/null
+          fi
+
+          if ! verified_tag_commit="$(resolve_preview_tag_commit)"; then
+            echo "could not verify the tag created for $RELEASE_TAG; refusing to publish"
+            exit 1
+          fi
+          if [[ "$verified_tag_commit" != "$SOURCE_SHA" ]]; then
+            echo "refusing to publish: $RELEASE_TAG does not identify $SOURCE_SHA"
+            exit 1
+          fi
+
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --verify-tag \
+            --title "Bridge MCPB unsigned preview: $RELEASE_TAG" \
+            --notes-file packaging/mcpb/UNSIGNED_PREVIEW_RELEASE.md \
+            --prerelease
