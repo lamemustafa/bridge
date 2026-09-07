@@ -569,7 +569,10 @@ function App() {
   }, [evidenceDrawerOpen, refreshRecentSnapshots]);
 
   React.useEffect(() => {
-    if (view !== "companies" && view !== "outstandings" && view !== "clients") return;
+    // Overview is the prompt-free landing view. Persisted profiles are only
+    // needed once the operator opens the company workflow; the shell's
+    // client switcher also loads them on its explicit open action.
+    if (view !== "companies" && view !== "clients") return;
     void refreshPersistedCompanyProfiles();
   }, [view, refreshPersistedCompanyProfiles]);
 

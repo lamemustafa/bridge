@@ -124,6 +124,21 @@ test("persisted-company load failures remain visible regardless of Tally connect
   assert.match(evidenceDrawer, /\{persistedCompanyProfileError && <TallyErrorNotice message=\{persistedCompanyProfileError\} \/>\}/);
 });
 
+test("Overview stays prompt-free until the operator opens company workflows", async () => {
+  const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const profileEffectStart = frontend.indexOf("// Overview is the prompt-free landing view");
+  const profileEffect = frontend.slice(
+    profileEffectStart,
+    frontend.indexOf("React.useEffect(() => {", profileEffectStart),
+  );
+
+  assert.notEqual(profileEffectStart, -1);
+  assert.match(frontend, /const \[view, setView\] = React\.useState<View>\("outstandings"\)/);
+  assert.match(profileEffect, /if \(view !== "companies" && view !== "clients"\) return;/);
+  assert.doesNotMatch(profileEffect, /view !== "outstandings"/);
+  assert.match(frontend, /onOpen=\{\(\) => void refreshPersistedCompanyProfiles\(\)\}/);
+});
+
 test("saved clients absent from the current probe require verification, not setup", async () => {
   const frontend = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
   const clientStates = frontend.slice(
