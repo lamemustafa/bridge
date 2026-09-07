@@ -24,18 +24,18 @@ test("Tally setup does not expose unqualified legacy reads", async () => {
   assert.match(frontend, /async function discoverUntrustedCompanies\(\) \{\s*if \(currentProbeCompanyList\.length > 0\) return;/s);
 });
 
-test("Tally nav routes unreadable client views to connection management", async () => {
+test("Tally nav keeps setup explicit while Overview remains reachable", async () => {
   const [frontend, outstandings] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
   ]);
-  const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge operations">'), frontend.indexOf("</nav>"));
+  const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge navigation">'), frontend.indexOf("</nav>"));
 
-  assert.match(nav, /<Cable size=\{18\} \/> Outstandings/);
-  assert.match(nav, /<Building2 size=\{18\} \/> Compare clients/);
-  assert.match(nav, /<Cable size=\{18\} \/> Manage Tally/);
-  assert.match(frontend, /selectedCompanyReadable \? "outstandings" : "companies"/);
-  assert.match(frontend, /selectedCompanyReadable \? "clients" : "companies"/);
+  assert.match(nav, /<Cable size=\{18\} \/> Overview/);
+  assert.match(nav, /<Building2 size=\{18\} \/> Companies/);
+  assert.match(nav, /<Cable size=\{18\} \/> Settings/);
+  assert.match(frontend, /onClick=\{\(\) => setView\("outstandings"\)\}/);
+  assert.match(frontend, /onClick=\{\(\) => setView\("companies"\)\}/);
   assert.match(frontend, /selectedCompanyRecord\?\.guid && selectedCompanyRecord\.company_number && selectedCompanyRecord\.books_from_yyyymmdd/);
   assert.match(outstandings, /Manage Tally/);
 });
@@ -180,8 +180,8 @@ test("party ledger export disables the concurrent outstandings refresh through t
   assert.match(outstandings, /onClick=\{onChangeSetup\} disabled=\{liveReadNavigationLocked\}/);
   const switcherManage = switcher.slice(switcher.indexOf('onManageTally();') - 180, switcher.indexOf('onManageTally();') + 80);
   assert.match(switcherManage, /disabled=\{selectionLocked\}/);
-  const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge operations">'), frontend.indexOf("</nav>"));
-  assert.match(nav, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Manage Tally/);
+  const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge navigation">'), frontend.indexOf("</nav>"));
+  assert.match(nav, /disabled=\{childTallyReadCount > 0\}[\s\S]*?Settings/);
 });
 
 test("a ledger-master export notice survives unmounting the outstandings screen", async () => {

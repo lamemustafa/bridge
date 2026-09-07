@@ -13,7 +13,7 @@ import {
   tallyReadinessState,
 } from "./tally-company-selection";
 import { classifyTallyError } from "./tally-error-copy";
-import { TallyReadinessFlow } from "./TallyReadinessFlow";
+import { SettingsScreen } from "./SettingsScreen";
 import {
   OutstandingsExportNotice,
   OutstandingsScreen,
@@ -277,7 +277,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "companies" | "gst" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "companies" | "settings" | "gst" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -289,8 +289,9 @@ const NON_TALLY_SECTIONS_ENABLED = false;
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
   clients: "All clients",
-  outstandings: "Aged outstandings",
-  companies: "Connect Tally",
+  outstandings: "Overview",
+  companies: "Companies",
+  settings: "Settings",
   gst: "GST return readiness",
   dsc: "DSC token",
   documents: "Documents",
@@ -474,7 +475,7 @@ function App() {
   const [axalSession, setAxalSession] = React.useState<{ id: string; integration: AxalIntegration } | null>(null);
   const [axalConnection, setAxalConnection] = React.useState<AxalConnectionStatus | null>(null);
   const [documentsWorkspace, setDocumentsWorkspace] = React.useState(createDocumentsWorkspaceState);
-  const [view, setView] = React.useState<View>("dashboard");
+  const [view, setView] = React.useState<View>("outstandings");
   const [evidenceDrawerOpen, setEvidenceDrawerOpen] = React.useState(false);
   const [evidenceDrawerRestorePending, setEvidenceDrawerRestorePending] = React.useState(false);
   const [evidenceDrawerEntry, setEvidenceDrawerEntry] = React.useState<EvidenceDrawerEntry>({ kind: "local-only" });
@@ -1378,7 +1379,6 @@ function App() {
       && selectedCompanyRecord?.canonical_endpoint === currentProbeCanonicalOrigin,
     companySaved: Boolean(selectedCompanyRecord?.mirror_company_id),
   }).companyReady;
-  const selectedCompanyReadable = selectedCompanyReady;
   // An unsaved identity is only usable at the endpoint that returned it. Saved
   // profiles remain available for local Mirror & Proof review even when no
   // endpoint is currently checked.
@@ -1504,44 +1504,26 @@ function App() {
           <ShieldCheck size={24} />
           <div>
             <strong>Bridge</strong>
-            <span>Tauri Agent</span>
+            <span>Local Tally connector</span>
           </div>
         </div>
-        <nav aria-label="Bridge operations">
+        <nav aria-label="Bridge navigation">
           <button
             aria-current={view === "outstandings" ? "page" : undefined}
             className={view === "outstandings" ? "active" : ""}
             disabled={childTallyReadCount > 0}
             aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined}
-            onClick={() => setView(selectedCompanyReadable ? "outstandings" : "companies")}
+            onClick={() => setView("outstandings")}
           >
-            <Cable size={18} /> Outstandings
-          </button>
-          <button aria-current={view === "clients" ? "page" : undefined} className={view === "clients" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView(selectedCompanyReadable ? "clients" : "companies")}>
-            <Building2 size={18} /> Compare clients
+            <Cable size={18} /> Overview
           </button>
           <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("companies")}>
-            <Cable size={18} /> Manage Tally
+            <Building2 size={18} /> Companies
           </button>
-          <button aria-current={view === "dashboard" ? "page" : undefined} className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
-            <ShieldCheck size={18} /> Evidence dashboard
-          </button>
-          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("gst")}>
-            <FileText size={18} /> GST Returns {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
-          </button>
-          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("dsc")}>
-            <KeyRound size={18} /> DSC Token {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
-          </button>
-          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("documents")}>
-            <FolderOpen size={18} /> Documents {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
-          </button>
-          <button disabled={!NON_TALLY_SECTIONS_ENABLED} aria-describedby={NON_TALLY_SECTIONS_ENABLED ? undefined : "future-sections-note"} onClick={() => setView("axal")}>
-            <Cloud size={18} /> AXAL Backend {!NON_TALLY_SECTIONS_ENABLED && <small>Not yet available</small>}
+          <button aria-current={view === "settings" ? "page" : undefined} className={view === "settings" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("settings")}>
+            <Cable size={18} /> Settings
           </button>
         </nav>
-        {!NON_TALLY_SECTIONS_ENABLED && (
-          <p className="future-sections-note" id="future-sections-note">Unavailable until their workflow evidence is complete.</p>
-        )}
         {childTallyReadCount > 0 && (
           <p className="future-sections-note" id="active-tally-read-note" role="status">A Tally read is still in progress. Wait before opening another live read.</p>
         )}
@@ -1571,7 +1553,7 @@ function App() {
         />
         <header>
           <div>
-            {view !== "companies" && (
+            {view !== "companies" && view !== "settings" && (
               <p className="eyebrow">
                 {view === "outstandings"
                   ? "Receivables and payables"
@@ -1582,7 +1564,7 @@ function App() {
             )}
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
-          {!["outstandings", "companies", "clients"].includes(view) && (
+          {view === "dashboard" && (
             <button className="primary" onClick={checkTally} disabled={tallyAction !== null || childTallyReadCount > 0}>
               <Cable size={18} />
               {tallyAction === "probe" ? "Checking endpoint..." : "Check Tally Endpoint"}
@@ -1590,7 +1572,7 @@ function App() {
           )}
         </header>
 
-        {!["outstandings", "companies", "clients"].includes(view) && (
+        {view === "dashboard" && (
           <section className="company-context-bar" aria-label="Selected Tally company context">
             <div>
               <span>Selected company</span>
@@ -1847,18 +1829,26 @@ function App() {
         {view === "companies" && (
           <ErrorBoundary key="companies" label="Connect Tally">
           <>
-            <TallyReadinessFlow
-              config={config}
-              endpointReachable={Boolean(status?.reachable)}
-              passportObserved={Boolean(passport)}
-              companyReady={selectedCompanyReady}
-              busy={tallyAction !== null}
-              settingsLocked={endpointSettingsLockMessage !== null}
-              settingsLockMessage={endpointSettingsLockMessage}
-              onHostChange={updateTallyHost}
-              onPortChange={updateTallyPort}
-              onCheck={checkTally}
-            />
+            <section className="panel wide company-connection-summary" aria-labelledby="company-connection-heading">
+              <div className="panel-heading">
+                <div>
+                  <h2 id="company-connection-heading">Tally connection</h2>
+                  <p className="panel-description">
+                    {status?.reachable && passport
+                      ? `Tally is checked at ${config.host}:${config.port}. Choose a company below.`
+                      : `Set the Tally host and port in Settings, then check the connection before choosing a company.`}
+                  </p>
+                </div>
+                <button className="secondary-action" type="button" onClick={() => setView("settings")} disabled={childTallyReadCount > 0}>
+                  {status?.reachable && passport ? "Change connection" : "Open Settings"}
+                </button>
+              </div>
+              <dl className="company-connection-details">
+                <div><dt>Endpoint</dt><dd>{config.host}:{config.port}</dd></div>
+                <div><dt>Connection</dt><dd>{status ? (status.reachable ? "Reachable" : "Not reachable") : "Not checked"}</dd></div>
+                <div><dt>Selected company</dt><dd>{selectedCompanyRecord?.name ?? "None selected"}</dd></div>
+              </dl>
+            </section>
 
             {dashboardError && <TallyErrorNotice message={dashboardError} />}
             {persistedCompanyProfileError && <TallyErrorNotice message={persistedCompanyProfileError} />}
@@ -1977,6 +1967,27 @@ function App() {
               </section>
             )}
 
+          </>
+          </ErrorBoundary>
+        )}
+
+        {view === "settings" && (
+          <ErrorBoundary key="settings" label="Settings">
+          <>
+            <SettingsScreen
+              config={config}
+              endpointReachable={Boolean(status?.reachable)}
+              passportObserved={Boolean(passport)}
+              companyReady={selectedCompanyReady}
+              busy={tallyAction !== null}
+              settingsLocked={endpointSettingsLockMessage !== null}
+              settingsLockMessage={endpointSettingsLockMessage}
+              onHostChange={updateTallyHost}
+              onPortChange={updateTallyPort}
+              onCheck={checkTally}
+            />
+            {dashboardError && <TallyErrorNotice message={dashboardError} />}
+            {companyError && <TallyErrorNotice message={companyError} />}
           </>
           </ErrorBoundary>
         )}
