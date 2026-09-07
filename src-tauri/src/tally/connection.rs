@@ -937,14 +937,8 @@ impl TallyClient {
         let xml = self
             .post_probe_xml(ReadOnlyProfile::CompanyListV2.render(), &mut evidence)
             .await?;
-        let discovered = xml_parser::parse_companies_from_collection(&xml).map_err(|_| {
-            with_read_evidence(
-                anyhow::anyhow!(
-                    "Tally returned an invalid company identity for interactive discovery"
-                ),
-                evidence.clone(),
-            )
-        })?;
+        let discovered = xml_parser::parse_companies_from_collection(&xml)
+            .map_err(|error| with_read_evidence(error, evidence.clone()))?;
         let companies = normalize_discovered_companies(discovered).map_err(|_| {
             with_read_evidence(
                 anyhow::anyhow!(
@@ -3551,6 +3545,10 @@ mod tests {
         .expect_err("a company row without a GUID must fail closed");
         server.await.expect("synthetic Tally server task");
         assert!(error.to_string().contains("GUID"));
+        let retained = error
+            .downcast_ref::<crate::tally::runtime::RuntimeReadFailure>()
+            .expect("parser refusal retains its typed wire-evidence boundary");
+        assert!(retained.evidence.bytes > 0);
     }
 
     #[tokio::test]
