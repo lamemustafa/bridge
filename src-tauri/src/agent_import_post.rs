@@ -136,11 +136,11 @@ impl Server {
         match operation {
             Ok(result) => Ok(result),
             Err(failure) => {
-                let attempted = self
-                    .latest_import_snapshot(batch_id)
-                    .ok()
-                    .flatten()
-                    .map(|s| s.dispatched);
+                let snapshot = self.latest_import_snapshot(batch_id).ok().flatten();
+                let attempted = snapshot.as_ref().map(|snapshot| snapshot.dispatched);
+                let response = snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.response.as_ref());
                 let mut evidence = failure
                     .evidence
                     .map(|item| combine_evidence(accumulated.clone(), *item))
@@ -148,9 +148,12 @@ impl Server {
                 evidence.state = "partial";
                 evidence.reason_code = Some(failure.code.clone());
                 Ok(ToolOutcome {
-                    payload: json!({"result":{"batch_id":batch_id,"attempt_recorded":attempted,"error":{"code":failure.code,
-                        "message":if attempted == Some(false) { "No posting attempt was recorded. Review the error before requesting approval again." }
-                        else { "The saved batch requires reconciliation. Use verify_import with this original batch; never rebuild it to retry." }}}}),
+                    payload: reconciliation_failure_payload(
+                        batch_id,
+                        attempted,
+                        response,
+                        &failure.code,
+                    ),
                     evidence,
                     company_guid: Some(guid.to_string()),
                     truncated: false,
@@ -158,6 +161,17 @@ impl Server {
             }
         }
     }
+}
+
+fn reconciliation_failure_payload(
+    batch_id: &str,
+    attempted: Option<bool>,
+    response: Option<&ledger::DispatchResponse>,
+    code: &str,
+) -> Value {
+    json!({"result":{"batch_id":batch_id,"attempt_recorded":attempted,"dispatch_response":response,"error":{"code":code,
+        "message":if attempted == Some(false) { "No posting attempt was recorded. Review the error before requesting approval again." }
+        else { "The saved batch requires reconciliation. Use verify_import with this original batch; never rebuild it to retry." }}}})
 }
 
 fn mark_reconciliation_required(payload: &mut Value) {

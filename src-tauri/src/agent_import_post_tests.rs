@@ -210,6 +210,36 @@ fn exact_readback_requires_a_clean_persisted_response_to_reconcile() {
 }
 
 #[test]
+fn recovery_failure_retains_the_saved_dispatch_response() {
+    let response = dispatch_response("success", 1, 0);
+    let payload = reconciliation_failure_payload(
+        "bridge-test",
+        Some(true),
+        Some(&response),
+        "verification_transport_failed",
+    );
+    let result = &payload["result"];
+    assert_eq!(result["attempt_recorded"], true);
+    assert_eq!(
+        result["dispatch_response"]["request_sha256"],
+        response.request_sha256
+    );
+    assert_eq!(
+        result["dispatch_response"]["response_sha256"],
+        response.response_sha256
+    );
+    assert_eq!(
+        result["dispatch_response"]["outcome"]["application_status"],
+        "success"
+    );
+    assert_eq!(
+        result["dispatch_response"]["outcome"]["counters"]["created"],
+        1
+    );
+    assert_eq!(result["error"]["code"], "verification_transport_failed");
+}
+
+#[test]
 fn post_date_refusal_retains_the_completed_profile_probe_evidence() {
     let (mut line, _) = batch();
     line.vouchers[0].date = "20260907".into();
