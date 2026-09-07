@@ -1,7 +1,7 @@
 use bridge_tally_protocol::{
-    TallyImportApplicationStatus, TallyImportCounterPresence, TallyImportResult,
     parse_import_evidence, parse_import_outcome, parse_import_result,
-    parse_ledger_write_readback_with_evidence,
+    parse_ledger_write_readback_with_evidence, TallyImportApplicationStatus,
+    TallyImportCounterPresence, TallyImportResult,
 };
 
 const LIVE_EDUCATION_W1_LEDGER: &str =

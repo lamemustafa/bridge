@@ -260,7 +260,11 @@ fn dispatch_response(
                     "errors":0,
                     "cancelled":0,
                     "exceptions":0,
-                    "line_error_count":0
+                    "line_error_count":0,
+                    "counter_presence": {
+                        "created":true, "altered":true, "deleted":true,
+                        "ignored":true, "errors":true, "cancelled":true, "exceptions":true
+                    }
                 },
                 "exceptions_were_reported":true
             }))
@@ -455,31 +459,52 @@ fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
 }
 
 #[test]
-fn omitted_exceptions_cannot_confirm_current_or_previous_dispatch() {
+fn missing_counter_evidence_cannot_confirm_current_or_previous_dispatch() {
     // Mutate only the presence marker in saved response evidence. This tests
     // classification, not a newly claimed live response profile.
-    let mut saved = serde_json::to_value(dispatch_response("success", 1, 0)).unwrap();
-    saved["outcome"]["exceptions_were_reported"] = json!(false);
-    let response: ledger::DispatchResponse = serde_json::from_value(saved).unwrap();
-    for finalize in [
-        finalize_current_dispatch,
-        finalize_previous_attempt_reconciliation,
+    for missing in [
+        "legacy",
+        "created",
+        "altered",
+        "deleted",
+        "ignored",
+        "errors",
+        "cancelled",
+        "exceptions",
+        "exception_marker",
     ] {
-        let mut payload = json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
-        finalize(&mut payload, Some(&response));
-        assert_eq!(
-            payload["result"]["dispatch"]["state"],
-            "reconciliation_required"
-        );
-        assert_eq!(
-            payload["result"]["dispatch"]["response_state"],
-            "response_not_clean"
-        );
-        assert_eq!(
-            payload["result"]["error"]["code"],
-            "import_reconciliation_required"
-        );
-        assert!(render_proof_markdown(&payload["result"]).contains("does not confirm posting"));
+        let mut saved = serde_json::to_value(dispatch_response("success", 1, 0)).unwrap();
+        match missing {
+            "legacy" => {
+                saved["outcome"]["counters"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("counter_presence");
+            }
+            "exception_marker" => saved["outcome"]["exceptions_were_reported"] = json!(false),
+            counter => saved["outcome"]["counters"]["counter_presence"][counter] = json!(false),
+        }
+        let response: ledger::DispatchResponse = serde_json::from_value(saved).unwrap();
+        for finalize in [
+            finalize_current_dispatch,
+            finalize_previous_attempt_reconciliation,
+        ] {
+            let mut payload = json!({"result":{"counts":{"posted_verified":1},"duplicates":[]}});
+            finalize(&mut payload, Some(&response));
+            assert_eq!(
+                payload["result"]["dispatch"]["state"],
+                "reconciliation_required"
+            );
+            assert_eq!(
+                payload["result"]["dispatch"]["response_state"],
+                "response_not_clean"
+            );
+            assert_eq!(
+                payload["result"]["error"]["code"],
+                "import_reconciliation_required"
+            );
+            assert!(render_proof_markdown(&payload["result"]).contains("does not confirm posting"));
+        }
     }
 }
 

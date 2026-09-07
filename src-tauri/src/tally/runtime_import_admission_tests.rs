@@ -180,7 +180,7 @@ fn single_observation(
 fn expected_queued_evidence(
     observed: &[tally_protocol_simulator::ObservedRequest],
     responses: &[Vec<u8>],
-    final_admission: bool,
+    include_absence_reads: bool,
 ) -> RuntimeReadEvidence {
     let mut evidence = single_observation(observed, responses, 0)
         .combine(single_observation(observed, responses, 1))
@@ -191,7 +191,7 @@ fn expected_queued_evidence(
     evidence = evidence
         .combine(closing)
         .combine(single_observation(observed, responses, 11));
-    if final_admission {
+    if include_absence_reads {
         for index in [13, 19] {
             evidence = evidence.combine(paired_observation(observed, responses, index));
         }

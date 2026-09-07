@@ -11,7 +11,7 @@ use std::{
     fmt::Write as _,
 };
 
-use quick_xml::{Reader, events::Event, name::QName};
+use quick_xml::{events::Event, name::QName, Reader};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

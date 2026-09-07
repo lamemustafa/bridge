@@ -637,6 +637,14 @@ Escape on the way out; the failure is total and gives no hint of which field cau
 > **Success requires all four: the intended counter incremented, `ERRORS=0`,
 > `EXCEPTIONS=0`, and no `LINEERROR`.**
 
+**Bridge admission rule (2026-09-07).** Clean-result classification additionally
+requires source presence for all seven counters: `CREATED`, `ALTERED`, `DELETED`,
+`IGNORED`, `ERRORS`, `CANCELLED`, and `EXCEPTIONS`. An omitted counter is not an
+observed zero. Saved responses retain these presence bits alongside their counts.
+Older records without presence bits remain readable but cannot establish a clean
+response, even when readback matches. Preserve the original batch for investigation;
+do not infer missing evidence or resend it to obtain a cleaner receipt.
+
 `LINEERROR` text is **untrustworthy for cause attribution** — an out-of-range date produced
 "Voucher date is missing" when the date was present.
 
