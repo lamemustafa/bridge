@@ -32,7 +32,7 @@ downloaded bytes and source commit.
    visible. In a new chat, use **Connectors** to confirm Bridge is connected.
 
 Journal preparation and posting are available by default. Every new posting
-requires your approval in a separate dialog. Turn off **Allow Journal posting**
+requires your approval in a separate Bridge dialog. Turn off **Allow Journal posting**
 in the extension settings for a read-only connector.
 
 Bridge only accepts loopback Tally endpoints. Do not open a port to the
