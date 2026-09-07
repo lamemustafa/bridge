@@ -21,16 +21,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require an immutable preview tag
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+      - name: Require reviewed source and a matching immutable preview version
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^mcp-preview-[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z]+)*$ ]]; then
-            echo "release_tag must be an immutable mcp-preview semantic version"
-            exit 1
-          fi
+          node scripts/check-mcpb-preview-admission.mjs "$RELEASE_TAG" "$SOURCE_REF" "$DEFAULT_BRANCH"
 
   package:
     name: Package ${{ matrix.platform }}
@@ -142,17 +147,31 @@ jobs:
             exit 1
           fi
 
-          tag_ref_file="$(mktemp)"
-          if ! git ls-remote --tags --refs origin "refs/tags/$RELEASE_TAG" >"$tag_ref_file"; then
+          resolve_preview_tag_commit() {
+            local tag_ref_file tag_sha peeled_sha ref_sha ref
+            tag_ref_file="$(mktemp)"
+            if ! git ls-remote --tags origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}" >"$tag_ref_file"; then
+              rm -f "$tag_ref_file"
+              return 1
+            fi
+            tag_sha=""
+            peeled_sha=""
+            while IFS=$'\t' read -r ref_sha ref; do
+              case "$ref" in
+                "refs/tags/$RELEASE_TAG") tag_sha="$ref_sha" ;;
+                "refs/tags/$RELEASE_TAG^{}") peeled_sha="$ref_sha" ;;
+              esac
+            done <"$tag_ref_file"
             rm -f "$tag_ref_file"
+            printf '%s' "${peeled_sha:-$tag_sha}"
+          }
+
+          if ! existing_tag_commit="$(resolve_preview_tag_commit)"; then
             echo "could not verify whether $RELEASE_TAG already exists; refusing to publish"
             exit 1
           fi
-          existing_tag_sha="$(awk 'NR == 1 { print $1 }' "$tag_ref_file")"
-          rm -f "$tag_ref_file"
-
-          if [[ -n "$existing_tag_sha" ]]; then
-            if [[ "$existing_tag_sha" != "$SOURCE_SHA" ]]; then
+          if [[ -n "$existing_tag_commit" ]]; then
+            if [[ "$existing_tag_commit" != "$SOURCE_SHA" ]]; then
               echo "refusing to publish: existing tag $RELEASE_TAG does not identify $SOURCE_SHA"
               exit 1
             fi
@@ -162,15 +181,11 @@ jobs:
               -f "sha=$SOURCE_SHA" >/dev/null
           fi
 
-          tag_ref_file="$(mktemp)"
-          if ! git ls-remote --tags --refs origin "refs/tags/$RELEASE_TAG" >"$tag_ref_file"; then
-            rm -f "$tag_ref_file"
+          if ! verified_tag_commit="$(resolve_preview_tag_commit)"; then
             echo "could not verify the tag created for $RELEASE_TAG; refusing to publish"
             exit 1
           fi
-          verified_tag_sha="$(awk 'NR == 1 { print $1 }' "$tag_ref_file")"
-          rm -f "$tag_ref_file"
-          if [[ "$verified_tag_sha" != "$SOURCE_SHA" ]]; then
+          if [[ "$verified_tag_commit" != "$SOURCE_SHA" ]]; then
             echo "refusing to publish: $RELEASE_TAG does not identify $SOURCE_SHA"
             exit 1
           fi
