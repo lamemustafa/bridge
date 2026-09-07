@@ -35,7 +35,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "2d6c66e1c494a64b0b13fcdbf51ba4fe193f2d918957d3a4a76c52b5a8a1277f"
+      "sha256": "1d4565e9a49bc28e26b5457d454fc1ffb50415de39b10a8c0c08399265a2f1e8"
     },
     {
       "path": "docs/tally/compatibility/README.md",
@@ -167,7 +167,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/lib.rs",
-      "sha256": "271ebbc6236835e82a0e1e4d8a9c0c44a71f4f79e2ed1ce6929c1c351b6cb4d8"
+      "sha256": "dd3d7b4b5dc043265e5b7403c8ff95cef01447c0d594f4f8cccd920a5f0e3e41"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/native_outstandings/compute.rs",
@@ -499,7 +499,7 @@
     },
     {
       "path": "src-tauri/src/tally/runtime.rs",
-      "sha256": "0fae53a464cf11ae33bb96f1c81757faba77619bc3a2c5642f4f72c6161eb6fd"
+      "sha256": "b6d18f3eccf1184a6ba8a2b27756a50b41755a2129b76e483b104a4a64eeaded"
     },
     {
       "path": "src-tauri/src/tally/serial_queue.rs",
@@ -539,7 +539,7 @@
     },
     {
       "path": "src/MirrorProofScreen.tsx",
-      "sha256": "1215e456d54fe2e9819f6ef813cb45a68a8c132b283d1b6f1e7bfaf8b9dc1703"
+      "sha256": "090ce413b9d2b4876c17128db419d814d2e5eeee95007cb0070b7d1eca771379"
     },
     {
       "path": "src/OutstandingsEvidencePanel.tsx",
@@ -658,5 +658,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "8055959ddc2ca2223ca3c1bc1bd05355e25e65cabede2237a648bfbc4c652440"
+  "manifest_sha256": "afede51db9bfc8a3929ac7975aa32d2bb6fdb6d07c4a232b30c961d8d1f58605"
 }
