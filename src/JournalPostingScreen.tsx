@@ -55,7 +55,19 @@ function outcomeOf(action: JournalActionResponse | null) {
 }
 
 function actionErrorOf(action: JournalActionResponse | null) {
-  return action?.result?.result?.error?.message ?? null;
+  const result = action?.result?.result;
+  if (!result?.error) return null;
+  if (result.attempt_recorded !== false) return result.error.message ?? null;
+  switch (result.error.code) {
+    case "import_approval_timed_out":
+      return "The approval dialog expired before Bridge could post this Journal. Choose Post Journal to review it again.";
+    case "import_approval_declined":
+      return "The Journal was not posted because approval was declined. Choose Post Journal to try again.";
+    case "import_approval_unavailable":
+      return "Bridge could not open the approval dialog, so the Journal was not posted. Choose Post Journal to try again.";
+    default:
+      return result.error.message ?? null;
+  }
 }
 
 function displayJournalDate(value: string) {

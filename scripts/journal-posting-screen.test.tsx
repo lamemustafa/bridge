@@ -113,3 +113,38 @@ test("renders the review flow and keeps safe recovery actions after each backend
 
   root.unmount();
 });
+
+for (const [code, expected] of [
+  ["import_approval_timed_out", "The approval dialog expired before Bridge could post this Journal."],
+  ["import_approval_declined", "The Journal was not posted because approval was declined."],
+] as const) {
+  test(`explains ${code} while keeping Post Journal available`, async () => {
+    mocks.invoke.mockResolvedValueOnce(review).mockResolvedValueOnce({
+      batchId: review.batchId,
+      result: {
+        result: {
+          dispatch: { state: "not_dispatched" },
+          attempt_recorded: false,
+          error: { code, message: "No posting attempt was recorded." },
+        },
+      },
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(<JournalPostingScreen config={config} />);
+    });
+    await act(async () => {
+      button(host, "Choose Journal file").click();
+    });
+    await act(async () => {
+      button(host, "Post Journal").click();
+    });
+
+    expect(host.textContent).toContain(expected);
+    expect(button(host, "Post Journal")).toBeTruthy();
+    root.unmount();
+  });
+}
