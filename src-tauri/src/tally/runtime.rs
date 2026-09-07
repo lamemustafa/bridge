@@ -2217,7 +2217,7 @@ impl TallyRuntime {
                     // Admit the initial observed product/mode and company scope before
                     // any queued monetary source read. Those observations can become
                     // stale during queued source reads, so the same admission is
-                    // repeated after the queued absence and catalogue reads below.
+                    // repeated after the catalogue, before the final absence reads.
                     let (opening_profile, opening_mode_evidence) =
                         observe_read_boundary(&client).await?;
                     let (opening_companies, opening_company_evidence) = client
@@ -2242,22 +2242,6 @@ impl TallyRuntime {
                         .map_err(|error| {
                             with_read_evidence(error.into(), admission_evidence.clone())
                         })?;
-                    let (first_read, first_evidence) = fetch_admitted_agent_read(
-                        &client,
-                        &identity,
-                        request.verification_request(),
-                    )
-                    .await
-                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    let admission_evidence = admission_evidence.combine(first_evidence);
-                    let (second_read, second_evidence) = fetch_admitted_agent_read(
-                        &client,
-                        &identity,
-                        request.verification_request(),
-                    )
-                    .await
-                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
-                    let admission_evidence = admission_evidence.combine(second_evidence);
                     let (catalogue, catalogue_evidence) = fetch_admitted_agent_read(
                         &client,
                         &identity,
@@ -2266,13 +2250,6 @@ impl TallyRuntime {
                     .await
                     .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     let admission_evidence = admission_evidence.combine(catalogue_evidence);
-                    recheck_admission(
-                        &first_read.body,
-                        &second_read.body,
-                        &catalogue.body,
-                        request.ledger_binding(),
-                    )
-                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     let (profile, mode_evidence) = observe_read_boundary(&client)
                         .await
                         .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
@@ -2291,6 +2268,32 @@ impl TallyRuntime {
                     request.require_boundary_profile(profile).map_err(|error| {
                         with_read_evidence(error.into(), admission_evidence.clone())
                     })?;
+                    // Keep duplicate absence as the final source admission. The
+                    // helper retains its required identity/health brackets; no
+                    // unrelated profile or catalogue read follows this verdict.
+                    let (first_read, first_evidence) = fetch_admitted_agent_read(
+                        &client,
+                        &identity,
+                        request.verification_request(),
+                    )
+                    .await
+                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let admission_evidence = admission_evidence.combine(first_evidence);
+                    let (second_read, second_evidence) = fetch_admitted_agent_read(
+                        &client,
+                        &identity,
+                        request.verification_request(),
+                    )
+                    .await
+                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    let admission_evidence = admission_evidence.combine(second_evidence);
+                    recheck_admission(
+                        &first_read.body,
+                        &second_read.body,
+                        &catalogue.body,
+                        request.ledger_binding(),
+                    )
+                    .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
                     before_dispatch().map_err(|error| {
                         with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())
                     })?;

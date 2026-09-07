@@ -139,14 +139,14 @@ fn queued_plans(
         company_plan(opening_companies.clone()),
         company_plan(opening_companies.clone()),
     ];
-    plans.extend(paired(verification.clone(), &opening_companies));
-    plans.extend(paired(verification, &opening_companies));
     plans.extend(paired(catalogue, &opening_companies));
     plans.extend([
         status_plan(),
         company_plan(final_companies.clone()),
         company_plan(final_companies),
     ]);
+    plans.extend(paired(verification.clone(), &opening_companies));
+    plans.extend(paired(verification, &opening_companies));
     if let Some(response) = post_response {
         plans.push(company_plan(response));
     }
@@ -185,21 +185,22 @@ fn expected_queued_evidence(
     let mut evidence = single_observation(observed, responses, 0)
         .combine(single_observation(observed, responses, 1))
         .combine(single_observation(observed, responses, 2));
-    for index in [4, 10, 16] {
-        evidence = evidence.combine(paired_observation(observed, responses, index));
-    }
+    evidence = evidence.combine(paired_observation(observed, responses, 4));
+    let closing = single_observation(observed, responses, 9)
+        .combine(single_observation(observed, responses, 10));
+    evidence = evidence
+        .combine(closing)
+        .combine(single_observation(observed, responses, 11));
     if final_admission {
-        let closing = single_observation(observed, responses, 21)
-            .combine(single_observation(observed, responses, 22));
-        evidence = evidence
-            .combine(closing)
-            .combine(single_observation(observed, responses, 23));
+        for index in [13, 19] {
+            evidence = evidence.combine(paired_observation(observed, responses, index));
+        }
     }
     evidence
 }
 
 #[tokio::test]
-async fn queued_education_change_refuses_after_captured_absence_and_catalogue_reads() {
+async fn queued_education_change_refuses_before_final_absence_reads() {
     let companies = captured_companies();
     let education = companies.replace(
         "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
@@ -209,13 +210,14 @@ async fn queued_education_change_refuses_after_captured_absence_and_catalogue_re
         education, companies,
         "fixture mutation is explicit, not live evidence"
     );
-    let plans = queued_plans(
+    let mut plans = queued_plans(
         companies.clone(),
         companies.clone(),
         captured_catalogue(),
         education,
         None,
     );
+    plans.truncate(12);
     let responses = plans
         .iter()
         .map(ScenarioPlan::response_bytes)
@@ -249,11 +251,15 @@ async fn queued_education_change_refuses_after_captured_absence_and_catalogue_re
         "refusal precedes durable intent"
     );
     let observed = simulator.finish().unwrap();
-    assert_eq!(observed.len(), 24, "final refusal precedes import POST");
+    assert_eq!(
+        observed.len(),
+        12,
+        "final mode refusal precedes absence reads"
+    );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
-        expected_queued_evidence(&observed, &responses, true),
-        "initial Licensed and final Education observations plus all queued reads survive refusal"
+        expected_queued_evidence(&observed, &responses, false),
+        "initial Licensed, catalogue and final Education observations survive refusal"
     );
 }
 
@@ -266,13 +272,14 @@ async fn queued_company_refusal_retains_captured_source_and_final_identity_evide
         1,
     );
     assert_ne!(replaced, companies);
-    let plans = queued_plans(
+    let mut plans = queued_plans(
         companies.clone(),
         companies.clone(),
         captured_catalogue(),
         replaced,
         None,
     );
+    plans.truncate(12);
     let responses = plans
         .iter()
         .map(ScenarioPlan::response_bytes)
@@ -308,12 +315,12 @@ async fn queued_company_refusal_retains_captured_source_and_final_identity_evide
     let observed = simulator.finish().unwrap();
     assert_eq!(
         observed.len(),
-        24,
-        "final identity refusal precedes import POST"
+        12,
+        "final identity refusal precedes absence reads"
     );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
-        expected_queued_evidence(&observed, &responses, true),
+        expected_queued_evidence(&observed, &responses, false),
     );
 }
 
@@ -337,14 +344,13 @@ async fn queued_catalogue_rename_refuses_before_intent_or_post() {
         renamed, original_catalogue,
         "captured metadata mutation is explicit"
     );
-    let mut plans = queued_plans(
+    let plans = queued_plans(
         companies.clone(),
         companies.clone(),
         renamed,
         companies.clone(),
         None,
     );
-    plans.truncate(21); // This refusal occurs before final admission.
     let responses = plans
         .iter()
         .map(ScenarioPlan::response_bytes)
@@ -385,12 +391,12 @@ async fn queued_catalogue_rename_refuses_before_intent_or_post() {
     let observed = simulator.finish().unwrap();
     assert_eq!(
         observed.len(),
-        21,
-        "catalogue refusal precedes final admission and POST"
+        24,
+        "catalogue refusal precedes intent and POST"
     );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
-        expected_queued_evidence(&observed, &responses, false),
+        expected_queued_evidence(&observed, &responses, true),
         "captured queued absence and catalogue evidence survive the master-binding refusal"
     );
 }
@@ -454,17 +460,16 @@ async fn queued_import_keeps_admission_separate_from_raw_import_wire() {
 }
 
 #[tokio::test]
-async fn queued_import_refuses_newly_attributed_source_before_intent_or_post() {
+async fn queued_import_refuses_attribution_after_final_profile_and_catalogue_reads() {
     let companies = captured_companies();
     let journal = captured_journal();
-    let mut plans = queued_plans(
+    let plans = queued_plans(
         companies.clone(),
         journal.clone(),
         captured_catalogue(),
         companies.clone(),
         None,
     );
-    plans.truncate(21); // This refusal occurs before final admission.
     let responses = plans
         .iter()
         .map(ScenarioPlan::response_bytes)
@@ -504,12 +509,12 @@ async fn queued_import_refuses_newly_attributed_source_before_intent_or_post() {
     let observed = simulator.finish().unwrap();
     assert_eq!(
         observed.len(),
-        21,
-        "refusal precedes final admission and import POST"
+        24,
+        "final absence refusal precedes intent and import POST"
     );
     assert_eq!(
         error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence,
-        expected_queued_evidence(&observed, &responses, false),
+        expected_queued_evidence(&observed, &responses, true),
         "initial mode/company and all three queued source reads survive refusal"
     );
 }
