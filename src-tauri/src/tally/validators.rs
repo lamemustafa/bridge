@@ -4,6 +4,10 @@ pub fn validate_company_name(value: &str) -> Result<(), String> {
     normalize_company_name(value).map(|_| ())
 }
 
+pub(crate) fn is_valid_company_number(value: &str) -> bool {
+    (1..=16).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 pub fn normalize_company_name(value: &str) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

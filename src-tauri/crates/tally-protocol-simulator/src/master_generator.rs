@@ -91,7 +91,8 @@ fn predicted_encoded_bytes(utf8_bytes: usize, encoding: WireEncoding) -> Option<
         WireEncoding::Utf8 => Some(utf8_bytes),
         WireEncoding::Utf8Bom => utf8_bytes.checked_add(3),
         // Every generated code point is ASCII, so each UTF-8 byte becomes one
-        // UTF-16 code unit plus a two-byte BOM.
+        // UTF-16 code unit, plus two bytes for BOM-bearing variants.
+        WireEncoding::Utf16LeNoBom => utf8_bytes.checked_mul(2),
         WireEncoding::Utf16Le | WireEncoding::Utf16Be => utf8_bytes.checked_mul(2)?.checked_add(2),
     }
 }

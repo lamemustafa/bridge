@@ -113,12 +113,23 @@ fn tally_command_error(
     }
 }
 
+#[cfg(test)]
+#[path = "commands_native_ledger_tests.rs"]
+mod native_ledger_tests;
+
 fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
-    if error
-        .downcast_ref::<PartyLedgerMasterSourceValidationError>()
-        .is_some()
-        || error.downcast_ref::<PairedReadValidationError>().is_some()
-    {
+    if error.chain().any(|cause| {
+        cause
+            .downcast_ref::<PartyLedgerMasterSourceValidationError>()
+            .is_some()
+            || cause.downcast_ref::<PairedReadValidationError>().is_some()
+            || cause
+                .downcast_ref::<crate::tally::runtime::OpeningBoundaryObservationError>()
+                .is_some()
+            || cause
+                .downcast_ref::<crate::tally::runtime::NativeLedgerIdentityAdmissionError>()
+                .is_some()
+    }) {
         return tally_command_error(
             "response_validation_failed",
             "Response validation",
@@ -128,7 +139,10 @@ fn tally_runtime_command_error(error: anyhow::Error) -> TallyCommandError {
             "Keep the result unverified and inspect redacted diagnostics before retrying.",
         );
     }
-    if let Some(control) = error.downcast_ref::<TallyRuntimeControlError>() {
+    if let Some(control) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<TallyRuntimeControlError>())
+    {
         return match control {
             TallyRuntimeControlError::Cancelled => tally_command_error(
                 "request_cancelled",
@@ -741,7 +755,7 @@ pub async fn qualify_selected_tally_reads(
             },
         );
     }
-    probe.profile.profile_version = 3;
+    probe.profile.profile_version = 4;
     let selected_read_scope = SelectedReadScopeEvidence {
         scope_version: 2,
         ledger_profile_id: SELECTED_LEDGER_QUERY_PROFILE_ID.to_string(),
@@ -1116,6 +1130,7 @@ pub async fn save_tally_setup(
                     profile_version: probe.profile.profile_version,
                     product: probe.profile.product.clone(),
                     release: probe.profile.release.clone(),
+                    license_tier: probe.profile.license_tier,
                     mode: probe.profile.mode.clone(),
                     mode_confidence: if probe.profile.mode.is_some() {
                         Confidence::Observed
@@ -1815,6 +1830,7 @@ pub async fn start_tally_core_snapshot(
             profile_version: canary.profile.profile_version,
             product: canary.profile.product.clone(),
             release: canary.profile.release.clone(),
+            license_tier: canary.profile.license_tier,
             mode: canary.profile.mode.clone(),
             mode_confidence: if canary.profile.mode.is_some() {
                 Confidence::Observed
@@ -2200,12 +2216,7 @@ fn verify_observed_company_tuple_from_companies(
             "Probe again and choose an observed company identity.",
         )
     })?;
-    if selected.company_number.is_empty()
-        || selected.company_number.len() > 16
-        || !selected
-            .company_number
-            .bytes()
-            .all(|byte| byte.is_ascii_digit())
+    if !crate::tally::validators::is_valid_company_number(&selected.company_number)
         || TallyDate::parse(selected.books_from_yyyymmdd.clone()).is_err()
     {
         return Err(tally_command_error(
@@ -2225,6 +2236,22 @@ fn verify_observed_company_tuple_from_companies(
         &companies,
     )
     .map_err(|error| match error {
+        VerifiedCompanyIdentityError::InvalidCompanyNumber => tally_command_error(
+            "company_selection_invalid",
+            "Tally application",
+            "The observed company number is invalid.",
+            "after_change",
+            false,
+            "Probe again and choose a valid observed company identity.",
+        ),
+        VerifiedCompanyIdentityError::InvalidBooksFrom => tally_command_error(
+            "company_books_from_invalid",
+            "Tally application",
+            "Tally returned an invalid books-from calendar date for the selected company.",
+            "not_recommended",
+            false,
+            "Check the company's books-from date in Tally, then probe again.",
+        ),
         VerifiedCompanyIdentityError::Missing => tally_command_error(
             "reviewed_company_scope_changed",
             "Tally application",
@@ -3356,6 +3383,23 @@ mod tests {
     }
 
     #[test]
+    fn retained_wire_evidence_does_not_hide_typed_command_refusals() {
+        use crate::tally::runtime::{with_read_evidence, RuntimeReadEvidence};
+        for (source, code) in [
+            (anyhow::Error::new(crate::tally::runtime::OpeningBoundaryObservationError::Unobserved), "response_validation_failed"),
+            (anyhow::Error::new(crate::tally::runtime::OpeningBoundaryObservationError::Unqualified), "response_validation_failed"),
+            (anyhow::Error::new(crate::tally::connection::PartyLedgerMasterSourceValidationError::OpeningBalancesDisagreed), "response_validation_failed"),
+            (anyhow::Error::new(crate::tally::connection::PairedReadValidationError::PartyLedgerMaster), "response_validation_failed"),
+            (anyhow::Error::new(crate::tally::runtime::TallyRuntimeControlError::QueueDeadline), "tally_runtime_temporarily_unavailable"),
+        ] {
+            let wrapped = with_read_evidence(source, RuntimeReadEvidence::empty());
+            let mapped = tally_runtime_command_error(wrapped);
+            assert_eq!(mapped.code, code);
+            assert!(!mapped.message.contains("opening balances disagreed"));
+        }
+    }
+
+    #[test]
     fn drifted_party_master_read_is_response_validation_not_endpoint_failure() {
         let error = tally_runtime_command_error(anyhow::Error::new(
             crate::tally::connection::PairedReadValidationError::PartyLedgerMaster,
@@ -3539,6 +3583,7 @@ mod tests {
                 profile_version: 2,
                 product: "Unknown".to_string(),
                 release: None,
+                license_tier: None,
                 mode: None,
                 transports: BTreeMap::new(),
                 features: BTreeMap::new(),

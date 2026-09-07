@@ -224,6 +224,38 @@ simply what a custom report emits when its fields are named `Company Name Field`
 
 ---
 
+### 3.1 Observing the running release and licence tier
+
+**VERIFIED 2026-09-06; one synthetic TallyPrime Silver 7.1 endpoint.** Adding
+only `<COMPUTE>BridgeRelease : @@VersionReleaseString</COMPUTE>` to the existing
+native `CompanyListV2` collection returned `BRIDGERELEASE` = `7.1` for all 16
+loaded companies. The same rows returned `PRODUCTNAME` = `TallyPrime`,
+`EDUMODE` = `No`, `SILVER` = `Yes`, and `GOLD` = `No`. Two independent calls
+returned identical 20,412-byte UTF-16LE bodies, SHA-256
+`998280fac5b6b40b23ee3879dcb35780bc439083a4d1a3a3fb9a64231adbaa50`.
+The 2,524-byte request SHA-256 was
+`9df2a53f085dac2636e9435462b612c1487ec6f903677815036c9f39163f7dd8`.
+The unchanged captured response and metadata are retained in
+`src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.*`.
+
+The expression was a discovery lead from the upstream
+[TallyConnector implementation](https://github.com/Accounting-Companion/TallyConnector/blob/03c7f4f53914bcbf017849c8e268154cffcfd76e/src/TallyConnector/Services/BaseTallyService.cs).
+The live bytes establish this observation; the upstream code is not proof of
+Bridge compatibility. No licence serial, account identifier, machine path,
+report definition, or new dispatch path was needed.
+
+**Admission boundary.** Preserve an unobserved release as unknown. A missing,
+empty, or disagreeing release across company rows cannot identify a release.
+Silver or Gold is known only when Education is false and exactly one tier flag
+is true. The observed label does not establish other releases, customised TDL,
+Gold, ERP9, Edit Log, or every voucher configuration. It does not promote any
+compatibility-matrix claim. New Journal files and persisted import-absence
+verdicts require the observed TallyPrime Silver 7.1 profile before and
+after the relevant reads; positive historical rows remain directly observable
+on other profiles.
+
+---
+
 ## 4. Object types
 
 **VERIFIED** — all readable via collection export, all returning `STATUS=1`, all sub-40 ms
@@ -288,11 +320,43 @@ machine, Tally build, licence tier, company, or configuration.
 **The failure is invisible from the response.** When the period is silently widened:
 
 - **without** a `<FILTERS>` clause you receive far **too many** rows;
-- **with** a `<FILTERS>` clause you receive **zero** rows, because `##SVToDate` does not
-  resolve and the predicate excludes everything.
+- **with** a `<FILTERS>` predicate bound to `##SVFromDate` / `##SVToDate`, you receive
+  **zero** rows, because the refused date variable does not resolve and the predicate excludes
+  everything. This observation does not describe a predicate using literal date bounds.
 
 Both return `STATUS=1`. Neither reports an error. A zero-row response is indistinguishable
 from a genuinely empty period without corroboration.
+
+**VERIFIED, limited literal-predicate counter-observation (2026-08-21).** Retained request
+and response bytes from TallyPrime 7.1 Education, synthetic `WR2 Unicode Lab`, distinguish
+that variable-dependent failure from a literal-date predicate. Both requests sent
+`SVFROMDATE=20260701` and the refused `SVTODATE=20260830`:
+
+| Predicate bounds | Actual voucher rows | Returned voucher dates | Response bytes | Response SHA-256 |
+| --- | --- | --- | --- | --- |
+| `$Date >= ##SVFromDate AND $Date <= ##SVToDate` | 0 | none | 3,022 | `49d1cf0c7cf56220fbaa7e2f583a99835f6af74dda7ad807ad54a34277bbff7e` |
+| `$Date >= $$Date:"20260701" AND $Date <= $$Date:"20260831"` | 3 | all `20260801` | 9,974 | `544dd8facaffa54263ded46db4f18a75cb940450ca49aacce7f0014b22703b98` |
+
+Both responses carried `STATUS=1`. Rows and dates were counted from complete XML elements,
+not substring matches. The literal predicate does not depend on the refused date variable;
+this is direct counter-evidence to treating every filtered voucher collection as the zero-row
+failure above. Ordinary agent voucher reads and import readback use literal bounds and validate
+returned row dates. This differs from a native opening/balance report with no returned span,
+whose monetary period still requires current-mode admission.
+
+**Measurement limits:** one Education instance and one synthetic company. The literal request
+used `DATE,VOUCHERNUMBER`; the variable request used the broader accounting projection. Its
+literal upper bound was `20260831`, one day after the refused static-variable upper bound;
+the three observed vouchers fall inside both windows. This was not an otherwise-identical
+full-projection comparison, does not qualify every arbitrary-date window or mode transition,
+and does not establish that repeating an empty response proves absence. A regression test
+protects the literal predicates in both agent renderers; it is not additional live evidence.
+
+**Import verification qualification policy:** persisting any `not_found` verdict requires an
+observed TallyPrime Silver 7.1 profile (§3.1) before the voucher reads and a qualified closing observation.
+An unqualified negative verdict must leave the prior proof and batch status unchanged. Positive
+historical readback remains available. This is a conservative qualification limit on negative
+verdicts, not a claim that Education was observed to reject a literal day-15 predicate.
 
 **Bridge native-outstandings policy.** The paired ledger snapshot is the only exact money
 discriminator available after a zero-row Bills response: a book with no named bills and no
@@ -342,13 +406,32 @@ At `FROM=BOOKSFROM`, only 3 of 88 Aarav ledgers were non-zero; the same date-les
 display period. Bridge therefore pins the native master export to `BOOKSFROM..LASTVOUCHERDATE`
 and treats its period as an accounting input, not a cosmetic request variable.
 
+**CORRECTION — live 2026-09-06, licensed synthetic lab.** Period opening is
+account-dependent; the two cash/bank observations above do not establish a
+running-balance rule for every ledger. Three Sales vouchers on 2026-08-01
+contributed `306.06`, but that Sales ledger returned native opening `0.00` for
+both 2026-08-02 and 2026-09-01. A debtor carried `-102.02` into September, and
+Cash carried a 2026-09-01 posting of `-12.50` into 2026-09-02. Paired native
+responses and MCP results agreed. These observations corroborate the earlier
+account-nature distinction: observed balance-sheet ledgers carry prior balances;
+observed nominal ledgers open at zero for the selected period.
+
+For a period movement report, use the observed native opening at the requested
+`from`, then apply only direct voucher entries inside the literal window. Do not
+add pre-window nominal activity to that opening. The resulting calculated
+closing is a period movement figure, not the balance-sheet `CLOSINGBALANCE`
+method. This is bounded evidence for the recorded ledgers and host, not universal
+report parity. Empty opening values remain unknown, never zero.
+
 **Compatibility boundary.** Education mode can silently refuse a non-01/02/31 `BOOKSFROM` and
 load its display period instead. The master response does not carry a returned date span, so this
 path cannot apply the voucher reader's I12 span comparison. Before dispatch, Bridge instead uses
-the endpoint's `DateBoundaryProfile`: verified Education evidence rejects unsupported boundaries;
-licensed or unknown evidence remains mode-agnostic and permits ordinary calendar dates. Do not
-replace this with a global day-of-month rule: licensed Tally remains unverified but must not be
-silently narrowed by an Education-only observation.
+a freshly observed endpoint `DateBoundaryProfile`: verified Education evidence rejects unsupported
+boundaries; observed licensed mode permits ordinary calendar dates under the limited evidence
+above. Native opening, compliance-ledger, and native-outstandings reads require a recognized
+current mode and a matching closing mode observation. A missing or stale cached probe cannot
+admit these date-dependent balances. Unknown mode is refused. Do not replace this with a global
+day-of-month rule or imply that one licensed observation qualifies every installation.
 
 ---
 
@@ -602,8 +685,40 @@ Two consequences, both significant:
 2. **Manual numbering converts a dangerous failure into a safe one.** The same failed Alter
    duplicates a client's voucher under automatic numbering and is rejected under manual.
 
-> **RULE: any voucher type Bridge writes to should use Manual numbering with
-> `PREVENTDUPLICATES=Yes`.** This is a safety property, not a preference.
+> **RULE: a flow that relies on voucher numbers for identity or duplicate
+> rejection requires Manual numbering with `PREVENTDUPLICATES=Yes`.** Do not
+> apply the failed-`Alter` observation to a different request identity mechanism.
+
+**Scope clarification — verified 2026-09-06, recorded 2026-09-07.** The licensed
+Journal file workflow uses `ACTION="Create"` with a stable client `REMOTEID`, as
+described in [Implementation Guide §3.3a](IMPLEMENTATION_GUIDE.md#33a-remoteid-is-the-idempotency-key--supersedes-34s-conclusion).
+The measured file omitted `VOUCHERNUMBER`. Its first import returned
+`CREATED=1, ALTERED=0`; importing the exact file again returned
+`CREATED=0, ALTERED=1`. Readback retained one voucher with the same GUID, numeric
+master ID, and assigned voucher number. The file SHA-256 was
+`7c02fd1b598d70157fa676e5a41ae16184034d39169793d8554e31713cd0f127`.
+
+This qualifies that exact-file repeat on the observed licensed Journal path. It
+does not establish voucher-number-based identity, the configured numbering
+method, other request shapes or voucher types, restart behavior, or universal
+REMOTEID semantics. The connector neither dispatches imports nor retries them.
+A mandatory manual-numbering preflight would require a separately observed
+voucher-type read contract; it cannot be inferred from the failed-`Alter` case.
+
+**Batch identity qualification — verified 2026-09-06, recorded 2026-09-07.**
+A new synthetic Journal reused the earlier caller transaction label in a separate
+local batch. Its `REMOTEID` and narration marker used the same batch-derived UUID;
+the caller label was not the wire key. The first exact-file import returned
+`CREATED=1, ALTERED=0`; its repeat returned `CREATED=0, ALTERED=1`. Both had zero
+errors, exceptions and deletions. Readback retained new master ID 5, voucher number
+2, and the same GUID while AlterID advanced from 9 to 10. The old voucher's GUID,
+master ID 4, number 1 and AlterID 8 were unchanged in immediate before/after reads.
+The new file SHA-256 was
+`e39eb3c0bfe53144bdd9c0f4afcb88c3d63a2050214233ee77465d42a54245ef`.
+The unchanged UTF-16LE readback is retained as
+`native-namespaced-journal.utf16le.xml` in the protocol fixture tree, with capture
+metadata. This is a Silver 7.1 Journal observation; it does not qualify other
+profiles or deduplication after losing/rebuilding a batch.
 
 Creating such a type over XML works: `<VOUCHERTYPE ACTION="Create">` with
 `<NUMBERINGMETHOD>Manual</NUMBERINGMETHOD>` and `<PREVENTDUPLICATES>Yes</PREVENTDUPLICATES>`

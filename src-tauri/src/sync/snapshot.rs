@@ -3698,6 +3698,7 @@ mod tests {
             profile_version: 1,
             product: "TallyPrime".to_string(),
             release: None,
+            license_tier: None,
             mode: Some("Education".to_string()),
             transports: BTreeMap::from([(
                 TransportId::XmlHttp,
@@ -4327,6 +4328,7 @@ mod tests {
                 profile_version: 1,
                 product: "TallyPrime".to_string(),
                 release: None,
+                license_tier: None,
                 mode: Some("Education".to_string()),
                 mode_confidence: Confidence::Observed,
                 items: vec![CapabilityItemInput {

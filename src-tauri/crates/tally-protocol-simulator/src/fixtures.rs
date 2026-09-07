@@ -128,6 +128,7 @@ pub enum WireEncoding {
     Utf8,
     Utf8Bom,
     Utf16Le,
+    Utf16LeNoBom,
     Utf16Be,
 }
 
@@ -221,6 +222,7 @@ pub fn encode(text: &str, encoding: WireEncoding) -> Vec<u8> {
     match encoding {
         WireEncoding::Utf8 => text.as_bytes().to_vec(),
         WireEncoding::Utf8Bom => [b"\xEF\xBB\xBF".as_slice(), text.as_bytes()].concat(),
+        WireEncoding::Utf16LeNoBom => text.encode_utf16().flat_map(u16::to_le_bytes).collect(),
         WireEncoding::Utf16Le => {
             let mut bytes = vec![0xFF, 0xFE];
             bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));

@@ -24,7 +24,10 @@ test("native provenance labels its receivable-only count while native rows inclu
   assert.match(screen, /readProvenance: \{\s*read_strategy: inrCompleteResult\.read_strategy,/s);
   assert.match(runtime, /read_strategy: OutstandingsReadStrategy::NativeBills,/);
   assert.match(runtime, /read_strategy: OutstandingsReadStrategy::VoucherScan,/);
-  assert.match(runtime, /all_open_bill_rows\(&receivable_rows, &payable_rows, ageing_anchor, &as_of\)/);
+  assert.ok(
+    /all_open_bill_rows\(\s*&receivable_rows,\s*&payable_rows,\s*ageing_anchor,\s*&as_of,?\s*\)/.test(runtime),
+    "native statement rows must consume both receivable and payable sources",
+  );
   assert.match(runtime, /assert_eq!\(statement_open_bills\.len\(\), 6\);/);
   assert.match(panel, /readProvenance\(evidence\.readProvenance\)/);
   assert.doesNotMatch(panel, /sourceVoucherCount/);

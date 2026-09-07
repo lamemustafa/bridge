@@ -1,0 +1,14 @@
+{
+  "source": "Live licensed TallyPrime synthetic-company voucher collection read",
+  "observed_date": "2026-09-06",
+  "encoding": "UTF-16LE without BOM",
+  "bytes": 2926,
+  "sha256": "52f69354f7d87de773f68e7d9856f2719374a24c920933f47283e4d662c4f40b",
+  "scope": "Successful empty collection with CMPINFO counters; no voucher contents; request shape not qualified by this fixture",
+  "request_bytes": 1592,
+  "request_sha256": "ea009828f883d2a887849d3ba8086a84403434e6bffaccdd53bfa755a6e5f984",
+  "collection": "Bridge Agent Vouchers",
+  "capture_bytes_retained_unchanged": true,
+  "sensitivity_review": "Synthetic lab data; no credentials, customer identifiers, or operational paths.",
+  "compatibility_claim": "None; captures only qualify parser behavior for these returned bytes."
+}

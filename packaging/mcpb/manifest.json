@@ -1,0 +1,45 @@
+{
+  "manifest_version": "0.1",
+  "name": "bridge-tally",
+  "display_name": "Bridge Tally",
+  "version": "0.2.0",
+  "description": "Read-only, loopback-only Bridge connector for Tally; optional local import-file planning is experimental and disabled by default.",
+  "author": {
+    "name": "Bridge contributors"
+  },
+  "license": "Apache-2.0",
+  "server": {
+    "type": "binary",
+    "entry_point": "bin/bridge_mcp",
+    "mcp_config": {
+      "command": "${__dirname}/bin/bridge_mcp",
+      "env": {
+        "BRIDGE_TALLY_HOST": "${user_config.host}",
+        "BRIDGE_TALLY_PORT": "${user_config.port}",
+        "BRIDGE_AGENT_REDACTION": "${user_config.redaction}"
+      }
+    }
+  },
+  "user_config": {
+    "host": {
+      "type": "string",
+      "title": "Tally host",
+      "description": "Loopback host of the local Tally instance (localhost, 127.0.0.1, or ::1).",
+      "default": "localhost"
+    },
+    "port": {
+      "type": "number",
+      "title": "Tally port",
+      "description": "HTTP port of the local Tally instance.",
+      "default": 9000,
+      "min": 1,
+      "max": 65535
+    },
+    "redaction": {
+      "type": "string",
+      "title": "Response redaction",
+      "description": "Enter none, mask_parties, or drop_narration. Other values prevent the connector from starting.",
+      "default": "none"
+    }
+  }
+}

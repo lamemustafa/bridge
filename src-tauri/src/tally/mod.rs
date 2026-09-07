@@ -1,3 +1,4 @@
+pub(crate) mod agent_read_request;
 pub mod capability_packs;
 pub mod connection;
 pub mod connector;
@@ -40,27 +41,51 @@ pub use xml_parser::{TallyCompany, TallyImportResult, TallyLedger, TallyVoucher}
 pub struct VerifiedCompanyIdentity {
     display_name: String,
     company_guid: String,
-    company_number: String,
-    books_from_yyyymmdd: String,
+    company_number: ObservedCompanyNumber,
+    books_from_yyyymmdd: bridge_tally_core::TallyDate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VerifiedCompanyIdentityError {
+pub enum VerifiedCompanyIdentityError {
+    InvalidCompanyNumber,
+    InvalidBooksFrom,
     Missing,
     DuplicateTuple,
     DisplayScopeAmbiguous,
 }
 
+#[derive(Debug, Clone)]
+struct ObservedCompanyNumber(String);
+
+impl ObservedCompanyNumber {
+    fn parse(value: String) -> Result<Self, VerifiedCompanyIdentityError> {
+        if !validators::is_valid_company_number(&value) {
+            return Err(VerifiedCompanyIdentityError::InvalidCompanyNumber);
+        }
+        Ok(Self(value))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 impl VerifiedCompanyIdentity {
     /// Produces an identity only after the exact observed tuple is unique and
     /// no same-GUID book can collide with Tally's display-name scope.
-    pub(crate) fn from_observed_companies(
+    /// Constructs a library-facing read identity from a complete observed
+    /// tuple. The exact tuple must occur once and no same-GUID book may share
+    /// its display scope; callers cannot turn a bare GUID into a capability.
+    pub fn from_observed_companies(
         display_name: String,
         company_guid: String,
         company_number: String,
         books_from_yyyymmdd: String,
         companies: &[TallyCompany],
     ) -> Result<Self, VerifiedCompanyIdentityError> {
+        let company_number = ObservedCompanyNumber::parse(company_number)?;
+        let books_from_yyyymmdd = bridge_tally_core::TallyDate::parse(books_from_yyyymmdd)
+            .map_err(|_| VerifiedCompanyIdentityError::InvalidBooksFrom)?;
         let identity = Self {
             display_name,
             company_guid,
@@ -92,8 +117,10 @@ impl VerifiedCompanyIdentity {
         Self {
             display_name: display_name.into(),
             company_guid: company_guid.into(),
-            company_number: "1".to_string(),
-            books_from_yyyymmdd: "20260401".to_string(),
+            company_number: ObservedCompanyNumber::parse("1".to_string())
+                .expect("fixed fixture company number is valid"),
+            books_from_yyyymmdd: bridge_tally_core::TallyDate::parse("20260401")
+                .expect("fixed fixture date is valid"),
         }
     }
 

@@ -1,0 +1,20 @@
+{
+  "source": "Live TallyPrime Silver 7.1 synthetic-company native voucher collection read",
+  "observed_date": "2026-09-06",
+  "encoding": "UTF-16LE without BOM",
+  "bytes": 7990,
+  "sha256": "d4ee5c73377cbe7be6de9995bdf15a6bde58206c5abcb1c4c08751922685dedf",
+  "fixture_sha256": "d4ee5c73377cbe7be6de9995bdf15a6bde58206c5abcb1c4c08751922685dedf",
+  "source_response_sha256": "d4ee5c73377cbe7be6de9995bdf15a6bde58206c5abcb1c4c08751922685dedf",
+  "request_bytes": 1792,
+  "request_sha256": "c9859e181d4ad836ac6b44d1f8eb98896f731998cde5610ca80cf50e21f9e4a4",
+  "scope": "One synthetic Journal after exact-file repeat; batch-derived UUIDv8 attribution, GUID/master 5, AlterID 10",
+  "batch_id": "bridge-6c79872c-aab6-4be5-a181-18182c8148be",
+  "caller_id": "BRIDGE_MCP_LIVE_20260906_A1",
+  "wire_identity": "9c8d8de4-c06c-847b-8309-60ba702bf663",
+  "import_file_sha256": "e39eb3c0bfe53144bdd9c0f4afcb88c3d63a2050214233ee77465d42a54245ef",
+  "transformation": [],
+  "capture_bytes_retained_unchanged": true,
+  "sensitivity_review": "Synthetic lab data; no credentials, customer identifiers, or operational paths.",
+  "compatibility_claim": "None; this capture records only the observed Silver 7.1 Journal slice."
+}

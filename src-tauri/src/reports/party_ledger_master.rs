@@ -28,6 +28,8 @@ pub(crate) struct PartyLedgerMasterSource {
     pub(crate) from: TallyDate,
     pub(crate) to: TallyDate,
     pub(crate) rows: Vec<PartyLedgerMasterRow>,
+    /// Ordered master/balance/group request body commitments (UTF-16LE on wire).
+    pub(crate) request_sha256: String,
     pub(crate) master_response_sha256: String,
     pub(crate) balance_response_sha256: String,
     pub(crate) group_response_sha256: String,
@@ -201,6 +203,7 @@ mod tests {
                 opening_balance: ExactDecimal::parse("-100.00".to_string()).unwrap(),
                 closing_balance: Some(ExactDecimal::parse("125.00".to_string()).unwrap()),
             }],
+            request_sha256: "0".repeat(64),
             master_response_sha256: "a".repeat(64),
             balance_response_sha256: "b".repeat(64),
             group_response_sha256: "c".repeat(64),
@@ -309,6 +312,7 @@ mod tests {
             from: TallyDate::parse("20250401").unwrap(),
             to: TallyDate::parse("20260331").unwrap(),
             rows,
+            request_sha256: "0".repeat(64),
             master_response_sha256:
                 "def766e42d0e36b4b73d7a176fa0ad08d1a7467e301000650fb5ba9a2ae06f29".to_string(),
             balance_response_sha256:

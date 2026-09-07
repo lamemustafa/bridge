@@ -1134,9 +1134,12 @@ pub fn parse_companies_from_collection(xml: &str) -> anyhow::Result<Vec<TallyCom
 /// Product and licence-mode facts returned by the fixed `CompanyListV2`
 /// collection. The collection repeats endpoint-wide facts for every loaded
 /// company, so this parser requires all rows to agree before exposing them.
+/// Missing, empty or disagreeing optional release fields leave release unknown
+/// without discarding the independently agreed product and licence facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanyGatewayCapabilityObservation {
     pub product: String,
+    pub release: Option<String>,
     pub educational_mode: bool,
     pub silver: bool,
     pub gold: bool,
@@ -1152,7 +1155,8 @@ pub fn parse_company_gateway_capability_observation(
     validate_export_response(xml)?;
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
-    let mut observation = None;
+    let mut observation: Option<CompanyGatewayCapabilityObservation> = None;
+    let mut release_agrees = true;
     loop {
         match reader.read_event()? {
             Event::Start(element)
@@ -1161,7 +1165,12 @@ pub fn parse_company_gateway_capability_observation(
             {
                 let parsed = parse_company_gateway_capability_row(&mut reader, &element)?;
                 if let Some(previous) = &observation {
-                    if previous != &parsed {
+                    release_agrees &= previous.release == parsed.release;
+                    if previous.product != parsed.product
+                        || previous.educational_mode != parsed.educational_mode
+                        || previous.silver != parsed.silver
+                        || previous.gold != parsed.gold
+                    {
                         anyhow::bail!(
                             "company collection reported inconsistent gateway capabilities"
                         );
@@ -1179,7 +1188,12 @@ pub fn parse_company_gateway_capability_observation(
     if !path.is_empty() {
         anyhow::bail!("company capability response ended before its root closed");
     }
-    observation.ok_or_else(|| anyhow::anyhow!("company capability response omitted company rows"))
+    let mut observation = observation
+        .ok_or_else(|| anyhow::anyhow!("company capability response omitted company rows"))?;
+    if !release_agrees {
+        observation.release = None;
+    }
+    Ok(observation)
 }
 
 /// Validates the fixed, documented `List of Ledgers` collection used only to
@@ -1749,6 +1763,7 @@ fn parse_company_gateway_capability_row(
     validate_only_attributes(element, &[b"NAME", b"RESERVEDNAME"])?;
     let row_name = element.name().as_ref().to_ascii_uppercase();
     let mut product = None;
+    let mut release = None;
     let mut educational_mode = None;
     let mut silver = None;
     let mut gold = None;
@@ -1757,6 +1772,13 @@ fn parse_company_gateway_capability_row(
             Event::Start(child) => {
                 validate_only_attributes(&child, &[b"TYPE"])?;
                 let child_name = child.name().as_ref().to_ascii_uppercase();
+                if child_name == b"BRIDGERELEASE" {
+                    let value = read_optional_text(reader, child.name())?
+                        .map(|value| normalized_standard_value(&value, "release"))
+                        .transpose()?;
+                    set_once(&mut release, value)?;
+                    continue;
+                }
                 let value = read_required_text(reader, child.name())?;
                 match child_name.as_slice() {
                     b"PRODUCTNAME" => set_once(
@@ -1776,6 +1798,10 @@ fn parse_company_gateway_capability_row(
             }
             Event::Empty(child) => {
                 let child_name = child.name().as_ref().to_ascii_uppercase();
+                if child_name == b"BRIDGERELEASE" {
+                    validate_only_attributes(&child, &[b"TYPE"])?;
+                    set_once(&mut release, None)?;
+                }
                 if matches!(
                     child_name.as_slice(),
                     b"PRODUCTNAME" | b"EDUMODE" | b"SILVER" | b"GOLD"
@@ -1801,6 +1827,7 @@ fn parse_company_gateway_capability_row(
         }
     }
     Ok(CompanyGatewayCapabilityObservation {
+        release: release.flatten(),
         product: product
             .ok_or_else(|| anyhow::anyhow!("company capability collection omitted PRODUCTNAME"))?,
         educational_mode: educational_mode
@@ -3390,6 +3417,32 @@ fn parse_native_voucher_ledger_entry(
             .ok_or_else(|| anyhow::anyhow!("native voucher ledger entry omitted sign evidence"))?,
         raw_source_sha256: String::new(),
     })
+}
+
+/// Tests the observed company prefix and nonempty master suffix of a Tally GUID.
+pub fn master_guid_belongs_to_company(master_guid: &str, company_guid: &str) -> bool {
+    // Bind the response to the pinned company, not just the request.
+    //
+    // `SVCURRENTCOMPANY` selects by NAME. If a second loaded company shares the
+    // selected name, or the name binding shifts mid-scan, Tally can return that
+    // other company's vouchers while the paired company collection still finds
+    // the expected GUID among all loaded companies -- so date checks, AlterID
+    // range checks, and the closing extent all pass, and another company's
+    // financial data is published under the pinned name.
+    //
+    // TALLY_PROTOCOL_REFERENCE.md §9.11 records that every master GUID begins
+    // with its company GUID; require the documented `-<master-id>` delimiter
+    // as response identity evidence instead of accepting the bare company GUID.
+    let Some(prefix) = master_guid.get(..company_guid.len()) else {
+        return false;
+    };
+    let Some(suffix) = master_guid.get(company_guid.len()..) else {
+        return false;
+    };
+    prefix.eq_ignore_ascii_case(company_guid)
+        && suffix
+            .strip_prefix('-')
+            .is_some_and(|master_id| !master_id.is_empty())
 }
 
 fn native_ledger_guid_has_company_prefix(guid: &str, expected_company_guid: &str) -> bool {

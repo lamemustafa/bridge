@@ -1,0 +1,15 @@
+{
+  "source": "Live licensed TallyPrime synthetic ageing-lab read",
+  "observed_date": "2026-09-06",
+  "requested_as_of": "20260801",
+  "source_response_bytes": 2312,
+  "source_response_sha256": "89d4f8ea7f2f2ec46623ba7a8c91c9ded7cdcf3dfd07ea286ea452570b9f9e12",
+  "source_request_bytes": 766,
+  "source_request_sha256": "55465b04aeb652d0b706835077341f268476d64bad5fef4ce879dd5a53d9553e",
+  "fixture_bytes": 2312,
+  "fixture_sha256": "89d4f8ea7f2f2ec46623ba7a8c91c9ded7cdcf3dfd07ea286ea452570b9f9e12",
+  "encoding": "UTF-16LE without BOM",
+  "transformation": [],
+  "provenance_limit": "Byte-exact observed synthetic lab response. Fault regressions mutate separate in-memory copies and do not claim live fault experiments.",
+  "sensitivity_review": "Operator-created synthetic company and standard groups; no populated credentials, customer contact/tax/bank details, or machine paths. Raw control characters are retained unchanged."
+}
