@@ -143,6 +143,57 @@ fn native_preview_refuses_directional_marks_in_every_operator_text_field() {
     }
 }
 
+fn dispatch_response(
+    application_status: &str,
+    created: u64,
+    altered: u64,
+) -> ledger::DispatchResponse {
+    ledger::DispatchResponse {
+        request_sha256: "a".repeat(64),
+        response_sha256: "b".repeat(64),
+        bytes: 1,
+        outcome: Some(
+            serde_json::from_value(json!({
+                "application_status":application_status,
+                "counters": {
+                    "created":created,
+                    "altered":altered,
+                    "deleted":0,
+                    "ignored":0,
+                    "errors":0,
+                    "cancelled":0,
+                    "exceptions":0,
+                    "line_error_count":0
+                },
+                "exceptions_were_reported":true
+            }))
+            .unwrap(),
+        ),
+    }
+}
+
+#[test]
+fn previous_attempt_needs_clean_persisted_counters_as_well_as_exact_readback() {
+    let clean = dispatch_response("success", 1, 0);
+    let altered = dispatch_response("success", 0, 1);
+    let failed = dispatch_response("failure", 1, 0);
+
+    assert!(persisted_response_is_clean(Some(&clean)));
+    assert_eq!(persisted_response_state(Some(&clean)), "response_clean");
+    assert!(!persisted_response_is_clean(Some(&altered)));
+    assert_eq!(
+        persisted_response_state(Some(&altered)),
+        "response_not_clean"
+    );
+    assert!(!persisted_response_is_clean(Some(&failed)));
+    assert_eq!(
+        persisted_response_state(Some(&failed)),
+        "response_not_clean"
+    );
+    assert!(!persisted_response_is_clean(None));
+    assert_eq!(persisted_response_state(None), "response_missing");
+}
+
 #[test]
 fn absence_is_required_before_a_first_attempt() {
     for payload in [

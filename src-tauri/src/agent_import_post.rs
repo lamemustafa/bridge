@@ -24,9 +24,16 @@ impl Server {
             let (xml, preview) = admit_saved_journal(&line, &self.settings.endpoint)?;
             if snapshot.dispatched {
                 let mut result = self.verify_import(args).await?;
-                let verified = verification_status(&result.payload["result"], 1) == "posted_verified";
-                result.payload["result"]["dispatch"] = json!({"state":if verified { "previous_attempt_reconciled" } else { "reconciliation_required" }, "resent":false, "response":snapshot.response});
-                if !verified { mark_reconciliation_required(&mut result.payload); }
+                let readback_verified = verification_status(&result.payload["result"], 1) == "posted_verified";
+                let response_state = persisted_response_state(snapshot.response.as_ref());
+                let reconciled = readback_verified && persisted_response_is_clean(snapshot.response.as_ref());
+                result.payload["result"]["dispatch"] = json!({
+                    "state":if reconciled { "previous_attempt_reconciled" } else { "reconciliation_required" },
+                    "resent":false,
+                    "response_state":response_state,
+                    "response":snapshot.response,
+                });
+                if !reconciled { mark_reconciliation_required(&mut result.payload); }
                 return Ok(result);
             }
             let before = self.verify_import(args).await?;
@@ -80,9 +87,7 @@ impl Server {
             }
             // A valid counter response is evidence, never proof that Tally preserved
             // the requested ledger/amount/date semantics. Readback is mandatory.
-            let clean = parsed_outcome.as_ref().is_some_and(|outcome|
-                outcome.application_status() != TallyImportApplicationStatus::Failure
-                && outcome.counters().is_clean_success_for(1, 0, 0));
+            let clean = import_outcome_is_clean(parsed_outcome.as_ref());
             let mut proof = self.verify_import(args).await?;
             accumulated = combine_evidence(accumulated.clone(), proof.evidence.clone());
             let verified = verification_status(&proof.payload["result"], 1) == "posted_verified";
@@ -128,6 +133,25 @@ impl Server {
 
 fn mark_reconciliation_required(payload: &mut Value) {
     payload["result"]["error"] = json!({"code":"import_reconciliation_required", "message":"The saved attempt has not been confirmed as the intended new Journal. Reconcile this original batch without resending it."});
+}
+
+fn import_outcome_is_clean(outcome: Option<&bridge_tally_protocol::TallyImportOutcome>) -> bool {
+    outcome.is_some_and(|outcome| {
+        outcome.application_status() != TallyImportApplicationStatus::Failure
+            && outcome.counters().is_clean_success_for(1, 0, 0)
+    })
+}
+
+fn persisted_response_is_clean(response: Option<&ledger::DispatchResponse>) -> bool {
+    response.is_some_and(|response| import_outcome_is_clean(response.outcome.as_ref()))
+}
+
+fn persisted_response_state(response: Option<&ledger::DispatchResponse>) -> &'static str {
+    match response {
+        None => "response_missing",
+        Some(response) if import_outcome_is_clean(response.outcome.as_ref()) => "response_clean",
+        Some(_) => "response_not_clean",
+    }
 }
 
 fn require_absent(payload: &Value) -> Result<(), String> {
