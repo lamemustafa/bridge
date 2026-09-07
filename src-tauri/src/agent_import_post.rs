@@ -20,12 +20,13 @@ impl Server {
         if batch_id != format!("bridge-{uuid}") {
             return Err("import_batch_identifier_invalid".to_string().into());
         }
-        let attempted = self
-            .latest_import_snapshot(batch_id)
-            .ok()
-            .flatten()
-            .filter(|snapshot| batch_guid_matches(&snapshot.batch.company_guid, guid))
-            .map(|snapshot| snapshot.dispatched);
+        let attempted = match self.latest_import_snapshot(batch_id) {
+            Ok(snapshot) => snapshot
+                .filter(|snapshot| batch_guid_matches(&snapshot.batch.company_guid, guid))
+                .map(|snapshot| snapshot.dispatched),
+            Err(error) if error == "import_admission_busy" => return Err(error.into()),
+            Err(_) => None,
+        };
         let mut evidence =
             evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
         evidence.state = "partial";
@@ -63,10 +64,11 @@ impl Server {
             evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
         let mut received_response = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
-            let (_, preview) = admit_saved_journal(&line, &self.settings.endpoint)?;
-            if snapshot.dispatched {
-                return self.verify_import(args).await;
-            }
+        let _xml = admit_saved_journal_integrity(&line, &self.settings.endpoint)?;
+        if snapshot.dispatched {
+            return self.verify_import(args).await;
+        }
+        let preview = admit_fresh_saved_journal(&line)?;
             // Number matching precedence is not qualified for native Create.
             // Previously dispatched numbered batches remain reconcilable above.
             require_native_numbering(&line.vouchers[0])?;
@@ -406,10 +408,10 @@ fn require_native_numbering(voucher: &ImportVoucher) -> Result<(), String> {
     Ok(())
 }
 
-fn admit_saved_journal(
+pub(super) fn admit_saved_journal_integrity(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
-) -> Result<(String, String), String> {
+) -> Result<String, String> {
     if line.vouchers.len() != 1
         || line.vouchers[0].voucher_type != VoucherType::Journal
         || line.identity_scheme != Some(ImportIdentityScheme::BatchV1)
@@ -427,6 +429,25 @@ fn admit_saved_journal(
         vouchers: line.vouchers.clone(),
     };
     validate_payload(&payload)?;
+    totals(&line.vouchers)?;
+    let xml = render_import_xml(&company.name, &line.vouchers, &line.batch_id);
+    if sha256_hex(xml.as_bytes()) != line.sha256 {
+        return Err("import_batch_changed".into());
+    }
+    Ok(xml)
+}
+
+pub(super) fn admit_saved_journal(
+    line: &ImportLedgerLine,
+    endpoint: &super::super::TallyEndpointConfig,
+) -> Result<(String, String), String> {
+    let xml = admit_saved_journal_integrity(line, endpoint)?;
+    let preview = admit_fresh_saved_journal(line)?;
+    Ok((xml, preview))
+}
+
+fn admit_fresh_saved_journal(line: &ImportLedgerLine) -> Result<String, String> {
+    let company = line.company.as_ref().ok_or("import_post_company_missing")?;
     let (debit, credit) = totals(&line.vouchers)?;
     let voucher = &line.vouchers[0];
     let mut review_text = std::iter::once(company.name.as_str())
@@ -439,10 +460,6 @@ fn admit_saved_journal(
     }
     if review_text.any(has_unreviewable_format_character) {
         return Err("import_review_format_text".into());
-    }
-    let xml = render_import_xml(&company.name, &line.vouchers, &line.batch_id);
-    if sha256_hex(xml.as_bytes()) != line.sha256 {
-        return Err("import_batch_changed".into());
     }
     let quoted = |text: &str| serde_json::to_string(text).expect("string serialization");
     let optional = |value: &Option<String>| {
@@ -480,7 +497,7 @@ fn admit_saved_journal(
     {
         return Err("import_review_too_large".into());
     }
-    Ok((xml, preview))
+    Ok(preview)
 }
 
 fn has_unsafe_review_layout_character(value: &str) -> bool {
