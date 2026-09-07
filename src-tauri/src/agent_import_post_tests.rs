@@ -240,6 +240,22 @@ fn recovery_failure_retains_the_saved_dispatch_response() {
 }
 
 #[test]
+fn current_dispatch_finalizer_marks_only_a_clean_response_posted() {
+    let response = dispatch_response("success", 1, 0);
+    let mut payload = json!({
+        "result": {"counts": {"posted_verified": 1}, "duplicates": []}
+    });
+    finalize_current_dispatch(&mut payload, Some(&response));
+    assert_eq!(payload["result"]["dispatch"]["state"], "posted_verified");
+    assert_eq!(
+        payload["result"]["dispatch"]["response_state"],
+        "response_clean"
+    );
+    assert_eq!(payload["result"]["dispatch"]["counters"]["created"], 1);
+    assert!(payload["result"].get("error").is_none());
+}
+
+#[test]
 fn post_date_refusal_retains_the_completed_profile_probe_evidence() {
     let (mut line, _) = batch();
     line.vouchers[0].date = "20260907".into();

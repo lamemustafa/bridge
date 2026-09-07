@@ -1879,3 +1879,78 @@ async fn dispatched_verification_persists_reconciliation_for_missing_or_dirty_re
         assert_eq!(snapshot.batch.status, "verification_incomplete");
     }
 }
+
+#[tokio::test]
+async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_the_proof() {
+    let simulator = SequenceSimulator::spawn(qualified_import_cycle_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let server = Server::new(super::super::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: super::super::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+    });
+    let built = server
+        .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
+        .await
+        .expect("build");
+    let batch_id = built.payload["result"]["batch_id"]
+        .as_str()
+        .expect("batch id")
+        .to_string();
+    let saved = server
+        .latest_import_snapshot(&batch_id)
+        .expect("saved snapshot")
+        .expect("batch");
+    let response = persisted_dispatch_response(1, 0);
+    let admission = server.lock_import_admission().expect("admission lock");
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&saved.batch))
+        .expect("dispatch intent");
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::response(
+            &saved.batch,
+            response,
+        ))
+        .expect("dispatch response");
+    drop(admission);
+
+    let outcome = server
+        .verify_import_after_current_dispatch(
+            &json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}),
+        )
+        .await
+        .expect("current dispatch verification");
+    let persisted: Value = serde_json::from_slice(
+        &std::fs::read(
+            server
+                .imports_dir()
+                .expect("imports directory")
+                .join(format!("{batch_id}.proof.json")),
+        )
+        .expect("persisted proof"),
+    )
+    .expect("proof JSON");
+    let latest = server
+        .latest_import_snapshot(&batch_id)
+        .expect("latest snapshot")
+        .expect("batch");
+    assert_eq!(
+        outcome.payload["result"]["dispatch"]["state"],
+        "reconciliation_required"
+    );
+    assert_eq!(persisted["dispatch"], outcome.payload["result"]["dispatch"]);
+    assert_eq!(persisted["dispatch"]["counters"]["created"], 1);
+    assert_eq!(persisted["dispatch"]["automatic_retry"], false);
+    assert_eq!(latest.batch.status, "verification_incomplete");
+    assert_eq!(
+        simulator.finish().expect("captured plan requests").len(),
+        50
+    );
+}

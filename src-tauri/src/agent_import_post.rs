@@ -71,16 +71,23 @@ impl Server {
             require_absent(&before.payload)?;
             // No Tally mutation can occur while the separate approval dialog is open.
             let request = ApprovedImport::confirm(xml, &preview).await?;
-            let payload = ImportPayload { company_guid: line.company_guid.clone(), vouchers: line.vouchers.clone() };
+            let payload = ImportPayload {
+                company_guid: line.company_guid.clone(),
+                vouchers: line.vouchers.clone(),
+            };
             let (company, identity, identity_evidence) = self.verified_company(guid).await?;
             accumulated = combine_evidence(accumulated.clone(), identity_evidence);
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
                 return Err("company_identity_mismatch".to_string().into());
             }
             validate_dates(&payload, company.books_from.as_deref())?;
-            let (catalogue, evidence) = self.read_ledger_catalogue(&identity, &company.name).await?;
+            let (catalogue, evidence) =
+                self.read_ledger_catalogue(&identity, &company.name).await?;
             accumulated = combine_evidence(accumulated.clone(), evidence);
-            if masters_for_payload(&payload, &catalogue).iter().any(|item| item["match_state"] != "exact") {
+            if masters_for_payload(&payload, &catalogue)
+                .iter()
+                .any(|item| item["match_state"] != "exact")
+            {
                 return Err("import_masters_changed".to_string().into());
             }
             let preflight = self.verify_import(args).await?;
@@ -88,49 +95,61 @@ impl Server {
             require_absent(&preflight.payload)?;
             let mode = self.qualified_import_profile().await?;
             validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
-            let posted = self.runtime.post_approved_import(self.tally_config(), &identity, request, || {
-                // The file lock covers only the admission+synced append. It is not
-                // held over approval or network I/O. A competing process loses here.
-                let _lock = self.lock_import_admission()?;
-                let current = self.import_snapshot_while_admitted(Some(batch_id))?
-                    .ok_or_else(|| "import_batch_not_found".to_string())?;
-                if current.dispatched { return Err("import_already_attempted".into()); }
-                if current.batch.sha256 != line.sha256 || current.batch.endpoint_origin != line.endpoint_origin {
-                    return Err("import_batch_changed".into());
-                }
-                self.append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&line))
-            }).await;
+            let posted = self
+                .runtime
+                .post_approved_import(self.tally_config(), &identity, request, || {
+                    // The file lock covers only the admission+synced append. It is not
+                    // held over approval or network I/O. A competing process loses here.
+                    let _lock = self.lock_import_admission()?;
+                    let current = self
+                        .import_snapshot_while_admitted(Some(batch_id))?
+                        .ok_or_else(|| "import_batch_not_found".to_string())?;
+                    if current.dispatched {
+                        return Err("import_already_attempted".into());
+                    }
+                    if current.batch.sha256 != line.sha256
+                        || current.batch.endpoint_origin != line.endpoint_origin
+                    {
+                        return Err("import_batch_changed".into());
+                    }
+                    self.append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&line))
+                })
+                .await;
             let (body, wire) = posted.map_err(|error| {
-                if error.downcast_ref::<crate::tally::approved_import::AmbiguousImportCompany>().is_some() {
+                if error
+                    .downcast_ref::<crate::tally::approved_import::AmbiguousImportCompany>()
+                    .is_some()
+                {
                     "import_company_scope_ambiguous".to_string()
-                } else { "import_dispatch_outcome_unknown".to_string() }
+                } else {
+                    "import_dispatch_outcome_unknown".to_string()
+                }
             })?;
-            accumulated = combine_evidence(accumulated.clone(), evidence_from_runtime_read(wire.clone()));
+            accumulated = combine_evidence(
+                accumulated.clone(),
+                evidence_from_runtime_read(wire.clone()),
+            );
             let parsed_outcome = parse_import_outcome(&body).ok();
             {
                 let _lock = self.lock_import_admission()?;
-                self.append_import_record_while_admitted(&ledger::StatusRecord::response(&line, ledger::DispatchResponse {
-                    request_sha256:wire.request_sha256, response_sha256:wire.response_sha256, bytes:wire.bytes,
-                    outcome:parsed_outcome.clone(),
-                }))?;
+                self.append_import_record_while_admitted(&ledger::StatusRecord::response(
+                    &line,
+                    ledger::DispatchResponse {
+                        request_sha256: wire.request_sha256,
+                        response_sha256: wire.response_sha256,
+                        bytes: wire.bytes,
+                        outcome: parsed_outcome.clone(),
+                    },
+                ))?;
             }
             // A valid counter response is evidence, never proof that Tally preserved
             // the requested ledger/amount/date semantics. Readback is mandatory.
-            let clean = import_outcome_is_clean(parsed_outcome.as_ref());
-            let mut proof = self.verify_import(args).await?;
+            let mut proof = self.verify_import_after_current_dispatch(args).await?;
             accumulated = combine_evidence(accumulated.clone(), proof.evidence.clone());
-            let verified = verification_status(&proof.payload["result"], 1) == "posted_verified";
-            proof.payload["result"]["dispatch"] = json!({
-                "state": if clean && verified { "posted_verified" } else { "reconciliation_required" },
-                "counters":parsed_outcome.as_ref().map(|outcome| outcome.counters()), "application_status":parsed_outcome.as_ref().map(|outcome| outcome.application_status()),
-                "resent":false, "automatic_retry":false
-            });
-            if !clean || !verified {
-                mark_reconciliation_required(&mut proof.payload);
-            }
             proof.evidence = accumulated.clone();
             Ok(proof)
-        }.await;
+        }
+        .await;
         // Even failure after a lost response carries the saved identity. The next
         // call must reconcile that batch, never create a replacement business event.
         match operation {
@@ -210,6 +229,25 @@ pub(super) fn finalize_previous_attempt_reconciliation(
         "response": response,
     });
     if !reconciled {
+        mark_reconciliation_required(payload);
+    }
+}
+
+pub(super) fn finalize_current_dispatch(
+    payload: &mut Value,
+    response: Option<&ledger::DispatchResponse>,
+) {
+    let verified = verification_status(&payload["result"], 1) == "posted_verified";
+    let clean = persisted_response_is_clean(response);
+    payload["result"]["dispatch"] = json!({
+        "state": if clean && verified { "posted_verified" } else { "reconciliation_required" },
+        "counters":response.and_then(|response| response.outcome.as_ref().map(|outcome| outcome.counters())),
+        "application_status":response.and_then(|response| response.outcome.as_ref().map(|outcome| outcome.application_status())),
+        "response_state": persisted_response_state(response),
+        "response": response,
+        "resent":false, "automatic_retry":false
+    });
+    if !clean || !verified {
         mark_reconciliation_required(payload);
     }
 }

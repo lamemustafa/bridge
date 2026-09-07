@@ -480,6 +480,21 @@ impl Server {
     }
 
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
+        self.verify_import_with_dispatch(args, false).await
+    }
+
+    pub(in crate::agent) async fn verify_import_after_current_dispatch(
+        &self,
+        args: &Value,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        self.verify_import_with_dispatch(args, true).await
+    }
+
+    async fn verify_import_with_dispatch(
+        &self,
+        args: &Value,
+        current_dispatch: bool,
+    ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
         let ledger::BatchSnapshot {
@@ -546,13 +561,17 @@ impl Server {
             });
             let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof});
             if dispatched {
-                post::finalize_previous_attempt_reconciliation(
-                    &mut payload,
-                    dispatch_response.as_ref(),
-                );
+                if current_dispatch {
+                    post::finalize_current_dispatch(&mut payload, dispatch_response.as_ref());
+                } else {
+                    post::finalize_previous_attempt_reconciliation(
+                        &mut payload,
+                        dispatch_response.as_ref(),
+                    );
+                }
             }
             let status = if dispatched
-                && payload["result"]["dispatch"]["state"] != "previous_attempt_reconciled"
+                && payload["result"]["dispatch"]["state"] == "reconciliation_required"
             {
                 "verification_incomplete"
             } else {
