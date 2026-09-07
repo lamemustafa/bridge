@@ -154,3 +154,41 @@ fn oversized_record_stops_at_the_line_bound_without_reading_the_remaining_stream
     // The next chunk stays unread; there is no unbounded read-to-end fallback.
     assert_eq!(reader.buffer().len(), 8192);
 }
+
+#[test]
+fn dispatch_admission_survives_verification_and_legacy_full_records() {
+    let initial = batch("dispatch-test", "local journal test");
+    let mut bytes = record(&initial);
+    bytes.extend(record(&StatusRecord::dispatch(&initial)));
+    let mut verified = initial.clone();
+    verified.status = "verification_incomplete".into();
+    bytes.extend(record(&StatusRecord::from(&verified)));
+    // Legacy full records must not erase a previous attempt either.
+    bytes.extend(record(&verified));
+    let snapshot = read_snapshot(Cursor::new(bytes.clone()), Some("dispatch-test"))
+        .unwrap()
+        .unwrap();
+    assert!(snapshot.dispatched);
+    assert_eq!(snapshot.batch.status, "verification_incomplete");
+    bytes.extend(record(&StatusRecord::dispatch(&initial)));
+    assert_eq!(
+        read_snapshot(Cursor::new(bytes), Some("dispatch-test"))
+            .err()
+            .as_deref(),
+        Some("import_ledger_duplicate_dispatch")
+    );
+}
+
+#[test]
+fn dispatched_batch_cannot_change_its_commitment() {
+    let initial = batch("dispatch-test", "local journal test");
+    let mut bytes = record(&initial);
+    bytes.extend(record(&StatusRecord::dispatch(&initial)));
+    let mut changed = initial;
+    changed.sha256 = "b".repeat(64);
+    bytes.extend(record(&changed));
+    assert_eq!(
+        read_snapshot(Cursor::new(bytes), None).err().as_deref(),
+        Some("import_ledger_invalid")
+    );
+}

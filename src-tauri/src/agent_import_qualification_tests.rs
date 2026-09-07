@@ -24,6 +24,7 @@ async fn unqualified_voucher_types_are_refused_before_dispatch_or_persistence() 
             max_bytes: 200_000,
             redaction: super::super::super::Redaction::None,
             import_enabled: true,
+            writes_enabled: false,
         });
         let mut input = payload();
         input.vouchers[0].voucher_type = VoucherType::Journal;

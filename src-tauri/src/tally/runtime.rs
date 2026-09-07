@@ -189,6 +189,13 @@ async fn bracket_verified_company_identity(
     identity: &VerifiedCompanyIdentity,
 ) -> anyhow::Result<()> {
     let companies = client.fetch_companies().await?;
+    admit_company_identity(&companies, identity)
+}
+
+fn admit_company_identity(
+    companies: &[TallyCompany],
+    identity: &VerifiedCompanyIdentity,
+) -> anyhow::Result<()> {
     if companies
         .iter()
         .any(|company| identity.is_presentation_equivalent_guid_sibling(company))
@@ -2149,6 +2156,43 @@ impl TallyRuntime {
                         encoded_bytes,
                         encoded_sha256,
                     })
+                }
+            },
+        )
+        .await
+    }
+
+    /// One approved mutation through the shared endpoint queue. The durable
+    /// intent is committed after identity admission and before any import bytes.
+    /// Unlike paired reads, an import must never be repeated automatically.
+    pub(crate) async fn post_approved_import<F>(
+        &self,
+        config: TallyConfig,
+        identity: &VerifiedCompanyIdentity,
+        request: super::approved_import::ApprovedImport,
+        before_dispatch: F,
+    ) -> anyhow::Result<(String, RuntimeReadEvidence)>
+    where
+        F: Fn() -> Result<(), String>,
+    {
+        let _lease = self.begin_ordinary_read(&config)?;
+        let identity = identity.clone();
+        self.execute(
+            config,
+            ReadOperation::Import,
+            ReadRetryPolicy::SINGLE_ATTEMPT,
+            |client| {
+                let identity = identity.clone();
+                let xml = request.xml().to_string();
+                let before_dispatch = &before_dispatch;
+                async move {
+                    let companies = client.fetch_companies().await?;
+                    admit_company_identity(&companies, &identity)?;
+                    super::approved_import::require_unique_company_scope(&companies, &identity)?;
+                    before_dispatch().map_err(anyhow::Error::msg)?;
+                    let mut evidence = RuntimeReadEvidence::empty();
+                    let body = client.post_probe_xml(xml, &mut evidence).await?;
+                    Ok((body, evidence))
                 }
             },
         )

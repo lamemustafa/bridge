@@ -24,6 +24,8 @@ pub(super) use schema::voucher_input_schema;
 mod ledger;
 #[path = "agent_import_persistence.rs"]
 mod persistence;
+#[path = "agent_import_post.rs"]
+mod post;
 use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
@@ -133,6 +135,8 @@ struct ImportLedgerLine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     identity_scheme: Option<ImportIdentityScheme>,
     company_guid: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    endpoint_origin: Option<String>,
     #[serde(default)]
     company: Option<ImportCompanyTuple>,
     txn_ids: Vec<String>,
@@ -422,6 +426,7 @@ impl Server {
                 batch_id: batch_id.clone(),
                 identity_scheme: Some(ImportIdentityScheme::BatchV1),
                 company_guid: canonical_batch_guid(&payload.company_guid),
+                endpoint_origin: Some(super::canonical_loopback_origin(&self.settings.endpoint).map_err(|_| "host_setting_invalid".to_string())?),
                 company: Some(import_company_tuple(&company)?),
                 txn_ids: payload
                     .vouchers
@@ -480,6 +485,8 @@ impl Server {
         let ledger::BatchSnapshot {
             batch: line,
             generation,
+            response: dispatch_response,
+            ..
         } = self
             .latest_import_snapshot(batch_id)?
             .ok_or_else(|| "import_batch_not_found".to_string())?;
@@ -529,6 +536,7 @@ impl Server {
                 "company": company_json(&company, std::slice::from_ref(&company)),
                 "batch_id": line.batch_id, "batch_sha256": line.sha256,
                 "built_at": line.built_at, "verified_at": now(),
+                "dispatch_response": dispatch_response,
                 "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed.rows),
                 "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],

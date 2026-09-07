@@ -63,6 +63,7 @@ test("every host manifest launches its bundled binary and maps user settings to 
       BRIDGE_TALLY_HOST: "${user_config.host}",
       BRIDGE_TALLY_PORT: "${user_config.port}",
       BRIDGE_AGENT_REDACTION: "${user_config.redaction}",
+      BRIDGE_AGENT_ENABLE_WRITES: "${user_config.enable_writes}",
     });
     for (const resource of resources) await writeFile(join(stage, resource), "packaging fixture");
     await assert.rejects(() => verifyMcpbStage(stage), /missing binary/);

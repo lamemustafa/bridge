@@ -17,6 +17,7 @@ pub(super) fn server(address: std::net::SocketAddr, path: &std::path::Path) -> S
         max_bytes: 200_000,
         redaction: Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     })
 }
 

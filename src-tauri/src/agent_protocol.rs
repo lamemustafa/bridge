@@ -11,7 +11,16 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut initialized = false;
-    while let Some(frame) = read_frame(&mut reader, MAX_REQUEST_BYTES).await? {
+    let mut framer = Framer::default();
+    let mut pending = std::collections::VecDeque::new();
+    loop {
+        let frame = match pending.pop_front() {
+            Some(frame) => frame,
+            None => match framer.read(&mut reader, MAX_REQUEST_BYTES).await? {
+                Some(frame) => frame,
+                None => break,
+            },
+        };
         let request = match frame.and_then(parse_request) {
             Ok(request) => request,
             Err((code, message)) => {
@@ -77,18 +86,33 @@ where
             }
             "ping" => Ok(json!({})),
             _ if !initialized => Err("initialize_required".to_string()),
-            "tools/list" => Ok(json!({"tools": tool_definitions(server.settings.import_enabled)})),
+            "tools/list" => Ok(json!({"tools": catalog::tool_definitions(server.settings.import_enabled, server.settings.writes_enabled)})),
             "tools/call" => match params.get("name").and_then(Value::as_str) {
                 Some(name) => {
                 let arguments = params
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                if registered_tool_definitions(true).as_array().is_some_and(|tools| tools.iter().any(|tool| tool["name"] == name)) {
-                    let tool_response = server.call_tool_response(name, arguments).await;
-                    recovery_batch_id = tool_response.recovery_batch_id;
-                    egress = Some(tool_response.egress);
-                    Ok(tool_response.value)
+                if catalog::registered_tool_definitions(true, true).as_array().is_some_and(|tools| tools.iter().any(|tool| tool["name"] == name)) {
+                    let response = if name == "post_import" {
+                        await_post(
+                            server.call_tool_response(name, arguments.clone()),
+                            id.as_ref().expect("tool requests have IDs"),
+                            &mut reader, &mut framer, &mut pending,
+                        ).await?
+                    } else { Some(server.call_tool_response(name, arguments.clone()).await) };
+                    match response {
+                        Some(tool_response) => {
+                            recovery_batch_id = tool_response.recovery_batch_id;
+                            egress = Some(tool_response.egress);
+                            Ok(tool_response.value)
+                        }
+                        None => {
+                            egress = Some(EgressContext { evidence:None, tool:name.into(),
+                                args_sha256:sha256_json(&arguments), company_guid:None });
+                            Err("request_cancelled".into())
+                        }
+                    }
                 } else {
                     egress = Some(EgressContext {
                         evidence: None,
@@ -135,7 +159,9 @@ pub(super) async fn finish_response<W: AsyncWrite + Unpin>(
         let mut response = match result {
             Ok(result) => json!({"jsonrpc":"2.0","id":id.clone(),"result":result}),
             Err(code) => {
-                let error_code = if code == "method_not_found" {
+                let error_code = if code == "request_cancelled" {
+                    -32800
+                } else if code == "method_not_found" {
                     -32601
                 } else {
                     -32602
@@ -240,39 +266,81 @@ fn recovery_error(id: Value, batch_id: Option<&str>, message: &str) -> Value {
 const MAX_REQUEST_BYTES: usize = 5_000_000;
 type Frame = Result<String, (i32, &'static str)>;
 
-async fn read_frame<R: AsyncBufRead + Unpin>(
+// State survives a cancelled read future when a write finishes between frame
+// fragments. Dropping a local Vec here would corrupt the next MCP request.
+#[derive(Default)]
+struct Framer {
+    bytes: Vec<u8>,
+    oversized: bool,
+}
+
+impl Framer {
+    async fn read<R: AsyncBufRead + Unpin>(
+        &mut self,
+        reader: &mut R,
+        cap: usize,
+    ) -> Result<Option<Frame>, String> {
+        loop {
+            let chunk = reader.fill_buf().await.map_err(|_| "stdio_read_failed")?;
+            if chunk.is_empty() {
+                let incomplete = !self.bytes.is_empty() || self.oversized;
+                self.bytes.clear();
+                self.oversized = false;
+                return Ok(incomplete.then_some(Err((-32700, "Incomplete message"))));
+            }
+            let newline = chunk.iter().position(|byte| *byte == b'\n');
+            let length = newline.map_or(chunk.len(), |index| index + 1);
+            if !self.oversized && self.bytes.len().saturating_add(length) <= cap {
+                self.bytes.extend_from_slice(&chunk[..length]);
+            } else {
+                self.oversized = true;
+                self.bytes.clear();
+            }
+            reader.consume(length);
+            if newline.is_some() {
+                let oversized = std::mem::take(&mut self.oversized);
+                let bytes = std::mem::take(&mut self.bytes);
+                return Ok(Some(if oversized {
+                    Err((-32600, "request_too_large"))
+                } else {
+                    String::from_utf8(bytes).map_err(|_| (-32700, "Parse error"))
+                }));
+            }
+        }
+    }
+}
+
+// Keep receiving cancellation and disconnect while a native approval or write
+// is pending. Other requests wait in a bounded queue, without concurrent writes.
+async fn await_post<R, F>(
+    future: F,
+    id: &Value,
     reader: &mut R,
-    cap: usize,
-) -> Result<Option<Frame>, String> {
-    let mut bytes = Vec::new();
-    let mut oversized = false;
+    framer: &mut Framer,
+    pending: &mut std::collections::VecDeque<Frame>,
+) -> Result<Option<ToolResponse>, String>
+where
+    R: AsyncBufRead + Unpin,
+    F: std::future::Future<Output = ToolResponse>,
+{
+    tokio::pin!(future);
     loop {
-        let chunk = reader
-            .fill_buf()
-            .await
-            .map_err(|_| "stdio_read_failed".to_string())?;
-        if chunk.is_empty() {
-            return if bytes.is_empty() && !oversized {
-                Ok(None)
-            } else {
-                Ok(Some(Err((-32700, "Incomplete message"))))
-            };
-        }
-        let newline = chunk.iter().position(|byte| *byte == b'\n');
-        let length = newline.map_or(chunk.len(), |index| index + 1);
-        if !oversized && bytes.len().saturating_add(length) <= cap {
-            bytes.extend_from_slice(&chunk[..length]);
-        } else {
-            oversized = true;
-            bytes.clear();
-        }
-        reader.consume(length);
-        if newline.is_some() {
-            return Ok(Some(if oversized {
-                Err((-32600, "request_too_large"))
-            } else {
-                String::from_utf8(bytes).map_err(|_| (-32700, "Parse error"))
-            }));
+        tokio::select! {
+            biased;
+            frame = framer.read(reader, MAX_REQUEST_BYTES) => {
+                let frame = frame?.ok_or("stdio_client_disconnected")?;
+                let cancelled = frame.as_ref().ok().and_then(|text| serde_json::from_str::<Value>(text).ok())
+                    .is_some_and(|message| message["jsonrpc"] == "2.0" && message.get("id").is_none()
+                        && message["method"] == "notifications/cancelled" && message["params"]["requestId"] == *id);
+                if cancelled { return Ok(None); }
+                let queued_bytes: usize = pending.iter().filter_map(|frame| frame.as_ref().ok()).map(String::len).sum();
+                let size = frame.as_ref().map_or(0, String::len);
+                if pending.len() >= 8 || queued_bytes.saturating_add(size) > MAX_REQUEST_BYTES {
+                    return Err("stdio_pending_requests_exceeded".into());
+                }
+                pending.push_back(frame);
+            }
+            response = &mut future => return Ok(Some(response)),
         }
     }
 }
@@ -320,3 +388,7 @@ fn serialize_response(response: &Value, max_bytes: usize) -> Result<String, Stri
 #[cfg(test)]
 #[path = "agent_protocol_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_post_cancellation_tests.rs"]
+mod post_cancellation_tests;

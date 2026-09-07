@@ -5,9 +5,9 @@ is deployed, or use the [fallback installation guide](./INSTALL.md).
 The developer configuration below remains for supported client integrations.
 
 `bridge_mcp` is Bridge's newline-delimited JSON-RPC 2.0 MCP server. It uses
-Bridge's loopback-only Tally XML transport for reads. It can render a local
-voucher import file, but it never sends that file—or any import request—to
-Tally.
+Bridge's loopback-only Tally XML transport. Reads are enabled by default.
+An operator can also enable local voucher-file preparation and experimental
+posting of one Journal, with separate native approval for each new attempt.
 
 Build and run it with Rust 1.96:
 
@@ -184,11 +184,59 @@ Positive historical readback remains available on an unqualified profile.
 A failed profile probe remains a read failure.
 
 Safety boundary: local loopback only, bounded responses, verified company tuple
-selection, append-only receipts, and no agent import dispatch. Unsupported:
+selection, append-only receipts, and separately approved, opt-in Journal dispatch. Unsupported:
 Tally Cloud Access, every non-loopback Tally host, and change enumeration. A
 `posted_verified` result is a readback comparison of the selected date window,
 not live-Tally qualification or a claim that every Tally configuration or
 licence mode has been qualified.
+
+## Approved Journal posting (experimental; disabled by default)
+
+Set `BRIDGE_AGENT_ENABLE_WRITES=true` (or enable **Allow Journal posting** in
+an MCPB client). This also enables `build_import_xml` and `verify_import`.
+`BRIDGE_AGENT_ENABLE_IMPORT=true` alone continues to expose only the manual
+file workflow. Both switches accept `true`/`false` or `1`/`0`; invalid values
+stop startup. No model-supplied argument can grant approval.
+
+1. Validate the exact existing ledger names and build **one Journal** using the
+   file workflow above. A Journal is a voucher; Payment, Receipt, Contra,
+   sales, purchases, tax, inventory and master creation remain unavailable.
+2. Call `post_import` with the original `company_guid` and `batch_id`.
+3. Review the native dialog's company, endpoint, date, numbering, reference,
+   narration, every debit/credit entry, and totals. Choose **Post Journal** on
+   macOS or **Yes** on Windows to permit this attempt. **Cancel** or Escape
+   declines on macOS; Return may leave the dialog open. Windows defaults to
+   **No**. Long or directionally ambiguous previews are refused; use the
+   manual file workflow instead. A desktop session is required.
+4. Bridge refreshes company identity, product/mode, date admission and exact
+   masters, checks the batch is absent, then records a durable dispatch intent
+   before one POST through the existing serial Tally queue. It saves response
+   commitments/counters and performs mandatory accounting readback. Only a
+   clean create response together with matching readback confirms the first
+   posting as `posted_verified`.
+
+Cancel, client disconnect, or the two-minute approval timeout ends the pending
+approval. If dispatch has already begun, cancellation cannot undo Tally's
+work. A timeout, crash, malformed response or incomplete readback requires
+`verify_import` on the **same original batch**. Once dispatch intent exists,
+`post_import` only reconciles and never resends, including after process restart.
+An intent may exist even if the request never reached Tally: this is deliberately
+an unknown outcome, not permission to build a replacement voucher. The saved
+response metadata helps distinguish clean counters from readback alone.
+
+Posting binds the saved batch to its loopback endpoint and full company tuple.
+Legacy batches without that endpoint binding remain readable/verifiable but
+cannot be posted. Only a uniquely selectable loaded company is admitted.
+Existing batch files and proofs retain their formats with additive optional
+journal metadata; no database migration or background queue is introduced.
+Disabling the switch and restarting the connector removes posting from tool
+availability without deleting reconciliation evidence. Retain this connector
+version for recovery: older binaries may refuse the new dispatch journal records.
+
+This is a bounded first posting slice, not blanket host/licence qualification.
+A ledger mapper is unnecessary for exact existing names: `validate_masters`
+returns exact matches and bounded near matches. Resolve ambiguity with the
+user rather than silently creating or choosing a ledger.
 
 ## Evidence-shaped outputs
 

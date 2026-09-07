@@ -1,6 +1,5 @@
 //! The local stdio MCP surface. It uses Bridge's loopback-only Tally XML
-//! transport. Import XML is only rendered to a local file: this server never
-//! dispatches an import or another write request to Tally.
+//! transport. Posting is opt-in and requires an independent native confirmation.
 
 #[path = "agent_directory.rs"]
 mod directory;
@@ -10,10 +9,13 @@ mod local_file;
 
 #[path = "agent_import.rs"]
 mod agent_import;
+pub use crate::tally::approved_import::run_confirmation;
 
 #[path = "agent_catalog.rs"]
 mod catalog;
-use catalog::{registered_tool_definitions, tool_definitions, validate_tool_arguments};
+#[cfg(test)]
+use catalog::tool_definitions;
+use catalog::validate_tool_arguments;
 #[path = "agent_protocol.rs"]
 mod agent_protocol;
 #[path = "agent_receipt_fields.rs"]
@@ -214,6 +216,7 @@ struct Settings {
     max_bytes: usize,
     redaction: Redaction,
     import_enabled: bool,
+    writes_enabled: bool,
 }
 
 impl Settings {
@@ -248,14 +251,25 @@ impl Settings {
             #[cfg(unix)]
             DirectoryAdmissionError::Permissions => "agent_data_dir_permissions_failed".to_string(),
         })?;
+        let writes_enabled = enabled_setting("BRIDGE_AGENT_ENABLE_WRITES")?;
         Ok(Self {
             endpoint,
             data_dir,
             max_rows,
             max_bytes,
             redaction,
-            import_enabled: env::var("BRIDGE_AGENT_ENABLE_IMPORT").as_deref() == Ok("1"),
+            import_enabled: enabled_setting("BRIDGE_AGENT_ENABLE_IMPORT")? || writes_enabled,
+            writes_enabled,
         })
+    }
+}
+
+fn enabled_setting(name: &str) -> Result<bool, String> {
+    match env::var(name) {
+        Err(env::VarError::NotPresent) => Ok(false),
+        Ok(value) if matches!(value.as_str(), "1" | "true") => Ok(true),
+        Ok(value) if matches!(value.as_str(), "0" | "false") => Ok(false),
+        _ => Err("boolean_setting_invalid".into()),
     }
 }
 
@@ -329,7 +343,7 @@ struct Evidence {
 }
 
 fn receipt_tool_identity(tool: &str) -> (&str, Option<String>) {
-    if registered_tool_definitions(true)
+    if catalog::registered_tool_definitions(true, true)
         .as_array()
         .is_some_and(|tools| tools.iter().any(|definition| definition["name"] == tool))
     {
@@ -525,7 +539,7 @@ impl Server {
                 evidence.state = "partial";
                 evidence.reason_code = Some(code.clone());
                 ToolOutcome {
-                    payload: json!({"error": {"code": code, "message": "Bridge withheld this read."}}),
+                    payload: json!({"error": {"code": code, "message": "Bridge refused this operation."}}),
                     evidence,
                     company_guid: args
                         .get("company_guid")
@@ -629,6 +643,9 @@ impl Server {
         if matches!(name, "build_import_xml" | "verify_import") {
             self.import_enabled()?;
         }
+        if name == "post_import" && !self.settings.writes_enabled {
+            return Err("import_posting_disabled".to_string().into());
+        }
         validate_tool_arguments(name, args)?;
         match name {
             "tally_status" => {
@@ -655,6 +672,7 @@ impl Server {
             }
             "voucher_schema" => self.voucher_schema().map_err(Into::into),
             "validate_masters" => self.validate_masters(args).await,
+            "post_import" => self.post_import(args).await,
             "build_import_xml" => {
                 self.import_enabled()?;
                 self.build_import_xml(args).await

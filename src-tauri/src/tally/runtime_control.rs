@@ -72,6 +72,7 @@ pub(super) enum ReadOperation {
     VoucherExport,
     ReportExport,
     OtherRead,
+    Import,
 }
 
 impl ReadOperation {
@@ -84,6 +85,7 @@ impl ReadOperation {
             Self::VoucherExport => RequestClass::VoucherExport,
             Self::ReportExport => RequestClass::ReportExport,
             Self::OtherRead => RequestClass::OtherRead,
+            Self::Import => RequestClass::Import,
         }
     }
 }

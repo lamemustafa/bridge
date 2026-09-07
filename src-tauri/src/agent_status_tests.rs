@@ -65,6 +65,7 @@ async fn tally_status_uses_observed_gateway_product_and_preserves_wire_evidence(
             max_bytes: 200_000,
             redaction: Redaction::None,
             import_enabled: false,
+            writes_enabled: false,
         });
         let response = server.call_tool("tally_status", json!({})).await;
         assert_eq!(response["isError"], false, "{fault}");
@@ -178,6 +179,7 @@ async fn tally_status_failure_retains_completed_sources_in_response_and_history(
             max_bytes: 200_000,
             redaction: Redaction::None,
             import_enabled: false,
+            writes_enabled: false,
         });
         let response = server.call_tool("tally_status", json!({})).await;
         assert_eq!(response["isError"], true);

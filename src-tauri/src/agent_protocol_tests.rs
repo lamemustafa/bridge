@@ -18,6 +18,7 @@ fn server(path: &Path) -> Server {
         max_bytes: 200_000,
         redaction: Redaction::MaskParties,
         import_enabled: false,
+        writes_enabled: false,
     })
 }
 

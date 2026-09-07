@@ -824,7 +824,7 @@ impl TallyClient {
         })
     }
 
-    async fn post_probe_xml(
+    pub(super) async fn post_probe_xml(
         &self,
         xml: String,
         evidence: &mut RuntimeReadEvidence,

@@ -49,6 +49,7 @@ async fn batch_total_overflow_is_refused_before_dispatch_or_persistence() {
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     });
     let mut input = payload();
     for entry in input
@@ -137,6 +138,7 @@ fn external_import_ledger_read_waits_for_the_append_admission_lock() {
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     };
     let server = Server::new(settings.clone());
     let append_admission = server
@@ -179,9 +181,11 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     };
     let server = Server::new(settings.clone());
     let initial = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-proof".into(),
         company_guid: GUID.into(),
@@ -324,8 +328,10 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     });
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-a".to_string(),
         company_guid: GUID.to_string(),
@@ -420,6 +426,7 @@ fn duplicate_detection_uses_stable_voucher_identity_independently_of_remote_id()
 fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "synthetic-redaction-batch".into(),
         company_guid: GUID.into(),
@@ -504,6 +511,7 @@ fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
 fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-b".to_string(),
         company_guid: GUID.to_string(),
@@ -666,9 +674,11 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     });
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-unwritable".to_string(),
         company_guid: GUID.to_string(),
@@ -700,6 +710,7 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
 fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-unrelated".to_string(),
         company_guid: GUID.to_string(),
@@ -780,6 +791,7 @@ fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
 fn fingerprint_only_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-mark".to_string(),
         company_guid: GUID.to_string(),
@@ -841,6 +853,7 @@ fn fingerprint_fallback_consumes_an_observed_voucher_once_per_batch() {
     let mut duplicate = input.vouchers[0].clone();
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-fingerprint-once".to_string(),
         company_guid: GUID.to_string(),
@@ -900,6 +913,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
     let mut duplicate = input.vouchers[0].clone();
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let mut line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-fingerprint-once".to_string(),
         company_guid: GUID.to_string(),
@@ -966,6 +980,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
 fn narration_tag_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-tag-mark".to_string(),
         company_guid: GUID.to_string(),
@@ -1028,6 +1043,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
     }
     validate_payload(&input).expect("leading zeros satisfy the input contract");
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-tag-mark".to_string(),
         company_guid: GUID.to_string(),
@@ -1083,6 +1099,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
 fn verified_import_vouchers_require_observed_effective_accounting_flags() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-accounting-state".to_string(),
         company_guid: GUID.to_string(),
@@ -1271,6 +1288,7 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
             max_bytes: 200_000,
             redaction: super::super::Redaction::None,
             import_enabled: true,
+            writes_enabled: false,
         });
         let built = server
             .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
@@ -1516,6 +1534,7 @@ async fn import_bounds_distinct_ledger_names_before_tally_without_reducing_vouch
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     });
     let response = server
         .call_tool_response("build_import_xml", serde_json::to_value(unique).unwrap())
