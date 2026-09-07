@@ -1,3 +1,4 @@
+use super::super::ToolResponse;
 use super::*;
 use bridge_tally_transport::TallyEndpointConfig;
 use tally_protocol_simulator::{
@@ -1783,4 +1784,98 @@ async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads(
         validate_dispatched_import_endpoint(&manual, false, &endpoint),
         Ok(())
     );
+}
+
+fn persisted_dispatch_response(created: u64, altered: u64) -> ledger::DispatchResponse {
+    ledger::DispatchResponse {
+        request_sha256: "a".repeat(64),
+        response_sha256: "b".repeat(64),
+        bytes: 1,
+        outcome: Some(
+            serde_json::from_value(json!({
+                "application_status":"success",
+                "counters": {
+                    "created":created, "altered":altered, "deleted":0, "ignored":0,
+                    "errors":0, "cancelled":0, "exceptions":0, "line_error_count":0
+                },
+                "exceptions_were_reported":true
+            }))
+            .unwrap(),
+        ),
+    }
+}
+
+async fn verify_saved_batch_after_dispatch(
+    dispatched: bool,
+    dispatch_response: Option<ledger::DispatchResponse>,
+) -> (ToolResponse, ledger::BatchSnapshot) {
+    let simulator = SequenceSimulator::spawn(qualified_import_cycle_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let server = Server::new(super::super::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: super::super::Redaction::None,
+        import_enabled: true,
+        writes_enabled: false,
+    });
+    let built = server
+        .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
+        .await
+        .expect("build");
+    let batch_id = built.payload["result"]["batch_id"]
+        .as_str()
+        .expect("batch id")
+        .to_string();
+    let saved = server
+        .latest_import_snapshot(&batch_id)
+        .expect("saved snapshot")
+        .expect("batch");
+    if dispatched {
+        let admission = server.lock_import_admission().expect("admission lock");
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&saved.batch))
+            .expect("dispatch intent");
+        if let Some(response) = dispatch_response {
+            server
+                .append_import_record_while_admitted(&ledger::StatusRecord::response(
+                    &saved.batch,
+                    response,
+                ))
+                .expect("dispatch response");
+        }
+        drop(admission);
+    }
+    let response = server
+        .call_tool_response(
+            "verify_import",
+            json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}),
+        )
+        .await;
+    let snapshot = server
+        .latest_import_snapshot(&batch_id)
+        .expect("persisted snapshot")
+        .expect("batch");
+    assert_eq!(
+        simulator.finish().expect("captured plan requests").len(),
+        50
+    );
+    (response, snapshot)
+}
+
+#[tokio::test]
+async fn dispatched_verification_persists_reconciliation_for_missing_or_dirty_response() {
+    for response in [None, Some(persisted_dispatch_response(0, 1))] {
+        let (outcome, snapshot) = verify_saved_batch_after_dispatch(true, response).await;
+        assert_eq!(outcome.value["isError"], true);
+        assert_eq!(
+            outcome.value["structuredContent"]["result"]["dispatch"]["state"],
+            "reconciliation_required"
+        );
+        assert_eq!(snapshot.batch.status, "verification_incomplete");
+    }
 }

@@ -544,12 +544,25 @@ impl Server {
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
                 "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
             });
-            let status = verification_status(&result, line.vouchers.len());
+            let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof});
+            if dispatched {
+                post::finalize_previous_attempt_reconciliation(
+                    &mut payload,
+                    dispatch_response.as_ref(),
+                );
+            }
+            let status = if dispatched
+                && payload["result"]["dispatch"]["state"] != "previous_attempt_reconciled"
+            {
+                "verification_incomplete"
+            } else {
+                verification_status(&result, line.vouchers.len())
+            };
             let mut update = line.clone();
             update.status = status.to_string();
-            self.persist_import_verification(&proof, &update, generation)?;
+            self.persist_import_verification(&payload["result"], &update, generation)?;
             Ok(ToolOutcome {
-                payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof}),
+                payload,
                 evidence: accumulated.clone(),
                 company_guid: Some(guid.to_string()),
                 truncated: false,

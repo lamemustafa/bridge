@@ -64,18 +64,14 @@ impl Server {
         let operation: Result<ToolOutcome, ToolFailure> = async {
             let (xml, preview) = admit_saved_journal(&line, &self.settings.endpoint)?;
             if snapshot.dispatched {
-                let mut result = self.verify_import(args).await?;
-                finalize_previous_attempt_reconciliation(&mut result.payload, snapshot.response.as_ref());
-                return Ok(result);
+                return self.verify_import(args).await;
             }
             let before = self.verify_import(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
             require_absent(&before.payload)?;
             // No Tally mutation can occur while the separate approval dialog is open.
             let request = ApprovedImport::confirm(xml, &preview).await?;
-            let mode = self.qualified_import_profile().await?;
             let payload = ImportPayload { company_guid: line.company_guid.clone(), vouchers: line.vouchers.clone() };
-            validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
             let (company, identity, identity_evidence) = self.verified_company(guid).await?;
             accumulated = combine_evidence(accumulated.clone(), identity_evidence);
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
@@ -90,6 +86,8 @@ impl Server {
             let preflight = self.verify_import(args).await?;
             accumulated = combine_evidence(accumulated.clone(), preflight.evidence);
             require_absent(&preflight.payload)?;
+            let mode = self.qualified_import_profile().await?;
+            validate_post_profile_with_evidence(&payload, &mode, &mut accumulated)?;
             let posted = self.runtime.post_approved_import(self.tally_config(), &identity, request, || {
                 // The file lock covers only the admission+synced append. It is not
                 // held over approval or network I/O. A competing process loses here.
@@ -185,7 +183,7 @@ fn persisted_response_state(response: Option<&ledger::DispatchResponse>) -> &'st
     }
 }
 
-fn finalize_previous_attempt_reconciliation(
+pub(super) fn finalize_previous_attempt_reconciliation(
     payload: &mut Value,
     response: Option<&ledger::DispatchResponse>,
 ) {
