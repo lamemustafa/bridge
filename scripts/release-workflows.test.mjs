@@ -14,20 +14,17 @@ async function workflow(path) {
 
 function assertWorkflowDispatch(workflow, label) {
   assert.ok(Object.hasOwn(workflow, "on"), `${label} must declare a trigger`);
-  assert.ok(Object.hasOwn(workflow.on, "workflow_dispatch"), `${label} must be manually dispatched`);
-  assert.equal(Object.hasOwn(workflow.on, "push"), false, `${label} must not publish on push`);
+  assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"], `${label} must be manual only`);
 }
 
-function assertEnabled(node, label) {
-  assert.notEqual(node.if, false, `${label} must not be disabled`);
-  assert.notEqual(node.if, "false", `${label} must not be disabled`);
-  assert.notEqual(node.if, "${{ false }}", `${label} must not be disabled`);
+function assertUnconditional(node, label) {
+  assert.equal(node.if, undefined, `${label} must not be conditional`);
+  assert.equal(node["continue-on-error"], undefined, `${label} must not continue after failure`);
 }
 
 function step(job, name) {
   const found = job.steps.find((candidate) => candidate.name === name);
   assert.ok(found, `missing ${name} step`);
-  assertEnabled(found, name);
   return found;
 }
 
@@ -37,22 +34,25 @@ function assertReleaseWorkflow(release) {
   const packageJob = release.jobs.package;
   const publish = release.jobs["publish-preview"];
   assert.ok(admission && packageJob && publish, "release jobs must be present");
-  assertEnabled(admission, "release admission job");
-  assertEnabled(packageJob, "package job");
-  assertEnabled(publish, "publish job");
+  assertUnconditional(admission, "release admission job");
+  assertUnconditional(packageJob, "package job");
+  assertUnconditional(publish, "publish job");
   assert.equal(packageJob.needs, "release-admission", "package must wait for release admission");
   assert.equal(publish.needs, "package", "publication must wait for both package archives");
   assert.equal(publish.permissions.contents, "write", "only publication receives contents write permission");
 
   const admissionStep = step(admission, "Require reviewed source and a matching immutable preview version");
+  assertUnconditional(admissionStep, "release admission step");
   assert.equal(admissionStep.env.SOURCE_REF, "${{ github.ref }}");
   assert.equal(admissionStep.env.DEFAULT_BRANCH, "${{ github.event.repository.default_branch }}");
   assert.match(admissionStep.run, /node scripts\/check-mcpb-preview-admission\.mjs/);
 
   const windowsSetup = step(packageJob, "Set up Windows native prerequisites");
   assert.equal(windowsSetup.if, "runner.os == 'Windows'");
+  assert.equal(windowsSetup["continue-on-error"], undefined, "Windows prerequisites must not continue after failure");
   assert.equal(windowsSetup.uses, "./.github/actions/setup-windows-native");
   const cargoBuild = step(packageJob, "Build the host Bridge MCP binary");
+  assertUnconditional(cargoBuild, "Cargo build step");
   assert.match(cargoBuild.run, /cargo build --locked --release --manifest-path src-tauri\/Cargo\.toml --bin bridge_mcp/);
   assert.ok(
     packageJob.steps.indexOf(windowsSetup) < packageJob.steps.indexOf(cargoBuild),
@@ -60,8 +60,15 @@ function assertReleaseWorkflow(release) {
   );
 
   const releaseStep = step(publish, "Create the immutable GitHub preview release");
+  assertUnconditional(releaseStep, "immutable release step");
   assert.equal(releaseStep.env.GH_REPO, "${{ github.repository }}");
   assert.match(releaseStep.run, /gh release create/);
+  assert.match(releaseStep.run, /refusing to replace existing release assets/);
+  assert.match(releaseStep.run, /git ls-remote --tags origin "refs\/tags\/\$RELEASE_TAG" "refs\/tags\/\$RELEASE_TAG\^\{\}"/);
+  assert.match(releaseStep.run, /\$\{peeled_sha:-\$tag_sha\}/);
+  assert.match(releaseStep.run, /could not verify whether \$RELEASE_TAG already exists; refusing to publish/);
+  assert.match(releaseStep.run, /existing tag \$RELEASE_TAG does not identify \$SOURCE_SHA/);
+  assert.match(releaseStep.run, /gh api --method POST "repos\/\$GH_REPO\/git\/refs"/);
   assert.match(releaseStep.run, /--verify-tag/);
   assert.doesNotMatch(releaseStep.run, /--target/);
   assert.match(releaseStep.run, /--prerelease/);
@@ -72,11 +79,12 @@ function assertInstallPageWorkflow(page) {
   const deploy = page.jobs.deploy;
   assert.ok(deploy, "install page deployment job must be present");
   assert.equal(deploy.if, defaultBranchGuard, "Pages deployment must be gated to the default branch");
+  assert.equal(deploy["continue-on-error"], undefined, "Pages deployment must not continue after failure");
   const upload = deploy.steps.find((candidate) => candidate.uses?.startsWith("actions/upload-pages-artifact@"));
   const publish = deploy.steps.find((candidate) => candidate.uses?.startsWith("actions/deploy-pages@"));
   assert.ok(upload && publish, "Pages deployment must upload and deploy the site artifact");
-  assertEnabled(upload, "Pages upload step");
-  assertEnabled(publish, "Pages deployment step");
+  assertUnconditional(upload, "Pages upload step");
+  assertUnconditional(publish, "Pages deployment step");
   assert.equal(upload.with.path, "site");
 }
 
@@ -91,7 +99,11 @@ test("publication workflow checks reject disabled or misplaced controls", async 
   disabledAdmission.jobs["release-admission"].steps.find(
     (candidate) => candidate.name === "Require reviewed source and a matching immutable preview version",
   ).if = false;
-  assert.throws(() => assertReleaseWorkflow(disabledAdmission), /must not be disabled/);
+  assert.throws(() => assertReleaseWorkflow(disabledAdmission), /must not be conditional/);
+
+  const admissionContinues = structuredClone(release);
+  admissionContinues.jobs["release-admission"]["continue-on-error"] = true;
+  assert.throws(() => assertReleaseWorkflow(admissionContinues), /must not continue after failure/);
 
   const misplacedAdmission = structuredClone(release);
   const admissionSteps = misplacedAdmission.jobs["release-admission"].steps;
@@ -100,6 +112,10 @@ test("publication workflow checks reject disabled or misplaced controls", async 
   ), 1);
   misplacedAdmission.jobs.package.steps.push(admissionStep);
   assert.throws(() => assertReleaseWorkflow(misplacedAdmission), /missing Require reviewed source/);
+
+  const alwaysPackage = structuredClone(release);
+  alwaysPackage.jobs.package.if = "${{ always() }}";
+  assert.throws(() => assertReleaseWorkflow(alwaysPackage), /package job must not be conditional/);
 
   const page = await workflow("../.github/workflows/deploy-install-page.yml");
   const disabledPage = structuredClone(page);
