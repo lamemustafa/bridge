@@ -201,7 +201,9 @@ fn service_at_endpoint(
         import_enabled: true,
         writes_enabled: true,
     });
-    server.append_import_ledger(&line).unwrap();
+    // Fixture construction exclusively owns this temporary directory. Avoid a
+    // setup lock that another parallel test's fork can transiently inherit.
+    server.append_import_ledger_while_admitted(&line).unwrap();
     (DesktopJournalService { server }, line)
 }
 
@@ -363,7 +365,10 @@ async fn review_refuses_fresh_unreviewable_text_but_retains_dispatched_reconcili
     line.vouchers[0].entries[0].ledger = "Cash\u{200d}".into();
     let xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
     line.sha256 = sha256_hex(xml.as_bytes());
-    service.server.append_import_ledger(&line).unwrap();
+    service
+        .server
+        .append_import_ledger_while_admitted(&line)
+        .unwrap();
     std::fs::write(
         service
             .server
