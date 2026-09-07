@@ -335,6 +335,8 @@ fn compact_dispatch_outcome(outcome: &Value) -> Option<Value> {
     }
     let counters = outcome["counters"].as_object()?;
     let counter = |name| counters.get(name).and_then(Value::as_u64);
+    let presence = counters.get("counter_presence")?.as_object()?;
+    let reported = |name| presence.get(name).and_then(Value::as_bool);
     Some(json!({
         "application_status":application_status,
         "counters":{
@@ -345,7 +347,16 @@ fn compact_dispatch_outcome(outcome: &Value) -> Option<Value> {
             "errors":counter("errors")?,
             "cancelled":counter("cancelled")?,
             "exceptions":counter("exceptions")?,
-            "line_error_count":counter("line_error_count")?
+            "line_error_count":counter("line_error_count")?,
+            "counter_presence":{
+                "created":reported("created")?,
+                "altered":reported("altered")?,
+                "deleted":reported("deleted")?,
+                "ignored":reported("ignored")?,
+                "errors":reported("errors")?,
+                "cancelled":reported("cancelled")?,
+                "exceptions":reported("exceptions")?
+            }
         },
         "exceptions_were_reported":outcome["exceptions_were_reported"].as_bool()?
     }))
