@@ -20,10 +20,8 @@ pub(super) struct EndpointDispatchLease {
 /// Tally listener. This is intentionally more conservative than the transport
 /// endpoint identity.
 pub(super) fn acquire(endpoint: &TallyEndpointConfig) -> Result<EndpointDispatchLease, String> {
-    let root = super::super::default_data_dir();
-    if !root.is_absolute() {
-        return Err("import_admission_lock_unavailable".into());
-    }
+    let root = super::super::default_dispatch_coordination_dir()
+        .ok_or_else(|| "import_admission_lock_unavailable".to_string())?;
     acquire_at(&root, endpoint)
 }
 
