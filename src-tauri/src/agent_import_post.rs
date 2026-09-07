@@ -275,9 +275,13 @@ impl Server {
         expected_sha256: &str,
     ) -> Result<ToolOutcome, ToolFailure> {
         let batch_id = required_string(args, "batch_id")?;
-        let snapshot = self
-            .latest_import_snapshot(batch_id)?
-            .ok_or_else(|| "import_batch_not_found".to_string())?;
+        let snapshot = {
+            // An empty journal cannot rule out another process's pre-intent
+            // admission. Observe it only while that dispatch lane is idle.
+            let _lease = dispatch_lease::acquire(&self.settings.endpoint)?;
+            self.latest_import_snapshot(batch_id)?
+                .ok_or_else(|| "import_batch_not_found".to_string())?
+        };
         if snapshot.batch.sha256 != expected_sha256 {
             return Err("import_batch_changed".to_string().into());
         }

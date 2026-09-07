@@ -258,9 +258,31 @@ async fn missing_or_unreadable_history_refuses_admission_without_claiming_no_pri
 }
 
 #[tokio::test]
-async fn reconcile_without_durable_intent_never_enters_post_or_approval() {
+async fn reconcile_without_durable_intent_requires_an_idle_dispatch_lane() {
     let directory = tempfile::tempdir().unwrap();
-    let (service, line) = service(directory.path().join("agent"));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = TallyEndpointConfig {
+        host: "127.0.0.1".into(),
+        port: listener.local_addr().unwrap().port(),
+    };
+    let (service, line) = service_at_endpoint(directory.path().join("agent"), None, endpoint);
+    let journal = service
+        .server
+        .settings
+        .data_dir
+        .join("agent-import-ledger.jsonl");
+    let before = std::fs::read(&journal).unwrap();
+    let lease = dispatch_lease::acquire(&service.server.settings.endpoint).unwrap();
+    let contended = service
+        .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
+        .await;
+    assert_eq!(
+        contended.result["result"]["error"]["code"],
+        "import_admission_busy"
+    );
+    assert!(contended.result["result"]["attempt_recorded"].is_null());
+    assert_eq!(std::fs::read(&journal).unwrap(), before);
+    drop(lease);
     let operation = service
         .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
         .await;
