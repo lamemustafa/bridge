@@ -122,14 +122,21 @@ fn streaming_admission_checks_corruption_after_target_and_unrelated_status_bindi
             );
         }
     }
-    let invalid_utf8 = [prefix.clone(), vec![0xff]].concat();
+    let invalid_utf8 = [prefix.clone(), vec![0xff, b'\n']].concat();
     assert_eq!(
         read_snapshot(Cursor::new(invalid_utf8), Some("target")).err(),
         Some("import_ledger_unavailable".into())
     );
-    // Preserve the existing reader's valid final-record behavior with no LF.
+    // A complete JSON object is still an incomplete JSONL append without LF.
     let final_record = serde_json::to_vec(&target).unwrap();
-    assert!(read_snapshot(Cursor::new(final_record), Some("target"))
+    assert_eq!(
+        read_snapshot(Cursor::new(final_record), Some("target")).err(),
+        Some("import_ledger_invalid".into())
+    );
+    assert!(read_snapshot(Cursor::new(Vec::<u8>::new()), None)
+        .unwrap()
+        .is_none());
+    assert!(read_snapshot(Cursor::new(record(&target)), Some("target"))
         .unwrap()
         .is_some());
 }

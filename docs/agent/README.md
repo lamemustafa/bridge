@@ -403,6 +403,9 @@ Journal admission streams every record and checks even unrelated compact-record
 hash bindings. Builds retain no historical voucher payloads; verification retains
 only its requested batch. Each record is limited to 32 MiB. Memory still grows
 with distinct batch IDs and hashes, and scan time grows with total journal bytes;
-there is no automatic truncation. Reserved narration markers begin exactly with
+there is no automatic truncation. Every nonempty record must end with a newline;
+a complete JSON object at an unterminated tail is refused before a later append
+can concatenate objects. Preserve the file for explicit recovery instead of
+truncating history or silently repairing it. Reserved narration markers begin exactly with
 `[BRIDGE:`. Unrelated text such as `[BRIDGE CLUB]` is ordinary narration, while
 malformed or multiple reserved markers still refuse verification.

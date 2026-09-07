@@ -382,12 +382,14 @@ batch ID. Each record is capped at 32 MiB on read and append; memory still grows
 with distinct IDs, and scanning remains proportional to total history. Existing
 compact and full records, physical generation checks, corruption refusal and
 publication recovery remain intact. Local tests generate over 32 MiB of journal
-history without materializing it all and check oversized-record refusal. No
-history is truncated. Source narration admission reserves exactly `[BRIDGE:`;
+history without materializing it all and check oversized-record refusal. A
+nonempty unterminated tail is rejected even if it contains valid JSON: admitting
+it would allow the next append to join two records and corrupt the journal.
+No history is truncated or silently repaired. Source narration admission reserves exactly `[BRIDGE:`;
 ordinary `[BRIDGE CLUB]` text is accepted, and malformed or multiple reserved
 markers remain refused.
 
-Local candidate verification: **1,019 Rust workspace tests**, **247 agent tests
+Local candidate verification: **1,020 Rust workspace tests**, **248 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,

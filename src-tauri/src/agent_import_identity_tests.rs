@@ -112,7 +112,7 @@ fn batch_identity_is_deterministic_uuid_v8_and_separates_tuple_components() {
 fn historical_journal_without_scheme_keeps_raw_attribution_and_serialization() {
     let original = legacy_record();
     assert!(original.get("identity_scheme").is_none());
-    let snapshots = ledger::parse_snapshots(&original.to_string()).unwrap();
+    let snapshots = ledger::parse_snapshots(&format!("{original}\n")).unwrap();
     let line = &snapshots[0].batch;
     assert!(line.identity_scheme.is_none());
     assert_eq!(line.attribution_tag(&line.vouchers[0]), "txn-001");
@@ -123,7 +123,7 @@ fn historical_journal_without_scheme_keeps_raw_attribution_and_serialization() {
 fn namespaced_journal_roundtrips_derived_attribution_and_rejects_unknown_scheme() {
     let mut value = legacy_record();
     value["identity_scheme"] = json!("batch_v1");
-    let snapshots = ledger::parse_snapshots(&value.to_string()).unwrap();
+    let snapshots = ledger::parse_snapshots(&format!("{value}\n")).unwrap();
     let line = &snapshots[0].batch;
     assert!(matches!(
         line.identity_scheme,
@@ -138,7 +138,7 @@ fn namespaced_journal_roundtrips_derived_attribution_and_rejects_unknown_scheme(
     for unsupported in [json!("batch_v2"), json!("BatchV1"), json!(1)] {
         value["identity_scheme"] = unsupported;
         assert_eq!(
-            ledger::parse_snapshots(&value.to_string()).err(),
+            ledger::parse_snapshots(&format!("{value}\n")).err(),
             Some("import_ledger_invalid".into())
         );
     }

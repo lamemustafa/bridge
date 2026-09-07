@@ -35,6 +35,36 @@ fn server(path: &Path) -> Server {
     })
 }
 
+#[tokio::test]
+async fn unterminated_complete_journal_record_refuses_build_before_publication() {
+    // Reuse the observed profile, company and catalogue; admission must stop
+    // before requesting a pre-import mark or publishing another journal record.
+    let simulator =
+        SequenceSimulator::spawn(qualified_import_cycle_plans()[..12].to_vec()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut server = server(directory.path());
+    server.settings.endpoint.port = simulator.address().port();
+    let journal = directory.path().join("agent-import-ledger.jsonl");
+    let original = serde_json::to_vec(&batch()).unwrap();
+    assert_eq!(original.last(), Some(&b'}'));
+    fs::write(&journal, &original).unwrap();
+    let imports = server.imports_dir().unwrap();
+    let existing = imports.join("existing.xml");
+    fs::write(&existing, b"retained local artifact").unwrap();
+
+    let failure = server
+        .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).unwrap())
+        .await
+        .err()
+        .expect("unterminated journal is refused");
+    assert_eq!(failure.code, "import_ledger_invalid");
+    assert!(failure.evidence.is_some_and(|evidence| evidence.bytes > 0));
+    assert_eq!(simulator.finish().unwrap().len(), 12);
+    assert_eq!(fs::read(&journal).unwrap(), original);
+    assert_eq!(fs::read(&existing).unwrap(), b"retained local artifact");
+    assert_eq!(fs::read_dir(&imports).unwrap().count(), 1);
+}
+
 #[test]
 fn repeated_verification_appends_only_compact_status_and_preserves_batch_bytes() {
     let directory = tempfile::tempdir().unwrap();
@@ -154,7 +184,7 @@ fn compact_status_hydrates_legacy_full_records_and_rejects_unknown_builds() {
     let mut unknown_record = serde_json::to_value(&original).unwrap();
     unknown_record["record_type"] = json!("future_record");
     assert_eq!(
-        ledger::parse_snapshots(&unknown_record.to_string()).err(),
+        ledger::parse_snapshots(&format!("{unknown_record}\n")).err(),
         Some("import_ledger_invalid".into())
     );
 }

@@ -117,7 +117,13 @@ fn read_record(reader: &mut impl BufRead, line: &mut Vec<u8>) -> Result<bool, St
             .fill_buf()
             .map_err(|_| "import_ledger_unavailable".to_string())?;
         if available.is_empty() {
-            return Ok(!line.is_empty());
+            return if line.is_empty() {
+                Ok(false)
+            } else {
+                // Even a complete JSON value needs its record delimiter;
+                // otherwise the next append would concatenate two objects.
+                Err("import_ledger_invalid".into())
+            };
         }
         let newline = available.iter().position(|byte| *byte == b'\n');
         let length = newline.map_or(available.len(), |index| index + 1);
