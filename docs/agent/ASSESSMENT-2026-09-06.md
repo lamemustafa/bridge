@@ -41,7 +41,7 @@ the protocol's transport, lifecycle, and tool requirements.
 | --- | --- |
 | Native collection requests | Use explicit object-type elements, a defined collection matching the export ID, and measured ledger-entry fetch paths. |
 | Native parser | Read actual collection objects and direct scalar fields; preserve strict row validation and exact decimal values. Retained live captures exercise counters, numeric padding, Unicode, and nested allocations. |
-| Ledger movement | Use Tally's observed period opening at the requested start. Apply only in-window, non-cancelled, non-optional voucher entries. Eliminate the earlier-history scan. Corroborate opening snapshots and require freshly observed licence mode for both book-start and caller-specified opening dates. |
+| Ledger movement | Use Tally's observed period opening at the requested start. Apply only in-window, non-cancelled, non-optional voucher entries. Eliminate the earlier-history scan. Corroborate opening snapshots and require the observed Licensed TallyPrime Silver 7.1 profile before and after both book-start and caller-specified opening reads. |
 | Change enumeration | Hide and refuse `changed_since`. A client result cap is not a server-work bound, and unqualified snapshot continuation is not a reliable change feed. No bypass setting is added. |
 | Import verification | Reserve explicit markers before fallback matching, consume each observed row once, and distinguish attributed postings from matching content. Equivalent decimal spellings compare equally without changing stored XML bytes. |
 | Response recovery | Preserve a persisted batch ID through result caps, final framing caps, and receipt failures. The client can recover without generating another transaction. |
@@ -107,25 +107,33 @@ The education-mode flag is boolean for observed modes and null otherwise. Caller
 company UUIDs are admitted before any read, and malformed observed GUIDs cannot
 produce verified identities or complete unscoped receipts.
 
-Both book-start and explicit-date ledger openings now obtain a fresh mode probe
-before date admission and bracket the read with a closing mode observation. A
-stale cached mode cannot admit an unsupported Education-mode date. Captured-source
-regressions cover absent/stale cache, unsafe book starts, and closing mode drift.
+**Qualification correction — 2026-09-07.** Both book-start and explicit-date
+ledger openings require fresh observations of TallyPrime, Licensed mode, release
+7.1 and exclusive Silver tier before and after the reads. The same runtime gate
+covers basic/compliance ledger balances and native outstandings, whose balance
+fields lack an independently returned period. Other or unobserved profiles
+return `financial_read_profile_unqualified` without releasing monetary results;
+a prior status call or cached profile cannot grant admission.
 
-The same fresh-mode requirement covers compliance ledgers and native
-outstandings, whose balance fields also lack an independently returned period.
-The corrected boundary is the runtime source, rather than a requirement that a
-client call status first. Mode/date refusals retain completed wire observations
-through the runtime and adapter error mappings. MCP outstandings also binds the
-INR observation to its company and master extent and requires that witness to
-match the opening financial extent. Closing extent drift remains partial. The
-desktop operator-assertion contract remains separate.
+Historical monetary/date observations on Education profiles remain valid within
+their recorded bounds (protocol sections 5.3, 5.5 and 12a). They are not evidence
+for arbitrary ERP9, Edit Log, TallyPrime release or licence-tier combinations.
+The current financial workflow withholds those broader profiles rather than
+promoting their historical observations into current qualification. Ordinary
+voucher reads keep their separate literal-date and returned-row admission.
+
+The gate is shared by native desktop consumers as well as MCP. The desktop
+operator-supplied currency assertion remains a separate contract and does not
+bypass profile qualification. Profile/date refusals retain completed wire
+observations through runtime and adapter error mappings. MCP outstandings also
+binds the INR observation to its company and master extent and requires that
+witness to match the opening financial extent. Closing extent drift remains partial.
 
 The final date-admission audit traced every MCP route:
 
 | Read family | Admission evidence |
 | --- | --- |
-| Basic/compliance ledger balances, movement openings, native outstandings | Fresh recognized mode, typed permitted period, closing mode observation. |
+| Basic/compliance ledger balances, movement openings, native outstandings | Fresh Licensed TallyPrime Silver 7.1 observations before and after reads, plus typed period admission. |
 | Voucher reads and import readback | Literal date predicates and returned-row window validation; corroborated empty reads, with fresh Silver 7.1 profile qualification before import absence is persisted. |
 | Catalogue, currency, company identity, import high-water | Metadata only; no period-dependent balance is released. |
 | Legacy calibrated scan and change enumeration | Unavailable through the MCP evidence path. |
@@ -363,7 +371,7 @@ admitted as Unicode before state creation, preventing JSON path serialization
 from failing after publication. Startup regressions cover native invalid encoding
 and exact preservation of multilingual paths; Windows runtime checks are required.
 
-Local candidate verification: **1,011 Rust workspace tests**, **242 agent tests
+Local candidate verification: **1,012 Rust workspace tests**, **243 agent tests
 within that workspace**, **48 tools-workspace tests**, **107 Node tests**, **6
 Vitest tests**, and **2 Playwright tests** passed. Both Rust workspace Clippy
 runs passed with warnings denied. Frontend build, formatting, licensing,
@@ -484,6 +492,9 @@ accepts legacy full batch records and compact hash-bound verification status
 records; older binaries refuse the compact format. Preserve the ledger and
 proofs, and disable imports after a binary downgrade instead of truncating
 history. Rolling back the connector does not undo an operator import into Tally.
+A binary predating the financial-read profile gate restores broader monetary
+admission for shared native desktop and MCP reads. Such a downgrade is not a
+recommended workaround for an unqualified endpoint.
 
 The connector remains loopback-only and never dispatches import XML. Company
 identity, response redaction, bounded input/output, local private-file handling,

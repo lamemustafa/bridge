@@ -100,9 +100,21 @@ or immediate parent groups. A missing opening keeps both opening and closing
 unestablished, including at book start. Qualification covers the recorded account
 groups and instances; it is not a claim of universal ledger-report parity.
 
-The runtime retains its paired read, verified company, book-extent checks, and
-endpoint date-boundary admission. A rejected opening boundary is refused before
-the ledger export. A genuinely empty voucher response uses the same wider-window
+The runtime retains its paired read, verified company and book-extent checks.
+Native ledger openings, basic/compliance ledger balances, and native outstandings
+require freshly observed **TallyPrime, Licensed mode, release 7.1, Silver tier**
+before and after the reads. Other or unobserved profiles return
+`financial_read_profile_unqualified` without releasing monetary results. This
+shared runtime gate also affects native desktop consumers, including those with
+an operator-supplied currency assertion. A prior status call or cached profile
+does not grant admission.
+
+This qualification boundary was narrowed on 2026-09-07. The retained Education
+observations in protocol sections 5.3, 5.5 and 12a remain valid within their
+recorded scope; they do not qualify every release or the current financial read
+workflow. Those profiles are withheld here. Ordinary voucher reads retain their
+separate literal-date and returned-row validation contract.
+A genuinely empty voucher response uses the same wider-window
 corroboration as `vouchers` before zero movement can be reported. Cancelled and
 optional rows establish response presence while contributing no accounting movement.
 
@@ -263,8 +275,8 @@ Active vouchers without observed accounting entries are refused before movement
 filtering; cancelled and optional vouchers remain excluded from movement totals.
 Movement corroborates the complete opening-ledger snapshot after voucher reads
 and rejects unknown entry names before selecting a ledger. Caller-specified
-opening dates require freshly observed product and licence mode before and after
-the read; a prior status call or cached licensed profile does not grant admission.
+opening dates require the freshly observed Licensed TallyPrime Silver 7.1 profile
+before and after the read; a prior status call or cached profile does not grant admission.
 
 Top-party ranking uses `gross_exposure`, with billed and unallocated receivable
 and payable fields kept separate. `totals.scope` is `open_bills_only`.
@@ -370,4 +382,6 @@ status records. Preserve the data directory, import ledger, and proofs; use the
 new binary for the import workflow or disable imports after a binary downgrade.
 Do not truncate the ledger to force downgrade compatibility. A binary rollback
 does not undo a separately imported Tally voucher. Existing files and transaction
-IDs remain local recovery evidence.
+IDs remain local recovery evidence. Downgrading to a binary predating the
+financial-read profile gate restores broader monetary admission and is not a
+recommended way to access an unqualified endpoint.

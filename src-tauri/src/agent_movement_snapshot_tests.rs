@@ -17,7 +17,7 @@ fn captured(bytes: &[u8]) -> ScenarioPlan {
 #[tokio::test]
 async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
     let company = captured(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml"
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
     ));
     let extent = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"

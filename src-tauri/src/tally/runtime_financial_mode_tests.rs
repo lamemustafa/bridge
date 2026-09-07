@@ -16,7 +16,7 @@ fn decode(bytes: &[u8]) -> String {
 }
 fn companies() -> String {
     decode(include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml"))
+    "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"))
 }
 fn extents() -> String {
     decode(include_bytes!(
@@ -110,95 +110,145 @@ fn join(left: &str, right: &str) -> String {
     sha256_hex(format!("{left}:{right}").as_bytes())
 }
 
+// Refusal-only metadata mutations of the captured qualified profile.
+const PROFILE_FAULTS: [&str; 10] = [
+    "education",
+    "erp9",
+    "editlog",
+    "release_old",
+    "release_missing",
+    "release_unknown",
+    "gold",
+    "tier_ambiguous",
+    "mode_unknown",
+    "product_unknown",
+];
+fn fault_company(fault: &str) -> String {
+    let source = companies();
+    let release = "<BRIDGERELEASE TYPE=\"String\">7.1</BRIDGERELEASE>";
+    let silver = "<SILVER TYPE=\"Logical\">Yes</SILVER>";
+    let gold = "<GOLD TYPE=\"Logical\">No</GOLD>";
+    let product = "<PRODUCTNAME TYPE=\"String\">TallyPrime</PRODUCTNAME>";
+    let changed = match fault {
+        "education" => education(&source),
+        "erp9" => source.replace(
+            product,
+            "<PRODUCTNAME TYPE=\"String\">Tally ERP 9</PRODUCTNAME>",
+        ),
+        "editlog" => source.replace(
+            product,
+            "<PRODUCTNAME TYPE=\"String\">TallyPrime Edit Log</PRODUCTNAME>",
+        ),
+        "product_unknown" => source.replace(
+            product,
+            "<PRODUCTNAME TYPE=\"String\">UnknownProduct</PRODUCTNAME>",
+        ),
+        "release_old" => source.replace(
+            release,
+            "<BRIDGERELEASE TYPE=\"String\">7.0</BRIDGERELEASE>",
+        ),
+        "release_missing" => source.replace(release, ""),
+        "release_unknown" => source.replace(
+            release,
+            "<BRIDGERELEASE TYPE=\"String\">unknown</BRIDGERELEASE>",
+        ),
+        "gold" => source
+            .replace(silver, "<SILVER TYPE=\"Logical\">No</SILVER>")
+            .replace(gold, "<GOLD TYPE=\"Logical\">Yes</GOLD>"),
+        "tier_ambiguous" => source.replace(gold, "<GOLD TYPE=\"Logical\">Yes</GOLD>"),
+        "mode_unknown" => source.replace(silver, "<SILVER TYPE=\"Logical\">No</SILVER>"),
+        "none" => return source,
+        _ => panic!("unknown profile fault: {fault}"),
+    };
+    assert_ne!(changed, source, "{fault}");
+    changed
+}
+fn assert_profile_refusal(error: &anyhow::Error, fault: &str) {
+    let expected = if matches!(fault, "mode_unknown" | "product_unknown") {
+        OpeningBoundaryObservationError::Unobserved
+    } else {
+        OpeningBoundaryObservationError::Unqualified
+    };
+    assert_eq!(
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
+        Some(&expected),
+        "{fault}: {error:?}"
+    );
+}
+
 #[tokio::test]
-async fn financial_reads_reject_unsafe_education_dates_with_absent_or_stale_cache() {
+async fn financial_reads_refuse_unqualified_profiles_before_reports_despite_stale_cache() {
     for party in [false, true] {
         for cached in [false, true] {
-            let company_xml = education(&companies()).replace("20260401", "20260415");
-            let extent_xml = extents().replace("20260401", "20260415");
-            let identity = company_identity(&company_xml);
-            let company = xml(company_xml);
-            let extent = xml(extent_xml.clone());
-            let plans = vec![
-                status(),
-                company.clone(),
-                company,
-                extent.clone(),
-                status(),
-                extent,
-                status(),
-            ];
-            let response_bytes = plans
-                .iter()
-                .map(|plan| encode(&plan.fixture.body(), plan.encoding))
-                .collect::<Vec<_>>();
-            let simulator = SequenceSimulator::spawn(plans).unwrap();
-            let config = TallyConfig {
-                host: simulator.address().ip().to_string(),
-                port: simulator.address().port(),
-            };
-            let runtime = TallyRuntime::default();
-            if cached {
-                stale_cache(&runtime, &config);
-            }
-            let evidence = if party {
-                let error = runtime
-                    .fetch_party_ledger_master_source_with_evidence(
-                        config,
-                        &identity,
-                        assertion(&extent_xml, &identity),
-                    )
-                    .await
-                    .unwrap_err();
-                assert!(matches!(error.chain().find_map(|cause| cause.downcast_ref::<
-                    crate::tally::connection::PartyLedgerMasterSourceValidationError>()),
-                    Some(crate::tally::connection::PartyLedgerMasterSourceValidationError::MasterPeriod)));
-                error
-                    .downcast_ref::<RuntimeReadFailure>()
-                    .unwrap()
-                    .evidence
-                    .clone()
-            } else {
-                let (result, evidence) = runtime
-                    .fetch_outstandings_native(
-                        config,
-                        &identity,
-                        TallyDate::parse("20260902").unwrap(),
-                        OutstandingsCurrencyAssertion::Inr,
-                        OutstandingsAgeingAnchor::DueDate,
-                    )
-                    .await
-                    .unwrap();
-                assert!(
-                    matches!(result,OutstandingsLoadResult::Partial { reason,.. }
-                    if reason.reason_code == "as_of_has_no_valid_window_boundary")
+            for fault in PROFILE_FAULTS {
+                if cached && fault != "education" {
+                    continue;
+                }
+                let plans = vec![status(), xml(fault_company(fault))];
+                let response_bytes = plans
+                    .iter()
+                    .map(ScenarioPlan::response_bytes)
+                    .collect::<Vec<_>>();
+                let simulator = SequenceSimulator::spawn(plans).unwrap();
+                let config = TallyConfig {
+                    host: simulator.address().ip().to_string(),
+                    port: simulator.address().port(),
+                };
+                let identity = company_identity(&companies());
+                let runtime = TallyRuntime::default();
+                if cached {
+                    stale_cache(&runtime, &config);
+                }
+                let error = if party {
+                    runtime
+                        .fetch_party_ledger_master_source_with_evidence(
+                            config,
+                            &identity,
+                            assertion(&extents(), &identity),
+                        )
+                        .await
+                        .unwrap_err()
+                } else {
+                    runtime
+                        .fetch_outstandings_native(
+                            config,
+                            &identity,
+                            TallyDate::parse("20260902").unwrap(),
+                            OutstandingsCurrencyAssertion::Inr,
+                            OutstandingsAgeingAnchor::DueDate,
+                        )
+                        .await
+                        .unwrap_err()
+                };
+                assert_profile_refusal(&error, fault);
+                let evidence = &error.downcast_ref::<RuntimeReadFailure>().unwrap().evidence;
+                let observed = simulator.finish().unwrap();
+                assert_eq!(
+                    observed.len(),
+                    2,
+                    "{fault}: refusal must precede financial reports"
                 );
-                evidence
-            };
-            let observed = simulator.finish().unwrap();
-            assert_eq!(
-                observed.len(),
-                7,
-                "unsafe profile must stop before a financial report"
-            );
-            assert_eq!(
-                evidence.request_sha256,
-                join(
-                    &observed[0].request_body_sha256,
-                    &observed[1].request_body_sha256
-                )
-            );
-            assert_eq!(
-                evidence.response_sha256,
-                join(
-                    &sha256_hex(&response_bytes[0]),
-                    &sha256_hex(&response_bytes[1])
-                )
-            );
-            assert_eq!(
-                evidence.bytes,
-                response_bytes[0].len() + response_bytes[1].len()
-            );
+                assert_eq!(
+                    evidence.request_sha256,
+                    join(
+                        &observed[0].request_body_sha256,
+                        &observed[1].request_body_sha256
+                    )
+                );
+                assert_eq!(
+                    evidence.response_sha256,
+                    join(
+                        &sha256_hex(&response_bytes[0]),
+                        &sha256_hex(&response_bytes[1])
+                    )
+                );
+                assert_eq!(
+                    evidence.bytes,
+                    response_bytes[0].len() + response_bytes[1].len()
+                );
+            }
         }
     }
 }
@@ -206,7 +256,7 @@ async fn financial_reads_reject_unsafe_education_dates_with_absent_or_stale_cach
 fn pair(plans: &mut Vec<ScenarioPlan>, response: ScenarioPlan) {
     plans.extend([response.clone(), status(), response, status()]);
 }
-fn compliance_plans(closing_drift: bool) -> Vec<ScenarioPlan> {
+fn compliance_plans(closing_fault: &str) -> Vec<ScenarioPlan> {
     let company = xml(companies());
     let extent = xml(extents());
     let mut plans = vec![status(), company.clone(), company.clone()];
@@ -217,22 +267,14 @@ fn compliance_plans(closing_drift: bool) -> Vec<ScenarioPlan> {
         include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-party-groups.utf16le.xml").as_slice(),
     ] { pair(&mut plans,xml(decode(bytes))); }
     pair(&mut plans, extent);
-    plans.extend([
-        company,
-        status(),
-        xml(if closing_drift {
-            education(&companies())
-        } else {
-            companies()
-        }),
-    ]);
+    plans.extend([company, status(), xml(fault_company(closing_fault))]);
     plans
 }
 
 #[tokio::test]
 async fn compliance_source_requires_closing_mode_and_preserves_source_commitments() {
-    for drift in [false, true] {
-        let plans = compliance_plans(drift);
+    for fault in std::iter::once("none").chain(PROFILE_FAULTS) {
+        let plans = compliance_plans(fault);
         let responses = plans
             .iter()
             .map(|plan| encode(&plan.fixture.body(), plan.encoding))
@@ -249,14 +291,9 @@ async fn compliance_source_requires_closing_mode_and_preserves_source_commitment
                 assertion(&extents(), &identity),
             )
             .await;
-        let evidence = if drift {
+        let evidence = if fault != "none" {
             let error = result.unwrap_err();
-            assert!(matches!(
-                error
-                    .chain()
-                    .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
-                Some(OpeningBoundaryObservationError::Changed)
-            ));
+            assert_profile_refusal(&error, fault);
             error
                 .downcast_ref::<RuntimeReadFailure>()
                 .unwrap()
@@ -299,7 +336,7 @@ async fn compliance_source_requires_closing_mode_and_preserves_source_commitment
 
 #[tokio::test]
 async fn outstandings_requires_closing_mode_and_retains_sources_on_refusal() {
-    for fault in ["none", "mode", "amount"] {
+    for fault in ["none", "amount"].into_iter().chain(PROFILE_FAULTS) {
         let company = xml(companies());
         let extent = xml(extents());
         let mut plans = vec![status(), company.clone(), company.clone()];
@@ -322,11 +359,11 @@ async fn outstandings_requires_closing_mode_and_retains_sources_on_refusal() {
         plans.extend([
             company,
             status(),
-            xml(if fault == "mode" {
-                education(&companies())
+            xml(fault_company(if fault == "amount" {
+                "none"
             } else {
-                companies()
-            }),
+                fault
+            })),
         ]);
         let responses = plans
             .iter()
@@ -352,13 +389,8 @@ async fn outstandings_requires_closing_mode_and_retains_sources_on_refusal() {
             evidence
         } else {
             let error = result.unwrap_err();
-            if fault == "mode" {
-                assert!(matches!(
-                    error
-                        .chain()
-                        .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
-                    Some(OpeningBoundaryObservationError::Changed)
-                ));
+            if fault != "amount" {
+                assert_profile_refusal(&error, fault);
             } else {
                 assert!(matches!(
                     error

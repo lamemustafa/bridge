@@ -162,15 +162,15 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
                         json!({"type":"object","additionalProperties":false}),
                     ),
                     "outstandings" => (
-                        "Return paired native receivable/payable totals, ageing, top-party ranking, and paginated open bills. `top` applies only to party ranking; use offset and limit for bills.",
+                        "Return paired native receivable/payable totals, ageing, top-party ranking, and paginated open bills on freshly observed TallyPrime Silver 7.1 only. `top` applies only to party ranking; use offset and limit for bills.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"direction":{"type":"string","enum":["receivable","payable","both"],"default":"both"},"as_of":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ageing_basis":{"type":"string","enum":["bill_date","due_date"],"default":"due_date"},"top":{"type":"integer","minimum":1,"default":25},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "ledger_masters" => (
-                        "Return verified ledger masters; compliance includes paired party-master observations.",
+                        "Return verified ledger masters with monetary fields on freshly observed TallyPrime Silver 7.1 only; compliance includes paired party-master observations.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid"],"properties":{"company_guid":{"type":"string","minLength":1},"group":{"type":"string"},"fields":{"type":"string","enum":["basic","compliance"],"default":"basic"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "ledger_movement" => (
-                        "Return literal-window ledger opening, exact debit/credit movement, closing, and touched-voucher count. Reads the full voucher window before filtering or pagination; use narrow dates. Dense windows are unqualified and can fail source limits.",
+                        "Return literal-window ledger opening, exact debit/credit movement, closing, and touched-voucher count on freshly observed TallyPrime Silver 7.1 only. Reads the full voucher window before filtering or pagination; use narrow dates. Dense windows are unqualified and can fail source limits.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ledger":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "vouchers" => (

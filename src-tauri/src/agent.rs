@@ -388,6 +388,19 @@ impl From<String> for ToolFailure {
 
 impl ToolFailure {
     fn from_runtime(code: &str, error: anyhow::Error) -> Self {
+        let code = if error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<crate::tally::runtime::OpeningBoundaryObservationError>(),
+                Some(
+                    crate::tally::runtime::OpeningBoundaryObservationError::Unqualified
+                        | crate::tally::runtime::OpeningBoundaryObservationError::Unobserved
+                )
+            )
+        }) {
+            "financial_read_profile_unqualified"
+        } else {
+            code
+        };
         let evidence = error.chain().find_map(|cause| {
             cause
                 .downcast_ref::<crate::tally::runtime::RuntimeReadFailure>()
@@ -1046,3 +1059,7 @@ fn attach_build_egress_failure(response: &mut Value) -> bool {
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_financial_profile_tests.rs"]
+mod financial_profile_tests;

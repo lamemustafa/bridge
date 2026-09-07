@@ -210,12 +210,12 @@ async fn opening_mode_refusals_retain_probe_evidence_through_agent_mapping() {
         (
             "ledger_masters",
             json!({"company_guid": CAPTURED_GUID}),
-            "ledger_export_invalid",
+            "financial_read_profile_unqualified",
         ),
         (
             "ledger_movement",
             json!({"company_guid": CAPTURED_GUID, "from":"20260901", "to":"20260902"}),
-            "ledger_movement_read_failed",
+            "financial_read_profile_unqualified",
         ),
     ] {
         // Reuse the existing identity/status replay without a recognized mode.

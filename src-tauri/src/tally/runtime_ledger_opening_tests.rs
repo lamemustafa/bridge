@@ -114,25 +114,21 @@ fn scoped_opening_requires_observed_mode_and_does_not_infer_unknown_as_licensed(
     );
     assert_eq!(
         observed_opening_boundary(&profile),
-        Ok(DateBoundaryProfile::ModeAgnostic)
+        Err(OpeningBoundaryObservationError::Unqualified)
     );
-    profile.mode = Some("Education".into());
-    let boundary = observed_opening_boundary(&profile).unwrap();
-    assert_eq!(boundary, DateBoundaryProfile::EducationRestricted);
-    assert_eq!(
-        ledger_opening_period(
-            boundary,
-            &TallyDate::parse("20260401").unwrap(),
-            &TallyDate::parse("20260902").unwrap(),
-            Some(&TallyDate::parse("20260815").unwrap())
-        ),
-        Err(NativeLedgerExportPeriodError::UnsupportedBoundary)
-    );
-    profile.mode = None;
+    profile.release = Some("7.1".into());
+    profile.license_tier = Some(bridge_tally_core::LicenseTier::Silver);
     assert_eq!(
         observed_opening_boundary(&profile),
-        Err(OpeningBoundaryObservationError::Unobserved)
+        Ok(DateBoundaryProfile::ModeAgnostic)
     );
+    for mode in [Some("Education"), Some("Educational"), None] {
+        profile.mode = mode.map(str::to_string);
+        assert_eq!(
+            observed_opening_boundary(&profile),
+            Err(OpeningBoundaryObservationError::Unqualified)
+        );
+    }
 }
 
 #[tokio::test]
@@ -331,7 +327,7 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
         .unwrap()
     };
     let captured_company = decode(include_bytes!(
-        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-companies.utf16le.xml"));
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"));
     let captured_extent = decode(include_bytes!(
         "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"));
     let captured_ledger = decode(include_bytes!(
@@ -406,6 +402,11 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
                 }),
             ]);
         }
+        if unsafe_book_start {
+            // Current monetary qualification stops at the profile; lower-level
+            // Education boundary semantics remain covered by pure period tests.
+            plans.truncate(2);
+        }
         let expected_requests = plans.len();
         let responses = plans
             .iter()
@@ -429,9 +430,7 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
                 error
                     .chain()
                     .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
-                Some(&OpeningBoundaryObservationError::Period(
-                    NativeLedgerExportPeriodError::UnsupportedBoundary
-                ))
+                Some(&OpeningBoundaryObservationError::Unqualified)
             );
         } else if mode_drift {
             assert_eq!(
@@ -439,7 +438,7 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
                     .unwrap_err()
                     .chain()
                     .find_map(|cause| cause.downcast_ref::<OpeningBoundaryObservationError>()),
-                Some(&OpeningBoundaryObservationError::Changed)
+                Some(&OpeningBoundaryObservationError::Unqualified)
             );
         } else {
             let (ledgers, evidence) = result.unwrap();
