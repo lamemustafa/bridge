@@ -5,28 +5,18 @@ use crate::tally::approved_import::{ApprovedImport, ApprovedImportAdmissionError
 use bridge_tally_protocol::{parse_import_outcome, TallyImportApplicationStatus};
 
 impl Server {
-    /// Describes the durable cancellation boundary without changing the batch.
-    /// Missing or unreadable history is unknown, never proof of no dispatch.
-    pub(in crate::agent) fn cancelled_import(
+    /// The response path runs only after its interrupted post future is gone.
+    /// It may therefore use the endpoint lease to distinguish a locally empty
+    /// journal from another connector's in-flight pre-intent admission.
+    pub(in crate::agent) fn cancelled_import_for_response(
         &self,
         args: &Value,
     ) -> Result<ToolOutcome, ToolFailure> {
+        let snapshot = self.recorded_import_snapshot(args)?;
         let batch_id = required_string(args, "batch_id")?;
         let guid = required_string(args, "company_guid")?;
-        let uuid = batch_id
-            .strip_prefix("bridge-")
-            .and_then(|id| uuid::Uuid::parse_str(id).ok())
-            .ok_or_else(|| "import_batch_identifier_invalid".to_string())?;
-        if batch_id != format!("bridge-{uuid}") {
-            return Err("import_batch_identifier_invalid".to_string().into());
-        }
-        let attempted = match self.latest_import_snapshot(batch_id) {
-            Ok(snapshot) => snapshot
-                .filter(|snapshot| batch_guid_matches(&snapshot.batch.company_guid, guid))
-                .map(|snapshot| snapshot.dispatched),
-            Err(error) if error == "import_admission_busy" => return Err(error.into()),
-            Err(_) => None,
-        };
+        let attempted =
+            self.post_failure_attempt_observation(batch_id, guid, snapshot.as_ref(), None);
         let mut evidence =
             evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
         evidence.state = "partial";
@@ -45,6 +35,37 @@ impl Server {
             company_guid: Some(guid.to_string()),
             truncated: false,
         })
+    }
+
+    pub(in crate::agent) fn recorded_import_attempt(
+        &self,
+        args: &Value,
+    ) -> Result<Option<bool>, ToolFailure> {
+        self.recorded_import_snapshot(args)
+            .map(|snapshot| snapshot.map(|snapshot| snapshot.dispatched))
+    }
+
+    fn recorded_import_snapshot(
+        &self,
+        args: &Value,
+    ) -> Result<Option<ledger::BatchSnapshot>, ToolFailure> {
+        let batch_id = required_string(args, "batch_id")?;
+        let guid = required_string(args, "company_guid")?;
+        let uuid = batch_id
+            .strip_prefix("bridge-")
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            .ok_or_else(|| "import_batch_identifier_invalid".to_string())?;
+        if batch_id != format!("bridge-{uuid}") {
+            return Err("import_batch_identifier_invalid".to_string().into());
+        }
+        match self.latest_import_snapshot(batch_id) {
+            Ok(snapshot) => {
+                Ok(snapshot
+                    .filter(|snapshot| batch_guid_matches(&snapshot.batch.company_guid, guid)))
+            }
+            Err(error) if error == "import_admission_busy" => Err(error.into()),
+            Err(_) => Ok(None),
+        }
     }
 
     pub(in crate::agent) async fn post_import(
@@ -243,6 +264,12 @@ impl Server {
             Ok(result) => Ok(result),
             Err(failure) => {
                 let snapshot = self.latest_import_snapshot(batch_id).ok().flatten();
+                let attempted = self.post_failure_attempt_observation(
+                    batch_id,
+                    guid,
+                    snapshot.as_ref(),
+                    received_response.as_ref(),
+                );
                 Ok(post_failure_outcome(
                     batch_id,
                     guid,
@@ -250,9 +277,40 @@ impl Server {
                     accumulated,
                     snapshot.as_ref(),
                     received_response.as_ref(),
+                    attempted,
                 ))
             }
         }
+    }
+
+    pub(super) fn post_failure_attempt_observation(
+        &self,
+        batch_id: &str,
+        company_guid: &str,
+        snapshot: Option<&ledger::BatchSnapshot>,
+        received_response: Option<&ledger::DispatchResponse>,
+    ) -> Option<bool> {
+        if received_response.is_some() || snapshot.is_some_and(|snapshot| snapshot.dispatched) {
+            return Some(true);
+        }
+        let snapshot = snapshot?;
+        if !batch_guid_matches(&snapshot.batch.company_guid, company_guid) {
+            return None;
+        }
+        let origin = super::super::canonical_loopback_origin(&self.settings.endpoint).ok()?;
+        if snapshot.batch.endpoint_origin.as_deref() != Some(origin.as_str()) {
+            return None;
+        }
+        let _lease = dispatch_lease::acquire(&self.settings.endpoint).ok()?;
+        self.latest_import_snapshot(batch_id)
+            .ok()
+            .flatten()
+            .filter(|snapshot| {
+                batch_guid_matches(&snapshot.batch.company_guid, company_guid)
+                    && (snapshot.dispatched
+                        || snapshot.batch.endpoint_origin.as_deref() == Some(origin.as_str()))
+            })
+            .map(|snapshot| snapshot.dispatched)
     }
 }
 
@@ -263,11 +321,8 @@ fn post_failure_outcome(
     accumulated: Evidence,
     snapshot: Option<&ledger::BatchSnapshot>,
     received_response: Option<&ledger::DispatchResponse>,
+    attempted: Option<bool>,
 ) -> ToolOutcome {
-    let attempted = received_response
-        .is_some()
-        .then_some(true)
-        .or_else(|| snapshot.map(|snapshot| snapshot.dispatched));
     let persisted_response = snapshot.and_then(|snapshot| snapshot.response.as_ref());
     let response = received_response.or(persisted_response);
     let mut evidence = failure

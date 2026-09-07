@@ -11,6 +11,10 @@ const BATCH: &str = "bridge-00000000-0000-4000-8000-000000000001";
 const COMPANY: &str = "00000000-0000-4000-8000-000000000002";
 
 fn local_batch(root: &std::path::Path) -> Server {
+    local_batch_at(root, 9)
+}
+
+fn local_batch_at(root: &std::path::Path, port: u16) -> Server {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -19,6 +23,7 @@ fn local_batch(root: &std::path::Path) -> Server {
     ensure_private_directory(root).unwrap();
     let batch = json!({
         "batch_id":BATCH,"identity_scheme":"batch_v1","company_guid":COMPANY,
+        "endpoint_origin":format!("http://127.0.0.1:{port}"),
         "company":{"name":"Synthetic Accounts","guid":COMPANY,"company_number":"100001","books_from":"20260401"},
         "txn_ids":["journal-test"],"date_from":"20260901","date_to":"20260901",
         "sha256":"a".repeat(64),"built_at":"2026-09-07T00:00:00Z","status":"built",
@@ -30,7 +35,7 @@ fn local_batch(root: &std::path::Path) -> Server {
     Server::new(Settings {
         endpoint: TallyEndpointConfig {
             host: "127.0.0.1".into(),
-            port: 9,
+            port,
         },
         data_dir: root.to_owned(),
         max_rows: 10,
@@ -99,7 +104,7 @@ async fn cancellation_wire(server: &Server) -> Value {
         "post_import",
         &args(),
         Utc::now(),
-        server.cancelled_import(&args()),
+        server.cancelled_import_for_response(&args()),
     );
     let mut output = Vec::new();
     finish_response(
@@ -310,7 +315,8 @@ async fn output_error_after_durable_intent_drains_the_original_future() {
 #[tokio::test]
 async fn cancellation_distinguishes_no_intent_from_unreadable_history() {
     let directory = tempfile::tempdir().unwrap();
-    let server = local_batch(directory.path());
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = local_batch_at(directory.path(), listener.local_addr().unwrap().port());
     let response = cancellation_wire(&server).await;
     assert_eq!(
         response["result"]["structuredContent"]["result"]["attempt_recorded"],
@@ -336,7 +342,8 @@ async fn cancellation_distinguishes_no_intent_from_unreadable_history() {
 #[tokio::test]
 async fn buffered_post_cancellation_removes_call_before_it_can_start() {
     let directory = tempfile::tempdir().unwrap();
-    let server = local_batch(directory.path());
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = local_batch_at(directory.path(), listener.local_addr().unwrap().port());
     let queued = json!({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"post_import","arguments":args()}});
     let cancel =
         |id| json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":id}});
