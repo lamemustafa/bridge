@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use bridge_tally_core::{CapabilityPackId, VerificationState};
@@ -222,32 +222,54 @@ impl SnapshotCoordinator {
         mirror: &TallyMirrorRepository,
         limit: u32,
     ) -> Result<Vec<SnapshotJobStatus>, &'static str> {
-        let tracked = self
+        let jobs = self
             .jobs
             .lock()
-            .map_err(|_| "snapshot_registry_unavailable")?
+            .map_err(|_| "snapshot_registry_unavailable")?;
+        let tracked = jobs
             .iter()
             .map(|(run_id, job)| {
-                let terminal = job.terminal.lock().ok().and_then(|status| status.clone());
-                (run_id.clone(), terminal)
+                let terminal = job
+                    .terminal
+                    .lock()
+                    .map_err(|_| "snapshot_status_unavailable")?
+                    .clone();
+                Ok((run_id.clone(), job.plan.clone(), terminal))
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<Result<Vec<_>, &'static str>>()?;
+        drop(jobs);
         let store = SqliteSnapshotStateStore::new(mirror.pool_clone());
         let states = store
             .load_recent(limit)
             .await
             .map_err(|_| "snapshot_state_unavailable")?;
-        Ok(states
+        let tracked_by_id = tracked
+            .iter()
+            .map(|(run_id, _, terminal)| (run_id.as_str(), terminal))
+            .collect::<HashMap<_, _>>();
+        let mut seen = HashSet::new();
+        let mut statuses = states
             .into_iter()
             .map(|state| {
-                if let Some(Some(status)) = tracked.get(&state.run_id) {
-                    return status.clone();
-                }
-                let requires_resume =
-                    !state.progress.phase.is_terminal() && !tracked.contains_key(&state.run_id);
-                status_from_state(state, requires_resume)
+                let requires_resume = !state.progress.phase.is_terminal()
+                    && !tracked_by_id.contains_key(state.run_id.as_str());
+                let status = tracked_by_id
+                    .get(state.run_id.as_str())
+                    .and_then(|terminal| terminal.as_ref().cloned())
+                    .unwrap_or_else(|| status_from_state(state, requires_resume));
+                seen.insert(status.run_id.clone());
+                status
             })
-            .collect())
+            .collect::<Vec<_>>();
+        let mut missing = tracked
+            .into_iter()
+            .filter(|(run_id, _, _)| !seen.contains(run_id))
+            .collect::<Vec<_>>();
+        missing.sort_by(|left, right| left.0.cmp(&right.0));
+        statuses.extend(missing.into_iter().map(|(_, plan, terminal)| {
+            terminal.unwrap_or_else(|| status_from_plan(&plan))
+        }));
+        Ok(statuses)
     }
 
     pub fn cancel(&self, run_id: &str) -> Result<bool, &'static str> {

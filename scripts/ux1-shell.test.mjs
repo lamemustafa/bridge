@@ -79,6 +79,9 @@ test("UI keeps client selection searchable and exposes only source-backed shell 
   assert.match(mirrorProof, /liveReadActionsLocked: boolean;/);
   assert.match(mirrorProof, /disabled=\{!selectedCompanyRecord\?\.mirror_company_id \|\| !selectedCompanyLive \|\| snapshotActive \|\| snapshotStartOutcomeUnknown \|\| liveReadActionsLocked \|\| tallyAction !== null\}/);
   assert.match(mirrorProof, /disabled=\{snapshotStartOutcomeUnknown \|\| liveReadActionsLocked \|\| tallyAction !== null\}/);
+  assert.match(mirrorProof, /const runs = await refreshRecentSnapshots\(\);[\s\S]*?if \(!runs\) return;[\s\S]*?const hasActiveRun = runs\.some/);
+  assert.match(mirrorProof, /if \(hasActiveRun \|\| \(snapshotOutcomeUnknownRunId !== null && \(!knownRun \|\| \(!knownRun\.requires_resume && !terminal\(knownRun\)\)\)\)\) return;/);
+  assert.doesNotMatch(mirrorProof, /setSnapshotJob\(run\); setSnapshotStartOutcomeUnknown\(false\)/);
   assert.match(mirrorProof, /Wait before starting or resuming a Core Accounting read\./);
 });
 

@@ -523,13 +523,15 @@ type Props = {
   snapshotActive: boolean;
   snapshotError: OperatorError | null;
   snapshotStartOutcomeUnknown: boolean;
+  snapshotOutcomeUnknownRunId: string | null;
   liveReadActionsLocked: boolean;
   setSnapshotStartOutcomeUnknown: (value: boolean) => void;
+  setSnapshotOutcomeUnknownRunId: (value: string | null) => void;
   startCoreSnapshot: () => Promise<void>;
   cancelCoreSnapshot: () => Promise<void>;
   resumeCoreSnapshot: (runId: string) => Promise<void>;
   selectedRecentSnapshotRuns: SnapshotJobStatus[];
-  refreshRecentSnapshots: () => Promise<void>;
+  refreshRecentSnapshots: () => Promise<SnapshotJobStatus[] | null>;
   inspectedJob: SnapshotJobStatus | null;
   activeGapCodes: string[];
   activeWarningCodes: string[];
@@ -576,8 +578,10 @@ export function MirrorProofScreen({
   snapshotActive,
   snapshotError,
   snapshotStartOutcomeUnknown,
+  snapshotOutcomeUnknownRunId,
   liveReadActionsLocked,
   setSnapshotStartOutcomeUnknown,
+  setSnapshotOutcomeUnknownRunId,
   startCoreSnapshot,
   cancelCoreSnapshot,
   resumeCoreSnapshot,
@@ -597,6 +601,25 @@ export function MirrorProofScreen({
   refreshRuntime,
   cancelTallyRequest,
 }: Props) {
+  const [acknowledgingSnapshotOutcome, setAcknowledgingSnapshotOutcome] = React.useState(false);
+
+  async function acknowledgeSnapshotOutcome() {
+    const selectionVersion = snapshotSelectionVersion.current;
+    setAcknowledgingSnapshotOutcome(true);
+    try {
+      const runs = await refreshRecentSnapshots();
+      if (!runs || selectionVersion !== snapshotSelectionVersion.current) return;
+      const terminal = (run: SnapshotJobStatus) => ["completed", "partial", "failed", "cancelled"].includes(run.phase);
+      const hasActiveRun = runs.some((run) => !terminal(run) && !run.requires_resume);
+      const knownRun = snapshotOutcomeUnknownRunId === null ? null : runs.find((run) => run.run_id === snapshotOutcomeUnknownRunId);
+      if (hasActiveRun || (snapshotOutcomeUnknownRunId !== null && (!knownRun || (!knownRun.requires_resume && !terminal(knownRun))))) return;
+      setSnapshotStartOutcomeUnknown(false);
+      setSnapshotOutcomeUnknownRunId(null);
+    } finally {
+      if (selectionVersion === snapshotSelectionVersion.current) setAcknowledgingSnapshotOutcome(false);
+    }
+  }
+
   return (
     <>
       {savedCompanyPicker}
@@ -651,8 +674,8 @@ export function MirrorProofScreen({
       )}
       {snapshotStartOutcomeUnknown && (
         <section className="status-strip" role="alert">
-          <span>Bridge could not confirm whether the read started or resumed. Review the saved runs before continuing.</span>
-          <button className="secondary-action" type="button" onClick={() => setSnapshotStartOutcomeUnknown(false)}>I reviewed the saved runs</button>
+          <span>Bridge could not confirm whether the read started or resumed. Refresh saved runs before continuing.</span>
+          <button className="secondary-action" type="button" disabled={acknowledgingSnapshotOutcome} onClick={() => void acknowledgeSnapshotOutcome()}>{acknowledgingSnapshotOutcome ? "Refreshing saved runs…" : "Refresh and confirm no active run"}</button>
         </section>
       )}
 
@@ -692,7 +715,7 @@ export function MirrorProofScreen({
                     <td>{formatIdentifier(run.phase)}</td>
                     <td>{run.completed_windows}/{run.total_windows}</td>
                     <td>{run.resume_available ? "Resume available" : run.requires_resume ? "Inspect only" : run.phase === "completed" || run.phase === "partial" || run.phase === "failed" || run.phase === "cancelled" ? "Terminal" : "Active"}</td>
-                    <td><button className="secondary-action" disabled={tallyAction !== null} onClick={() => { snapshotSelectionVersion.current += 1; setSnapshotJob(run); setSnapshotStartOutcomeUnknown(false); }}>Inspect</button></td>
+                    <td><button className="secondary-action" disabled={tallyAction !== null} onClick={() => { snapshotSelectionVersion.current += 1; setSnapshotJob(run); }}>Inspect</button></td>
                   </tr>
                 ))}
               </tbody>

@@ -468,6 +468,7 @@ function App() {
   const [recentSnapshotRuns, setRecentSnapshotRuns] = React.useState<SnapshotJobStatus[]>([]);
   const [snapshotError, setSnapshotError] = React.useState<OperatorError | null>(null);
   const [snapshotStartOutcomeUnknown, setSnapshotStartOutcomeUnknown] = React.useState(false);
+  const [snapshotOutcomeUnknownRunId, setSnapshotOutcomeUnknownRunId] = React.useState<string | null>(null);
   const [dashboardError, setDashboardError] = React.useState<OperatorError | null>(null);
   const [gstCompany, setGstCompany] = React.useState("");
   const [gstFinancialYear, setGstFinancialYear] = React.useState(currentFinancialYear.label);
@@ -526,8 +527,10 @@ function App() {
       const runs = await invoke<SnapshotJobStatus[]>("tally_recent_snapshot_runs");
       setRecentSnapshotRuns(runs);
       setSnapshotJob((current) => current ? runs.find((run) => run.run_id === current.run_id) ?? current : null);
+      return runs;
     } catch (error) {
       setSnapshotError(toOperatorError(error));
+      return null;
     }
   }, []);
 
@@ -775,6 +778,7 @@ function App() {
         setSnapshotJob(null);
         setSnapshotError(null);
         setSnapshotStartOutcomeUnknown(false);
+        setSnapshotOutcomeUnknownRunId(null);
       },
       invalidateTallyResults: () => {
         tallyResultsVersion.current += 1;
@@ -1287,9 +1291,12 @@ function App() {
           ...current.filter((run) => run.run_id !== job.run_id),
         ]);
         setSnapshotStartOutcomeUnknown(false);
+        setSnapshotOutcomeUnknownRunId(null);
       }
       void refreshRecentSnapshots();
     } catch (error) {
+      setSnapshotJob(null);
+      setSnapshotOutcomeUnknownRunId(null);
       await refreshRecentSnapshots();
       setSnapshotStartOutcomeUnknown(true);
       setSnapshotError(`Start outcome was not confirmed. Recent durable runs were refreshed and a new start is locked until you review them. ${toErrorMessage(error)}`);
@@ -1329,6 +1336,8 @@ function App() {
       if (selectionVersion === snapshotSelectionVersion.current) setSnapshotJob(job);
       void refreshRecentSnapshots();
     } catch (error) {
+      setSnapshotJob(null);
+      setSnapshotOutcomeUnknownRunId(runId);
       await refreshRecentSnapshots();
       setSnapshotStartOutcomeUnknown(true);
       setSnapshotError(`Resume outcome was not confirmed. Run status was refreshed before another resume is allowed. ${toErrorMessage(error)}`);
@@ -2158,8 +2167,10 @@ function App() {
             snapshotActive={snapshotActive}
             snapshotError={snapshotError}
             snapshotStartOutcomeUnknown={snapshotStartOutcomeUnknown}
+            snapshotOutcomeUnknownRunId={snapshotOutcomeUnknownRunId}
             liveReadActionsLocked={childTallyReadCount > 0}
             setSnapshotStartOutcomeUnknown={setSnapshotStartOutcomeUnknown}
+            setSnapshotOutcomeUnknownRunId={setSnapshotOutcomeUnknownRunId}
             startCoreSnapshot={startCoreSnapshot}
             cancelCoreSnapshot={cancelCoreSnapshot}
             resumeCoreSnapshot={resumeCoreSnapshot}

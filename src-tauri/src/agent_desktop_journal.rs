@@ -6,7 +6,7 @@ use super::super::{
 use super::desktop_journal_review::{
     DesktopJournalCompany, DesktopJournalDetails, DesktopJournalEntry, DesktopJournalReview,
 };
-use super::post::{admit_saved_journal, require_native_numbering};
+use super::post::{admit_saved_journal, admit_saved_journal_integrity, require_native_numbering};
 use super::*;
 use crate::tally::{TallyConfig, TallyRuntime};
 use bridge_tally_transport::canonical_loopback_origin;
@@ -117,7 +117,11 @@ impl DesktopJournalService {
         &self,
         snapshot: ledger::BatchSnapshot,
     ) -> Result<DesktopJournalReview, String> {
-        let _ = admit_saved_journal(&snapshot.batch, &self.server.settings.endpoint)?;
+        if snapshot.dispatched {
+            let _ = admit_saved_journal_integrity(&snapshot.batch, &self.server.settings.endpoint)?;
+        } else {
+            let _ = admit_saved_journal(&snapshot.batch, &self.server.settings.endpoint)?;
+        }
         let voucher = snapshot
             .batch
             .vouchers
