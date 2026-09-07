@@ -1632,6 +1632,8 @@ function App() {
             <button
               className="primary"
               type="button"
+              disabled={shellNavigationLocked}
+              aria-describedby={shellNavigationDescription}
               onClick={() => {
                 setView("companies");
               }}

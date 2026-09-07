@@ -206,6 +206,44 @@ async fn descriptor_company_mismatch_is_refused_before_any_tally_work() {
         operation.result["result"]["error"]["code"],
         "import_batch_company_mismatch"
     );
+    assert_eq!(
+        operation.result["result"]["dispatch"]["state"],
+        "admission_refused"
+    );
+}
+
+#[tokio::test]
+async fn missing_or_unreadable_history_refuses_admission_without_claiming_no_prior_attempt() {
+    for unreadable in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let (service, line) = service(directory.path().join("agent"));
+        let journal = service
+            .server
+            .settings
+            .data_dir
+            .join("agent-import-ledger.jsonl");
+        std::fs::remove_file(&journal).unwrap();
+        if unreadable {
+            std::fs::create_dir(&journal).unwrap();
+        }
+        let operation = service
+            .post(&line.batch_id, &line.sha256, &line.company_guid)
+            .await
+            .unwrap();
+        assert_eq!(
+            operation.result["result"]["dispatch"]["state"],
+            "admission_refused"
+        );
+        assert_eq!(
+            operation.result["result"]["error"]["code"],
+            if unreadable {
+                "import_ledger_unavailable"
+            } else {
+                "import_batch_not_found"
+            }
+        );
+        assert!(operation.result["result"]["attempt_recorded"].is_null());
+    }
 }
 
 #[tokio::test]

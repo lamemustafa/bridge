@@ -15,19 +15,20 @@ export function deriveJournalActionState(
   uncertainAttempt: boolean,
 ) {
   const noAttemptRecorded = action?.state === "not_dispatched" || action?.attemptRecorded === false;
+  const admissionRefused = action?.state === "admission_refused";
   const reconciliationRequired = Boolean(
     review.dispatched ||
       review.responseRecorded ||
       action?.state === "reconciliation_required" ||
       uncertainAttempt ||
-      (action?.hasError && !noAttemptRecorded),
+      (action?.hasError && !noAttemptRecorded && !admissionRefused),
   );
   const verified = action?.state === "posted_verified" || action?.state === "previous_attempt_reconciled";
 
   return {
     reconciliationRequired,
     verified,
-    canPost: !verified && !reconciliationRequired,
+    canPost: !verified && !reconciliationRequired && !admissionRefused,
     canReconcile: !verified && reconciliationRequired,
     canChooseAnother: verified || !reconciliationRequired,
   };

@@ -60,10 +60,17 @@ impl DesktopJournalService {
         let args = json!({"batch_id":batch_id,"company_guid":company_guid});
         match self.server.post_import_checked(&args, Some(sha256)).await {
             Ok(outcome) => Ok(DesktopJournalOperation::from_outcome(outcome)),
-            Err(failure) => Ok(DesktopJournalOperation::from_failure(
-                failure,
-                "The original Journal remains available for reconciliation; do not rebuild or resend it.",
-            )),
+            Err(failure) => {
+                // This Err boundary precedes approval/dispatch. It does not
+                // prove that unreadable history contains no earlier attempt.
+                let mut operation = DesktopJournalOperation::from_failure(
+                    failure,
+                    "This request stopped before approval or posting. Choose the saved Journal file again after correcting the error.",
+                );
+                operation.result["result"]["dispatch"] =
+                    json!({"state":"admission_refused","resent":false});
+                Ok(operation)
+            }
         }
     }
 

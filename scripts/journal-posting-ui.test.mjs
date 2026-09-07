@@ -11,6 +11,9 @@ test("Journal review is reachable from Overview without becoming a top-level nav
   assert.match(app, /<JournalPostingScreen config=\{config\} onBusyChange=\{setJournalActionBusy\} \/>/);
   assert.match(app, /disabled=\{shellNavigationLocked\}/);
   assert.match(app, /journal-action-busy-note/);
+  const discoveryNotice = app.slice(app.indexOf('className="company-discovery-notice"'), app.indexOf('{discoveredCompanyPrompt.actionLabel}'));
+  assert.match(discoveryNotice, /disabled=\{shellNavigationLocked\}/);
+  assert.match(discoveryNotice, /aria-describedby=\{shellNavigationDescription\}/);
   assert.doesNotMatch(app, /Bridge only reads from Tally/);
   assert.match(app, /posting a Journal always requires your explicit approval/);
   const nav = app.slice(app.indexOf('<nav aria-label="Bridge operations">'), app.indexOf("</nav>"));

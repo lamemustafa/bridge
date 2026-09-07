@@ -242,3 +242,23 @@ for (const [code, expected] of [
     root.unmount();
   });
 }
+
+test("pre-dispatch admission refusal returns to file review without suggesting a resend", async () => {
+  mocks.invoke.mockResolvedValueOnce(review);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<JournalPostingScreen config={config} />); });
+  await act(async () => { button(host, "Choose Journal file").click(); });
+  mocks.invoke.mockResolvedValueOnce({
+    result: { result: {
+      dispatch: { state: "admission_refused", resent: false },
+      error: { code: "import_batch_not_found", message: "This request stopped before approval or posting." },
+    } },
+  });
+  await act(async () => { button(host, "Post Journal").click(); });
+  expect(host.textContent).toContain("This request stopped before approval or posting.");
+  expect(button(host, "Choose another file").disabled).toBe(false);
+  expect([...host.querySelectorAll("button")].some((item) => /Post Journal|Reconcile original/.test(item.textContent ?? ""))).toBe(false);
+  root.unmount();
+});
