@@ -64,14 +64,13 @@ impl Server {
             evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
         let mut received_response = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
-        let _xml = admit_saved_journal_integrity(&line, &self.settings.endpoint)?;
-        if snapshot.dispatched {
-            return self.verify_import(args).await;
-        }
-        let preview = admit_fresh_saved_journal(&line)?;
+            let _xml = admit_saved_journal_integrity(&line, &self.settings.endpoint)?;
+            if snapshot.dispatched {
+                return self.verify_import(args).await;
+            }
+            let preview = admit_fresh_saved_journal(&line, &self.settings.endpoint)?;
             // Number matching precedence is not qualified for native Create.
             // Previously dispatched numbered batches remain reconcilable above.
-            require_native_numbering(&line.vouchers[0])?;
             let before = self.verify_import(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
             require_absent_verification_result(&before.payload["result"])?;
@@ -442,12 +441,18 @@ pub(super) fn admit_saved_journal(
     endpoint: &super::super::TallyEndpointConfig,
 ) -> Result<(String, String), String> {
     let xml = admit_saved_journal_integrity(line, endpoint)?;
-    let preview = admit_fresh_saved_journal(line)?;
+    let preview = admit_fresh_saved_journal(line, endpoint)?;
     Ok((xml, preview))
 }
 
-fn admit_fresh_saved_journal(line: &ImportLedgerLine) -> Result<String, String> {
+fn admit_fresh_saved_journal(
+    line: &ImportLedgerLine,
+    endpoint: &super::super::TallyEndpointConfig,
+) -> Result<String, String> {
     let company = line.company.as_ref().ok_or("import_post_company_missing")?;
+    require_native_numbering(&line.vouchers[0])?;
+    let origin =
+        super::super::canonical_loopback_origin(endpoint).map_err(|_| "host_setting_invalid")?;
     let (debit, credit) = totals(&line.vouchers)?;
     let voucher = &line.vouchers[0];
     let mut review_text = std::iter::once(company.name.as_str())

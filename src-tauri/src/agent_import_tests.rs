@@ -1567,6 +1567,32 @@ fn verify_observed_batch(line: &ImportLedgerLine, rows: &[ReadVoucher]) -> Resul
     verify_batch(line, &ImportReadSource::admit(rows.to_vec())?)
 }
 
+#[test]
+fn build_guidance_routes_only_eligible_write_enabled_batches_to_native_approval() {
+    let (write_warnings, write_next_step) = build_import_guidance(true, true);
+    assert!(write_warnings[0].as_str().unwrap().contains("post_import"));
+    assert!(write_warnings[0]
+        .as_str()
+        .unwrap()
+        .contains("do not call post_import"));
+    assert!(write_next_step.starts_with("Call post_import"));
+
+    let (ineligible_warnings, ineligible_next_step) = build_import_guidance(true, false);
+    assert!(ineligible_warnings[0]
+        .as_str()
+        .unwrap()
+        .contains("not eligible"));
+    assert!(ineligible_warnings[0]
+        .as_str()
+        .unwrap()
+        .contains("do not call post_import"));
+    assert!(ineligible_next_step.starts_with("Import this file in Tally"));
+
+    let (manual_warnings, manual_next_step) = build_import_guidance(false, false);
+    assert!(manual_warnings[0].as_str().unwrap().contains("manually"));
+    assert!(manual_next_step.starts_with("Import this file in Tally"));
+}
+
 fn corroborate_observed_window(
     observed: &[ReadVoucher],
     corroboration: &[ReadVoucher],

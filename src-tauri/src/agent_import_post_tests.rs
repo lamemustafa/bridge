@@ -601,9 +601,8 @@ fn native_post_refuses_supplied_numbers_without_disabling_manual_files() {
     line.sha256 = sha256_hex(
         render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id).as_bytes(),
     );
-    assert!(admit_saved_journal(&line, &endpoint).is_ok());
     assert_eq!(
-        require_native_numbering(&line.vouchers[0]).err().as_deref(),
+        admit_saved_journal(&line, &endpoint).err().as_deref(),
         Some("import_post_numbered_journal_unsupported")
     );
 }

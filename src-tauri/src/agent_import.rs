@@ -24,7 +24,7 @@ pub(super) use schema::voucher_input_schema;
 #[path = "agent_import_dispatch_lease.rs"]
 mod dispatch_lease;
 #[path = "agent_import_ledger.rs"]
-mod ledger;
+pub(super) mod ledger;
 #[path = "agent_import_persistence.rs"]
 mod persistence;
 #[path = "agent_import_post.rs"]
@@ -133,7 +133,7 @@ struct ImportEntry {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct ImportLedgerLine {
+pub(super) struct ImportLedgerLine {
     batch_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     identity_scheme: Option<ImportIdentityScheme>,
@@ -461,6 +461,13 @@ impl Server {
                     truncated: false,
                 });
             }
+            // Reuse the posting admission path to describe only a route that
+            // this exact saved batch can take. A manual-only batch is still a
+            // successful build.
+            let native_post_eligible = self.settings.writes_enabled
+                && post::admit_saved_journal(&line, &self.settings.endpoint).is_ok();
+            let (warnings, next_step) =
+                build_import_guidance(self.settings.writes_enabled, native_post_eligible);
             Ok(ToolOutcome {
                 payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                     "batch_id": batch_id, "path": path, "sha256": sha256,
@@ -470,8 +477,8 @@ impl Server {
                     "identity_scheme": line.identity_scheme,
                     "observed_profile": opening_profile.observed_profile,
                     "live_evidence_report": "docs/agent/ASSESSMENT-2026-09-06.md",
-                    "warnings": ["No import XML was sent to Tally. Import the written file manually, then use verify_import.", "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits."],
-                    "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
+                    "warnings": warnings,
+                    "next_step": next_step
                 }}),
                 evidence: accumulated.clone(),
                 company_guid: Some(line.company_guid.clone()),
@@ -700,7 +707,7 @@ impl Server {
         Ok(path)
     }
 
-    fn lock_import_admission(&self) -> Result<std::fs::File, String> {
+    pub(super) fn lock_import_admission(&self) -> Result<std::fs::File, String> {
         let path = self.settings.data_dir.join("agent-import-admission.lock");
         let file = super::local_file::open_local_file(&path, true)
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
@@ -762,7 +769,7 @@ impl Server {
     }
 
     #[cfg(test)]
-    fn append_import_ledger(&self, line: &ImportLedgerLine) -> Result<(), String> {
+    pub(super) fn append_import_ledger(&self, line: &ImportLedgerLine) -> Result<(), String> {
         let _admission_lock = self.lock_import_admission()?;
         self.append_import_ledger_while_admitted(line)
     }
@@ -771,7 +778,10 @@ impl Server {
         self.append_import_record_while_admitted(line)
     }
 
-    fn append_import_record_while_admitted(&self, line: &impl Serialize) -> Result<(), String> {
+    pub(super) fn append_import_record_while_admitted(
+        &self,
+        line: &impl Serialize,
+    ) -> Result<(), String> {
         let path = self.settings.data_dir.join("agent-import-ledger.jsonl");
         let encoded = serde_json::to_string(line)
             .map_err(|_| "import_ledger_serialization_failed".to_string())?;
@@ -907,6 +917,39 @@ fn nonempty_company_field(value: &str) -> Result<String, String> {
     (!value.trim().is_empty())
         .then(|| value.to_string())
         .ok_or_else(|| "company_identity_incomplete".to_string())
+}
+
+fn build_import_guidance(
+    writes_enabled: bool,
+    native_post_eligible: bool,
+) -> (Value, &'static str) {
+    let preflight_warning =
+        "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits.";
+    if writes_enabled && native_post_eligible {
+        (
+            json!([
+                "No import XML was sent to Tally. To post this saved batch, call post_import; it requires a separate native approval. If you import the file manually, call verify_import afterward and do not call post_import for that batch.",
+                preflight_warning
+            ]),
+            "Call post_import with this company_guid and batch_id; the local user must review and approve it before one posting attempt.",
+        )
+    } else if writes_enabled {
+        (
+            json!([
+                "No import XML was sent to Tally. This saved batch is not eligible for native posting because native posting requires one unnumbered Journal with a reviewable preview. Import the written file manually, then use verify_import; do not call post_import for this batch.",
+                preflight_warning
+            ]),
+            "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import",
+        )
+    } else {
+        (
+            json!([
+                "No import XML was sent to Tally. Import the written file manually, then use verify_import.",
+                preflight_warning
+            ]),
+            "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import",
+        )
+    }
 }
 
 fn validate_payload(payload: &ImportPayload) -> Result<(), String> {

@@ -17,7 +17,7 @@ enum StatusKind {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct StatusRecord {
+pub(in crate::agent) struct StatusRecord {
     record_type: StatusKind,
     batch_id: String,
     batch_sha256: String,
@@ -39,7 +39,7 @@ pub(super) struct DispatchResponse {
 
 impl StatusRecord {
     #[cfg(test)]
-    pub(super) fn dispatch(batch: &ImportLedgerLine) -> Self {
+    pub(in crate::agent) fn dispatch(batch: &ImportLedgerLine) -> Self {
         let mut record = Self::dispatch_native(batch, String::new());
         record.native_request_sha256 = None;
         record

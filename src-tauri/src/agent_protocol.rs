@@ -434,8 +434,11 @@ where
     F: std::future::Future<Output = ToolResponse>,
 {
     tokio::pin!(future);
+    let mut phase = PostPhase::Running;
+    let mut classifier_retry = tokio::time::interval(std::time::Duration::from_millis(10));
     loop {
         tokio::select! {
+            biased;
             // Do not let a continuously readable stdin starve the pending
             // approval/write future. Cancellation remains visible on every turn.
             frame = framer.read(reader, MAX_REQUEST_BYTES) => {
@@ -446,16 +449,32 @@ where
                         request,
                         server,
                         Some("stdio_client_disconnected".into()),
+                        phase == PostPhase::Draining,
                     )
                     .await,
-                    Err(error) => return finish_interrupted_post(future.as_mut(), request, server, Some(error)).await,
+                    Err(error) => return finish_interrupted_post(future.as_mut(), request, server, Some(error), phase == PostPhase::Draining).await,
                 };
                 if let Some(target) = cancellation_target(&frame) {
                     if target == *request.id {
-                        return finish_interrupted_post(future.as_mut(), request, server, None).await;
+                        if phase == PostPhase::Draining {
+                            continue;
+                        }
+                        match post_dispatch_state(server, request.args) {
+                            PostDispatchState::NotDispatched => return Ok(None),
+                            PostDispatchState::MayHaveDispatched if phase == PostPhase::Running => {
+                                phase = PostPhase::Draining;
+                            }
+                            PostDispatchState::AdmissionBusy => {
+                                if phase == PostPhase::Running {
+                                    phase = PostPhase::Classifying;
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
                     }
                     if let Err(error) = cancel_queued_request(server, stdout, pending, &target).await {
-                        return finish_interrupted_post(future.as_mut(), request, server, Some(error)).await;
+                        return finish_interrupted_post(future.as_mut(), request, server, Some(error), phase == PostPhase::Draining).await;
                     }
                     continue;
                 }
@@ -470,7 +489,7 @@ where
                             refuse_pending_frame(server, stdout, frame).await
                         };
                         if let Err(error) = result {
-                            return finish_interrupted_post(future.as_mut(), request, server, Some(error)).await;
+                            return finish_interrupted_post(future.as_mut(), request, server, Some(error), phase == PostPhase::Draining).await;
                         }
                     }
                     continue;
@@ -479,13 +498,23 @@ where
                 let size = frame.as_ref().map_or(0, String::len);
                 if pending.len() >= 8 || queued_bytes.saturating_add(size) > MAX_REQUEST_BYTES {
                     if let Err(error) = refuse_pending_frame(server, stdout, frame).await {
-                        return finish_interrupted_post(future.as_mut(), request, server, Some(error)).await;
+                        return finish_interrupted_post(future.as_mut(), request, server, Some(error), phase == PostPhase::Draining).await;
                     }
                     continue;
                 }
                 pending.push_back(frame);
             }
-            response = &mut future => return Ok(Some(response)),
+            // Keep servicing framed input while a concurrent admission holds
+            // the durable snapshot lock. In particular, a ping must not wait
+            // for the builder's Tally reads to finish.
+            _ = classifier_retry.tick(), if phase == PostPhase::Classifying => {
+                match post_dispatch_state(server, request.args) {
+                    PostDispatchState::NotDispatched => return Ok(None),
+                    PostDispatchState::MayHaveDispatched => phase = PostPhase::Draining,
+                    PostDispatchState::AdmissionBusy => {}
+                }
+            }
+            response = &mut future, if phase != PostPhase::Classifying => return Ok(Some(response)),
         }
     }
 }
@@ -493,10 +522,47 @@ where
 /// A malformed request cannot have reached `post_import`; all valid requests
 /// fail closed. Missing or unreadable history is an uncertain durable boundary
 /// and therefore drains the existing future instead of dropping it.
-fn post_may_have_dispatched(server: &Server, args: &Value) -> bool {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PostDispatchState {
+    NotDispatched,
+    MayHaveDispatched,
+    AdmissionBusy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PostPhase {
+    Running,
+    Classifying,
+    Draining,
+}
+
+fn post_dispatch_state(server: &Server, args: &Value) -> PostDispatchState {
     match server.cancelled_import(args) {
-        Err(_) => false,
-        Ok(outcome) => outcome.payload["result"]["attempt_recorded"] != Value::Bool(false),
+        Ok(outcome) if outcome.payload["result"]["attempt_recorded"] == Value::Bool(false) => {
+            PostDispatchState::NotDispatched
+        }
+        Ok(_) => PostDispatchState::MayHaveDispatched,
+        Err(ToolFailure { code, .. }) if code == "import_admission_busy" => {
+            PostDispatchState::AdmissionBusy
+        }
+        // Invalid cancellation arguments cannot name this post. The normal
+        // request path therefore remains pre-intent and promptly cancellable.
+        Err(_) => PostDispatchState::NotDispatched,
+    }
+}
+
+async fn post_may_have_dispatched(server: &Server, args: &Value) -> bool {
+    loop {
+        match post_dispatch_state(server, args) {
+            PostDispatchState::NotDispatched => return false,
+            // A concurrent build holds this lock across source reads. Keep the
+            // post future suspended until its durable phase can be observed;
+            // otherwise it could record a new intent after cancellation.
+            PostDispatchState::AdmissionBusy => {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            PostDispatchState::MayHaveDispatched => return true,
+        }
     }
 }
 
@@ -505,11 +571,12 @@ async fn finish_interrupted_post<F>(
     request: PostRequest<'_>,
     server: &Server,
     interruption: Option<String>,
+    known_dispatched: bool,
 ) -> Result<Option<ToolResponse>, String>
 where
     F: std::future::Future<Output = ToolResponse>,
 {
-    if post_may_have_dispatched(server, request.args) {
+    if known_dispatched || post_may_have_dispatched(server, request.args).await {
         // The caller may be gone, but the original execution owns the only
         // response wire. Let the ordinary response path publish it if stdout
         // remains usable; no replacement post is created.
