@@ -74,19 +74,36 @@ impl Server {
             evidence_from_runtime_read(crate::tally::runtime::RuntimeReadEvidence::empty());
         let mut received_response = None;
         let operation: Result<ToolOutcome, ToolFailure> = async {
-            let (xml, preview) = admit_saved_journal(&line, &self.settings.endpoint)?;
+            let (_, preview) = admit_saved_journal(&line, &self.settings.endpoint)?;
             if snapshot.dispatched {
                 return self.verify_import(args).await;
             }
+            // Number matching precedence is not qualified for native Create.
+            // Previously dispatched numbered batches remain reconcilable above.
+            require_native_numbering(&line.vouchers[0])?;
             let before = self.verify_import(args).await?;
             accumulated = combine_evidence(accumulated.clone(), before.evidence);
             require_absent(&before.payload)?;
             // No Tally mutation can occur while the separate approval dialog is open.
-            let request = ApprovedImport::confirm(xml, &preview).await?;
             let payload = ImportPayload {
                 company_guid: line.company_guid.clone(),
                 vouchers: line.vouchers.clone(),
             };
+            let voucher_date = bridge_tally_core::TallyDate::parse(line.vouchers[0].date.clone())
+                .map_err(|_| "voucher_date_invalid".to_string())?;
+            let xml = render_native_journal_xml(
+                &line
+                    .company
+                    .as_ref()
+                    .ok_or_else(|| "import_post_company_missing".to_string())?
+                    .name,
+                &line.vouchers[0],
+                &line.batch_id,
+            );
+            let request_sha256 = sha256_hex(
+                &bridge_tally_protocol::encode_tally_xml_request_utf16le(&xml),
+            );
+            let request = ApprovedImport::confirm(xml, &preview, voucher_date).await?;
             let (company, identity, identity_evidence) = self.verified_company(guid).await?;
             accumulated = combine_evidence(accumulated.clone(), identity_evidence);
             if line.company.as_ref() != Some(&import_company_tuple(&company)?) {
@@ -124,28 +141,38 @@ impl Server {
                     {
                         return Err("import_batch_changed".into());
                     }
-                    self.append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&line))
+                    self.append_import_record_while_admitted(
+                        &ledger::StatusRecord::dispatch_native(&line, request_sha256.clone()),
+                    )
                 })
                 .await;
-            let (body, wire) = posted.map_err(|error| {
-                if error
-                    .downcast_ref::<crate::tally::approved_import::AmbiguousImportCompany>()
-                    .is_some()
-                {
-                    "import_company_scope_ambiguous".to_string()
+            let posted = posted.map_err(|error| {
+                let code = if error.chain().any(|cause| {
+                    cause.is::<crate::tally::approved_import::AmbiguousImportCompany>()
+                }) {
+                    "import_company_scope_ambiguous"
+                } else if error.chain().any(|cause| {
+                    cause.is::<crate::tally::approved_import::ApprovedImportAdmissionError>()
+                }) {
+                    "education_voucher_date_unsupported"
                 } else {
-                    "import_dispatch_outcome_unknown".to_string()
-                }
+                    "import_dispatch_outcome_unknown"
+                };
+                ToolFailure::from_runtime(code, error)
             })?;
             accumulated = combine_evidence(
                 accumulated.clone(),
-                evidence_from_runtime_read(wire.clone()),
+                evidence_from_runtime_read(posted.admission_evidence.clone()),
             );
-            let parsed_outcome = parse_import_outcome(&body).ok();
+            accumulated = combine_evidence(
+                accumulated.clone(),
+                evidence_from_runtime_read(posted.response_evidence.clone()),
+            );
+            let parsed_outcome = parse_import_outcome(&posted.body).ok();
             let response = ledger::DispatchResponse {
-                request_sha256: wire.request_sha256,
-                response_sha256: wire.response_sha256,
-                bytes: wire.bytes,
+                request_sha256: posted.response_evidence.request_sha256,
+                response_sha256: posted.response_evidence.response_sha256,
+                bytes: posted.response_evidence.bytes,
                 outcome: parsed_outcome,
             };
             received_response = Some(response.clone());
@@ -336,6 +363,13 @@ fn require_absent(payload: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn require_native_numbering(voucher: &ImportVoucher) -> Result<(), String> {
+    if voucher.voucher_number.is_some() {
+        return Err("import_post_numbered_journal_unsupported".into());
+    }
+    Ok(())
+}
+
 pub(super) fn admit_saved_journal(
     line: &ImportLedgerLine,
     endpoint: &super::super::TallyEndpointConfig,
@@ -398,25 +432,10 @@ pub(super) fn admit_saved_journal(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let preview = format!(
-        "Create ONE Journal in {}\nCompany GUID: {}\nCompany number: {}  Books from: {}\nTally: {origin}\nDate: {}  Voucher number: {}\nReference: {}\nNarration: {}\n\n{}\n\nTotal debit: {}  Total credit: {}\nBatch: {}\n\nBridge adds its batch reference for readback.\nCheck every ledger, date and amount. This changes your accounts.\nAfter a timeout, reconcile this batch; do not rebuild or resend it.",
-        quoted(&company.name),
-        company.guid,
-        company.company_number,
-        company.books_from,
-        voucher.date,
-        voucher
-            .voucher_number
-            .as_deref()
-            .map(quoted)
-            .unwrap_or_else(|| "Tally assigns it".into()),
-        optional(&voucher.reference),
-        optional(&voucher.narration),
-        entries,
-        debit.as_str(),
-        credit.as_str(),
-        line.batch_id
-    );
+    let preview = format!("Create ONE Journal in {}\nCompany GUID: {}\nCompany number: {}  Books from: {}\nTally: {origin}\nDate: {}  Voucher number: {}\nReference: {}\nNarration: {}\n\n{}\n\nTotal debit: {}  Total credit: {}\nBatch: {}\n\nBridge adds its batch reference for readback.\nDo not post a file already imported manually.\nCheck every ledger, date and amount. This changes your accounts.\nAfter a timeout, reconcile this batch; do not rebuild or resend it.",
+        quoted(&company.name), company.guid, company.company_number, company.books_from,
+        voucher.date, voucher.voucher_number.as_deref().map(quoted).unwrap_or_else(|| "Tally assigns it".into()),
+        optional(&voucher.reference), optional(&voucher.narration), entries, debit.as_str(), credit.as_str(), line.batch_id);
     // Native message boxes have no portable scrollable review surface. Keep this
     // first posting slice reviewable; longer batches retain the manual file path.
     if preview.chars().count() > 1_600

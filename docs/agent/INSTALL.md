@@ -35,6 +35,17 @@ Journal preparation and posting are available by default. Every new posting
 requires your approval in a separate Bridge dialog. Turn off **Allow Journal posting**
 in the extension settings for a read-only connector.
 
+Native posting currently accepts one Journal with existing ledgers and no supplied
+voucher number. Tally assigns the number. Bridge uses a private request identity
+for the native attempt; the selected XML file stays unchanged. Do not manually
+import a file and then post it through Bridge: if the original Journal was edited,
+Bridge may be unable to recognize that earlier business event.
+
+Keep the recovery data when upgrading. New posting attempts add a native request
+commitment to the journal; older connector builds cannot read that new record.
+Use this version or a newer compatible build to reconcile it rather than removing
+the journal to downgrade.
+
 Bridge only accepts loopback Tally endpoints. Do not open a port to the
 internet or use a remote host to make this work.
 

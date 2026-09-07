@@ -192,3 +192,50 @@ fn dispatched_batch_cannot_change_its_commitment() {
         Some("import_ledger_invalid")
     );
 }
+
+#[test]
+fn native_dispatch_response_must_match_its_durable_wire_commitment() {
+    let initial = batch("native-dispatch", "local journal test");
+    let hash = "c".repeat(64);
+    let intent = StatusRecord::dispatch_native(&initial, hash.clone());
+    let mut bytes = record(&initial);
+    bytes.extend(record(&intent));
+    for (response_hash, admitted) in [(hash, true), ("d".repeat(64), false)] {
+        let response = StatusRecord::response(
+            &initial,
+            DispatchResponse {
+                request_sha256: response_hash,
+                response_sha256: "e".repeat(64),
+                bytes: 1,
+                outcome: None,
+            },
+        );
+        let mut with_response = bytes.clone();
+        with_response.extend(record(&response));
+        let result = read_snapshot(Cursor::new(with_response), Some("native-dispatch"));
+        if admitted {
+            assert!(result.unwrap().unwrap().dispatched);
+        } else {
+            assert_eq!(result.err().as_deref(), Some("import_ledger_invalid"));
+        }
+    }
+    for invalid in ["", "not-a-hash"] {
+        let mut bytes = record(&initial);
+        bytes.extend(record(&StatusRecord::dispatch_native(
+            &initial,
+            invalid.into(),
+        )));
+        assert_eq!(
+            read_snapshot(Cursor::new(bytes), None).err().as_deref(),
+            Some("import_ledger_invalid")
+        );
+    }
+    let mut misplaced = serde_json::to_value(StatusRecord::from(&initial)).unwrap();
+    misplaced["native_request_sha256"] = serde_json::json!("c".repeat(64));
+    let mut bytes = record(&initial);
+    bytes.extend(record(&misplaced));
+    assert_eq!(
+        read_snapshot(Cursor::new(bytes), None).err().as_deref(),
+        Some("import_ledger_invalid")
+    );
+}

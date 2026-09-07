@@ -1112,20 +1112,37 @@ fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) 
     let messages = vouchers
         .iter()
         .map(|voucher| {
-            render_voucher_xml(voucher, import_identity(batch_id, &voucher.bridge_txn_id))
+            let identity = import_identity(batch_id, &voucher.bridge_txn_id);
+            render_voucher_xml(voucher, identity, identity)
         })
         .collect::<String>();
+    render_import_envelope(company, &messages)
+}
+
+fn render_native_journal_xml(company: &str, voucher: &ImportVoucher, batch_id: &str) -> String {
+    // A public file may already have been imported and edited. Never reuse its
+    // client REMOTEID for a native Create, which Tally can treat as an upsert.
+    // The stable narration tag remains the batch attribution used by readback.
+    let messages = render_voucher_xml(
+        voucher,
+        Uuid::new_v4(),
+        import_identity(batch_id, &voucher.bridge_txn_id),
+    );
+    render_import_envelope(company, &messages)
+}
+
+fn render_import_envelope(company: &str, messages: &str) -> String {
     format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>{messages}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>", xml_escape(company))
 }
 
-fn render_voucher_xml(voucher: &ImportVoucher, identity: Uuid) -> String {
+fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: Uuid) -> String {
     let narration = format!(
         "<NARRATION>{}</NARRATION>",
         xml_escape(
             format!(
                 "{} [BRIDGE:{}]",
                 voucher.narration.as_deref().unwrap_or("").trim(),
-                identity
+                attribution_id
             )
             .trim(),
         )
@@ -1146,9 +1163,9 @@ fn render_voucher_xml(voucher: &ImportVoucher, identity: Uuid) -> String {
         format!("<ALLLEDGERENTRIES.LIST><LEDGERNAME>{}</LEDGERNAME><ISDEEMEDPOSITIVE>{}</ISDEEMEDPOSITIVE><AMOUNT>{}</AMOUNT></ALLLEDGERENTRIES.LIST>", xml_escape(&entry.ledger), entry.side.tally_positive(), amount)
     }).collect::<String>();
     // The qualified human-import slice uses Create + stable client REMOTEID;
-    // a supplied voucher number is optional and is not its identity key.
+    // native posting uses a separate private REMOTEID and no supplied number.
     // See docs/tally/TALLY_PROTOCOL_REFERENCE.md §9.8 for scope and limits.
-    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{}</DATE><VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", identity, voucher.voucher_type.as_str(), normalized_date(&voucher.date).unwrap_or_default(), voucher.voucher_type.as_str())
+    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{}</DATE><VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", remote_id, voucher.voucher_type.as_str(), normalized_date(&voucher.date).unwrap_or_default(), voucher.voucher_type.as_str())
 }
 
 fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {

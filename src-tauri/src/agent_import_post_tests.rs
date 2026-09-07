@@ -481,3 +481,67 @@ fn absence_is_required_before_a_first_attempt() {
     }
     assert!(require_absent(&json!({"result":{"counts":{"not_found":1},"vouchers":[{}]}})).is_ok());
 }
+
+#[test]
+fn native_request_uses_a_private_remote_identity_but_preserves_batch_attribution() {
+    let (line, _) = batch();
+    let voucher = &line.vouchers[0];
+    let public = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    let first = render_native_journal_xml("Synthetic Accounts", voucher, &line.batch_id);
+    let second = render_native_journal_xml("Synthetic Accounts", voucher, &line.batch_id);
+    let remote_id = |xml: &str| {
+        let mut reader = quick_xml::Reader::from_str(xml);
+        loop {
+            match reader.read_event().unwrap() {
+                quick_xml::events::Event::Start(tag) if tag.name().as_ref() == b"VOUCHER" => {
+                    let attribute = tag
+                        .attributes()
+                        .map(Result::unwrap)
+                        .find(|attribute| attribute.key.as_ref() == b"REMOTEID")
+                        .unwrap();
+                    break Uuid::parse_str(std::str::from_utf8(&attribute.value).unwrap()).unwrap();
+                }
+                quick_xml::events::Event::Eof => panic!("voucher missing"),
+                _ => {}
+            }
+        }
+    };
+    let public_id = remote_id(&public);
+    let first_id = remote_id(&first);
+    let second_id = remote_id(&second);
+    assert_ne!(first_id, public_id);
+    assert_ne!(second_id, public_id);
+    assert_ne!(first_id, second_id);
+    // Only the client mutation selector changes; accounting, company and stable
+    // readback attribution remain byte-for-byte the reviewed public document.
+    assert_eq!(
+        first.replace(
+            &format!("REMOTEID=\"{first_id}\""),
+            &format!("REMOTEID=\"{public_id}\"")
+        ),
+        public
+    );
+    assert_eq!(
+        second.replace(
+            &format!("REMOTEID=\"{second_id}\""),
+            &format!("REMOTEID=\"{public_id}\"")
+        ),
+        public
+    );
+    assert_eq!(sha256_hex(public.as_bytes()), line.sha256);
+}
+
+#[test]
+fn native_post_refuses_supplied_numbers_without_disabling_manual_files() {
+    let (mut line, endpoint) = batch();
+    assert!(require_native_numbering(&line.vouchers[0]).is_ok());
+    line.vouchers[0].voucher_number = Some("MANUAL-1".into());
+    line.sha256 = sha256_hex(
+        render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id).as_bytes(),
+    );
+    assert!(admit_saved_journal(&line, &endpoint).is_ok());
+    assert_eq!(
+        require_native_numbering(&line.vouchers[0]).err().as_deref(),
+        Some("import_post_numbered_journal_unsupported")
+    );
+}

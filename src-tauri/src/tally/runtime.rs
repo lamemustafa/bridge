@@ -76,6 +76,16 @@ pub struct AgentRead {
     pub encoded_sha256: String,
 }
 
+/// An approved import response retains the import wire separately from the
+/// source observations that admitted it. The ledger's request/response hashes
+/// must remain the raw import bytes, not a composite admission digest.
+#[derive(Debug, Clone)]
+pub(crate) struct ApprovedImportDispatch {
+    pub(crate) body: String,
+    pub(crate) response_evidence: RuntimeReadEvidence,
+    pub(crate) admission_evidence: RuntimeReadEvidence,
+}
+
 /// Commitments to completed runtime source observations, using actual encoded
 /// request and response bodies. Stable pairs share a hash and count both bodies;
 /// a failed pair may retain only its first body, or combine differing bodies.
@@ -770,6 +780,10 @@ mod agent_read_evidence_tests;
 #[cfg(test)]
 #[path = "runtime_party_evidence_tests.rs"]
 mod party_evidence_tests;
+
+#[cfg(test)]
+#[path = "runtime_import_admission_tests.rs"]
+mod import_admission_tests;
 
 enum NativeLedgerSnapshotPeriodAdmission {
     Period(NativeLedgerSnapshotPeriod),
@@ -2171,7 +2185,7 @@ impl TallyRuntime {
         identity: &VerifiedCompanyIdentity,
         request: super::approved_import::ApprovedImport,
         before_dispatch: F,
-    ) -> anyhow::Result<(String, RuntimeReadEvidence)>
+    ) -> anyhow::Result<ApprovedImportDispatch>
     where
         F: Fn() -> Result<(), String>,
     {
@@ -2183,16 +2197,38 @@ impl TallyRuntime {
             ReadRetryPolicy::SINGLE_ATTEMPT,
             |client| {
                 let identity = identity.clone();
+                let request = request.clone();
                 let xml = request.xml().to_string();
                 let before_dispatch = &before_dispatch;
                 async move {
-                    let companies = client.fetch_companies().await?;
-                    admit_company_identity(&companies, &identity)?;
-                    super::approved_import::require_unique_company_scope(&companies, &identity)?;
-                    before_dispatch().map_err(anyhow::Error::msg)?;
-                    let mut evidence = RuntimeReadEvidence::empty();
-                    let body = client.post_probe_xml(xml, &mut evidence).await?;
-                    Ok((body, evidence))
+                    let (profile, mode_evidence) = observe_read_boundary(&client).await?;
+                    let (companies, company_evidence) = client
+                        .fetch_companies_with_wire_evidence()
+                        .await
+                        .map_err(|error| with_read_evidence(error, mode_evidence.clone()))?;
+                    let admission_evidence = mode_evidence.combine(company_evidence);
+                    admit_company_identity(&companies, &identity)
+                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    super::approved_import::require_unique_company_scope(&companies, &identity)
+                        .map_err(|error| {
+                            with_read_evidence(error.into(), admission_evidence.clone())
+                        })?;
+                    request.require_boundary_profile(profile).map_err(|error| {
+                        with_read_evidence(error.into(), admission_evidence.clone())
+                    })?;
+                    before_dispatch().map_err(|error| {
+                        with_read_evidence(anyhow::Error::msg(error), admission_evidence.clone())
+                    })?;
+                    let mut response_evidence = RuntimeReadEvidence::empty();
+                    let body = client
+                        .post_probe_xml(xml, &mut response_evidence)
+                        .await
+                        .map_err(|error| with_read_evidence(error, admission_evidence.clone()))?;
+                    Ok(ApprovedImportDispatch {
+                        body,
+                        response_evidence,
+                        admission_evidence,
+                    })
                 }
             },
         )
