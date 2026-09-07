@@ -4,8 +4,11 @@
 #[path = "agent_directory.rs"]
 mod directory;
 use directory::{ensure_private_directory, DirectoryAdmissionError};
+#[path = "agent_path.rs"]
+mod agent_path;
 #[path = "agent_file.rs"]
 mod local_file;
+use agent_path::{default_data_dir, default_dispatch_coordination_dir};
 
 #[path = "agent_import.rs"]
 mod agent_import;
@@ -299,30 +302,6 @@ fn parse_bounded_limit(name: &str, value: &str, min: usize, max: usize) -> Resul
         .ok()
         .filter(|value| (*value >= min) && (*value <= max))
         .ok_or_else(|| format!("limit_setting_invalid:{name}"))
-}
-
-fn default_data_dir() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(local_app_data).join("Bridge").join("agent");
-        }
-        if let Some(app_data) = env::var_os("APPDATA") {
-            return PathBuf::from(app_data).join("Bridge").join("agent");
-        }
-        PathBuf::from("Bridge").join("agent")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        #[cfg(target_os = "macos")]
-        if let Some(home) = env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("Bridge");
-        }
-        env::temp_dir().join("bridge")
-    }
 }
 
 fn endpoint_origin(endpoint: &TallyEndpointConfig) -> Result<String, String> {

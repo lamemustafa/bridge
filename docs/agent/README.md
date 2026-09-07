@@ -231,6 +231,11 @@ interactive approval and Gold/Education live posting have not been established.
    clean create response together with matching readback confirms the first
    posting as `posted_verified`.
 
+Keep the selected company free of other imports and ledger changes while posting,
+and leave Tally's product/licence mode unchanged. Bridge serializes its own writers;
+its separate checks cannot lock out Tally UI edits or other importers. Concurrent
+external changes are outside this preview's validated posting workflow.
+
 Cancel, client disconnect, or the two-minute approval timeout ends the pending
 approval. If dispatch has already begun, cancellation cannot undo Tally's
 work. A timeout, crash, malformed response or incomplete readback requires
