@@ -160,7 +160,10 @@ export function JournalPostingScreen({ config, onBusyChange }: JournalPostingScr
       setUncertainAttempt(false);
     } catch (cause) {
       setError(errorMessage(cause));
-      if (kind === "post") setUncertainAttempt(true);
+      const refusedBeforePosting = cause !== null && typeof cause === "object"
+        && "code" in cause && cause.code === "journal_review_refused"
+        && "tally_state_may_have_changed" in cause && cause.tally_state_may_have_changed === false;
+      if (kind === "post" && !refusedBeforePosting) setUncertainAttempt(true);
     } finally {
       actionRef.current = null;
       setAction(null);

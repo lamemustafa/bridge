@@ -168,8 +168,7 @@ pub(crate) async fn post_reviewed(
         .map_err(DesktopJournalError::refused)?;
     let operation = service
         .post(&request.batch_id, &request.sha256, &request.company_guid)
-        .await
-        .map_err(DesktopJournalError::refused)?;
+        .await;
     Ok(action(request.batch_id, operation))
 }
 
@@ -181,7 +180,6 @@ pub(crate) async fn reconcile_reviewed(
         .map_err(DesktopJournalError::refused)?;
     let operation = service
         .reconcile(&request.batch_id, &request.sha256, &request.company_guid)
-        .await
-        .map_err(DesktopJournalError::refused)?;
+        .await;
     Ok(action(request.batch_id, operation))
 }

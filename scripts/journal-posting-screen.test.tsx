@@ -262,3 +262,25 @@ test("pre-dispatch admission refusal returns to file review without suggesting a
   expect([...host.querySelectorAll("button")].some((item) => /Post Journal|Reconcile original/.test(item.textContent ?? ""))).toBe(false);
   root.unmount();
 });
+
+test.each([
+  { code: "journal_review_refused", tally_state_may_have_changed: false, retryable: true },
+  { code: "journal_review_refused", tally_state_may_have_changed: true, retryable: false },
+  { code: "journal_review_refused", tally_state_may_have_changed: "false", retryable: false },
+  { code: "unknown_failure", tally_state_may_have_changed: false, retryable: false },
+])("post command failure preserves the typed dispatch boundary: $code / $tally_state_may_have_changed", async ({ retryable, ...failure }) => {
+  mocks.invoke.mockResolvedValueOnce(review);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<JournalPostingScreen config={config} />); });
+  await act(async () => { button(host, "Choose Journal file").click(); });
+  mocks.invoke.mockRejectedValueOnce({ ...failure, message: "The saved data directory is unavailable." });
+  await act(async () => { button(host, "Post Journal").click(); });
+  expect(host.textContent).toContain("The saved data directory is unavailable.");
+  const labels = [...host.querySelectorAll("button")].map((item) => item.textContent);
+  expect(labels.some((label) => label?.includes("Post Journal"))).toBe(retryable);
+  expect(labels.some((label) => label?.includes("Choose another file"))).toBe(retryable);
+  expect(labels.some((label) => label?.includes("Reconcile original batch"))).toBe(!retryable);
+  root.unmount();
+});

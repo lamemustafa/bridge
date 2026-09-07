@@ -200,8 +200,7 @@ async fn descriptor_company_mismatch_is_refused_before_any_tally_work() {
     let (service, line) = service(directory.path().join("agent"));
     let operation = service
         .post(&line.batch_id, &line.sha256, "other-company")
-        .await
-        .unwrap();
+        .await;
     assert_eq!(
         operation.result["result"]["error"]["code"],
         "import_batch_company_mismatch"
@@ -228,8 +227,7 @@ async fn missing_or_unreadable_history_refuses_admission_without_claiming_no_pri
         }
         let operation = service
             .post(&line.batch_id, &line.sha256, &line.company_guid)
-            .await
-            .unwrap();
+            .await;
         assert_eq!(
             operation.result["result"]["dispatch"]["state"],
             "admission_refused"
@@ -252,8 +250,7 @@ async fn reconcile_without_durable_intent_never_enters_post_or_approval() {
     let (service, line) = service(directory.path().join("agent"));
     let operation = service
         .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
-        .await
-        .unwrap();
+        .await;
     assert_eq!(
         operation.result["result"]["error"]["code"],
         "import_not_dispatched"

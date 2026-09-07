@@ -56,10 +56,10 @@ impl DesktopJournalService {
         batch_id: &str,
         sha256: &str,
         company_guid: &str,
-    ) -> Result<DesktopJournalOperation, String> {
+    ) -> DesktopJournalOperation {
         let args = json!({"batch_id":batch_id,"company_guid":company_guid});
         match self.server.post_import_checked(&args, Some(sha256)).await {
-            Ok(outcome) => Ok(DesktopJournalOperation::from_outcome(outcome)),
+            Ok(outcome) => DesktopJournalOperation::from_outcome(outcome),
             Err(failure) => {
                 // This Err boundary precedes approval/dispatch. It does not
                 // prove that unreadable history contains no earlier attempt.
@@ -69,7 +69,7 @@ impl DesktopJournalService {
                 );
                 operation.result["result"]["dispatch"] =
                     json!({"state":"admission_refused","resent":false});
-                Ok(operation)
+                operation
             }
         }
     }
@@ -79,12 +79,12 @@ impl DesktopJournalService {
         batch_id: &str,
         sha256: &str,
         company_guid: &str,
-    ) -> Result<DesktopJournalOperation, String> {
+    ) -> DesktopJournalOperation {
         let args = json!({"batch_id":batch_id,"company_guid":company_guid});
         // This method checks the expected digest and durable dispatch intent in
         // the same server entrypoint. It cannot fall through to approval/POST.
         match self.server.reconcile_import(&args, sha256).await {
-            Ok(outcome) => Ok(DesktopJournalOperation::from_outcome(outcome)),
+            Ok(outcome) => DesktopJournalOperation::from_outcome(outcome),
             Err(failure) => {
                 let no_attempt_recorded = failure.code == "import_not_dispatched";
                 let message = if no_attempt_recorded {
@@ -96,7 +96,7 @@ impl DesktopJournalService {
                 if no_attempt_recorded {
                     operation.result["result"]["attempt_recorded"] = Value::Bool(false);
                 }
-                Ok(operation)
+                operation
             }
         }
     }
