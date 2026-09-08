@@ -3,6 +3,7 @@ use super::*;
 use crate::reports::trial_balance_store::TrialBalanceExportStore;
 use crate::reports::trial_balance_xlsx::render_trial_balance_xlsx;
 use crate::tally::runtime::{TrialBalancePeriod, TrialBalanceRead, TrialBalanceReadError};
+use bridge_tally_protocol::PartyLedgerMasterFieldObservation;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -17,6 +18,32 @@ pub struct TrialBalanceRequest {
 pub struct TrialBalanceResponse {
     read: TrialBalanceRead,
     export_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrialBalanceCaptureParentQueryRequest {
+    export_id: String,
+    parent: PartyLedgerMasterFieldObservation,
+}
+
+#[derive(Serialize)]
+pub struct TrialBalanceCaptureProvenance {
+    company_guid: String,
+    company_name: String,
+    from: TallyDate,
+    to: TallyDate,
+    read_at: String,
+    request_sha256: String,
+    response_sha256: String,
+    source_bytes: usize,
+    expires_in_seconds: u64,
+}
+
+#[derive(Serialize)]
+pub struct TrialBalanceCaptureParentQueryResponse {
+    query: crate::reports::trial_balance::TrialBalanceParentQuery,
+    capture: TrialBalanceCaptureProvenance,
 }
 
 fn local_error(code: &'static str, message: &str, remediation: &'static str) -> TallyCommandError {
@@ -195,5 +222,53 @@ pub async fn export_tally_trial_balance(
             "Bridge could not save the workbook to Downloads.",
             "Check Downloads-folder access and retry the export.",
         )
+    })
+}
+
+/// Derives a bounded parent subset from one already captured report. This
+/// command cannot acquire Tally data, accept a company identity, or write.
+#[tauri::command]
+pub async fn query_tally_trial_balance_capture_parent(
+    request: TrialBalanceCaptureParentQueryRequest,
+    exports: State<'_, TrialBalanceExportStore>,
+) -> Result<TrialBalanceCaptureParentQueryResponse, TallyCommandError> {
+    let capture = exports.get_capture(&request.export_id).map_err(|_| {
+        local_error(
+            "trial_balance_capture_expired",
+            "This captured Trial Balance is no longer available for a follow-up query.",
+            "Refresh the report before selecting a parent again.",
+        )
+    })?;
+    let query =
+        crate::reports::trial_balance::query_observed_parent(&capture.read.report, &request.parent)
+            .map_err(|error| match error {
+                crate::reports::trial_balance::TrialBalanceParentQueryError::ParentNotInCapture => {
+                    local_error(
+                        "trial_balance_capture_parent_unavailable",
+                        "That exact parent was not returned by the retained capture.",
+                        "Select a parent returned by this capture or refresh the report.",
+                    )
+                }
+                crate::reports::trial_balance::TrialBalanceParentQueryError::TotalsUnavailable => {
+                    local_error(
+                        "trial_balance_capture_invalid",
+                        "The retained Trial Balance cannot be summarized safely.",
+                        "Refresh the report before selecting a parent again.",
+                    )
+                }
+            })?;
+    Ok(TrialBalanceCaptureParentQueryResponse {
+        query,
+        capture: TrialBalanceCaptureProvenance {
+            company_guid: capture.read.company_guid.clone(),
+            company_name: capture.read.company_name.clone(),
+            from: capture.read.from.clone(),
+            to: capture.read.to.clone(),
+            read_at: capture.read.read_at.clone(),
+            request_sha256: capture.read.evidence.request_sha256.clone(),
+            response_sha256: capture.read.evidence.response_sha256.clone(),
+            source_bytes: capture.read.evidence.bytes,
+            expires_in_seconds: capture.expires_in.as_secs(),
+        },
     })
 }
