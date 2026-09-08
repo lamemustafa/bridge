@@ -235,6 +235,11 @@ jobs:
     # check is deliberately skipped only for frontend- and documentation-only PRs.
     if: github.event_name != 'pull_request' || needs.changes.outputs.native == 'true'
     runs-on: ${{ matrix.os }}
+    # CI does not debug native test executables. Keep local line tables and
+    # release profiles unchanged; assertions and overflow checks stay enabled.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
     # A cold Windows native build already consumed the former 35-minute budget
     # before the final isolated qualification test could complete. Keep a hard
     # bound, but reserve time for every required compile, test, and lint gate.
@@ -275,7 +280,7 @@ jobs:
         run: |
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native prerequisites'
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-native-prerequisites.outputs.cache-hit }}`'
-      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast --timings
       - name: Test Tally qualification tools workspace
         working-directory: tools
         run: cargo test --locked --workspace --no-fail-fast
@@ -285,7 +290,7 @@ jobs:
           cargo test --locked -p bridge-tally-live-read
           --features bills-native-outstandings-probe-runner
           --all-targets -- --test-threads=1
-      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --workspace --all-targets --timings -- -D warnings
       - name: Lint Tally qualification tools workspace
         working-directory: tools
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -295,6 +300,15 @@ jobs:
           cargo clippy --locked -p bridge-tally-live-read
           --features bills-native-outstandings-probe-runner
           --all-targets -- -D warnings
+
+      - name: Retain native compiler timings
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-compiler-timings-${{ matrix.os }}
+          path: src-tauri/target/cargo-timings/*.html
+          if-no-files-found: warn
+          retention-days: 7
 
   bundle-smoke:
     name: Bundle smoke (${{ matrix.os }})
