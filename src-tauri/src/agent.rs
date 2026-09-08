@@ -13,6 +13,7 @@ use agent_path::{default_data_dir, default_dispatch_coordination_dir};
 #[path = "agent_import.rs"]
 mod agent_import;
 pub use crate::tally::approved_import::run_confirmation;
+pub(crate) use agent_import::acquire_endpoint_dispatch_lease;
 pub(crate) use agent_import::desktop_journal_review as desktop_journal;
 
 #[path = "agent_catalog.rs"]

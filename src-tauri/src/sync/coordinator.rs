@@ -13,6 +13,10 @@ use crate::tally::RuntimeTallyConnector;
 
 const MAX_TRACKED_RUNS: usize = 100;
 
+#[cfg(test)]
+#[path = "coordinator_lease_tests.rs"]
+mod lease_tests;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SnapshotJobStatus {
     pub run_id: String,
@@ -56,6 +60,13 @@ impl SnapshotCoordinator {
         connector: RuntimeTallyConnector,
         mirror: TallyMirrorRepository,
     ) -> Result<SnapshotJobStatus, &'static str> {
+        let endpoint_lease = crate::agent::acquire_endpoint_dispatch_lease(connector.endpoint())
+            .map_err(|error| match error.as_str() {
+                "import_admission_busy" => {
+                    "Another Bridge snapshot or Journal posting is using this Tally endpoint. Wait for it to finish."
+                }
+                _ => "Bridge could not coordinate access to this Tally endpoint. The snapshot was not started.",
+            })?;
         let cancellation = Arc::new(AtomicCancellation::default());
         let terminal = Arc::new(Mutex::new(None));
         let lease_owner = uuid::Uuid::new_v4().to_string();
@@ -167,6 +178,9 @@ impl SnapshotCoordinator {
             if let Ok(mut state) = terminal.lock() {
                 *state = Some(final_status);
             }
+            // Keep other Bridge processes out through the fresh probe, every
+            // snapshot window, and finalization, including cancellation.
+            drop(endpoint_lease);
         });
         Ok(initial)
     }

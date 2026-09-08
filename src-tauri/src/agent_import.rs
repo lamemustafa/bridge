@@ -30,6 +30,7 @@ pub(crate) mod desktop_journal_review;
 mod desktop_journal_tests;
 #[path = "agent_import_dispatch_lease.rs"]
 mod dispatch_lease;
+pub(crate) use dispatch_lease::acquire as acquire_endpoint_dispatch_lease;
 #[path = "agent_import_ledger.rs"]
 pub(super) mod ledger;
 #[path = "agent_import_persistence.rs"]

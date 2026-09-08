@@ -2,24 +2,24 @@
 //!
 //! This lease is deliberately outside `BRIDGE_AGENT_DATA_DIR`: two connector
 //! processes may keep distinct recoverable journals while still talking to one
-//! loopback Tally endpoint. It serializes active dispatches only. A crash drops
+//! loopback Tally endpoint. It serializes dispatches and snapshot workers. A crash drops
 //! the kernel lease; the caller's durable local intent and reconciliation remain
 //! the recovery boundary.
 use bridge_tally_transport::{canonical_loopback_origin, TallyEndpointConfig};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-pub(super) struct EndpointDispatchLease {
+pub(crate) struct EndpointDispatchLease {
     _file: File,
 }
 
-/// Acquire a nonblocking, per-user/per-port lease for a native dispatch.
+/// Acquire a nonblocking, per-user/per-port lease for dispatch or snapshot work.
 ///
 /// The endpoint is validated first. Every admitted loopback alias on the same
 /// port shares one lease because IPv4, IPv6 and localhost can address the same
 /// Tally listener. This is intentionally more conservative than the transport
 /// endpoint identity.
-pub(super) fn acquire(endpoint: &TallyEndpointConfig) -> Result<EndpointDispatchLease, String> {
+pub(crate) fn acquire(endpoint: &TallyEndpointConfig) -> Result<EndpointDispatchLease, String> {
     let root = super::super::default_dispatch_coordination_dir()
         .ok_or_else(|| "import_admission_lock_unavailable".to_string())?;
     acquire_at(&root, endpoint)
