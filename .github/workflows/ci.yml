@@ -359,8 +359,11 @@ jobs:
       - name: Verify macOS app legal resources
         if: runner.os == 'macOS'
         run: node scripts/check-macos-bundle-resources.mjs
+      # tauri build uses --bins, including the auto-discovered bridge_mcp.
+      # Stage that fresh release binary instead of rebuilding without Tauri's
+      # custom-protocol feature and native build environment.
       - name: Stage host MCPB binary and legal resources
-        run: node scripts/package-mcpb.mjs
+        run: node scripts/package-mcpb.mjs --binary src-tauri/target/release/bridge_mcp${{ runner.os == 'Windows' && '.exe' || '' }}
       - name: Validate and pack MCPB with the official schema
         run: |
           npx --yes @anthropic-ai/mcpb@2.1.2 validate packaging/mcpb/stage/manifest.json
