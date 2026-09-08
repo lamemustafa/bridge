@@ -288,6 +288,13 @@ user rather than silently creating or choosing a ledger.
    clean response and matching readback. Keep the original batch when recovery
    is inconclusive; do not rebuild it as a retry.
 
+Bridge prevents Journal posting during a Core Accounting snapshot, including
+snapshots in another updated Bridge process using the same operating-system
+account and Tally port. Wait for the snapshot to finish or cancel it before
+posting. If a snapshot start or resume result is uncertain, use local evidence
+to restore monitoring or cancel the active run; connection settings stay locked
+until that uncertainty is resolved.
+
 An XML file alone is not portable posting authorization. Files generated
 elsewhere, edited files, legacy unbound batches and unsupported voucher types
 are refused. This first desktop flow has no Journal editor or arbitrary XML

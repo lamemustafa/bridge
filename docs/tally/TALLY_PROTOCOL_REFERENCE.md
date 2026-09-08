@@ -767,8 +767,19 @@ The original earlier Journal was unchanged in before/after readback. The executa
 SHA-256 was `c2df9ffd76bf687e50b9b78916cb83fdacc6cddde2f317b53c46f538f1b2a96f`;
 the durable native request commitment matched the actual transport request hash.
 This qualifies a fresh dispatch and read-only restart for that binary and source.
-The separate public-file import/edit/native-post comparison remains pending;
-this observation does not establish preservation after that sequence.
+**Preservation follow-up — verified 2026-09-08, bounded observation.** The
+macOS desktop at `f1ffcc4`, using shared posting code at `7c3266f`, posted one
+human-approved synthetic Journal in the quiet-company workflow. Its signed
+executable SHA-256 was
+`078e6bfe95fdd57f8f5ef905167b49a509bb0f7a3d3dd94734ae9aadc36c32ca`.
+Readback found exactly one new Journal and all six prior accounting records
+unchanged, including the manually edited public-file comparison voucher.
+The original selected XML stayed unchanged. The saved response included all
+seven counter-presence flags: one create and all other counters zero. A fresh
+`7c3266f` MCP process with writes disabled reconciled the original batch without
+resend; history retained one intent and one response. This closes that measured
+preservation/recovery comparison, not arbitrary concurrent editing or other
+platform, product-mode, or voucher-type qualification.
 
 **Batch identity qualification — verified 2026-09-06, recorded 2026-09-07.**
 A new synthetic Journal reused the earlier caller transaction label in a separate
