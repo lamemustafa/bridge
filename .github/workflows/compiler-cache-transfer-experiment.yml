@@ -1,0 +1,178 @@
+name: Workspace compiler cache transfer and routine edits
+
+on:
+  push:
+    branches: [tapish-codex/compiler-cache-workspace-20260909]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  writer:
+    name: Cache writer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    env:
+      CACHE_EXPERIMENT_PHASE: writer
+      BRIDGE_COMPILER_CACHE_KEY: bridge-workspace-transfer-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.96.0
+      - name: Match macOS cache inputs to the Tauri deployment target
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          const target = config.bundle?.macOS?.minimumSystemVersion;
+          if (typeof target !== 'string' || !/^\d+\.\d+(?:\.\d+)?$/.test(target)) {
+            throw new Error('Expected an explicit macOS minimumSystemVersion in tauri.conf.json');
+          }
+          appendFileSync(process.env.GITHUB_ENV, `MACOSX_DEPLOYMENT_TARGET=${target}\n`);
+          JS
+      # Match the existing bundle job's dependency key and setup order. Both
+      # phases restore read-only; only the separate compiler payload is saved.
+      - name: Restore existing packaging dependencies read-only
+        id: dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: bundle-smoke
+          env-vars: ${{ runner.os == 'macOS' && 'MACOSX_DEPLOYMENT_TARGET' || '' }}
+          workspaces: src-tauri -> target
+          save-if: false
+      - name: Set up Windows native prerequisites
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-native
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm run license:all
+      - name: Use ad-hoc signing for macOS smoke builds
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
+      - name: Install pinned compiler cache
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+      - name: Measure writer correctness and reuse
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python scripts/measure-compiler-cache-transfer.py
+          else
+            python3 scripts/measure-compiler-cache-transfer.py
+          fi
+      - name: Publish the sealed compiler cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/bridge-compiler-transfer
+          key: ${{ env.BRIDGE_COMPILER_CACHE_KEY }}
+      - name: Retain timings, readback and cache provenance
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiler-cache-writer-${{ matrix.os }}
+          path: compiler-cache-measurements/**
+          if-no-files-found: error
+          retention-days: 7
+
+  reader:
+    name: Cache reader (${{ matrix.os }})
+    needs: writer
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    env:
+      CACHE_EXPERIMENT_PHASE: reader
+      BRIDGE_COMPILER_CACHE_KEY: bridge-workspace-transfer-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.96.0
+      - name: Match macOS cache inputs to the Tauri deployment target
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          const target = config.bundle?.macOS?.minimumSystemVersion;
+          if (typeof target !== 'string' || !/^\d+\.\d+(?:\.\d+)?$/.test(target)) {
+            throw new Error('Expected an explicit macOS minimumSystemVersion in tauri.conf.json');
+          }
+          appendFileSync(process.env.GITHUB_ENV, `MACOSX_DEPLOYMENT_TARGET=${target}\n`);
+          JS
+      # Match the existing bundle job's dependency key and setup order. Both
+      # phases restore read-only; only the separate compiler payload is saved.
+      - name: Restore existing packaging dependencies read-only
+        id: dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: bundle-smoke
+          env-vars: ${{ runner.os == 'macOS' && 'MACOSX_DEPLOYMENT_TARGET' || '' }}
+          workspaces: src-tauri -> target
+          save-if: false
+      - name: Set up Windows native prerequisites
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-native
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm run license:all
+      - name: Use ad-hoc signing for macOS smoke builds
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
+      - name: Install pinned compiler cache
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+      - name: Restore the exact compiler cache from the writer
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/bridge-compiler-transfer
+          key: ${{ env.BRIDGE_COMPILER_CACHE_KEY }}
+          fail-on-cache-miss: true
+      - name: Measure reader correctness and reuse
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python scripts/measure-compiler-cache-transfer.py
+          else
+            python3 scripts/measure-compiler-cache-transfer.py
+          fi
+      - name: Retain timings, readback and cache provenance
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiler-cache-reader-${{ matrix.os }}
+          path: compiler-cache-measurements/**
+          if-no-files-found: error
+          retention-days: 7
