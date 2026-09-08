@@ -69,6 +69,9 @@ async function assertAppResources(app, label) {
       throw new Error(`${label} resource is missing or empty: ${resource}`);
     }
   }
+  await execFileAsync("codesign", ["--verify", "--deep", "--strict", app], {
+    timeout: 30_000,
+  });
 }
 
 const stagedApp = await findOnlyApp(join(bundleDirectory, "macos"), "staged macOS");
@@ -124,6 +127,6 @@ if (!appOnly) {
 
 console.log(
   appOnly
-    ? "macOS app bundle contains all required legal resources."
-    : "macOS app and DMG contain all required legal resources.",
+    ? "macOS app bundle contains all required legal resources and has a valid bundle signature."
+    : "macOS app and DMG contain all required legal resources and have valid bundle signatures.",
 );
