@@ -57,6 +57,15 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_ENDPOINT_SESSIONS: usize = 32;
 
+#[path = "runtime_trial_balance.rs"]
+mod trial_balance;
+pub use trial_balance::TrialBalanceRead;
+pub(crate) use trial_balance::TrialBalanceReadError;
+
+#[cfg(test)]
+#[path = "runtime_trial_balance_tests.rs"]
+mod trial_balance_tests;
+
 /// A company-list response bound to the exact transport bytes that produced
 /// it. The MCP adapter uses this rather than reserializing parsed companies.
 #[derive(Debug, Clone)]
