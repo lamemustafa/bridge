@@ -26,6 +26,13 @@ The resolved data path must be valid Unicode so saved artifact paths can be
 returned exactly in JSON. Invalid platform encoding is refused before state
 creation with `agent_data_dir_encoding_invalid`; no lossy path alias is used.
 
+Before requesting financial data through an MCP client, the client may send the selected
+Tally result to its AI provider, including company
+identity, party or open-bill details, and amounts. An unset
+`BRIDGE_AGENT_REDACTION` defaults to `none`; `mask_parties` masks party names
+and `drop_narration` drops narration. Neither setting removes amounts. Set the
+environment variable before launch when that better fits the workflow.
+
 On Unix, new data directories use mode `0700`; an existing data directory
 must belong to the current user and have that mode. Otherwise startup refuses
 it without changing its permissions. Select a new dedicated leaf under a shared
