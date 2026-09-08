@@ -144,7 +144,7 @@ impl PinnedCompany {
         }
         Ok(Self {
             name,
-            guid: Arc::from(guid),
+            guid: Arc::from(guid.to_ascii_lowercase()),
         })
     }
 
@@ -272,7 +272,7 @@ impl CompanyBookExtentExpectation {
             .map_err(|_| CompanyBookExtentExpectationError::BooksFrom)?;
         Ok(Self {
             name,
-            guid,
+            guid: guid.to_ascii_lowercase(),
             company_number,
             books_from,
         })
@@ -494,6 +494,14 @@ pub fn parse_company_book_extent_v2(
             continue;
         }
         let name = raw.name.text.trim();
+        // `COMPANY @NAME` is the Tally display selector, while nested `NAME`
+        // is the returned presentation. A same-GUID row with disagreement is
+        // an ambiguous company scope even if another row matches the tuple.
+        if raw.attribute_name != name {
+            return Err(OutstandingsError::InvalidResponse(
+                "company_identity_presentation_collision",
+            ));
+        }
         let company_number = raw.company_number.as_ref().map(|value| value.text.trim());
         let books_from = raw.books_from.text.trim();
         if name.eq_ignore_ascii_case(expected.name()) {

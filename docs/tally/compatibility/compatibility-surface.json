@@ -239,7 +239,7 @@
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/outstandings_shared.rs",
-      "sha256": "e130c5c062ae4841bff5fcff83b08518303c0af940a29f2ad9b2c45ee95ec267"
+      "sha256": "45fa3a2bf8797c6699db2500c1d836f1bb1c837780e20e893d0c824bc0a38b41"
     },
     {
       "path": "src-tauri/crates/bridge-tally-protocol/src/tolerant_xml.rs",
@@ -531,7 +531,7 @@
     },
     {
       "path": "src-tauri/src/tally/mod.rs",
-      "sha256": "e1bcba48917f13a4b56f7b837212569d07de99bd2c39e90278cf86a5e5cc842e"
+      "sha256": "aecad635e8395160376b403e9531d46ccfcbc4e8ad4e222729d2722fd5d47e65"
     },
     {
       "path": "src-tauri/src/tally/outstandings_runtime.rs",
@@ -714,5 +714,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "d3154342f3628da5f3f812a280e986c6c26504985a488928c61adf57606964f4"
+  "manifest_sha256": "a6d760d1602127f0e3f3617ef7a5ed4fe680c581a48787e17f604c1a270b7876"
 }

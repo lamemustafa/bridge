@@ -69,6 +69,26 @@ fn v2_captured_extent_selects_the_exact_tuple_among_same_guid_siblings() {
 }
 
 #[test]
+fn v2_canonicalizes_a_captured_guid_case_variant_for_extent_brackets() {
+    let target = company_row(COMPANY_EXTENT_V2, SPLIT_COMPANY_NAME);
+    let upper_guid = SPLIT_COMPANY_GUID.to_ascii_uppercase();
+    let changed_target = target.replacen(SPLIT_COMPANY_GUID, &upper_guid, 1);
+    assert_ne!(
+        changed_target, target,
+        "captured GUID case mutation must apply"
+    );
+    let changed = COMPANY_EXTENT_V2.replacen(target, &changed_target, 1);
+    assert_ne!(
+        changed, COMPANY_EXTENT_V2,
+        "captured response mutation must apply"
+    );
+
+    let extent = parse_company_book_extent_v2(&changed, &split_expectation())
+        .expect("GUID casing alone must not alter the selected extent");
+    assert_eq!(extent.company().guid(), SPLIT_COMPANY_GUID);
+}
+
+#[test]
 fn v2_full_tuple_expectation_refuses_noncanonical_caller_numbers() {
     for company_number in [
         "",
@@ -182,6 +202,30 @@ fn v2_refuses_duplicate_exact_tuple_and_presentation_collision() {
     assert_ne!(collision, target);
     let collision =
         COMPANY_EXTENT_V2.replacen("</COLLECTION>", &format!("{collision}</COLLECTION>"), 1);
+    assert_eq!(
+        parse_company_book_extent_v2(&collision, &split_expectation()),
+        Err(OutstandingsError::InvalidResponse(
+            "company_identity_presentation_collision"
+        ))
+    );
+}
+
+#[test]
+fn v2_refuses_same_guid_selector_attribute_with_a_different_nested_name() {
+    let target = company_row(COMPANY_EXTENT_V2, SPLIT_COMPANY_NAME);
+    let sibling = target.replacen(
+        &format!(r#"<NAME TYPE="String">{SPLIT_COMPANY_NAME}</NAME>"#),
+        r#"<NAME TYPE="String">BRIDGE PROBE B OTHER BOOK</NAME>"#,
+        1,
+    );
+    assert_ne!(sibling, target, "captured nested-name mutation must apply");
+    let collision =
+        COMPANY_EXTENT_V2.replacen("</COLLECTION>", &format!("{sibling}</COLLECTION>"), 1);
+    assert_ne!(
+        collision, COMPANY_EXTENT_V2,
+        "captured sibling insertion must apply"
+    );
+
     assert_eq!(
         parse_company_book_extent_v2(&collision, &split_expectation()),
         Err(OutstandingsError::InvalidResponse(
