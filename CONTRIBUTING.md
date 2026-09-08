@@ -24,7 +24,8 @@ Use the [supported development hosts](./README.md#supported-development-hosts) a
 That is the canonical prerequisite and command list; it covers the native
 Tauri, Perl/SQLCipher, and LLVM/libclang requirements without duplicating them
 here. After setup, run the smallest relevant check for the files you changed,
-then the required checks on the final candidate:
+then the applicable final-candidate checks in [Bridge CI](./.github/workflows/ci.yml).
+Common application checks are:
 
 ```text
 corepack pnpm test
@@ -32,6 +33,11 @@ corepack pnpm run cargo:test
 corepack pnpm run build
 corepack pnpm run cargo:check
 ```
+
+For changes under `tools/`, also run
+`cargo test --locked --manifest-path tools/Cargo.toml --workspace`. CI includes
+additional feature-specific, formatting, lint and compatibility gates; use the
+workflow as the complete command reference.
 
 Run `corepack pnpm run tauri:build` on each native target host when validating
 packaging. Do not treat a Windows build as macOS evidence or the reverse.

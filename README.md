@@ -26,11 +26,14 @@ before launch when that better fits the workflow. These settings mask party
 names or drop narration; they do not remove amounts. The package installation
 settings expose the same choices.
 
-The supported first result is available after connecting to local Tally and
-listing the loaded companies, then selecting a company with exactly one
-observed INR currency master before requesting receivables or payables. Bridge
-refuses the financial read when Tally reports no currency master, a non-INR
-currency, or multiple currency masters.
+For a first result, run `tally_status` to check that TallyPrime and its Licensed
+or Education mode are observed, then list the loaded companies. Select a
+company with exactly one observed INR currency master and request receivables
+or payables. In Education mode, explicitly supply an `as_of` date on day 1, 2,
+or 31; an omitted date defaults to today and may be refused. Bridge rechecks
+product, mode, dates and currency for the financial read; other or unobserved
+products/modes, no currency master, non-INR, or multiple currency masters are
+refused.
 
 For contributors, use the setup and development path below.
 
