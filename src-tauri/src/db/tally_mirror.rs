@@ -56,6 +56,8 @@ const MIRROR_MIGRATION_V25: &str =
 
 const MIRROR_MIGRATION_V26: &str =
     include_str!("migrations/0026_tally_capability_license_tier.sql");
+const MIRROR_MIGRATION_V27: &str =
+    include_str!("migrations/0027_tally_retire_resurrected_guid_index.sql");
 
 const MAX_WINDOW_STAGE_CHUNK: usize = 256;
 const MAX_WINDOW_EVIDENCE_JSON_BYTES: usize = 16 * 1024;
@@ -2149,15 +2151,42 @@ impl TallyMirrorRepository {
 
     pub async fn migrate(&self) -> Result<(), MirrorError> {
         let mut transaction = self.pool.begin().await?;
-        sqlx::raw_sql(MIRROR_MIGRATION_V2)
-            .execute(&mut *transaction)
-            .await?;
-        sqlx::raw_sql(MIRROR_MIGRATION_V3)
-            .execute(&mut *transaction)
-            .await?;
-        sqlx::raw_sql(MIRROR_MIGRATION_V4)
-            .execute(&mut *transaction)
-            .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS tally_schema_migrations (\
+             version INTEGER PRIMARY KEY, description TEXT NOT NULL, applied_at_unix_ms INTEGER NOT NULL)",
+        )
+        .execute(&mut *transaction)
+        .await?;
+        let mirror_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 2",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if mirror_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V2)
+                .execute(&mut *transaction)
+                .await?;
+        }
+        let safe_writes_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 3",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if safe_writes_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V3)
+                .execute(&mut *transaction)
+                .await?;
+        }
+        let snapshot_state_installed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 4",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if snapshot_state_installed == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V4)
+                .execute(&mut *transaction)
+                .await?;
+        }
         let recovery_installed = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 5",
         )
@@ -2466,9 +2495,19 @@ impl TallyMirrorRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        let resurrected_guid_index_retired = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 27",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if resurrected_guid_index_retired == 0 {
+            sqlx::raw_sql(MIRROR_MIGRATION_V27)
+                .execute(&mut *transaction)
+                .await?;
+        }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
-             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26) AND applied_at_unix_ms = 0",
+             WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27) AND applied_at_unix_ms = 0",
         )
         .bind(Utc::now().timestamp_millis())
         .execute(&mut *transaction)
@@ -5868,7 +5907,8 @@ fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::path::Path;
 
     use super::*;
     use crate::sync::reconciliation::{proof_record_counts_sha256, CommitBatchParts};
@@ -5893,6 +5933,27 @@ mod tests {
         let repository = TallyMirrorRepository::new(pool);
         repository.migrate().await.expect("run mirror migration");
         repository
+    }
+
+    async fn file_repository(path: &Path) -> TallyMirrorRepository {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(path)
+                    .create_if_missing(true),
+            )
+            .await
+            .expect("connect file-backed mirror");
+        TallyMirrorRepository::new(pool)
     }
 
     async fn repository_through_v9() -> TallyMirrorRepository {
@@ -8187,13 +8248,13 @@ mod tests {
         .expect("count mirror tables");
         let migration_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM tally_schema_migrations \
-             WHERE version IN (2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26)",
+             WHERE version IN (2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27)",
         )
         .fetch_one(&repository.pool)
         .await
         .expect("count migration marker");
         assert_eq!(table_count, 6);
-        assert_eq!(migration_count, 23);
+        assert_eq!(migration_count, 24);
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 7",
@@ -8317,6 +8378,217 @@ mod tests {
         .await
         .expect("read migration timestamp");
         assert!(applied_at > 0, "migration marker must contain real time");
+    }
+
+    #[tokio::test]
+    async fn bootstrap_markers_preserve_retired_objects_on_reopen() {
+        let repository = repository().await;
+        for (index, drop_index) in [
+            (
+                "idx_tally_capability_snapshots_endpoint_observed",
+                "DROP INDEX idx_tally_capability_snapshots_endpoint_observed",
+            ),
+            (
+                "idx_tally_import_jobs_company_state",
+                "DROP INDEX idx_tally_import_jobs_company_state",
+            ),
+            (
+                "idx_tally_snapshot_run_states_run",
+                "DROP INDEX idx_tally_snapshot_run_states_run",
+            ),
+        ] {
+            sqlx::query(drop_index)
+                .execute(&repository.pool)
+                .await
+                .expect("retire bootstrap-created index");
+            repository
+                .migrate()
+                .await
+                .expect("marker-gated reopen must not recreate retired index");
+            let present = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            )
+            .bind(index)
+            .fetch_one(&repository.pool)
+            .await
+            .expect("inspect retired index");
+            assert_eq!(present, 0, "reopen recreated {index}");
+        }
+    }
+
+    #[tokio::test]
+    async fn bootstrap_marker_upgrade_paths_install_remaining_schema() {
+        for migrations in [
+            vec![MIRROR_MIGRATION_V2],
+            vec![MIRROR_MIGRATION_V2, MIRROR_MIGRATION_V3],
+        ] {
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .expect("connect pre-bootstrap migration mirror");
+            let mut transaction = pool.begin().await.expect("begin pre-bootstrap migration");
+            for migration in migrations {
+                sqlx::raw_sql(migration)
+                    .execute(&mut *transaction)
+                    .await
+                    .expect("apply historical bootstrap migration");
+            }
+            transaction
+                .commit()
+                .await
+                .expect("commit historical bootstrap migration");
+
+            let repository = TallyMirrorRepository::new(pool);
+            repository
+                .migrate()
+                .await
+                .expect("upgrade from historical bootstrap marker");
+            for version in [2, 3, 4, 27] {
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = ?1",
+                    )
+                    .bind(version)
+                    .fetch_one(&repository.pool)
+                    .await
+                    .expect("inspect installed migration marker"),
+                    1,
+                    "upgrade did not retain or install v{version}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_reopened_v26_mirror_repairs_guid_index_before_shared_book_insert() {
+        let directory = tempfile::tempdir().expect("temporary mirror directory");
+        let path = directory.path().join("mirror.sqlite3");
+        let old = file_repository(&path).await;
+        old.migrate().await.expect("install current mirror schema");
+        sqlx::query(
+            "INSERT INTO tally_endpoints(id, canonical_origin, created_at_unix_ms, last_observed_at_unix_ms) \
+             VALUES ('endpoint', 'http://127.0.0.1:9000', 1, 1)",
+        )
+        .execute(&old.pool)
+        .await
+        .expect("seed endpoint before repair");
+        sqlx::query(
+            "INSERT INTO tally_companies(\
+               id, endpoint_id, display_name, company_guid, company_number, books_from_yyyymmdd, \
+               identity_confidence, first_observed_at_unix_ms, last_observed_at_unix_ms\
+             ) VALUES ('preserved', 'endpoint', 'Synthetic Preserved', 'preserved-guid', '0', \
+                       '20230401', 'observed', 1, 1)",
+        )
+        .execute(&old.pool)
+        .await
+        .expect("seed company before repair");
+        sqlx::query("DELETE FROM tally_schema_migrations WHERE version = 27")
+            .execute(&old.pool)
+            .await
+            .expect("model pre-v27 mirror");
+        sqlx::raw_sql(MIRROR_MIGRATION_V2)
+            .execute(&old.pool)
+            .await
+            .expect("model legacy bootstrap reopen");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'uq_tally_companies_guid'",
+            )
+            .fetch_one(&old.pool)
+            .await
+            .expect("inspect resurrected GUID-only index"),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 26",
+            )
+            .fetch_one(&old.pool)
+            .await
+            .expect("inspect pre-fix v26 marker"),
+            1
+        );
+        old.pool.close().await;
+
+        let repaired = file_repository(&path).await;
+        repaired
+            .migrate()
+            .await
+            .expect("repair legacy-reopened v26 mirror");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'uq_tally_companies_guid'",
+            )
+            .fetch_one(&repaired.pool)
+            .await
+            .expect("inspect retired GUID-only index"),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_companies WHERE id = 'preserved' AND company_guid = 'preserved-guid'",
+            )
+            .fetch_one(&repaired.pool)
+            .await
+            .expect("inspect preserved company"),
+            1
+        );
+        for (id, number, name, books_from) in [
+            ("parent", "1", "Synthetic Parent", "20240401"),
+            ("split", "2", "Synthetic Split", "20250401"),
+        ] {
+            sqlx::query(
+                "INSERT INTO tally_companies(\
+                   id, endpoint_id, display_name, company_guid, company_number, books_from_yyyymmdd, \
+                   identity_confidence, first_observed_at_unix_ms, last_observed_at_unix_ms\
+                 ) VALUES (?1, 'endpoint', ?2, 'shared-guid', ?3, ?4, 'observed', 1, 1)",
+            )
+            .bind(id)
+            .bind(name)
+            .bind(number)
+            .bind(books_from)
+            .execute(&repaired.pool)
+            .await
+            .expect("insert distinct shared-GUID book");
+        }
+        let duplicate = sqlx::query(
+            "INSERT INTO tally_companies(\
+               id, endpoint_id, display_name, company_guid, company_number, books_from_yyyymmdd, \
+               identity_confidence, first_observed_at_unix_ms, last_observed_at_unix_ms\
+             ) VALUES ('duplicate', 'endpoint', 'Synthetic Parent', 'shared-guid', '1', \
+                       '20240401', 'observed', 1, 1)",
+        )
+        .execute(&repaired.pool)
+        .await
+        .expect_err("composite identity must still reject an exact duplicate");
+        let sqlx::Error::Database(error) = duplicate else {
+            panic!("exact composite duplicate must return a SQLite database error");
+        };
+        assert!(error.is_unique_violation());
+        repaired.pool.close().await;
+
+        let reopened = file_repository(&path).await;
+        reopened.migrate().await.expect("reopen shared-GUID mirror");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_companies WHERE endpoint_id = 'endpoint' AND company_guid = 'shared-guid'",
+            )
+            .fetch_one(&reopened.pool)
+            .await
+            .expect("count shared-GUID books"),
+            2
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 27",
+            )
+            .fetch_one(&reopened.pool)
+            .await
+            .expect("inspect repair marker"),
+            1
+        );
+        reopened.pool.close().await;
     }
 
     fn assert_observed_identity_constraint(error: sqlx::Error) {

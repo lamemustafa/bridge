@@ -1231,3 +1231,25 @@ Do not restart unchanged native checks merely to chase an empty review queue.
 Upstream workflows are design comparisons, not benchmark evidence for Bridge.
 No new cache service, runner purchase or reduction in platform coverage is
 required by these changes.
+
+## Mirror bootstrap migration repair (#225)
+
+`TallyMirrorRepository::migrate()` creates the migration-tracking table before
+checking the existing V2–V4 markers. Each bootstrap migration now runs only when
+its marker is absent, within the existing transaction. Fresh databases still
+apply the historical migrations in order; committed older schemas retain their
+markers and receive the remaining migrations.
+
+V27 removes `uq_tally_companies_guid` if an older Bridge build recreated it after
+V23 retired it. Gating must precede this repair: recreating the GUID-only index
+can fail immediately when two observed split books already share a GUID. The
+composite identity constraint remains in force. No company rows or legacy
+raw-GUID client labels are deleted or migrated; #190 remains separate.
+
+Rollback is a binary-compatibility decision, not an inverse data migration. A
+pre-fix binary can recreate this index or fail to open a shared-GUID mirror.
+Keep a backup made while Bridge is closed before changing binaries, and use a
+build containing the bootstrap fix for continued operation. Do not recreate the
+GUID-only index, delete split-book rows, or remove migration markers as a
+rollback procedure. Restoring a pre-upgrade backup also discards any later local
+changes and requires an explicit operator decision.
