@@ -41,7 +41,7 @@ impl Server {
                 })
             })
             .collect::<Vec<_>>();
-        let truncated = offset.saturating_add(rows.len()) < total;
+        let (truncated, next_offset) = page_boundary(offset, rows.len(), total);
         Ok(ToolOutcome {
             payload: json!({
                 "company": company_json(&company, std::slice::from_ref(&company)),
@@ -50,7 +50,7 @@ impl Server {
                     "from": read.from, "to": read.to, "currency": read.currency,
                     "read_at": read.read_at, "ledgers": rows, "total_ledgers": total,
                     "totals": read.totals, "totals_scope": "all_returned_ledgers_numeric_observations_only",
-                    "offset": offset, "next_offset": truncated.then_some(offset + limit),
+                    "offset": offset, "next_offset": next_offset,
                     "verification": "stable_paired_source_with_company_mode_and_extent_guards",
                     "limitations": ["Not voucher-level reconciliation or an atomic snapshot", "Native empty amounts are not numeric zero", "Includes ledger masters Tally may hide in its screen"],
                 },
@@ -59,5 +59,25 @@ impl Server {
             company_guid: Some(guid.to_string()),
             truncated,
         })
+    }
+}
+
+fn page_boundary(offset: usize, returned: usize, total: usize) -> (bool, Option<usize>) {
+    let Some(next_offset) = offset.checked_add(returned) else {
+        return (false, None);
+    };
+    let truncated = next_offset < total;
+    (truncated, truncated.then_some(next_offset))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::page_boundary;
+
+    #[test]
+    fn maximum_offset_returns_an_empty_page_without_overflowing() {
+        assert_eq!(page_boundary(usize::MAX, 0, 1), (false, None));
+        assert_eq!(page_boundary(0, 2, 3), (true, Some(2)));
+        assert_eq!(page_boundary(2, 1, 3), (false, None));
     }
 }
