@@ -54,8 +54,10 @@ pub(crate) struct SourceDraftEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SourceDraftProposal {
+    #[serde(default, deserialize_with = "deserialize_optional_text")]
     pub(crate) date: Option<String>,
     pub(crate) voucher_type: Option<SourceDraftVoucherType>,
+    #[serde(default, deserialize_with = "deserialize_optional_text")]
     pub(crate) narration: Option<String>,
     pub(crate) notes: String,
     pub(crate) entries: Vec<SourceDraftEntryProposal>,
@@ -73,9 +75,18 @@ pub(crate) enum SourceDraftVoucherType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SourceDraftEntryProposal {
+    #[serde(default, deserialize_with = "deserialize_optional_text")]
     pub(crate) ledger: Option<String>,
     pub(crate) side: Option<SourceDraftSide>,
+    #[serde(default, deserialize_with = "deserialize_optional_text")]
     pub(crate) amount: Option<String>,
+}
+
+fn deserialize_optional_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(|value| value.filter(|text| !text.is_empty()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +114,7 @@ pub(super) fn error(code: &'static str) -> SourceDraftCommandError {
             "Choose a smaller supported local file.",
         ),
         "source_draft_xml_shape_unsupported" => (
-            "The selected XML is not a supported source export.",
+            "The selected XML is not a supported voucher-import document.",
             "Choose the original source XML without modifying it.",
         ),
         _ => (

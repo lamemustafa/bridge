@@ -44,19 +44,13 @@ pub(super) async fn save_path() -> CommandResult<Option<PathBuf>> {
     tokio::task::spawn_blocking(|| {
         let Some(path) = rfd::FileDialog::new()
             .set_title("Save Bridge source draft")
-            .add_filter("Bridge source draft", &["bridge-draft.json"])
+            .add_filter("Bridge source draft", &["json"])
             .set_file_name("source.bridge-draft.json")
             .save_file()
         else {
             return Ok(None);
         };
-        let filename = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| error("source_draft_filename_invalid"))?;
-        if !filename.ends_with(".bridge-draft.json") {
-            return Err(error("source_draft_extension_invalid"));
-        }
+        validate_save_destination(&path)?;
         Ok(Some(path))
     })
     .await
@@ -130,6 +124,18 @@ pub(super) fn write_private_file(path: &Path, bytes: &[u8]) -> CommandResult<()>
             .map_err(|_| error("source_draft_destination_unavailable"))?;
     }
     Ok(())
+}
+
+pub(super) fn validate_save_destination(path: &Path) -> CommandResult<()> {
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| error("source_draft_filename_invalid"))?;
+    if filename.ends_with(".bridge-draft.json") {
+        Ok(())
+    } else {
+        Err(error("source_draft_extension_invalid"))
+    }
 }
 
 fn read_regular_file(path: &Path, max_bytes: usize) -> CommandResult<Vec<u8>> {

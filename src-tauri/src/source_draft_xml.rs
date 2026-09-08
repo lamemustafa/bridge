@@ -1,7 +1,7 @@
-//! Strict, bounded parsing for a locally chosen historical voucher export.
+//! Strict, bounded parsing for a locally chosen historical voucher-import document.
 //!
 //! This module preserves source text for review. It does not construct a Tally
-//! request, derive accounting sides, or make a source export executable.
+//! request, derive accounting sides, or make a source document executable.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -475,6 +475,18 @@ struct WorkingEntry {
 mod tests {
     use super::*;
     const XML: &str = "<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE><VOUCHER REMOTEID=\"id&amp;1\" VCHTYPE=\"Receipt\"><DATE>20260901</DATE><NARRATION>Party &amp; Co</NARRATION><VOUCHERNUMBER>1</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>-1.00</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>";
+    #[test]
+    fn captured_tally_collection_export_is_not_a_voucher_import_document() {
+        // This real captured response is a different document contract from the
+        // user-authored IMPORTDATA candidates supported by local preparation.
+        let captured = include_bytes!(
+            "../crates/bridge-tally-protocol/tests/fixtures/unit_a_vouchers_wildcard_live.xml"
+        );
+        assert_eq!(
+            parse_source_xml(captured, "captured-collection.xml".into()),
+            Err(SourceXmlError::UnsupportedShape)
+        );
+    }
     #[test]
     fn preserves_raw_source_and_marks_omitted_fields() {
         let parsed = parse_source_xml(XML.as_bytes(), "source.xml".into()).unwrap();
