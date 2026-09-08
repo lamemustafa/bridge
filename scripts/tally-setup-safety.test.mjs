@@ -168,8 +168,8 @@ test("child Tally reads keep client selection locked until every invocation sett
   assert.match(companySetup, /bootstrapDirectCompany\(company\.name\)\} disabled=\{savedCompanySelectionLocked\}/);
   assert.match(companySetup, /discoverUntrustedCompanies\(\)\} disabled=\{savedCompanySelectionLocked\}/);
   assert.match(companySetup, /saveReviewedTallySetup\(\)\} disabled=\{savedCompanySelectionLocked \|\| !passport/);
-  assert.match(frontend, /onClick=\{checkTally\} disabled=\{tallyAction !== null \|\| childTallyReadCount > 0\}/);
-  assert.match(frontend, /const endpointSettingsLockMessage = snapshotActive[\s\S]*?childTallyReadCount > 0[\s\S]*?Tally read is in progress/);
+  assert.match(frontend, /onClick=\{checkTally\} disabled=\{tallyAction !== null \|\| endpointSettingsLockMessage !== null\}/);
+  assert.match(frontend, /const endpointSettingsLockMessage = snapshotStartOutcomeUnknown[\s\S]*?snapshotActive \|\| snapshotTransitionPending[\s\S]*?childTallyReadCount > 0[\s\S]*?Tally read is in progress/);
   assert.match(frontend, /settingsLocked=\{endpointSettingsLockMessage !== null\}\s*settingsLockMessage=\{endpointSettingsLockMessage\}/);
   assert.match(readiness, /settingsLockMessage: string \| null;/);
   assert.match(readiness, /\{settingsLockMessage && <p role="status">\{settingsLockMessage\}<\/p>\}/);
@@ -201,7 +201,7 @@ test("party ledger export disables the concurrent outstandings refresh through t
   assert.match(switcherManage, /disabled=\{selectionLocked\}/);
   const nav = frontend.slice(frontend.indexOf('<nav aria-label="Bridge navigation">'), frontend.indexOf("</nav>"));
   assert.match(frontend, /const shellNavigationLocked = childTallyReadCount > 0 \|\| journalActionBusy;/);
-  assert.match(nav, /<button aria-current=\{view === "settings" \? "page" : undefined\}[\s\S]*?disabled=\{shellNavigationLocked\}/);
+  assert.match(nav, /<button aria-current=\{view === "settings" \? "page" : undefined\}[\s\S]*?disabled=\{shellNavigationLocked \|\| snapshotPostingBlocked\}/);
 });
 
 test("a ledger-master export notice survives unmounting the outstandings screen", async () => {

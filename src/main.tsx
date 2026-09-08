@@ -12,6 +12,7 @@ import {
   tallyCompanyKey,
   tallyReadinessState,
 } from "./tally-company-selection";
+import { recoverSnapshotJob } from "./snapshot-job-recovery";
 import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
 import {
@@ -523,18 +524,20 @@ function App() {
     }
   }, []);
 
-  const refreshRecentSnapshots = React.useCallback(async () => {
+  const refreshRecentSnapshots = React.useCallback(async (knownRunId: string | null = snapshotOutcomeUnknownRunId) => {
+    const selectionVersion = snapshotSelectionVersion.current;
     try {
       const runs = await invoke<SnapshotJobStatus[]>("tally_recent_snapshot_runs");
+      if (selectionVersion !== snapshotSelectionVersion.current) return null;
       setRecentSnapshotRuns(runs);
-      setSnapshotJob((current) => current ? runs.find((run) => run.run_id === current.run_id) ?? current : null);
+      setSnapshotJob((current) => recoverSnapshotJob(current, runs, knownRunId));
       setInspectedSnapshotJob((current) => current ? runs.find((run) => run.run_id === current.run_id) ?? current : null);
       return runs;
     } catch (error) {
       setSnapshotError(toOperatorError(error));
       return null;
     }
-  }, []);
+  }, [snapshotOutcomeUnknownRunId]);
 
   const refreshPersistedCompanyProfiles = React.useCallback(async () => {
     const loadVersion = persistedCompanyProfileLoadVersion.current + 1;
@@ -644,7 +647,9 @@ function App() {
     || snapshotStartOutcomeUnknown
     || tallyAction !== null
     || childTallyReadCount > 0;
-  const endpointSettingsLockMessage = snapshotActive
+  const endpointSettingsLockMessage = snapshotStartOutcomeUnknown
+    ? "Endpoint settings are locked until the unknown snapshot outcome is resolved in local evidence."
+    : snapshotActive || snapshotTransitionPending
     ? "Endpoint settings are locked while the active snapshot continues against its reviewed source."
     : childTallyReadCount > 0
     ? "Endpoint settings are locked while a Tally read is in progress."
@@ -838,16 +843,19 @@ function App() {
   }
 
   function updateTallyHost(host: string) {
+    if (endpointSettingsLockMessage) return;
     setConfig((current) => ({ ...current, host }));
     invalidateTallyResults();
   }
 
   function updateTallyPort(port: number) {
+    if (endpointSettingsLockMessage) return;
     setConfig((current) => ({ ...current, port }));
     invalidateTallyResults();
   }
 
   async function checkTally() {
+    if (endpointSettingsLockMessage) return;
     const resultsVersion = tallyResultsVersion.current;
     setTallyAction("probe");
     setDashboardError(null);
@@ -1302,8 +1310,8 @@ function App() {
       setSnapshotJob(null);
       setInspectedSnapshotJob(null);
       setSnapshotOutcomeUnknownRunId(null);
-      await refreshRecentSnapshots();
       setSnapshotStartOutcomeUnknown(true);
+      await refreshRecentSnapshots(null);
       setSnapshotError(`Start outcome was not confirmed. Recent durable runs were refreshed and a new start is locked until you review them. ${toErrorMessage(error)}`);
     } finally {
       setTallyAction(null);
@@ -1347,8 +1355,8 @@ function App() {
       setSnapshotJob(null);
       setInspectedSnapshotJob(null);
       setSnapshotOutcomeUnknownRunId(runId);
-      await refreshRecentSnapshots();
       setSnapshotStartOutcomeUnknown(true);
+      await refreshRecentSnapshots(runId);
       setSnapshotError(`Resume outcome was not confirmed. Run status was refreshed before another resume is allowed. ${toErrorMessage(error)}`);
     } finally {
       setTallyAction(null);
@@ -1556,7 +1564,7 @@ function App() {
           <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("companies")}>
             <Building2 size={18} /> Companies
           </button>
-          <button aria-current={view === "settings" ? "page" : undefined} className={view === "settings" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("settings")}>
+          <button aria-current={view === "settings" ? "page" : undefined} className={view === "settings" ? "active" : ""} disabled={shellNavigationLocked || snapshotPostingBlocked} aria-describedby={shellNavigationDescription} onClick={() => setView("settings")}>
             <Settings2 size={18} /> Settings
           </button>
         </nav>
@@ -1614,7 +1622,7 @@ function App() {
             </button>
           )}
           {view === "dashboard" && (
-            <button className="primary" onClick={checkTally} disabled={tallyAction !== null || childTallyReadCount > 0}>
+            <button className="primary" onClick={checkTally} disabled={tallyAction !== null || endpointSettingsLockMessage !== null}>
               <Cable size={18} />
               {tallyAction === "probe" ? "Checking endpoint..." : "Check Tally Endpoint"}
             </button>
@@ -1896,7 +1904,7 @@ function App() {
                       : `Set the Tally host and port in Settings, then check the connection before choosing a company.`}
                   </p>
                 </div>
-                <button className="secondary-action" type="button" onClick={() => setView("settings")} disabled={childTallyReadCount > 0}>
+                <button className="secondary-action" type="button" onClick={() => setView("settings")} disabled={endpointSettingsLockMessage !== null}>
                   {status?.reachable && passport ? "Change connection" : "Open Settings"}
                 </button>
               </div>
