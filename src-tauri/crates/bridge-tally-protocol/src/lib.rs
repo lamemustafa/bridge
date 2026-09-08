@@ -26,6 +26,7 @@ pub mod jsonex;
 #[cfg(feature = "jsonex-request-builder")]
 pub mod jsonex_request;
 pub mod native_outstandings;
+pub mod native_trial_balance;
 /// The legacy voucher-scan outstandings path: date/AlterID-partitioned
 /// wildcard voucher fetch, segment/witness completeness proofs, and bill
 /// computation from voucher allocations. Superseded by `native_outstandings`,
@@ -3584,7 +3585,10 @@ pub fn master_guid_belongs_to_company(master_guid: &str, company_guid: &str) -> 
             .is_some_and(|master_id| !master_id.is_empty())
 }
 
-fn native_ledger_guid_has_company_prefix(guid: &str, expected_company_guid: &str) -> bool {
+pub(crate) fn native_ledger_guid_has_company_prefix(
+    guid: &str,
+    expected_company_guid: &str,
+) -> bool {
     let Some(remainder) = guid.get(..expected_company_guid.len()) else {
         return false;
     };

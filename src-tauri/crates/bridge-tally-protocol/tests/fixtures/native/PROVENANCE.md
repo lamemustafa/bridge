@@ -1,5 +1,26 @@
 # Native fixture byte provenance
 
+## Native Trial Balance captures — 2026-09-08
+
+`trial_balance_known_lab.xml` and `trial_balance_opening_year.xml` are
+byte-exact, synthetic `List of Ledgers` collection responses captured from a
+read-only native Trial Balance experiment. The first has six ledger rows and
+records present-empty native Amount elements; the second has eight rows and
+contains genuine non-zero brought-forward openings. Both envelopes carry
+`STATUS=1`, their row GUIDs identify the selected synthetic company, and the
+captured response includes the native `TBALOPENING`, `DEBITTOTALS`,
+`CREDITTOTALS`, and `TBALCLOSING` fields.
+
+| Fixture | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `trial_balance_known_lab.xml` | 6,313 | `79ec1ca08428cade945e18136bf04ec67213935e3e229814343c42e2bf64bb4d` |
+| `trial_balance_opening_year.xml` | 7,919 | `be3d72463d9840ad1553e2b3c7b7f15a041646e94c818b39efc73ae4694ccfef` |
+
+The captures were screened before commit for customer identifiers and contact
+fields. They are parser evidence only: the production request fetches the
+smaller Trial Balance field set, so its request/response pairing requires its
+own live qualification.
+
 The following files were normalised by Git on their first commit. Their original
 captured bytes are unrecoverable: parse-level content is believed intact, but
 byte-level fidelity is not. Each is pending a future re-capture from live Tally.
