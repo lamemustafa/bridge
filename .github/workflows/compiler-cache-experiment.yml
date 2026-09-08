@@ -1,8 +1,8 @@
-name: Compiler cache build-script context
+name: Compiler cache deterministic context
 
 on:
   push:
-    branches: [tapish-codex/compiler-cache-codegen-20260909]
+    branches: [tapish-codex/compiler-cache-determinism-20260909]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,7 @@ jobs:
   measure:
     name: Compiler cache (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +54,7 @@ jobs:
           tool: sccache@0.17.0
           fallback: none
       - name: Measure reuse and changed-input correctness
+        timeout-minutes: 80
         shell: bash
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then

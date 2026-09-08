@@ -1,4 +1,4 @@
-"""Branch-only build-script context experiment; restore application inputs on exit."""
+"""Branch-only deterministic context experiment; restore application inputs on exit."""
 import hashlib
 import importlib.util
 import json
@@ -65,6 +65,10 @@ def build(name, cached, require_correct=True):
     match = re.search(r"const UNIT_DATA = (\[.*?\]);", report, re.S)
     assert match, "missing compiler timing units"
     units = json.loads(match.group(1))
+    contexts = list((root / "src-tauri/target/release/build").glob("bridge-*/out/tauri-build-context.rs"))
+    assert len(contexts) == 1, "missing or ambiguous generated context"
+    context_bytes = contexts[0].read_bytes()
+    (output / (name + "-context.rs")).write_bytes(context_bytes)
     stats = None
     if cached:
         stats = json.loads(subprocess.check_output(["sccache", "--show-stats", "--stats-format", "json"], env=env))
@@ -74,6 +78,7 @@ def build(name, cached, require_correct=True):
     expected = {"title": json.loads(config.read_text())["app"]["windows"][0]["title"],
                 "asset_sha256": hashlib.sha256(asset.read_bytes()).hexdigest(), "source_value": source_value}
     row = {"sample": name, "cached": cached, "command_seconds": seconds,
+           "context_sha256": hashlib.sha256(context_bytes).hexdigest(),
            "inputs": {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
                       for path in (manifest, library, config, build_script, lockfile, asset, probe)},
            "bridge_units": [unit for unit in units if unit["name"] == "bridge"],
@@ -89,13 +94,21 @@ def build(name, cached, require_correct=True):
 try:
     execute(["rustc", "--version", "--verbose"], "rustc-version.txt")
     execute(["sccache", "--version"], "sccache-version.txt")
+    execute(["cargo", "fetch", "--locked", "--manifest-path", str(manifest)], "candidate-fetch.log")
+    patch_spec = importlib.util.spec_from_file_location("codegen_patch", root / "scripts/prepare-codegen-determinism.py")
+    codegen_patch = importlib.util.module_from_spec(patch_spec)
+    patch_spec.loader.exec_module(codegen_patch)
+    copied_codegen, locked_codegen = codegen_patch.prepare(root, output)
     # All samples use the same rlib prerequisite; the experiment isolates caching.
     old = b'crate-type = ["staticlib", "cdylib", "rlib"]'
     assert originals[manifest].count(old) == 1
     candidate_manifest = originals[manifest].replace(old, b'crate-type = ["rlib"]')
     old_build = b'tauri-build = { version = "2", features = [] }'
     assert candidate_manifest.count(old_build) == 1
-    manifest.write_bytes(candidate_manifest.replace(old_build, b'tauri-build = { version = "2", features = ["codegen"] }'))
+    assert b"[patch.crates-io]" not in candidate_manifest
+    candidate_manifest = candidate_manifest.replace(old_build, b'tauri-build = { version = "2", features = ["codegen"] }')
+    manifest.write_bytes(candidate_manifest + (
+        '\n[patch.crates-io]\ntauri-codegen = { path = ' + json.dumps(copied_codegen.as_posix()) + ' }\n').encode())
     # Enable only the two already-locked optional dependencies of tauri-build.
     # The subsequent --locked metadata check refuses any further lockfile change.
     lock = originals[lockfile].decode()
@@ -104,7 +117,15 @@ try:
     block = lock[start:end]
     assert ' "quote",' not in block and ' "tauri-codegen",' not in block
     changed_block = block.replace(' "json-patch",\n', ' "json-patch",\n "quote",\n').replace(' "tauri-utils",\n', ' "tauri-codegen",\n "tauri-utils",\n')
-    lockfile.write_text(lock[:start] + changed_block + lock[end:])
+    lock = lock[:start] + changed_block + lock[end:]
+    start = lock.index('name = "tauri-codegen"\n')
+    end = lock.index('[[package]]', start)
+    block = lock[start:end]
+    for key in ("source", "checksum"):
+        line = f'{key} = "{locked_codegen[key]}"\n'
+        assert block.count(line) == 1
+        block = block.replace(line, "")
+    lockfile.write_text(lock[:start] + block + lock[end:])
     build_script.write_text('''fn main() {
     tauri_build::try_build(
         tauri_build::Attributes::new().codegen(tauri_build::CodegenContext::new()),
