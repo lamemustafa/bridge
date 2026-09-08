@@ -15,11 +15,21 @@ As of 8 September 2026, no installer is published: the public `v0.1.0`
 release has no downloadable assets. Check [GitHub Releases](https://github.com/lamemustafa/bridge/releases)
 for future packages. For source use, the contributor quick start below builds
 the desktop app; to run the MCP server, follow the [source MCP setup](./docs/agent/README.md)
-and use the [installation guide](./docs/agent/INSTALL.md) when an unsigned
-preview becomes available.
+When a release asset is published, use the [installation guide](./docs/agent/INSTALL.md)
+for its package-specific steps.
 
-The supported first result is: connect to local Tally, list the loaded
-companies, then request receivables or payables for a selected company.
+Before requesting financial data through an MCP client, note that the selected
+Tally result is sent to that client's AI provider and may include company
+identity, party or open-bill details, and amounts. Source installations default
+to `BRIDGE_AGENT_REDACTION=none`; set it to `mask_parties` or `drop_narration`
+before launch when that better fits the workflow. These settings mask party
+names or drop narration; they do not remove amounts. The package installation
+settings expose the same choices.
+
+The supported first result is available after connecting to local Tally and
+listing the loaded companies, then selecting a company whose verified base
+currency is INR before requesting receivables or payables. Bridge refuses the
+financial read when Tally cannot establish that INR prerequisite.
 
 For contributors, use the setup and development path below.
 

@@ -27,6 +27,8 @@ here. After setup, run the smallest relevant check for the files you changed,
 then the required checks on the final candidate:
 
 ```text
+corepack pnpm test
+corepack pnpm run cargo:test
 corepack pnpm run build
 corepack pnpm run cargo:check
 ```
