@@ -72,12 +72,23 @@ impl Server {
         &self,
         args: &Value,
     ) -> Result<ToolOutcome, ToolFailure> {
+        self.post_import_checked(args, None).await
+    }
+
+    pub(in crate::agent) async fn post_import_checked(
+        &self,
+        args: &Value,
+        expected_sha256: Option<&str>,
+    ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
         let snapshot = self
             .latest_import_snapshot(batch_id)?
             .ok_or_else(|| "import_batch_not_found".to_string())?;
-        let line = snapshot.batch;
+        if expected_sha256.is_some_and(|expected| snapshot.batch.sha256 != expected) {
+            return Err("import_batch_changed".to_string().into());
+        }
+        let line = snapshot.batch.clone();
         if !batch_guid_matches(&line.company_guid, guid) {
             return Err("import_batch_company_mismatch".to_string().into());
         }
@@ -283,6 +294,51 @@ impl Server {
         }
     }
 
+    /// Reconciliation is read-only. Unlike `post_import`, it never reaches the
+    /// approval dialog or dispatch path when a concurrent history change means
+    /// there is no durable attempt to reconcile.
+    pub(in crate::agent) async fn reconcile_import(
+        &self,
+        args: &Value,
+        expected_sha256: &str,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        let batch_id = required_string(args, "batch_id")?;
+        let snapshot = {
+            // An empty journal cannot rule out another process's pre-intent
+            // admission. Observe it only while that dispatch lane is idle.
+            let _lease = dispatch_lease::acquire_observation(&self.settings.endpoint)?;
+            self.latest_import_snapshot(batch_id)?
+                .ok_or_else(|| "import_batch_not_found".to_string())?
+        };
+        if snapshot.batch.sha256 != expected_sha256 {
+            return Err("import_batch_changed".to_string().into());
+        }
+        if !snapshot.dispatched {
+            let origin = super::super::canonical_loopback_origin(&self.settings.endpoint)
+                .map_err(|_| "host_setting_invalid".to_string())?;
+            if snapshot.batch.endpoint_origin.as_deref() != Some(origin.as_str()) {
+                return Err("import_post_endpoint_mismatch".to_string().into());
+            }
+            return Err("import_not_dispatched".to_string().into());
+        }
+        self.reconcile_dispatched_import(args, snapshot).await
+    }
+
+    async fn reconcile_dispatched_import(
+        &self,
+        args: &Value,
+        snapshot: ledger::BatchSnapshot,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        let guid = required_string(args, "company_guid")?;
+        if !batch_guid_matches(&snapshot.batch.company_guid, guid) {
+            return Err("import_batch_company_mismatch".to_string().into());
+        }
+        // Retain batch and endpoint integrity without applying approval-only
+        // display restrictions or constructing an approval request.
+        let _ = admit_saved_journal_integrity(&snapshot.batch, &self.settings.endpoint)?;
+        self.verify_import(args).await
+    }
+
     pub(super) fn post_failure_attempt_observation(
         &self,
         batch_id: &str,
@@ -301,7 +357,7 @@ impl Server {
         if snapshot.batch.endpoint_origin.as_deref() != Some(origin.as_str()) {
             return None;
         }
-        let _lease = dispatch_lease::acquire(&self.settings.endpoint).ok()?;
+        let _lease = dispatch_lease::acquire_observation(&self.settings.endpoint).ok()?;
         self.latest_import_snapshot(batch_id)
             .ok()
             .flatten()
@@ -455,7 +511,7 @@ fn recheck_import_admission(
     Ok(())
 }
 
-fn require_native_numbering(voucher: &ImportVoucher) -> Result<(), String> {
+pub(super) fn require_native_numbering(voucher: &ImportVoucher) -> Result<(), String> {
     if voucher.voucher_number.is_some() {
         return Err("import_post_numbered_journal_unsupported".into());
     }

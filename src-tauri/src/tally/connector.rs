@@ -90,6 +90,10 @@ impl RuntimeTallyConnector {
         self.cancellation.cancel();
     }
 
+    pub(crate) fn endpoint(&self) -> &TallyConfig {
+        &self.config
+    }
+
     /// Records the exact profile a snapshot lifecycle probe just observed. This
     /// is connector-local run evidence, not the runtime's interactive-review
     /// cache, and supplies every core extraction until the next fresh probe.

@@ -12,6 +12,7 @@ import {
   tallyCompanyKey,
   tallyReadinessState,
 } from "./tally-company-selection";
+import { recoverSnapshotJob } from "./snapshot-job-recovery";
 import { classifyTallyError } from "./tally-error-copy";
 import { TallyReadinessFlow } from "./TallyReadinessFlow";
 import {
@@ -36,6 +37,7 @@ import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
+import { JournalPostingScreen } from "./JournalPostingScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import "./styles.css";
 
@@ -277,7 +279,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "companies" | "settings" | "gst" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "companies" | "settings" | "journal" | "gst" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -292,6 +294,7 @@ const VIEW_TITLES: Record<View, string> = {
   outstandings: "Overview",
   companies: "Companies",
   settings: "Settings",
+  journal: "Review Journal",
   gst: "GST return readiness",
   dsc: "DSC token",
   documents: "Documents",
@@ -463,9 +466,11 @@ function App() {
   const [mirrorExplorer, setMirrorExplorer] = React.useState<MirrorExplorerPage | null>(null);
   const [mirrorExplorerError, setMirrorExplorerError] = React.useState<OperatorError | null>(null);
   const [snapshotJob, setSnapshotJob] = React.useState<SnapshotJobStatus | null>(null);
+  const [inspectedSnapshotJob, setInspectedSnapshotJob] = React.useState<SnapshotJobStatus | null>(null);
   const [recentSnapshotRuns, setRecentSnapshotRuns] = React.useState<SnapshotJobStatus[]>([]);
   const [snapshotError, setSnapshotError] = React.useState<OperatorError | null>(null);
   const [snapshotStartOutcomeUnknown, setSnapshotStartOutcomeUnknown] = React.useState(false);
+  const [snapshotOutcomeUnknownRunId, setSnapshotOutcomeUnknownRunId] = React.useState<string | null>(null);
   const [dashboardError, setDashboardError] = React.useState<OperatorError | null>(null);
   const [gstCompany, setGstCompany] = React.useState("");
   const [gstFinancialYear, setGstFinancialYear] = React.useState(currentFinancialYear.label);
@@ -485,6 +490,8 @@ function App() {
   );
   const [busy, setBusy] = React.useState(false);
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
+  const snapshotTransitionPending = tallyAction === "start" || tallyAction === "resume";
+  const [journalActionBusy, setJournalActionBusy] = React.useState(false);
   const tallyResultsVersion = React.useRef(0);
   const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
@@ -502,9 +509,10 @@ function App() {
     setEvidenceDrawerOpen(true);
   }, [evidenceDrawerFocusLifecycle]);
   const closeEvidenceDrawer = React.useCallback(() => {
+    if (snapshotTransitionPending) return;
     setEvidenceDrawerOpen(false);
     setEvidenceDrawerRestorePending(true);
-  }, []);
+  }, [snapshotTransitionPending]);
 
   const refreshRuntime = React.useCallback(async () => {
     try {
@@ -516,15 +524,20 @@ function App() {
     }
   }, []);
 
-  const refreshRecentSnapshots = React.useCallback(async () => {
+  const refreshRecentSnapshots = React.useCallback(async (knownRunId: string | null = snapshotOutcomeUnknownRunId) => {
+    const selectionVersion = snapshotSelectionVersion.current;
     try {
       const runs = await invoke<SnapshotJobStatus[]>("tally_recent_snapshot_runs");
+      if (selectionVersion !== snapshotSelectionVersion.current) return null;
       setRecentSnapshotRuns(runs);
-      setSnapshotJob((current) => current ? runs.find((run) => run.run_id === current.run_id) ?? current : null);
+      setSnapshotJob((current) => recoverSnapshotJob(current, runs, knownRunId));
+      setInspectedSnapshotJob((current) => current ? runs.find((run) => run.run_id === current.run_id) ?? current : null);
+      return runs;
     } catch (error) {
       setSnapshotError(toOperatorError(error));
+      return null;
     }
-  }, []);
+  }, [snapshotOutcomeUnknownRunId]);
 
   const refreshPersistedCompanyProfiles = React.useCallback(async () => {
     const loadVersion = persistedCompanyProfileLoadVersion.current + 1;
@@ -629,15 +642,24 @@ function App() {
   const snapshotActive = !!snapshotJob
     && !snapshotJob.requires_resume
     && !["completed", "partial", "failed", "cancelled"].includes(snapshotJob.phase);
+  const snapshotPostingBlocked = snapshotActive || snapshotStartOutcomeUnknown || snapshotTransitionPending;
   const savedCompanySelectionLocked = snapshotActive
     || snapshotStartOutcomeUnknown
     || tallyAction !== null
     || childTallyReadCount > 0;
-  const endpointSettingsLockMessage = snapshotActive
+  const endpointSettingsLockMessage = snapshotStartOutcomeUnknown
+    ? "Endpoint settings are locked until the unknown snapshot outcome is resolved in local evidence."
+    : snapshotActive || snapshotTransitionPending
     ? "Endpoint settings are locked while the active snapshot continues against its reviewed source."
     : childTallyReadCount > 0
     ? "Endpoint settings are locked while a Tally read is in progress."
     : null;
+  const shellNavigationLocked = childTallyReadCount > 0 || journalActionBusy;
+  const shellNavigationDescription = journalActionBusy
+    ? "journal-action-busy-note"
+    : childTallyReadCount > 0
+      ? "active-tally-read-note"
+      : undefined;
 
   React.useEffect(() => {
     if (!tallyAction && !snapshotActive) {
@@ -761,8 +783,10 @@ function App() {
       clearSnapshotState: () => {
         snapshotSelectionVersion.current += 1;
         setSnapshotJob(null);
+        setInspectedSnapshotJob(null);
         setSnapshotError(null);
         setSnapshotStartOutcomeUnknown(false);
+        setSnapshotOutcomeUnknownRunId(null);
       },
       invalidateTallyResults: () => {
         tallyResultsVersion.current += 1;
@@ -819,16 +843,19 @@ function App() {
   }
 
   function updateTallyHost(host: string) {
+    if (endpointSettingsLockMessage) return;
     setConfig((current) => ({ ...current, host }));
     invalidateTallyResults();
   }
 
   function updateTallyPort(port: number) {
+    if (endpointSettingsLockMessage) return;
     setConfig((current) => ({ ...current, port }));
     invalidateTallyResults();
   }
 
   async function checkTally() {
+    if (endpointSettingsLockMessage) return;
     const resultsVersion = tallyResultsVersion.current;
     setTallyAction("probe");
     setDashboardError(null);
@@ -1270,16 +1297,21 @@ function App() {
       });
       if (selectionVersion === snapshotSelectionVersion.current) {
         setSnapshotJob(job);
+        setInspectedSnapshotJob(null);
         setRecentSnapshotRuns((current) => [
           job,
           ...current.filter((run) => run.run_id !== job.run_id),
         ]);
         setSnapshotStartOutcomeUnknown(false);
+        setSnapshotOutcomeUnknownRunId(null);
       }
       void refreshRecentSnapshots();
     } catch (error) {
-      await refreshRecentSnapshots();
+      setSnapshotJob(null);
+      setInspectedSnapshotJob(null);
+      setSnapshotOutcomeUnknownRunId(null);
       setSnapshotStartOutcomeUnknown(true);
+      await refreshRecentSnapshots(null);
       setSnapshotError(`Start outcome was not confirmed. Recent durable runs were refreshed and a new start is locked until you review them. ${toErrorMessage(error)}`);
     } finally {
       setTallyAction(null);
@@ -1314,10 +1346,17 @@ function App() {
       const job = await invoke<SnapshotJobStatus>("resume_tally_core_snapshot", {
         request: { config, run_id: runId },
       });
-      if (selectionVersion === snapshotSelectionVersion.current) setSnapshotJob(job);
+      if (selectionVersion === snapshotSelectionVersion.current) {
+        setSnapshotJob(job);
+        setInspectedSnapshotJob(null);
+      }
       void refreshRecentSnapshots();
     } catch (error) {
-      await refreshRecentSnapshots();
+      setSnapshotJob(null);
+      setInspectedSnapshotJob(null);
+      setSnapshotOutcomeUnknownRunId(runId);
+      setSnapshotStartOutcomeUnknown(true);
+      await refreshRecentSnapshots(runId);
       setSnapshotError(`Resume outcome was not confirmed. Run status was refreshed before another resume is allowed. ${toErrorMessage(error)}`);
     } finally {
       setTallyAction(null);
@@ -1446,7 +1485,9 @@ function App() {
     : [];
   const latestProof = syncEvidence?.latest_proofs[0];
   const mirrorTruthState = latestProof?.verification_state ?? "unknown";
-  const inspectedJob = snapshotJob?.mirror_company_id === selectedCompanyRecord?.mirror_company_id ? snapshotJob : null;
+  const inspectedJob = (inspectedSnapshotJob ?? snapshotJob)?.mirror_company_id === selectedCompanyRecord?.mirror_company_id
+    ? inspectedSnapshotJob ?? snapshotJob
+    : null;
   const latestDurableJob = inspectedJob
     && !inspectedJob.requires_resume
     && !["completed", "partial", "failed", "cancelled"].includes(inspectedJob.phase)
@@ -1514,21 +1555,24 @@ function App() {
           <button
             aria-current={view === "outstandings" ? "page" : undefined}
             className={view === "outstandings" ? "active" : ""}
-            disabled={childTallyReadCount > 0}
-            aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined}
+            disabled={shellNavigationLocked}
+            aria-describedby={shellNavigationDescription}
             onClick={() => setView("outstandings")}
           >
             <Cable size={18} /> Overview
           </button>
-          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("companies")}>
+          <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("companies")}>
             <Building2 size={18} /> Companies
           </button>
-          <button aria-current={view === "settings" ? "page" : undefined} className={view === "settings" ? "active" : ""} disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("settings")}>
+          <button aria-current={view === "settings" ? "page" : undefined} className={view === "settings" ? "active" : ""} disabled={shellNavigationLocked || snapshotPostingBlocked} aria-describedby={shellNavigationDescription} onClick={() => setView("settings")}>
             <Settings2 size={18} /> Settings
           </button>
         </nav>
         {childTallyReadCount > 0 && (
           <p className="future-sections-note" id="active-tally-read-note" role="status">A Tally read is still in progress. Wait before opening another live read.</p>
+        )}
+        {journalActionBusy && (
+          <p className="future-sections-note" id="journal-action-busy-note" role="status">A Journal action is still in progress. Wait for Bridge to finish before leaving this review.</p>
         )}
       </aside>
 
@@ -1543,7 +1587,7 @@ function App() {
           clients={clientSwitcherClients}
           selectedClientKey={selectedCompany}
           activeView={view}
-          selectionLocked={savedCompanySelectionLocked}
+          selectionLocked={savedCompanySelectionLocked || journalActionBusy}
           endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
           loadError={persistedCompanyProfileError ? toErrorMessage(persistedCompanyProfileError) : null}
@@ -1556,7 +1600,7 @@ function App() {
         />
         <header>
           <div>
-            {view !== "companies" && view !== "settings" && (
+            {view !== "companies" && view !== "settings" && view !== "journal" && (
               <p className="eyebrow">
                 {view === "outstandings"
                   ? "Receivables and payables"
@@ -1567,8 +1611,18 @@ function App() {
             )}
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
+          {(view === "dashboard" || view === "outstandings") && (
+            <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotPostingBlocked} onClick={() => setView("journal")}>
+              <FileText size={18} aria-hidden="true" /> Review Journal file
+            </button>
+          )}
+          {view === "journal" && (
+            <button className="secondary-action" type="button" disabled={journalActionBusy} aria-describedby={journalActionBusy ? "journal-action-busy-note" : undefined} onClick={() => setView("outstandings")}>
+              Back to Overview
+            </button>
+          )}
           {view === "dashboard" && (
-            <button className="primary" onClick={checkTally} disabled={tallyAction !== null || childTallyReadCount > 0}>
+            <button className="primary" onClick={checkTally} disabled={tallyAction !== null || endpointSettingsLockMessage !== null}>
               <Cable size={18} />
               {tallyAction === "probe" ? "Checking endpoint..." : "Check Tally Endpoint"}
             </button>
@@ -1610,6 +1664,8 @@ function App() {
             <button
               className="primary"
               type="button"
+              disabled={shellNavigationLocked}
+              aria-describedby={shellNavigationDescription}
               onClick={() => {
                 setView("companies");
               }}
@@ -1803,6 +1859,12 @@ function App() {
           </ErrorBoundary>
         )}
 
+        {view === "journal" && (
+          <ErrorBoundary key="journal" label="Review Journal">
+            <JournalPostingScreen config={config} postingBlocked={snapshotPostingBlocked} onBusyChange={setJournalActionBusy} />
+          </ErrorBoundary>
+        )}
+
         {view === "outstandings" && (
           <ErrorBoundary key="outstandings" label="Aged outstandings">
           <OutstandingsScreen
@@ -1842,7 +1904,7 @@ function App() {
                       : `Set the Tally host and port in Settings, then check the connection before choosing a company.`}
                   </p>
                 </div>
-                <button className="secondary-action" type="button" onClick={() => setView("settings")} disabled={childTallyReadCount > 0}>
+                <button className="secondary-action" type="button" onClick={() => setView("settings")} disabled={endpointSettingsLockMessage !== null}>
                   {status?.reachable && passport ? "Change connection" : "Open Settings"}
                 </button>
               </div>
@@ -1869,7 +1931,7 @@ function App() {
               <section className="setup-company" id="company-profile" aria-labelledby="company-profile-heading">
                 <div>
                   <h2 id="company-profile-heading">Choose a company</h2>
-                  <p>Choose the company that is open in Tally. Bridge only reads from Tally.</p>
+                  <p>Choose the company that is open in Tally. Bridge reads for setup and review; posting a Journal always requires your explicit approval.</p>
                 </div>
                 {companyError && <TallyErrorNotice message={companyError} />}
                 {currentProbeCompanyList.length > 0 ? (
@@ -2026,7 +2088,7 @@ function App() {
                   <h2 id="evidence-drawer-title">{evidenceDrawerEntry.kind === "local-only" ? "Local evidence and limits" : "Report evidence and limits"}</h2>
                   <p>{evidenceDrawerEntry.kind === "local-only" ? "This local evidence review is not attached to a current Outstandings report." : "The report-bound read is shown first. Core Accounting history is separate below."}</p>
                 </div>
-                <button className="secondary-action" type="button" ref={evidenceDrawerCloseRef} onClick={closeEvidenceDrawer}>Close</button>
+                <button className="secondary-action" type="button" ref={evidenceDrawerCloseRef} onClick={closeEvidenceDrawer} disabled={snapshotTransitionPending}>Close</button>
               </header>
               <div className="evidence-drawer-content">
           <OutstandingsEvidencePanel entry={evidenceDrawerEntry} />
@@ -2119,13 +2181,15 @@ function App() {
             latestProof={latestProof}
             mirrorTruthState={mirrorTruthState}
             snapshotJob={snapshotJob}
-            setSnapshotJob={setSnapshotJob}
+            setInspectedJob={setInspectedSnapshotJob}
             snapshotSelectionVersion={snapshotSelectionVersion}
             snapshotActive={snapshotActive}
             snapshotError={snapshotError}
             snapshotStartOutcomeUnknown={snapshotStartOutcomeUnknown}
+            snapshotOutcomeUnknownRunId={snapshotOutcomeUnknownRunId}
             liveReadActionsLocked={childTallyReadCount > 0}
             setSnapshotStartOutcomeUnknown={setSnapshotStartOutcomeUnknown}
+            setSnapshotOutcomeUnknownRunId={setSnapshotOutcomeUnknownRunId}
             startCoreSnapshot={startCoreSnapshot}
             cancelCoreSnapshot={cancelCoreSnapshot}
             resumeCoreSnapshot={resumeCoreSnapshot}

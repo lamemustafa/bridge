@@ -3,7 +3,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
 
-pub(super) fn open_local_file(path: &Path, writable: bool) -> io::Result<File> {
+pub(crate) fn open_local_file(path: &Path, writable: bool) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options
         .read(true)
@@ -62,4 +62,12 @@ pub(super) fn open_local_file(path: &Path, writable: bool) -> io::Result<File> {
         }
     }
     Ok(file)
+}
+
+pub(crate) fn lock_error(error: std::fs::TryLockError) -> String {
+    match error {
+        std::fs::TryLockError::WouldBlock => "import_admission_busy",
+        std::fs::TryLockError::Error(_) => "import_admission_lock_unavailable",
+    }
+    .into()
 }

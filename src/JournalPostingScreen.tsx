@@ -1,0 +1,290 @@
+import React from "react";
+import { FileCheck2, FileText, RotateCcw, ShieldCheck } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { deriveJournalActionState } from "./journal-posting-state";
+
+type TallyConfig = { host: string; port: number };
+
+type JournalEntry = { ledger: string; side: "Dr" | "Cr"; amount: string };
+
+type JournalDetails = {
+  date: string;
+  reference: string | null;
+  narration: string | null;
+  entries: JournalEntry[];
+  totalDebit: string;
+  totalCredit: string;
+};
+
+type JournalReview = {
+  batchId: string;
+  sha256: string;
+  company: { name: string; guid: string; companyNumber: string; booksFrom: string };
+  builtAt: string;
+  dispatched: boolean;
+  responseRecorded: boolean;
+  details: JournalDetails;
+};
+
+type JournalActionResponse = {
+  batchId: string;
+  result: {
+    result?: {
+      dispatch?: { state?: string; resent?: boolean };
+      attempt_recorded?: boolean | null;
+      dispatch_response?: {
+        request_sha256: string;
+        response_sha256: string;
+        bytes: number;
+        outcome: {
+          application_status: "success" | "failure" | "not_reported";
+          counters: {
+            created: number;
+            altered: number;
+            deleted: number;
+            ignored: number;
+            errors: number;
+            cancelled: number;
+            exceptions: number;
+            line_error_count: number;
+          };
+          exceptions_were_reported: boolean;
+        } | null;
+      };
+      error?: { code?: string; message?: string; remediation?: string };
+    };
+  };
+};
+
+type Action = "pick" | "post" | "reconcile" | null;
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const envelope = error as { message?: unknown; remediation?: unknown };
+    const message = typeof envelope.message === "string" ? envelope.message : "Journal action failed.";
+    return typeof envelope.remediation === "string" ? `${message} ${envelope.remediation}` : message;
+  }
+  return "Journal action failed.";
+}
+
+function outcomeOf(action: JournalActionResponse | null) {
+  return action?.result?.result?.dispatch?.state ?? null;
+}
+
+function actionErrorCodeOf(action: JournalActionResponse | null) {
+  return action?.result?.result?.error?.code ?? null;
+}
+
+function dispatchResponseOf(action: JournalActionResponse | null) {
+  return action?.result?.result?.dispatch_response ?? null;
+}
+
+function actionErrorOf(action: JournalActionResponse | null) {
+  const result = action?.result?.result;
+  if (!result?.error) return null;
+  if (result.attempt_recorded !== false) return result.error.message ?? null;
+  switch (actionErrorCodeOf(action)) {
+    case "import_approval_timed_out":
+      return "The approval dialog expired before Bridge could post this Journal. Choose Post Journal to review it again.";
+    case "import_approval_declined":
+      return "The Journal was not posted because approval was declined. Choose Post Journal to try again.";
+    case "import_approval_unavailable":
+      return "Bridge could not open the approval dialog, so the Journal was not posted. Choose Post Journal to try again.";
+    default:
+      return result.error.message ?? null;
+  }
+}
+
+function displayJournalDate(value: string) {
+  return /^\d{8}$/.test(value) ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}` : value;
+}
+
+type JournalPostingScreenProps = {
+  config: TallyConfig;
+  onBusyChange?: (busy: boolean) => void;
+  postingBlocked?: boolean;
+};
+
+export function JournalPostingScreen({ config, onBusyChange, postingBlocked = false }: JournalPostingScreenProps) {
+  const [review, setReview] = React.useState<JournalReview | null>(null);
+  const [actionResult, setActionResult] = React.useState<JournalActionResponse | null>(null);
+  const [action, setAction] = React.useState<Action>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [reviewConfig, setReviewConfig] = React.useState<TallyConfig | null>(null);
+  const [uncertainAttempt, setUncertainAttempt] = React.useState(false);
+  const actionRef = React.useRef<Action>(null);
+
+  async function chooseJournal() {
+    if (actionRef.current !== null) return;
+    onBusyChange?.(true);
+    actionRef.current = "pick";
+    setAction("pick");
+    try {
+      const selected = await invoke<JournalReview | null>("desktop_pick_journal_for_review", { config });
+      if (selected) {
+        setReview(selected);
+        setReviewConfig(config);
+        setActionResult(null);
+        setUncertainAttempt(false);
+        setError(null);
+      }
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      actionRef.current = null;
+      setAction(null);
+      onBusyChange?.(false);
+    }
+  }
+
+  async function runAction(kind: "post" | "reconcile") {
+    if (!review || actionRef.current !== null || (kind === "post" && postingBlocked)) return;
+    const requestedConfig = reviewConfig ?? config;
+    onBusyChange?.(true);
+    actionRef.current = kind;
+    setAction(kind);
+    setError(null);
+    // Reconciliation must retain the prior attempt and response if IPC fails.
+    if (kind === "post") setActionResult(null);
+    try {
+      const command = kind === "post" ? "desktop_post_reviewed_journal" : "desktop_reconcile_reviewed_journal";
+      const result = await invoke<JournalActionResponse>(command, {
+        request: {
+          batchId: review.batchId,
+          sha256: review.sha256,
+          companyGuid: review.company.guid,
+          config: requestedConfig,
+        },
+      });
+      setActionResult(result);
+      setUncertainAttempt(false);
+    } catch (cause) {
+      setError(errorMessage(cause));
+      const refusedBeforePosting = cause !== null && typeof cause === "object"
+        && "code" in cause && cause.code === "journal_review_refused"
+        && "tally_state_may_have_changed" in cause && cause.tally_state_may_have_changed === false;
+      if (kind === "post" && !refusedBeforePosting) setUncertainAttempt(true);
+    } finally {
+      actionRef.current = null;
+      setAction(null);
+      onBusyChange?.(false);
+    }
+  }
+
+  const outcome = outcomeOf(actionResult);
+  const journalState = deriveJournalActionState(
+    { dispatched: Boolean(review?.dispatched), responseRecorded: Boolean(review?.responseRecorded) },
+    actionResult
+      ? {
+          state: outcome,
+          attemptRecorded: actionResult.result?.result?.attempt_recorded,
+          hasError: Boolean(actionErrorOf(actionResult)),
+        }
+      : null,
+    uncertainAttempt,
+  );
+  const { reconciliationRequired, verified } = journalState;
+  const dispatchResponse = dispatchResponseOf(actionResult);
+
+  return (
+    <section className="panel wide journal-review" aria-labelledby="journal-review-heading" aria-busy={action !== null}>
+      <div className="panel-heading">
+        <div>
+          <h2 id="journal-review-heading">Review a Bridge Journal</h2>
+          <p className="panel-description">Choose the original XML file Bridge generated. Bridge checks it against the saved local batch before showing one Journal for review.</p>
+        </div>
+        <FileText size={24} aria-hidden="true" />
+      </div>
+
+      {error && <div className="error-banner" role="alert"><strong>Journal action failed</strong><span>{error}</span></div>}
+
+      {!review ? (
+        <div className="journal-empty-state">
+          <ShieldCheck size={28} aria-hidden="true" />
+          <p>No Journal is open for review.</p>
+          <button className="primary" type="button" onClick={() => void chooseJournal()} disabled={action !== null}>
+            <FileText size={18} aria-hidden="true" />
+            {action === "pick" ? "Opening file picker…" : "Choose Journal file"}
+          </button>
+        </div>
+      ) : (
+        <>
+          <section className="journal-primary-details" aria-labelledby="journal-details-heading">
+            <h3 id="journal-details-heading">Journal</h3>
+            <dl className="journal-review-details">
+              <div><dt>Company</dt><dd>{review.company.name}</dd></div>
+              <div><dt>Date</dt><dd>{displayJournalDate(review.details.date)}</dd></div>
+              <div><dt>Reference</dt><dd>{review.details.reference || "None"}</dd></div>
+              <div className="journal-narration"><dt>Narration</dt><dd>{review.details.narration || "None"}</dd></div>
+            </dl>
+            <div className="journal-entry-table-wrap">
+              <table className="journal-entry-table">
+                <caption>Journal entries</caption>
+                <thead><tr><th scope="col">Ledger</th><th scope="col">Side</th><th scope="col">Amount</th></tr></thead>
+                <tbody>{review.details.entries.map((entry, index) => <tr key={index}><td>{entry.ledger}</td><td>{entry.side}</td><td>{entry.amount}</td></tr>)}</tbody>
+                <tfoot><tr><th scope="row" colSpan={2}>Total debit</th><td>{review.details.totalDebit}</td></tr><tr><th scope="row" colSpan={2}>Total credit</th><td>{review.details.totalCredit}</td></tr></tfoot>
+              </table>
+            </div>
+          </section>
+          <details className="journal-recovery-details">
+            <summary>Connection and recovery details</summary>
+            <dl className="journal-review-details">
+              <div><dt>Company number</dt><dd>{review.company.companyNumber}</dd></div>
+              <div><dt>Books from</dt><dd>{review.company.booksFrom}</dd></div>
+              <div><dt>Endpoint</dt><dd>{reviewConfig?.host}:{reviewConfig?.port}</dd></div>
+              <div><dt>Company GUID</dt><dd>{review.company.guid}</dd></div>
+              <div><dt>Saved batch</dt><dd>{review.batchId}</dd></div>
+              <div><dt>File digest</dt><dd>{review.sha256}</dd></div>
+              {actionErrorCodeOf(actionResult) && <div><dt>Last result code</dt><dd>{actionErrorCodeOf(actionResult)}</dd></div>}
+              {dispatchResponse && (
+                <>
+                  <div>
+                    <dt>Received response evidence</dt>
+                    <dd>Tally&apos;s response is retained for reconciliation; Bridge only confirms posting after a matching Journal readback.</dd>
+                  </div>
+                  <div><dt>Response bytes</dt><dd>{dispatchResponse.bytes}</dd></div>
+                  <div><dt>Request digest</dt><dd><code>{dispatchResponse.request_sha256}</code></dd></div>
+                  <div><dt>Response digest</dt><dd><code>{dispatchResponse.response_sha256}</code></dd></div>
+                  {dispatchResponse.outcome ? (
+                    <>
+                      <div><dt>Response status</dt><dd>{dispatchResponse.outcome.application_status}</dd></div>
+                      <div>
+                        <dt>Response counters</dt>
+                        <dd>
+                          Created {dispatchResponse.outcome.counters.created} · Altered {dispatchResponse.outcome.counters.altered} · Deleted {dispatchResponse.outcome.counters.deleted} · Ignored {dispatchResponse.outcome.counters.ignored} · Errors {dispatchResponse.outcome.counters.errors} · Cancelled {dispatchResponse.outcome.counters.cancelled} · Exceptions {dispatchResponse.outcome.counters.exceptions} · Line errors {dispatchResponse.outcome.counters.line_error_count}
+                        </dd>
+                      </div>
+                    </>
+                  ) : (
+                    <div><dt>Response outcome</dt><dd>Not parsed</dd></div>
+                  )}
+                </>
+              )}
+            </dl>
+          </details>
+          {verified && <p className="journal-status" role="status"><FileCheck2 size={18} aria-hidden="true" /> Bridge confirmed the original Journal and its saved batch.</p>}
+          {reconciliationRequired && !verified && <p className="journal-status journal-status-warning" role="alert">The original batch needs reconciliation. Bridge will use this same review and will not rebuild or resend it.</p>}
+          {actionErrorOf(actionResult) && <p className="journal-status journal-status-warning" role="alert">{actionErrorOf(actionResult)}</p>}
+          {postingBlocked && journalState.canPost && <p className="journal-status journal-status-warning" role="status">Finish or reconcile the snapshot before posting this Journal.</p>}
+          {!postingBlocked && !verified && !reconciliationRequired && <p className="journal-action-note">Review the approval dialog; Bridge then checks and posts this saved batch.</p>}
+          <div className="journal-actions">
+            {journalState.canReconcile ? (
+              <button className="primary" type="button" onClick={() => void runAction("reconcile")} disabled={action !== null}>
+                <RotateCcw size={18} aria-hidden="true" />
+                {action === "reconcile" ? "Reconciling original batch…" : "Reconcile original batch"}
+              </button>
+            ) : journalState.canPost ? (
+              <button className="primary" type="button" onClick={() => void runAction("post")} disabled={action !== null || postingBlocked}>
+                <ShieldCheck size={18} aria-hidden="true" />
+                {action === "post" ? "Review approval dialog…" : "Post Journal"}
+              </button>
+            ) : null}
+            {journalState.canChooseAnother && <button className="secondary-action" type="button" onClick={() => void chooseJournal()} disabled={action !== null}>Choose another file</button>}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}

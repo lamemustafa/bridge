@@ -3665,7 +3665,7 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -4296,7 +4296,7 @@ mod tests {
         }
     }
 
-    async fn setup() -> (
+    pub(crate) async fn setup() -> (
         SqlitePool,
         TallyMirrorRepository,
         SqliteSnapshotStateStore,

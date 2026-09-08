@@ -7,7 +7,9 @@ pub mod commands;
 pub mod db;
 pub mod documents;
 pub mod dsc;
+pub(crate) mod endpoint_coordination;
 pub mod gst;
+pub(crate) mod local_files;
 // Crate-internal only: the previously separate `bridge-tally-observability` crate had exactly
 // one consumer inside this crate, so it does not need to be reachable from outside `bridge_lib`.
 mod observability;
@@ -73,6 +75,16 @@ impl LazyTallyMirror {
     }
 }
 
+pub fn run_journal_confirmation_child_from_args(
+    mut args: impl Iterator<Item = String>,
+) -> Option<i32> {
+    if args.next().as_deref() == Some("--confirm-journal") && args.next().is_none() {
+        Some(if agent::run_confirmation() { 0 } else { 1 })
+    } else {
+        None
+    }
+}
+
 pub fn run() {
     tracing_subscriber::fmt::init();
 
@@ -135,6 +147,9 @@ pub fn run() {
             commands::scan_document_paths,
             commands::sync_documents_to_axal,
             commands::revoke_document_authorizations,
+            commands::desktop_pick_journal_for_review,
+            commands::desktop_post_reviewed_journal,
+            commands::desktop_reconcile_reviewed_journal,
             commands::select_document_files,
             commands::select_document_folder
         ])

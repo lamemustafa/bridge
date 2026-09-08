@@ -2,7 +2,7 @@
 use std::env;
 use std::path::PathBuf;
 
-pub(super) fn default_data_dir() -> PathBuf {
+pub(crate) fn default_data_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
@@ -33,7 +33,7 @@ pub(super) fn default_data_dir() -> PathBuf {
 /// the same local Tally listener. Supported platforms resolve an OS-owned
 /// per-user root directly so launcher environment filtering cannot move the
 /// lease.
-pub(super) fn default_dispatch_coordination_dir() -> Option<PathBuf> {
+pub(crate) fn default_dispatch_coordination_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         stable_coordination_dir(windows_local_app_data_dir())
@@ -149,5 +149,5 @@ pub(super) fn windows_local_app_data_dir() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-#[path = "agent_path_tests.rs"]
+#[path = "paths_tests.rs"]
 mod tests;

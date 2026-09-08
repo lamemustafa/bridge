@@ -1440,6 +1440,159 @@ h2 {
   font-weight: 700;
 }
 
+.journal-review {
+  min-width: 0;
+}
+
+.journal-empty-state {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 12px;
+  border: 1px dashed #cbdcd2;
+  border-radius: 10px;
+  color: #61756a;
+  padding: 24px;
+}
+
+.journal-empty-state p {
+  margin: 0;
+  color: #27352e;
+  font-weight: 700;
+}
+
+.journal-review-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 18px;
+  margin: 0 0 22px;
+}
+
+.journal-review-details div {
+  min-width: 0;
+}
+
+.journal-review-details dt {
+  color: #61756a;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.journal-review-details dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.journal-primary-details {
+  border-top: 1px solid #e6ebe7;
+  padding-top: 18px;
+}
+
+.journal-primary-details h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.journal-primary-details .journal-review-details {
+  margin-bottom: 18px;
+}
+
+.journal-narration {
+  grid-column: 1 / -1;
+}
+
+.journal-entry-table-wrap {
+  overflow-x: auto;
+}
+
+.journal-entry-table {
+  border-collapse: collapse;
+  min-width: 520px;
+  width: 100%;
+}
+
+.journal-entry-table caption {
+  font-weight: 700;
+  padding-bottom: 8px;
+}
+
+.journal-entry-table th,
+.journal-entry-table td {
+  border-bottom: 1px solid #e6ebe7;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.journal-entry-table th:last-child,
+.journal-entry-table td:last-child {
+  text-align: right;
+}
+
+.journal-entry-table tfoot th,
+.journal-entry-table tfoot td {
+  font-weight: 700;
+}
+
+.journal-recovery-details {
+  border-top: 1px solid #e6ebe7;
+  margin-top: 18px;
+  padding-top: 16px;
+}
+
+.journal-recovery-details summary {
+  color: #27352e;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.journal-recovery-details[open] summary {
+  margin-bottom: 16px;
+}
+
+.journal-recovery-details .journal-review-details {
+  margin-bottom: 0;
+}
+
+.journal-recovery-details dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.journal-entry-table td:last-child,
+.journal-entry-table tfoot td {
+  font-variant-numeric: tabular-nums;
+}
+
+.journal-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #0f766e;
+  line-height: 1.5;
+  margin: 18px 0 0;
+}
+
+.journal-status-warning {
+  color: #9b2c1f;
+}
+
+.journal-action-note {
+  color: #61756a;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 18px 0 0;
+}
+
+.journal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .error-boundary-panel {
   border-color: #f0b8ad;
   background: #fff5f2;

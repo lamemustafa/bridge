@@ -1,18 +1,14 @@
 //! The local stdio MCP surface. It uses Bridge's loopback-only Tally XML
 //! transport. Posting is opt-in and requires an independent native confirmation.
 
-#[path = "agent_directory.rs"]
-mod directory;
-use directory::{ensure_private_directory, DirectoryAdmissionError};
-#[path = "agent_path.rs"]
-mod agent_path;
-#[path = "agent_file.rs"]
-mod local_file;
-use agent_path::{default_data_dir, default_dispatch_coordination_dir};
+use crate::local_files::directory::{ensure_private_directory, DirectoryAdmissionError};
+use crate::local_files::file as local_file;
+use crate::local_files::paths::default_data_dir;
 
 #[path = "agent_import.rs"]
 mod agent_import;
 pub use crate::tally::approved_import::run_confirmation;
+pub(crate) use agent_import::desktop_journal_review as desktop_journal;
 
 #[path = "agent_catalog.rs"]
 mod catalog;

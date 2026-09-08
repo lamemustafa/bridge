@@ -1,0 +1,477 @@
+use super::desktop_journal::{DesktopJournalOperation, DesktopJournalService};
+use super::*;
+use bridge_tally_transport::TallyEndpointConfig;
+
+#[test]
+fn action_ipc_keeps_recovery_state_without_unbounded_voucher_details() {
+    let large = "x".repeat(5_000_001);
+    for state in [
+        "posted_verified",
+        "previous_attempt_reconciled",
+        "reconciliation_required",
+    ] {
+        let mut payload = json!({"result":{
+            "dispatch":{"state":state,"resent":false,"response":{"unused":large}},
+            "attempt_recorded":true,
+            "unrelated_duplicates_in_window":[large],
+        }});
+        if state == "reconciliation_required" {
+            payload["result"]["error"] = json!({
+                "code":"import_reconciliation_required",
+                "message":"Reconcile the original batch without resending it.",
+                "remediation":large,
+            });
+        }
+        let operation = DesktopJournalOperation::from_outcome(ToolOutcome {
+            payload,
+            evidence: Evidence {
+                request_sha256: "a".repeat(64),
+                response_sha256: "b".repeat(64),
+                bytes: large.len(),
+                state: "complete",
+                read_at: None,
+                duration_ms: None,
+                reason_code: None,
+            },
+            company_guid: None,
+            truncated: false,
+        });
+        let result = &operation.result["result"];
+        assert_eq!(result["dispatch"]["state"], state);
+        assert_eq!(result["dispatch"]["resent"], false);
+        assert_eq!(result["attempt_recorded"], true);
+        assert!(result.get("unrelated_duplicates_in_window").is_none());
+        assert!(result["dispatch"].get("response").is_none());
+        if state == "reconciliation_required" {
+            assert_eq!(result["error"]["code"], "import_reconciliation_required");
+            assert_eq!(
+                result["error"]["message"],
+                "Reconcile the original batch without resending it."
+            );
+            assert!(result["error"]["remediation"].is_null());
+        } else {
+            assert!(result["error"].is_null());
+        }
+        assert!(serde_json::to_vec(&operation.result).unwrap().len() < 1024);
+    }
+}
+
+#[test]
+fn action_ipc_keeps_bounded_response_evidence_and_drops_invalid_metadata() {
+    let large = "x".repeat(5_000_001);
+    let response = json!({
+        "request_sha256": "a".repeat(64),
+        "response_sha256": "b".repeat(64),
+        "bytes": 538,
+        "outcome": bridge_tally_protocol::parse_import_outcome(include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/live_education_w4_voucher_sanitized.xml"
+        )).unwrap(),
+    });
+    let mut payload = json!({"result":{
+        "dispatch": {"state":"reconciliation_required","resent":false},
+        "attempt_recorded":true,
+        "dispatch_response":response,
+        "proof":large.clone(),
+        "vouchers":[large],
+    }});
+    let operation = DesktopJournalOperation::from_outcome(ToolOutcome {
+        payload: payload.clone(),
+        evidence: Evidence {
+            request_sha256: "a".repeat(64),
+            response_sha256: "b".repeat(64),
+            bytes: 538,
+            state: "partial",
+            read_at: None,
+            duration_ms: None,
+            reason_code: Some("import_ledger_append_failed".into()),
+        },
+        company_guid: None,
+        truncated: false,
+    });
+    let result = &operation.result["result"];
+    assert_eq!(
+        result["dispatch_response"]["outcome"]["counters"]["counter_presence"]["deleted"],
+        true
+    );
+    assert_eq!(
+        result["dispatch_response"]["request_sha256"],
+        "a".repeat(64)
+    );
+    assert_eq!(
+        result["dispatch_response"]["response_sha256"],
+        "b".repeat(64)
+    );
+    assert_eq!(result["dispatch_response"]["bytes"], 538);
+    assert_eq!(
+        result["dispatch_response"]["outcome"]["application_status"],
+        "not_reported"
+    );
+    assert_eq!(
+        result["dispatch_response"]["outcome"]["counters"]["created"],
+        1
+    );
+    assert_eq!(
+        result["dispatch_response"]["outcome"]["counters"]["line_error_count"],
+        0
+    );
+    assert!(result.get("proof").is_none());
+    assert!(result.get("vouchers").is_none());
+    assert!(serde_json::to_vec(&operation.result).unwrap().len() < 2_000);
+
+    let mut null_payload = json!({"result":{"dispatch_response":response.clone()}});
+    null_payload["result"]["dispatch_response"]["outcome"] = Value::Null;
+    let operation = DesktopJournalOperation::from_outcome(ToolOutcome {
+        payload: null_payload,
+        evidence: Evidence {
+            request_sha256: "a".repeat(64),
+            response_sha256: "b".repeat(64),
+            bytes: 538,
+            state: "partial",
+            read_at: None,
+            duration_ms: None,
+            reason_code: Some("import_ledger_append_failed".into()),
+        },
+        company_guid: None,
+        truncated: false,
+    });
+    assert_eq!(
+        operation.result["result"]["dispatch_response"]["bytes"],
+        538
+    );
+    assert!(operation.result["result"]["dispatch_response"]["outcome"].is_null());
+
+    payload["result"]["dispatch_response"]["request_sha256"] = json!("not-a-sha256");
+    let operation = DesktopJournalOperation::from_outcome(ToolOutcome {
+        payload,
+        evidence: Evidence {
+            request_sha256: "a".repeat(64),
+            response_sha256: "b".repeat(64),
+            bytes: 538,
+            state: "partial",
+            read_at: None,
+            duration_ms: None,
+            reason_code: Some("import_ledger_append_failed".into()),
+        },
+        company_guid: None,
+        truncated: false,
+    });
+    assert!(operation.result["result"]
+        .get("dispatch_response")
+        .is_none());
+}
+
+fn service(root: PathBuf) -> (DesktopJournalService, ImportLedgerLine) {
+    service_with_voucher_number(root, None)
+}
+
+fn service_with_voucher_number(
+    root: PathBuf,
+    voucher_number: Option<&str>,
+) -> (DesktopJournalService, ImportLedgerLine) {
+    service_at_endpoint(
+        root,
+        voucher_number,
+        TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9001,
+        },
+    )
+}
+
+fn service_at_endpoint(
+    root: PathBuf,
+    voucher_number: Option<&str>,
+    endpoint: TallyEndpointConfig,
+) -> (DesktopJournalService, ImportLedgerLine) {
+    let mut line: ImportLedgerLine = serde_json::from_value(json!({
+        "batch_id":"bridge-00000000-0000-4000-8000-000000000001", "identity_scheme":"batch_v1", "company_guid":"00000000-0000-4000-8000-000000000002", "endpoint_origin":super::super::canonical_loopback_origin(&endpoint).unwrap(),
+        "company":{"name":"Synthetic Accounts","guid":"00000000-0000-4000-8000-000000000002","company_number":"100001","books_from":"20260401"}, "txn_ids":["journal-test"],"date_from":"20260901","date_to":"20260901","sha256":"","built_at":"2026-09-07T00:00:00Z","status":"built","pre_import_mark":{"kind":"company_high_water","value":1,"master_value":1},
+        "vouchers":[{"bridge_txn_id":"journal-test","date":"20260901","voucher_type":"Journal","voucher_number":voucher_number,"entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},{"ledger":"Cash","amount":"12.50","side":"Cr"}]}]
+    })).unwrap();
+    line.sha256 = sha256_hex(
+        render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id).as_bytes(),
+    );
+    super::super::ensure_private_directory(&root).unwrap();
+    let server = Server::new(super::super::Settings {
+        endpoint,
+        data_dir: root,
+        max_rows: 500,
+        max_bytes: 5_000_000,
+        redaction: super::super::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+    });
+    // Fixture construction exclusively owns this temporary directory. Avoid a
+    // setup lock that another parallel test's fork can transiently inherit.
+    server.append_import_ledger_while_admitted(&line).unwrap();
+    (DesktopJournalService { server }, line)
+}
+
+#[tokio::test]
+async fn descriptor_company_mismatch_is_refused_before_any_tally_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let (service, line) = service(directory.path().join("agent"));
+    let operation = service
+        .post(&line.batch_id, &line.sha256, "other-company")
+        .await;
+    assert_eq!(
+        operation.result["result"]["error"]["code"],
+        "import_batch_company_mismatch"
+    );
+    assert_eq!(
+        operation.result["result"]["dispatch"]["state"],
+        "admission_refused"
+    );
+}
+
+#[tokio::test]
+async fn missing_or_unreadable_history_refuses_admission_without_claiming_no_prior_attempt() {
+    for unreadable in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let (service, line) = service(directory.path().join("agent"));
+        let journal = service
+            .server
+            .settings
+            .data_dir
+            .join("agent-import-ledger.jsonl");
+        std::fs::remove_file(&journal).unwrap();
+        if unreadable {
+            std::fs::create_dir(&journal).unwrap();
+        }
+        let operation = service
+            .post(&line.batch_id, &line.sha256, &line.company_guid)
+            .await;
+        assert_eq!(
+            operation.result["result"]["dispatch"]["state"],
+            "admission_refused"
+        );
+        assert_eq!(
+            operation.result["result"]["error"]["code"],
+            if unreadable {
+                "import_ledger_unavailable"
+            } else {
+                "import_batch_not_found"
+            }
+        );
+        assert!(operation.result["result"]["attempt_recorded"].is_null());
+    }
+}
+
+#[tokio::test]
+async fn reconcile_without_durable_intent_requires_an_idle_dispatch_lane() {
+    let directory = tempfile::tempdir().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = TallyEndpointConfig {
+        host: "127.0.0.1".into(),
+        port: listener.local_addr().unwrap().port(),
+    };
+    let (mut service, line) = service_at_endpoint(directory.path().join("agent"), None, endpoint);
+    let journal = service
+        .server
+        .settings
+        .data_dir
+        .join("agent-import-ledger.jsonl");
+    let before = std::fs::read(&journal).unwrap();
+    let lease = dispatch_lease::acquire(&service.server.settings.endpoint).unwrap();
+    let contended = service
+        .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
+        .await;
+    assert_eq!(
+        contended.result["result"]["error"]["code"],
+        "import_admission_busy"
+    );
+    assert!(contended.result["result"]["attempt_recorded"].is_null());
+    assert_eq!(std::fs::read(&journal).unwrap(), before);
+    drop(lease);
+    let snapshot_lease =
+        dispatch_lease::acquire_snapshot(&service.server.settings.endpoint).unwrap();
+    let operation = service
+        .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
+        .await;
+    assert_eq!(
+        operation.result["result"]["error"]["code"],
+        "import_not_dispatched"
+    );
+    assert_eq!(operation.result["result"]["attempt_recorded"], false);
+    drop(snapshot_lease);
+    let other_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    service.server.settings.endpoint.port = other_listener.local_addr().unwrap().port();
+    let changed = service
+        .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
+        .await;
+    assert_eq!(
+        changed.result["result"]["error"]["code"],
+        "import_post_endpoint_mismatch"
+    );
+    assert!(changed.result["result"]["attempt_recorded"].is_null());
+    assert_eq!(std::fs::read(&journal).unwrap(), before);
+}
+
+#[test]
+fn review_details_come_from_the_admitted_saved_journal() {
+    let directory = tempfile::tempdir().unwrap();
+    let (service, line) = service(directory.path().join("agent"));
+    let xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    std::fs::write(
+        service
+            .server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        &xml,
+    )
+    .unwrap();
+
+    let review = service.review_selected_xml(xml.as_bytes()).unwrap();
+    assert_eq!(review.details.date, "20260901");
+    assert_eq!(review.details.total_debit, "12.5");
+    assert_eq!(review.details.total_credit, "12.5");
+    assert_eq!(
+        review
+            .details
+            .entries
+            .iter()
+            .map(|entry| (&entry.ledger, &entry.side, &entry.amount))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                &"Expense".to_string(),
+                &"Dr".to_string(),
+                &"12.50".to_string()
+            ),
+            (&"Cash".to_string(), &"Cr".to_string(), &"12.50".to_string())
+        ]
+    );
+}
+
+#[test]
+fn review_refuses_selected_xml_from_a_superseded_full_record() {
+    let directory = tempfile::tempdir().unwrap();
+    let (service, mut line) = service(directory.path().join("agent"));
+    let original_xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    let path = service
+        .server
+        .imports_dir()
+        .unwrap()
+        .join(format!("{}.xml", line.batch_id));
+    std::fs::write(&path, &original_xml).unwrap();
+
+    // Legacy history accepts changed full records before dispatch. The file
+    // still contains the original bytes while the latest saved batch changes.
+    line.vouchers[0].narration = Some("Updated Journal".into());
+    let latest_xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    line.sha256 = sha256_hex(latest_xml.as_bytes());
+    service
+        .server
+        .append_import_ledger_while_admitted(&line)
+        .unwrap();
+
+    assert_eq!(
+        service
+            .review_selected_xml(original_xml.as_bytes())
+            .unwrap_err(),
+        "import_batch_changed"
+    );
+
+    std::fs::write(&path, &latest_xml).unwrap();
+    let review = service.review_selected_xml(latest_xml.as_bytes()).unwrap();
+    assert_eq!(review.sha256, line.sha256);
+    assert_eq!(review.details.narration.as_deref(), Some("Updated Journal"));
+}
+
+#[test]
+fn review_refuses_fresh_numbered_journal_but_retains_dispatched_reconciliation() {
+    let directory = tempfile::tempdir().unwrap();
+    let (service, line) = service_with_voucher_number(directory.path().join("agent"), Some("JV-1"));
+    let xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    std::fs::write(
+        service
+            .server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        &xml,
+    )
+    .unwrap();
+
+    assert_eq!(
+        service.review_selected_xml(xml.as_bytes()).unwrap_err(),
+        "import_post_numbered_journal_unsupported"
+    );
+
+    service
+        .server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_native(
+            &line,
+            "a".repeat(64),
+        ))
+        .unwrap();
+    let review = service.review_selected_xml(xml.as_bytes()).unwrap();
+    assert!(review.dispatched);
+}
+
+#[tokio::test]
+async fn review_refuses_fresh_unreviewable_text_but_retains_dispatched_reconciliation() {
+    let directory = tempfile::tempdir().unwrap();
+    // Reserve a port without listening: recovery must reach a read failure,
+    // independently of any live Tally instance or reusable free-port race.
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let (service, mut line) = service_at_endpoint(
+        directory.path().join("agent"),
+        None,
+        TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: socket.local_addr().unwrap().port(),
+        },
+    );
+    std::fs::remove_file(
+        service
+            .server
+            .settings
+            .data_dir
+            .join("agent-import-ledger.jsonl"),
+    )
+    .unwrap();
+    line.vouchers[0].entries[0].ledger = "Cash\u{200d}".into();
+    let xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    line.sha256 = sha256_hex(xml.as_bytes());
+    service
+        .server
+        .append_import_ledger_while_admitted(&line)
+        .unwrap();
+    std::fs::write(
+        service
+            .server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{}.xml", line.batch_id)),
+        &xml,
+    )
+    .unwrap();
+
+    assert_eq!(
+        service.review_selected_xml(xml.as_bytes()).unwrap_err(),
+        "import_review_format_text"
+    );
+    service
+        .server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch_native(
+            &line,
+            "a".repeat(64),
+        ))
+        .unwrap();
+    assert!(
+        service
+            .review_selected_xml(xml.as_bytes())
+            .unwrap()
+            .dispatched
+    );
+    let reconciliation = service
+        .reconcile(&line.batch_id, &line.sha256, &line.company_guid)
+        .await;
+    assert_eq!(
+        reconciliation.result["result"]["error"]["code"],
+        "import_mode_probe_failed"
+    );
+}

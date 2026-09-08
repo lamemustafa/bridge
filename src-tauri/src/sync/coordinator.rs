@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use bridge_tally_core::{CapabilityPackId, VerificationState};
@@ -12,6 +12,10 @@ use crate::sync::snapshot::{
 use crate::tally::RuntimeTallyConnector;
 
 const MAX_TRACKED_RUNS: usize = 100;
+
+#[cfg(test)]
+#[path = "coordinator_lease_tests.rs"]
+mod lease_tests;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SnapshotJobStatus {
@@ -56,6 +60,13 @@ impl SnapshotCoordinator {
         connector: RuntimeTallyConnector,
         mirror: TallyMirrorRepository,
     ) -> Result<SnapshotJobStatus, &'static str> {
+        let endpoint_lease = crate::endpoint_coordination::acquire_snapshot(connector.endpoint())
+            .map_err(|error| match error.as_str() {
+                "import_admission_busy" => {
+                    "Another Bridge snapshot or Journal posting is using this Tally endpoint. Wait for it to finish."
+                }
+                _ => "Bridge could not coordinate access to this Tally endpoint. The snapshot was not started.",
+            })?;
         let cancellation = Arc::new(AtomicCancellation::default());
         let terminal = Arc::new(Mutex::new(None));
         let lease_owner = uuid::Uuid::new_v4().to_string();
@@ -167,6 +178,9 @@ impl SnapshotCoordinator {
             if let Ok(mut state) = terminal.lock() {
                 *state = Some(final_status);
             }
+            // Keep other Bridge processes out through the fresh probe, every
+            // snapshot window, and finalization, including cancellation.
+            drop(endpoint_lease);
         });
         Ok(initial)
     }
@@ -222,32 +236,53 @@ impl SnapshotCoordinator {
         mirror: &TallyMirrorRepository,
         limit: u32,
     ) -> Result<Vec<SnapshotJobStatus>, &'static str> {
-        let tracked = self
-            .jobs
-            .lock()
-            .map_err(|_| "snapshot_registry_unavailable")?
-            .iter()
-            .map(|(run_id, job)| {
-                let terminal = job.terminal.lock().ok().and_then(|status| status.clone());
-                (run_id.clone(), terminal)
-            })
-            .collect::<HashMap<_, _>>();
         let store = SqliteSnapshotStateStore::new(mirror.pool_clone());
         let states = store
             .load_recent(limit)
             .await
             .map_err(|_| "snapshot_state_unavailable")?;
-        Ok(states
+        let jobs = self
+            .jobs
+            .lock()
+            .map_err(|_| "snapshot_registry_unavailable")?;
+        let tracked = jobs
+            .iter()
+            .map(|(run_id, job)| {
+                let terminal = job
+                    .terminal
+                    .lock()
+                    .map_err(|_| "snapshot_status_unavailable")?
+                    .clone();
+                Ok((run_id.clone(), job.plan.clone(), terminal))
+            })
+            .collect::<Result<Vec<_>, &'static str>>()?;
+        let tracked_by_id = tracked
+            .iter()
+            .map(|(run_id, _, terminal)| (run_id.as_str(), terminal))
+            .collect::<HashMap<_, _>>();
+        let mut seen = HashSet::new();
+        let mut statuses = states
             .into_iter()
             .map(|state| {
-                if let Some(Some(status)) = tracked.get(&state.run_id) {
-                    return status.clone();
-                }
-                let requires_resume =
-                    !state.progress.phase.is_terminal() && !tracked.contains_key(&state.run_id);
-                status_from_state(state, requires_resume)
+                let requires_resume = !state.progress.phase.is_terminal()
+                    && !tracked_by_id.contains_key(state.run_id.as_str());
+                let status = tracked_by_id
+                    .get(state.run_id.as_str())
+                    .and_then(|terminal| terminal.as_ref().cloned())
+                    .unwrap_or_else(|| status_from_state(state, requires_resume));
+                seen.insert(status.run_id.clone());
+                status
             })
-            .collect())
+            .collect::<Vec<_>>();
+        let missing = tracked
+            .into_iter()
+            .filter(|(run_id, _, _)| !seen.contains(run_id))
+            .map(|(run_id, plan, terminal)| {
+                (run_id, terminal.unwrap_or_else(|| status_from_plan(&plan)))
+            })
+            .collect();
+        append_missing_tracked_statuses(&mut statuses, missing);
+        Ok(statuses)
     }
 
     pub fn cancel(&self, run_id: &str) -> Result<bool, &'static str> {
@@ -367,10 +402,67 @@ fn requested_bounds(plan: &SnapshotPlan) -> (Option<String>, Option<String>) {
     )
 }
 
+fn append_missing_tracked_statuses(
+    statuses: &mut Vec<SnapshotJobStatus>,
+    mut missing: Vec<(String, SnapshotJobStatus)>,
+) {
+    // Durable recency remains the operator-facing order. Only tracked runs
+    // that have not reached durable state are appended in stable ID order.
+    missing.sort_by(|left, right| left.0.cmp(&right.0));
+    statuses.extend(missing.into_iter().map(|(_, status)| status));
+}
+
 #[cfg(test)]
 pub(crate) fn status_from_state_for_test(
     state: DurableSnapshotState,
     requires_resume: bool,
 ) -> SnapshotJobStatus {
     status_from_state(state, requires_resume)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(run_id: &str) -> SnapshotJobStatus {
+        SnapshotJobStatus {
+            run_id: run_id.into(),
+            mirror_company_id: None,
+            pack_id: None,
+            requested_from_yyyymmdd: None,
+            requested_to_yyyymmdd: None,
+            phase: SnapshotPhase::Prepare,
+            active_window_id: None,
+            completed_windows: 0,
+            total_windows: 0,
+            verification: None,
+            proof_id: None,
+            proof_sha256: None,
+            gap_codes: Vec::new(),
+            warning_codes: Vec::new(),
+            failure_code: None,
+            requires_resume: false,
+            resume_available: false,
+        }
+    }
+
+    #[test]
+    fn recent_keeps_durable_order_and_appends_tracked_before_durable_runs() {
+        let mut statuses = vec![status("durable-newest"), status("durable-older")];
+        append_missing_tracked_statuses(
+            &mut statuses,
+            vec![
+                ("run-z".into(), status("run-z")),
+                ("run-a".into(), status("run-a")),
+            ],
+        );
+
+        assert_eq!(
+            statuses
+                .iter()
+                .map(|status| status.run_id.as_str())
+                .collect::<Vec<_>>(),
+            ["durable-newest", "durable-older", "run-a", "run-z"]
+        );
+    }
 }
