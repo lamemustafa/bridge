@@ -23,6 +23,9 @@ contain customer data in release artifacts.
 
 ## Project-authored assets
 
+- `scripts/capture-package-log.py` and its test are project-authored CI
+  diagnostic tooling contributed under Apache-2.0; no upstream implementation
+  is copied into them.
 - `src-tauri/app-icon.svg` is the project-authored source icon contributed by
   the repository owner under Apache-2.0.
 - Raster, ICO, and ICNS files under `src-tauri/icons/` are generated derivatives
