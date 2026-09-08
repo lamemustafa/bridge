@@ -101,3 +101,17 @@ jobs:
           path: src-tauri/target/cargo-timings/*.html
           if-no-files-found: error
           retention-days: 7
+
+      - name: Compare library formats on the same runner
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then python_command=python; else python_command=python3; fi
+          "$python_command" scripts/measure-library-build.py
+      - name: Retain paired compiler evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: paired-library-build-${{ matrix.os }}
+          path: library-build-measurements/**
+          if-no-files-found: error
+          retention-days: 7
