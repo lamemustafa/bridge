@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { act } from "react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
@@ -19,6 +19,8 @@ function button(root: HTMLElement, text: string): HTMLButtonElement {
   expect(matched).toBeDefined();
   return matched!;
 }
+
+beforeEach(() => vi.resetModules());
 
 afterEach(async () => {
   const root = document.getElementById("root") as (HTMLElement & {
@@ -66,4 +68,32 @@ test("restart restores only the endpoint hint and waits for an explicit Check Ta
     button(root, "Check Tally").click();
   });
   expect(mocks.invoke).toHaveBeenCalledWith("probe_tally", { config: { host: "127.1.2.3", port: 9001 } });
+});
+
+test.each([
+  [false, "supported", "observed", true],
+  [true, "unknown", "observed", false],
+  [true, "supported", "inferred", false],
+] as const)("persists only observed XML success (status compatible=%s, XML=%s/%s)", async (compatible, state, confidence, shouldSave) => {
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "tally_persisted_company_profiles") {
+      return Promise.resolve({ profiles: [], total_profiles: 0, limit: 100, truncated: false });
+    }
+    if (command === "probe_tally") {
+      return Promise.resolve({
+        connection: { reachable: true, compatible, product: "Unknown", server_text: "", error: "status_heuristic_unavailable" },
+        companies: [], canonical_origin: "http://localhost:9000", observed_at_unix_ms: 1,
+        review_id: "current-review", profile_sha256: "current-profile", review_commitment_sha256: "current-commitment",
+        profile: { profile_version: 1, product: "TallyPrime", transports: { xml_http: { state, confidence } }, features: {}, packs: {} },
+      });
+    }
+    return Promise.resolve(undefined);
+  });
+  const root = document.createElement("div");
+  root.id = "root";
+  document.body.append(root);
+  await act(async () => { await import("../src/main.tsx"); });
+  await act(async () => { button(root, "Settings").click(); });
+  await act(async () => { button(root, "Check Tally").click(); });
+  expect(window.localStorage.getItem(endpointHintKey)).toBe(shouldSave ? JSON.stringify({ host: "localhost", port: 9000 }) : null);
 });

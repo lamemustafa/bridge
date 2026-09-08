@@ -865,7 +865,8 @@ function App() {
     try {
       const result = await invoke<TallyProbeResult>("probe_tally", { config });
       if (resultsVersion === tallyResultsVersion.current) {
-        if (result.connection.reachable && result.connection.compatible) {
+        const xmlTransport = result.profile.transports.xml_http;
+        if (result.connection.reachable && xmlTransport?.state === "supported" && xmlTransport.confidence === "observed") {
           saveEndpointReconnectHint(config);
         }
         const liveCompanies = result.companies.map((company) => ({
