@@ -33,6 +33,7 @@ pub fn render_trial_balance_xlsx(
     let number_format = amount_num_format(read)?;
     let amount = Format::new().set_num_format(&number_format);
     let bold_amount = Format::new().set_bold().set_num_format(&number_format);
+    let wrapped = Format::new().set_text_wrap();
 
     let mut row = 0;
     for (label, value) in [
@@ -59,11 +60,20 @@ pub fn render_trial_balance_xlsx(
         ("Source bytes", &read.evidence.bytes.to_string()),
     ] {
         sheet.write_string(row, 0, label)?;
-        sheet.write_string(row, 1, value)?;
+        sheet.write_string_with_format(row, 1, value, &wrapped)?;
+        // Long source commitments must remain readable without bleeding into
+        // adjacent cells in the exported workbook.
+        if matches!(label, "Source request SHA-256" | "Source response SHA-256") {
+            sheet.set_row_height(row, 30)?;
+        }
         row += 1;
     }
     sheet.write_string(row, 0, "Limitation")?;
-    sheet.write_string(row, 1, "Observed native Trial Balance fields only. Opening, debit, credit and closing retain Tally's signed values. Negative opening/closing is Dr, positive is Cr; the desktop displays debit/credit magnitudes. Paired source stability does not establish an atomic Tally snapshot.")?;
+    sheet.write_string_with_format(row, 1, "Observed native Trial Balance fields only. Opening, debit, credit and closing retain Tally's signed values. Negative opening/closing is Dr, positive is Cr; the desktop displays debit/credit magnitudes. Paired source stability does not establish an atomic Tally snapshot.", &wrapped)?;
+    // This 271-character qualification requires six lines at the committed
+    // column width, so preserve a full six-line row rather than Excel's
+    // default clipped height.
+    sheet.set_row_height(row, 90)?;
     row += 2;
 
     for (column, label) in [
@@ -113,7 +123,7 @@ pub fn render_trial_balance_xlsx(
                 &bold_amount,
             )?;
         } else {
-            sheet.write_string(
+            sheet.write_string_with_format(
                 row,
                 column,
                 format!(
@@ -121,8 +131,22 @@ pub fn render_trial_balance_xlsx(
                     total.sum.as_str(),
                     total.empty_count
                 ),
+                &wrapped,
             )?;
         }
+    }
+    // Qualification text in the totals row is meaningful evidence, not a
+    // decorative footer; give wrapped cells enough vertical space to show it.
+    if [
+        read.totals.opening.empty_count,
+        read.totals.debit.empty_count,
+        read.totals.credit.empty_count,
+        read.totals.closing.empty_count,
+    ]
+    .into_iter()
+    .any(|count| count > 0)
+    {
+        sheet.set_row_height(row, 45)?;
     }
     row += 1;
     if read.totals.opening.empty_count == 0 {
@@ -148,7 +172,7 @@ pub fn render_trial_balance_xlsx(
     sheet.set_freeze_panes(header + 1, 1)?;
     sheet.autofilter(header, 0, last_ledger_row, 6)?;
     sheet.set_column_width(0, 34)?;
-    sheet.set_column_width(1, 38)?;
+    sheet.set_column_width(1, 48)?;
     sheet.set_column_width(2, 28)?;
     for column in 3..=6 {
         sheet.set_column_width(column, 22)?;
@@ -336,6 +360,23 @@ mod tests {
         assert_eq!(cells.get("F14"), Some(&"4500".to_string()));
         assert!(!cells.contains_key("E13"));
         assert!(worksheet_xml(&bytes).contains("<autoFilter ref=\"A12:G18\"/>"));
+    }
+
+    #[test]
+    fn captured_export_wraps_total_qualification_text() {
+        let bytes = render_trial_balance_xlsx(&captured_read()).unwrap();
+        let xml = worksheet_xml(&bytes);
+
+        let text = workbook_text(&bytes);
+        assert!(text.contains(r#"<alignment wrapText="1"/>"#));
+        for cell in ["E19", "F19", "G19"] {
+            assert!(
+                xml.contains(&format!(r#"<c r="{cell}" s="1" t="s">"#)),
+                "expected wrapped cell style for {cell}"
+            );
+        }
+        assert!(text.contains("Observed numeric total:"));
+        assert!(text.contains("empty fields:"));
     }
 
     #[test]
