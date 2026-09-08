@@ -56,11 +56,23 @@ class CaptureTests(unittest.TestCase):
             directory = Path(root)
             path = directory / "bridge_lib-cafe.ips"
             path.write_text(self.report()[:60])
-            with patch.object(capture.time, "monotonic", side_effect=[0, 0, 1]), \
+            with patch.object(capture.time, "monotonic", side_effect=[0, 0, 2]), \
                     patch.object(capture.time, "sleep", side_effect=lambda _: path.write_text(self.report())):
                 result = capture.wait_for_reports([directory], 0, 2)
             self.assertEqual(result["status"], "captured")
             self.assertEqual(len(result["reports"]), 1)
+
+    def test_waits_for_later_reports_without_duplicating_earlier_report(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            (directory / "bridge_lib-cafe-first.ips").write_text(self.report())
+            later = directory / "bridge_lib-cafe-second.ips"
+            with patch.object(capture.time, "monotonic", side_effect=[0, 0, 1, 2]), \
+                    patch.object(capture.time, "sleep", side_effect=lambda _: later.write_text(self.report())) as sleep:
+                result = capture.wait_for_reports([directory], 0, 2)
+            self.assertEqual(result["status"], "captured")
+            self.assertEqual(len(result["reports"]), 2)
+            self.assertEqual(sleep.call_count, 2)
 
     def test_preserves_parse_error_at_deadline(self):
         with tempfile.TemporaryDirectory() as root:

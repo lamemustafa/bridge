@@ -99,13 +99,13 @@ def wait_for_reports(directories, since, wait_seconds):
     deadline = time.monotonic() + wait_seconds
     last_error = None
     while True:
+        # Refresh the bounded snapshot through the grace period: later IPS files
+        # can arrive after the first complete report. Replacing avoids duplicates.
         result = collect(directories, since)
-        if result["status"] == "captured":
-            return result
         if result["status"] == "capture_error":
             last_error = result
         if time.monotonic() >= deadline:
-            return last_error or result
+            return result if result["status"] == "captured" else last_error or result
         time.sleep(1)
 
 
