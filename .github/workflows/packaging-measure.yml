@@ -1,6 +1,8 @@
 name: Packaging measurement
 
 on:
+  push:
+    branches: [tapish-codex/packaging-cold-build-20260908]
   workflow_dispatch:
     inputs:
       cache_scope:
@@ -38,7 +40,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri -> target
-          prefix-key: packaging-measure-20260908-${{ inputs.cache_scope }}
+          prefix-key: packaging-measure-20260908-${{ inputs.cache_scope || 'baseline-v1' }}
       - name: Set up Windows native prerequisites
         id: windows-bundle-prerequisites
         if: runner.os == 'Windows'
