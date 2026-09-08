@@ -38,7 +38,7 @@ pub use xml_parser::{TallyCompany, TallyImportResult, TallyLedger, TallyVoucher}
 ///
 /// The fields are intentionally private: a bare GUID cannot authorize a
 /// company-scoped read after a year-end split.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedCompanyIdentity {
     display_name: String,
     company_guid: String,
@@ -55,7 +55,7 @@ pub enum VerifiedCompanyIdentityError {
     DisplayScopeAmbiguous,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ObservedCompanyNumber(String);
 
 impl ObservedCompanyNumber {
@@ -153,6 +153,20 @@ impl VerifiedCompanyIdentity {
 
     pub(crate) fn company_guid(&self) -> &str {
         &self.company_guid
+    }
+
+    pub(crate) fn company_book_extent_expectation(
+        &self,
+    ) -> Result<
+        bridge_tally_protocol::outstandings_shared::CompanyBookExtentExpectation,
+        bridge_tally_protocol::outstandings_shared::CompanyBookExtentExpectationError,
+    > {
+        bridge_tally_protocol::outstandings_shared::CompanyBookExtentExpectation::new(
+            self.display_name.clone(),
+            self.company_guid.clone(),
+            self.company_number.as_str().to_owned(),
+            self.books_from_yyyymmdd.as_str().to_owned(),
+        )
     }
 
     pub(crate) fn matches_observed_company(&self, company: &TallyCompany) -> bool {

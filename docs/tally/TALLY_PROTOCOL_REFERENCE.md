@@ -1038,6 +1038,35 @@ against a schema that can contain same-GUID books.
 pin by guessing fields from a current listing: re-observe and review the full tuple. This rule
 is implemented by the composite-identity migration and `snapshot_source_pin`.
 
+### 9.11c Extent reads must retain the verified company tuple — **VERIFIED on one endpoint**
+
+**VERIFIED 2026-09-09 field and versioned request observations on one endpoint.**
+A paired Company collection extent read returned 16 company rows, including a
+same-GUID split pair. Adding only `CompanyNumber` to the existing extent fetch
+returned that field on all 16 rows; removing the new field left the other response
+fields unchanged. The captured response is retained in
+[`native-company-book-extents-with-number.utf8.xml`](../../src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml),
+with an adjacent provenance note. Wire numbers contained leading whitespace;
+comparison uses the trimmed observed digit string and preserves leading zeros.
+
+**Design rule.** `CompanyBookExtentV2` selects the full verified
+`(NAME, GUID, COMPANYNUMBER, BOOKSFROM)` tuple. A same-GUID book with a different
+display scope may coexist; a presentation-equivalent sibling, duplicate tuple,
+missing or malformed number, or changed tuple refuses admission. Native clients
+and snapshot connectors retain the original verified identity for every opening
+and closing extent read. Neither GUID-only fallback nor a new database identity
+is needed. Paired equality, health checks, and the `ALTMSTID` master-change witness
+remain required independently of tuple selection.
+
+A separate single-attempt native runtime observation then used the exact V2
+renderer and production extent client. Opening and closing full-tuple extents
+agreed; the independently retained V2 paired response had the same decoded bytes
+as the field observation. Fresh Company collection and licensed-mode checks
+passed around the reads. This establishes the V2 extent boundary on that endpoint,
+not a financial report, another endpoint, a compatibility cell, or accounting
+writes. V1 remains for historical corpus interpretation; production extent reads
+use V2 without fallback.
+
 ## 9.10 Company creation over XML — **PARTIAL: symbol element found, formal-name element not**
 
 **PARTIAL.** Company creation is *attempted* by Tally — it validates and returns specific

@@ -92,12 +92,7 @@ impl TallyRuntime {
                             NativeLedgerSnapshotPeriod::new(profile, from.clone(), to.clone())
                                 .map_err(TrialBalanceReadError::Period)?;
                         bracket_verified_company_identity(&client, &identity).await?;
-                        let extent = client
-                            .fetch_company_book_extent(
-                                identity.display_name(),
-                                identity.company_guid(),
-                            )
-                            .await?;
+                        let extent = client.fetch_company_book_extent(&identity).await?;
                         if from < *extent.books_from() {
                             return Err(TrialBalanceReadError::BeforeBooks.into());
                         }
@@ -135,12 +130,7 @@ impl TallyRuntime {
                             .combine(RuntimeReadEvidence::paired(&request, hash, bytes));
                         let report = parse_native_trial_balance(&xml, identity.company_guid())?;
                         let totals = crate::reports::trial_balance::observed_totals(&report)?;
-                        let closing_extent = client
-                            .fetch_company_book_extent(
-                                identity.display_name(),
-                                identity.company_guid(),
-                            )
-                            .await?;
+                        let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != extent {
                             return Err(PairedReadValidationError::NativeLedgerExtent.into());
                         }

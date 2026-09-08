@@ -161,8 +161,7 @@ async fn party_master_drift_retains_prior_reports_and_exact_typed_cause() {
         let client = TallyClient::new(config(&simulator)).unwrap();
         let error = client
             .fetch_party_ledger_master_source(
-                identity.display_name(),
-                GUID,
+                &identity,
                 DateBoundaryProfile::ModeAgnostic,
                 assertion(&extents(), &identity),
             )
