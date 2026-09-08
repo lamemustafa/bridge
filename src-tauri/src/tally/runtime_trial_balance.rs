@@ -20,6 +20,8 @@ pub struct TrialBalanceRead {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TrialBalanceReadError {
+    #[error("trial_balance_education_unqualified")]
+    EducationUnqualified,
     #[error("trial_balance_before_books")]
     BeforeBooks,
     #[error("trial_balance_period_not_honoured")]
@@ -31,6 +33,7 @@ pub(crate) enum TrialBalanceReadError {
 impl TrialBalanceReadError {
     pub(crate) fn safe_code(&self) -> &'static str {
         match self {
+            Self::EducationUnqualified => "trial_balance_education_unqualified",
             Self::BeforeBooks => "trial_balance_before_books",
             Self::Period(_) => "trial_balance_period_not_honoured",
             Self::Currency(code) => code,
@@ -64,6 +67,9 @@ impl TallyRuntime {
                     let result = async {
                         let (profile, mode_evidence) = observe_read_boundary(&client).await?;
                         evidence = mode_evidence;
+                        if profile == DateBoundaryProfile::EducationRestricted {
+                            return Err(TrialBalanceReadError::EducationUnqualified.into());
+                        }
                         let period =
                             NativeLedgerSnapshotPeriod::new(profile, from.clone(), to.clone())
                                 .map_err(TrialBalanceReadError::Period)?;
