@@ -1,12 +1,41 @@
 # Bridge
 
-Bridge is an open-source Tauri desktop application for AXAL local-edge sync
-workflows. It combines a React/TypeScript interface with a Rust backend for
-Tally, digital-signature certificate (DSC), document, sync, and local database
+Bridge is an open-source local connector for AXAL and Tally workflows. The
+repository contains a Tauri desktop application and the MCPB packaging path for
+Claude Desktop, with React/TypeScript and Rust components for Tally,
+digital-signature certificate (DSC), document, sync, and local database
 operations.
 
 The repository is self-contained: build and development commands resolve files
 relative to the clone, not to a developer-specific directory.
+
+## First useful result
+
+As of 8 September 2026, no installer is published: the public `v0.1.0`
+release has no downloadable assets. Check [GitHub Releases](https://github.com/lamemustafa/bridge/releases)
+for future packages. For source use, the contributor quick start below builds
+the desktop app; to run the MCP server, follow the [source MCP setup](./docs/agent/README.md).
+When a release asset is published, use the [installation guide](./docs/agent/INSTALL.md)
+for its package-specific steps.
+
+Before requesting financial data through an MCP client, the client may send the selected
+Tally result to its AI provider, including company
+identity, party or open-bill details, and amounts. Source installations default
+to `BRIDGE_AGENT_REDACTION=none`; set it to `mask_parties` or `drop_narration`
+before launch when that better fits the workflow. These settings mask party
+names or drop narration; they do not remove amounts. The package installation
+settings expose the same choices.
+
+For a first result, run `tally_status` to check that TallyPrime and its Licensed
+or Education mode are observed, then list the loaded companies. Select a
+company with exactly one observed INR currency master and request receivables
+or payables. In Education mode, explicitly supply an `as_of` date on day 1, 2,
+or 31; an omitted date defaults to today and may be refused. Bridge rechecks
+product, mode, dates and currency for the financial read; other or unobserved
+products/modes, no currency master, non-INR, or multiple currency masters are
+refused.
+
+For contributors, use the setup and development path below.
 
 ## Supported development hosts
 
@@ -33,7 +62,7 @@ also require a vendor PKCS#11 library compatible with the host operating
 system; never commit a private key, PIN, certificate dump, or locally installed
 vendor library. Bridge's macOS bundles require macOS 12.4 or later.
 
-## Quick start
+## Contributor quick start
 
 Run these commands from the repository root in PowerShell, Command Prompt, or a
 POSIX-compatible shell:
