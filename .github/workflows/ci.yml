@@ -127,6 +127,7 @@ jobs:
         with:
           toolchain: 1.96.0
       - run: node scripts/check-ci-workflow-consistency.mjs
+      - run: python3 scripts/collect-macos-test-crashes.test.py
 
   tally-portable:
     name: Tally portable core

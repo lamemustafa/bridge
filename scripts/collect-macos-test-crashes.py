@@ -16,9 +16,8 @@ PROCESS = re.compile(r"bridge_lib(?:-[0-9a-f]+)?\Z")
 
 
 def label(value):
-    if not isinstance(value, str):
+    if not isinstance(value, str) or any(char in value for char in "/\\") or any(ord(char) < 32 for char in value):
         return None
-    value = re.sub(r"(?:[A-Za-z]:[\\/]|/)[^\s<>]+", "<path>", value)
     return value[:512]
 
 
@@ -43,7 +42,11 @@ def minimize(text):
         "threads_truncated": len(threads) > 64,
         "threads": [],
     }
-    for index, thread in enumerate(threads[:64]):
+    priority = [result["faulting_thread"]] + [index for index, thread in enumerate(threads) if thread.get("triggered") is True]
+    indices = dict.fromkeys(index for index in priority + list(range(len(threads)))
+                            if type(index) is int and 0 <= index < len(threads))
+    for index in list(indices)[:64]:
+        thread = threads[index]
         frames = thread.get("frames", [])
         output = {"index": index, "triggered": thread.get("triggered") is True,
                   "frames_truncated": len(frames) > 64, "frames": []}
@@ -92,6 +95,20 @@ def collect(directories, since):
     return result
 
 
+def wait_for_reports(directories, since, wait_seconds):
+    deadline = time.monotonic() + wait_seconds
+    last_error = None
+    while True:
+        result = collect(directories, since)
+        if result["status"] == "captured":
+            return result
+        if result["status"] == "capture_error":
+            last_error = result
+        if time.monotonic() >= deadline:
+            return last_error or result
+        time.sleep(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--since-file", type=Path, required=True)
@@ -100,12 +117,7 @@ def main():
     args = parser.parse_args()
     directories = [Path.home() / "Library/Logs/DiagnosticReports", Path("/Library/Logs/DiagnosticReports")]
     since = args.since_file.stat().st_mtime
-    deadline = time.monotonic() + args.wait_seconds
-    while True:
-        result = collect(directories, since)
-        if result["status"] != "no_fresh_reports" or time.monotonic() >= deadline:
-            break
-        time.sleep(1)
+    result = wait_for_reports(directories, since, args.wait_seconds)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({"status": result["status"], "reports": len(result["reports"]), "errors": result["errors"]}))
     return 1 if result["status"] == "capture_error" else 0
