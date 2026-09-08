@@ -258,27 +258,33 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: |
-            src-tauri -> target
-            tools -> target
-          # A lockfile change creates a cold target cache. On Windows, saving that
-          # multi-gigabyte target tree can outlast this job's hard timeout after
-          # every test and lint gate has already passed. Keep the registry cache,
-          # but do not persist native Windows build artifacts.
-          cache-targets: ${{ runner.os != 'Windows' }}
       - name: Set up Windows native prerequisites
         id: windows-native-prerequisites
         if: runner.os == 'Windows'
         uses: ./.github/actions/setup-windows-native
         with:
           save-cache: true
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        id: native-cache
+        with:
+          workspaces: |
+            src-tauri -> target
+            tools -> target
+          # Separate the Windows dependency artifacts from the former registry-only
+          # cache. Keep Cargo/toolchain/profile fingerprints and cleanup defaults;
+          # workspace binaries and incremental artifacts are not persisted.
+          key: ${{ runner.os == 'Windows' && format('native-deps-v1-{0}', hashFiles('.github/actions/setup-windows-native/action.yml')) || '' }}
+          env-vars: ${{ runner.os == 'Windows' && 'ImageOS ImageVersion OPENSSL LIBCLANG' || '' }}
+          # PRs consume trusted base caches. Manual branch runs can measure cold
+          # and warm reuse in their own scope before a change reaches master.
+          save-if: ${{ runner.os != 'Windows' || github.event_name != 'pull_request' }}
       - name: Record Windows prerequisite cache state
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native prerequisites'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native cache'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Dependency cache exact hit: `${{ steps.native-cache.outputs.cache-hit }}`'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Runner image: $env:ImageOS / $env:ImageVersion"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-native-prerequisites.outputs.cache-hit }}`'
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast --timings
       - name: Test Tally qualification tools workspace
