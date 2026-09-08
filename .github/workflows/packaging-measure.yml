@@ -1,0 +1,101 @@
+name: Packaging measurement
+
+on:
+  workflow_dispatch:
+    inputs:
+      cache_scope:
+        description: Fresh dependency-cache namespace for a cold run; reuse for its warm pair
+        required: true
+        default: baseline-v1
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package-measure:
+    name: Package measurement (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri -> target
+          prefix-key: packaging-measure-20260908-${{ inputs.cache_scope }}
+      - name: Set up Windows native prerequisites
+        id: windows-bundle-prerequisites
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-native
+      - name: Record Windows prerequisite cache state
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native prerequisites'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-bundle-prerequisites.outputs.cache-hit }}`'
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm run license:all
+      - name: Use ad-hoc signing for macOS smoke bundles
+        if: runner.os == 'macOS'
+        run: echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
+      - run: corepack pnpm run tauri:build -- --timings
+      - name: Verify Windows installer legal resources
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check-windows-bundle-resources.ps1
+      - name: Verify macOS app legal resources and signature
+        if: runner.os == 'macOS'
+        run: |
+          node scripts/check-macos-bundle-resources.mjs
+          node scripts/check-macos-bundle-resources.mutation.mjs
+      # tauri build uses --bins, including the auto-discovered bridge_mcp.
+      # Stage that fresh release binary instead of rebuilding without Tauri's
+      # custom-protocol feature and native build environment.
+      - name: Stage host MCPB binary and legal resources
+        run: node scripts/package-mcpb.mjs --binary src-tauri/target/release/bridge_mcp${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: Validate and pack MCPB with the official schema
+        run: |
+          npx --yes @anthropic-ai/mcpb@2.1.2 validate packaging/mcpb/stage/manifest.json
+          npx --yes @anthropic-ai/mcpb@2.1.2 pack packaging/mcpb/stage src-tauri/target/release/bundle/bridge-tally.mcpb
+          npx --yes @anthropic-ai/mcpb@2.1.2 info src-tauri/target/release/bundle/bridge-tally.mcpb
+      - name: Exercise the packaged MCPB stdio server
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python_command=python
+          else
+            python_command=python3
+          fi
+          "$python_command" scripts/check-mcpb-bundle.test.py
+          "$python_command" scripts/check-mcpb-bundle.py src-tauri/target/release/bundle/bridge-tally.mcpb --output src-tauri/target/release/bundle/mcpb-smoke.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: measured-bundle-${{ matrix.os }}
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain package compiler timings
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-compiler-timings-${{ matrix.os }}
+          path: src-tauri/target/cargo-timings/*.html
+          if-no-files-found: error
+          retention-days: 7
