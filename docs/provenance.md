@@ -81,3 +81,11 @@ review.
 Proprietary vendor PKCS#11 libraries, private keys, PINs, certificate dumps,
 customer files, and machine-specific configuration are not part of the public
 repository or distributable bundle.
+
+## macOS test crash evidence
+
+The crash collector and tests in `scripts/collect-macos-test-crashes*.py` are
+project-authored under this repository's Apache-2.0 license. The
+[privacy-reduced control fixture](../scripts/testdata/macos-sigtrap-control.PROVENANCE.md)
+comes from an owned disposable process, with capture provenance and the retained
+fields documented alongside it. It contains no application or customer data.

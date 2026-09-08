@@ -1,0 +1,55 @@
+name: macOS crash capture control
+
+on:
+  push:
+    branches: [tapish-codex/macos-ci-crash-evidence]
+  workflow_dispatch:
+
+jobs:
+  capture-control:
+    name: Capture a disposable hosted process crash
+    runs-on: macos-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Test collector parsing and bounded collection
+        run: python3 scripts/collect-macos-test-crashes.test.py
+      - name: Generate one disposable control report
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          root = Path(os.environ["RUNNER_TEMP"])
+          source = root / "crash-control.c"
+          source.write_text("#include <signal.h>\nint main(void) { return raise(SIGTRAP); }\n")
+          binary = root / "bridge_lib-cafe"
+          subprocess.run(["clang", str(source), "-o", str(binary)], check=True)
+          (root / "control-start").touch()
+          result = subprocess.run([str(binary)], capture_output=True)
+          assert result.returncode == -5, "control did not exit with SIGTRAP"
+          PY
+      - name: Capture and verify the control stack
+        shell: bash
+        run: |
+          python3 scripts/collect-macos-test-crashes.py --since-file "$RUNNER_TEMP/control-start" --output "$RUNNER_TEMP/control-crash.json" --wait-seconds 30
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          result = json.loads((Path(os.environ["RUNNER_TEMP"]) / "control-crash.json").read_text())
+          assert result["status"] == "captured", "hosted crash report was not captured"
+          assert any(report["process"] == "bridge_lib-cafe" and report["exception"]["signal"] == "SIGTRAP" and report["threads"] for report in result["reports"])
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: hosted-crash-capture-control
+          path: ${{ runner.temp }}/control-crash.json
+          if-no-files-found: error
+          retention-days: 7
