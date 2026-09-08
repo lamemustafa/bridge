@@ -14,6 +14,8 @@ pub(crate) mod local_files;
 // one consumer inside this crate, so it does not need to be reachable from outside `bridge_lib`.
 mod observability;
 pub mod reports;
+pub(crate) mod source_draft;
+pub(crate) mod source_draft_xml;
 pub mod sync;
 pub mod tally;
 pub mod warning_codes;
@@ -90,6 +92,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(tally::TallyRuntime::default())
+        .manage(source_draft::SourceDraftStore::default())
         .manage(reports::bulk_party_statement::PartyStatementDestinationApprovals::default())
         .manage(reports::outstandings_working_paper_store::WorkingPaperExportStore::default())
         .manage(reports::trial_balance_store::TrialBalanceExportStore::default())
@@ -150,6 +153,9 @@ pub fn run() {
             commands::scan_document_paths,
             commands::sync_documents_to_axal,
             commands::revoke_document_authorizations,
+            source_draft::desktop_pick_source_draft,
+            source_draft::desktop_open_source_draft,
+            source_draft::desktop_save_source_draft,
             commands::desktop_pick_journal_for_review,
             commands::desktop_post_reviewed_journal,
             commands::desktop_reconcile_reviewed_journal,

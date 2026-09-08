@@ -1,0 +1,557 @@
+//! Strict, bounded parsing for a locally chosen historical voucher export.
+//!
+//! This module preserves source text for review. It does not construct a Tally
+//! request, derive accounting sides, or make a source export executable.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use quick_xml::{
+    events::{BytesRef, BytesText, Event},
+    Reader, XmlVersion,
+};
+use sha2::{Digest, Sha256};
+
+pub(crate) const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_VOUCHERS: usize = 2_000;
+const MAX_ENTRIES: usize = 20;
+const MAX_TEXT_BYTES: usize = 4_096;
+const MAX_DEPTH: usize = 32;
+const MAX_TAG_BYTES: usize = 128;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ParsedSource {
+    pub(crate) filename: String,
+    pub(crate) sha256: String,
+    pub(crate) utf8: String,
+    pub(crate) vouchers: Vec<SourceVoucher>,
+    pub(crate) source_notices: Vec<SourceNotice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceNotice {
+    pub(crate) kind: String,
+    pub(crate) count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceVoucher {
+    pub(crate) position: usize,
+    pub(crate) remote_id: String,
+    pub(crate) date: String,
+    pub(crate) voucher_type: String,
+    pub(crate) narration: Option<String>,
+    pub(crate) entries: Vec<SourceEntry>,
+    pub(crate) omitted_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceEntry {
+    pub(crate) position: usize,
+    pub(crate) ledger: String,
+    pub(crate) amount: String,
+    pub(crate) polarity: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceXmlError {
+    TooLarge,
+    InvalidUtf8,
+    DoctypeForbidden,
+    InvalidEntity,
+    UnsupportedShape,
+    InvalidText,
+    VoucherLimit,
+    EntryLimit,
+    RequiredFieldMissing,
+}
+
+impl SourceXmlError {
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::TooLarge => "source_draft_source_too_large",
+            Self::InvalidUtf8 => "source_draft_source_not_utf8",
+            Self::DoctypeForbidden => "source_draft_doctype_forbidden",
+            Self::InvalidEntity => "source_draft_entity_invalid",
+            Self::UnsupportedShape => "source_draft_xml_shape_unsupported",
+            Self::InvalidText => "source_draft_source_text_invalid",
+            Self::VoucherLimit => "source_draft_voucher_limit_exceeded",
+            Self::EntryLimit => "source_draft_entry_limit_exceeded",
+            Self::RequiredFieldMissing => "source_draft_required_field_missing",
+        }
+    }
+}
+
+pub(crate) fn parse_source_xml(
+    bytes: &[u8],
+    filename: String,
+) -> Result<ParsedSource, SourceXmlError> {
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Err(SourceXmlError::TooLarge);
+    }
+    let xml = std::str::from_utf8(bytes).map_err(|_| SourceXmlError::InvalidUtf8)?;
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    let mut stack = Vec::<String>::new();
+    let mut vouchers = Vec::new();
+    let mut current: Option<WorkingVoucher> = None;
+    let mut entry: Option<WorkingEntry> = None;
+    let mut notices = BTreeMap::new();
+    let mut saw_root = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Decl(_)) if stack.is_empty() && !saw_root => {}
+            Ok(Event::Decl(_)) => return Err(SourceXmlError::UnsupportedShape),
+            Ok(Event::Start(event)) => {
+                start(
+                    &mut stack,
+                    &event,
+                    &reader,
+                    &mut current,
+                    &mut entry,
+                    &mut saw_root,
+                    &mut notices,
+                )?;
+            }
+            Ok(Event::Empty(event)) => {
+                let tag = tag_name(event.name().as_ref())?;
+                start(
+                    &mut stack,
+                    &event,
+                    &reader,
+                    &mut current,
+                    &mut entry,
+                    &mut saw_root,
+                    &mut notices,
+                )?;
+                finish(&mut stack, &tag, &mut vouchers, &mut current, &mut entry)?;
+            }
+            Ok(Event::Text(text)) => {
+                append_text(&stack, &mut current, &mut entry, decode_text(text)?)?
+            }
+            Ok(Event::CData(text)) => append_text(
+                &stack,
+                &mut current,
+                &mut entry,
+                text.decode()
+                    .map_err(|_| SourceXmlError::InvalidUtf8)?
+                    .into_owned(),
+            )?,
+            Ok(Event::GeneralRef(reference)) => append_text(
+                &stack,
+                &mut current,
+                &mut entry,
+                decode_reference(reference)?,
+            )?,
+            Ok(Event::End(event)) => {
+                let tag = tag_name(event.name().as_ref())?;
+                finish(&mut stack, &tag, &mut vouchers, &mut current, &mut entry)?;
+            }
+            Ok(Event::DocType(_)) => return Err(SourceXmlError::DoctypeForbidden),
+            Ok(Event::Comment(_)) | Ok(Event::PI(_)) => {
+                return Err(SourceXmlError::UnsupportedShape)
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => return Err(SourceXmlError::UnsupportedShape),
+        }
+    }
+    if !saw_root || !stack.is_empty() || current.is_some() || entry.is_some() || vouchers.is_empty()
+    {
+        return Err(SourceXmlError::UnsupportedShape);
+    }
+    if vouchers
+        .iter()
+        .map(|voucher| voucher.remote_id.as_str())
+        .collect::<BTreeSet<_>>()
+        .len()
+        != vouchers.len()
+    {
+        return Err(SourceXmlError::UnsupportedShape);
+    }
+    let sha256 = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let source_notices = notices
+        .into_iter()
+        .map(|(kind, count)| SourceNotice { kind, count })
+        .collect();
+    Ok(ParsedSource {
+        filename,
+        sha256,
+        utf8: xml.to_owned(),
+        vouchers,
+        source_notices,
+    })
+}
+
+fn start(
+    stack: &mut Vec<String>,
+    event: &quick_xml::events::BytesStart<'_>,
+    reader: &Reader<&[u8]>,
+    current: &mut Option<WorkingVoucher>,
+    entry: &mut Option<WorkingEntry>,
+    saw_root: &mut bool,
+    notices: &mut BTreeMap<String, usize>,
+) -> Result<(), SourceXmlError> {
+    let tag = tag_name(event.name().as_ref())?;
+    validate_attribute_bounds(event, reader)?;
+    if stack.len() >= MAX_DEPTH {
+        return Err(SourceXmlError::UnsupportedShape);
+    }
+    let parent = stack.last().map(String::as_str);
+    let direct_message = stack.as_slice()
+        == [
+            "ENVELOPE",
+            "BODY",
+            "IMPORTDATA",
+            "REQUESTDATA",
+            "TALLYMESSAGE",
+        ];
+    if tag == "VOUCHER" && !direct_message {
+        return Err(SourceXmlError::UnsupportedShape);
+    }
+    let allowed = matches!(
+        (parent, tag.as_str()),
+        (None, "ENVELOPE")
+            | (Some("ENVELOPE"), "HEADER" | "BODY")
+            | (Some("BODY"), "IMPORTDATA")
+            | (Some("IMPORTDATA"), "REQUESTDESC" | "REQUESTDATA")
+            | (Some("REQUESTDESC"), _)
+            | (Some("STATICVARIABLES"), _)
+            | (Some("REQUESTDATA"), "TALLYMESSAGE")
+            | (Some("TALLYMESSAGE"), _)
+            | (Some("VOUCHER"), "ALLLEDGERENTRIES.LIST")
+            | (Some("VOUCHER"), _)
+            | (Some("ALLLEDGERENTRIES.LIST"), _)
+    );
+    let ignored_metadata = matches!(
+        parent,
+        Some("HEADER") | Some("REQUESTDESC") | Some("STATICVARIABLES")
+    ) || (current.is_none()
+        && stack.iter().any(|element| element == "TALLYMESSAGE"));
+    if (!allowed && !ignored_metadata) || (parent.is_none() && *saw_root) {
+        return Err(SourceXmlError::UnsupportedShape);
+    }
+    if parent == Some("TALLYMESSAGE") && tag != "VOUCHER" {
+        *notices
+            .entry(format!("Ignored TALLYMESSAGE/{tag}"))
+            .or_insert(0) += 1;
+    } else if parent == Some("ENVELOPE") && tag == "HEADER" {
+        *notices
+            .entry("Ignored ENVELOPE/HEADER metadata".into())
+            .or_insert(0) += 1;
+    } else if parent == Some("IMPORTDATA") && tag == "REQUESTDESC" {
+        *notices
+            .entry("Ignored IMPORTDATA/REQUESTDESC metadata".into())
+            .or_insert(0) += 1;
+    }
+    if tag == "VOUCHER" && direct_message {
+        if current.is_some() {
+            return Err(SourceXmlError::UnsupportedShape);
+        }
+        let mut row = WorkingVoucher::default();
+        for attr in event.attributes().with_checks(true) {
+            let attr = attr.map_err(|_| SourceXmlError::UnsupportedShape)?;
+            let key = tag_name(attr.key.as_ref())?;
+            let value = attr
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                .map_err(|_| SourceXmlError::InvalidUtf8)?;
+            let value = bounded(value.into_owned())?;
+            match key.as_str() {
+                "REMOTEID" => claim(&mut row.remote_id, value)?,
+                "VCHTYPE" => claim(&mut row.voucher_type, value)?,
+                _ => {
+                    row.omitted.insert(format!("VOUCHER/@{key}"));
+                }
+            }
+        }
+        *current = Some(row);
+    } else if tag == "ALLLEDGERENTRIES.LIST" && current.is_some() && parent == Some("VOUCHER") {
+        if entry.is_some() || current.is_none() {
+            return Err(SourceXmlError::UnsupportedShape);
+        }
+        *entry = Some(WorkingEntry::default());
+    } else if matches!(parent, Some("VOUCHER") | Some("ALLLEDGERENTRIES.LIST")) {
+        let voucher = current.as_mut().ok_or(SourceXmlError::UnsupportedShape)?;
+        if parent == Some("VOUCHER") && matches!(tag.as_str(), "DATE" | "NARRATION") {
+            let slot = if tag == "DATE" {
+                &mut voucher.date
+            } else {
+                &mut voucher.narration
+            };
+            if slot.replace(String::new()).is_some() {
+                return Err(SourceXmlError::UnsupportedShape);
+            }
+        } else if parent == Some("VOUCHER") && tag != "ALLLEDGERENTRIES.LIST" {
+            voucher.omitted.insert(format!("VOUCHER/{tag}"));
+        }
+        if parent == Some("ALLLEDGERENTRIES.LIST")
+            && matches!(tag.as_str(), "LEDGERNAME" | "AMOUNT" | "ISDEEMEDPOSITIVE")
+        {
+            let row = entry.as_mut().ok_or(SourceXmlError::UnsupportedShape)?;
+            let slot = match tag.as_str() {
+                "LEDGERNAME" => &mut row.ledger,
+                "AMOUNT" => &mut row.amount,
+                _ => &mut row.polarity,
+            };
+            if slot.replace(String::new()).is_some() {
+                return Err(SourceXmlError::UnsupportedShape);
+            }
+        } else if parent == Some("ALLLEDGERENTRIES.LIST") {
+            voucher.omitted.insert(format!("ENTRY/{tag}"));
+        }
+        if event.attributes().next().is_some() {
+            return Err(SourceXmlError::UnsupportedShape);
+        }
+    }
+    if tag == "ENVELOPE" {
+        *saw_root = true;
+    }
+    stack.push(tag);
+    Ok(())
+}
+
+fn finish(
+    stack: &mut Vec<String>,
+    tag: &str,
+    vouchers: &mut Vec<SourceVoucher>,
+    current: &mut Option<WorkingVoucher>,
+    entry: &mut Option<WorkingEntry>,
+) -> Result<(), SourceXmlError> {
+    if stack.pop().as_deref() != Some(tag) {
+        return Err(SourceXmlError::UnsupportedShape);
+    }
+    if tag == "ALLLEDGERENTRIES.LIST" {
+        let row = entry.take().ok_or(SourceXmlError::UnsupportedShape)?;
+        let voucher = current.as_mut().ok_or(SourceXmlError::UnsupportedShape)?;
+        if voucher.entries.len() >= MAX_ENTRIES {
+            return Err(SourceXmlError::EntryLimit);
+        }
+        voucher.entries.push(SourceEntry {
+            position: voucher.entries.len() + 1,
+            ledger: row.ledger.ok_or(SourceXmlError::RequiredFieldMissing)?,
+            amount: row.amount.ok_or(SourceXmlError::RequiredFieldMissing)?,
+            polarity: row.polarity,
+        });
+    }
+    if tag == "VOUCHER" {
+        let row = current.take().ok_or(SourceXmlError::UnsupportedShape)?;
+        if vouchers.len() >= MAX_VOUCHERS {
+            return Err(SourceXmlError::VoucherLimit);
+        }
+        vouchers.push(SourceVoucher {
+            position: vouchers.len() + 1,
+            remote_id: row.remote_id.ok_or(SourceXmlError::RequiredFieldMissing)?,
+            date: row.date.ok_or(SourceXmlError::RequiredFieldMissing)?,
+            voucher_type: row
+                .voucher_type
+                .ok_or(SourceXmlError::RequiredFieldMissing)?,
+            narration: row.narration,
+            entries: nonempty(row.entries)?,
+            omitted_fields: row.omitted.into_iter().collect(),
+        });
+    }
+    Ok(())
+}
+
+fn append_text(
+    stack: &[String],
+    current: &mut Option<WorkingVoucher>,
+    entry: &mut Option<WorkingEntry>,
+    value: String,
+) -> Result<(), SourceXmlError> {
+    if value.len() > MAX_TEXT_BYTES {
+        return Err(SourceXmlError::InvalidText);
+    }
+    let (parent, tag) = (
+        stack.iter().rev().nth(1).map(String::as_str),
+        stack.last().map(String::as_str),
+    );
+    match (parent, tag, current.as_mut(), entry.as_mut()) {
+        (Some("VOUCHER"), Some("DATE"), Some(row), _) => append(&mut row.date, value)?,
+        (Some("VOUCHER"), Some("NARRATION"), Some(row), _) => append(&mut row.narration, value)?,
+        (Some("ALLLEDGERENTRIES.LIST"), Some("LEDGERNAME"), _, Some(row)) => {
+            append(&mut row.ledger, value)?
+        }
+        (Some("ALLLEDGERENTRIES.LIST"), Some("AMOUNT"), _, Some(row)) => {
+            append(&mut row.amount, value)?
+        }
+        (Some("ALLLEDGERENTRIES.LIST"), Some("ISDEEMEDPOSITIVE"), _, Some(row)) => {
+            append(&mut row.polarity, value)?
+        }
+        (_, _, _, _) if stack.is_empty() && !value.trim().is_empty() => {
+            return Err(SourceXmlError::UnsupportedShape)
+        }
+        (_, _, None, _) | (_, _, _, None) if !stack.iter().any(|tag| tag == "VOUCHER") => {}
+        (_, _, _, _) if value.trim().is_empty() => {}
+        (Some("VOUCHER") | Some("ALLLEDGERENTRIES.LIST"), _, _, _) => {}
+        _ => return Err(SourceXmlError::UnsupportedShape),
+    }
+    Ok(())
+}
+
+fn tag_name(raw: &[u8]) -> Result<String, SourceXmlError> {
+    if raw.len() > MAX_TAG_BYTES {
+        return Err(SourceXmlError::UnsupportedShape);
+    }
+    std::str::from_utf8(raw)
+        .map(str::to_owned)
+        .map_err(|_| SourceXmlError::InvalidUtf8)
+}
+fn validate_attribute_bounds(
+    event: &quick_xml::events::BytesStart<'_>,
+    reader: &Reader<&[u8]>,
+) -> Result<(), SourceXmlError> {
+    for attribute in event.attributes().with_checks(true) {
+        let attribute = attribute.map_err(|_| SourceXmlError::UnsupportedShape)?;
+        let _ = tag_name(attribute.key.as_ref())?;
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+            .map_err(|_| SourceXmlError::InvalidUtf8)?;
+        bounded(value.into_owned())?;
+    }
+    Ok(())
+}
+fn unescape(value: &str) -> Result<String, SourceXmlError> {
+    quick_xml::escape::unescape(value)
+        .map(|v| v.into_owned())
+        .map_err(|_| SourceXmlError::InvalidEntity)
+}
+fn decode_text(text: BytesText<'_>) -> Result<String, SourceXmlError> {
+    unescape(&text.decode().map_err(|_| SourceXmlError::InvalidUtf8)?)
+}
+fn decode_reference(reference: BytesRef<'_>) -> Result<String, SourceXmlError> {
+    unescape(&format!(
+        "&{};",
+        reference
+            .decode()
+            .map_err(|_| SourceXmlError::InvalidUtf8)?
+    ))
+}
+fn bounded(value: String) -> Result<String, SourceXmlError> {
+    if value.len() > MAX_TEXT_BYTES {
+        Err(SourceXmlError::InvalidText)
+    } else {
+        Ok(value)
+    }
+}
+fn claim(slot: &mut Option<String>, value: String) -> Result<(), SourceXmlError> {
+    if slot.replace(value).is_some() {
+        Err(SourceXmlError::UnsupportedShape)
+    } else {
+        Ok(())
+    }
+}
+fn append(slot: &mut Option<String>, value: String) -> Result<(), SourceXmlError> {
+    let next = format!("{}{}", slot.as_deref().unwrap_or_default(), value);
+    *slot = Some(bounded(next)?);
+    Ok(())
+}
+fn nonempty<T>(value: Vec<T>) -> Result<Vec<T>, SourceXmlError> {
+    if value.is_empty() {
+        Err(SourceXmlError::RequiredFieldMissing)
+    } else {
+        Ok(value)
+    }
+}
+
+#[derive(Default)]
+struct WorkingVoucher {
+    remote_id: Option<String>,
+    date: Option<String>,
+    voucher_type: Option<String>,
+    narration: Option<String>,
+    entries: Vec<SourceEntry>,
+    omitted: BTreeSet<String>,
+}
+#[derive(Default)]
+struct WorkingEntry {
+    ledger: Option<String>,
+    amount: Option<String>,
+    polarity: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const XML: &str = "<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE><VOUCHER REMOTEID=\"id&amp;1\" VCHTYPE=\"Receipt\"><DATE>20260901</DATE><NARRATION>Party &amp; Co</NARRATION><VOUCHERNUMBER>1</VOUCHERNUMBER><ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>-1.00</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>";
+    #[test]
+    fn preserves_raw_source_and_marks_omitted_fields() {
+        let parsed = parse_source_xml(XML.as_bytes(), "source.xml".into()).unwrap();
+        assert_eq!(parsed.vouchers[0].remote_id, "id&1");
+        assert_eq!(parsed.vouchers[0].narration.as_deref(), Some("Party & Co"));
+        assert_eq!(parsed.vouchers[0].entries[0].polarity, None);
+        assert_eq!(parsed.vouchers[0].omitted_fields, ["VOUCHER/VOUCHERNUMBER"]);
+    }
+    #[test]
+    fn rejects_doctype_and_nested_unknown_source_fields() {
+        assert_eq!(
+            parse_source_xml(b"<!DOCTYPE a><ENVELOPE/>", "x".into()),
+            Err(SourceXmlError::DoctypeForbidden)
+        );
+        assert_eq!(
+            parse_source_xml(
+                XML.replacen(
+                    "<VOUCHERNUMBER>1</VOUCHERNUMBER>",
+                    "<EXTRA><X>1</X></EXTRA>",
+                    1
+                )
+                .as_bytes(),
+                "x".into()
+            ),
+            Err(SourceXmlError::UnsupportedShape)
+        );
+    }
+    #[test]
+    fn duplicate_scalar_refuses_while_present_empty_remains_distinct_from_absent() {
+        let duplicate = XML.replacen(
+            "<DATE>20260901</DATE>",
+            "<DATE>20260901</DATE><DATE>20260902</DATE>",
+            1,
+        );
+        assert_eq!(
+            parse_source_xml(duplicate.as_bytes(), "x.xml".into()),
+            Err(SourceXmlError::UnsupportedShape)
+        );
+        let empty = XML.replacen("<NARRATION>Party &amp; Co</NARRATION>", "<NARRATION/>", 1);
+        assert_eq!(
+            parse_source_xml(empty.as_bytes(), "x.xml".into())
+                .unwrap()
+                .vouchers[0]
+                .narration
+                .as_deref(),
+            Some("")
+        );
+        let absent = XML.replacen("<NARRATION>Party &amp; Co</NARRATION>", "", 1);
+        assert_eq!(
+            parse_source_xml(absent.as_bytes(), "x.xml".into())
+                .unwrap()
+                .vouchers[0]
+                .narration,
+            None
+        );
+    }
+    #[test]
+    fn hash_changes_with_source_bytes_and_duplicate_remote_id_refuses() {
+        let one = parse_source_xml(XML.as_bytes(), "x.xml".into()).unwrap();
+        let two = parse_source_xml(format!("{XML}\n").as_bytes(), "x.xml".into()).unwrap();
+        assert_ne!(one.sha256, two.sha256);
+        let duplicate = XML.replacen(
+            "</TALLYMESSAGE>",
+            &format!(
+                "</TALLYMESSAGE><TALLYMESSAGE>{}</TALLYMESSAGE>",
+                XML.split("<TALLYMESSAGE>")
+                    .nth(1)
+                    .unwrap()
+                    .split("</TALLYMESSAGE>")
+                    .next()
+                    .unwrap()
+            ),
+            1,
+        );
+        assert_eq!(
+            parse_source_xml(duplicate.as_bytes(), "x.xml".into()),
+            Err(SourceXmlError::UnsupportedShape)
+        );
+    }
+}

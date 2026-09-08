@@ -38,6 +38,7 @@ import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
 import { JournalPostingScreen } from "./JournalPostingScreen";
+import { SourceDraftScreen } from "./SourceDraftScreen";
 import { TrialBalanceScreen } from "./TrialBalanceScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import { loadEndpointReconnectHint, saveEndpointReconnectHint } from "./tally-endpoint-reconnect-hint";
@@ -281,7 +282,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "trial_balance" | "companies" | "settings" | "journal" | "gst" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "trial_balance" | "companies" | "settings" | "journal" | "source_draft" | "gst" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -298,6 +299,7 @@ const VIEW_TITLES: Record<View, string> = {
   companies: "Companies",
   settings: "Settings",
   journal: "Review Journal",
+  source_draft: "Prepare file",
   gst: "GST return readiness",
   dsc: "DSC token",
   documents: "Documents",
@@ -495,6 +497,7 @@ function App() {
   const [tallyAction, setTallyAction] = React.useState<TallyAction | null>(null);
   const snapshotTransitionPending = tallyAction === "start" || tallyAction === "resume";
   const [journalActionBusy, setJournalActionBusy] = React.useState(false);
+  const [sourceDraftBusy, setSourceDraftBusy] = React.useState(false);
   const tallyResultsVersion = React.useRef(0);
   const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
@@ -657,8 +660,10 @@ function App() {
     : childTallyReadCount > 0
     ? "Endpoint settings are locked while a Tally read is in progress."
     : null;
-  const shellNavigationLocked = childTallyReadCount > 0 || journalActionBusy;
-  const shellNavigationDescription = journalActionBusy
+  const shellNavigationLocked = childTallyReadCount > 0 || journalActionBusy || sourceDraftBusy;
+  const shellNavigationDescription = sourceDraftBusy
+    ? "source-draft-busy-note"
+    : journalActionBusy
     ? "journal-action-busy-note"
     : childTallyReadCount > 0
       ? "active-tally-read-note"
@@ -1577,6 +1582,9 @@ function App() {
           >
             <FileText size={18} /> Trial Balance
           </button>
+          <button aria-current={view === "source_draft" ? "page" : undefined} className={view === "source_draft" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("source_draft")}>
+            <FileText size={18} /> Prepare file
+          </button>
           <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("companies")}>
             <Building2 size={18} /> Companies
           </button>
@@ -1586,6 +1594,9 @@ function App() {
         </nav>
         {childTallyReadCount > 0 && (
           <p className="future-sections-note" id="active-tally-read-note" role="status">A Tally read is still in progress. Wait before opening another live read.</p>
+        )}
+        {sourceDraftBusy && (
+          <p className="future-sections-note" id="source-draft-busy-note" role="status">A local draft file action is in progress. Wait for it to finish before leaving.</p>
         )}
         {journalActionBusy && (
           <p className="future-sections-note" id="journal-action-busy-note" role="status">A Journal action is still in progress. Wait for Bridge to finish before leaving this review.</p>
@@ -1603,7 +1614,7 @@ function App() {
           clients={clientSwitcherClients}
           selectedClientKey={selectedCompany}
           activeView={view}
-          selectionLocked={savedCompanySelectionLocked || journalActionBusy}
+          selectionLocked={savedCompanySelectionLocked || journalActionBusy || sourceDraftBusy}
           endpoint={currentProbeCanonicalOrigin ?? `${config.host}:${config.port}`}
           endpointStatus={status?.reachable && passport ? "checked" : "not_checked"}
           loadError={persistedCompanyProfileError ? toErrorMessage(persistedCompanyProfileError) : null}
@@ -1616,7 +1627,7 @@ function App() {
         />
         <header>
           <div>
-            {view !== "companies" && view !== "settings" && view !== "journal" && (
+            {view !== "companies" && view !== "settings" && view !== "journal" && view !== "source_draft" && (
               <p className="eyebrow">
                 {view === "outstandings"
                   ? "Receivables and payables"
@@ -1876,6 +1887,13 @@ function App() {
           />
           </ErrorBoundary>
         )}
+
+        {/* Keep local proposals mounted when navigating; switching views must not discard edits. */}
+        <div hidden={view !== "source_draft"}>
+          <ErrorBoundary key="source_draft" label="Prepare file">
+            <SourceDraftScreen onBusyChange={setSourceDraftBusy} />
+          </ErrorBoundary>
+        </div>
 
         {view === "journal" && (
           <ErrorBoundary key="journal" label="Review Journal">
