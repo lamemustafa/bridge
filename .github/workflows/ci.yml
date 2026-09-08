@@ -380,6 +380,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/bridge-package-sccache
+      SCCACHE_CACHE_SIZE: 64M
+      SCCACHE_LOCAL_RW_MODE: ${{ github.ref == 'refs/heads/master' && 'READ_WRITE' || 'READ_ONLY' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -423,15 +427,37 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-bundle-prerequisites.outputs.cache-hit }}`'
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm run license:all
+      - name: Install pinned package compiler cache
+        id: package-sccache
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+      - name: Restore package compiler objects
+        id: package-sccache-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: bridge-package-sccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: |
+            bridge-package-sccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}-
+      - name: Start package compiler cache statistics
+        id: package-sccache-start
+        run: sccache --zero-stats
       - name: Use ad-hoc signing for macOS smoke bundles
         if: runner.os == 'macOS'
         run: echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
       - run: corepack pnpm run tauri:build
         if: runner.os != 'macOS'
+        env:
+          CARGO_INCREMENTAL: '0'
+          RUSTC_WORKSPACE_WRAPPER: sccache
       - name: Build macOS bundles with child diagnostics
         id: macos-bundle
         if: runner.os == 'macOS'
         env:
+          CARGO_INCREMENTAL: '0'
+          RUSTC_WORKSPACE_WRAPPER: sccache
           # Pinned Tauri CLI logs bundle_dmg.sh stdout/stderr only at debug.
           TAURI_CLI_VERBOSITY: '1'
         run: |
@@ -490,6 +516,26 @@ jobs:
           path: src-tauri/target/release/bundle/**
           if-no-files-found: error
           retention-days: 7
+      - name: Retain package compiler cache statistics
+        if: ${{ always() && steps.package-sccache-start.outcome == 'success' }}
+        shell: bash
+        run: |
+          sccache --show-stats --stats-format json > package-compiler-cache.json
+          sccache --stop-server
+      - name: Upload package compiler cache statistics
+        if: ${{ always() && steps.package-sccache-start.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-compiler-cache-${{ matrix.os }}
+          path: package-compiler-cache.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save qualified master compiler objects
+        if: ${{ success() && github.ref == 'refs/heads/master' && steps.package-sccache-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: ${{ steps.package-sccache-cache.outputs.cache-primary-key }}
 
   required-checks:
     name: Required checks
