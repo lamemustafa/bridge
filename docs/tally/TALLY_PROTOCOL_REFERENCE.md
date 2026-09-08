@@ -445,6 +445,34 @@ current mode and a matching closing mode observation. A missing or stale cached 
 admit these date-dependent balances. Unknown mode is refused. Do not replace this with a global
 day-of-month rule or imply that one licensed observation qualifies every installation.
 
+### 5.6 Native Trial Balance fields
+
+**VERIFIED within captured synthetic scope — 2026-08-21 and 2026-09-08.**
+For ledger-wise native Trial Balance, request `TBALOPENING`, `DEBITTOTALS`,
+`CREDITTOTALS` and `TBALCLOSING` from `List of Ledgers` with both period
+boundaries admitted under the observed mode. `CLOSINGBALANCE` is not a substitute:
+the captured Profit & Loss row for 1 June–31 July 2026 has native Trial Balance
+closing `7000.00`, while the balance-sheet method yields `11027.00`.
+
+The captured native response retains empty amount elements. They are distinct
+from an explicit numeric `0.00`; absent required fields are invalid. Signed
+amounts use negative debit and positive credit. Opening columns need not net to
+zero: the captured opening corpus has an opening net of `-49833.50`. Report that
+difference separately; do not manufacture a balancing ledger. Numeric column
+sums must disclose any empty observations excluded from arithmetic.
+
+The export includes dormant ledger masters that Tally's rendered report may
+omit. Stable paired bytes and bracketed company/mode/book-extent observations
+are bounded source evidence, not an atomic snapshot or a completeness proof.
+The committed `native/trial_balance_*` fixtures retain complete decoded responses
+and provenance. Earlier Education observations established the opening and
+closing Trial Balance fields, but did not establish the gross debit and credit
+fields used by this four-column request. This runtime therefore admits the
+complete native report only on observed licensed TallyPrime. The 8 September
+runtime checks exercised six-, eight- and eleven-ledger synthetic companies;
+they do not qualify Education mode, other currencies, account types or
+production books.
+
 ---
 
 ## 6. Crashes and rendering traps

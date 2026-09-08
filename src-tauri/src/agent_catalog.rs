@@ -127,6 +127,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
         "outstandings",
         "ledger_masters",
         "ledger_movement",
+        "trial_balance",
         "vouchers",
         "changed_since",
         "read_evidence",
@@ -181,6 +182,10 @@ pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: 
                     "ledger_movement" => (
                         "Return literal-window ledger opening, exact debit/credit movement, closing, and touched-voucher count with a freshly observed supported product/mode and an operation-valid opening boundary. Reads the full voucher window before filtering or pagination; use narrow dates. Dense windows can fail source limits.",
                         json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"ledger":{"type":"string","minLength":1,"maxLength":agent_import::MAX_MASTER_NAME_CHARS,"pattern":r"\S"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
+                    ),
+                    "trial_balance" => (
+                        "Return native ledger-wise Trial Balance for a date range, using Tally's TBAL fields without scanning vouchers. Requires observed INR currency and supported date boundaries. Preserves empty amounts; paired source stability is not voucher-level reconciliation. Pagination limits output only; each call captures a fresh report.",
+                        json!({"type":"object","additionalProperties":false,"required":["company_guid","from","to"],"properties":{"company_guid":{"type":"string","minLength":1},"from":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"to":{"type":"string","pattern":"^[0-9]{4}-?[0-9]{2}-?[0-9]{2}$"},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"default":500}}}),
                     ),
                     "vouchers" => (
                         "Return literal-window voucher evidence with curated metadata and redaction. Reads the full source window before selectors and output pagination; limit does not reduce Tally work. Use narrow dates; dense windows are unqualified and can fail source limits.",

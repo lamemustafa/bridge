@@ -26,6 +26,13 @@ The resolved data path must be valid Unicode so saved artifact paths can be
 returned exactly in JSON. Invalid platform encoding is refused before state
 creation with `agent_data_dir_encoding_invalid`; no lossy path alias is used.
 
+Before requesting financial data through an MCP client, the client may send the selected
+Tally result to its AI provider, including company
+identity, party or open-bill details, and amounts. An unset
+`BRIDGE_AGENT_REDACTION` defaults to `none`; `mask_parties` masks party names
+and `drop_narration` drops narration. Neither setting removes amounts. Set the
+environment variable before launch when that better fits the workflow.
+
 On Unix, new data directories use mode `0700`; an existing data directory
 must belong to the current user and have that mode. Otherwise startup refuses
 it without changing its permissions. Select a new dedicated leaf under a shared
@@ -57,7 +64,7 @@ Cursor uses the same server object in `.cursor/mcp.json`:
 ```
 
 The read tools are `tally_status`, `list_companies`, `outstandings`,
-`ledger_masters`, `ledger_movement`, `vouchers`,
+`ledger_masters`, `trial_balance`, `ledger_movement`, `vouchers`,
 `read_evidence`, `egress_log`, and `verify_import`; `voucher_schema` and
 `validate_masters` are also available by default (eleven read/schema tools).
 The MCPB extension adds Journal building and posting by default, for thirteen
@@ -89,6 +96,32 @@ larger receipt file still yields its bounded tail without loading the head.
 are refused as `changed_since_unqualified` before contacting Tally. Bounded change
 enumeration and snapshot continuation have not been qualified. There is no operator
 setting to enable this tool.
+
+### Native Trial Balance
+
+Use `trial_balance` with `company_guid`, `from` and `to` (YYYYMMDD or
+YYYY-MM-DD) for native ledger totals without a voucher scan. For example, ask
+for the selected company's Trial Balance from 1 April to 31 March. The runtime
+requires freshly observed Licensed TallyPrime for this four-column report.
+Education mode is refused before report dispatch until this complete request
+has mode-specific live qualification. Dates before book start are refused.
+The monetary scope also requires one observed INR currency master.
+
+Each opening, debit, credit and closing value is either
+`{"state":"present","value":"-7000.00"}` or `{"state":"present_empty"}`.
+Negative values are debits; positive values are credits. No empty value is
+converted to zero. `totals` sums numeric observations across all returned ledgers
+and carries an `empty_count` for each column. A fully observed nonzero opening
+net is the difference in opening balances; Bridge does not add a balancing row.
+
+`offset` and `limit` restrict output, not the source read. Each call captures a
+fresh report; compare source evidence before combining separate pages. Native
+Trial Balance uses Tally's TBAL fields, including the Profit & Loss treatment;
+see [protocol semantics](../tally/TALLY_PROTOCOL_REFERENCE.md#56-native-trial-balance-fields).
+It may include dormant ledgers hidden by Tally's screen. Paired response,
+company, mode and extent checks detect observed changes, but do not prove an
+atomic snapshot or voucher-level reconciliation. Keep the company quiet during
+reads. Use `ledger_movement` with narrow dates when voucher detail is needed.
 
 ### Ledger-movement opening decision
 

@@ -5,12 +5,15 @@ Release asset for your operating system and gives the same setup steps without
 developer configuration. This guide is the fallback when that page is
 unavailable.
 
-## Download the right package
+## If a package is published
 
-Download a `.mcpb` from the project's [GitHub Releases](https://github.com/lamemustafa/bridge/releases).
-Preview packages are available for Windows x64 and Apple Silicon Mac (ARM64).
-Intel Mac and other platforms are not qualified. Package availability is not a
-host-validation claim; read each release's notes for its current runtime gaps.
+Check the project's [GitHub Releases](https://github.com/lamemustafa/bridge/releases)
+for a compatible `.mcpb`. If no release asset is listed, use the [source MCP
+setup](./README.md) instead; the steps below apply only after a package is
+published. Preview packaging targets Windows x64 and Apple Silicon Mac (ARM64);
+Intel Mac and other platforms are not qualified. Package availability
+is not a host-validation claim; read each release's notes for its current
+runtime gaps.
 
 An **unsigned preview** is labelled as a prerelease and is only for evaluation;
 it is not signed or notarized. Each archive has a same-named `.sha256` file and
