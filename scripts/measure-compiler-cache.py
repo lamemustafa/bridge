@@ -1,5 +1,6 @@
 """Branch-only compiler experiment. Restore every application input on exit."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -25,12 +26,18 @@ env["SCCACHE_DIR"] = str(Path(env["RUNNER_TEMP"]) / "bridge-compiler-cache")
 env["SCCACHE_CACHE_SIZE"] = "2G"
 assert not Path(env["SCCACHE_DIR"]).exists(), "cache must start empty"
 rows = []
+spec = importlib.util.spec_from_file_location("capture", root / "scripts/capture-package-log.py")
+capture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(capture)
 
 
 def execute(command, name, environment=env):
-    with (output / name).open("wb") as log:
-        subprocess.run(command, env=environment, stdout=log,
-                       stderr=subprocess.STDOUT, check=True)
+    with subprocess.Popen(command, env=environment, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT) as process:
+        capture.capture(process.stdout, output / name)
+        code = process.wait()
+        if code:
+            raise subprocess.CalledProcessError(code, command)
 
 
 def build(name, cached):
@@ -98,7 +105,7 @@ fn main() {
     let bytes = context.assets().get(&"/compiler-cache-control.txt".into()).expect("control asset missing");
     println!("{}", serde_json::json!({
         "title": context.config().app.windows[0].title,
-        "asset_sha256": format!("{:x}", Sha256::digest(bytes.as_ref()))
+        "asset_sha256": Sha256::digest(bytes.as_ref()).iter().map(|byte| format!("{byte:02x}")).collect::<String>()
     }));
 }
 ''')
