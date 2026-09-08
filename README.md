@@ -11,14 +11,15 @@ relative to the clone, not to a developer-specific directory.
 
 ## First useful result
 
-No installer is currently published: the public `v0.1.0` release has no
-downloadable assets. For source use, follow the contributor quick start below;
-the [installation guide](./docs/agent/INSTALL.md) describes the Claude Desktop
-setup when an unsigned preview becomes available in [GitHub Releases](https://github.com/lamemustafa/bridge/releases).
+As of 8 September 2026, no installer is published: the public `v0.1.0`
+release has no downloadable assets. Check [GitHub Releases](https://github.com/lamemustafa/bridge/releases)
+for future packages. For source use, the contributor quick start below builds
+the desktop app; to run the MCP server, follow the [source MCP setup](./docs/agent/README.md)
+and use the [installation guide](./docs/agent/INSTALL.md) when an unsigned
+preview becomes available.
 
-The supported first result is to connect to Tally on this computer, list its
-companies, and ask for native existing outstandings or the current report.
-Native Trial Balance is not available yet.
+The supported first result is: connect to local Tally, list the loaded
+companies, then request receivables or payables for a selected company.
 
 For contributors, use the setup and development path below.
 
