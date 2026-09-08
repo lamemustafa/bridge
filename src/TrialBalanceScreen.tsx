@@ -204,7 +204,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
         <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setCaptured(null); setExportPath(null); }} disabled={disabled} /></label>
       </div>
       <p className="section-note trial-balance-date-note">
-        Choose the end date before reading. Education mode requires day 1, 2, or 31 for both dates. Bridge checks the dates against the active Tally mode when you refresh.
+        Choose the end date before reading. This report currently requires Licensed TallyPrime and one observed INR currency master.
       </p>
       {error && <div className="error-banner" role="alert"><span>{error}</span></div>}
       {exportPath && <div className="trial-balance-success" role="status">Trial Balance export saved to <code>{exportPath}</code></div>}
