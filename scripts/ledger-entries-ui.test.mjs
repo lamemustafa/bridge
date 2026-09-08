@@ -18,10 +18,13 @@ test("ledger investigation remains an explicit, bounded Overview action", async 
   assert.match(screen, /submittedScope === latestScope\.current/);
   assert.match(screen, /fetch_selected_ledger_entries/);
   assert.match(screen, /onSubmit=\{\(event\) => \{[\s\S]*?investigate\(\)/);
-  assert.match(screen, /complete requested window before filtering; page controls only limit what is displayed/);
+  assert.match(screen, /shows vouchers observed for this selected window before filtering\. Each next page makes a new observation/);
   assert.match(screen, /Voucher entries and counterpart lines/);
-  assert.match(screen, /voucher\.cancelled \|\| voucher\.optional/);
-  assert.match(screen, /result\.offset \+ result\.items\.length < result\.total/);
+  assert.match(screen, /voucher\.cancelled && "cancelled"/);
+  assert.match(screen, /voucher\.optional && "optional"/);
+  assert.match(screen, /result\.total > 0 && result\.items\.length === 0/);
+  assert.match(screen, /Show first entries/);
+  assert.match(screen, /result\.items\.length > 0 && result\.offset \+ result\.items\.length < result\.total/);
   assert.match(styles, /\.ledger-investigation-form\s*\{[\s\S]*?grid-template-columns:/);
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.ledger-investigation-form/);
 });

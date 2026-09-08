@@ -75,7 +75,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "f3ae3e95e10f6b33f307922d3bd76ebf7db2a76880c0157e9e57a9999d4383b4"
+      "sha256": "22cb45a958079eb281e6820651d63151ac559261376b8daa65b87250fd66d062"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -302,12 +302,28 @@
       "sha256": "bd3e3c955a2963eaa7f4abf06faeff7bfe4d7f90764cd6d9a81e484cdc4cdc6d"
     },
     {
+      "path": "src-tauri/src/agent.rs",
+      "sha256": "83824bf04e0d6b10b2cc3ed852a1600ef9472fe37966c6dce4d318efe58f1e9b"
+    },
+    {
+      "path": "src-tauri/src/agent_read_profiles.rs",
+      "sha256": "651de79173793b020a3e350f180604b64a8e1946710164f2a3fe31ec6acbb217"
+    },
+    {
       "path": "src-tauri/src/agent_trial_balance.rs",
       "sha256": "3d82f16e3942a94c945b88b91f6684f35560e82cc240d7646b92e692e2df896f"
     },
     {
+      "path": "src-tauri/src/agent_voucher_parse.rs",
+      "sha256": "0aeb17e66bc77b10921631fca3c4aeda3f6e8b914a07ce1d32fd1a3f71bafb94"
+    },
+    {
+      "path": "src-tauri/src/agent_vouchers.rs",
+      "sha256": "721cc3958ddb165da160255aa236c13b1581fcba477382eed5b51e2dff81a9c6"
+    },
+    {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "8cb2add66af98dc8f6d292036384be2d2f0300338315f8fa1791d5d43ae26f4f"
+      "sha256": "b5f92e166e0397be964909ef3c50111268debea2a74f9321dade294eb82bab93"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -435,7 +451,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "1ae99377e7a4acb7bd64332aae095de29520d4e4c92725da3fdf31a2ab969725"
+      "sha256": "0612c6079b36678b781111b69cfb676a4a2891b92b93956a4840120ed13f020a"
     },
     {
       "path": "src-tauri/src/reports/bulk_party_statement.rs",
@@ -515,7 +531,7 @@
     },
     {
       "path": "src-tauri/src/tally/mod.rs",
-      "sha256": "2903d5b95e216dac14ddb44606db325ff8336400ff57cb95237c9d63b4a3908e"
+      "sha256": "a042a3cbbbae38e6e413fe6fb7ab6d6b9816a92fd2a328156dc9f493fba7a085"
     },
     {
       "path": "src-tauri/src/tally/outstandings_runtime.rs",
@@ -570,6 +586,10 @@
       "sha256": "52b784448067bc6bbe89fea64cf509668ad196e686316c72823262bde04c9ec1"
     },
     {
+      "path": "src/LedgerEntriesScreen.tsx",
+      "sha256": "9fe95889c7ec216e0783f5d1e2f8e472333de392eae59520f6c93730327f0f1d"
+    },
+    {
       "path": "src/MirrorProofScreen.tsx",
       "sha256": "090ce413b9d2b4876c17128db419d814d2e5eeee95007cb0070b7d1eca771379"
     },
@@ -603,7 +623,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "17b55433c99d50e98e4085f95530d60ef91784c739c8e29720e27a5338279561"
+      "sha256": "227fc64b5d1e5299b2578b42ab29ab2127f8e2b20f870ab57d5064e90f2a4bcd"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -631,7 +651,7 @@
     },
     {
       "path": "src/styles.css",
-      "sha256": "b635241f0d2ad3b8555f50022da623be5ddfc04b02a21158b32c10a1e11a8f71"
+      "sha256": "b13edcd14fc881b2f4a544d6afeb39fcdaf9581c737bb5d3ef665a36c1f5bd2f"
     },
     {
       "path": "src/tally-company-selection.ts",
@@ -690,5 +710,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "bb74e75c3c341427302876eed6efd4969e688fced328016ffb57c89b6ce3e0b1"
+  "manifest_sha256": "4f30b7ee2f4814474670aedb7294923d0f86bc6386d0778e02dce11ad27c3707"
 }
