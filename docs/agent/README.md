@@ -95,9 +95,10 @@ setting to enable this tool.
 Use `trial_balance` with `company_guid`, `from` and `to` (YYYYMMDD or
 YYYY-MM-DD) for native ledger totals without a voucher scan. For example, ask
 for the selected company's Trial Balance from 1 April to 31 March. The runtime
-observes the current licence mode and admits both boundaries; unsupported
-Education dates are refused without rounding. Dates before book start are refused.
-The initial monetary scope requires one observed INR currency master.
+requires freshly observed Licensed TallyPrime for this four-column report.
+Education mode is refused before report dispatch until this complete request
+has mode-specific live qualification. Dates before book start are refused.
+The monetary scope also requires one observed INR currency master.
 
 Each opening, debit, credit and closing value is either
 `{"state":"present","value":"-7000.00"}` or `{"state":"present_empty"}`.

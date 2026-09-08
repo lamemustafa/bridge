@@ -465,9 +465,13 @@ The export includes dormant ledger masters that Tally's rendered report may
 omit. Stable paired bytes and bracketed company/mode/book-extent observations
 are bounded source evidence, not an atomic snapshot or a completeness proof.
 The committed `native/trial_balance_*` fixtures retain complete decoded responses
-and provenance. The 8 September runtime checks exercised six-, eight- and
-eleven-ledger synthetic companies on licensed TallyPrime; they do not qualify
-all modes, currencies, account types or production books.
+and provenance. Earlier Education observations established the opening and
+closing Trial Balance fields, but did not establish the gross debit and credit
+fields used by this four-column request. This runtime therefore admits the
+complete native report only on observed licensed TallyPrime. The 8 September
+runtime checks exercised six-, eight- and eleven-ledger synthetic companies;
+they do not qualify Education mode, other currencies, account types or
+production books.
 
 ---
 

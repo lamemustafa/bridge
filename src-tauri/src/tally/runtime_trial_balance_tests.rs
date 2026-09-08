@@ -61,6 +61,13 @@ fn status() -> ScenarioPlan {
     ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime))
 }
 
+fn education(text: &str) -> String {
+    text.replace(
+        "<EDUMODE TYPE=\"Logical\">No</EDUMODE>",
+        "<EDUMODE TYPE=\"Logical\">Yes</EDUMODE>",
+    )
+}
+
 fn pair(plans: &mut Vec<ScenarioPlan>, response: ScenarioPlan) {
     plans.extend([response.clone(), status(), response, status()]);
 }
@@ -92,6 +99,29 @@ fn config(simulator: &SequenceSimulator) -> TallyConfig {
 
 fn join(left: &str, right: &str) -> String {
     sha256_hex(format!("{left}:{right}").as_bytes())
+}
+
+#[tokio::test]
+async fn trial_balance_refuses_education_before_identity_or_report_dispatch() {
+    let simulator = SequenceSimulator::spawn(vec![status(), xml(education(&companies()))]).unwrap();
+
+    let error = TallyRuntime::default()
+        .fetch_trial_balance(
+            config(&simulator),
+            &identity(),
+            TallyDate::parse("20260401").unwrap(),
+            TallyDate::parse("20260902").unwrap(),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<super::trial_balance::TrialBalanceReadError>()),
+        Some(super::trial_balance::TrialBalanceReadError::EducationUnqualified)
+    ));
+    assert_eq!(simulator.finish().unwrap().len(), 2);
 }
 
 #[tokio::test]
