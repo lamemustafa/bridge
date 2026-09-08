@@ -2,7 +2,7 @@ name: macOS crash capture control
 
 on:
   push:
-    branches: [tapish-codex/macos-ci-crash-evidence]
+    branches: [tapish-codex/macos-ci-crash-evidence, tapish-codex/macos-crash-binary-linkage]
   workflow_dispatch:
 
 jobs:
@@ -17,7 +17,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Test collector parsing and bounded collection
-        run: python3 scripts/collect-macos-test-crashes.test.py
+        run: |
+          python3 scripts/collect-macos-test-crashes.test.py
+          python3 scripts/retain-macos-test-binaries.test.py
       - name: Generate one disposable control report
         shell: bash
         run: |
@@ -46,10 +48,42 @@ jobs:
           assert result["status"] == "captured", "hosted crash report was not captured"
           assert any(report["process"] == "bridge_lib-cafe" and report["exception"]["signal"] == "SIGTRAP" and report["threads"] for report in result["reports"])
           PY
+      - name: Verify matching executable retention and mismatch refusal
+        shell: bash
+        run: |
+          python3 scripts/retain-macos-test-binaries.py --crash-json "$RUNNER_TEMP/control-crash.json" --target "$RUNNER_TEMP" --output "$RUNNER_TEMP/control-binaries"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          root = Path(os.environ["RUNNER_TEMP"])
+          result = json.loads((root / "control-binaries/manifest.json").read_text())
+          assert result["status"] == "linked" and len(result["binaries"]) == 1
+          binary = result["binaries"][0]
+          staged = root / "control-binaries" / binary["file"]
+          assert staged.read_bytes() == (root / "bridge_lib-cafe").read_bytes()
+          assert hashlib.sha256(staged.read_bytes()).hexdigest() == binary["sha256"]
+          assert result["provenance"]["checkout_sha"] == subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          # Compile a different owned image; it is never executed or crashed.
+          mismatch = root / "mismatch"
+          mismatch.mkdir()
+          (mismatch / "other.c").write_text("int main(void) { return 0; }\n")
+          subprocess.run(["clang", str(mismatch / "other.c"), "-o", str(mismatch / "bridge_lib-cafe")], check=True)
+          refused = subprocess.run(["python3", "scripts/retain-macos-test-binaries.py", "--crash-json", str(root / "control-crash.json"), "--target", str(mismatch), "--output", str(root / "mismatch-evidence")])
+          assert refused.returncode == 1
+          rejected = json.loads((root / "mismatch-evidence/manifest.json").read_text())
+          assert rejected["errors"] == ["image_identity_mismatch"] and rejected["binaries"] == []
+          assert [path.name for path in (root / "mismatch-evidence").iterdir()] == ["manifest.json"]
+          PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() }}
         with:
           name: hosted-crash-capture-control
-          path: ${{ runner.temp }}/control-crash.json
+          path: |
+            ${{ runner.temp }}/control-crash.json
+            ${{ runner.temp }}/control-binaries
+            ${{ runner.temp }}/mismatch-evidence
           if-no-files-found: error
           retention-days: 7
