@@ -324,6 +324,10 @@ test("bounds parent options and finds later values without rereading or losing s
   const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
   expect(select.options).toHaveLength(101);
   expect(host.textContent).toContain("Showing the first 100 matching parent values");
+  await act(async () => setDate(search, "parent"));
+  expect(select.options[1]?.value).toBe('returned:"Parent"');
+  expect(select.options.length).toBeLessThanOrEqual(101);
+  expect(host.textContent).toContain("Showing the first 100 matching parent values");
   await act(async () => setDate(search, "pArEnT 998"));
   expect(select.options).toHaveLength(2);
   await act(async () => selectParent(host, 'returned:"Parent 998"'));
@@ -342,6 +346,30 @@ test("bounds parent options and finds later values without rereading or losing s
   expect(select.value).toBe('returned:"Parent"');
   expect(mocks.invoke).toHaveBeenCalledTimes(1);
   await act(async () => root.unmount());
+});
+
+test("keeps a literal case variant reachable while bounding over 100 folded matches", async () => {
+  const variants = Array.from({ length: 128 }, (_, index) => {
+    const suffix = [..."abcdefgh"].map((letter, bit) => index & (1 << bit) ? letter.toUpperCase() : letter).join("");
+    return `Parent${suffix}`;
+  });
+  const parents = ["parentabcdefgh", ...variants];
+  const rows = parents.map((parent, index) => ({ ...report.read.report.rows[0], name: `Ledger ${index}`, guid: `ledger-${index}`, parent }));
+  mocks.invoke.mockResolvedValueOnce({ ...report, read: { ...report.read, report: { rows } } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  const select = host.querySelector<HTMLSelectElement>("select")!;
+  const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  await act(async () => setDate(search, "parentabcdefgh"));
+  expect(select.options[1]?.value).toBe('returned:"parentabcdefgh"');
+  expect(select.options.length).toBe(101);
+  expect(host.textContent).toContain("Showing the first 100 matching parent values");
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  root.unmount();
 });
 
 test("distinguishes missing and empty Parent fields from literal group names", async () => {

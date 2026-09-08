@@ -36,6 +36,15 @@ type TrialBalanceCaptureParentQuery = {
   capture: { company_guid: string; company_name: string; from: string; to: string; read_at: string; request_sha256: string; response_sha256: string; source_bytes: number; expires_in_seconds: number };
 };
 
+type ParentOption = {
+  key: string;
+  parent: ParentObservation;
+  rowCount: number;
+  displayLabel: string;
+  normalizedRawValue: string | null;
+  normalizedSearchKey: string;
+};
+
 type Props = {
   config: { host: string; port: number };
   company?: Company;
@@ -112,7 +121,16 @@ function parentOptions(rows: TrialBalanceRow[]) {
     if (existing) existing.rowCount += 1;
     else options.set(key, { parent: row.parent, rowCount: 1 });
   }
-  return [...options.entries()].map(([key, option]) => ({ key, ...option }));
+  return [...options.entries()].map(([key, option]): ParentOption => {
+    const displayLabel = formatParentOption(option.parent);
+    return {
+      key,
+      ...option,
+      displayLabel,
+      normalizedRawValue: option.parent === null ? null : option.parent.toLocaleLowerCase(),
+      normalizedSearchKey: displayLabel.toLocaleLowerCase(),
+    };
+  });
 }
 
 export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, liveReadSuppressed, onChangeSetup, onTallyReadActivityChange }: Props) {
@@ -246,11 +264,25 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const currency = read?.currency;
   const options = React.useMemo(() => parentOptions(read?.report.rows ?? []), [read?.report.rows]);
   const matchingOptions = React.useMemo(() => {
-    const exact = parentSearch === "" ? [] : options.filter((option) => option.parent === parentSearch || formatParentOption(option.parent) === parentSearch);
-    const found = [...exact];
+    const found: ParentOption[] = [];
+    const seen = new Set<string>();
+    const append = (option: ParentOption) => {
+      if (!seen.has(option.key) && found.length <= PARENT_OPTION_LIMIT) {
+        seen.add(option.key);
+        found.push(option);
+      }
+    };
+    if (parentSearch === "") return options.slice(0, PARENT_OPTION_LIMIT + 1);
     const search = parentSearch.toLocaleLowerCase();
     for (const option of options) {
-      if (!exact.includes(option) && formatParentOption(option.parent).toLocaleLowerCase().includes(search)) found.push(option);
+      if (option.parent === parentSearch || option.displayLabel === parentSearch) append(option);
+    }
+    for (const option of options) {
+      if (option.normalizedRawValue === search || option.normalizedSearchKey === search) append(option);
+      if (found.length > PARENT_OPTION_LIMIT) break;
+    }
+    for (const option of options) {
+      if (option.normalizedSearchKey.includes(search)) append(option);
       if (found.length > PARENT_OPTION_LIMIT) break;
     }
     return found;
@@ -302,7 +334,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
           <div className="trial-balance-meta"><span>{read.company_name}</span><span>{toInputDate(read.from)} → {toInputDate(read.to)}</span><span>Fresh at {new Date(read.read_at).toLocaleString()}</span><span>Capture source: {read.report.rows.length} ledger rows · {read.evidence.bytes.toLocaleString()} bytes · expires within 15 minutes</span></div>
           <div className="toolbar trial-balance-parent-query">
             <label>Find a parent<input type="search" value={parentSearch} onChange={(event) => setParentSearch(event.target.value)} placeholder="Search parent values" aria-describedby="trial-balance-parent-search-note" disabled={disabled} /></label>
-            <label>Parent returned by this capture<select value={selectedParentKey} onChange={(event) => { setSelectedParentKey(event.target.value); setParentQuery(null); setParentQueryError(null); setPage(0); }} disabled={disabled} aria-describedby="trial-balance-parent-search-note"><option value="">All captured rows</option>{selectedOutsideSearch && <option value={selectedParent.key}>{formatParentOption(selectedParent.parent)} ({selectedParent.rowCount} rows · current selection)</option>}{visibleOptions.map((option) => <option key={option.key} value={option.key}>{formatParentOption(option.parent)} ({option.rowCount} rows)</option>)}</select></label>
+            <label>Parent returned by this capture<select value={selectedParentKey} onChange={(event) => { setSelectedParentKey(event.target.value); setParentQuery(null); setParentQueryError(null); setPage(0); }} disabled={disabled} aria-describedby="trial-balance-parent-search-note"><option value="">All captured rows</option>{selectedOutsideSearch && <option value={selectedParent.key}>{selectedParent.displayLabel} ({selectedParent.rowCount} rows · current selection)</option>}{visibleOptions.map((option) => <option key={option.key} value={option.key}>{option.displayLabel} ({option.rowCount} rows)</option>)}</select></label>
             <button className="secondary-action" type="button" onClick={() => void queryCapturedParent()} disabled={disabled || !selectedParent}>{queryingParent ? "Selecting…" : "View selected rows"}</button>
           </div>
           <p id="trial-balance-parent-search-note" className="section-note">{matchingOptions.length > PARENT_OPTION_LIMIT ? `Showing the first ${PARENT_OPTION_LIMIT} matching parent values. Refine the search to find another.` : matchingOptions.length === 0 ? "No matching parent values. Change or clear the search; your current selection stays available." : `${matchingOptions.length} matching parent values. Search and selection use this capture without rereading Tally.`}</p>
