@@ -89,3 +89,14 @@ project-authored under this repository's Apache-2.0 license. The
 [privacy-reduced control fixture](../scripts/testdata/macos-sigtrap-control.PROVENANCE.md)
 comes from an owned disposable process, with capture provenance and the retained
 fields documented alongside it. It contains no application or customer data.
+
+`scripts/retain-macos-test-binaries.py` is project-authored diagnostic code. It
+retains at most 256 MiB of executable images matched to fresh crash UUIDs and
+architectures, with staged-copy hashes and checkout/run provenance. Its unit
+tests use explicit adversarial metadata and opaque synthetic bytes; these are
+not new captured application evidence. The disposable hosted control verifies
+actual image linkage and refusal of a different executable. Apple's
+[IPS format](https://developer.apple.com/documentation/xcode/interpreting-the-json-format-of-a-crash-report)
+defines frame image indexes and binary image UUID/architecture fields. Native
+CI still disables debug information; retaining a binary does not restore absent
+source line tables or identify which individual nextest test executed it.
