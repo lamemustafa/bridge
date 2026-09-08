@@ -491,6 +491,22 @@ that those cases were observed in the captured native Trial Balance responses.
 The query only summarizes rows already present in the retained capture and
 reports numeric totals with their empty-amount counts.
 
+**Local discovery contract.** Parent discovery also uses only the opaque handle
+of that retained capture. It returns at most 100 distinct observations, exact
+row counts for those observations, and an overflow indicator. The backend
+retains only a bounded set of candidates while scanning borrowed capture rows;
+it does not build a second index of every distinct parent in the webview.
+Discovery runs away from the UI thread and never acquires Tally data.
+
+An empty search preserves source order without creating per-row search strings.
+A nonempty search ranks literal raw/display-label matches first, then exact
+matches using Unicode lowercase conversion, then lowercase substring matches.
+Source order breaks ties. This folding is for discovery only; the subsequent row selector
+still receives the original exact observation. Missing and empty fields use
+explicit field-state labels, while returned group strings use a `Group:` prefix
+in both the selector and report table. Large-capture resource tests are derived
+synthetic stress cases, not additional live-Tally or completeness evidence.
+
 ---
 
 ## 6. Crashes and rendering traps

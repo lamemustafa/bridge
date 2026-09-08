@@ -36,13 +36,18 @@ type TrialBalanceCaptureParentQuery = {
   capture: { company_guid: string; company_name: string; from: string; to: string; read_at: string; request_sha256: string; response_sha256: string; source_bytes: number; expires_in_seconds: number };
 };
 
+type TrialBalanceCaptureParentOption = { parent: ParentObservation; row_count: number };
+type TrialBalanceCaptureParents = {
+  options: TrialBalanceCaptureParentOption[];
+  has_more: boolean;
+  source_row_count: number;
+};
+
 type ParentOption = {
   key: string;
   parent: ParentObservation;
   rowCount: number;
   displayLabel: string;
-  normalizedRawValue: string | null;
-  normalizedSearchKey: string;
 };
 
 type Props = {
@@ -108,24 +113,13 @@ function formatParent(parent: ParentObservation) {
   return parent === "" ? "Empty field: Parent returned empty" : `Group: ${parent}`;
 }
 
-function parentOptions(rows: TrialBalanceRow[]) {
-  const options = new Map<string, { parent: ParentObservation; rowCount: number }>();
-  for (const row of rows) {
-    const key = parentKey(row.parent);
-    const existing = options.get(key);
-    if (existing) existing.rowCount += 1;
-    else options.set(key, { parent: row.parent, rowCount: 1 });
-  }
-  return [...options.entries()].map(([key, option]): ParentOption => {
-    const displayLabel = formatParent(option.parent);
-    return {
-      key,
-      ...option,
-      displayLabel,
-      normalizedRawValue: option.parent === null ? null : option.parent.toLocaleLowerCase(),
-      normalizedSearchKey: displayLabel.toLocaleLowerCase(),
-    };
-  });
+function parentOption(option: TrialBalanceCaptureParentOption): ParentOption {
+  return {
+    key: parentKey(option.parent),
+    parent: option.parent,
+    rowCount: option.row_count,
+    displayLabel: formatParent(option.parent),
+  };
 }
 
 export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, liveReadSuppressed, onChangeSetup, onTallyReadActivityChange }: Props) {
@@ -136,6 +130,12 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const [parentSearch, setParentSearch] = React.useState("");
   const [parentQuery, setParentQuery] = React.useState<TrialBalanceCaptureParentQuery | null>(null);
   const [parentQueryError, setParentQueryError] = React.useState<string | null>(null);
+  const [parentOptions, setParentOptions] = React.useState<ParentOption[]>([]);
+  const [parentOptionsHasMore, setParentOptionsHasMore] = React.useState(false);
+  const [parentSourceRowCount, setParentSourceRowCount] = React.useState(0);
+  const [parentDiscoveryError, setParentDiscoveryError] = React.useState<string | null>(null);
+  const [discoveringParents, setDiscoveringParents] = React.useState(false);
+  const [selectedParent, setSelectedParent] = React.useState<ParentOption | null>(null);
   const [queryingParent, setQueryingParent] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [exportPath, setExportPath] = React.useState<string | null>(null);
@@ -143,9 +143,21 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const [loading, setLoading] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
   const requestVersion = React.useRef(0);
+  const latestCapture = React.useRef<{ scope: string; result: TrialBalanceResult } | null>(null);
+  const parentDiscoveryEpoch = React.useRef(0);
+  const parentDiscoveryTimer = React.useRef<number | null>(null);
+  const parentDiscoveryInFlight = React.useRef(false);
+  const queuedParentDiscovery = React.useRef<{ scope: string; exportId: string; search: string; epoch: number } | null>(null);
   const scope = readScope(company, config, from, to);
   const latestScope = React.useRef(scope);
   latestScope.current = scope;
+
+  React.useEffect(() => () => {
+    parentDiscoveryEpoch.current += 1;
+    queuedParentDiscovery.current = null;
+    if (parentDiscoveryTimer.current !== null) window.clearTimeout(parentDiscoveryTimer.current);
+    parentDiscoveryTimer.current = null;
+  }, []);
 
   React.useEffect(() => {
     requestVersion.current += 1;
@@ -154,12 +166,19 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
     setParentSearch("");
     setParentQuery(null);
     setParentQueryError(null);
+    setParentOptions([]);
+    setParentOptionsHasMore(false);
+    setParentSourceRowCount(0);
+    setParentDiscoveryError(null);
+    setDiscoveringParents(false);
+    setSelectedParent(null);
     setError(null);
     setExportPath(null);
     setPage(0);
     setLoading(false);
     setExporting(false);
     setQueryingParent(false);
+    queuedParentDiscovery.current = null;
     setFrom(toInputDate(company?.books_from_yyyymmdd ?? ""));
     setTo("");
     return () => {
@@ -183,6 +202,12 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
     setParentSearch("");
     setParentQuery(null);
     setParentQueryError(null);
+    setParentOptions([]);
+    setParentOptionsHasMore(false);
+    setParentSourceRowCount(0);
+    setParentDiscoveryError(null);
+    setDiscoveringParents(false);
+    setSelectedParent(null);
     setExportPath(null);
     setPage(0);
     onTallyReadActivityChange(1);
@@ -235,6 +260,44 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
     }
   }
 
+  async function discoverParentOptions(search: string, epoch: number, expectedScope: string, exportId: string) {
+    const currentCapture = latestCapture.current;
+    if (!currentCapture || currentCapture.scope !== expectedScope || currentCapture.result.export_id !== exportId) return;
+    if (parentDiscoveryInFlight.current) {
+      queuedParentDiscovery.current = { scope: expectedScope, exportId, search, epoch };
+      return;
+    }
+    parentDiscoveryInFlight.current = true;
+    setDiscoveringParents(true);
+    try {
+      const next = await invoke<TrialBalanceCaptureParents>("list_tally_trial_balance_capture_parents", {
+        request: { export_id: exportId, search },
+      });
+      const latest = latestCapture.current;
+      if (epoch === parentDiscoveryEpoch.current && expectedScope === latestScope.current && latest?.scope === expectedScope && latest.result.export_id === exportId) {
+        const nextOptions = next.options.map(parentOption);
+        setParentOptions(nextOptions);
+        setParentOptionsHasMore(next.has_more);
+        setParentSourceRowCount(next.source_row_count);
+        setSelectedParent((current) => {
+          if (!current) return current;
+          return nextOptions.find((option) => option.key === current.key) ?? current;
+        });
+      }
+    } catch (cause) {
+      if (epoch === parentDiscoveryEpoch.current && expectedScope === latestScope.current) setParentDiscoveryError(formatInvokeError(cause));
+    } finally {
+      parentDiscoveryInFlight.current = false;
+      const queued = queuedParentDiscovery.current;
+      queuedParentDiscovery.current = null;
+      if (queued && queued.epoch === parentDiscoveryEpoch.current && queued.scope === latestScope.current) {
+        void discoverParentOptions(queued.search, queued.epoch, queued.scope, queued.exportId);
+      } else if (epoch === parentDiscoveryEpoch.current) {
+        setDiscoveringParents(false);
+      }
+    }
+  }
+
   async function exportReport() {
     if (!captured || exporting || captured.scope !== scope) return;
     const exportingScope = captured.scope;
@@ -257,33 +320,33 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const result = captured?.scope === scope ? captured.result : null;
   const read = result?.read;
   const currency = read?.currency;
-  const options = React.useMemo(() => parentOptions(read?.report.rows ?? []), [read?.report.rows]);
-  const matchingOptions = React.useMemo(() => {
-    const found: ParentOption[] = [];
-    const seen = new Set<string>();
-    const append = (option: ParentOption) => {
-      if (!seen.has(option.key) && found.length <= PARENT_OPTION_LIMIT) {
-        seen.add(option.key);
-        found.push(option);
-      }
+  latestCapture.current = result ? { scope, result } : null;
+  React.useEffect(() => {
+    parentDiscoveryEpoch.current += 1;
+    const epoch = parentDiscoveryEpoch.current;
+    if (parentDiscoveryTimer.current !== null) window.clearTimeout(parentDiscoveryTimer.current);
+    parentDiscoveryTimer.current = null;
+    setParentDiscoveryError(null);
+    if (!result) {
+      queuedParentDiscovery.current = null;
+      setParentOptions([]);
+      setParentOptionsHasMore(false);
+      setParentSourceRowCount(0);
+      setDiscoveringParents(false);
+      setSelectedParent(null);
+      return;
+    }
+    const delay = parentSearch === "" ? 0 : 175;
+    parentDiscoveryTimer.current = window.setTimeout(() => {
+      parentDiscoveryTimer.current = null;
+      void discoverParentOptions(parentSearch, epoch, scope, result.export_id);
+    }, delay);
+    return () => {
+      if (parentDiscoveryTimer.current !== null) window.clearTimeout(parentDiscoveryTimer.current);
+      parentDiscoveryTimer.current = null;
     };
-    if (parentSearch === "") return options.slice(0, PARENT_OPTION_LIMIT + 1);
-    const search = parentSearch.toLocaleLowerCase();
-    for (const option of options) {
-      if (option.parent === parentSearch || option.displayLabel === parentSearch) append(option);
-    }
-    for (const option of options) {
-      if (option.normalizedRawValue === search || option.normalizedSearchKey === search) append(option);
-      if (found.length > PARENT_OPTION_LIMIT) break;
-    }
-    for (const option of options) {
-      if (option.normalizedSearchKey.includes(search)) append(option);
-      if (found.length > PARENT_OPTION_LIMIT) break;
-    }
-    return found;
-  }, [options, parentSearch]);
-  const visibleOptions = matchingOptions.slice(0, PARENT_OPTION_LIMIT);
-  const selectedParent = options.find((option) => option.key === selectedParentKey);
+  }, [parentSearch, result?.export_id, scope]);
+  const visibleOptions = parentOptions.slice(0, PARENT_OPTION_LIMIT);
   const selectedOutsideSearch = selectedParent && !visibleOptions.some((option) => option.key === selectedParent.key);
   const queried = parentQuery && result ? parentQuery : null;
   const displayedRows = queried?.query.selected_rows ?? read?.report.rows ?? [];
@@ -312,8 +375,8 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
         </div>
       </div>
       <div className="toolbar trial-balance-toolbar">
-        <label>From<input type="date" value={from} min={toInputDate(company.books_from_yyyymmdd)} onChange={(event) => { setFrom(event.target.value); setCaptured(null); setSelectedParentKey(""); setParentSearch(""); setParentQuery(null); setParentQueryError(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
-        <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setCaptured(null); setSelectedParentKey(""); setParentSearch(""); setParentQuery(null); setParentQueryError(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
+        <label>From<input type="date" value={from} min={toInputDate(company.books_from_yyyymmdd)} onChange={(event) => { setFrom(event.target.value); setCaptured(null); setSelectedParentKey(""); setParentSearch(""); setParentQuery(null); setParentQueryError(null); setParentOptions([]); setParentOptionsHasMore(false); setParentSourceRowCount(0); setParentDiscoveryError(null); setDiscoveringParents(false); setSelectedParent(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
+        <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setCaptured(null); setSelectedParentKey(""); setParentSearch(""); setParentQuery(null); setParentQueryError(null); setParentOptions([]); setParentOptionsHasMore(false); setParentSourceRowCount(0); setParentDiscoveryError(null); setDiscoveringParents(false); setSelectedParent(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
       </div>
       <p className="section-note trial-balance-date-note">
         Choose the end date before reading. This report currently requires Licensed TallyPrime and one observed INR currency master.
@@ -329,10 +392,10 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
           <div className="trial-balance-meta"><span>{read.company_name}</span><span>{toInputDate(read.from)} → {toInputDate(read.to)}</span><span>Fresh at {new Date(read.read_at).toLocaleString()}</span><span>Capture source: {read.report.rows.length} ledger rows · {read.evidence.bytes.toLocaleString()} bytes · expires within 15 minutes</span></div>
           <div className="toolbar trial-balance-parent-query">
             <label>Find a parent<input type="search" value={parentSearch} onChange={(event) => setParentSearch(event.target.value)} placeholder="Search parent values" aria-describedby="trial-balance-parent-search-note" disabled={disabled} /></label>
-            <label>Parent returned by this capture<select value={selectedParentKey} onChange={(event) => { setSelectedParentKey(event.target.value); setParentQuery(null); setParentQueryError(null); setPage(0); }} disabled={disabled} aria-describedby="trial-balance-parent-search-note"><option value="">All captured rows</option>{selectedOutsideSearch && <option value={selectedParent.key}>{selectedParent.displayLabel} ({selectedParent.rowCount} rows · current selection)</option>}{visibleOptions.map((option) => <option key={option.key} value={option.key}>{option.displayLabel} ({option.rowCount} rows)</option>)}</select></label>
+            <label>Parent returned by this capture<select value={selectedParentKey} onChange={(event) => { const next = visibleOptions.find((option) => option.key === event.target.value) ?? (selectedOutsideSearch && selectedParent?.key === event.target.value ? selectedParent : null); setSelectedParentKey(event.target.value); setSelectedParent(next); setParentQuery(null); setParentQueryError(null); setPage(0); }} disabled={disabled} aria-describedby="trial-balance-parent-search-note"><option value="">All captured rows</option>{selectedOutsideSearch && <option value={selectedParent.key}>{selectedParent.displayLabel} ({selectedParent.rowCount} rows · current selection)</option>}{visibleOptions.map((option) => <option key={option.key} value={option.key}>{option.displayLabel} ({option.rowCount} rows)</option>)}</select></label>
             <button className="secondary-action" type="button" onClick={() => void queryCapturedParent()} disabled={disabled || !selectedParent}>{queryingParent ? "Selecting…" : "View selected rows"}</button>
           </div>
-          <p id="trial-balance-parent-search-note" className="section-note">{matchingOptions.length > PARENT_OPTION_LIMIT ? `Showing the first ${PARENT_OPTION_LIMIT} matching parent values. Refine the search to find another.` : matchingOptions.length === 0 ? "No matching parent values. Change or clear the search; your current selection stays available." : `${matchingOptions.length} matching parent values. Search and selection use this capture without rereading Tally.`}</p>
+          <p id="trial-balance-parent-search-note" className="section-note">{parentDiscoveryError ?? (discoveringParents ? "Finding parent values in this capture…" : parentOptionsHasMore ? `Showing the first ${PARENT_OPTION_LIMIT} matching parent values. Refine the search to find another.` : parentOptions.length === 0 ? "No matching parent values. Change or clear the search; your current selection stays available." : `${parentOptions.length} matching parent values from ${parentSourceRowCount} captured rows. Search and selection use this capture without rereading Tally.`)}</p>
           {queried && <p className="section-note">Selected rows: {queried.query.selected_rows.length} of {queried.query.source_row_count} from this capture. These exact observed-parent totals are a subset, not a qualified financial group balance. The capture had {queried.capture.expires_in_seconds} seconds remaining when this selection was derived and this query did not read Tally.</p>}
           <dl className="trial-balance-totals">
             <div><dt>{queried ? "Selected opening net" : displayedTotals?.opening.empty_count === 0 ? "Difference in opening balances" : "Observed opening net"}</dt><dd>{displayedTotals && formatBalance({ state: "present", value: displayedTotals.opening.sum }, currency.symbol, currency.decimal_places)}{displayedTotals?.opening.empty_count ? ` · ${displayedTotals.opening.empty_count} empty source values` : ""}</dd></div>

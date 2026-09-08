@@ -27,6 +27,13 @@ pub struct TrialBalanceCaptureParentQueryRequest {
     parent: PartyLedgerMasterFieldObservation,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrialBalanceCaptureParentListRequest {
+    export_id: String,
+    search: String,
+}
+
 #[derive(Serialize)]
 pub struct TrialBalanceCaptureProvenance {
     company_guid: String,
@@ -55,6 +62,28 @@ fn local_error(code: &'static str, message: &str, remediation: &'static str) -> 
         false,
         remediation,
     )
+}
+
+fn parent_list_capture_error(
+    error: crate::reports::trial_balance_store::TrialBalanceExportStoreError,
+) -> TallyCommandError {
+    match error {
+        crate::reports::trial_balance_store::TrialBalanceExportStoreError::InvalidOrExpired => {
+            local_error(
+                "trial_balance_capture_expired",
+                "This captured Trial Balance is no longer available for a follow-up query.",
+                "Refresh the report before selecting a parent again.",
+            )
+        }
+        crate::reports::trial_balance_store::TrialBalanceExportStoreError::ResourceLimit
+        | crate::reports::trial_balance_store::TrialBalanceExportStoreError::Unavailable => {
+            local_error(
+                "trial_balance_capture_unavailable",
+                "Bridge could not access the retained Trial Balance safely.",
+                "Refresh the report before selecting a parent again.",
+            )
+        }
+    }
 }
 
 fn read_error(error: anyhow::Error) -> TallyCommandError {
@@ -161,6 +190,26 @@ mod tests {
             assert!(!mapped.message.contains("trial_balance_xml_malformed"));
             assert!(!mapped.remediation.contains("trial_balance_xml_malformed"));
         }
+    }
+
+    #[test]
+    fn parent_list_request_refuses_unknown_fields_and_maps_expired_captures() {
+        let request: TrialBalanceCaptureParentListRequest =
+            serde_json::from_str(r#"{"export_id":"opaque","search":"debtor"}"#).unwrap();
+        assert_eq!(request.export_id, "opaque");
+        assert_eq!(request.search, "debtor");
+        assert!(
+            serde_json::from_str::<TrialBalanceCaptureParentListRequest>(
+                r#"{"export_id":"opaque","search":"debtor","parent":"unexpected"}"#
+            )
+            .is_err()
+        );
+
+        let expired = parent_list_capture_error(
+            crate::reports::trial_balance_store::TrialBalanceExportStoreError::InvalidOrExpired,
+        );
+        assert_eq!(expired.code, "trial_balance_capture_expired");
+        assert!(expired.remediation.contains("Refresh the report"));
     }
 }
 
@@ -270,5 +319,39 @@ pub async fn query_tally_trial_balance_capture_parent(
             source_bytes: capture.read.evidence.bytes,
             expires_in_seconds: capture.expires_in.as_secs(),
         },
+    })
+}
+
+/// Lists a bounded set of parent observations from one already retained Trial
+/// Balance. The opaque handle is resolved locally before an off-thread scan;
+/// this command cannot acquire Tally data, accept an identity, or write.
+#[tauri::command]
+pub async fn list_tally_trial_balance_capture_parents(
+    request: TrialBalanceCaptureParentListRequest,
+    exports: State<'_, TrialBalanceExportStore>,
+) -> Result<crate::reports::trial_balance::TrialBalanceCaptureParentOptions, TallyCommandError> {
+    let capture = exports
+        .get_capture(&request.export_id)
+        .map_err(parent_list_capture_error)?;
+    let read = capture.read;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::reports::trial_balance::list_observed_capture_parents(&read.report, request.search)
+    })
+    .await
+    .map_err(|_| {
+        local_error(
+            "trial_balance_capture_parent_list_failed",
+            "Bridge could not scan the retained Trial Balance.",
+            "Refresh the report before selecting a parent again.",
+        )
+    })?
+    .map_err(|error| match error {
+        crate::reports::trial_balance::TrialBalanceCaptureParentOptionsError::SearchInvalid => {
+            local_error(
+                "trial_balance_capture_parent_search_invalid",
+                "That parent search is not valid for this retained capture.",
+                "Use a shorter parent name or clear the search.",
+            )
+        }
     })
 }

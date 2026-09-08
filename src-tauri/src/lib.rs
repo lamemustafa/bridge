@@ -114,6 +114,7 @@ pub fn run() {
             commands::trial_balance::fetch_tally_trial_balance,
             commands::trial_balance::export_tally_trial_balance,
             commands::trial_balance::query_tally_trial_balance_capture_parent,
+            commands::trial_balance::list_tally_trial_balance_capture_parents,
             commands::export_party_statement,
             commands::select_party_statement_destination,
             commands::revoke_party_statement_destination,
