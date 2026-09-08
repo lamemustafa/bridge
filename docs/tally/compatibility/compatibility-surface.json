@@ -422,6 +422,10 @@
       "sha256": "17c4235a72ff8fc8207e431a43951b1bbc7b0de7bf8429cfb1474336fb07e35a"
     },
     {
+      "path": "src-tauri/src/db/migrations/0027_tally_retire_resurrected_guid_index.sql",
+      "sha256": "34fa8d6d07d47ef0da3d0729bb8abe27cef95975c201ab55c6d723643828b909"
+    },
+    {
       "path": "src-tauri/src/db/migrations/mod.rs",
       "sha256": "409843abef918f3a497048cea95ec1f7a6ddd6d75b2f177474335fdc890f479a"
     },
@@ -431,7 +435,7 @@
     },
     {
       "path": "src-tauri/src/db/tally_mirror.rs",
-      "sha256": "024c7dce882d764451b9d453201359cdb57b25c5b8daf2304695843d45199938"
+      "sha256": "8c0d495a96e47066b54305008210ff53f1bae77d57af3135dec796e4736da7b8"
     },
     {
       "path": "src-tauri/src/db/tally_write_store.rs",
@@ -706,5 +710,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "be738fd06d4977ffdca2df4ec81fd9963aae73098ca147746fb82dca18fcbd41"
+  "manifest_sha256": "a6427cba3d4faa41ec4f7d1acc5fe7ed7f737b1ed00de7f1168c746404c67cbd"
 }
