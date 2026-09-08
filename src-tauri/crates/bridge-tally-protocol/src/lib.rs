@@ -26,6 +26,7 @@ pub mod jsonex;
 #[cfg(feature = "jsonex-request-builder")]
 pub mod jsonex_request;
 pub mod native_outstandings;
+pub mod native_trial_balance;
 /// The legacy voucher-scan outstandings path: date/AlterID-partitioned
 /// wildcard voucher fetch, segment/witness completeness proofs, and bill
 /// computation from voucher allocations. Superseded by `native_outstandings`,
