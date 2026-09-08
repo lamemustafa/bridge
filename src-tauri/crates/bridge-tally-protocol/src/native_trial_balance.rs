@@ -349,7 +349,7 @@ fn parse_row(
             "trial_balance_company_guid_mismatch",
         ));
     }
-    Ok(NativeTrialBalanceRow {
+    let row = NativeTrialBalanceRow {
         name,
         guid,
         parent: parent
@@ -367,7 +367,54 @@ fn parse_row(
         closing: closing.ok_or(NativeTrialBalanceError::InvalidResponse(
             "trial_balance_closing_missing",
         ))?,
-    })
+    };
+    validate_guid_suffix(&row.guid, expected_company_guid)?;
+    validate_observed_row_equation(&row)?;
+    Ok(row)
+}
+
+fn validate_guid_suffix(
+    guid: &str,
+    expected_company_guid: &str,
+) -> Result<(), NativeTrialBalanceError> {
+    let suffix = guid
+        .get(expected_company_guid.len().saturating_add(1)..)
+        .ok_or(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_guid_suffix_invalid",
+        ))?;
+    if suffix.len() != 8 || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_guid_suffix_invalid",
+        ));
+    }
+    Ok(())
+}
+
+/// A fully observed native row must satisfy Tally's signed movement identity.
+/// Present-empty fields deliberately bypass this check: their numeric value is
+/// not established and must never be substituted with zero.
+fn validate_observed_row_equation(
+    row: &NativeTrialBalanceRow,
+) -> Result<(), NativeTrialBalanceError> {
+    let (
+        NativeTrialBalanceAmount::Present(opening),
+        NativeTrialBalanceAmount::Present(debit),
+        NativeTrialBalanceAmount::Present(credit),
+        NativeTrialBalanceAmount::Present(closing),
+    ) = (&row.opening, &row.debit, &row.credit, &row.closing)
+    else {
+        return Ok(());
+    };
+    let movement = opening
+        .checked_add(debit)
+        .and_then(|sum| sum.checked_add(credit))
+        .map_err(|_| NativeTrialBalanceError::InvalidResponse("trial_balance_amount_overflow"))?;
+    if !movement.numeric_eq(closing) {
+        return Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_row_equation_mismatch",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_amount(
@@ -560,6 +607,15 @@ mod tests {
             report.rows[0].parent.returned_text(),
             Some("Sundry Debtors")
         );
+        let profit_and_loss = report
+            .rows
+            .iter()
+            .find(|row| row.name == "Profit & Loss A/c")
+            .unwrap();
+        assert_eq!(
+            profit_and_loss.closing,
+            NativeTrialBalanceAmount::Present(ExactDecimal::parse("7000.00").unwrap())
+        );
 
         let opening =
             parse_native_trial_balance(OPENING_YEAR, "915d42f8-42ae-4b03-8291-55f596e3a2ea")
@@ -688,5 +744,29 @@ mod tests {
                 "trial_balance_scalar_not_text_only"
             ))
         ));
+        let arithmetic_mismatch = KNOWN_LAB.replacen(
+            "<TBALCLOSING TYPE=\"Amount\">-7277.00</TBALCLOSING>",
+            "<TBALCLOSING TYPE=\"Amount\">-7278.00</TBALCLOSING>",
+            1,
+        );
+        assert_eq!(
+            parse_native_trial_balance(&arithmetic_mismatch, COMPANY),
+            Err(NativeTrialBalanceError::InvalidResponse(
+                "trial_balance_row_equation_mismatch"
+            ))
+        );
+        for malformed_suffix in ["", "zzzzzzzz"] {
+            let mutation = KNOWN_LAB.replacen(
+                "eebb9a9f-1679-4468-9e8f-814c729674cb-000000d1",
+                &format!("{COMPANY}-{malformed_suffix}"),
+                1,
+            );
+            assert_eq!(
+                parse_native_trial_balance(&mutation, COMPANY),
+                Err(NativeTrialBalanceError::InvalidResponse(
+                    "trial_balance_guid_suffix_invalid"
+                ))
+            );
+        }
     }
 }
