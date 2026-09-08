@@ -155,6 +155,14 @@ impl VerifiedCompanyIdentity {
         &self.company_guid
     }
 
+    pub(crate) fn company_number(&self) -> &str {
+        self.company_number.as_str()
+    }
+
+    pub(crate) fn books_from_yyyymmdd(&self) -> &str {
+        self.books_from_yyyymmdd.as_str()
+    }
+
     pub(crate) fn matches_observed_company(&self, company: &TallyCompany) -> bool {
         company.name == self.display_name
             && company

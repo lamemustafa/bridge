@@ -1,7 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import ReactDOM from "react-dom/client";
-import { Building2, Cable, Check, Cloud, FileText, FolderOpen, KeyRound, Play, Settings2, ShieldCheck } from "lucide-react";
+import { Building2, Cable, Check, Cloud, FileText, FolderOpen, KeyRound, Play, Search, Settings2, ShieldCheck } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   applyProbeCompanySelectionTransition,
@@ -38,6 +38,7 @@ import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
 import { JournalPostingScreen } from "./JournalPostingScreen";
+import { LedgerEntriesScreen } from "./LedgerEntriesScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import "./styles.css";
 
@@ -279,7 +280,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "companies" | "settings" | "journal" | "gst" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "ledger_entries" | "companies" | "settings" | "journal" | "gst" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -292,6 +293,7 @@ const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
   clients: "All clients",
   outstandings: "Overview",
+  ledger_entries: "Ledger entries",
   companies: "Companies",
   settings: "Settings",
   journal: "Review Journal",
@@ -1606,18 +1608,30 @@ function App() {
                   ? "Receivables and payables"
                   : view === "clients"
                     ? "Every book open in Tally"
+                    : view === "ledger_entries"
+                      ? "Selected-ledger investigation"
                     : "Tally Truth Layer"}
               </p>
             )}
             <h1 id="active-view-title">{VIEW_TITLES[view]}</h1>
           </div>
           {(view === "dashboard" || view === "outstandings") && (
-            <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotPostingBlocked} onClick={() => setView("journal")}>
-              <FileText size={18} aria-hidden="true" /> Review Journal file
-            </button>
+            <div className="header-actions">
+              {view === "outstandings" && <button className="secondary-action" type="button" disabled={shellNavigationLocked} onClick={() => setView("ledger_entries")}>
+                <Search size={18} aria-hidden="true" /> Investigate ledger
+              </button>}
+              <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotPostingBlocked} onClick={() => setView("journal")}>
+                <FileText size={18} aria-hidden="true" /> Review Journal file
+              </button>
+            </div>
           )}
           {view === "journal" && (
             <button className="secondary-action" type="button" disabled={journalActionBusy} aria-describedby={journalActionBusy ? "journal-action-busy-note" : undefined} onClick={() => setView("outstandings")}>
+              Back to Overview
+            </button>
+          )}
+          {view === "ledger_entries" && (
+            <button className="secondary-action" type="button" disabled={childTallyReadCount > 0} aria-describedby={childTallyReadCount > 0 ? "active-tally-read-note" : undefined} onClick={() => setView("outstandings")}>
               Back to Overview
             </button>
           )}
@@ -1888,6 +1902,24 @@ function App() {
             onTallyReadActivityChange={changeChildTallyReadActivity}
             onExportNoticeChange={setOutstandingsExportNotice}
           />
+          </ErrorBoundary>
+        )}
+
+        {view === "ledger_entries" && (
+          <ErrorBoundary key="ledger-entries" label="Ledger entries">
+            <LedgerEntriesScreen
+              key={selectedCompany || "unselected"}
+              config={config}
+              company={selectedCompanyReady && selectedCompanyRecord?.guid && selectedCompanyRecord.company_number && selectedCompanyRecord.books_from_yyyymmdd && selectedCompanyRecord.canonical_endpoint ? {
+                name: selectedCompanyRecord.name,
+                guid: selectedCompanyRecord.guid,
+                company_number: selectedCompanyRecord.company_number,
+                books_from_yyyymmdd: selectedCompanyRecord.books_from_yyyymmdd,
+                canonical_origin: selectedCompanyRecord.canonical_endpoint,
+              } : undefined}
+              locked={childTallyReadCount > 0}
+              onReadActivity={changeChildTallyReadActivity}
+            />
           </ErrorBoundary>
         )}
 
