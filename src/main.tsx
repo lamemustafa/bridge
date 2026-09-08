@@ -40,6 +40,7 @@ import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
 import { JournalPostingScreen } from "./JournalPostingScreen";
 import { TrialBalanceScreen } from "./TrialBalanceScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
+import { loadEndpointReconnectHint, saveEndpointReconnectHint } from "./tally-endpoint-reconnect-hint";
 import "./styles.css";
 
 type TallyConfig = {
@@ -423,7 +424,7 @@ function TallyErrorNotice({ message }: { message: OperatorError }) {
 
 function App() {
   const currentFinancialYear = React.useMemo(() => getCurrentFinancialYear(), []);
-  const [config, setConfig] = React.useState<TallyConfig>({ host: "localhost", port: 9000 });
+  const [config, setConfig] = React.useState<TallyConfig>(() => loadEndpointReconnectHint());
   const [status, setStatus] = React.useState<ConnectionStatus | null>(null);
   const [passport, setPassport] = React.useState<CapabilityProfile | null>(null);
   // This value comes from the Rust loopback boundary after a successful
@@ -864,6 +865,9 @@ function App() {
     try {
       const result = await invoke<TallyProbeResult>("probe_tally", { config });
       if (resultsVersion === tallyResultsVersion.current) {
+        if (result.connection.reachable && result.connection.compatible) {
+          saveEndpointReconnectHint(config);
+        }
         const liveCompanies = result.companies.map((company) => ({
           ...company,
           canonical_endpoint: result.canonical_origin,
