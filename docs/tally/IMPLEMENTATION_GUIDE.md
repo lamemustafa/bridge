@@ -1245,6 +1245,9 @@ V23 retired it. Gating must precede this repair: recreating the GUID-only index
 can fail immediately when two observed split books already share a GUID. The
 composite identity constraint remains in force. No company rows or legacy
 raw-GUID client labels are deleted or migrated; #190 remains separate.
+An older binary can also recreate the index after V27 was recorded. Returning
+to a fixed build therefore retires it even when the V27 marker already exists;
+the marker alone cannot establish that this legacy-writable index is absent.
 
 Rollback is a binary-compatibility decision, not an inverse data migration. A
 pre-fix binary can recreate this index or fail to open a shared-GUID mirror.

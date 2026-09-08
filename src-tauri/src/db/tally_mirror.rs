@@ -2504,6 +2504,12 @@ impl TallyMirrorRepository {
             sqlx::raw_sql(MIRROR_MIGRATION_V27)
                 .execute(&mut *transaction)
                 .await?;
+        } else {
+            // A downgraded binary can rerun legacy bootstrap V2 after V27 was
+            // recorded. Keep the retired-index invariant on every fixed open.
+            sqlx::query("DROP INDEX IF EXISTS uq_tally_companies_guid")
+                .execute(&mut *transaction)
+                .await?;
         }
         sqlx::query(
             "UPDATE tally_schema_migrations SET applied_at_unix_ms = ?1 \
@@ -8534,6 +8540,44 @@ mod tests {
             .expect("inspect preserved company"),
             1
         );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 27",
+            )
+            .fetch_one(&repaired.pool)
+            .await
+            .expect("inspect initial v27 repair marker"),
+            1
+        );
+        sqlx::raw_sql(MIRROR_MIGRATION_V2)
+            .execute(&repaired.pool)
+            .await
+            .expect("model downgrade reopen after v27 repair");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'uq_tally_companies_guid'",
+            )
+            .fetch_one(&repaired.pool)
+            .await
+            .expect("inspect post-v27 resurrected GUID-only index"),
+            1
+        );
+        repaired.pool.close().await;
+
+        let reopened = file_repository(&path).await;
+        reopened
+            .migrate()
+            .await
+            .expect("repair downgrade-reopened shared-GUID mirror");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'uq_tally_companies_guid'",
+            )
+            .fetch_one(&reopened.pool)
+            .await
+            .expect("inspect repaired downgrade GUID-only index"),
+            0
+        );
         for (id, number, name, books_from) in [
             ("parent", "1", "Synthetic Parent", "20240401"),
             ("split", "2", "Synthetic Split", "20250401"),
@@ -8548,7 +8592,7 @@ mod tests {
             .bind(name)
             .bind(number)
             .bind(books_from)
-            .execute(&repaired.pool)
+            .execute(&reopened.pool)
             .await
             .expect("insert distinct shared-GUID book");
         }
@@ -8559,22 +8603,25 @@ mod tests {
              ) VALUES ('duplicate', 'endpoint', 'Synthetic Parent', 'shared-guid', '1', \
                        '20240401', 'observed', 1, 1)",
         )
-        .execute(&repaired.pool)
+        .execute(&reopened.pool)
         .await
         .expect_err("composite identity must still reject an exact duplicate");
         let sqlx::Error::Database(error) = duplicate else {
             panic!("exact composite duplicate must return a SQLite database error");
         };
         assert!(error.is_unique_violation());
-        repaired.pool.close().await;
+        reopened.pool.close().await;
 
-        let reopened = file_repository(&path).await;
-        reopened.migrate().await.expect("reopen shared-GUID mirror");
+        let final_reopen = file_repository(&path).await;
+        final_reopen
+            .migrate()
+            .await
+            .expect("reopen existing shared-GUID books");
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM tally_companies WHERE endpoint_id = 'endpoint' AND company_guid = 'shared-guid'",
             )
-            .fetch_one(&reopened.pool)
+            .fetch_one(&final_reopen.pool)
             .await
             .expect("count shared-GUID books"),
             2
@@ -8583,12 +8630,12 @@ mod tests {
             sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM tally_schema_migrations WHERE version = 27",
             )
-            .fetch_one(&reopened.pool)
+            .fetch_one(&final_reopen.pool)
             .await
             .expect("inspect repair marker"),
             1
         );
-        reopened.pool.close().await;
+        final_reopen.pool.close().await;
     }
 
     fn assert_observed_identity_constraint(error: sqlx::Error) {
