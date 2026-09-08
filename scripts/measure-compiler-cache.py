@@ -40,7 +40,7 @@ def execute(command, name, environment=env):
             raise subprocess.CalledProcessError(code, command)
 
 
-def build(name, cached):
+def build(name, cached, require_correct=True):
     build_env = env.copy()
     if cached:
         build_env["RUSTC_WRAPPER"] = shutil.which("sccache")
@@ -79,7 +79,8 @@ def build(name, cached):
     rows.append(row)
     (output / "results.json").write_text(json.dumps(rows, indent=2) + "\n")
     print(json.dumps({key: row[key] for key in ("sample", "command_seconds", "correct")}), flush=True)
-    assert witness == expected, "cached context returned stale configuration or asset bytes"
+    if require_correct:
+        assert witness == expected, "context returned stale configuration or asset bytes"
 
 
 try:
@@ -118,9 +119,19 @@ fn main() {
     changed = json.loads(config.read_text())
     changed["app"]["windows"][0]["title"] = "Compiler Cache Changed Config"
     config.write_text(json.dumps(changed, indent=2) + "\n")
-    build("4-config-change", True)
+    # Retain a rejected cached result, then build the exact changed input without
+    # a wrapper. The unwrapped control must pass before interpreting the cache.
+    build("4-config-change-cached", True, require_correct=False)
+    build("5-config-change-uncached", False)
     asset.write_bytes(b"compiler-cache-asset-changed\n")
-    build("5-asset-change", True)
+    build("6-asset-change-cached", True, require_correct=False)
+    build("7-asset-change-uncached", False)
+    summary = {"controls_complete": True, "candidate_correct": all(row["correct"] for row in rows),
+               "source_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+               "run_id": env.get("GITHUB_RUN_ID"), "run_attempt": env.get("GITHUB_RUN_ATTEMPT"),
+               "rejected_samples": [row["sample"] for row in rows if not row["correct"]]}
+    (output / "decision.json").write_text(json.dumps(summary, indent=2) + "\n")
+    assert summary["candidate_correct"], "compiler-cache candidate rejected; uncached controls completed"
 finally:
     for path, contents in originals.items():
         path.write_bytes(contents)

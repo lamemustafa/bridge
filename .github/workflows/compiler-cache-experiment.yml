@@ -1,8 +1,8 @@
-name: Compiler cache experiment
+name: Compiler cache input controls
 
 on:
   push:
-    branches: [tapish-codex/compiler-cache-experiment-20260908]
+    branches: [tapish-codex/compiler-cache-input-controls-20260909]
   workflow_dispatch:
 
 permissions:
