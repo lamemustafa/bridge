@@ -127,6 +127,8 @@ jobs:
         with:
           toolchain: 1.96.0
       - run: node scripts/check-ci-workflow-consistency.mjs
+      - run: python3 scripts/collect-macos-test-crashes.test.py
+      - run: python3 scripts/retain-macos-test-binaries.test.py
 
   tally-portable:
     name: Tally portable core
@@ -291,10 +293,47 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Dependency cache exact hit: `${{ steps.native-cache.outputs.cache-hit }}`'
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Runner image: $env:ImageOS / $env:ImageVersion"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-native-prerequisites.outputs.cache-hit }}`'
+      - name: Mark macOS test crash capture boundary
+        id: native-crash-boundary
+        if: runner.os == 'macOS'
+        run: touch "$RUNNER_TEMP/bridge-native-start"
       - name: Test native workspace
+        id: native-tests
         run: >-
           cargo nextest run --locked --manifest-path src-tauri/Cargo.toml
           --workspace --no-fail-fast --retries 0 --test-threads num-cpus --timings
+      - name: Collect minimized macOS test crash stacks
+        if: ${{ always() && runner.os == 'macOS' && steps.native-crash-boundary.outcome == 'success' }}
+        run: >-
+          python3 scripts/collect-macos-test-crashes.py
+          --since-file "$RUNNER_TEMP/bridge-native-start"
+          --output "$RUNNER_TEMP/bridge-native-crashes.json"
+          --wait-seconds ${{ steps.native-tests.outcome == 'failure' && '30' || '0' }}
+      - name: Retain minimized macOS test crash stacks
+        if: ${{ always() && runner.os == 'macOS' && steps.native-crash-boundary.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-crash-stacks-macos
+          path: ${{ runner.temp }}/bridge-native-crashes.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Link failed macOS test images to retained executables
+        if: ${{ always() && runner.os == 'macOS' && steps.native-tests.outcome == 'failure' }}
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          python3 scripts/retain-macos-test-binaries.py
+          --crash-json "$RUNNER_TEMP/bridge-native-crashes.json"
+          --target src-tauri/target/debug/deps
+          --output "$RUNNER_TEMP/bridge-native-binaries"
+      - name: Retain failed macOS executable evidence
+        if: ${{ always() && runner.os == 'macOS' && steps.native-tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-crash-binaries-macos
+          path: ${{ runner.temp }}/bridge-native-binaries
+          if-no-files-found: error
+          retention-days: 7
       # Nextest does not execute doctests. Keep these as a separate required step.
       - name: Test native workspace doctests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace --doc --no-fail-fast

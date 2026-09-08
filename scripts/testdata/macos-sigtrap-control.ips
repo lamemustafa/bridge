@@ -1,0 +1,66 @@
+{"bug_type": "309"}
+{
+  "procName": "bridge_lib-cafe",
+  "faultingThread": 0,
+  "exception": {
+    "type": "EXC_CRASH",
+    "signal": "SIGTRAP"
+  },
+  "threads": [
+    {
+      "triggered": true,
+      "frames": [
+        {
+          "imageIndex": 1,
+          "imageOffset": 38376,
+          "symbol": "__pthread_kill",
+          "symbolLocation": 8
+        },
+        {
+          "imageIndex": 2,
+          "imageOffset": 26840,
+          "symbol": "pthread_kill",
+          "symbolLocation": 296
+        },
+        {
+          "imageIndex": 3,
+          "imageOffset": 267144,
+          "symbol": "raise",
+          "symbolLocation": 32
+        },
+        {
+          "imageIndex": 0,
+          "imageOffset": 1064,
+          "symbol": "main",
+          "symbolLocation": 24
+        },
+        {
+          "imageIndex": 4,
+          "imageOffset": 132324,
+          "symbol": "start",
+          "symbolLocation": 6992
+        }
+      ]
+    }
+  ],
+  "usedImages": [
+    {
+      "name": "bridge_lib-cafe"
+    },
+    {
+      "name": "libsystem_kernel.dylib"
+    },
+    {
+      "name": "libsystem_pthread.dylib"
+    },
+    {
+      "name": "libsystem_c.dylib"
+    },
+    {
+      "name": "dyld"
+    },
+    {
+      "name": "unknown"
+    }
+  ]
+}

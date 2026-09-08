@@ -246,10 +246,11 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const currency = read?.currency;
   const options = React.useMemo(() => parentOptions(read?.report.rows ?? []), [read?.report.rows]);
   const matchingOptions = React.useMemo(() => {
-    const found: typeof options = [];
+    const exact = parentSearch === "" ? [] : options.filter((option) => option.parent === parentSearch || formatParentOption(option.parent) === parentSearch);
+    const found = [...exact];
     const search = parentSearch.toLocaleLowerCase();
     for (const option of options) {
-      if (formatParentOption(option.parent).toLocaleLowerCase().includes(search)) found.push(option);
+      if (!exact.includes(option) && formatParentOption(option.parent).toLocaleLowerCase().includes(search)) found.push(option);
       if (found.length > PARENT_OPTION_LIMIT) break;
     }
     return found;

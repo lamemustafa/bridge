@@ -6,11 +6,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("UI keeps client selection searchable and exposes only source-backed shell destinations", async () => {
-  const [app, switcher, outstandings, allClients] = await Promise.all([
+  const [app, switcher, outstandings, allClients, endpointHint] = await Promise.all([
     readFile(new URL("../src/main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/ClientSwitcher.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/OutstandingsScreen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/AllClientsScreen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/tally-endpoint-reconnect-hint.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(app, /type View = .*"settings"/);
@@ -21,7 +22,9 @@ test("UI keeps client selection searchable and exposes only source-backed shell 
   assert.match(app, /Settings/);
   const nav = app.slice(app.indexOf('<nav aria-label="Bridge navigation">'), app.indexOf("</nav>"));
   assert.doesNotMatch(nav, /GST Returns|DSC Token|Documents|AXAL Backend|Evidence dashboard/);
-  assert.match(app, /port: 9000/);
+  assert.match(app, /loadEndpointReconnectHint/);
+  assert.match(endpointHint, /host: "localhost"/);
+  assert.match(endpointHint, /port: 9000/);
   assert.match(app, /currentProbeCanonicalOrigin/);
   assert.match(app, /company\.canonical_endpoint === currentProbeCanonicalOrigin/);
   assert.doesNotMatch(app, /function configuredTallyEndpoint/);
