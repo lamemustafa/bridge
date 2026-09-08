@@ -17,7 +17,7 @@ use quick_xml::{
 use serde::Serialize;
 
 use crate::{
-    native_outstandings::NativeLedgerSnapshotPeriod,
+    native_ledger_guid_has_company_prefix, native_outstandings::NativeLedgerSnapshotPeriod,
     tolerant_xml::sanitize_invalid_numeric_references, PartyLedgerMasterFieldObservation,
 };
 
@@ -99,10 +99,16 @@ pub fn parse_native_trial_balance(
     let mut reader = Reader::from_str(&sanitized);
     reader.config_mut().trim_text(true);
     let mut path = Vec::<Vec<u8>>::new();
+    let mut root_seen = false;
+    let mut envelope_closed = false;
+    let mut header_seen = false;
+    let mut body_seen = false;
+    let mut data_seen = false;
     let mut status_seen = false;
     let mut collection_seen = false;
     let mut rows = Vec::new();
     let mut identities = HashSet::new();
+    let mut names = HashSet::new();
 
     loop {
         match reader
@@ -111,28 +117,70 @@ pub fn parse_native_trial_balance(
         {
             Event::Start(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
-                if path.is_empty() && name != b"ENVELOPE" {
+                if envelope_closed || (path.is_empty() && (name != b"ENVELOPE" || root_seen)) {
                     return Err(NativeTrialBalanceError::InvalidResponse(
                         "trial_balance_root_not_envelope",
                     ));
                 }
+                if path.is_empty() {
+                    root_seen = true;
+                }
+                if path_is(&path, &[b"ENVELOPE"]) && name == b"HEADER" {
+                    if std::mem::replace(&mut header_seen, true) {
+                        return Err(NativeTrialBalanceError::InvalidResponse(
+                            "trial_balance_duplicate_header",
+                        ));
+                    }
+                }
+                if path_is(&path, &[b"ENVELOPE"]) && name == b"BODY" {
+                    if std::mem::replace(&mut body_seen, true) {
+                        return Err(NativeTrialBalanceError::InvalidResponse(
+                            "trial_balance_duplicate_body",
+                        ));
+                    }
+                }
+                if path_is(&path, &[b"ENVELOPE", b"BODY"]) && name == b"DATA" {
+                    if std::mem::replace(&mut data_seen, true) {
+                        return Err(NativeTrialBalanceError::InvalidResponse(
+                            "trial_balance_duplicate_data",
+                        ));
+                    }
+                }
+                if name == b"LINEERROR" || name == b"ERROR" || name == b"DOCTYPE" {
+                    return Err(NativeTrialBalanceError::TallyReportedFailure);
+                }
                 if path_is(&path, &[b"ENVELOPE", b"HEADER"]) && name == b"STATUS" {
-                    if read_element_text(&mut reader, element.name())? != "1" {
+                    if status_seen {
+                        return Err(NativeTrialBalanceError::InvalidResponse(
+                            "trial_balance_duplicate_status",
+                        ));
+                    }
+                    if read_element_text(&mut reader, element.name())?.trim() != "1" {
                         return Err(NativeTrialBalanceError::TallyReportedFailure);
                     }
                     status_seen = true;
                     continue;
                 }
                 if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    if collection_seen {
+                        return Err(NativeTrialBalanceError::InvalidResponse(
+                            "trial_balance_duplicate_collection",
+                        ));
+                    }
                     collection_seen = true;
                 }
                 if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"LEDGER"
                 {
                     let row = parse_row(&mut reader, &element, expected_company_guid)?;
-                    if !identities.insert(row.guid.clone()) {
+                    if !identities.insert(row.guid.to_ascii_lowercase()) {
                         return Err(NativeTrialBalanceError::InvalidResponse(
                             "trial_balance_duplicate_guid",
+                        ));
+                    }
+                    if !names.insert(row.name.to_lowercase()) {
+                        return Err(NativeTrialBalanceError::InvalidResponse(
+                            "trial_balance_duplicate_name",
                         ));
                     }
                     rows.push(row);
@@ -142,7 +190,15 @@ pub fn parse_native_trial_balance(
             }
             Event::Empty(element) => {
                 let name = element.name().as_ref().to_ascii_uppercase();
+                if name == b"LINEERROR" || name == b"ERROR" || name == b"DOCTYPE" {
+                    return Err(NativeTrialBalanceError::TallyReportedFailure);
+                }
                 if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA"]) && name == b"COLLECTION" {
+                    if collection_seen {
+                        return Err(NativeTrialBalanceError::InvalidResponse(
+                            "trial_balance_duplicate_collection",
+                        ));
+                    }
                     collection_seen = true;
                 } else if path_is(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"])
                     && name == b"LEDGER"
@@ -161,6 +217,14 @@ pub fn parse_native_trial_balance(
                         "trial_balance_unexpected_close",
                     ));
                 }
+                if expected == b"ENVELOPE" {
+                    envelope_closed = true;
+                }
+            }
+            Event::DocType(_) => {
+                return Err(NativeTrialBalanceError::InvalidResponse(
+                    "trial_balance_doctype_forbidden",
+                ))
             }
             Event::Eof => break,
             _ => {}
@@ -169,6 +233,11 @@ pub fn parse_native_trial_balance(
     if !path.is_empty() {
         return Err(NativeTrialBalanceError::InvalidResponse(
             "trial_balance_envelope_unterminated",
+        ));
+    }
+    if !root_seen || !envelope_closed || !header_seen || !body_seen || !data_seen {
+        return Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_envelope_incomplete",
         ));
     }
     if !status_seen {
@@ -217,22 +286,22 @@ fn parse_row(
                 )?,
                 b"TBALOPENING" => set_once(
                     &mut opening,
-                    parse_amount(read_element_text(reader, child.name())?)?,
+                    parse_amount(&child, read_element_text(reader, child.name())?)?,
                     "trial_balance_duplicate_opening",
                 )?,
                 b"DEBITTOTALS" => set_once(
                     &mut debit,
-                    parse_amount(read_element_text(reader, child.name())?)?,
+                    parse_amount(&child, read_element_text(reader, child.name())?)?,
                     "trial_balance_duplicate_debit",
                 )?,
                 b"CREDITTOTALS" => set_once(
                     &mut credit,
-                    parse_amount(read_element_text(reader, child.name())?)?,
+                    parse_amount(&child, read_element_text(reader, child.name())?)?,
                     "trial_balance_duplicate_credit",
                 )?,
                 b"TBALCLOSING" => set_once(
                     &mut closing,
-                    parse_amount(read_element_text(reader, child.name())?)?,
+                    parse_amount(&child, read_element_text(reader, child.name())?)?,
                     "trial_balance_duplicate_closing",
                 )?,
                 _ => skip_subtree(reader)?,
@@ -243,22 +312,22 @@ fn parse_row(
                 }
                 b"TBALOPENING" => set_once(
                     &mut opening,
-                    NativeTrialBalanceAmount::PresentEmpty,
+                    parse_amount(&child, String::new())?,
                     "trial_balance_duplicate_opening",
                 )?,
                 b"DEBITTOTALS" => set_once(
                     &mut debit,
-                    NativeTrialBalanceAmount::PresentEmpty,
+                    parse_amount(&child, String::new())?,
                     "trial_balance_duplicate_debit",
                 )?,
                 b"CREDITTOTALS" => set_once(
                     &mut credit,
-                    NativeTrialBalanceAmount::PresentEmpty,
+                    parse_amount(&child, String::new())?,
                     "trial_balance_duplicate_credit",
                 )?,
                 b"TBALCLOSING" => set_once(
                     &mut closing,
-                    NativeTrialBalanceAmount::PresentEmpty,
+                    parse_amount(&child, String::new())?,
                     "trial_balance_duplicate_closing",
                 )?,
                 _ => {}
@@ -275,10 +344,7 @@ fn parse_row(
     let guid = guid.ok_or(NativeTrialBalanceError::InvalidResponse(
         "trial_balance_guid_missing",
     ))?;
-    if !guid
-        .strip_prefix(expected_company_guid)
-        .is_some_and(|suffix| suffix.starts_with('-'))
-    {
+    if !native_ledger_guid_has_company_prefix(&guid, expected_company_guid) {
         return Err(NativeTrialBalanceError::InvalidResponse(
             "trial_balance_company_guid_mismatch",
         ));
@@ -304,7 +370,15 @@ fn parse_row(
     })
 }
 
-fn parse_amount(value: String) -> Result<NativeTrialBalanceAmount, NativeTrialBalanceError> {
+fn parse_amount(
+    element: &BytesStart<'_>,
+    value: String,
+) -> Result<NativeTrialBalanceAmount, NativeTrialBalanceError> {
+    if required_attribute(element, b"TYPE", "trial_balance_amount_type_missing")? != "Amount" {
+        return Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_amount_type_invalid",
+        ));
+    }
     if value.is_empty() {
         Ok(NativeTrialBalanceAmount::PresentEmpty)
     } else {
@@ -331,33 +405,70 @@ fn required_attribute(
     key: &[u8],
     missing: &'static str,
 ) -> Result<String, NativeTrialBalanceError> {
-    element
-        .attributes()
-        .flatten()
-        .find(|attribute| attribute.key.as_ref().eq_ignore_ascii_case(key))
-        .and_then(|attribute| {
-            attribute
-                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                .ok()
-        })
-        .map(|value| value.into_owned())
-        .filter(|value| !value.trim().is_empty())
-        .ok_or(NativeTrialBalanceError::InvalidResponse(missing))
+    let mut found = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| {
+            NativeTrialBalanceError::InvalidResponse("trial_balance_attribute_malformed")
+        })?;
+        if !attribute.key.as_ref().eq_ignore_ascii_case(key) {
+            continue;
+        }
+        if found.is_some() {
+            return Err(NativeTrialBalanceError::InvalidResponse(
+                "trial_balance_attribute_duplicate",
+            ));
+        }
+        let value = attribute
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+            .map_err(|_| {
+                NativeTrialBalanceError::InvalidResponse("trial_balance_attribute_malformed")
+            })?
+            .into_owned();
+        if value.is_empty() {
+            return Err(NativeTrialBalanceError::InvalidResponse(missing));
+        }
+        found = Some(value);
+    }
+    found.ok_or(NativeTrialBalanceError::InvalidResponse(missing))
 }
 
 fn read_element_text(
     reader: &mut Reader<&[u8]>,
     name: QName<'_>,
 ) -> Result<String, NativeTrialBalanceError> {
-    let raw = reader
-        .read_text(name)
-        .map_err(|_| NativeTrialBalanceError::InvalidResponse("trial_balance_xml_malformed"))?;
-    let decoded = raw.decode().map_err(|_| {
-        NativeTrialBalanceError::InvalidResponse("trial_balance_xml_invalid_encoding")
-    })?;
-    quick_xml::escape::unescape(&decoded)
-        .map(|value| value.trim().to_string())
-        .map_err(|_| NativeTrialBalanceError::InvalidResponse("trial_balance_xml_invalid_escape"))
+    let mut value = String::new();
+    loop {
+        match reader
+            .read_event()
+            .map_err(|_| NativeTrialBalanceError::InvalidResponse("trial_balance_xml_malformed"))?
+        {
+            Event::Text(text) => {
+                let decoded = text.decode().map_err(|_| {
+                    NativeTrialBalanceError::InvalidResponse("trial_balance_xml_invalid_encoding")
+                })?;
+                let unescaped = quick_xml::escape::unescape(&decoded).map_err(|_| {
+                    NativeTrialBalanceError::InvalidResponse("trial_balance_xml_invalid_escape")
+                })?;
+                value.push_str(&unescaped);
+            }
+            Event::End(end) if end.name() == name => return Ok(value),
+            Event::Start(_) | Event::Empty(_) | Event::CData(_) | Event::Comment(_) => {
+                return Err(NativeTrialBalanceError::InvalidResponse(
+                    "trial_balance_scalar_not_text_only",
+                ))
+            }
+            Event::Eof => {
+                return Err(NativeTrialBalanceError::InvalidResponse(
+                    "trial_balance_scalar_unterminated",
+                ))
+            }
+            _ => {
+                return Err(NativeTrialBalanceError::InvalidResponse(
+                    "trial_balance_scalar_not_text_only",
+                ))
+            }
+        }
+    }
 }
 
 fn skip_subtree(reader: &mut Reader<&[u8]>) -> Result<(), NativeTrialBalanceError> {
@@ -519,5 +630,63 @@ mod tests {
                 "trial_balance_source_identity_missing"
             ))
         );
+
+        let type_confusion = KNOWN_LAB.replacen(
+            "<TBALOPENING TYPE=\"Amount\">0.00</TBALOPENING>",
+            "<TBALOPENING TYPE=\"String\">0.00</TBALOPENING>",
+            1,
+        );
+        assert_eq!(
+            parse_native_trial_balance(&type_confusion, COMPANY),
+            Err(NativeTrialBalanceError::InvalidResponse(
+                "trial_balance_amount_type_invalid"
+            ))
+        );
+        let duplicate_type = KNOWN_LAB.replacen(
+            "<TBALOPENING TYPE=\"Amount\">0.00</TBALOPENING>",
+            "<TBALOPENING TYPE=\"Amount\" TYPE=\"Amount\">0.00</TBALOPENING>",
+            1,
+        );
+        assert_eq!(
+            parse_native_trial_balance(&duplicate_type, COMPANY),
+            Err(NativeTrialBalanceError::InvalidResponse(
+                "trial_balance_attribute_malformed"
+            ))
+        );
+        let duplicate_name = KNOWN_LAB.replacen(
+            "<LEDGER NAME=\"Ageing Customer A\"",
+            "<LEDGER NAME=\"Ageing Bank\"",
+            1,
+        );
+        assert_eq!(
+            parse_native_trial_balance(&duplicate_name, COMPANY),
+            Err(NativeTrialBalanceError::InvalidResponse(
+                "trial_balance_duplicate_name"
+            ))
+        );
+        let concatenated = format!("{KNOWN_LAB}{KNOWN_LAB}");
+        assert_eq!(
+            parse_native_trial_balance(&concatenated, COMPANY),
+            Err(NativeTrialBalanceError::InvalidResponse(
+                "trial_balance_root_not_envelope"
+            ))
+        );
+        let error =
+            KNOWN_LAB.replacen("<DATA>", "<DATA><LINEERROR>reported failure</LINEERROR>", 1);
+        assert_eq!(
+            parse_native_trial_balance(&error, COMPANY),
+            Err(NativeTrialBalanceError::TallyReportedFailure)
+        );
+        let nested_scalar = KNOWN_LAB.replacen(
+            "<PARENT TYPE=\"String\">Sundry Debtors</PARENT>",
+            "<PARENT TYPE=\"String\"><NAME>Sundry Debtors</NAME></PARENT>",
+            1,
+        );
+        assert!(matches!(
+            parse_native_trial_balance(&nested_scalar, COMPANY),
+            Err(NativeTrialBalanceError::InvalidResponse(
+                "trial_balance_scalar_not_text_only"
+            ))
+        ));
     }
 }

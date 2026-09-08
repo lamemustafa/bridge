@@ -3585,7 +3585,10 @@ pub fn master_guid_belongs_to_company(master_guid: &str, company_guid: &str) -> 
             .is_some_and(|master_id| !master_id.is_empty())
 }
 
-fn native_ledger_guid_has_company_prefix(guid: &str, expected_company_guid: &str) -> bool {
+pub(crate) fn native_ledger_guid_has_company_prefix(
+    guid: &str,
+    expected_company_guid: &str,
+) -> bool {
     let Some(remainder) = guid.get(..expected_company_guid.len()) else {
         return false;
     };
