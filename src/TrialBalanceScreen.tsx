@@ -46,11 +46,6 @@ function toYyyymmdd(value: string) {
   return value.replace(/-/g, "");
 }
 
-function todayInputDate() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
 export function formatAmount(amount: Amount, symbol: string, decimals: number, magnitude = false) {
   if (amount.state === "present_empty") return "—";
   const sourceNegative = amount.value.startsWith("-");
@@ -90,9 +85,8 @@ function readScope(company: Company | undefined, config: Props["config"], from: 
 }
 
 export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, liveReadSuppressed, onChangeSetup, onTallyReadActivityChange }: Props) {
-  const initialFrom = toInputDate(company?.books_from_yyyymmdd ?? "");
-  const [from, setFrom] = React.useState(initialFrom);
-  const [to, setTo] = React.useState(todayInputDate());
+  const [from, setFrom] = React.useState(toInputDate(company?.books_from_yyyymmdd ?? ""));
+  const [to, setTo] = React.useState("");
   const [captured, setCaptured] = React.useState<{ scope: string; result: TrialBalanceResult } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [exportPath, setExportPath] = React.useState<string | null>(null);
@@ -112,17 +106,15 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
     setPage(0);
     setLoading(false);
     setExporting(false);
-    if (company) {
-      setFrom(toInputDate(company.books_from_yyyymmdd));
-      setTo(todayInputDate());
-    }
+    setFrom(toInputDate(company?.books_from_yyyymmdd ?? ""));
+    setTo("");
     return () => {
       requestVersion.current += 1;
     };
   }, [company?.name, company?.guid, company?.company_number, company?.books_from_yyyymmdd, company?.canonical_origin, config.host, config.port]);
 
   async function refresh() {
-    if (!company || loading || liveReadNavigationLocked || liveReadSuppressed) return;
+    if (!company || loading || exporting || liveReadNavigationLocked || liveReadSuppressed) return;
     if (!from || !to || from > to) {
       setError("Choose a valid date range. The start date must be on or before the end date.");
       setCaptured(null);
@@ -169,6 +161,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
     setExporting(true);
     setError(null);
     setExportPath(null);
+    onTallyReadActivityChange(1);
     try {
       const path = await invoke<string>("export_tally_trial_balance", { exportId: captured.result.export_id });
       if (version === requestVersion.current && exportingScope === latestScope.current) setExportPath(path);
@@ -176,6 +169,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
       if (version === requestVersion.current && exportingScope === latestScope.current) setError(formatInvokeError(cause));
     } finally {
       if (version === requestVersion.current) setExporting(false);
+      onTallyReadActivityChange(-1);
     }
   }
 
@@ -187,7 +181,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const firstRow = totalRows === 0 ? 0 : page * TABLE_PAGE_SIZE + 1;
   const lastRow = Math.min((page + 1) * TABLE_PAGE_SIZE, totalRows);
   const visibleRows = read?.report.rows.slice(page * TABLE_PAGE_SIZE, (page + 1) * TABLE_PAGE_SIZE) ?? [];
-  const disabled = liveReadNavigationLocked || liveReadSuppressed || loading;
+  const disabled = liveReadNavigationLocked || liveReadSuppressed || loading || exporting;
 
   if (!company) {
     return <section className="panel wide trial-balance-empty"><h2>Trial Balance</h2><p>Select and verify a Tally company before reading its report.</p><button className="secondary-action" type="button" onClick={onChangeSetup}>Choose company</button></section>;
@@ -209,6 +203,9 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
         <label>From<input type="date" value={from} min={toInputDate(company.books_from_yyyymmdd)} onChange={(event) => { setFrom(event.target.value); setCaptured(null); setExportPath(null); }} disabled={disabled} /></label>
         <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setCaptured(null); setExportPath(null); }} disabled={disabled} /></label>
       </div>
+      <p className="section-note trial-balance-date-note">
+        Choose the end date before reading. Education mode requires day 1, 2, or 31 for both dates. Bridge checks the dates against the active Tally mode when you refresh.
+      </p>
       {error && <div className="error-banner" role="alert"><span>{error}</span></div>}
       {exportPath && <div className="trial-balance-success" role="status">Trial Balance export saved to <code>{exportPath}</code></div>}
       {loading && <div className="panel wide trial-balance-loading" role="status">Reading the selected company for the exact date range…</div>}
@@ -220,6 +217,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
             <div><dt>{read.totals.opening.empty_count === 0 ? "Difference in opening balances" : "Observed opening net"}</dt><dd>{formatSum(read.totals.opening.sum, currency.symbol, currency.decimal_places)}{read.totals.opening.empty_count ? ` · ${read.totals.opening.empty_count} empty source values` : ""}</dd></div>
             <div><dt>Debit total</dt><dd>{formatAmount({ state: "present", value: read.totals.debit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.debit.empty_count ? ` · ${read.totals.debit.empty_count} empty` : ""}</dd></div>
             <div><dt>Credit total</dt><dd>{formatAmount({ state: "present", value: read.totals.credit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.credit.empty_count ? ` · ${read.totals.credit.empty_count} empty` : ""}</dd></div>
+            <div><dt>Closing total</dt><dd>{formatSum(read.totals.closing.sum, currency.symbol, currency.decimal_places)}{read.totals.closing.empty_count ? ` · ${read.totals.closing.empty_count} empty source values` : ""}</dd></div>
           </dl>
           <div className="trial-balance-table-wrap">
             <table className="trial-balance-table"><caption className="visually-hidden">Trial Balance ledger totals</caption><thead><tr><th scope="col">Ledger</th><th scope="col">Opening</th><th scope="col">Debit (Dr)</th><th scope="col">Credit (Cr)</th><th scope="col">Closing</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={row.guid}><th scope="row">{row.name}</th><td>{formatBalance(row.opening, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.debit, currency.symbol, currency.decimal_places, true)}</td><td>{formatAmount(row.credit, currency.symbol, currency.decimal_places, true)}</td><td>{formatBalance(row.closing, currency.symbol, currency.decimal_places)}</td></tr>)}</tbody></table>

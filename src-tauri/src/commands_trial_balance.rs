@@ -38,18 +38,65 @@ fn read_error(error: anyhow::Error) -> TallyCommandError {
         return local_error(reason.safe_code(), "Bridge could not admit this Trial Balance period or currency.",
             "Choose dates on or after book start. Education mode requires day 1, 2 or 31 at both ends. This report currently requires one observed INR currency master.");
     }
-    if error.chain().any(|cause| {
-        cause
-            .downcast_ref::<bridge_tally_protocol::native_trial_balance::NativeTrialBalanceError>()
-            .is_some()
+    if let Some(reason) = error.chain().find_map(|cause| {
+        cause.downcast_ref::<bridge_tally_protocol::native_trial_balance::NativeTrialBalanceError>()
     }) {
-        return local_error(
-            "trial_balance_source_invalid",
-            "Tally's Trial Balance response could not be represented safely.",
-            "Keep the selected company quiet, confirm the date range and retry the read.",
-        );
+        return match reason {
+            bridge_tally_protocol::native_trial_balance::NativeTrialBalanceError::TallyReportedFailure => local_error(
+                "trial_balance_tally_rejected",
+                "Tally rejected the Trial Balance request.",
+                "Confirm the selected company and date range in Tally, then retry the report.",
+            ),
+            bridge_tally_protocol::native_trial_balance::NativeTrialBalanceError::InvalidAmount => local_error(
+                "trial_balance_amount_invalid",
+                "Tally returned a Trial Balance amount Bridge could not represent safely.",
+                "Keep the selected company quiet and retry the report. If it persists, review the affected ledger amount in Tally.",
+            ),
+            bridge_tally_protocol::native_trial_balance::NativeTrialBalanceError::InvalidResponse(_) => local_error(
+                "trial_balance_source_invalid",
+                "Tally's Trial Balance response could not be represented safely.",
+                "Keep the selected company quiet, confirm the date range and retry the read.",
+            ),
+        };
     }
     tally_runtime_command_error(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bridge_tally_protocol::native_trial_balance::NativeTrialBalanceError;
+
+    #[test]
+    fn native_trial_balance_errors_have_distinct_safe_desktop_remediation() {
+        for (source, code, message_fragment, remediation_fragment) in [
+            (
+                NativeTrialBalanceError::TallyReportedFailure,
+                "trial_balance_tally_rejected",
+                "Tally rejected",
+                "selected company and date range in Tally",
+            ),
+            (
+                NativeTrialBalanceError::InvalidAmount,
+                "trial_balance_amount_invalid",
+                "amount Bridge could not represent safely",
+                "affected ledger amount in Tally",
+            ),
+            (
+                NativeTrialBalanceError::InvalidResponse("trial_balance_xml_malformed"),
+                "trial_balance_source_invalid",
+                "response could not be represented safely",
+                "Keep the selected company quiet",
+            ),
+        ] {
+            let mapped = read_error(anyhow::Error::new(source));
+            assert_eq!(mapped.code, code);
+            assert!(mapped.message.contains(message_fragment));
+            assert!(mapped.remediation.contains(remediation_fragment));
+            assert!(!mapped.message.contains("trial_balance_xml_malformed"));
+            assert!(!mapped.remediation.contains("trial_balance_xml_malformed"));
+        }
+    }
 }
 
 #[tauri::command]

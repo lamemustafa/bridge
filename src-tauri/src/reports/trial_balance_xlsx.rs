@@ -63,7 +63,7 @@ pub fn render_trial_balance_xlsx(
         row += 1;
     }
     sheet.write_string(row, 0, "Limitation")?;
-    sheet.write_string(row, 1, "Observed native Trial Balance fields only. Paired source stability does not establish an atomic Tally snapshot.")?;
+    sheet.write_string(row, 1, "Observed native Trial Balance fields only. Opening, debit, credit and closing retain Tally's signed values. Negative opening/closing is Dr, positive is Cr; the desktop displays debit/credit magnitudes. Paired source stability does not establish an atomic Tally snapshot.")?;
     row += 2;
 
     for (column, label) in [
@@ -71,8 +71,8 @@ pub fn render_trial_balance_xlsx(
         "GUID",
         "Parent",
         "Opening (source signed)",
-        "Debit (source magnitude)",
-        "Credit (source magnitude)",
+        "Debit (source signed)",
+        "Credit (source signed)",
         "Closing (source signed)",
     ]
     .into_iter()
@@ -96,6 +96,7 @@ pub fn render_trial_balance_xlsx(
         }
         row += 1;
     }
+    let last_ledger_row = row.saturating_sub(1);
 
     sheet.write_string_with_format(row, 0, "OBSERVED TOTALS", &bold)?;
     for (column, total) in [
@@ -145,7 +146,7 @@ pub fn render_trial_balance_xlsx(
     }
 
     sheet.set_freeze_panes(header + 1, 1)?;
-    sheet.autofilter(header, 0, row, 6)?;
+    sheet.autofilter(header, 0, last_ledger_row, 6)?;
     sheet.set_column_width(0, 34)?;
     sheet.set_column_width(1, 38)?;
     sheet.set_column_width(2, 28)?;
@@ -170,7 +171,7 @@ fn write_amount(
             .map(|_| ())
             .map_err(TrialBalanceXlsxError::from),
         NativeTrialBalanceAmount::PresentEmpty => sheet
-            .write_string(row, column, "-")
+            .write_blank(row, column, format)
             .map(|_| ())
             .map_err(TrialBalanceXlsxError::from),
     }
@@ -209,12 +210,16 @@ fn amount_num_format(read: &TrialBalanceRead) -> Result<String, TrialBalanceXlsx
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Cursor, Read};
+    use std::{
+        collections::BTreeMap,
+        io::{Cursor, Read},
+    };
 
     use bridge_tally_core::TallyDate;
     use bridge_tally_protocol::{
         native_outstandings::CompanyCurrency, native_trial_balance::parse_native_trial_balance,
     };
+    use quick_xml::{events::Event, Reader};
     use zip::ZipArchive;
 
     use super::*;
@@ -264,6 +269,49 @@ mod tests {
         text
     }
 
+    fn worksheet_xml(bytes: &[u8]) -> String {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        archive
+            .by_name("xl/worksheets/sheet1.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        xml
+    }
+
+    fn worksheet_numeric_cells(bytes: &[u8]) -> BTreeMap<String, String> {
+        let xml = worksheet_xml(bytes);
+
+        let mut reader = Reader::from_str(&xml);
+        reader.config_mut().trim_text(true);
+        let mut cells = BTreeMap::new();
+        let mut cell = None;
+        let mut in_value = false;
+        loop {
+            match reader.read_event().unwrap() {
+                Event::Start(tag) if tag.name().as_ref() == b"c" => {
+                    cell = tag.attributes().find_map(|attribute| {
+                        let attribute = attribute.ok()?;
+                        (attribute.key.as_ref() == b"r")
+                            .then(|| String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                    });
+                }
+                Event::Start(tag) if tag.name().as_ref() == b"v" => in_value = true,
+                Event::Text(text) if in_value => {
+                    if let Some(reference) = cell.as_ref() {
+                        cells.insert(reference.clone(), text.decode().unwrap().into_owned());
+                    }
+                }
+                Event::End(tag) if tag.name().as_ref() == b"v" => in_value = false,
+                Event::End(tag) if tag.name().as_ref() == b"c" => cell = None,
+                Event::Eof => break,
+                _ => {}
+            }
+        }
+        cells
+    }
+
     #[test]
     fn captured_export_preserves_empty_and_writes_formula_shaped_ledger_as_text() {
         let mut read = captured_read();
@@ -272,8 +320,22 @@ mod tests {
         let text = workbook_text(&bytes);
         assert!(text.contains("=SUM(A1:A2)"));
         assert!(!text.contains("<f>SUM(A1:A2)</f>"));
-        assert!(text.contains(">-</t>"));
+        assert!(!text.contains(">-</t>"));
         assert!(text.contains("formatCode=\"##,##,##0.000\""));
+    }
+
+    #[test]
+    fn captured_export_retains_native_signed_debit_and_credit_cells() {
+        let bytes = render_trial_balance_xlsx(&captured_read()).unwrap();
+        let cells = worksheet_numeric_cells(&bytes);
+
+        // The second captured ledger has a negative debit and positive credit.
+        // These cells must retain the source signs; desktop-only magnitude
+        // presentation is not an export transformation.
+        assert_eq!(cells.get("E14"), Some(&"-4777".to_string()));
+        assert_eq!(cells.get("F14"), Some(&"4500".to_string()));
+        assert!(!cells.contains_key("E13"));
+        assert!(worksheet_xml(&bytes).contains("<autoFilter ref=\"A12:G18\"/>"));
     }
 
     #[test]
