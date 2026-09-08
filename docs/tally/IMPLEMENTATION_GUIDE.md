@@ -1143,11 +1143,40 @@ installer legal-resource checks, official MCPB schema validation, archive
 extraction, offline stdio execution, both posting settings, and copied legal
 bytes when assessing the change. A ZIP listing alone is insufficient evidence.
 
-Windows native target caching remains disabled because its previous multi-GB
-save could exceed the job timeout after checks passed. Registry caching stays
-enabled. Do not reverse that policy without a measured save/restore experiment.
-The pinned rust-cache action hashes `CARGO*` environment values, so changing CI
-profiles invalidates its compiler cache as expected.
+Windows native CI caches dependency build artifacts using the existing pinned
+rust-cache action. Workspace binaries and incremental outputs are excluded by
+its cleanup defaults. The Windows namespace includes the native prerequisite
+action digest; runner image/version, OpenSSL and libclang environment values
+join the existing toolchain/Cargo/profile fingerprints. Set up prerequisites
+before cache lookup. Windows PR runs restore without saving; master and manual
+branch runs can publish caches in their own scopes. A cache miss still runs the
+complete build and gates. Keep the 50-minute job bound.
+
+The earlier multi-GB cache-save overrun is why this policy requires a measured
+cold/warm comparison. The [cache-only cold run](https://github.com/lamemustafa/bridge/actions/runs/34221535786)
+at `97a8d0b` passed Windows native
+in 28m32s, including a 67-second save of 825,712,308 compressed bytes. Its main
+compilation took 12m40s, including a 547.32-second OpenSSL build step; 778 library
+tests took 462.69s. The [same-commit warm run](https://github.com/lamemustafa/bridge/actions/runs/34224173710)
+passed in 9m55s, with a 33-second exact-cache restore and no OpenSSL/AWS-LC
+build-script execution. All 778 library tests still ran (328.08s). Hosted test
+time also varied, so do not attribute the entire elapsed difference to caching.
+These are one cold/warm pair, not a future cache-size bound or latency guarantee.
+
+The main native workspace uses pinned nextest with no retries or early exit.
+Cargo doctests remain a separate required step. Qualification tools, their
+serial feature test, all Clippy commands and both platform jobs are unchanged.
+Nextest runs each test in a process: preserve temporary-root/port isolation and
+review cross-process resources when adding tests. Do not weaken encryption,
+timeout or reconciliation checks to shorten execution.
+
+A local library comparison on the same compiled binary, source and eight-test
+concurrency used Cargo → nextest → nextest → Cargo order: 151.829s, 72.079s,
+74.356s and 166.196s, respectively. Each passed the exact same 786-test set with
+no retries/skips. A separate nextest workspace run passed 1,099 tests across 31
+binaries; Cargo then passed the two doctests separately. These local shared-Mac
+samples justify a hosted trial, not a Windows performance forecast. Record the
+hosted candidate, cache state and complete checks in the PR before adopting it.
 
 ### Compare complete measurements
 
@@ -1192,11 +1221,13 @@ Do not restart unchanged native checks merely to chase an empty review queue.
 
 - [Cargo profiles](https://doc.rust-lang.org/cargo/reference/profiles.html)
 - [Cargo timings](https://doc.rust-lang.org/cargo/reference/timings.html)
+- [Nextest execution model](https://github.com/nextest-rs/nextest/blob/60fa45f638ffc3f35e74afa65737f45fcd32db2a/site/src/docs/design/how-it-works.md)
+- [Pinned nextest installer and checksums](https://github.com/taiki-e/install-action/blob/5bf6ce016fd2e72eefc647cbca1e4213f65955b8/manifests/cargo-nextest.json)
 - [Tauri 2.11.4 binary/feature selection](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-cli/src/interface/rust.rs)
 - [Tauri upstream CI profile](https://github.com/tauri-apps/tauri/blob/e19121427332c8a14165999251cce415707a62fc/.github/workflows/lint-rust.yml)
 - [Pinned rust-cache configuration](https://github.com/Swatinem/rust-cache/blob/6323deb102c322ba6fcbdcafc7e3dddab59af2b6/src/config.ts)
 - [sccache Rust limits](https://github.com/mozilla/sccache/blob/05aafc82b9311edba4747a4656c106512ff181e8/docs/Rust.md)
 
 Upstream workflows are design comparisons, not benchmark evidence for Bridge.
-No new cache service, runner purchase, test-runner migration or reduction in
-platform coverage is required by this change.
+No new cache service, runner purchase or reduction in platform coverage is
+required by these changes.
