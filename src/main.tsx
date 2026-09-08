@@ -38,6 +38,7 @@ import { MirrorProofScreen } from "./MirrorProofScreen";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
 import { JournalPostingScreen } from "./JournalPostingScreen";
+import { TrialBalanceScreen } from "./TrialBalanceScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import "./styles.css";
 
@@ -279,7 +280,7 @@ type AxalConnectionStatus = {
   };
 };
 
-type View = "dashboard" | "clients" | "outstandings" | "companies" | "settings" | "journal" | "gst" | "dsc" | "documents" | "axal";
+type View = "dashboard" | "clients" | "outstandings" | "trial_balance" | "companies" | "settings" | "journal" | "gst" | "dsc" | "documents" | "axal";
 type TallyAction = "probe" | "discover" | "bootstrap" | "save" | "fixture_enroll" | "fixture_revoke" | "evidence" | "explorer" | "start" | "resume" | "cancel";
 
 const TABLE_PREVIEW_LIMIT = 100;
@@ -292,6 +293,7 @@ const VIEW_TITLES: Record<View, string> = {
   dashboard: "Tally evidence dashboard",
   clients: "All clients",
   outstandings: "Overview",
+  trial_balance: "Trial Balance",
   companies: "Companies",
   settings: "Settings",
   journal: "Review Journal",
@@ -1561,6 +1563,15 @@ function App() {
           >
             <Cable size={18} /> Overview
           </button>
+          <button
+            aria-current={view === "trial_balance" ? "page" : undefined}
+            className={view === "trial_balance" ? "active" : ""}
+            disabled={shellNavigationLocked}
+            aria-describedby={shellNavigationDescription}
+            onClick={() => setView("trial_balance")}
+          >
+            <FileText size={18} /> Trial Balance
+          </button>
           <button aria-current={view === "companies" ? "page" : undefined} className={view === "companies" ? "active" : ""} disabled={shellNavigationLocked} aria-describedby={shellNavigationDescription} onClick={() => setView("companies")}>
             <Building2 size={18} /> Companies
           </button>
@@ -1604,6 +1615,8 @@ function App() {
               <p className="eyebrow">
                 {view === "outstandings"
                   ? "Receivables and payables"
+                  : view === "trial_balance"
+                    ? "Native accounting report"
                   : view === "clients"
                     ? "Every book open in Tally"
                     : "Tally Truth Layer"}
@@ -1888,6 +1901,25 @@ function App() {
             onTallyReadActivityChange={changeChildTallyReadActivity}
             onExportNoticeChange={setOutstandingsExportNotice}
           />
+          </ErrorBoundary>
+        )}
+
+        {view === "trial_balance" && (
+          <ErrorBoundary key="trial-balance" label="Trial Balance">
+            <TrialBalanceScreen
+              config={config}
+              company={selectedCompanyReady && selectedCompanyRecord?.guid && selectedCompanyRecord.company_number && selectedCompanyRecord.books_from_yyyymmdd && selectedCompanyRecord.canonical_endpoint ? {
+                name: selectedCompanyRecord.name,
+                guid: selectedCompanyRecord.guid,
+                company_number: selectedCompanyRecord.company_number,
+                books_from_yyyymmdd: selectedCompanyRecord.books_from_yyyymmdd,
+                canonical_origin: selectedCompanyRecord.canonical_endpoint,
+              } : undefined}
+              onChangeSetup={() => setView("companies")}
+              liveReadNavigationLocked={childTallyReadCount > 0}
+              liveReadSuppressed={isLocalEvidenceReadSuppressed(evidenceDrawerOpen, evidenceDrawerEntry)}
+              onTallyReadActivityChange={changeChildTallyReadActivity}
+            />
           </ErrorBoundary>
         )}
 

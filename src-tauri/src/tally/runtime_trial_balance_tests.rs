@@ -109,8 +109,11 @@ async fn trial_balance_refuses_education_before_identity_or_report_dispatch() {
         .fetch_trial_balance(
             config(&simulator),
             &identity(),
-            TallyDate::parse("20260401").unwrap(),
-            TallyDate::parse("20260902").unwrap(),
+            TrialBalancePeriod::new(
+                TallyDate::parse("20260401").unwrap(),
+                TallyDate::parse("20260902").unwrap(),
+            )
+            .unwrap(),
         )
         .await
         .unwrap_err();
@@ -135,8 +138,11 @@ async fn trial_balance_refuses_before_books_before_currency_or_report_dispatch()
         .fetch_trial_balance(
             config(&simulator),
             &identity(),
-            TallyDate::parse("20250101").unwrap(),
-            TallyDate::parse("20260902").unwrap(),
+            TrialBalancePeriod::new(
+                TallyDate::parse("20250101").unwrap(),
+                TallyDate::parse("20260902").unwrap(),
+            )
+            .unwrap(),
         )
         .await
         .unwrap_err();
@@ -170,8 +176,11 @@ async fn trial_balance_rejects_non_inr_before_trial_balance_dispatch() {
         .fetch_trial_balance(
             config(&simulator),
             &identity(),
-            TallyDate::parse("20260401").unwrap(),
-            TallyDate::parse("20260902").unwrap(),
+            TrialBalancePeriod::new(
+                TallyDate::parse("20260401").unwrap(),
+                TallyDate::parse("20260902").unwrap(),
+            )
+            .unwrap(),
         )
         .await
         .unwrap_err();
@@ -225,8 +234,11 @@ async fn trial_balance_replays_captured_native_report_through_all_runtime_bracke
         .fetch_trial_balance(
             config(&simulator),
             &identity(),
-            TallyDate::parse("20260401").unwrap(),
-            TallyDate::parse("20260902").unwrap(),
+            TrialBalancePeriod::new(
+                TallyDate::parse("20260401").unwrap(),
+                TallyDate::parse("20260902").unwrap(),
+            )
+            .unwrap(),
         )
         .await
         .unwrap();
@@ -273,8 +285,11 @@ async fn trial_balance_rejects_report_or_book_drift_and_retains_completed_source
             .fetch_trial_balance(
                 config(&simulator),
                 &identity(),
-                TallyDate::parse("20260401").unwrap(),
-                TallyDate::parse("20260902").unwrap(),
+                TrialBalancePeriod::new(
+                    TallyDate::parse("20260401").unwrap(),
+                    TallyDate::parse("20260902").unwrap(),
+                )
+                .unwrap(),
             )
             .await
             .unwrap_err();
