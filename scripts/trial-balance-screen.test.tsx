@@ -387,6 +387,14 @@ test("distinguishes missing and empty Parent fields from literal group names", a
   expect(options.find((option) => option.value === "not-observed")?.textContent).toBe("Missing field: Parent not returned (1 rows)");
   expect(options.find((option) => option.value === 'returned:""')?.textContent).toBe("Empty field: Parent returned empty (1 rows)");
   expect(options.find((option) => option.value === 'returned:"Not observed"')?.textContent).toBe("Group: Not observed (1 rows)");
+  expect([...host.querySelectorAll("tbody tr")].map((row) => row.querySelector("td")?.textContent)).toEqual([
+    "Missing field: Parent not returned",
+    "Empty field: Parent returned empty",
+    "Group: Not observed",
+    "Group: Returned empty",
+    "Group: Missing field: Parent not returned",
+    "Group: Empty field: Parent returned empty",
+  ]);
   expect(mocks.invoke).toHaveBeenCalledTimes(1);
   await act(async () => root.unmount());
 });

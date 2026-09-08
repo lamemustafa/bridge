@@ -104,11 +104,6 @@ function parentKey(parent: ParentObservation) {
 }
 
 function formatParent(parent: ParentObservation) {
-  if (parent === null) return "Not observed";
-  return parent || "Returned empty";
-}
-
-function formatParentOption(parent: ParentObservation) {
   if (parent === null) return "Missing field: Parent not returned";
   return parent === "" ? "Empty field: Parent returned empty" : `Group: ${parent}`;
 }
@@ -122,7 +117,7 @@ function parentOptions(rows: TrialBalanceRow[]) {
     else options.set(key, { parent: row.parent, rowCount: 1 });
   }
   return [...options.entries()].map(([key, option]): ParentOption => {
-    const displayLabel = formatParentOption(option.parent);
+    const displayLabel = formatParent(option.parent);
     return {
       key,
       ...option,
