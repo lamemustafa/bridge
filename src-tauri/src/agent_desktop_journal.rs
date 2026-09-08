@@ -43,6 +43,9 @@ impl DesktopJournalService {
         let snapshot = self
             .snapshot_for_sha256(&selected_sha256)?
             .ok_or_else(|| "import_selected_file_not_found".to_string())?;
+        if snapshot.batch.sha256 != selected_sha256 {
+            return Err("import_batch_changed".into());
+        }
         let review = self.review_snapshot(snapshot)?;
         let persisted = self.read_persisted_xml(&review.batch_id)?;
         if persisted != selected {

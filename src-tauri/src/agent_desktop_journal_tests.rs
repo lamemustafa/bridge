@@ -342,6 +342,41 @@ fn review_details_come_from_the_admitted_saved_journal() {
 }
 
 #[test]
+fn review_refuses_selected_xml_from_a_superseded_full_record() {
+    let directory = tempfile::tempdir().unwrap();
+    let (service, mut line) = service(directory.path().join("agent"));
+    let original_xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    let path = service
+        .server
+        .imports_dir()
+        .unwrap()
+        .join(format!("{}.xml", line.batch_id));
+    std::fs::write(&path, &original_xml).unwrap();
+
+    // Legacy history accepts changed full records before dispatch. The file
+    // still contains the original bytes while the latest saved batch changes.
+    line.vouchers[0].narration = Some("Updated Journal".into());
+    let latest_xml = render_import_xml("Synthetic Accounts", &line.vouchers, &line.batch_id);
+    line.sha256 = sha256_hex(latest_xml.as_bytes());
+    service
+        .server
+        .append_import_ledger_while_admitted(&line)
+        .unwrap();
+
+    assert_eq!(
+        service
+            .review_selected_xml(original_xml.as_bytes())
+            .unwrap_err(),
+        "import_batch_changed"
+    );
+
+    std::fs::write(&path, &latest_xml).unwrap();
+    let review = service.review_selected_xml(latest_xml.as_bytes()).unwrap();
+    assert_eq!(review.sha256, line.sha256);
+    assert_eq!(review.details.narration.as_deref(), Some("Updated Journal"));
+}
+
+#[test]
 fn review_refuses_fresh_numbered_journal_but_retains_dispatched_reconciliation() {
     let directory = tempfile::tempdir().unwrap();
     let (service, line) = service_with_voucher_number(directory.path().join("agent"), Some("JV-1"));
