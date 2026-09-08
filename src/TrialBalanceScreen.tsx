@@ -36,6 +36,8 @@ type Props = {
   onTallyReadActivityChange: (delta: 1 | -1) => void;
 };
 
+const TABLE_PAGE_SIZE = 100;
+
 function toInputDate(value: string) {
   return value.length === 8 ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}` : value;
 }
@@ -94,6 +96,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const [captured, setCaptured] = React.useState<{ scope: string; result: TrialBalanceResult } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [exportPath, setExportPath] = React.useState<string | null>(null);
+  const [page, setPage] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
   const requestVersion = React.useRef(0);
@@ -106,6 +109,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
     setCaptured(null);
     setError(null);
     setExportPath(null);
+    setPage(0);
     setLoading(false);
     setExporting(false);
     if (company) {
@@ -130,6 +134,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
     setError(null);
     setCaptured(null);
     setExportPath(null);
+    setPage(0);
     onTallyReadActivityChange(1);
     try {
       const next = await invoke<TrialBalanceResult>("fetch_tally_trial_balance", {
@@ -145,7 +150,10 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
           to: toYyyymmdd(to),
         },
       });
-      if (version === requestVersion.current && requestedScope === latestScope.current) setCaptured({ scope: requestedScope, result: next });
+      if (version === requestVersion.current && requestedScope === latestScope.current) {
+        setCaptured({ scope: requestedScope, result: next });
+        setPage(0);
+      }
     } catch (cause) {
       if (version === requestVersion.current) setError(formatInvokeError(cause));
     } finally {
@@ -172,6 +180,11 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const result = captured?.scope === scope ? captured.result : null;
   const read = result?.read;
   const currency = read?.currency;
+  const totalRows = read?.report.rows.length ?? 0;
+  const pageCount = Math.max(1, Math.ceil(totalRows / TABLE_PAGE_SIZE));
+  const firstRow = totalRows === 0 ? 0 : page * TABLE_PAGE_SIZE + 1;
+  const lastRow = Math.min((page + 1) * TABLE_PAGE_SIZE, totalRows);
+  const visibleRows = read?.report.rows.slice(page * TABLE_PAGE_SIZE, (page + 1) * TABLE_PAGE_SIZE) ?? [];
   const disabled = liveReadNavigationLocked || liveReadSuppressed || loading;
 
   if (!company) {
@@ -207,7 +220,11 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
             <div><dt>Credit total</dt><dd>{formatAmount({ state: "present", value: read.totals.credit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.credit.empty_count ? ` · ${read.totals.credit.empty_count} empty` : ""}</dd></div>
           </dl>
           <div className="trial-balance-table-wrap">
-            <table className="trial-balance-table"><caption className="visually-hidden">Trial Balance ledger totals</caption><thead><tr><th scope="col">Ledger</th><th scope="col">Opening</th><th scope="col">Debit (Dr)</th><th scope="col">Credit (Cr)</th><th scope="col">Closing</th></tr></thead><tbody>{read.report.rows.map((row) => <tr key={row.guid}><th scope="row">{row.name}</th><td>{formatBalance(row.opening, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.debit, currency.symbol, currency.decimal_places, true)}</td><td>{formatAmount(row.credit, currency.symbol, currency.decimal_places, true)}</td><td>{formatBalance(row.closing, currency.symbol, currency.decimal_places)}</td></tr>)}</tbody></table>
+            <table className="trial-balance-table"><caption className="visually-hidden">Trial Balance ledger totals</caption><thead><tr><th scope="col">Ledger</th><th scope="col">Opening</th><th scope="col">Debit (Dr)</th><th scope="col">Credit (Cr)</th><th scope="col">Closing</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={row.guid}><th scope="row">{row.name}</th><td>{formatBalance(row.opening, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.debit, currency.symbol, currency.decimal_places, true)}</td><td>{formatAmount(row.credit, currency.symbol, currency.decimal_places, true)}</td><td>{formatBalance(row.closing, currency.symbol, currency.decimal_places)}</td></tr>)}</tbody></table>
+          </div>
+          <div className="trial-balance-pagination" aria-label="Trial Balance rows">
+            <span>Rows {firstRow}–{lastRow} of {totalRows}</span>
+            <div><button className="secondary-action" type="button" onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={page === 0}>Previous</button><button className="secondary-action" type="button" onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))} disabled={page >= pageCount - 1}>Next</button></div>
           </div>
           <p className="section-note">Currency: {currency.mailing_name || currency.symbol}. This native read is tied to the selected company and date range; it may include dormant ledger masters and is not an atomic snapshot of concurrent Tally changes.</p>
         </div>

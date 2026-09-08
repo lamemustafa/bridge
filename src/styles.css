@@ -3151,6 +3151,21 @@ button.outstandings-party {
   text-align: left;
 }
 
+.trial-balance-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  color: #52645b;
+  font-size: 13px;
+}
+
+.trial-balance-pagination > div {
+  display: flex;
+  gap: 8px;
+}
+
 .trial-balance-empty,
 .trial-balance-loading {
   display: grid;

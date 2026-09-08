@@ -28,7 +28,7 @@ const report = {
       rows: [{ name: "Cash", guid: "cash", opening: { state: "present", value: "1234567.89" }, debit: { state: "present", value: "-1.25" }, credit: { state: "present", value: "100.00" }, closing: { state: "present", value: "1234467.80" } }],
     },
     totals: { opening: { sum: "1234567.89", empty_count: 0 }, debit: { sum: "-1.25", empty_count: 0 }, credit: { sum: "100.00", empty_count: 0 }, closing: { sum: "1234467.80", empty_count: 0 } },
-    read_at: Date.parse("2026-09-08T10:00:00Z"),
+    read_at: "2026-09-08T10:00:00Z",
     evidence: { request_sha256: "a", response_sha256: "b", bytes: 10 },
   },
   export_id: "export-1",
@@ -79,5 +79,29 @@ test("drops a stale response after the report scope changes", async () => {
   await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={changed} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
   await act(async () => { resolve(report); await pending; });
   expect(host.textContent).not.toContain("₹1,234,567.80");
+  root.unmount();
+});
+
+test("paginates captured rows locally without rereading or changing totals", async () => {
+  const manyRows = Array.from({ length: 101 }, (_, index) => ({
+    name: `Ledger ${index + 1}`,
+    guid: `ledger-${index + 1}`,
+    opening: { state: "present_empty" as const },
+    debit: { state: "present_empty" as const },
+    credit: { state: "present_empty" as const },
+    closing: { state: "present_empty" as const },
+  }));
+  mocks.invoke.mockResolvedValueOnce({ ...report, read: { ...report.read, report: { rows: manyRows } } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await act(async () => button(host, "Refresh report").click());
+  expect(host.textContent).toContain("Rows 1–100 of 101");
+  expect(host.textContent).toContain("Difference in opening balances₹12,34,567.89");
+  await act(async () => button(host, "Next").click());
+  expect(host.textContent).toContain("Rows 101–101 of 101");
+  expect(host.textContent).toContain("Difference in opening balances₹12,34,567.89");
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
   root.unmount();
 });
