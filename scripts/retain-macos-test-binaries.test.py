@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import importlib.util
 import json
@@ -129,6 +130,34 @@ class BinaryEvidenceTests(unittest.TestCase):
         self.assertEqual(result["threads"][0]["frames"][3]["image_index"], 0)
         self.assertEqual(capture.image_identity({"uuid": "private/path", "arch": []}),
                          {"uuid": None, "arch": None})
+
+    def test_large_valid_stack_output_preserves_executable_linkage(self):
+        fixture = Path(__file__).parent / "testdata/macos-sigtrap-control.ips"
+        metadata, body = fixture.read_text().split("\n", 1)
+        report = json.loads(body)
+        report["usedImages"][0].update(uuid=UUID, arch="arm64")
+        report["usedImages"][1]["name"] = "library" * 73
+        frame = {"imageIndex": 1, "imageOffset": 1, "symbol": "s" * 512, "symbolLocation": 0}
+        report["threads"] = [{"triggered": True, "frames": [frame] * 64}] * 64
+        raw = metadata + "\n" + json.dumps(report)
+        self.assertLess(len(raw.encode()), capture.MAX_BYTES)
+        minimized = capture.minimize(raw)
+        snapshot = {"status": "captured", "reports": [copy.deepcopy(minimized) for _ in range(8)],
+                    "errors": [], "truncated": False}
+        self.assertGreater(len(json.dumps(snapshot).encode()), 16 * 1024 * 1024)
+        encoded = capture.encode_result(snapshot)
+        self.assertLessEqual(len(encoded), capture.MAX_OUTPUT_BYTES)
+        self.assertLess(capture.MAX_OUTPUT_BYTES, 16 * 1024 * 1024)
+        bounded = json.loads(encoded)
+        self.assertTrue(bounded["details_truncated"])
+        for item in bounded["reports"]:
+            self.assertEqual(item["process_images"], minimized["process_images"])
+            self.assertGreater(item["frames_removed_for_output_limit"], 0)
+        with patch.object(retain, "binary_identities", return_value=[EXPECTED]):
+            result = retain.collect(bounded, self.target, self.output)
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(len(result["binaries"]), 1)
+        self.assertEqual(result["errors"], ["crash_capture_incomplete"])
 
 
 if __name__ == "__main__":

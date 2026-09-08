@@ -12,6 +12,7 @@ import time
 
 MAX_REPORTS = 8
 MAX_BYTES = 8 * 1024 * 1024
+MAX_OUTPUT_BYTES = 8 * 1024 * 1024  # Below the executable retainer's 16 MiB input bound.
 PROCESS = re.compile(r"bridge_lib(?:-[0-9a-f]+)?\Z")
 UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
 ARCHES = {"arm64", "arm64e", "x86_64", "x86_64h", "i386"}
@@ -128,6 +129,32 @@ def wait_for_reports(directories, since, wait_seconds):
         time.sleep(1)
 
 
+def encode_result(result):
+    # Keep every admitted process-image identity. Thin deep frame tails evenly
+    # across reports rather than losing all executable linkage to an input cap.
+    if len(result["errors"]) > 64:
+        result["errors_omitted"] = len(result["errors"]) - 64
+        result["errors"] = result["errors"][:64]
+        result.update(status="capture_error", truncated=True)
+    encoded = (json.dumps(result, indent=2) + "\n").encode("utf-8")
+    while len(encoded) > MAX_OUTPUT_BYTES:
+        removed = 0
+        for report in result["reports"]:
+            for thread in report["threads"]:
+                frames = thread["frames"]
+                count = len(frames) - len(frames) // 2
+                if count:
+                    thread["frames"] = frames[:len(frames) // 2]
+                    thread["frames_truncated"] = True
+                    report["frames_removed_for_output_limit"] = report.get("frames_removed_for_output_limit", 0) + count
+                    removed += count
+        if not removed:
+            raise ValueError("crash_metadata_exceeds_output_limit")
+        result.update(status="capture_error", truncated=True, details_truncated=True)
+        encoded = (json.dumps(result, indent=2) + "\n").encode("utf-8")
+    return encoded
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--since-file", type=Path, required=True)
@@ -137,7 +164,7 @@ def main():
     directories = [Path.home() / "Library/Logs/DiagnosticReports", Path("/Library/Logs/DiagnosticReports")]
     since = args.since_file.stat().st_mtime
     result = wait_for_reports(directories, since, args.wait_seconds)
-    args.output.write_text(json.dumps(result, indent=2) + "\n")
+    args.output.write_bytes(encode_result(result))
     print(json.dumps({"status": result["status"], "reports": len(result["reports"]), "errors": result["errors"]}))
     return 1 if result["status"] == "capture_error" else 0
 
