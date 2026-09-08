@@ -21,15 +21,16 @@ pub const ATTESTATION_SCHEMA_VERSION: u16 = 1;
 pub const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 /// Capacity deliberately reserved for one small cohesive surface change.
 pub const RESERVED_SURFACE_FILES: usize = 15;
-/// Bounded high enough for the additive Tally safety-migration and report
-/// surfaces while still rejecting an unexpectedly broad attestation surface.
+/// Bounded high enough for the additive Tally safety-migration, Trial Balance,
+/// and selected-ledger evidence surfaces while still rejecting an unexpectedly
+/// broad attestation surface.
 /// Every file under the Tally migration and report directories is required by a
 /// directory rule; `src/` and the protocol crates remain judgment-pinned
 /// because their mixed-purpose directories do not have that invariant. The
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 177;
+pub const MAX_SURFACE_FILES: usize = 192;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -2433,6 +2434,25 @@ mod tests {
         // surface above `MAX_SURFACE_FILES`, while this assertion protects the
         // policy bound by rejecting an inflated cap with excess headroom.
         assert!(MAX_SURFACE_FILES - surface.files.len() <= RESERVED_SURFACE_FILES);
+    }
+
+    #[test]
+    fn surface_file_cap_refuses_an_oversized_manifest() {
+        let oversized = CompatibilitySurfaceManifest {
+            schema_version: SURFACE_SCHEMA_VERSION,
+            files: (0..=MAX_SURFACE_FILES)
+                .map(|index| SurfaceFile {
+                    path: format!("pinned-{index:03}"),
+                    sha256: "0".repeat(64),
+                })
+                .collect(),
+            manifest_sha256: String::new(),
+        };
+
+        assert_eq!(
+            oversized.seal().unwrap_err(),
+            invalid("surface_file_count_invalid")
+        );
     }
 
     fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {
