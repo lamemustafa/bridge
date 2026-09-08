@@ -27,7 +27,7 @@ const report = {
     report: {
       rows: [{ name: "Cash", guid: "cash", opening: { state: "present", value: "1234567.89" }, debit: { state: "present", value: "-1.25" }, credit: { state: "present", value: "100.00" }, closing: { state: "present", value: "-7277.00" } }],
     },
-    totals: { opening: { sum: "1234567.89", empty_count: 0 }, debit: { sum: "-1.25", empty_count: 0 }, credit: { sum: "100.00", empty_count: 0 }, closing: { sum: "1234467.80", empty_count: 0 } },
+    totals: { opening: { sum: "-1234567.89", empty_count: 0 }, debit: { sum: "-1.25", empty_count: 0 }, credit: { sum: "100.00", empty_count: 0 }, closing: { sum: "1234467.80", empty_count: 0 } },
     read_at: "2026-09-08T10:00:00Z",
     evidence: { request_sha256: "a", response_sha256: "b", bytes: 10 },
   },
@@ -139,7 +139,8 @@ test("paginates captured rows locally without rereading or changing totals", asy
   await chooseEndDate(host);
   await act(async () => button(host, "Refresh report").click());
   expect(host.textContent).toContain("Rows 1–100 of 101");
-  expect(host.textContent).toContain("Difference in opening balances₹12,34,567.89");
+  expect(host.textContent).toContain("Difference in opening balances₹12,34,567.89 Dr");
+  expect(host.textContent).toContain("Closing total₹12,34,467.80 Cr");
   await act(async () => button(host, "Next").click());
   expect(host.textContent).toContain("Rows 101–101 of 101");
   expect(host.textContent).toContain("Difference in opening balances₹12,34,567.89");

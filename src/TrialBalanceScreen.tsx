@@ -59,10 +59,6 @@ export function formatAmount(amount: Amount, symbol: string, decimals: number, m
   return `${negative ? "−" : ""}${symbol}${grouped}${exactFraction}`;
 }
 
-function formatSum(sum: string, symbol: string, decimals: number) {
-  return formatAmount({ state: "present", value: sum }, symbol, decimals);
-}
-
 function formatBalance(amount: Amount, symbol: string, decimals: number) {
   if (amount.state === "present_empty") return "—";
   const debit = amount.value.startsWith("-");
@@ -215,10 +211,10 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
         <div className="panel wide trial-balance-report">
           <div className="trial-balance-meta"><span>{read.company_name}</span><span>{toInputDate(read.from)} → {toInputDate(read.to)}</span><span>Fresh at {new Date(read.read_at).toLocaleString()}</span><span>Source scope: {read.report.rows.length} ledger rows</span></div>
           <dl className="trial-balance-totals">
-            <div><dt>{read.totals.opening.empty_count === 0 ? "Difference in opening balances" : "Observed opening net"}</dt><dd>{formatSum(read.totals.opening.sum, currency.symbol, currency.decimal_places)}{read.totals.opening.empty_count ? ` · ${read.totals.opening.empty_count} empty source values` : ""}</dd></div>
+            <div><dt>{read.totals.opening.empty_count === 0 ? "Difference in opening balances" : "Observed opening net"}</dt><dd>{formatBalance({ state: "present", value: read.totals.opening.sum }, currency.symbol, currency.decimal_places)}{read.totals.opening.empty_count ? ` · ${read.totals.opening.empty_count} empty source values` : ""}</dd></div>
             <div><dt>Debit total</dt><dd>{formatAmount({ state: "present", value: read.totals.debit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.debit.empty_count ? ` · ${read.totals.debit.empty_count} empty` : ""}</dd></div>
             <div><dt>Credit total</dt><dd>{formatAmount({ state: "present", value: read.totals.credit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.credit.empty_count ? ` · ${read.totals.credit.empty_count} empty` : ""}</dd></div>
-            <div><dt>Closing total</dt><dd>{formatSum(read.totals.closing.sum, currency.symbol, currency.decimal_places)}{read.totals.closing.empty_count ? ` · ${read.totals.closing.empty_count} empty source values` : ""}</dd></div>
+            <div><dt>Closing total</dt><dd>{formatBalance({ state: "present", value: read.totals.closing.sum }, currency.symbol, currency.decimal_places)}{read.totals.closing.empty_count ? ` · ${read.totals.closing.empty_count} empty source values` : ""}</dd></div>
           </dl>
           <div className="trial-balance-table-wrap">
             <table className="trial-balance-table"><caption className="visually-hidden">Trial Balance ledger totals</caption><thead><tr><th scope="col">Ledger</th><th scope="col">Opening</th><th scope="col">Debit (Dr)</th><th scope="col">Credit (Cr)</th><th scope="col">Closing</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={row.guid}><th scope="row">{row.name}</th><td>{formatBalance(row.opening, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.debit, currency.symbol, currency.decimal_places, true)}</td><td>{formatAmount(row.credit, currency.symbol, currency.decimal_places, true)}</td><td>{formatBalance(row.closing, currency.symbol, currency.decimal_places)}</td></tr>)}</tbody></table>
