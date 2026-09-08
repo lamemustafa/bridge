@@ -119,3 +119,22 @@ test("scope turnover clears the pending indicator before the obsolete read settl
   expect(host.textContent).not.toContain("No vouchers in the complete source matched this ledger.");
   root.unmount();
 });
+
+test("a refused read shows the backend recovery step and allows correction", async () => {
+  mocks.invoke.mockRejectedValue({
+    code: "selected_ledger_entries_refused",
+    message: "Bridge withheld this ledger investigation because its source could not be verified.",
+    remediation: "Choose a ledger from the verified company and try again.",
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<LedgerEntriesScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} locked={false} onReadActivity={() => {}} />); });
+  const inputs = host.querySelectorAll<HTMLInputElement>("input");
+  await act(async () => { enter(inputs[0], "Unknown ledger"); enter(inputs[1], "2026-04-01"); enter(inputs[2], "2026-04-30"); });
+  await act(async () => { host.querySelector<HTMLFormElement>("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Choose a ledger from the verified company and try again.");
+  expect(inputs[0].disabled).toBe(false);
+  expect(host.textContent).not.toContain("No vouchers in the complete source matched this ledger.");
+  await act(async () => { root.unmount(); });
+});

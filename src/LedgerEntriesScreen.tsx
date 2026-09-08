@@ -79,4 +79,11 @@ export function LedgerEntriesScreen({ config, company, locked, onReadActivity }:
 function formatDate(value: string) { return value.length === 8 ? `${value.slice(6, 8)}-${value.slice(4, 6)}-${value.slice(0, 4)}` : value; }
 function formatDateInput(value?: string) { return value || "unavailable"; }
 function formatObservedAt(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? "an unavailable time" : date.toLocaleString(); }
-function operatorMessage(cause: unknown) { if (typeof cause === "string") return cause; if (cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string") return cause.message; return "Bridge could not complete this ledger investigation."; }
+function operatorMessage(cause: unknown) {
+  if (typeof cause === "string") return cause;
+  if (cause && typeof cause === "object" && "message" in cause && typeof cause.message === "string") {
+    const remediation = "remediation" in cause && typeof cause.remediation === "string" ? cause.remediation : "";
+    return [cause.message, remediation].filter(Boolean).join(" ");
+  }
+  return "Bridge could not complete this ledger investigation.";
+}
