@@ -108,8 +108,10 @@ impl ParentSearch {
         let raw_lowercase = parent.returned_text().map(str::to_lowercase);
         let display_lowercase = display.to_lowercase();
         #[cfg(test)]
-        let temporary_text_bytes = display_owned_len(&display)
-            + raw_lowercase.as_ref().map_or(0, String::len)
+        let temporary_text_bytes = match &display {
+            Cow::Borrowed(_) => 0,
+            Cow::Owned(value) => value.len(),
+        } + raw_lowercase.as_ref().map_or(0, String::len)
             + display_lowercase.len();
         if raw_lowercase.as_deref() == Some(self.lowercase.as_str())
             || display_lowercase == self.lowercase
@@ -165,14 +167,6 @@ fn parent_display_label(parent: &PartyLedgerMasterFieldObservation) -> Cow<'stat
         PartyLedgerMasterFieldObservation::Returned(value) => {
             Cow::Owned(format!("{GROUP_LABEL_PREFIX}{value}"))
         }
-    }
-}
-
-#[cfg(test)]
-fn display_owned_len(display: &Cow<'static, str>) -> usize {
-    match display {
-        Cow::Borrowed(_) => 0,
-        Cow::Owned(value) => value.len(),
     }
 }
 

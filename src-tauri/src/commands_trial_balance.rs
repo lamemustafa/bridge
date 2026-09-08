@@ -288,24 +288,34 @@ pub async fn query_tally_trial_balance_capture_parent(
             "Refresh the report before selecting a parent again.",
         )
     })?;
-    let query =
-        crate::reports::trial_balance::query_observed_parent(&capture.read.report, &request.parent)
-            .map_err(|error| match error {
-                crate::reports::trial_balance::TrialBalanceParentQueryError::ParentNotInCapture => {
-                    local_error(
-                        "trial_balance_capture_parent_unavailable",
-                        "That exact parent was not returned by the retained capture.",
-                        "Select a parent returned by this capture or refresh the report.",
-                    )
-                }
-                crate::reports::trial_balance::TrialBalanceParentQueryError::TotalsUnavailable => {
-                    local_error(
-                        "trial_balance_capture_invalid",
-                        "The retained Trial Balance cannot be summarized safely.",
-                        "Refresh the report before selecting a parent again.",
-                    )
-                }
-            })?;
+    let read = std::sync::Arc::clone(&capture.read);
+    let query = tauri::async_runtime::spawn_blocking(move || {
+        crate::reports::trial_balance::query_observed_parent(&read.report, &request.parent)
+    })
+    .await
+    .map_err(|_| {
+        local_error(
+            "trial_balance_capture_parent_query_failed",
+            "Bridge could not derive rows from the retained Trial Balance.",
+            "Select the parent again or refresh the report.",
+        )
+    })?
+    .map_err(|error| match error {
+        crate::reports::trial_balance::TrialBalanceParentQueryError::ParentNotInCapture => {
+            local_error(
+                "trial_balance_capture_parent_unavailable",
+                "That exact parent was not returned by the retained capture.",
+                "Select a parent returned by this capture or refresh the report.",
+            )
+        }
+        crate::reports::trial_balance::TrialBalanceParentQueryError::TotalsUnavailable => {
+            local_error(
+                "trial_balance_capture_invalid",
+                "The retained Trial Balance cannot be summarized safely.",
+                "Refresh the report before selecting a parent again.",
+            )
+        }
+    })?;
     Ok(TrialBalanceCaptureParentQueryResponse {
         query,
         capture: TrialBalanceCaptureProvenance {
