@@ -204,6 +204,31 @@ fn captured_trial_balance_mutations_fail_closed() {
             "trial_balance_row_equation_mismatch"
         ))
     );
+    // Synthetic adversarial transformation, not an observed Tally response:
+    // the empty credit bypasses row-equation validation, so polarity remains a
+    // parser-boundary admission rather than a UI magnitude assumption.
+    let wrong_sign_debit_with_empty_credit = KNOWN_LAB.replacen(
+        "<DEBITTOTALS TYPE=\"Amount\">-4777.00</DEBITTOTALS>",
+        "<DEBITTOTALS TYPE=\"Amount\">4777.00</DEBITTOTALS>",
+        1,
+    );
+    assert_eq!(
+        parse_native_trial_balance(&wrong_sign_debit_with_empty_credit, COMPANY),
+        Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_debit_polarity_invalid"
+        ))
+    );
+    let wrong_sign_credit_with_empty_debit = KNOWN_LAB.replacen(
+        "<CREDITTOTALS TYPE=\"Amount\">1200.00</CREDITTOTALS>",
+        "<CREDITTOTALS TYPE=\"Amount\">-1200.00</CREDITTOTALS>",
+        1,
+    );
+    assert_eq!(
+        parse_native_trial_balance(&wrong_sign_credit_with_empty_debit, COMPANY),
+        Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_credit_polarity_invalid"
+        ))
+    );
     for malformed_suffix in ["", "zzzzzzzz"] {
         let mutation = KNOWN_LAB.replacen(
             "eebb9a9f-1679-4468-9e8f-814c729674cb-000000d1",

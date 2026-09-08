@@ -2,7 +2,7 @@
 use super::*;
 use crate::reports::trial_balance_store::TrialBalanceExportStore;
 use crate::reports::trial_balance_xlsx::render_trial_balance_xlsx;
-use crate::tally::runtime::{TrialBalanceRead, TrialBalanceReadError};
+use crate::tally::runtime::{TrialBalancePeriod, TrialBalanceRead, TrialBalanceReadError};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +35,18 @@ fn read_error(error: anyhow::Error) -> TallyCommandError {
         .chain()
         .find_map(|cause| cause.downcast_ref::<TrialBalanceReadError>())
     {
+        if matches!(
+            reason,
+            TrialBalanceReadError::Period(
+                bridge_tally_protocol::native_outstandings::NativeLedgerSnapshotPeriodError::InvalidRange
+            )
+        ) {
+            return local_error(
+                "trial_balance_period_invalid",
+                "The start date must be on or before the end date.",
+                "Choose a valid date range and refresh the report.",
+            );
+        }
         if matches!(reason, TrialBalanceReadError::EducationUnqualified) {
             return local_error(reason.safe_code(), "Native Trial Balance is not yet qualified for Education mode.",
                 "This report currently requires observed Licensed TallyPrime. Education support needs further qualification.");
@@ -81,6 +93,19 @@ mod tests {
     }
 
     #[test]
+    fn ordered_period_keeps_the_actionable_desktop_error() {
+        let error = TrialBalancePeriod::new(
+            TallyDate::parse("20260902").unwrap(),
+            TallyDate::parse("20260401").unwrap(),
+        )
+        .unwrap_err();
+        let mapped = read_error(error.into());
+        assert_eq!(mapped.code, "trial_balance_period_invalid");
+        assert!(mapped.message.contains("start date"));
+        assert!(mapped.remediation.contains("valid date range"));
+    }
+
+    #[test]
     fn native_trial_balance_errors_have_distinct_safe_desktop_remediation() {
         for (source, code, message_fragment, remediation_fragment) in [
             (
@@ -118,13 +143,8 @@ pub async fn fetch_tally_trial_balance(
     runtime: State<'_, TallyRuntime>,
     exports: State<'_, TrialBalanceExportStore>,
 ) -> Result<TrialBalanceResponse, TallyCommandError> {
-    if request.from > request.to {
-        return Err(local_error(
-            "trial_balance_period_invalid",
-            "The start date must be on or before the end date.",
-            "Choose a valid date range and refresh the report.",
-        ));
-    }
+    let period = TrialBalancePeriod::new(request.from, request.to)
+        .map_err(|error| read_error(error.into()))?;
     exports.clear().map_err(|_| {
         local_error(
             "trial_balance_export_unavailable",
@@ -135,7 +155,7 @@ pub async fn fetch_tally_trial_balance(
     let identity =
         verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
     let read = runtime
-        .fetch_trial_balance(request.config, &identity, request.from, request.to)
+        .fetch_trial_balance(request.config, &identity, period)
         .await
         .map_err(read_error)?;
     let export_id = exports.insert(read.clone()).map_err(|_| {
