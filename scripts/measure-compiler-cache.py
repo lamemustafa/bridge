@@ -1,4 +1,4 @@
-"""Branch-only build-script context experiment; restore application inputs on exit."""
+"""Branch-only executable context experiment; restore application inputs on exit."""
 import hashlib
 import importlib.util
 import json
@@ -16,12 +16,12 @@ output.mkdir(exist_ok=True)
 manifest = root / "src-tauri/Cargo.toml"
 library = root / "src-tauri/src/lib.rs"
 config = root / "src-tauri/tauri.conf.json"
+main = root / "src-tauri/src/main.rs"
 build_script = root / "src-tauri/build.rs"
 lockfile = root / "src-tauri/Cargo.lock"
 asset = root / "public/compiler-cache-control.txt"
-probe = root / "src-tauri/src/bin/compiler_cache_probe.rs"
-assert not asset.exists() and not probe.exists()
-originals = {path: path.read_bytes() for path in (manifest, library, config, build_script, lockfile)}
+assert not asset.exists()
+originals = {path: path.read_bytes() for path in (manifest, library, config, main, build_script, lockfile)}
 env = os.environ.copy()
 env["CARGO_INCREMENTAL"] = "0"
 env["SCCACHE_DIR"] = str(Path(env["RUNNER_TEMP"]) / "bridge-compiler-cache")
@@ -70,12 +70,12 @@ def build(name, cached, require_correct=True):
         stats = json.loads(subprocess.check_output(["sccache", "--show-stats", "--stats-format", "json"], env=env))
         (output / (name + "-stats.json")).write_text(json.dumps(stats, indent=2) + "\n")
     suffix = ".exe" if os.name == "nt" else ""
-    witness = json.loads(subprocess.check_output([str(root / ("src-tauri/target/release/compiler_cache_probe" + suffix))], env=env))
+    witness = json.loads(subprocess.check_output([str(root / ("src-tauri/target/release/bridge" + suffix)), "--compiler-cache-witness"], env=env))
     expected = {"title": json.loads(config.read_text())["app"]["windows"][0]["title"],
                 "asset_sha256": hashlib.sha256(asset.read_bytes()).hexdigest(), "source_value": source_value}
     row = {"sample": name, "cached": cached, "command_seconds": seconds,
            "inputs": {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
-                      for path in (manifest, library, config, build_script, lockfile, asset, probe)},
+                      for path in (manifest, library, config, main, build_script, lockfile, asset)},
            "bridge_units": [unit for unit in units if unit["name"] == "bridge"],
            "other_compiled_units": [unit for unit in units if unit["name"] != "bridge" and unit["duration"] > 0],
            "observed": witness, "expected": expected, "correct": witness == expected}
@@ -92,47 +92,36 @@ try:
     # All samples use the same rlib prerequisite; the experiment isolates caching.
     old = b'crate-type = ["staticlib", "cdylib", "rlib"]'
     assert originals[manifest].count(old) == 1
-    candidate_manifest = originals[manifest].replace(old, b'crate-type = ["rlib"]')
-    old_build = b'tauri-build = { version = "2", features = [] }'
-    assert candidate_manifest.count(old_build) == 1
-    manifest.write_bytes(candidate_manifest.replace(old_build, b'tauri-build = { version = "2", features = ["codegen"] }'))
-    # Enable only the two already-locked optional dependencies of tauri-build.
-    # The subsequent --locked metadata check refuses any further lockfile change.
-    lock = originals[lockfile].decode()
-    start = lock.index('name = "tauri-build"\n')
-    end = lock.index('[[package]]', start)
-    block = lock[start:end]
-    assert ' "quote",' not in block and ' "tauri-codegen",' not in block
-    changed_block = block.replace(' "json-patch",\n', ' "json-patch",\n "quote",\n').replace(' "tauri-utils",\n', ' "tauri-codegen",\n "tauri-utils",\n')
-    lockfile.write_text(lock[:start] + changed_block + lock[end:])
-    build_script.write_text('''fn main() {
-    tauri_build::try_build(
-        tauri_build::Attributes::new().codegen(tauri_build::CodegenContext::new()),
-    ).expect("Tauri build-script context generation failed");
-}
+    manifest.write_bytes(originals[manifest].replace(old, b'crate-type = ["rlib"]'))
+    old_run = b'pub fn run() {'
+    old_context = b'.run(tauri::generate_context!())'
+    assert originals[library].count(old_run) == originals[library].count(old_context) == 1
+    library.write_bytes(originals[library].replace(
+        old_run, b'pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {'
+    ).replace(old_context, b'.run(make_context())') + b'\n\npub fn compiler_cache_source_value() -> u8 { 1 }\n')
+    old_entry = b'bridge_lib::run()'
+    assert originals[main].count(old_entry) == 1
+    # Context construction remains at the original point inside library startup.
+    # The same compiled factory serves normal startup and read-only CLI evidence.
+    entry = originals[main].replace(old_entry, b'bridge_lib::run(compiler_cache_context)')
+    assert entry.count(b'fn main() {') == 1
+    entry = entry.replace(b'fn main() {', b'''fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--compiler-cache-witness") {
+        use sha2::{Digest, Sha256};
+        let context = compiler_cache_context();
+        let bytes = context.assets().get(&"/compiler-cache-control.txt".into()).expect("control asset missing");
+        println!("{}", serde_json::json!({
+            "title": context.config().app.windows[0].title,
+            "asset_sha256": Sha256::digest(bytes.as_ref()).iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+            "source_value": bridge_lib::compiler_cache_source_value()
+        }));
+        return;
+    }
 ''')
-    execute(["cargo", "metadata", "--locked", "--offline", "--format-version", "1", "--no-deps", "--manifest-path", str(manifest)], "candidate-metadata.log")
-    old = b'.run(tauri::generate_context!())'
-    assert originals[library].count(old) == 1
-    library.write_bytes(originals[library].replace(old, b'.run(compiler_cache_context())') + b'''
+    main.write_bytes(entry + b'''
 
-// Experiment-only: both the application and witness consume this cached context.
-pub fn compiler_cache_context() -> tauri::Context<tauri::Wry> {
-    tauri::tauri_build_context!()
-}
-
-pub fn compiler_cache_source_value() -> u8 { 1 }
-''')
-    probe.write_text('''use sha2::{Digest, Sha256};
-
-fn main() {
-    let context = bridge_lib::compiler_cache_context();
-    let bytes = context.assets().get(&"/compiler-cache-control.txt".into()).expect("control asset missing");
-    println!("{}", serde_json::json!({
-        "title": context.config().app.windows[0].title,
-        "asset_sha256": Sha256::digest(bytes.as_ref()).iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
-        "source_value": bridge_lib::compiler_cache_source_value()
-    }));
+fn compiler_cache_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
 }
 ''')
     asset.parent.mkdir(exist_ok=True)
@@ -173,7 +162,6 @@ finally:
     for path, contents in originals.items():
         path.write_bytes(contents)
     asset.unlink(missing_ok=True)
-    probe.unlink(missing_ok=True)
     restored = all(path.read_bytes() == contents for path, contents in originals.items())
     (output / "restoration.json").write_text(json.dumps({"application_inputs_restored": restored}) + "\n")
     assert restored
