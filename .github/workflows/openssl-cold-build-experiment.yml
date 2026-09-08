@@ -1,0 +1,37 @@
+name: OpenSSL cold build experiment
+
+on:
+  push:
+    branches: [tapish-codex/openssl-cold-build-experiment-20260909]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.96.0
+      - name: Set up Windows native prerequisites
+        uses: ./.github/actions/setup-windows-native
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri -> target
+          save-if: false
+      - name: Compare fresh OpenSSL builds with the existing cipher test
+        run: python scripts/measure-openssl-cold.py
+      - name: Retain measurement and restoration evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openssl-cold-windows
+          path: openssl-cold-measurements/**
+          if-no-files-found: error
+          retention-days: 7
