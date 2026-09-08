@@ -297,8 +297,30 @@ fn parse_row(
         ))?,
     };
     validate_guid_suffix(&row.guid, expected_company_guid)?;
+    validate_observed_movement_polarity(&row)?;
     validate_observed_row_equation(&row)?;
     Ok(row)
+}
+
+/// See TALLY_PROTOCOL_REFERENCE §5.6. Licensed native captures establish
+/// signed movements: debit values are negative and credit values are positive.
+/// Empty amounts remain unqualified; a nonzero opposite sign is not admitted
+/// as a normal Dr/Cr magnitude.
+fn validate_observed_movement_polarity(
+    row: &NativeTrialBalanceRow,
+) -> Result<(), NativeTrialBalanceError> {
+    if matches!(&row.debit, NativeTrialBalanceAmount::Present(value) if !value.is_zero() && !value.is_negative())
+    {
+        return Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_debit_polarity_invalid",
+        ));
+    }
+    if matches!(&row.credit, NativeTrialBalanceAmount::Present(value) if value.is_negative()) {
+        return Err(NativeTrialBalanceError::InvalidResponse(
+            "trial_balance_credit_polarity_invalid",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_guid_suffix(

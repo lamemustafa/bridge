@@ -18,6 +18,25 @@ pub struct TrialBalanceRead {
     pub evidence: RuntimeReadEvidence,
 }
 
+/// An ordered caller-selected range. Profile-specific boundary admission stays
+/// inside the identity-bracketed runtime read.
+#[derive(Debug, Clone)]
+pub struct TrialBalancePeriod {
+    from: TallyDate,
+    to: TallyDate,
+}
+
+impl TrialBalancePeriod {
+    pub(crate) fn new(from: TallyDate, to: TallyDate) -> Result<Self, TrialBalanceReadError> {
+        if from > to {
+            return Err(TrialBalanceReadError::Period(
+                bridge_tally_protocol::native_outstandings::NativeLedgerSnapshotPeriodError::InvalidRange,
+            ));
+        }
+        Ok(Self { from, to })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TrialBalanceReadError {
     #[error("trial_balance_education_unqualified")]
@@ -49,8 +68,7 @@ impl TallyRuntime {
         &self,
         config: TallyConfig,
         identity: &VerifiedCompanyIdentity,
-        from: TallyDate,
-        to: TallyDate,
+        period: TrialBalancePeriod,
     ) -> anyhow::Result<TrialBalanceRead> {
         let _lease = self.begin_ordinary_read(&config)?;
         let identity = identity.clone();
@@ -60,8 +78,8 @@ impl TallyRuntime {
             ReadRetryPolicy::SINGLE_ATTEMPT,
             move |client| {
                 let identity = identity.clone();
-                let from = from.clone();
-                let to = to.clone();
+                let from = period.from.clone();
+                let to = period.to.clone();
                 async move {
                     let mut evidence = RuntimeReadEvidence::empty();
                     let result = async {

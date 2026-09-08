@@ -6,16 +6,15 @@ impl Server {
         let guid = required_string(args, "company_guid")?;
         let from = normalized_date(required_string(args, "from")?)?;
         let to = normalized_date(required_string(args, "to")?)?;
-        if from > to {
-            return Err("invalid_date_range".to_string().into());
-        }
         let from =
             bridge_tally_core::TallyDate::parse(from).map_err(|_| "invalid_date".to_string())?;
         let to = bridge_tally_core::TallyDate::parse(to).map_err(|_| "invalid_date".to_string())?;
+        let period = crate::tally::runtime::TrialBalancePeriod::new(from, to)
+            .map_err(|_| "invalid_date_range".to_string())?;
         let (company, identity, prior) = self.verified_company(guid).await?;
         let read = self
             .runtime
-            .fetch_trial_balance(self.tally_config(), &identity, from, to)
+            .fetch_trial_balance(self.tally_config(), &identity, period)
             .await
             .map_err(|error| {
                 ToolFailure::from_runtime("trial_balance_read_failed", error)

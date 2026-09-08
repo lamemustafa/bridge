@@ -3063,6 +3063,145 @@ button.outstandings-party {
   color: #1f6a4a;
 }
 
+.trial-balance {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: 18px;
+}
+
+.trial-balance-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.trial-balance-hero h2 {
+  margin-bottom: 8px;
+  font-size: 24px;
+}
+
+.trial-balance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trial-balance-toolbar {
+  padding: 0;
+}
+
+.trial-balance-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  border-bottom: 1px solid #dfe6e1;
+  color: #52645b;
+  font-size: 13px;
+  padding-bottom: 14px;
+}
+
+.trial-balance-table-wrap {
+  overflow-x: auto;
+  margin-top: 18px;
+}
+
+.trial-balance-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 18px 0 0;
+  background: #dfe6e1;
+  border: 1px solid #dfe6e1;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.trial-balance-totals > div {
+  display: grid;
+  gap: 5px;
+  background: #f8faf8;
+  padding: 14px;
+}
+
+.trial-balance-totals dt {
+  color: #61756a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trial-balance-totals dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.trial-balance-table {
+  min-width: 760px;
+}
+
+.trial-balance-table th:not(:first-child),
+.trial-balance-table td {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.trial-balance-table th:first-child {
+  max-width: 360px;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.trial-balance-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  color: #52645b;
+  font-size: 13px;
+}
+
+.trial-balance-pagination > div {
+  display: flex;
+  gap: 8px;
+}
+
+.trial-balance-empty,
+.trial-balance-loading {
+  display: grid;
+  gap: 12px;
+}
+
+.trial-balance-empty p,
+.trial-balance-loading p {
+  margin: 0;
+}
+
+.trial-balance-success {
+  overflow-wrap: anywhere;
+  border: 1px solid #9dcec4;
+  border-radius: 8px;
+  background: #eefaf6;
+  color: #0f665f;
+  padding: 12px 14px;
+}
+
+@media (max-width: 760px) {
+  .trial-balance-hero {
+    display: grid;
+  }
+
+  .trial-balance-actions {
+    justify-content: flex-start;
+  }
+
+  .trial-balance-totals {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 520px) {
   .client-group-labels {
     grid-template-columns: 1fr;

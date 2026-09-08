@@ -92,6 +92,7 @@ pub fn run() {
         .manage(tally::TallyRuntime::default())
         .manage(reports::bulk_party_statement::PartyStatementDestinationApprovals::default())
         .manage(reports::outstandings_working_paper_store::WorkingPaperExportStore::default())
+        .manage(reports::trial_balance_store::TrialBalanceExportStore::default())
         .manage(sync::coordinator::SnapshotCoordinator::default())
         .setup(|app| {
             let app_data_directory = app.path().app_data_dir()?;
@@ -110,6 +111,8 @@ pub fn run() {
             commands::reveal_exported_file,
             commands::export_outstandings_working_paper,
             commands::export_party_ledger_master,
+            commands::trial_balance::fetch_tally_trial_balance,
+            commands::trial_balance::export_tally_trial_balance,
             commands::export_party_statement,
             commands::select_party_statement_destination,
             commands::revoke_party_statement_destination,
