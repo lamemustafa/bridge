@@ -200,12 +200,13 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
         </div>
       </div>
       <div className="toolbar trial-balance-toolbar">
-        <label>From<input type="date" value={from} min={toInputDate(company.books_from_yyyymmdd)} onChange={(event) => { setFrom(event.target.value); setCaptured(null); setExportPath(null); }} disabled={disabled} /></label>
-        <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setCaptured(null); setExportPath(null); }} disabled={disabled} /></label>
+        <label>From<input type="date" value={from} min={toInputDate(company.books_from_yyyymmdd)} onChange={(event) => { setFrom(event.target.value); setCaptured(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
+        <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setCaptured(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
       </div>
       <p className="section-note trial-balance-date-note">
         Choose the end date before reading. This report currently requires Licensed TallyPrime and one observed INR currency master.
       </p>
+      <p className="section-note">Preview: validated with small synthetic companies. Compare this report with Tally before relying on it for production work.</p>
       {error && <div className="error-banner" role="alert"><span>{error}</span></div>}
       {exportPath && <div className="trial-balance-success" role="status">Trial Balance export saved to <code>{exportPath}</code></div>}
       {loading && <div className="panel wide trial-balance-loading" role="status">Reading the selected company for the exact date range…</div>}

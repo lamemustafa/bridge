@@ -599,7 +599,7 @@
     },
     {
       "path": "src/TrialBalanceScreen.tsx",
-      "sha256": "3bf1511a428ba9d56a463b1feb88b7681cfa76a52b6ab1febcf4d90950771a7b"
+      "sha256": "55b1859fa2bcf5f439b7f87105b85a42cdda7635328dfc366226181b204c6676"
     },
     {
       "path": "src/client-grouping.ts",
@@ -706,5 +706,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "a4a8a7002220acfbe028ff4611e2354ca9ab52b2547f7889147d4b55d10d1d3a"
+  "manifest_sha256": "caab2254baea75b65f096c78bfa8dcd4795ce56c8a9e4d16f6ed0fab369d959e"
 }

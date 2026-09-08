@@ -50,6 +50,13 @@ async function chooseEndDate(host: HTMLElement) {
   });
 }
 
+function setDate(input: HTMLInputElement, value: string) {
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setValue?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 afterEach(() => {
   document.body.replaceChildren();
   mocks.invoke.mockReset();
@@ -97,6 +104,24 @@ test("drops a stale response after the report scope changes", async () => {
   root.unmount();
 });
 
+test("clears a stale date refusal when either date changes", async () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  const dates = [...host.querySelectorAll<HTMLInputElement>('input[type="date"]')];
+  await act(async () => { setDate(dates[1]!, "2026-03-31"); });
+  await act(async () => button(host, "Refresh report").click());
+  expect(host.textContent).toContain("Choose a valid date range");
+  await act(async () => { setDate(dates[0]!, "2026-03-01"); });
+  expect(host.textContent).not.toContain("Choose a valid date range");
+  await act(async () => { setDate(dates[0]!, "2026-04-01"); button(host, "Refresh report").click(); });
+  expect(host.textContent).toContain("Choose a valid date range");
+  await act(async () => { setDate(dates[1]!, "2026-04-01"); });
+  expect(host.textContent).not.toContain("Choose a valid date range");
+  root.unmount();
+});
+
 test("paginates captured rows locally without rereading or changing totals", async () => {
   const manyRows = Array.from({ length: 101 }, (_, index) => ({
     name: `Ledger ${index + 1}`,
@@ -131,6 +156,7 @@ test("preserves book start and leaves end date for the operator without mode evi
   expect(dates[0]?.value).toBe("2026-04-01");
   expect(dates[1]?.value).toBe("");
   expect(host.textContent).toContain("Choose the end date before reading");
+  expect(host.textContent).toContain("Preview: validated with small synthetic companies");
   root.unmount();
 });
 
