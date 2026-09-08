@@ -82,6 +82,11 @@ costs differed across the runs. The macOS profile cache was cold and saved
 693,838,529 compressed bytes in a 37-second post-cache step. Windows retained
 only registry/tool caching (167,987,643 compressed bytes; 44-second post-cache
 step), not its target tree.
+The [current dependency candidate](https://github.com/lamemustafa/bridge/actions/runs/34208820274),
+with the same application sources and lockfile as the profile experiment, took
+10m49s in Windows main Clippy with line tables. This second baseline supports the
+observed compilation saving; it does not make unrelated cache states comparable.
+
 The old Windows Clippy log rebuilt `openssl-sys`, `aws-lc-sys` and many build
 dependencies. The profile experiment's Clippy log did not repeat those builds;
 its timing report is dominated by Rust checking. This is evidence of avoided
