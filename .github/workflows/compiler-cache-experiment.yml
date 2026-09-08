@@ -1,8 +1,8 @@
-name: Compiler cache input controls
+name: Compiler cache build-script context
 
 on:
   push:
-    branches: [tapish-codex/compiler-cache-input-controls-20260909]
+    branches: [tapish-codex/compiler-cache-codegen-20260909]
   workflow_dispatch:
 
 permissions:
