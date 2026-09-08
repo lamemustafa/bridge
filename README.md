@@ -1,12 +1,23 @@
 # Bridge
 
-Bridge is an open-source Tauri desktop application for AXAL local-edge sync
-workflows. It combines a React/TypeScript interface with a Rust backend for
-Tally, digital-signature certificate (DSC), document, sync, and local database
-operations.
+Bridge is an open-source local connector for AXAL and Tally workflows. The
+repository contains a Tauri desktop application and an MCPB package for Claude
+Desktop, with React/TypeScript and Rust components for Tally, digital-signature
+certificate (DSC), document, sync, and local database operations.
 
 The repository is self-contained: build and development commands resolve files
 relative to the clone, not to a developer-specific directory.
+
+## First useful result
+
+For ordinary Claude Desktop use, start with the [installation guide](./docs/agent/INSTALL.md)
+and download an available package from [GitHub Releases](https://github.com/lamemustafa/bridge/releases).
+The repository also contains a static installer page in `site/`; it is published
+only through the manual GitHub Pages workflow, so do not assume a live page is
+available. Unsigned previews are evaluation artifacts for Windows x64 and Apple
+Silicon Mac when a matching prerelease exists.
+
+For contributors, use the setup and development path below.
 
 ## Supported development hosts
 
@@ -33,7 +44,7 @@ also require a vendor PKCS#11 library compatible with the host operating
 system; never commit a private key, PIN, certificate dump, or locally installed
 vendor library. Bridge's macOS bundles require macOS 12.4 or later.
 
-## Quick start
+## Contributor quick start
 
 Run these commands from the repository root in PowerShell, Command Prompt, or a
 POSIX-compatible shell:

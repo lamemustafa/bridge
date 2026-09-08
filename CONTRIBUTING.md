@@ -19,24 +19,16 @@ attribution is introduced.
 
 ## Development setup
 
-Bridge supports development on Windows and macOS. Install a supported Node.js
-22 or 24 release, Corepack, the Rust toolchain selected by
-`rust-toolchain.toml`, and the
-[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for the host
-operating system. The bundled SQLCipher/OpenSSL build also requires Perl 5 with
-`Locale::Maketext::Simple`; on Windows, use a complete distribution such as
-Strawberry Perl and set `OPENSSL_SRC_PERL` if an incomplete Perl appears first
-on `PATH`. SQLCipher binding generation also requires LLVM/libclang; set
-`LIBCLANG_PATH` to the directory containing `libclang.dll` when it is not
-discoverable automatically. Then run from any local clone:
+Use the [supported development hosts](./README.md#supported-development-hosts) and
+[contributor quick start](./README.md#contributor-quick-start) in the README.
+That is the canonical prerequisite and command list; it covers the native
+Tauri, Perl/SQLCipher, and LLVM/libclang requirements without duplicating them
+here. After setup, run the smallest relevant check for the files you changed,
+then the required checks on the final candidate:
 
 ```text
-corepack pnpm install --frozen-lockfile
-corepack pnpm exec playwright install chromium
-corepack pnpm test
 corepack pnpm run build
 corepack pnpm run cargo:check
-corepack pnpm run tauri:dev
 ```
 
 Run `corepack pnpm run tauri:build` on each native target host when validating
@@ -57,16 +49,11 @@ coordinated disclosure is safe.
 
 ## Pull-request requirements
 
-Every pull request must include:
-
-- a functional summary and linked issue when applicable
-- exact test or reproduction commands and their results
-- a link to at least one completed item in
-  [review-checklist.md](./review-checklist.md)
-- migration compatibility and rollback notes for existing workflows
-- security impact notes for DSC, Tally, credential, endpoint, or customer-data
-  changes
-- native Windows and macOS evidence when the change can be platform-sensitive
+Use the [pull-request template](./.github/PULL_REQUEST_TEMPLATE.md). It asks
+for one concrete outcome, scope and reuse/deletion decisions, exact candidate
+evidence, compatibility and rollback notes, and the required security and
+platform details. Every pull request must link at least one completed item in
+the [review checklist](./review-checklist.md).
 
 Never paste raw production logs. Redact or replace names, email addresses,
 company and tax identifiers, financial data, document contents, certificate

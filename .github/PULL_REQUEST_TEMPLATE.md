@@ -1,36 +1,31 @@
-## Functional summary
+## Outcome and reason
 
-Brief summary of what this PR changes.
+What concrete user or maintainer workflow changes, and why now?
 
-## Source issue/rectify reference
+## Scope, reuse, and impact
 
-- Link to related issue(s) and area/severity labels (if applicable).
+- Scope and explicit exclusions:
+- Existing components reused; meaningful deletion or duplication avoided:
+- Source issue or rectify reference (with area/severity labels when applicable):
+- Migration/sync compatibility and rollback procedure (required when an
+  existing workflow changes):
+- Destructive database migration: <!-- No, or explain safeguards and rollback -->
+- Security impact for DSC, Tally, credentials, endpoints, or customer data:
+  <!-- None, or describe the change -->
+- Security-focused reviewer comment: <!-- Required for DSC or credential-path changes -->
 
-## Why
+## Validation and evidence
 
-Why is this needed for Bridge now?
-
-## Testing
-
-- [ ] Manual run notes
-- [ ] Command checks (`corepack pnpm run ...`)
-- [ ] Screenshots/logs attached where UI/behavior changed
-- [ ] One completed [`review-checklist.md`](../review-checklist.md) line is linked here: <!-- paste permalink -->
-- [ ] Rectify issue linked and `docs/rectify-guidelines.md` followed if this is
-      a regression fix
+- Exact candidate SHA:
+- Commands and results (`corepack pnpm ...`, `cargo ...`, or reproduction):
+- Captured/fixture/live scope and known limitations:
+- Manual/UI evidence (screenshots or logs) when behavior changes:
+- [ ] One completed [`review-checklist.md`](../review-checklist.md) line is
+      linked here: <!-- paste permalink -->
 - [ ] Native Windows validation completed or explained as not applicable
 - [ ] Native macOS validation completed or explained as not applicable
-
-## Compatibility and rollback
-
-- Migration/sync compatibility impact: <!-- None, or describe old/new compatibility -->
-- Rollback procedure: <!-- Required when an existing workflow changes -->
-- Destructive database migration: <!-- No, or explain safeguards and rollback -->
-
-## Security impact
-
-- DSC/Tally/credential impact: <!-- None, or describe the change -->
-- Security-focused reviewer comment: <!-- Required for DSC or credential-path changes -->
+- [ ] Rectify issue linked and [`docs/rectify-guidelines.md`](../docs/rectify-guidelines.md)
+      followed if this is a regression fix
 
 ## Checklist
 
