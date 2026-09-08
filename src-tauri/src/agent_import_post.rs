@@ -306,7 +306,7 @@ impl Server {
         let snapshot = {
             // An empty journal cannot rule out another process's pre-intent
             // admission. Observe it only while that dispatch lane is idle.
-            let _lease = dispatch_lease::acquire(&self.settings.endpoint)?;
+            let _lease = dispatch_lease::acquire_observation(&self.settings.endpoint)?;
             self.latest_import_snapshot(batch_id)?
                 .ok_or_else(|| "import_batch_not_found".to_string())?
         };
@@ -357,7 +357,7 @@ impl Server {
         if snapshot.batch.endpoint_origin.as_deref() != Some(origin.as_str()) {
             return None;
         }
-        let _lease = dispatch_lease::acquire(&self.settings.endpoint).ok()?;
+        let _lease = dispatch_lease::acquire_observation(&self.settings.endpoint).ok()?;
         self.latest_import_snapshot(batch_id)
             .ok()
             .flatten()

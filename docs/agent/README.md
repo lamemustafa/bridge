@@ -295,6 +295,10 @@ posting. If a snapshot start or resume result is uncertain, use local evidence
 to restore monitoring or cancel the active run; connection settings stay locked
 until that uncertainty is resolved.
 
+A snapshot does not itself mean a Journal was attempted. Bridge can still
+check the saved local history during a snapshot; an active posting process
+keeps that result uncertain until its attempt can be observed safely.
+
 An XML file alone is not portable posting authorization. Files generated
 elsewhere, edited files, legacy unbound batches and unsupported voucher types
 are refused. This first desktop flow has no Journal editor or arbitrary XML

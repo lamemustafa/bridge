@@ -17,7 +17,7 @@ const CHILD_RELEASE: &str = "BRIDGE_MACOS_DISPATCH_LEASE_RELEASE";
 #[test]
 fn macos_native_dispatch_lease_contends_across_filtered_and_overridden_home() {
     let directory = tempfile::tempdir().unwrap();
-    let expected_root = super::super::super::default_dispatch_coordination_dir()
+    let expected_root = crate::local_files::paths::default_dispatch_coordination_dir()
         .expect("macOS account coordination root");
     let endpoint = endpoint(50_000 + (std::process::id() % 10_000) as u16);
 
@@ -70,7 +70,7 @@ fn macos_native_dispatch_lease_child() {
         Some(data_root.into_os_string())
     );
     assert_eq!(
-        super::super::super::default_dispatch_coordination_dir(),
+        crate::local_files::paths::default_dispatch_coordination_dir(),
         Some(PathBuf::from(expected_root))
     );
     let port = std::env::var(CHILD_PORT)

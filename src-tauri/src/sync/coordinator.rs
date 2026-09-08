@@ -60,7 +60,7 @@ impl SnapshotCoordinator {
         connector: RuntimeTallyConnector,
         mirror: TallyMirrorRepository,
     ) -> Result<SnapshotJobStatus, &'static str> {
-        let endpoint_lease = crate::agent::acquire_endpoint_dispatch_lease(connector.endpoint())
+        let endpoint_lease = crate::endpoint_coordination::acquire_snapshot(connector.endpoint())
             .map_err(|error| match error.as_str() {
                 "import_admission_busy" => {
                     "Another Bridge snapshot or Journal posting is using this Tally endpoint. Wait for it to finish."

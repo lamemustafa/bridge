@@ -28,9 +28,8 @@ pub(crate) mod desktop_journal_review;
 #[cfg(test)]
 #[path = "agent_desktop_journal_tests.rs"]
 mod desktop_journal_tests;
-#[path = "agent_import_dispatch_lease.rs"]
-mod dispatch_lease;
-pub(crate) use dispatch_lease::acquire as acquire_endpoint_dispatch_lease;
+use crate::endpoint_coordination as dispatch_lease;
+use crate::local_files::file::lock_error as import_admission_lock_error;
 #[path = "agent_import_ledger.rs"]
 pub(super) mod ledger;
 #[path = "agent_import_persistence.rs"]
@@ -799,14 +798,6 @@ impl Server {
         }
         append_private_import_ledger(&path, encoded.as_bytes(), set_private_file)
     }
-}
-
-fn import_admission_lock_error(error: std::fs::TryLockError) -> String {
-    match error {
-        std::fs::TryLockError::WouldBlock => "import_admission_busy",
-        std::fs::TryLockError::Error(_) => "import_admission_lock_unavailable",
-    }
-    .into()
 }
 
 /// A native-dispatched batch is tied to the Tally endpoint used for its saved

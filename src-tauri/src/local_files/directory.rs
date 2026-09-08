@@ -2,13 +2,13 @@
 use std::{fs, path::Path};
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum DirectoryAdmissionError {
+pub(crate) enum DirectoryAdmissionError {
     Unavailable,
     #[cfg(unix)]
     Permissions,
 }
 
-pub(super) fn ensure_private_directory(path: &Path) -> Result<(), DirectoryAdmissionError> {
+pub(crate) fn ensure_private_directory(path: &Path) -> Result<(), DirectoryAdmissionError> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]

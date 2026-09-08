@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent::acquire_endpoint_dispatch_lease;
+use crate::endpoint_coordination::acquire as acquire_endpoint_dispatch_lease;
 use crate::tally::{TallyConfig, TallyRuntime};
 use bridge_tally_core::RequestContext;
 use std::time::Duration;

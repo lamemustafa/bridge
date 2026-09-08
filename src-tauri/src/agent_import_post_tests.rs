@@ -376,7 +376,7 @@ fn endpoint_lease_contention_keeps_negative_post_and_cancellation_results_uncert
         .latest_import_snapshot(&line.batch_id)
         .unwrap()
         .unwrap();
-    let lease = dispatch_lease::acquire(&server.settings.endpoint).unwrap();
+    let snapshot_lease = dispatch_lease::acquire_snapshot(&server.settings.endpoint).unwrap();
 
     assert_eq!(server.recorded_import_attempt(&args).unwrap(), Some(false));
     assert_eq!(
@@ -389,7 +389,7 @@ fn endpoint_lease_contention_keeps_negative_post_and_cancellation_results_uncert
         Some(&snapshot),
         None,
     );
-    assert_eq!(attempted, None);
+    assert_eq!(attempted, Some(false));
     for code in ["import_admission_busy", "import_approval_declined"] {
         let outcome = post_failure_outcome(
             &line.batch_id,
@@ -402,16 +402,19 @@ fn endpoint_lease_contention_keeps_negative_post_and_cancellation_results_uncert
             None,
             attempted,
         );
-        assert!(outcome.payload["result"]["attempt_recorded"].is_null());
-        assert!(outcome.payload["result"]["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("never rebuild it to retry"));
+        assert_eq!(outcome.payload["result"]["attempt_recorded"], false);
     }
     let cancellation = server.cancelled_import_for_response(&args).unwrap();
-    assert!(cancellation.payload["result"]["attempt_recorded"].is_null());
+    assert_eq!(cancellation.payload["result"]["attempt_recorded"], false);
+    drop(snapshot_lease);
 
-    drop(lease);
+    let writer_lease = dispatch_lease::acquire(&server.settings.endpoint).unwrap();
+    assert!(server
+        .post_failure_attempt_observation(&line.batch_id, &line.company_guid, Some(&snapshot), None)
+        .is_none());
+    let cancellation = server.cancelled_import_for_response(&args).unwrap();
+    assert!(cancellation.payload["result"]["attempt_recorded"].is_null());
+    drop(writer_lease);
     assert_eq!(
         server.post_failure_attempt_observation(
             &line.batch_id,

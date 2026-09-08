@@ -7,7 +7,9 @@ pub mod commands;
 pub mod db;
 pub mod documents;
 pub mod dsc;
+pub(crate) mod endpoint_coordination;
 pub mod gst;
+pub(crate) mod local_files;
 // Crate-internal only: the previously separate `bridge-tally-observability` crate had exactly
 // one consumer inside this crate, so it does not need to be reachable from outside `bridge_lib`.
 mod observability;
