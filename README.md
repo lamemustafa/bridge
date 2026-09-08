@@ -1,21 +1,24 @@
 # Bridge
 
 Bridge is an open-source local connector for AXAL and Tally workflows. The
-repository contains a Tauri desktop application and an MCPB package for Claude
-Desktop, with React/TypeScript and Rust components for Tally, digital-signature
-certificate (DSC), document, sync, and local database operations.
+repository contains a Tauri desktop application and the MCPB packaging path for
+Claude Desktop, with React/TypeScript and Rust components for Tally,
+digital-signature certificate (DSC), document, sync, and local database
+operations.
 
 The repository is self-contained: build and development commands resolve files
 relative to the clone, not to a developer-specific directory.
 
 ## First useful result
 
-For ordinary Claude Desktop use, start with the [installation guide](./docs/agent/INSTALL.md)
-and download an available package from [GitHub Releases](https://github.com/lamemustafa/bridge/releases).
-The repository also contains a static installer page in `site/`; it is published
-only through the manual GitHub Pages workflow, so do not assume a live page is
-available. Unsigned previews are evaluation artifacts for Windows x64 and Apple
-Silicon Mac when a matching prerelease exists.
+No installer is currently published: the public `v0.1.0` release has no
+downloadable assets. For source use, follow the contributor quick start below;
+the [installation guide](./docs/agent/INSTALL.md) describes the Claude Desktop
+setup when an unsigned preview becomes available in [GitHub Releases](https://github.com/lamemustafa/bridge/releases).
+
+The supported first result is to connect to Tally on this computer, list its
+companies, and ask for native existing outstandings or the current report.
+Native Trial Balance is not available yet.
 
 For contributors, use the setup and development path below.
 

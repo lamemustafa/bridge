@@ -5,7 +5,10 @@ What concrete user or maintainer workflow changes, and why now?
 ## Scope, reuse, and impact
 
 - Scope and explicit exclusions:
-- Existing components reused; meaningful deletion or duplication avoided:
+- Existing component reused:
+- What is deleted (or why no deletion is justified):
+- What breaks if this is not built:
+- Net LOC change (production, tests/fixtures, generated files):
 - Source issue or rectify reference (with area/severity labels when applicable):
 - Migration/sync compatibility and rollback procedure (required when an
   existing workflow changes):
