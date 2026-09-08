@@ -62,6 +62,9 @@ use zeroize::Zeroizing;
 
 const MAX_DSC_PIN_BYTES: usize = 128;
 
+#[path = "commands_trial_balance.rs"]
+pub(crate) mod trial_balance;
+
 #[derive(Debug, Serialize)]
 pub struct TallyCommandError {
     pub code: &'static str,

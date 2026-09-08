@@ -25,7 +25,7 @@ const report = {
     to: "20260908",
     currency: { symbol: "₹", mailing_name: "Indian Rupee", currency_count: 1, decimal_places: 2, is_inr: true },
     report: {
-      rows: [{ name: "Cash", guid: "cash", opening: { state: "present", value: "1234567.89" }, debit: { state: "present", value: "-1.25" }, credit: { state: "present", value: "100.00" }, closing: { state: "present", value: "1234467.80" } }],
+      rows: [{ name: "Cash", guid: "cash", opening: { state: "present", value: "1234567.89" }, debit: { state: "present", value: "-1.25" }, credit: { state: "present", value: "100.00" }, closing: { state: "present", value: "-7277.00" } }],
     },
     totals: { opening: { sum: "1234567.89", empty_count: 0 }, debit: { sum: "-1.25", empty_count: 0 }, credit: { sum: "100.00", empty_count: 0 }, closing: { sum: "1234467.80", empty_count: 0 } },
     read_at: "2026-09-08T10:00:00Z",
@@ -56,8 +56,9 @@ test("renders exact amounts and exports the captured report without another Tall
   const root = createRoot(host);
   await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
   await act(async () => button(host, "Refresh report").click());
-  expect(host.textContent).toContain("₹12,34,567.89 Dr");
+  expect(host.textContent).toContain("₹12,34,567.89 Cr");
   expect(host.textContent).toContain("₹1.25");
+  expect(host.textContent).toContain("₹7,277.00 Dr");
   expect(host.textContent).not.toContain("−₹1.25");
   expect(host.textContent).toContain("Difference in opening balances");
   await act(async () => button(host, "Excel").click());
@@ -78,7 +79,8 @@ test("drops a stale response after the report scope changes", async () => {
   const changed = { ...company, guid: "00000000-0000-4000-8000-000000000002", name: "Other Accounts" };
   await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={changed} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
   await act(async () => { resolve(report); await pending; });
-  expect(host.textContent).not.toContain("₹1,234,567.80");
+  expect(host.querySelector(".trial-balance-report")).toBeNull();
+  expect(button(host, "Excel").disabled).toBe(true);
   root.unmount();
 });
 

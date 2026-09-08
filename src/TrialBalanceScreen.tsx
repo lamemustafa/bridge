@@ -70,9 +70,9 @@ function formatSum(sum: string, symbol: string, decimals: number) {
 
 function formatBalance(amount: Amount, symbol: string, decimals: number) {
   if (amount.state === "present_empty") return "—";
-  const credit = amount.value.startsWith("-");
-  const value = credit ? amount.value.slice(1) : amount.value;
-  return `${formatAmount({ state: "present", value }, symbol, decimals, true)}${value === "0" || /^0\.0*$/.test(value) ? "" : credit ? " Cr" : " Dr"}`;
+  const debit = amount.value.startsWith("-");
+  const value = debit ? amount.value.slice(1) : amount.value;
+  return `${formatAmount({ state: "present", value }, symbol, decimals, true)}${value === "0" || /^0\.0*$/.test(value) ? "" : debit ? " Dr" : " Cr"}`;
 }
 
 function formatInvokeError(cause: unknown) {
@@ -86,7 +86,7 @@ function formatInvokeError(cause: unknown) {
 }
 
 function readScope(company: Company | undefined, config: Props["config"], from: string, to: string) {
-  return `${config.host}:${config.port}|${company?.name ?? ""}|${company?.guid ?? ""}|${company?.company_number ?? ""}|${company?.books_from_yyyymmdd ?? ""}|${company?.canonical_origin ?? ""}|${from}|${to}`;
+  return JSON.stringify([config.host, config.port, company?.name, company?.guid, company?.company_number, company?.books_from_yyyymmdd, company?.canonical_origin, from, to]);
 }
 
 export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, liveReadSuppressed, onChangeSetup, onTallyReadActivityChange }: Props) {
@@ -164,16 +164,18 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
 
   async function exportReport() {
     if (!captured || exporting || captured.scope !== scope) return;
+    const exportingScope = captured.scope;
+    const version = requestVersion.current;
     setExporting(true);
     setError(null);
     setExportPath(null);
     try {
       const path = await invoke<string>("export_tally_trial_balance", { exportId: captured.result.export_id });
-      setExportPath(path);
+      if (version === requestVersion.current && exportingScope === latestScope.current) setExportPath(path);
     } catch (cause) {
-      setError(formatInvokeError(cause));
+      if (version === requestVersion.current && exportingScope === latestScope.current) setError(formatInvokeError(cause));
     } finally {
-      setExporting(false);
+      if (version === requestVersion.current) setExporting(false);
     }
   }
 
