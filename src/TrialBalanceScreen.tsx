@@ -215,7 +215,7 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
       {!loading && !result && !error && <div className="panel wide trial-balance-empty"><p>Refresh to read the native report for this company and date range.</p></div>}
       {read && currency && (
         <div className="panel wide trial-balance-report">
-          <div className="trial-balance-meta"><span>{read.company_name}</span><span>{read.from} → {read.to}</span><span>Fresh at {new Date(read.read_at).toLocaleString()}</span><span>Source scope: {read.report.rows.length} ledger rows</span></div>
+          <div className="trial-balance-meta"><span>{read.company_name}</span><span>{toInputDate(read.from)} → {toInputDate(read.to)}</span><span>Fresh at {new Date(read.read_at).toLocaleString()}</span><span>Source scope: {read.report.rows.length} ledger rows</span></div>
           <dl className="trial-balance-totals">
             <div><dt>{read.totals.opening.empty_count === 0 ? "Difference in opening balances" : "Observed opening net"}</dt><dd>{formatSum(read.totals.opening.sum, currency.symbol, currency.decimal_places)}{read.totals.opening.empty_count ? ` · ${read.totals.opening.empty_count} empty source values` : ""}</dd></div>
             <div><dt>Debit total</dt><dd>{formatAmount({ state: "present", value: read.totals.debit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.debit.empty_count ? ` · ${read.totals.debit.empty_count} empty` : ""}</dd></div>

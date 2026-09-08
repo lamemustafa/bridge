@@ -3065,6 +3065,8 @@ button.outstandings-party {
 
 .trial-balance {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 18px;
 }
 
@@ -3178,6 +3180,7 @@ button.outstandings-party {
 }
 
 .trial-balance-success {
+  overflow-wrap: anywhere;
   border: 1px solid #9dcec4;
   border-radius: 8px;
   background: #eefaf6;
