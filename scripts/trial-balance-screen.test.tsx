@@ -7,7 +7,7 @@ import { afterEach, expect, test, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 
-import { TrialBalanceScreen } from "../src/TrialBalanceScreen";
+import { formatAmount, TrialBalanceScreen } from "../src/TrialBalanceScreen";
 
 const company = {
   name: "Synthetic Accounts",
@@ -25,9 +25,9 @@ const report = {
     to: "20260908",
     currency: { symbol: "₹", mailing_name: "Indian Rupee", currency_count: 1, decimal_places: 2, is_inr: true },
     report: {
-      rows: [{ name: "Cash", guid: "cash", opening: { state: "present", value: "1234567.8" }, debit: { state: "present_empty" }, credit: { state: "present", value: "100.00" }, closing: { state: "present", value: "1234467.80" } }],
+      rows: [{ name: "Cash", guid: "cash", opening: { state: "present", value: "1234567.89" }, debit: { state: "present", value: "-1.25" }, credit: { state: "present", value: "100.00" }, closing: { state: "present", value: "1234467.80" } }],
     },
-    totals: { opening: { sum: "1234567.8", empty_count: 0 }, debit: { sum: "0", empty_count: 1 }, credit: { sum: "100.00", empty_count: 0 }, closing: { sum: "1234467.80", empty_count: 0 } },
+    totals: { opening: { sum: "1234567.89", empty_count: 0 }, debit: { sum: "-1.25", empty_count: 0 }, credit: { sum: "100.00", empty_count: 0 }, closing: { sum: "1234467.80", empty_count: 0 } },
     read_at: Date.parse("2026-09-08T10:00:00Z"),
     evidence: { request_sha256: "a", response_sha256: "b", bytes: 10 },
   },
@@ -45,6 +45,10 @@ afterEach(() => {
   mocks.invoke.mockReset();
 });
 
+test("preserves extra fractional precision when currency decimals are zero", () => {
+  expect(formatAmount({ state: "present", value: "1.25" }, "¤", 0)).toBe("¤1.25");
+});
+
 test("renders exact amounts and exports the captured report without another Tally read", async () => {
   mocks.invoke.mockResolvedValueOnce(report).mockResolvedValueOnce("/tmp/trial-balance.xlsx");
   const host = document.createElement("div");
@@ -52,8 +56,9 @@ test("renders exact amounts and exports the captured report without another Tall
   const root = createRoot(host);
   await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
   await act(async () => button(host, "Refresh report").click());
-  expect(host.textContent).toContain("₹1,234,567.80");
-  expect(host.textContent).toContain("—");
+  expect(host.textContent).toContain("₹12,34,567.89 Dr");
+  expect(host.textContent).toContain("₹1.25");
+  expect(host.textContent).not.toContain("−₹1.25");
   expect(host.textContent).toContain("Difference in opening balances");
   await act(async () => button(host, "Excel").click());
   expect(mocks.invoke).toHaveBeenLastCalledWith("export_tally_trial_balance", { exportId: "export-1" });

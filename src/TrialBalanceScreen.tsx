@@ -21,7 +21,7 @@ type TrialBalanceResult = {
     currency: { symbol: string; mailing_name: string; currency_count: number; decimal_places: number; is_inr: boolean };
     report: { rows: Array<{ name: string; guid: string; opening: Amount; debit: Amount; credit: Amount; closing: Amount }> };
     totals: { opening: { sum: string; empty_count: number }; debit: { sum: string; empty_count: number }; credit: { sum: string; empty_count: number }; closing: { sum: string; empty_count: number } };
-    read_at: number;
+    read_at: string;
     evidence: { request_sha256: string; response_sha256: string; bytes: number };
   };
   export_id: string;
@@ -49,18 +49,38 @@ function todayInputDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-function formatAmount(amount: Amount, symbol: string, decimals: number) {
+export function formatAmount(amount: Amount, symbol: string, decimals: number, magnitude = false) {
   if (amount.state === "present_empty") return "—";
-  const negative = amount.value.startsWith("-");
-  const unsigned = negative ? amount.value.slice(1) : amount.value;
+  const sourceNegative = amount.value.startsWith("-");
+  const negative = sourceNegative && !magnitude;
+  const unsigned = sourceNegative ? amount.value.slice(1) : amount.value;
   const [whole, fraction = ""] = unsigned.split(".");
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const exactFraction = decimals > 0 ? `.${fraction.padEnd(decimals, "0")}` : "";
+  const tail = whole.slice(-3);
+  const head = whole.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",");
+  const grouped = head ? `${head},${tail}` : tail;
+  const exactFraction = fraction ? `.${fraction.padEnd(decimals, "0")}` : decimals > 0 ? `.${"0".repeat(decimals)}` : "";
   return `${negative ? "−" : ""}${symbol}${grouped}${exactFraction}`;
 }
 
 function formatSum(sum: string, symbol: string, decimals: number) {
   return formatAmount({ state: "present", value: sum }, symbol, decimals);
+}
+
+function formatBalance(amount: Amount, symbol: string, decimals: number) {
+  if (amount.state === "present_empty") return "—";
+  const credit = amount.value.startsWith("-");
+  const value = credit ? amount.value.slice(1) : amount.value;
+  return `${formatAmount({ state: "present", value }, symbol, decimals, true)}${value === "0" || /^0\.0*$/.test(value) ? "" : credit ? " Cr" : " Dr"}`;
+}
+
+function formatInvokeError(cause: unknown) {
+  if (cause && typeof cause === "object") {
+    const value = cause as { message?: unknown; code?: unknown; remediation?: unknown };
+    if (typeof value.message === "string") {
+      return [value.message, typeof value.code === "string" ? `[${value.code}]` : "", typeof value.remediation === "string" ? value.remediation : ""].filter(Boolean).join(" ");
+    }
+  }
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function readScope(company: Company | undefined, config: Props["config"], from: string, to: string) {
@@ -71,37 +91,45 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const initialFrom = toInputDate(company?.books_from_yyyymmdd ?? "");
   const [from, setFrom] = React.useState(initialFrom);
   const [to, setTo] = React.useState(todayInputDate());
-  const [result, setResult] = React.useState<TrialBalanceResult | null>(null);
+  const [captured, setCaptured] = React.useState<{ scope: string; result: TrialBalanceResult } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [exportPath, setExportPath] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
   const requestVersion = React.useRef(0);
   const scope = readScope(company, config, from, to);
+  const latestScope = React.useRef(scope);
+  latestScope.current = scope;
 
   React.useEffect(() => {
     requestVersion.current += 1;
-    setResult(null);
+    setCaptured(null);
     setError(null);
+    setExportPath(null);
     setLoading(false);
     setExporting(false);
     if (company) {
       setFrom(toInputDate(company.books_from_yyyymmdd));
       setTo(todayInputDate());
     }
+    return () => {
+      requestVersion.current += 1;
+    };
   }, [company?.name, company?.guid, company?.company_number, company?.books_from_yyyymmdd, company?.canonical_origin, config.host, config.port]);
 
   async function refresh() {
     if (!company || loading || liveReadNavigationLocked || liveReadSuppressed) return;
     if (!from || !to || from > to) {
       setError("Choose a valid date range. The start date must be on or before the end date.");
-      setResult(null);
+      setCaptured(null);
       return;
     }
     const version = ++requestVersion.current;
     const requestedScope = readScope(company, config, from, to);
     setLoading(true);
     setError(null);
-    setResult(null);
+    setCaptured(null);
+    setExportPath(null);
     onTallyReadActivityChange(1);
     try {
       const next = await invoke<TrialBalanceResult>("fetch_tally_trial_balance", {
@@ -117,9 +145,9 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
           to: toYyyymmdd(to),
         },
       });
-      if (version === requestVersion.current && requestedScope === readScope(company, config, from, to)) setResult(next);
+      if (version === requestVersion.current && requestedScope === latestScope.current) setCaptured({ scope: requestedScope, result: next });
     } catch (cause) {
-      if (version === requestVersion.current) setError(cause instanceof Error ? cause.message : String(cause));
+      if (version === requestVersion.current) setError(formatInvokeError(cause));
     } finally {
       if (version === requestVersion.current) setLoading(false);
       onTallyReadActivityChange(-1);
@@ -127,19 +155,21 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   }
 
   async function exportReport() {
-    if (!result || exporting || scope !== readScope(company, config, from, to)) return;
+    if (!captured || exporting || captured.scope !== scope) return;
     setExporting(true);
     setError(null);
+    setExportPath(null);
     try {
-      const path = await invoke<string>("export_tally_trial_balance", { exportId: result.export_id });
-      setError(`Trial Balance export saved to ${path}`);
+      const path = await invoke<string>("export_tally_trial_balance", { exportId: captured.result.export_id });
+      setExportPath(path);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(formatInvokeError(cause));
     } finally {
       setExporting(false);
     }
   }
 
+  const result = captured?.scope === scope ? captured.result : null;
   const read = result?.read;
   const currency = read?.currency;
   const disabled = liveReadNavigationLocked || liveReadSuppressed || loading;
@@ -157,26 +187,27 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
         </div>
         <div className="trial-balance-actions">
           <button className="primary" type="button" onClick={() => void refresh()} disabled={disabled}><RefreshCw size={17} aria-hidden="true" />{loading ? "Reading…" : "Refresh report"}</button>
-          <button className="secondary-action" type="button" onClick={() => void exportReport()} disabled={!result || exporting || scope !== readScope(company, config, from, to)}><Download size={17} aria-hidden="true" />{exporting ? "Exporting…" : "Excel"}</button>
+          <button className="secondary-action" type="button" onClick={() => void exportReport()} disabled={!result || exporting || captured?.scope !== scope}><Download size={17} aria-hidden="true" />{exporting ? "Exporting…" : "Excel"}</button>
         </div>
       </div>
       <div className="toolbar trial-balance-toolbar">
-        <label>From<input type="date" value={from} min={toInputDate(company.books_from_yyyymmdd)} onChange={(event) => { setFrom(event.target.value); setResult(null); }} disabled={disabled} /></label>
-        <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setResult(null); }} disabled={disabled} /></label>
+        <label>From<input type="date" value={from} min={toInputDate(company.books_from_yyyymmdd)} onChange={(event) => { setFrom(event.target.value); setCaptured(null); setExportPath(null); }} disabled={disabled} /></label>
+        <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setCaptured(null); setExportPath(null); }} disabled={disabled} /></label>
       </div>
-      {error && <div className={`error-banner${result ? " trial-balance-export-status" : ""}`} role={result ? "status" : "alert"}><span>{error}</span></div>}
+      {error && <div className="error-banner" role="alert"><span>{error}</span></div>}
+      {exportPath && <div className="trial-balance-success" role="status">Trial Balance export saved to <code>{exportPath}</code></div>}
       {loading && <div className="panel wide trial-balance-loading" role="status">Reading the selected company for the exact date range…</div>}
       {!loading && !result && !error && <div className="panel wide trial-balance-empty"><p>Refresh to read the native report for this company and date range.</p></div>}
       {read && currency && (
         <div className="panel wide trial-balance-report">
           <div className="trial-balance-meta"><span>{read.company_name}</span><span>{read.from} → {read.to}</span><span>Fresh at {new Date(read.read_at).toLocaleString()}</span><span>Source scope: {read.report.rows.length} ledger rows</span></div>
           <dl className="trial-balance-totals">
-            <div><dt>Difference in opening balances</dt><dd>{read.totals.opening.empty_count === 0 ? formatSum(read.totals.opening.sum, currency.symbol, currency.decimal_places) : `${formatSum(read.totals.opening.sum, currency.symbol, currency.decimal_places)} · ${read.totals.opening.empty_count} empty source values`}</dd></div>
-            <div><dt>Debit total</dt><dd>{formatSum(read.totals.debit.sum, currency.symbol, currency.decimal_places)}{read.totals.debit.empty_count ? ` · ${read.totals.debit.empty_count} empty` : ""}</dd></div>
-            <div><dt>Credit total</dt><dd>{formatSum(read.totals.credit.sum, currency.symbol, currency.decimal_places)}{read.totals.credit.empty_count ? ` · ${read.totals.credit.empty_count} empty` : ""}</dd></div>
+            <div><dt>{read.totals.opening.empty_count === 0 ? "Difference in opening balances" : "Observed opening net"}</dt><dd>{formatSum(read.totals.opening.sum, currency.symbol, currency.decimal_places)}{read.totals.opening.empty_count ? ` · ${read.totals.opening.empty_count} empty source values` : ""}</dd></div>
+            <div><dt>Debit total</dt><dd>{formatAmount({ state: "present", value: read.totals.debit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.debit.empty_count ? ` · ${read.totals.debit.empty_count} empty` : ""}</dd></div>
+            <div><dt>Credit total</dt><dd>{formatAmount({ state: "present", value: read.totals.credit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.credit.empty_count ? ` · ${read.totals.credit.empty_count} empty` : ""}</dd></div>
           </dl>
           <div className="trial-balance-table-wrap">
-            <table className="trial-balance-table"><caption className="visually-hidden">Trial Balance ledger totals</caption><thead><tr><th scope="col">Ledger</th><th scope="col">Opening</th><th scope="col">Debit (Dr)</th><th scope="col">Credit (Cr)</th><th scope="col">Closing</th></tr></thead><tbody>{read.report.rows.map((row) => <tr key={row.guid}><th scope="row">{row.name}</th><td>{formatAmount(row.opening, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.debit, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.credit, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.closing, currency.symbol, currency.decimal_places)}</td></tr>)}</tbody></table>
+            <table className="trial-balance-table"><caption className="visually-hidden">Trial Balance ledger totals</caption><thead><tr><th scope="col">Ledger</th><th scope="col">Opening</th><th scope="col">Debit (Dr)</th><th scope="col">Credit (Cr)</th><th scope="col">Closing</th></tr></thead><tbody>{read.report.rows.map((row) => <tr key={row.guid}><th scope="row">{row.name}</th><td>{formatBalance(row.opening, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.debit, currency.symbol, currency.decimal_places, true)}</td><td>{formatAmount(row.credit, currency.symbol, currency.decimal_places, true)}</td><td>{formatBalance(row.closing, currency.symbol, currency.decimal_places)}</td></tr>)}</tbody></table>
           </div>
           <p className="section-note">Currency: {currency.mailing_name || currency.symbol}. This native read is tied to the selected company and date range; it may include dormant ledger masters and is not an atomic snapshot of concurrent Tally changes.</p>
         </div>

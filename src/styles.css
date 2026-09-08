@@ -3162,8 +3162,12 @@ button.outstandings-party {
   margin: 0;
 }
 
-.trial-balance-export-status {
+.trial-balance-success {
+  border: 1px solid #9dcec4;
+  border-radius: 8px;
+  background: #eefaf6;
   color: #0f665f;
+  padding: 12px 14px;
 }
 
 @media (max-width: 760px) {
