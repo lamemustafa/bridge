@@ -1,0 +1,73 @@
+name: Compiler cache experiment
+
+on:
+  push:
+    branches: [tapish-codex/compiler-cache-experiment-20260908]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: Compiler cache (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri -> target
+          save-if: false
+      - name: Set up Windows native prerequisites
+        id: windows-bundle-prerequisites
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-native
+      - name: Record Windows prerequisite cache state
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '### Windows native prerequisites'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-bundle-prerequisites.outputs.cache-hit }}`'
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm run license:all
+      - name: Use ad-hoc signing for macOS smoke bundles
+        if: runner.os == 'macOS'
+        run: echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
+      - name: Install pinned compiler cache
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+      - name: Measure reuse and changed-input correctness
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python scripts/measure-compiler-cache.py
+          else
+            python3 scripts/measure-compiler-cache.py
+          fi
+      - name: Retain compiler-cache measurements
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiler-cache-${{ matrix.os }}
+          path: compiler-cache-measurements/**
+          if-no-files-found: error
+          retention-days: 7
