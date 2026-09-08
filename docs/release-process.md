@@ -139,7 +139,15 @@ corepack pnpm run license:all
 
 The repository intentionally does not auto-publish unsigned `v*` tag
 artifacts. CI bundle jobs produce short-lived smoke evidence only until signing
-and notarization ownership is configured.
+and notarization ownership is configured. The macOS smoke build sets
+`APPLE_SIGNING_IDENTITY=-` for that job so Tauri ad-hoc signs the assembled app
+before creating the DMG. The staged app and the app inside the mounted DMG must
+both pass `codesign --verify --deep --strict`; a mutation check confirms that
+changing a copied app's legal resource fails verification. Ad-hoc signing seals
+bundle integrity but supplies no verified publisher identity, Developer ID,
+notarization or Gatekeeper approval. These artifacts remain previews without
+publisher signing. Production signing defaults and the MCPB publication lane
+are unchanged.
 
 ## MCPB previews and the install page
 

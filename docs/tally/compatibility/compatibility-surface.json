@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "9f52d71eeefc318fde6816bfb7e7cb71e2a1484c943cfc7dd7051776e965a0ce"
+      "sha256": "64394b8246555331c1671609d3ad564dbb150d459d36319ddac34efed9327642"
     },
     {
       "path": ".github/workflows/dependency-security.yml",
@@ -307,7 +307,7 @@
     },
     {
       "path": "src-tauri/src/commands.rs",
-      "sha256": "b5f92e166e0397be964909ef3c50111268debea2a74f9321dade294eb82bab93"
+      "sha256": "8cb2add66af98dc8f6d292036384be2d2f0300338315f8fa1791d5d43ae26f4f"
     },
     {
       "path": "src-tauri/src/db/encrypted.rs",
@@ -435,7 +435,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "0612c6079b36678b781111b69cfb676a4a2891b92b93956a4840120ed13f020a"
+      "sha256": "1ae99377e7a4acb7bd64332aae095de29520d4e4c92725da3fdf31a2ab969725"
     },
     {
       "path": "src-tauri/src/reports/bulk_party_statement.rs",
@@ -515,7 +515,7 @@
     },
     {
       "path": "src-tauri/src/tally/mod.rs",
-      "sha256": "a042a3cbbbae38e6e413fe6fb7ab6d6b9816a92fd2a328156dc9f493fba7a085"
+      "sha256": "2903d5b95e216dac14ddb44606db325ff8336400ff57cb95237c9d63b4a3908e"
     },
     {
       "path": "src-tauri/src/tally/outstandings_runtime.rs",
@@ -603,7 +603,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "227fc64b5d1e5299b2578b42ab29ab2127f8e2b20f870ab57d5064e90f2a4bcd"
+      "sha256": "17b55433c99d50e98e4085f95530d60ef91784c739c8e29720e27a5338279561"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -631,7 +631,7 @@
     },
     {
       "path": "src/styles.css",
-      "sha256": "b13edcd14fc881b2f4a544d6afeb39fcdaf9581c737bb5d3ef665a36c1f5bd2f"
+      "sha256": "b635241f0d2ad3b8555f50022da623be5ddfc04b02a21158b32c10a1e11a8f71"
     },
     {
       "path": "src/tally-company-selection.ts",
@@ -690,5 +690,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "9f4257fee302abcc141fe668a612d3ff2ef96c3ccc1dad0a92606c1e2188dd61"
+  "manifest_sha256": "bb74e75c3c341427302876eed6efd4969e688fced328016ffb57c89b6ce3e0b1"
 }
