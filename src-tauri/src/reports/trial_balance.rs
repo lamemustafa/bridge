@@ -41,11 +41,17 @@ pub enum TrialBalanceParentQueryError {
 pub fn observed_totals(
     report: &NativeTrialBalance,
 ) -> Result<TrialBalanceTotals, bridge_tally_core::TallyError> {
+    observed_totals_for_rows(report.rows.iter())
+}
+
+fn observed_totals_for_rows<'a>(
+    rows: impl IntoIterator<Item = &'a NativeTrialBalanceRow>,
+) -> Result<TrialBalanceTotals, bridge_tally_core::TallyError> {
     let mut totals = std::array::from_fn::<_, 4, _>(|_| ObservedAmountTotal {
         sum: ExactDecimal::zero(),
         empty_count: 0,
     });
-    for row in &report.rows {
+    for row in rows {
         for (total, amount) in
             totals
                 .iter_mut()
@@ -70,6 +76,7 @@ pub fn observed_totals(
 
 /// Selects only rows whose source parent observation exactly matches `parent`.
 /// `NotObserved` and a returned empty string intentionally remain distinct.
+/// See `docs/tally/TALLY_PROTOCOL_REFERENCE.md` §5.6 for the capture contract.
 pub fn query_observed_parent(
     report: &NativeTrialBalance,
     parent: &PartyLedgerMasterFieldObservation,
@@ -83,10 +90,8 @@ pub fn query_observed_parent(
     if selected_rows.is_empty() {
         return Err(TrialBalanceParentQueryError::ParentNotInCapture);
     }
-    let totals = observed_totals(&NativeTrialBalance {
-        rows: selected_rows.clone(),
-    })
-    .map_err(|_| TrialBalanceParentQueryError::TotalsUnavailable)?;
+    let totals = observed_totals_for_rows(selected_rows.iter())
+        .map_err(|_| TrialBalanceParentQueryError::TotalsUnavailable)?;
     Ok(TrialBalanceParentQuery {
         parent: parent.clone(),
         selected_rows,

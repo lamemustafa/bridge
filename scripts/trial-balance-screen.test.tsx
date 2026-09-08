@@ -309,3 +309,51 @@ test("shows the observed closing empty count", async () => {
   expect(host.textContent).toContain("2 empty source values");
   root.unmount();
 });
+
+
+test("bounds parent options and finds later values without rereading or losing selection", async () => {
+  const rows = Array.from({ length: 1000 }, (_, index) => ({ ...report.read.report.rows[0], name: `Ledger ${index}`, guid: `ledger-${index}`, parent: `Parent ${index}` }));
+  mocks.invoke.mockResolvedValueOnce({ ...report, read: { ...report.read, report: { rows } } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  const select = host.querySelector<HTMLSelectElement>("select")!;
+  const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  expect(select.options).toHaveLength(101);
+  expect(host.textContent).toContain("Showing the first 100 matching parent values");
+  await act(async () => setDate(search, "pArEnT 999"));
+  expect(select.options).toHaveLength(2);
+  await act(async () => selectParent(host, 'returned:"Parent 999"'));
+  await act(async () => setDate(search, "no such parent"));
+  expect(select.value).toBe('returned:"Parent 999"');
+  expect(select.selectedOptions[0].textContent).toContain("current selection");
+  expect(host.textContent).toContain("No matching parent values");
+  expect(button(host, "View selected rows").disabled).toBe(false);
+  await act(async () => setDate(search, ""));
+  expect(select.options).toHaveLength(102);
+  expect(select.value).toBe('returned:"Parent 999"');
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  await act(async () => root.unmount());
+});
+
+test("distinguishes missing and empty Parent fields from literal group names", async () => {
+  const parents = [null, "", "Not observed", "Returned empty", "Missing field: Parent not returned", "Empty field: Parent returned empty"];
+  const rows = parents.map((parent, index) => ({ ...report.read.report.rows[0], name: `Ledger ${index}`, guid: `ledger-${index}`, parent }));
+  mocks.invoke.mockResolvedValueOnce({ ...report, read: { ...report.read, report: { rows } } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  const options = [...host.querySelectorAll("select option")];
+  expect(new Set(options.map((option) => option.textContent)).size).toBe(7);
+  expect(options.find((option) => option.value === "not-observed")?.textContent).toBe("Missing field: Parent not returned (1 rows)");
+  expect(options.find((option) => option.value === 'returned:""')?.textContent).toBe("Empty field: Parent returned empty (1 rows)");
+  expect(options.find((option) => option.value === 'returned:"Not observed"')?.textContent).toBe("Group: Not observed (1 rows)");
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  await act(async () => root.unmount());
+});

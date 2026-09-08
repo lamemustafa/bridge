@@ -473,6 +473,24 @@ runtime checks exercised six-, eight- and eleven-ledger synthetic companies;
 they do not qualify Education mode, other currencies, account types or
 production books.
 
+#### Parent follow-up query contract
+
+The retained-capture parent query is an exact row selector, not a qualified
+financial group balance. It compares the parsed `PARENT` observation as-is:
+returned text is case-preserving and case-sensitive, and a returned empty
+string is distinct from `NotObserved` (a `PARENT` element omitted by that
+response). It does not infer `Primary`, normalize a hierarchy, or turn either
+state into the other.
+
+The captured native fixtures include Tally's invalid numeric control reference
+form `&#4; Primary`; XML sanitization preserves it as a replacement-marker
+prefixed returned value. That marker remains an exact selectable value and is
+not renamed to `Primary`. The null and empty parent cases in the report-level
+tests are synthetic mutations that prove this distinction; they are not claims
+that those cases were observed in the captured native Trial Balance responses.
+The query only summarizes rows already present in the retained capture and
+reports numeric totals with their empty-amount counts.
+
 ---
 
 ## 6. Crashes and rendering traps
