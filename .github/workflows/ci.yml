@@ -258,6 +258,11 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy
+      - name: Install pinned nextest
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2.87.5
+        with:
+          tool: cargo-nextest@0.9.143
+          fallback: none
       - name: Set up Windows native prerequisites
         id: windows-native-prerequisites
         if: runner.os == 'Windows'
@@ -286,7 +291,13 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Dependency cache exact hit: `${{ steps.native-cache.outputs.cache-hit }}`'
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Runner image: $env:ImageOS / $env:ImageVersion"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '- Strawberry Perl cache hit: `${{ steps.windows-native-prerequisites.outputs.cache-hit }}`'
-      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast --timings
+      - name: Test native workspace
+        run: >-
+          cargo nextest run --locked --manifest-path src-tauri/Cargo.toml
+          --workspace --no-fail-fast --retries 0 --test-threads num-cpus --timings
+      # Nextest does not execute doctests. Keep these as a separate required step.
+      - name: Test native workspace doctests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --workspace --doc --no-fail-fast
       - name: Test Tally qualification tools workspace
         working-directory: tools
         run: cargo test --locked --workspace --no-fail-fast
