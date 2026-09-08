@@ -61,6 +61,7 @@ async fn import_post_read_failures_retain_source_evidence_and_admission_errors_s
             max_bytes: 200_000,
             redaction: Redaction::None,
             import_enabled: true,
+            writes_enabled: false,
         });
         let response = if malformed_catalogue {
             server

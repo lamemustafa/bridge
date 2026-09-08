@@ -4,10 +4,10 @@ use bridge_tally_protocol::{
     parse_companies_with_evidence, parse_group_source_records_with_evidence, parse_import_result,
     parse_ledger_source_records_with_evidence, parse_ledgers, parse_ledgers_with_evidence,
     parse_selected_voucher_source_records_with_evidence, parse_standard_ledger_catalog,
-    parse_standard_ledger_identity_observation, parse_voucher_source_records_with_evidence,
-    parse_voucher_type_source_records_with_evidence, parse_vouchers, parse_vouchers_with_evidence,
-    validate_exact_selected_export_structure, verify_company_context,
-    verify_selected_voucher_window_context, ParsedSourceIdentityKind,
+    parse_standard_ledger_catalog_with_identities, parse_standard_ledger_identity_observation,
+    parse_voucher_source_records_with_evidence, parse_voucher_type_source_records_with_evidence,
+    parse_vouchers, parse_vouchers_with_evidence, validate_exact_selected_export_structure,
+    verify_company_context, verify_selected_voucher_window_context, ParsedSourceIdentityKind,
     PartyLedgerMasterFieldObservation, TallyExportStatus, BRIDGE_GROUP_EXPORT_SCHEMA,
     BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
     BRIDGE_VOUCHER_EXPORT_SCHEMA, BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
@@ -906,6 +906,63 @@ fn standard_ledger_catalog_returns_only_context_bound_names_and_parents() {
         "company-guid",
     )
     .is_err());
+}
+
+#[test]
+fn opaque_catalog_binding_rejects_a_same_name_replacement_guid() {
+    let bytes = include_bytes!("fixtures/agent/native-ledger-catalogue.utf16le.xml");
+    let original = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("captured catalog is UTF-16LE");
+    let catalog = parse_standard_ledger_catalog_with_identities(
+        &original,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect("captured catalog is valid for its captured company");
+    let selected = catalog
+        .names()
+        .next()
+        .expect("captured catalog has a ledger")
+        .to_string();
+    let binding = catalog
+        .bind_selected([selected.clone()])
+        .expect("selected name is present in the observed catalog");
+    let ledger = original
+        .find(&format!(r#"NAME="{selected}""#))
+        .expect("selected captured ledger is named");
+    let guid_start = ledger
+        + original[ledger..]
+            .find(r#"<GUID TYPE="String">"#)
+            .expect("selected captured ledger includes GUID")
+        + r#"<GUID TYPE="String">"#.len();
+    let guid_end = guid_start
+        + original[guid_start..]
+            .find("</GUID>")
+            .expect("selected captured ledger GUID is closed");
+    let mut replacement_guid = original[guid_start..guid_end].to_string();
+    replacement_guid.replace_range(0..1, "0");
+    assert_ne!(replacement_guid, original[guid_start..guid_end]);
+    let replacement = format!(
+        "{}{}{}",
+        &original[..guid_start],
+        replacement_guid,
+        &original[guid_end..]
+    );
+    assert!(
+        !binding
+            .matches(
+                &replacement,
+                "WR2 Unicode Lab",
+                "61c6de69-1748-461c-ad3f-162cb949df9f",
+            )
+            .expect("single-GUID captured-fixture mutation remains structurally valid"),
+        "the public name alone cannot rebind an approved ledger"
+    );
 }
 
 #[test]

@@ -120,6 +120,7 @@ async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
             max_bytes: 200_000,
             redaction: Redaction::None,
             import_enabled: false,
+            writes_enabled: false,
         });
         let response = server
             .call_tool(

@@ -637,6 +637,14 @@ Escape on the way out; the failure is total and gives no hint of which field cau
 > **Success requires all four: the intended counter incremented, `ERRORS=0`,
 > `EXCEPTIONS=0`, and no `LINEERROR`.**
 
+**Bridge admission rule (2026-09-07).** Clean-result classification additionally
+requires source presence for all seven counters: `CREATED`, `ALTERED`, `DELETED`,
+`IGNORED`, `ERRORS`, `CANCELLED`, and `EXCEPTIONS`. An omitted counter is not an
+observed zero. Saved responses retain these presence bits alongside their counts.
+Older records without presence bits remain readable but cannot establish a clean
+response, even when readback matches. Preserve the original batch for investigation;
+do not infer missing evidence or resend it to obtain a cleaner receipt.
+
 `LINEERROR` text is **untrustworthy for cause attribution** — an out-of-range date produced
 "Voucher date is missing" when the date was present.
 
@@ -713,9 +721,54 @@ master ID, and assigned voucher number. The file SHA-256 was
 This qualifies that exact-file repeat on the observed licensed Journal path. It
 does not establish voucher-number-based identity, the configured numbering
 method, other request shapes or voucher types, restart behavior, or universal
-REMOTEID semantics. The connector neither dispatches imports nor retries them.
-A mandatory manual-numbering preflight would require a separately observed
-voucher-type read contract; it cannot be inferred from the failed-`Alter` case.
+REMOTEID semantics.
+
+**Automatic Journal dispatch — verified 2026-09-07, bounded observation.**
+On the synthetic TallyPrime Silver 7.1 instance, a macOS MCP host obtained
+explicit native approval and sent one saved Journal with `ACTION="Create"`
+and its generated `REMOTEID`. The response reported `CREATED=1`, with all
+other import counters zero. Independent effective-voucher readback matched
+the date, ledger entries and amounts. A fresh MCP process then reconciled
+the original batch: the voucher identity, number and AlterID were unchanged,
+and the local journal still contained one dispatch intent and one response.
+The observed executable SHA-256 was
+`208e6c95fb5f2a18aba4592767f6eeee9121922e02bb55371792925d42114a54`.
+This establishes that single dispatch and restart reconciliation; it does
+not qualify interactive Windows approval or Gold/Education live posting.
+
+Bridge can dispatch only a locally built, saved one-Journal batch on this
+source-specific path: it binds the saved endpoint, requires an independent
+native approval, records one durable attempt before sending, persists any
+response, and reads the original batch back. It does not automatically retry.
+A timeout, missing response, dirty counters, or incomplete readback stays with
+the original saved batch for read-only reconciliation. This operational guard
+is not evidence for a different product, licence mode, voucher type, endpoint,
+or request shape. A mandatory manual-numbering preflight would require a
+separately observed voucher-type read contract; it cannot be inferred from the
+failed-`Alter` case.
+
+**Native mutation selector — verified 2026-09-07, bounded fresh-dispatch observation.**
+A new native attempt uses a fresh private `REMOTEID`, separate from the selected
+public file's identity. The narration keeps the original batch attribution.
+The durable dispatch intent binds the exact UTF-16LE native request SHA-256 before
+sending; the response must match that commitment. Older intents without this
+field remain readable and are never resent. This prevents native posting from
+reusing the public file's mutation selector after a manual import. It does not
+prove semantic absence after arbitrary edits to an earlier business event.
+Native posting refuses a supplied `VOUCHERNUMBER` until its matching precedence
+is qualified.
+
+A fresh synthetic Silver 7.1 Journal using this separate selector and attribution
+returned `CREATED=1`, all other counters zero, and explicit zero exceptions.
+Independent readback matched its original batch attribution, date and balanced
+entries. Restarting with both generation and posting disabled reconciled the same
+GUID, master ID, voucher number and AlterID with one intent and one response.
+The original earlier Journal was unchanged in before/after readback. The executable
+SHA-256 was `c2df9ffd76bf687e50b9b78916cb83fdacc6cddde2f317b53c46f538f1b2a96f`;
+the durable native request commitment matched the actual transport request hash.
+This qualifies a fresh dispatch and read-only restart for that binary and source.
+The separate public-file import/edit/native-post comparison remains pending;
+this observation does not establish preservation after that sequence.
 
 **Batch identity qualification — verified 2026-09-06, recorded 2026-09-07.**
 A new synthetic Journal reused the earlier caller transaction label in a separate

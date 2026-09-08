@@ -1,3 +1,4 @@
+use super::super::ToolResponse;
 use super::*;
 use bridge_tally_transport::TallyEndpointConfig;
 use tally_protocol_simulator::{
@@ -49,6 +50,7 @@ async fn batch_total_overflow_is_refused_before_dispatch_or_persistence() {
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     });
     let mut input = payload();
     for entry in input
@@ -125,7 +127,7 @@ fn import_ledger_append_rolls_back_a_partial_failing_write() {
 }
 
 #[test]
-fn external_import_ledger_read_waits_for_the_append_admission_lock() {
+fn external_import_ledger_read_refuses_busy_admission_without_waiting() {
     let directory = tempfile::tempdir().expect("temporary agent directory");
     let settings = super::super::Settings {
         endpoint: TallyEndpointConfig {
@@ -137,6 +139,7 @@ fn external_import_ledger_read_waits_for_the_append_admission_lock() {
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     };
     let server = Server::new(settings.clone());
     let append_admission = server
@@ -151,18 +154,13 @@ fn external_import_ledger_read_waits_for_the_append_admission_lock() {
             .expect("reader completed");
     });
     started_rx.recv().expect("reader started");
-    assert!(
-        done_rx
-            .recv_timeout(std::time::Duration::from_millis(100))
-            .is_err(),
-        "the external reader must wait while an append is admitted"
+    let result = done_rx.recv_timeout(std::time::Duration::from_secs(2));
+    drop(append_admission); // Release even if the assertion fails, so no reader is stranded.
+    assert_eq!(
+        result.expect("reader must not wait for the lock").err(),
+        Some("import_admission_busy".into())
     );
-    drop(append_admission);
-    assert!(done_rx
-        .recv()
-        .expect("reader result")
-        .expect("ledger read after append admission releases")
-        .is_empty());
+    assert!(server.import_ledger().unwrap().is_empty());
     reader.join().expect("reader thread");
 }
 
@@ -179,9 +177,11 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     };
     let server = Server::new(settings.clone());
     let initial = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-proof".into(),
         company_guid: GUID.into(),
@@ -227,32 +227,33 @@ fn concurrent_verifications_replace_both_proofs_and_status_under_one_admission()
     for _ in 0..2 {
         started_rx.recv().expect("both writers started");
     }
-    assert!(done_rx
-        .recv_timeout(std::time::Duration::from_millis(100))
-        .is_err());
+    let results: Vec<_> = (0..2)
+        .map(|_| done_rx.recv_timeout(std::time::Duration::from_secs(2)))
+        .collect();
     let json_path = directory.path().join("imports/batch-proof.proof.json");
     let md_path = directory.path().join("imports/batch-proof.proof.md");
-    let published_before_admission = json_path.exists() || md_path.exists();
+    assert!(!json_path.exists() && !md_path.exists());
     drop(admission);
     for writer in writers {
         writer.join().expect("publication writer");
     }
-    let results = (0..2)
-        .map(|_| done_rx.recv().expect("publication result"))
-        .collect::<Vec<_>>();
-    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
-    assert_eq!(
-        results
-            .iter()
-            .filter(|result| result.as_ref().err().map(String::as_str)
-                == Some("import_verification_conflict_retry"))
-            .count(),
-        1
-    );
-    assert!(
-        !published_before_admission,
-        "proof files must wait for publication admission"
-    );
+    for result in results {
+        assert_eq!(
+            result.expect("busy writer must return"),
+            Err("import_admission_busy".into())
+        );
+    }
+    for (index, state) in ["first", "second"].into_iter().enumerate() {
+        let mut update = initial.clone();
+        update.status = state.into();
+        let proof = json!({"batch_id":"batch-proof", "company":{"name":state}, "writer":state});
+        let result = server.persist_import_verification(&proof, &update, generation);
+        if index == 0 {
+            result.unwrap();
+        } else {
+            assert_eq!(result, Err("import_verification_conflict_retry".into()));
+        }
+    }
     let proof: Value =
         serde_json::from_slice(&fs::read(json_path).expect("JSON proof")).expect("parseable proof");
     let markdown = fs::read_to_string(md_path).expect("Markdown proof");
@@ -324,8 +325,10 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     });
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-a".to_string(),
         company_guid: GUID.to_string(),
@@ -355,13 +358,17 @@ fn schema_balance_matcher_rendering_and_ledger_append_are_fail_closed() {
         std::thread::spawn(move || Server::new(first_settings).append_import_ledger(&first_line));
     let second =
         std::thread::spawn(move || Server::new(second_settings).append_import_ledger(&second_line));
-    first.join().expect("first writer").expect("first append");
-    second
-        .join()
-        .expect("second writer")
-        .expect("second append");
+    let results = [
+        first.join().expect("first writer"),
+        second.join().expect("second writer"),
+    ];
+    let accepted = results.iter().filter(|result| result.is_ok()).count();
+    assert!(accepted >= 1);
+    for result in results.into_iter().filter_map(Result::err) {
+        assert_eq!(result, "import_admission_busy");
+    }
     let lines = server.import_ledger().expect("parseable ledger lines");
-    assert_eq!(lines.len(), 3);
+    assert_eq!(lines.len(), 1 + accepted);
 }
 
 #[test]
@@ -420,6 +427,7 @@ fn duplicate_detection_uses_stable_voucher_identity_independently_of_remote_id()
 fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "synthetic-redaction-batch".into(),
         company_guid: GUID.into(),
@@ -504,6 +512,7 @@ fn verification_masks_entry_diffs_and_duplicate_fingerprints_before_release() {
 fn verification_reports_absence_divergence_and_duplicate_fingerprints() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-b".to_string(),
         company_guid: GUID.to_string(),
@@ -666,9 +675,11 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     });
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-unwritable".to_string(),
         company_guid: GUID.to_string(),
@@ -700,6 +711,7 @@ fn unwritable_ledger_path_removes_the_written_import_file() {
 fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-unrelated".to_string(),
         company_guid: GUID.to_string(),
@@ -780,6 +792,7 @@ fn unrelated_window_duplicates_do_not_block_a_verified_batch() {
 fn fingerprint_only_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-mark".to_string(),
         company_guid: GUID.to_string(),
@@ -841,6 +854,7 @@ fn fingerprint_fallback_consumes_an_observed_voucher_once_per_batch() {
     let mut duplicate = input.vouchers[0].clone();
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-fingerprint-once".to_string(),
         company_guid: GUID.to_string(),
@@ -900,6 +914,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
     let mut duplicate = input.vouchers[0].clone();
     duplicate.bridge_txn_id = "txn-duplicate".to_string();
     let mut line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-fingerprint-once".to_string(),
         company_guid: GUID.to_string(),
@@ -966,6 +981,7 @@ fn tagged_matches_are_reserved_and_consumed_independently_of_batch_order() {
 fn narration_tag_verification_requires_a_post_mark_voucher() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-tag-mark".to_string(),
         company_guid: GUID.to_string(),
@@ -1028,6 +1044,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
     }
     validate_payload(&input).expect("leading zeros satisfy the input contract");
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-tag-mark".to_string(),
         company_guid: GUID.to_string(),
@@ -1083,6 +1100,7 @@ fn verification_compares_amounts_numerically_and_preserves_real_divergence() {
 fn verified_import_vouchers_require_observed_effective_accounting_flags() {
     let input = payload();
     let line = ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "batch-accounting-state".to_string(),
         company_guid: GUID.to_string(),
@@ -1271,6 +1289,7 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
             max_bytes: 200_000,
             redaction: super::super::Redaction::None,
             import_enabled: true,
+            writes_enabled: false,
         });
         let built = server
             .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("json"))
@@ -1516,6 +1535,7 @@ async fn import_bounds_distinct_ledger_names_before_tally_without_reducing_vouch
         max_bytes: 200_000,
         redaction: super::super::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     });
     let response = server
         .call_tool_response("build_import_xml", serde_json::to_value(unique).unwrap())
@@ -1545,6 +1565,53 @@ mod multiplicity_tests;
 
 fn verify_observed_batch(line: &ImportLedgerLine, rows: &[ReadVoucher]) -> Result<Value, String> {
     verify_batch(line, &ImportReadSource::admit(rows.to_vec())?)
+}
+
+#[tokio::test]
+async fn built_batch_guidance_matches_the_saved_native_admission() {
+    for (writes_enabled, voucher_count, numbered, native) in [
+        (true, 1, false, true),
+        (true, 2, false, false),
+        (true, 1, true, false),
+        (false, 1, false, false),
+    ] {
+        let simulator = SequenceSimulator::spawn(qualified_import_cycle_plans()[..32].to_vec())
+            .expect("captured build plan");
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server::new(crate::agent::Settings {
+            endpoint: TallyEndpointConfig {
+                host: "127.0.0.1".into(),
+                port: simulator.address().port(),
+            },
+            data_dir: directory.path().into(),
+            max_rows: 10,
+            max_bytes: 200_000,
+            redaction: crate::agent::Redaction::None,
+            import_enabled: true,
+            writes_enabled,
+        });
+        let mut input = captured_catalogue_payload();
+        input.vouchers.truncate(voucher_count);
+        if numbered {
+            input.vouchers[0].voucher_number = Some("TEST-1".into());
+        }
+        let built = server
+            .build_import_xml(&serde_json::to_value(input).unwrap())
+            .await
+            .unwrap();
+        let result = &built.payload["result"];
+        assert_eq!(result["voucher_count"], voucher_count);
+        let next_step = result["next_step"].as_str().unwrap();
+        assert_eq!(next_step.starts_with("Call post_import"), native);
+        assert_eq!(next_step.starts_with("Import this file in Tally"), !native);
+        if writes_enabled {
+            assert!(result["warnings"][0]
+                .as_str()
+                .unwrap()
+                .contains("do not call post_import"));
+        }
+        assert_eq!(simulator.finish().unwrap().len(), 32);
+    }
 }
 
 fn corroborate_observed_window(
@@ -1688,3 +1755,259 @@ mod identity_tests;
 
 #[path = "agent_import_text_tests.rs"]
 mod text_tests;
+
+#[tokio::test]
+async fn dispatched_verification_requires_its_saved_endpoint_before_tally_reads() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking listener");
+    let endpoint = TallyEndpointConfig {
+        host: "127.0.0.1".into(),
+        port: listener.local_addr().expect("listener address").port(),
+    };
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let server = Server::new(super::super::Settings {
+        endpoint: endpoint.clone(),
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: super::super::Redaction::None,
+        import_enabled: true,
+        writes_enabled: false,
+    });
+    let line = ImportLedgerLine {
+        batch_id: "batch-dispatched-endpoint".into(),
+        identity_scheme: Some(ImportIdentityScheme::BatchV1),
+        company_guid: GUID.into(),
+        endpoint_origin: Some("http://127.0.0.1:9002".into()),
+        company: None,
+        txn_ids: vec![],
+        date_from: "20260901".into(),
+        date_to: "20260901".into(),
+        sha256: "hash".into(),
+        built_at: now(),
+        status: "built".into(),
+        pre_import_mark: PreImportMark {
+            kind: "company_high_water".into(),
+            value: Some(1),
+            master_value: Some(1),
+        },
+        vouchers: vec![],
+    };
+    server.append_import_ledger(&line).expect("saved batch");
+    let admission = server.lock_import_admission().expect("admission lock");
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&line))
+        .expect("durable dispatch intent");
+    drop(admission);
+
+    let failure = match server
+        .verify_import(&json!({"company_guid":GUID,"batch_id":line.batch_id}))
+        .await
+    {
+        Err(failure) => failure,
+        Ok(_) => panic!("mismatched dispatched endpoint must be refused"),
+    };
+    assert_eq!(failure.code, "import_post_endpoint_mismatch");
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+
+    let matching = ImportLedgerLine {
+        endpoint_origin: Some(super::super::canonical_loopback_origin(&endpoint).unwrap()),
+        ..line.clone()
+    };
+    assert_eq!(
+        validate_dispatched_import_endpoint(&matching, true, &endpoint),
+        Ok(())
+    );
+    let manual = ImportLedgerLine {
+        endpoint_origin: None,
+        ..line
+    };
+    assert_eq!(
+        validate_dispatched_import_endpoint(&manual, false, &endpoint),
+        Ok(())
+    );
+}
+
+fn persisted_dispatch_response(created: u64, altered: u64) -> ledger::DispatchResponse {
+    ledger::DispatchResponse {
+        request_sha256: "a".repeat(64),
+        response_sha256: "b".repeat(64),
+        bytes: 1,
+        outcome: Some(
+            serde_json::from_value(json!({
+                "application_status":"success",
+                "counters": {
+                    "created":created, "altered":altered, "deleted":0, "ignored":0,
+                    "errors":0, "cancelled":0, "exceptions":0, "line_error_count":0
+                },
+                "exceptions_were_reported":true
+            }))
+            .unwrap(),
+        ),
+    }
+}
+
+async fn verify_saved_batch_after_dispatch(
+    dispatched: bool,
+    dispatch_response: Option<ledger::DispatchResponse>,
+) -> (ToolResponse, ledger::BatchSnapshot, String) {
+    let simulator = SequenceSimulator::spawn(qualified_import_cycle_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let server = Server::new(super::super::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: super::super::Redaction::None,
+        import_enabled: true,
+        writes_enabled: false,
+    });
+    let built = server
+        .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
+        .await
+        .expect("build");
+    let batch_id = built.payload["result"]["batch_id"]
+        .as_str()
+        .expect("batch id")
+        .to_string();
+    let saved = server
+        .latest_import_snapshot(&batch_id)
+        .expect("saved snapshot")
+        .expect("batch");
+    if dispatched {
+        let admission = server.lock_import_admission().expect("admission lock");
+        server
+            .append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&saved.batch))
+            .expect("dispatch intent");
+        if let Some(response) = dispatch_response {
+            server
+                .append_import_record_while_admitted(&ledger::StatusRecord::response(
+                    &saved.batch,
+                    response,
+                ))
+                .expect("dispatch response");
+        }
+        drop(admission);
+    }
+    let response = server
+        .call_tool_response(
+            "verify_import",
+            json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}),
+        )
+        .await;
+    let snapshot = server
+        .latest_import_snapshot(&batch_id)
+        .expect("persisted snapshot")
+        .expect("batch");
+    assert_eq!(
+        simulator.finish().expect("captured plan requests").len(),
+        50
+    );
+    let markdown = fs::read_to_string(
+        server
+            .imports_dir()
+            .unwrap()
+            .join(format!("{batch_id}.proof.md")),
+    )
+    .unwrap();
+    (response, snapshot, markdown)
+}
+
+#[tokio::test]
+async fn dispatched_verification_persists_reconciliation_for_missing_or_dirty_response() {
+    for response in [None, Some(persisted_dispatch_response(0, 1))] {
+        let (outcome, snapshot, markdown) = verify_saved_batch_after_dispatch(true, response).await;
+        assert_eq!(outcome.value["isError"], true);
+        assert_eq!(
+            outcome.value["structuredContent"]["result"]["dispatch"]["state"],
+            "reconciliation_required"
+        );
+        assert_eq!(snapshot.batch.status, "verification_incomplete");
+        assert!(markdown.contains("Dispatch verdict: `reconciliation_required`"));
+        assert!(markdown.contains("this report does not confirm posting"));
+        assert!(markdown.contains("Error: `import_reconciliation_required`"));
+    }
+}
+
+#[tokio::test]
+async fn current_dispatch_persists_its_reconciliation_verdict_before_returning_the_proof() {
+    let simulator = SequenceSimulator::spawn(qualified_import_cycle_plans()).expect("simulator");
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let server = Server::new(super::super::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: simulator.address().port(),
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: super::super::Redaction::None,
+        import_enabled: true,
+        writes_enabled: true,
+    });
+    let built = server
+        .build_import_xml(&serde_json::to_value(captured_catalogue_payload()).expect("input"))
+        .await
+        .expect("build");
+    let batch_id = built.payload["result"]["batch_id"]
+        .as_str()
+        .expect("batch id")
+        .to_string();
+    let saved = server
+        .latest_import_snapshot(&batch_id)
+        .expect("saved snapshot")
+        .expect("batch");
+    let response = persisted_dispatch_response(1, 0);
+    let admission = server.lock_import_admission().expect("admission lock");
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::dispatch(&saved.batch))
+        .expect("dispatch intent");
+    server
+        .append_import_record_while_admitted(&ledger::StatusRecord::response(
+            &saved.batch,
+            response,
+        ))
+        .expect("dispatch response");
+    drop(admission);
+
+    let outcome = server
+        .verify_import_after_current_dispatch(
+            &json!({"company_guid":CAPTURED_GUID,"batch_id":batch_id}),
+        )
+        .await
+        .expect("current dispatch verification");
+    let persisted: Value = serde_json::from_slice(
+        &std::fs::read(
+            server
+                .imports_dir()
+                .expect("imports directory")
+                .join(format!("{batch_id}.proof.json")),
+        )
+        .expect("persisted proof"),
+    )
+    .expect("proof JSON");
+    let latest = server
+        .latest_import_snapshot(&batch_id)
+        .expect("latest snapshot")
+        .expect("batch");
+    assert_eq!(
+        outcome.payload["result"]["dispatch"]["state"],
+        "reconciliation_required"
+    );
+    assert_eq!(persisted["dispatch"], outcome.payload["result"]["dispatch"]);
+    assert_eq!(persisted["dispatch"]["counters"]["created"], 1);
+    assert_eq!(persisted["dispatch"]["automatic_retry"], false);
+    assert_eq!(latest.batch.status, "verification_incomplete");
+    assert_eq!(
+        simulator.finish().expect("captured plan requests").len(),
+        50
+    );
+}

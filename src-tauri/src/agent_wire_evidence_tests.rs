@@ -13,6 +13,7 @@ fn server_for(address: std::net::SocketAddr, data_dir: &Path) -> Server {
         max_bytes: 200_000,
         redaction: Redaction::None,
         import_enabled: false,
+        writes_enabled: false,
     })
 }
 

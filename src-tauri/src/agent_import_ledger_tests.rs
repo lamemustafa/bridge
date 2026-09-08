@@ -2,6 +2,7 @@ use super::*;
 
 fn batch() -> ImportLedgerLine {
     ImportLedgerLine {
+        endpoint_origin: None,
         identity_scheme: None,
         batch_id: "bridge-00000000-0000-4000-8000-000000000001".into(),
         company_guid: GUID.into(),
@@ -32,6 +33,7 @@ fn server(path: &Path) -> Server {
         max_bytes: 200_000,
         redaction: crate::agent::Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     })
 }
 

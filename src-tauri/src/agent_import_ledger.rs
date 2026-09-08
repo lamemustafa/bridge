@@ -11,15 +11,60 @@ pub(super) const MAX_RECORD_BYTES: usize = 32 * 1024 * 1024;
 #[serde(rename_all = "snake_case")]
 enum StatusKind {
     VerificationStatus,
+    DispatchIntent,
+    DispatchResponse,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct StatusRecord {
+pub(in crate::agent) struct StatusRecord {
     record_type: StatusKind,
     batch_id: String,
     batch_sha256: String,
     status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response: Option<DispatchResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_request_sha256: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DispatchResponse {
+    pub(super) request_sha256: String,
+    pub(super) response_sha256: String,
+    pub(super) bytes: usize,
+    pub(super) outcome: Option<bridge_tally_protocol::TallyImportOutcome>,
+}
+
+impl StatusRecord {
+    #[cfg(test)]
+    pub(in crate::agent) fn dispatch(batch: &ImportLedgerLine) -> Self {
+        let mut record = Self::dispatch_native(batch, String::new());
+        record.native_request_sha256 = None;
+        record
+    }
+
+    pub(super) fn dispatch_native(batch: &ImportLedgerLine, request_sha256: String) -> Self {
+        Self {
+            record_type: StatusKind::DispatchIntent,
+            batch_id: batch.batch_id.clone(),
+            batch_sha256: batch.sha256.clone(),
+            status: "dispatch_started".into(),
+            response: None,
+            native_request_sha256: Some(request_sha256),
+        }
+    }
+    pub(super) fn response(batch: &ImportLedgerLine, response: DispatchResponse) -> Self {
+        Self {
+            record_type: StatusKind::DispatchResponse,
+            batch_id: batch.batch_id.clone(),
+            batch_sha256: batch.sha256.clone(),
+            status: "response_received".into(),
+            response: Some(response),
+            native_request_sha256: None,
+        }
+    }
 }
 
 impl From<&ImportLedgerLine> for StatusRecord {
@@ -29,6 +74,8 @@ impl From<&ImportLedgerLine> for StatusRecord {
             batch_id: batch.batch_id.clone(),
             batch_sha256: batch.sha256.clone(),
             status: batch.status.clone(),
+            response: None,
+            native_request_sha256: None,
         }
     }
 }
@@ -38,13 +85,15 @@ pub(super) struct VerificationGeneration(usize);
 
 pub(super) struct BatchSnapshot {
     pub(super) batch: ImportLedgerLine,
+    pub(super) dispatched: bool,
+    pub(super) response: Option<DispatchResponse>,
     // Last matching physical journal record, including identical status appends.
     pub(super) generation: VerificationGeneration,
 }
 
 enum Record {
     Batch(Box<ImportLedgerLine>),
-    Status(StatusRecord),
+    Status(Box<StatusRecord>),
 }
 
 /// Validate the entire journal, retaining only the requested batch payload.
@@ -57,6 +106,12 @@ pub(super) fn read_snapshot(
     scan_records(reader, |record, generation| match record {
         Record::Batch(batch) if batch_id == Some(batch.batch_id.as_str()) => {
             selected = Some(BatchSnapshot {
+                response: selected
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.response.clone()),
+                dispatched: selected
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.dispatched),
                 batch: *batch,
                 generation,
             });
@@ -66,6 +121,10 @@ pub(super) fn read_snapshot(
             let snapshot = selected
                 .as_mut()
                 .expect("status refers to an admitted batch");
+            if let Some(response) = update.response {
+                snapshot.response = Some(response);
+            }
+            snapshot.dispatched |= matches!(update.record_type, StatusKind::DispatchIntent);
             snapshot.batch.status = update.status;
             snapshot.generation = generation;
         }
@@ -82,6 +141,7 @@ fn scan_records(
     // the latest hash per distinct ID, not every historical voucher payload.
     // Memory therefore still grows with distinct IDs, not with status history.
     let mut latest: BTreeMap<String, String> = BTreeMap::new();
+    let mut dispatched: BTreeMap<String, Option<String>> = BTreeMap::new();
     let mut line = Vec::new();
     let mut ordinal = 0_usize;
     while read_record(&mut reader, &mut line)? {
@@ -95,10 +155,47 @@ fn scan_records(
             if latest.get(&update.batch_id) != Some(&update.batch_sha256) {
                 return Err("import_ledger_invalid".into());
             }
-            Record::Status(update)
+            if let Some(hash) = &update.native_request_sha256 {
+                if !matches!(update.record_type, StatusKind::DispatchIntent)
+                    || hash.len() != 64
+                    || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+                {
+                    return Err("import_ledger_invalid".into());
+                }
+            }
+            if matches!(update.record_type, StatusKind::DispatchIntent)
+                && dispatched
+                    .insert(
+                        update.batch_id.clone(),
+                        update.native_request_sha256.clone(),
+                    )
+                    .is_some()
+            {
+                return Err("import_ledger_duplicate_dispatch".into());
+            }
+            if matches!(update.record_type, StatusKind::DispatchResponse) {
+                let request_hash = dispatched
+                    .get(&update.batch_id)
+                    .ok_or("import_ledger_invalid")?;
+                let response = update.response.as_ref().ok_or("import_ledger_invalid")?;
+                if request_hash
+                    .as_ref()
+                    .is_some_and(|hash| hash != &response.request_sha256)
+                {
+                    return Err("import_ledger_invalid".into());
+                }
+            } else if update.response.is_some() {
+                return Err("import_ledger_invalid".into());
+            }
+            Record::Status(Box::new(update))
         } else {
             let batch: ImportLedgerLine =
                 serde_json::from_value(value).map_err(|_| "import_ledger_invalid".to_string())?;
+            if dispatched.contains_key(&batch.batch_id)
+                && latest.get(&batch.batch_id) != Some(&batch.sha256)
+            {
+                return Err("import_ledger_invalid".into());
+            }
             latest.insert(batch.batch_id.clone(), batch.sha256.clone());
             Record::Batch(Box::new(batch))
         };
@@ -150,14 +247,27 @@ pub(super) fn read_history(reader: impl BufRead) -> Result<Vec<BatchSnapshot>, S
     scan_records(reader, |record, generation| match record {
         Record::Batch(batch) => {
             // Keep legacy full-record history readable without rewriting it.
+            let dispatched = latest
+                .get(&batch.batch_id)
+                .is_some_and(|index| batches[*index].dispatched);
+            let response = latest
+                .get(&batch.batch_id)
+                .and_then(|index| batches.get(*index))
+                .and_then(|snapshot| snapshot.response.clone());
             latest.insert(batch.batch_id.clone(), batches.len());
             batches.push(BatchSnapshot {
+                response,
+                dispatched,
                 batch: *batch,
                 generation,
             });
         }
         Record::Status(update) => {
             let snapshot = &mut batches[latest[&update.batch_id]];
+            if let Some(response) = update.response {
+                snapshot.response = Some(response);
+            }
+            snapshot.dispatched |= matches!(update.record_type, StatusKind::DispatchIntent);
             snapshot.batch.status = update.status;
             snapshot.generation = generation;
         }

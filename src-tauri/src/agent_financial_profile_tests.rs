@@ -119,6 +119,7 @@ async fn monetary_tools_refuse_unobserved_mode_or_unsupported_product_with_compl
                 max_bytes: 200_000,
                 redaction: Redaction::None,
                 import_enabled: false,
+                writes_enabled: false,
             });
             let response = server.call_tool(tool, args.clone()).await;
             assert_eq!(response["isError"], true, "{tool} {args}");

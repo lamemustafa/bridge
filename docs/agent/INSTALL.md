@@ -31,6 +31,33 @@ downloaded bytes and source commit.
 4. Save the extension settings and restart Claude Desktop if its tools are not
    visible. In a new chat, use **Connectors** to confirm Bridge is connected.
 
+Journal preparation and posting are available by default. Every new posting
+requires your approval in a separate Bridge dialog. Turn off **Allow Journal posting**
+in the extension settings for a read-only connector.
+
+Native posting currently accepts one Journal with existing ledgers and no supplied
+voucher number. Tally assigns the number. Bridge uses a private request identity
+for the native attempt; the selected XML file stays unchanged. Do not manually
+import a file and then post it through Bridge: if the original Journal was edited,
+Bridge may be unable to recognize that earlier business event.
+
+While posting, pause other imports and ledger changes in the selected company
+and leave Tally's product/licence mode unchanged. Bridge's checks do not lock
+out changes made directly in Tally or by other software.
+
+Stop Bridge and every client running its connector before upgrading, then restart
+them with the updated version. Dispatch coordination uses the operating system's
+local app-data folder on Windows and account home on macOS, independently of
+launcher environment variables. Older processes may use a different coordination path.
+Keep the recovery data when upgrading. New posting attempts add a native request
+commitment to the journal; older connector builds cannot read that new record.
+Use this version or a newer compatible build to reconcile it rather than removing
+the journal to downgrade. Older receipts may lack evidence that every result
+counter was actually reported. After upgrading, Bridge keeps those receipts but
+cannot confirm a clean response from them, even when the Journal matches in
+Tally. Preserve the original history for investigation; do not repost the Journal
+to replace its receipt.
+
 Bridge only accepts loopback Tally endpoints. Do not open a port to the
 internet or use a remote host to make this work.
 

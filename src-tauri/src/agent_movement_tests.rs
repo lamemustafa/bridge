@@ -246,6 +246,7 @@ async fn movement_read_preserves_observed_count_after_accounting_exclusions() {
             max_bytes: 200_000,
             redaction: Redaction::None,
             import_enabled: false,
+            writes_enabled: false,
         });
         let (page, _) = server
             .read_movement_vouchers(&identity, &observed.name, date.clone(), date)

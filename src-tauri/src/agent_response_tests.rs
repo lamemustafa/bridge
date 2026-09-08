@@ -36,6 +36,7 @@ fn standalone_master_and_status_rows_are_counted_in_final_receipts() {
             max_bytes: 200_000,
             redaction: Redaction::None,
             import_enabled: false,
+            writes_enabled: false,
         });
         let mut structured = json!({"result": {}});
         structured["result"][axis] = json!([{"name":"A"}, {"name":"B"}]);

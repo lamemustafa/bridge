@@ -1,21 +1,26 @@
 //! The local stdio MCP surface. It uses Bridge's loopback-only Tally XML
-//! transport. Import XML is only rendered to a local file: this server never
-//! dispatches an import or another write request to Tally.
+//! transport. Posting is opt-in and requires an independent native confirmation.
 
 #[path = "agent_directory.rs"]
 mod directory;
 use directory::{ensure_private_directory, DirectoryAdmissionError};
+#[path = "agent_path.rs"]
+mod agent_path;
 #[path = "agent_file.rs"]
 mod local_file;
+use agent_path::{default_data_dir, default_dispatch_coordination_dir};
 
 #[path = "agent_import.rs"]
 mod agent_import;
+pub use crate::tally::approved_import::run_confirmation;
 
 #[path = "agent_catalog.rs"]
 mod catalog;
-use catalog::{registered_tool_definitions, tool_definitions, validate_tool_arguments};
+#[cfg(test)]
+use catalog::tool_definitions;
+use catalog::validate_tool_arguments;
 #[path = "agent_protocol.rs"]
-mod agent_protocol;
+pub(super) mod agent_protocol;
 #[path = "agent_receipt_fields.rs"]
 mod agent_receipt_fields;
 #[path = "agent_delivery.rs"]
@@ -214,6 +219,7 @@ struct Settings {
     max_bytes: usize,
     redaction: Redaction,
     import_enabled: bool,
+    writes_enabled: bool,
 }
 
 impl Settings {
@@ -248,14 +254,25 @@ impl Settings {
             #[cfg(unix)]
             DirectoryAdmissionError::Permissions => "agent_data_dir_permissions_failed".to_string(),
         })?;
+        let writes_enabled = enabled_setting("BRIDGE_AGENT_ENABLE_WRITES")?;
         Ok(Self {
             endpoint,
             data_dir,
             max_rows,
             max_bytes,
             redaction,
-            import_enabled: env::var("BRIDGE_AGENT_ENABLE_IMPORT").as_deref() == Ok("1"),
+            import_enabled: enabled_setting("BRIDGE_AGENT_ENABLE_IMPORT")? || writes_enabled,
+            writes_enabled,
         })
+    }
+}
+
+fn enabled_setting(name: &str) -> Result<bool, String> {
+    match env::var(name) {
+        Err(env::VarError::NotPresent) => Ok(false),
+        Ok(value) if matches!(value.as_str(), "1" | "true") => Ok(true),
+        Ok(value) if matches!(value.as_str(), "0" | "false") => Ok(false),
+        _ => Err("boolean_setting_invalid".into()),
     }
 }
 
@@ -286,30 +303,6 @@ fn parse_bounded_limit(name: &str, value: &str, min: usize, max: usize) -> Resul
         .ok_or_else(|| format!("limit_setting_invalid:{name}"))
 }
 
-fn default_data_dir() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(local_app_data).join("Bridge").join("agent");
-        }
-        if let Some(app_data) = env::var_os("APPDATA") {
-            return PathBuf::from(app_data).join("Bridge").join("agent");
-        }
-        PathBuf::from("Bridge").join("agent")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        #[cfg(target_os = "macos")]
-        if let Some(home) = env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("Bridge");
-        }
-        env::temp_dir().join("bridge")
-    }
-}
-
 fn endpoint_origin(endpoint: &TallyEndpointConfig) -> Result<String, String> {
     canonical_loopback_origin(endpoint).map_err(|_| "endpoint_invalid".to_string())
 }
@@ -329,7 +322,7 @@ struct Evidence {
 }
 
 fn receipt_tool_identity(tool: &str) -> (&str, Option<String>) {
-    if registered_tool_definitions(true)
+    if catalog::registered_tool_definitions(true, true)
         .as_array()
         .is_some_and(|tools| tools.iter().any(|definition| definition["name"] == tool))
     {
@@ -502,9 +495,19 @@ impl Server {
     }
 
     async fn call_tool_response(&self, name: &str, args: Value) -> ToolResponse {
-        let args_sha256 = sha256_json(&args);
         let started = Utc::now();
         let result = self.tool_payload(name, &args).await;
+        self.finish_tool_response(name, &args, started, result)
+    }
+
+    fn finish_tool_response(
+        &self,
+        name: &str,
+        args: &Value,
+        started: chrono::DateTime<Utc>,
+        result: Result<ToolOutcome, ToolFailure>,
+    ) -> ToolResponse {
+        let args_sha256 = sha256_json(args);
         let ToolOutcome {
             payload,
             mut evidence,
@@ -525,7 +528,7 @@ impl Server {
                 evidence.state = "partial";
                 evidence.reason_code = Some(code.clone());
                 ToolOutcome {
-                    payload: json!({"error": {"code": code, "message": "Bridge withheld this read."}}),
+                    payload: json!({"error": {"code": code, "message": "Bridge refused this operation."}}),
                     evidence,
                     company_guid: args
                         .get("company_guid")
@@ -626,8 +629,11 @@ impl Server {
         if name == "changed_since" {
             return Err("changed_since_unqualified".to_string().into());
         }
-        if matches!(name, "build_import_xml" | "verify_import") {
+        if name == "build_import_xml" {
             self.import_enabled()?;
+        }
+        if name == "post_import" && !self.settings.writes_enabled {
+            return Err("import_posting_disabled".to_string().into());
         }
         validate_tool_arguments(name, args)?;
         match name {
@@ -655,14 +661,12 @@ impl Server {
             }
             "voucher_schema" => self.voucher_schema().map_err(Into::into),
             "validate_masters" => self.validate_masters(args).await,
+            "post_import" => self.post_import(args).await,
             "build_import_xml" => {
                 self.import_enabled()?;
                 self.build_import_xml(args).await
             }
-            "verify_import" => {
-                self.import_enabled()?;
-                self.verify_import(args).await
-            }
+            "verify_import" => self.verify_import(args).await,
             "ledger_masters" => self.ledger_masters(args).await,
             "vouchers" => self.vouchers(args).await,
             "changed_since" => self.changed_since(args).await,

@@ -3,7 +3,7 @@
   "name": "bridge-tally",
   "display_name": "Bridge Tally",
   "version": "0.2.0",
-  "description": "Read-only, loopback-only Bridge connector for Tally; optional local import-file planning is experimental and disabled by default.",
+  "description": "Read local Tally data and prepare Journals. Each new Journal posting requires a separate native approval.",
   "author": {
     "name": "Bridge contributors"
   },
@@ -16,7 +16,8 @@
       "env": {
         "BRIDGE_TALLY_HOST": "${user_config.host}",
         "BRIDGE_TALLY_PORT": "${user_config.port}",
-        "BRIDGE_AGENT_REDACTION": "${user_config.redaction}"
+        "BRIDGE_AGENT_REDACTION": "${user_config.redaction}",
+        "BRIDGE_AGENT_ENABLE_WRITES": "${user_config.enable_writes}"
       }
     }
   },
@@ -40,6 +41,12 @@
       "title": "Response redaction",
       "description": "Enter none, mask_parties, or drop_narration. Other values prevent the connector from starting.",
       "default": "none"
+    },
+    "enable_writes": {
+      "type": "boolean",
+      "title": "Allow Journal posting",
+      "description": "Journal preparation and posting are available by default. Every new posting requires approval in a native dialog; existing ledgers only. Turn off to use reads only.",
+      "default": true
     }
   }
 }

@@ -13,6 +13,7 @@ async fn voucher_type_selector_is_bounded_before_any_tally_read() {
         max_bytes: 200_000,
         redaction: Redaction::None,
         import_enabled: false,
+        writes_enabled: false,
     });
     let mut args = json!({"company_guid":"00000000-0000-4000-8000-000000000001",
         "from":"20260901","to":"20260902","voucher_type":"名".repeat(1025)});
@@ -30,7 +31,7 @@ async fn voucher_type_selector_is_bounded_before_any_tally_read() {
 #[tokio::test]
 async fn unqualified_change_feed_is_hidden_and_direct_calls_refuse_before_tally() {
     for import_enabled in [false, true] {
-        assert!(!tool_definitions(import_enabled)
+        assert!(!tool_definitions(import_enabled, false)
             .as_array()
             .unwrap()
             .iter()
@@ -47,6 +48,7 @@ async fn unqualified_change_feed_is_hidden_and_direct_calls_refuse_before_tally(
         max_bytes: 200_000,
         redaction: Redaction::None,
         import_enabled: true,
+        writes_enabled: false,
     });
     // A dispatched read against this unavailable endpoint would return a
     // transport/company failure, not the explicit admission refusal.
@@ -65,6 +67,41 @@ async fn unqualified_change_feed_is_hidden_and_direct_calls_refuse_before_tally(
 }
 
 #[tokio::test]
+async fn verification_remains_catalogued_and_admitted_when_import_and_writes_are_disabled() {
+    let definitions = tool_definitions(false, false);
+    let names = definitions
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"verify_import"));
+    assert!(!names.contains(&"build_import_xml"));
+    assert!(!names.contains(&"post_import"));
+
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().to_path_buf(),
+        max_rows: 500,
+        max_bytes: 200_000,
+        redaction: Redaction::None,
+        import_enabled: false,
+        writes_enabled: false,
+    });
+    let response = server.call_tool_response("verify_import", json!({})).await;
+    assert_eq!(response.value["isError"], true);
+    assert_eq!(
+        response.value["structuredContent"]["result"]["error"]["code"],
+        "company_guid_required"
+    );
+    assert_eq!(response.value["structuredContent"]["evidence"]["bytes"], 0);
+}
+
+#[tokio::test]
 async fn master_validation_rejects_unbounded_and_blank_names_before_tally() {
     let directory = tempfile::tempdir().unwrap();
     let server = Server::new(Settings {
@@ -77,6 +114,7 @@ async fn master_validation_rejects_unbounded_and_blank_names_before_tally() {
         max_bytes: 200_000,
         redaction: Redaction::None,
         import_enabled: false,
+        writes_enabled: false,
     });
     for ledgers in [
         json!([""]),
@@ -122,6 +160,7 @@ async fn ledger_selectors_are_bounded_before_company_or_catalogue_reads() {
         max_bytes: 200_000,
         redaction: Redaction::None,
         import_enabled: false,
+        writes_enabled: false,
     });
     for tool in ["vouchers", "ledger_movement"] {
         for ledger in ["x".repeat(1025), " ".into(), String::new()] {
@@ -156,6 +195,7 @@ async fn oversized_unknown_property_cannot_expand_response_or_retained_evidence(
         max_bytes: 5_000_000,
         redaction: Redaction::None,
         import_enabled: false,
+        writes_enabled: false,
     });
     for key in ["unknown".to_string(), "x".repeat(1_000_000)] {
         let value = server.call_tool("tally_status", json!({key: null})).await;

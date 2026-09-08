@@ -244,6 +244,38 @@ pub struct TallyImportResult {
     pub cancelled: u64,
     pub exceptions: u64,
     pub line_error_count: u64,
+    /// Whether every result counter was present in the source response.  Missing
+    /// fields in older saved response records deserialize as not observed, so
+    /// they cannot retrospectively prove a clean import.
+    #[serde(default)]
+    pub counter_presence: TallyImportCounterPresence,
+}
+
+/// Source presence for Tally import counters.
+///
+/// Counts alone cannot distinguish a reported zero from a parser default. This
+/// is persisted beside the counts so restarted processes retain that boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+pub struct TallyImportCounterPresence {
+    pub created: bool,
+    pub altered: bool,
+    pub deleted: bool,
+    pub ignored: bool,
+    pub errors: bool,
+    pub cancelled: bool,
+    pub exceptions: bool,
+}
+
+impl TallyImportCounterPresence {
+    pub fn all_reported(&self) -> bool {
+        self.created
+            && self.altered
+            && self.deleted
+            && self.ignored
+            && self.errors
+            && self.cancelled
+            && self.exceptions
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -340,6 +372,7 @@ impl TallyImportResult {
         expected_deleted: u64,
     ) -> bool {
         (expected_created > 0 || expected_altered > 0 || expected_deleted > 0)
+            && self.counter_presence.all_reported()
             && self.created == expected_created
             && self.altered == expected_altered
             && self.deleted == expected_deleted
@@ -752,7 +785,7 @@ fn process_utf8_chunk(
                 pending.clear();
             }
             Err(error) if error.error_len().is_some() => {
-                return Err(TallyTextDecodeError::InvalidUtf8)
+                return Err(TallyTextDecodeError::InvalidUtf8);
             }
             Err(_) => {}
         }
@@ -1228,7 +1261,9 @@ pub fn parse_standard_ledger_identity_observation(
                 }
                 if let Some(previous) = &company_guid {
                     if previous != &observed.company_guid {
-                        anyhow::bail!("standard ledger identity collection contained inconsistent company context");
+                        anyhow::bail!(
+                            "standard ledger identity collection contained inconsistent company context"
+                        );
                     }
                 } else {
                     company_guid = Some(observed.company_guid);
@@ -1259,6 +1294,89 @@ pub fn parse_standard_ledger_identity_observation(
     })
 }
 
+/// Opaque identities from one validated standard catalog. GUIDs remain
+/// internal to the admission path and are never serialized into a tool result
+/// or desktop review.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardLedgerCatalog {
+    entries: Vec<(String, String)>,
+}
+
+impl StandardLedgerCatalog {
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().map(|(name, _)| name.as_str())
+    }
+
+    pub fn bind_selected(
+        &self,
+        requested_names: impl IntoIterator<Item = String>,
+    ) -> anyhow::Result<StandardLedgerCatalogBinding> {
+        let mut requested = requested_names.into_iter().collect::<Vec<_>>();
+        requested.sort();
+        requested.dedup();
+        let entries = requested
+            .into_iter()
+            .map(|name| {
+                let (_, guid) = self
+                    .entries
+                    .iter()
+                    .find(|(candidate, _)| candidate == &name)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("standard ledger catalog omitted requested ledger")
+                    })?;
+                Ok((name, guid.clone()))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(StandardLedgerCatalogBinding { entries })
+    }
+}
+
+/// Opaque selected-master identities from one validated standard catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandardLedgerCatalogBinding {
+    entries: Vec<(String, String)>,
+}
+
+impl StandardLedgerCatalogBinding {
+    pub fn matches(
+        &self,
+        xml: &str,
+        expected_company_name: &str,
+        expected_company_guid: &str,
+    ) -> anyhow::Result<bool> {
+        let current = parse_standard_ledger_catalog_with_identities(
+            xml,
+            expected_company_name,
+            expected_company_guid,
+        )?;
+        // TALLY_PROTOCOL_REFERENCE.md §12a.9: Tally can retain a GUID while
+        // changing a visible ledger name, so admission binds the selected pair.
+        Ok(self.entries.iter().all(|(name, guid)| {
+            current.entries.iter().any(|(candidate, current_guid)| {
+                candidate == name && current_guid.eq_ignore_ascii_case(guid)
+            })
+        }))
+    }
+}
+
+/// Parses the standard catalog once, retaining source GUIDs only in an opaque
+/// in-memory value so an admission caller can select bindings without a second
+/// parse of the same response.
+pub fn parse_standard_ledger_catalog_with_identities(
+    xml: &str,
+    expected_company_name: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<StandardLedgerCatalog> {
+    let rows =
+        parse_standard_ledger_catalog_rows(xml, expected_company_name, expected_company_guid)?;
+    Ok(StandardLedgerCatalog {
+        entries: rows
+            .into_iter()
+            .map(|row| (row.ledger.name, row.guid))
+            .collect(),
+    })
+}
+
 /// Parses the documented `List of Ledgers` collection as a deliberately
 /// limited interactive catalog. The source GUIDs prove row uniqueness and
 /// company scope in memory only; callers receive no GUIDs or raw XML.
@@ -1267,6 +1385,24 @@ pub fn parse_standard_ledger_catalog(
     expected_company_name: &str,
     expected_company_guid: &str,
 ) -> anyhow::Result<Vec<TallyLedger>> {
+    Ok(
+        parse_standard_ledger_catalog_rows(xml, expected_company_name, expected_company_guid)?
+            .into_iter()
+            .map(|row| row.ledger)
+            .collect(),
+    )
+}
+
+struct StandardLedgerCatalogRow {
+    ledger: TallyLedger,
+    guid: String,
+}
+
+fn parse_standard_ledger_catalog_rows(
+    xml: &str,
+    expected_company_name: &str,
+    expected_company_guid: &str,
+) -> anyhow::Result<Vec<StandardLedgerCatalogRow>> {
     validate_export_response(xml)?;
     let expected_company_name = normalized_standard_value(expected_company_name, "company name")?;
     let expected_company_guid = normalized_standard_company_guid(expected_company_guid)?;
@@ -1302,11 +1438,14 @@ pub fn parse_standard_ledger_catalog(
                 {
                     anyhow::bail!("standard ledger catalog contained duplicate ledger identity");
                 }
-                rows.push(TallyLedger {
-                    name: ledger_name,
-                    parent: observed.parent,
-                    party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
-                    opening_balance: None,
+                rows.push(StandardLedgerCatalogRow {
+                    ledger: TallyLedger {
+                        name: ledger_name,
+                        parent: observed.parent,
+                        party_gstin: PartyLedgerMasterFieldObservation::NotObserved,
+                        opening_balance: None,
+                    },
+                    guid: ledger_guid,
                 });
             }
             Event::Start(element) => path.push(element.name().as_ref().to_ascii_uppercase()),
@@ -4403,6 +4542,15 @@ pub fn parse_import_outcome(xml: &str) -> anyhow::Result<TallyImportOutcome> {
         cancelled: cancelled.unwrap_or(0),
         exceptions: exceptions.unwrap_or(0),
         line_error_count,
+        counter_presence: TallyImportCounterPresence {
+            created: created.is_some(),
+            altered: altered.is_some(),
+            deleted: deleted.is_some(),
+            ignored: ignored.is_some(),
+            errors: errors.is_some(),
+            cancelled: cancelled.is_some(),
+            exceptions: exceptions.is_some(),
+        },
     };
     Ok(TallyImportOutcome {
         application_status,
@@ -4785,7 +4933,7 @@ fn validate_direct_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<()
                 read_direct_company_identity_text(reader, element.name())?;
             }
             Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(b"COMPANYINFO") => {
-                break
+                break;
             }
             Event::Start(_) | Event::Empty(_) => {
                 anyhow::bail!("Tally direct company record contained an unexpected field")
@@ -5060,7 +5208,7 @@ fn parse_company_context(
                     .as_ref()
                     .eq_ignore_ascii_case(b"COMPANYCONTEXT") =>
             {
-                break
+                break;
             }
             Event::Eof => anyhow::bail!("Tally response ended before COMPANYCONTEXT closed"),
             _ => {}
@@ -5281,7 +5429,7 @@ fn parse_company_info(reader: &mut Reader<&[u8]>) -> anyhow::Result<TallyCompany
                 company.guid = read_optional_text(reader, element.name())?
             }
             Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(b"COMPANYINFO") => {
-                break
+                break;
             }
             Event::Eof => anyhow::bail!("Tally company response ended before COMPANYINFO closed"),
             _ => {}
@@ -5662,7 +5810,7 @@ fn parse_voucher(
                 parse_ledger_entries(reader, xml, &mut voucher.ledger_entries)?;
             }
             Event::End(element) if element.name().as_ref().eq_ignore_ascii_case(b"VOUCHER") => {
-                break
+                break;
             }
             Event::Start(_) | Event::Empty(_) => {
                 anyhow::bail!("Tally voucher row contained an unexpected field");

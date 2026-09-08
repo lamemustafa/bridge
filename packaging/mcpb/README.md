@@ -20,7 +20,7 @@ node scripts/package-mcpb.mjs --binary /path/to/bridge_mcp
 
 The committed `manifest.json` is a schema-valid template; it is not an archive manifest. The command builds the host `bridge_mcp` release binary with the locked dependencies, then replaces `packaging/mcpb/stage/` with a clean host-specific stage. Its binary is staged at `bin/<target-triple>/bridge_mcp` (or `.exe` on Windows), alongside `LICENSE`, `NOTICE`, `THIRD_PARTY_LICENSES.txt`, and `THIRD_PARTY_LICENSES_RUST.txt`.
 
-The generated manifest uses the [official MCPB schema](https://github.com/anthropics/mcpb/blob/main/MANIFEST.md): a string entry point, an explicit launch command, environment substitutions for user settings, and an operating-system compatibility declaration. MCPB 0.1 has no architecture compatibility field. The configuration UI keeps the local Tally host, numeric HTTP port (default `9000`), and response redaction.
+The generated manifest uses the [official MCPB schema](https://github.com/anthropics/mcpb/blob/main/MANIFEST.md): a string entry point, an explicit launch command, environment substitutions for user settings, and an operating-system compatibility declaration. MCPB 0.1 has no architecture compatibility field. The configuration UI keeps the local Tally host, numeric HTTP port (default `9000`), response redaction, and **Allow Journal posting** (on by default; every new posting requires native approval).
 
 Build and distribute separate archives for Windows x64 and macOS arm64. Intel macOS is not currently qualified, so do not label an arm64 archive as universal macOS support. Identify the architecture in each distributed filename and select the archive matching the client host.
 

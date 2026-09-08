@@ -1,4 +1,5 @@
 pub(crate) mod agent_read_request;
+pub(crate) mod approved_import;
 pub mod capability_packs;
 pub mod connection;
 pub mod connector;

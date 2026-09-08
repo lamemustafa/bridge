@@ -134,6 +134,7 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             max_bytes: 200_000,
             redaction: crate::agent::Redaction::None,
             import_enabled: true,
+            writes_enabled: false,
         });
         let company =
             bridge_tally_protocol::parse_companies_from_collection(&cycle[0].fixture.body())
@@ -147,6 +148,7 @@ async fn verification_qualifies_absence_without_hiding_positive_historical_rows(
             vouchers.push(missing);
         }
         let line = ImportLedgerLine {
+            endpoint_origin: None,
             identity_scheme: None,
             batch_id: "mode-history".into(),
             company_guid: CAPTURED_GUID.into(),

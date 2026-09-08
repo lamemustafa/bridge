@@ -13,6 +13,7 @@ fn receipt_for(directory: &Path, response: &Value) -> Value {
         max_bytes: 200_000,
         redaction: Redaction::DropNarration,
         import_enabled: false,
+        writes_enabled: false,
     });
     let wire = format!("{response}\n");
     server

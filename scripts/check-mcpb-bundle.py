@@ -16,7 +16,7 @@ import zipfile
 RESOURCES = ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt", "THIRD_PARTY_LICENSES_RUST.txt")
 DEFAULT_TOOLS = {
     "tally_status", "list_companies", "voucher_schema", "validate_masters", "outstandings",
-    "ledger_masters", "ledger_movement", "vouchers", "read_evidence", "egress_log",
+    "ledger_masters", "ledger_movement", "vouchers", "read_evidence", "egress_log", "verify_import",
 }
 MAX_BUNDLE_BYTES = 128 * 1024 * 1024
 MAX_OUTPUT_BYTES = 512 * 1024
@@ -118,8 +118,13 @@ def run_bounded(command, payload, environment, timeout=15):
 
 def resolve_environment(manifest):
     mappings = manifest["server"]["mcp_config"]["env"]
-    require(set(mappings) == {"BRIDGE_TALLY_HOST", "BRIDGE_TALLY_PORT", "BRIDGE_AGENT_REDACTION"},
-            "unexpected_environment_mapping")
+    require(set(mappings) == {"BRIDGE_TALLY_HOST", "BRIDGE_TALLY_PORT", "BRIDGE_AGENT_REDACTION",
+                              "BRIDGE_AGENT_ENABLE_WRITES"}, "unexpected_environment_mapping")
+    writes = manifest["user_config"].get("enable_writes", {})
+    require(writes.get("type") == "boolean" and isinstance(writes.get("default"), bool),
+            "writes_default_must_be_boolean")
+    require(mappings["BRIDGE_AGENT_ENABLE_WRITES"] == "${user_config.enable_writes}",
+            "writes_environment_mapping_mismatch")
     # Supply isolated client settings through the manifest itself. Overwriting
     # the resulting environment would hide broken host/port substitutions.
     values = {name: option["default"] for name, option in manifest["user_config"].items()}
@@ -127,7 +132,8 @@ def resolve_environment(manifest):
     resolved = {}
     for key, value in mappings.items():
         for name, setting in values.items():
-            value = value.replace("${user_config." + name + "}", str(setting))
+            value = value.replace("${user_config." + name + "}",
+                                  json.dumps(setting) if isinstance(setting, bool) else str(setting))
         require("${" not in value, "unresolved_environment_mapping")
         resolved[key] = value
     require(resolved["BRIDGE_TALLY_HOST"] == values["host"]
@@ -190,8 +196,20 @@ def smoke(archive, repository):
         require(replies[0]["result"]["protocolVersion"] == "2025-06-18", "protocol_mismatch")
         server_version = validate_server_version(replies[0], manifest)
         names = [tool["name"] for tool in replies[1]["result"]["tools"]]
-        require(len(names) == len(DEFAULT_TOOLS) and set(names) == DEFAULT_TOOLS,
+        expected_tools = DEFAULT_TOOLS | ({"build_import_xml", "post_import"}
+                                          if environment["BRIDGE_AGENT_ENABLE_WRITES"] == "true" else set())
+        require(len(names) == len(expected_tools) and set(names) == expected_tools,
                 "default_tools_mismatch")
+        # The user's read-only opt-out hides generation and posting while
+        # retaining verify_import for safe recovery of saved batches.
+        disabled_environment = dict(environment, BRIDGE_AGENT_ENABLE_WRITES="false")
+        catalogue_payload = b"".join(json.dumps(request).encode() + b"\n" for request in requests[:-1])
+        disabled_output, disabled_diagnostics = run_bounded([command], catalogue_payload, disabled_environment)
+        disabled_replies = [json.loads(line) for line in disabled_output.splitlines()]
+        require([reply.get("id") for reply in disabled_replies] == [1, 2], "opt_out_response_ids")
+        disabled_names = [tool["name"] for tool in disabled_replies[1]["result"]["tools"]]
+        require(len(disabled_names) == len(DEFAULT_TOOLS) and set(disabled_names) == DEFAULT_TOOLS,
+                "opt_out_tools_mismatch")
         schema = replies[2]["result"]
         require(schema.get("isError") is False
                 and schema["structuredContent"]["result"]["schema"]["type"] == "object"
@@ -207,7 +225,8 @@ def smoke(archive, repository):
             "platform": sys.platform, "archive_entries": 6, "legal_resources": len(RESOURCES),
             "server_version": server_version,
             "response_ids": [reply["id"] for reply in replies], "response_bytes": len(output),
-            "default_tool_count": len(names), "egress_receipts": receipts,
+            "default_tool_count": len(names), "opt_out_tool_count": len(disabled_names),
+            "opt_out_stderr_bytes": len(disabled_diagnostics), "egress_receipts": receipts,
             "stderr_bytes": len(diagnostics), "stderr_sha256": hashlib.sha256(diagnostics).hexdigest(),
         }
 

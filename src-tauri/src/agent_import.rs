@@ -3,9 +3,10 @@ use super::{
     render_agent_company_high_water, required_string, sha256_hex, sha256_json, Evidence, Server,
     ToolFailure, ToolOutcome,
 };
+use crate::tally::agent_read_request::AgentReadRequest;
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
-use bridge_tally_protocol::parse_standard_ledger_catalog;
+use bridge_tally_protocol::parse_standard_ledger_catalog_with_identities;
 use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -20,10 +21,14 @@ use identity::{import_identity, ImportIdentityScheme};
 #[path = "agent_import_schema.rs"]
 mod schema;
 pub(super) use schema::voucher_input_schema;
+#[path = "agent_import_dispatch_lease.rs"]
+mod dispatch_lease;
 #[path = "agent_import_ledger.rs"]
-mod ledger;
+pub(super) mod ledger;
 #[path = "agent_import_persistence.rs"]
 mod persistence;
+#[path = "agent_import_post.rs"]
+mod post;
 use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
@@ -128,11 +133,13 @@ struct ImportEntry {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct ImportLedgerLine {
+pub(super) struct ImportLedgerLine {
     batch_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     identity_scheme: Option<ImportIdentityScheme>,
     company_guid: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    endpoint_origin: Option<String>,
     #[serde(default)]
     company: Option<ImportCompanyTuple>,
     txn_ids: Vec<String>,
@@ -422,6 +429,7 @@ impl Server {
                 batch_id: batch_id.clone(),
                 identity_scheme: Some(ImportIdentityScheme::BatchV1),
                 company_guid: canonical_batch_guid(&payload.company_guid),
+                endpoint_origin: Some(super::canonical_loopback_origin(&self.settings.endpoint).map_err(|_| "host_setting_invalid".to_string())?),
                 company: Some(import_company_tuple(&company)?),
                 txn_ids: payload
                     .vouchers
@@ -453,6 +461,13 @@ impl Server {
                     truncated: false,
                 });
             }
+            // Reuse the posting admission path to describe only a route that
+            // this exact saved batch can take. A manual-only batch is still a
+            // successful build.
+            let native_post_eligible = self.settings.writes_enabled
+                && post::admit_saved_journal(&line, &self.settings.endpoint).is_ok();
+            let (warnings, next_step) =
+                build_import_guidance(self.settings.writes_enabled, native_post_eligible);
             Ok(ToolOutcome {
                 payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                     "batch_id": batch_id, "path": path, "sha256": sha256,
@@ -462,8 +477,8 @@ impl Server {
                     "identity_scheme": line.identity_scheme,
                     "observed_profile": opening_profile.observed_profile,
                     "live_evidence_report": "docs/agent/ASSESSMENT-2026-09-06.md",
-                    "warnings": ["No import XML was sent to Tally. Import the written file manually, then use verify_import.", "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits."],
-                    "next_step": "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import"
+                    "warnings": warnings,
+                    "next_step": next_step
                 }}),
                 evidence: accumulated.clone(),
                 company_guid: Some(line.company_guid.clone()),
@@ -475,17 +490,36 @@ impl Server {
     }
 
     pub(super) async fn verify_import(&self, args: &Value) -> Result<ToolOutcome, ToolFailure> {
+        self.verify_import_with_dispatch(args, false).await
+    }
+
+    pub(in crate::agent) async fn verify_import_after_current_dispatch(
+        &self,
+        args: &Value,
+    ) -> Result<ToolOutcome, ToolFailure> {
+        self.verify_import_with_dispatch(args, true).await
+    }
+
+    async fn verify_import_with_dispatch(
+        &self,
+        args: &Value,
+        current_dispatch: bool,
+    ) -> Result<ToolOutcome, ToolFailure> {
         let guid = required_string(args, "company_guid")?;
         let batch_id = required_string(args, "batch_id")?;
         let ledger::BatchSnapshot {
             batch: line,
             generation,
+            response: dispatch_response,
+            dispatched,
+            ..
         } = self
             .latest_import_snapshot(batch_id)?
             .ok_or_else(|| "import_batch_not_found".to_string())?;
         if !batch_guid_matches(&line.company_guid, guid) {
             return Err("import_batch_company_mismatch".to_string().into());
         }
+        validate_dispatched_import_endpoint(&line, dispatched, &self.settings.endpoint)?;
         let opening_mode = self.observe_import_profile().await?;
         let (company, identity, identity_evidence) = self
             .verified_company(guid)
@@ -529,17 +563,35 @@ impl Server {
                 "company": company_json(&company, std::slice::from_ref(&company)),
                 "batch_id": line.batch_id, "batch_sha256": line.sha256,
                 "built_at": line.built_at, "verified_at": now(),
+                "dispatch_response": dispatch_response,
                 "pre_import_mark": line.pre_import_mark, "alter_id_delta": alter_id_delta(&line.pre_import_mark, &observed.rows),
                 "counts": result["counts"], "vouchers": result["vouchers"], "duplicates": result["duplicates"],
                 "unrelated_duplicates_in_window": result["unrelated_duplicates_in_window"],
                 "evidence": {"mode_opening": opening_mode.evidence, "mode_closing": closing_mode_evidence, "company": identity_evidence, "voucher_read": evidence, "voucher_read_corroboration": corroboration_evidence, "voucher_read_sha256": sha256_hex(xml.as_bytes())}
             });
-            let status = verification_status(&result, line.vouchers.len());
+            let mut payload = json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof});
+            if dispatched {
+                if current_dispatch {
+                    post::finalize_current_dispatch(&mut payload, dispatch_response.as_ref());
+                } else {
+                    post::finalize_previous_attempt_reconciliation(
+                        &mut payload,
+                        dispatch_response.as_ref(),
+                    );
+                }
+            }
+            let status = if dispatched
+                && payload["result"]["dispatch"]["state"] == "reconciliation_required"
+            {
+                "verification_incomplete"
+            } else {
+                verification_status(&result, line.vouchers.len())
+            };
             let mut update = line.clone();
             update.status = status.to_string();
-            self.persist_import_verification(&proof, &update, generation)?;
+            self.persist_import_verification(&payload["result"], &update, generation)?;
             Ok(ToolOutcome {
-                payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": proof}),
+                payload,
                 evidence: accumulated.clone(),
                 company_guid: Some(guid.to_string()),
                 truncated: false,
@@ -580,21 +632,44 @@ impl Server {
         identity: &super::VerifiedCompanyIdentity,
         company_name: &str,
     ) -> Result<(Vec<String>, Evidence), ToolFailure> {
+        let (names, _, _, evidence) = self
+            .read_import_ledger_catalogue(identity, company_name)
+            .await?;
+        Ok((names, evidence))
+    }
+
+    async fn read_import_ledger_catalogue(
+        &self,
+        identity: &super::VerifiedCompanyIdentity,
+        company_name: &str,
+    ) -> Result<
+        (
+            Vec<String>,
+            bridge_tally_protocol::StandardLedgerCatalog,
+            AgentReadRequest,
+            Evidence,
+        ),
+        ToolFailure,
+    > {
         let name = ValidatedCompanyName::new(company_name.to_string())
             .map_err(|_| "company_name_invalid".to_string())?;
-        let (xml, evidence) = self
-            .post_read(
-                identity,
-                ReadOnlyProfile::StandardLedgerCatalogV1 { company: &name }.render(),
-            )
-            .await?;
-        let ledgers = parse_standard_ledger_catalog(&xml, company_name, identity.company_guid())
-            .map_err(|_| {
-                ToolFailure::from("ledger_export_invalid".to_string())
-                    .with_prior_evidence(evidence.clone())
-            })?;
+        let request_xml = ReadOnlyProfile::StandardLedgerCatalogV1 { company: &name }.render();
+        let request = AgentReadRequest::parse(request_xml.clone())
+            .map_err(|_| "ledger_export_invalid".to_string())?;
+        let (xml, evidence) = self.post_read(identity, request_xml).await?;
+        let catalogue = parse_standard_ledger_catalog_with_identities(
+            &xml,
+            company_name,
+            identity.company_guid(),
+        )
+        .map_err(|_| {
+            ToolFailure::from("ledger_export_invalid".to_string())
+                .with_prior_evidence(evidence.clone())
+        })?;
         Ok((
-            ledgers.into_iter().map(|ledger| ledger.name).collect(),
+            catalogue.names().map(str::to_string).collect(),
+            catalogue,
+            request,
             evidence,
         ))
     }
@@ -632,12 +707,13 @@ impl Server {
         Ok(path)
     }
 
-    fn lock_import_admission(&self) -> Result<std::fs::File, String> {
+    pub(super) fn lock_import_admission(&self) -> Result<std::fs::File, String> {
         let path = self.settings.data_dir.join("agent-import-admission.lock");
         let file = super::local_file::open_local_file(&path, true)
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
-        file.lock()
-            .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        // Never park the async request loop behind another process's network
+        // work. Contention is an in-band refusal, not a deferred posting request.
+        file.try_lock().map_err(import_admission_lock_error)?;
         persistence::require_settled(&self.settings.data_dir.join("imports"))?;
         Ok(file)
     }
@@ -646,8 +722,8 @@ impl Server {
         let path = self.settings.data_dir.join("agent-import-admission.lock");
         let file = super::local_file::open_local_file(&path, true)
             .map_err(|_| "import_admission_lock_unavailable".to_string())?;
-        file.lock_shared()
-            .map_err(|_| "import_admission_lock_unavailable".to_string())?;
+        file.try_lock_shared()
+            .map_err(import_admission_lock_error)?;
         persistence::require_settled(&self.settings.data_dir.join("imports"))?;
         Ok(file)
     }
@@ -693,7 +769,7 @@ impl Server {
     }
 
     #[cfg(test)]
-    fn append_import_ledger(&self, line: &ImportLedgerLine) -> Result<(), String> {
+    pub(super) fn append_import_ledger(&self, line: &ImportLedgerLine) -> Result<(), String> {
         let _admission_lock = self.lock_import_admission()?;
         self.append_import_ledger_while_admitted(line)
     }
@@ -702,7 +778,10 @@ impl Server {
         self.append_import_record_while_admitted(line)
     }
 
-    fn append_import_record_while_admitted(&self, line: &impl Serialize) -> Result<(), String> {
+    pub(super) fn append_import_record_while_admitted(
+        &self,
+        line: &impl Serialize,
+    ) -> Result<(), String> {
         let path = self.settings.data_dir.join("agent-import-ledger.jsonl");
         let encoded = serde_json::to_string(line)
             .map_err(|_| "import_ledger_serialization_failed".to_string())?;
@@ -712,6 +791,32 @@ impl Server {
         }
         append_private_import_ledger(&path, encoded.as_bytes(), set_private_file)
     }
+}
+
+fn import_admission_lock_error(error: std::fs::TryLockError) -> String {
+    match error {
+        std::fs::TryLockError::WouldBlock => "import_admission_busy",
+        std::fs::TryLockError::Error(_) => "import_admission_lock_unavailable",
+    }
+    .into()
+}
+
+/// A native-dispatched batch is tied to the Tally endpoint used for its saved
+/// admission. Older manual imports retain their original verification path.
+fn validate_dispatched_import_endpoint(
+    line: &ImportLedgerLine,
+    dispatched: bool,
+    endpoint: &super::TallyEndpointConfig,
+) -> Result<(), String> {
+    if !dispatched {
+        return Ok(());
+    }
+    let origin = super::canonical_loopback_origin(endpoint)
+        .map_err(|_| "host_setting_invalid".to_string())?;
+    if line.endpoint_origin.as_deref() != Some(origin.as_str()) {
+        return Err("import_post_endpoint_mismatch".into());
+    }
+    Ok(())
 }
 
 fn append_private_import_ledger(
@@ -812,6 +917,39 @@ fn nonempty_company_field(value: &str) -> Result<String, String> {
     (!value.trim().is_empty())
         .then(|| value.to_string())
         .ok_or_else(|| "company_identity_incomplete".to_string())
+}
+
+fn build_import_guidance(
+    writes_enabled: bool,
+    native_post_eligible: bool,
+) -> (Value, &'static str) {
+    let preflight_warning =
+        "The preflight observes the current verification window. The import or subsequent changes can make later readback exceed the source limits.";
+    if writes_enabled && native_post_eligible {
+        (
+            json!([
+                "No import XML was sent to Tally. To post this saved batch, call post_import; it requires a separate native approval. If you import the file manually, call verify_import afterward and do not call post_import for that batch.",
+                preflight_warning
+            ]),
+            "Call post_import with this company_guid and batch_id; the local user must review and approve it before one posting attempt.",
+        )
+    } else if writes_enabled {
+        (
+            json!([
+                "No import XML was sent to Tally. This saved batch is not eligible for native posting because native posting requires one unnumbered Journal with a reviewable preview. Import the written file manually, then use verify_import; do not call post_import for this batch.",
+                preflight_warning
+            ]),
+            "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import",
+        )
+    } else {
+        (
+            json!([
+                "No import XML was sent to Tally. Import the written file manually, then use verify_import.",
+                preflight_warning
+            ]),
+            "Import this file in Tally (Gateway of Tally → Import → Vouchers) with the company open, then call verify_import",
+        )
+    }
 }
 
 fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
@@ -975,13 +1113,20 @@ fn totals(vouchers: &[ImportVoucher]) -> Result<(ExactDecimal, ExactDecimal), St
 }
 
 fn masters_for_payload(payload: &ImportPayload, catalogue: &[String]) -> Vec<Value> {
-    let mut names = BTreeSet::new();
-    for entry in payload.vouchers.iter().flat_map(|voucher| &voucher.entries) {
-        names.insert(entry.ledger.as_str());
-    }
-    names
+    requested_ledger_names(payload)
         .into_iter()
-        .map(|name| master_match(name, catalogue))
+        .map(|name| master_match(&name, catalogue))
+        .collect()
+}
+
+fn requested_ledger_names(payload: &ImportPayload) -> Vec<String> {
+    payload
+        .vouchers
+        .iter()
+        .flat_map(|voucher| &voucher.entries)
+        .map(|entry| entry.ledger.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect()
 }
 
@@ -1036,20 +1181,37 @@ fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) 
     let messages = vouchers
         .iter()
         .map(|voucher| {
-            render_voucher_xml(voucher, import_identity(batch_id, &voucher.bridge_txn_id))
+            let identity = import_identity(batch_id, &voucher.bridge_txn_id);
+            render_voucher_xml(voucher, identity, identity)
         })
         .collect::<String>();
+    render_import_envelope(company, &messages)
+}
+
+fn render_native_journal_xml(company: &str, voucher: &ImportVoucher, batch_id: &str) -> String {
+    // A public file may already have been imported and edited. Never reuse its
+    // client REMOTEID for a native Create, which Tally can treat as an upsert.
+    // The stable narration tag remains the batch attribution used by readback.
+    let messages = render_voucher_xml(
+        voucher,
+        Uuid::new_v4(),
+        import_identity(batch_id, &voucher.bridge_txn_id),
+    );
+    render_import_envelope(company, &messages)
+}
+
+fn render_import_envelope(company: &str, messages: &str) -> String {
     format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>{}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>{messages}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>", xml_escape(company))
 }
 
-fn render_voucher_xml(voucher: &ImportVoucher, identity: Uuid) -> String {
+fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: Uuid) -> String {
     let narration = format!(
         "<NARRATION>{}</NARRATION>",
         xml_escape(
             format!(
                 "{} [BRIDGE:{}]",
                 voucher.narration.as_deref().unwrap_or("").trim(),
-                identity
+                attribution_id
             )
             .trim(),
         )
@@ -1070,9 +1232,9 @@ fn render_voucher_xml(voucher: &ImportVoucher, identity: Uuid) -> String {
         format!("<ALLLEDGERENTRIES.LIST><LEDGERNAME>{}</LEDGERNAME><ISDEEMEDPOSITIVE>{}</ISDEEMEDPOSITIVE><AMOUNT>{}</AMOUNT></ALLLEDGERENTRIES.LIST>", xml_escape(&entry.ledger), entry.side.tally_positive(), amount)
     }).collect::<String>();
     // The qualified human-import slice uses Create + stable client REMOTEID;
-    // a supplied voucher number is optional and is not its identity key.
+    // native posting uses a separate private REMOTEID and no supplied number.
     // See docs/tally/TALLY_PROTOCOL_REFERENCE.md §9.8 for scope and limits.
-    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{}</DATE><VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", identity, voucher.voucher_type.as_str(), normalized_date(&voucher.date).unwrap_or_default(), voucher.voucher_type.as_str())
+    format!("<TALLYMESSAGE xmlns:UDF=\"TallyUDF\"><VOUCHER REMOTEID=\"{}\" VCHTYPE=\"{}\" ACTION=\"Create\" OBJVIEW=\"Accounting Voucher View\"><DATE>{}</DATE><VOUCHERTYPENAME>{}</VOUCHERTYPENAME>{voucher_number}{narration}{reference}{entries}</VOUCHER></TALLYMESSAGE>", remote_id, voucher.voucher_type.as_str(), normalized_date(&voucher.date).unwrap_or_default(), voucher.voucher_type.as_str())
 }
 
 fn render_import_verification_read(company: &str, from: &str, to: &str) -> String {
@@ -1629,7 +1791,32 @@ fn alter_id_delta(mark: &PreImportMark, observed: &[ReadVoucher]) -> Value {
 }
 
 fn render_proof_markdown(proof: &Value) -> String {
-    let mut output = format!("# Proof-of-Post — {}\n\n- Company: `{}`\n- Batch SHA-256: `{}`\n- Verified: `{}`\n- Counts: verified {}, divergent {}, not found {}\n- AlterID delta: `{}`\n- Unrelated duplicates in window: {}\n\n| Transaction | Status |\n| --- | --- |\n", proof["batch_id"].as_str().unwrap_or("unknown"), proof["company"]["name"].as_str().unwrap_or("unknown"), proof["batch_sha256"].as_str().unwrap_or("unknown"), proof["verified_at"].as_str().unwrap_or("unknown"), proof["counts"]["posted_verified"], proof["counts"]["posted_divergent"], proof["counts"]["not_found"], proof["alter_id_delta"], proof["unrelated_duplicates_in_window"].as_array().map_or(0, Vec::len));
+    let mut output = format!(
+        "# Journal verification — {}\n\n",
+        proof["batch_id"].as_str().unwrap_or("unknown")
+    );
+    let dispatch_state = proof["dispatch"]["state"].as_str();
+    if !proof["error"].is_null()
+        || (proof.get("dispatch").is_some()
+            && !matches!(
+                dispatch_state,
+                Some("posted_verified" | "previous_attempt_reconciled")
+            ))
+    {
+        output.push_str("**Reconciliation required — this report does not confirm posting.**\n\nA matching voucher readback alone is insufficient. Reconcile the original saved batch; do not rebuild or resend it.\n\n");
+    }
+    if let Some(state) = dispatch_state {
+        output.push_str(&format!(
+            "- Dispatch verdict: `{state}`\n- Response state: `{}`\n",
+            proof["dispatch"]["response_state"]
+                .as_str()
+                .unwrap_or("unknown")
+        ));
+    }
+    if let Some(code) = proof["error"]["code"].as_str() {
+        output.push_str(&format!("- Error: `{code}`\n"));
+    }
+    output.push_str(&format!("\n- Company: `{}`\n- Batch SHA-256: `{}`\n- Readback checked: `{}`\n- Readback counts: matching {}, divergent {}, not found {}\n- AlterID delta: `{}`\n- Unrelated duplicates in window: {}\n\n| Transaction | Readback status |\n| --- | --- |\n", proof["company"]["name"].as_str().unwrap_or("unknown"), proof["batch_sha256"].as_str().unwrap_or("unknown"), proof["verified_at"].as_str().unwrap_or("unknown"), proof["counts"]["posted_verified"], proof["counts"]["posted_divergent"], proof["counts"]["not_found"], proof["alter_id_delta"], proof["unrelated_duplicates_in_window"].as_array().map_or(0, Vec::len)));
     for row in proof["vouchers"].as_array().into_iter().flatten() {
         output.push_str(&format!(
             "| {} | {} |\n",

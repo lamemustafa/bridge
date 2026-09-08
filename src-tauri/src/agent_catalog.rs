@@ -5,7 +5,7 @@ pub(super) fn validate_tool_arguments(name: &str, args: &Value) -> Result<(), St
     let arguments = args
         .as_object()
         .ok_or_else(|| "argument_schema_invalid".to_string())?;
-    let definitions = registered_tool_definitions(true);
+    let definitions = registered_tool_definitions(true, true);
     let schema = &definitions
         .as_array()
         .expect("tool definitions")
@@ -105,17 +105,17 @@ fn validate_string_bounds(text: &str, schema: &Value, key: &str) -> Result<(), S
     Ok(())
 }
 
-pub(super) fn tool_definitions(import_enabled: bool) -> Value {
-    let mut definitions = registered_tool_definitions(import_enabled);
+pub(super) fn tool_definitions(import_enabled: bool, writes_enabled: bool) -> Value {
+    let mut definitions = registered_tool_definitions(import_enabled, writes_enabled);
     definitions
         .as_array_mut()
-        .expect("tool definitions")
+        .expect("tools")
         .retain(|tool| tool["name"] != "changed_since");
     definitions
 }
 
 // Retain the internal schema while bounded change enumeration is unqualified.
-pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
+pub(super) fn registered_tool_definitions(import_enabled: bool, writes_enabled: bool) -> Value {
     let names = [
         "tally_status",
         "list_companies",
@@ -123,6 +123,7 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
         "validate_masters",
         "build_import_xml",
         "verify_import",
+        "post_import",
         "outstandings",
         "ledger_masters",
         "ledger_movement",
@@ -134,7 +135,11 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
     Value::Array(
         names
             .into_iter()
-            .filter(|name| import_enabled || !matches!(*name, "build_import_xml" | "verify_import"))
+            // Verification is a read-only recovery capability. Keep it
+            // available when Journal generation/posting is disabled so an
+            // uncertain saved batch can still be checked safely.
+            .filter(|name| import_enabled || *name != "build_import_xml")
+            .filter(|name| writes_enabled || *name != "post_import")
             .map(|name| {
                 let (description, input_schema) = match name {
                     "voucher_schema" => (
@@ -148,6 +153,10 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
                     "build_import_xml" => (
                         "Validate a Journal batch and read its current verification window before writing a local import file. Every build creates a new batch identity, even for reused transaction labels; retry the saved file instead of rebuilding the same business event. Later changes may exceed read limits. Other voucher types are unqualified. This never dispatches import XML to Tally.",
                         agent_import::voucher_input_schema(),
+                    ),
+                    "post_import" => (
+                        "Ask the local user to review and approve ONE saved Journal in a native dialog, then attempt posting once and read it back. Requires opt-in. Repeating the original batch only reconciles; never rebuild the same event after a timeout. The model cannot approve it. No master creation, sales, purchase, tax, inventory, alteration or deletion.",
+                        json!({"type":"object", "additionalProperties":false, "required":["company_guid","batch_id"], "properties":{"company_guid":{"type":"string"},"batch_id":{"type":"string","minLength":43,"maxLength":43}}}),
                     ),
                     "verify_import" => (
                         "Read back a manually imported local batch and write Proof-of-Post files. This never dispatches import XML to Tally.",
@@ -190,7 +199,11 @@ pub(super) fn registered_tool_definitions(import_enabled: bool) -> Value {
                         json!({"type":"object", "additionalProperties": false}),
                     ),
                 };
-                json!({"name": name, "description": description, "inputSchema": input_schema})
+                let mut tool = json!({"name": name, "description": description, "inputSchema": input_schema});
+                if name == "post_import" {
+                    tool["annotations"] = json!({"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true});
+                }
+                tool
             })
             .collect(),
     )

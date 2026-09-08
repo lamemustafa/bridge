@@ -18,7 +18,9 @@ use super::{
 use crate::reports::party_ledger_master::{
     PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
 };
-use crate::tally::runtime::{PartyLedgerMasterCurrencyAssertion, RuntimeReadEvidence};
+use crate::tally::runtime::{
+    with_read_evidence, PartyLedgerMasterCurrencyAssertion, RuntimeReadEvidence,
+};
 use bridge_tally_core::{
     CapabilityEvidence, CapabilityFeatureId, CapabilityPackId, CapabilityProfile, CapabilityState,
     EvidenceConfidence, LicenseTier, TransportId,
@@ -824,7 +826,7 @@ impl TallyClient {
         })
     }
 
-    async fn post_probe_xml(
+    pub(super) async fn post_probe_xml(
         &self,
         xml: String,
         evidence: &mut RuntimeReadEvidence,
@@ -920,13 +922,32 @@ impl TallyClient {
     /// ordinary shaped `HEADER/STATUS=1` envelope, so `parse_companies_from_collection`
     /// can require that shape outright.
     pub async fn fetch_companies(&self) -> anyhow::Result<Vec<TallyCompany>> {
+        self.fetch_companies_with_wire_evidence()
+            .await
+            .map(|(companies, _)| companies)
+    }
+
+    /// Enumerates the complete Company collection together with the exact
+    /// request/response commitment. Write admission retains this observation
+    /// instead of treating a parsed tuple as sufficient evidence.
+    pub(crate) async fn fetch_companies_with_wire_evidence(
+        &self,
+    ) -> anyhow::Result<(Vec<TallyCompany>, RuntimeReadEvidence)> {
+        let mut evidence = RuntimeReadEvidence::empty();
         let xml = self
-            .post_xml(ReadOnlyProfile::CompanyListV2.render())
+            .post_probe_xml(ReadOnlyProfile::CompanyListV2.render(), &mut evidence)
             .await?;
-        let companies = xml_parser::parse_companies_from_collection(&xml)?;
-        normalize_discovered_companies(companies).map_err(|_| {
-            anyhow::anyhow!("Tally returned an invalid company identity for interactive discovery")
-        })
+        let discovered = xml_parser::parse_companies_from_collection(&xml)
+            .map_err(|error| with_read_evidence(error, evidence.clone()))?;
+        let companies = normalize_discovered_companies(discovered).map_err(|_| {
+            with_read_evidence(
+                anyhow::anyhow!(
+                    "Tally returned an invalid company identity for interactive discovery"
+                ),
+                evidence.clone(),
+            )
+        })?;
+        Ok((companies, evidence))
     }
 
     /// Re-enumerates the trusted `Company` collection, then proves one
@@ -3524,6 +3545,10 @@ mod tests {
         .expect_err("a company row without a GUID must fail closed");
         server.await.expect("synthetic Tally server task");
         assert!(error.to_string().contains("GUID"));
+        let retained = error
+            .downcast_ref::<crate::tally::runtime::RuntimeReadFailure>()
+            .expect("parser refusal retains its typed wire-evidence boundary");
+        assert!(retained.evidence.bytes > 0);
     }
 
     #[tokio::test]

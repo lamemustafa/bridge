@@ -18,6 +18,7 @@ fn server(path: &Path) -> Server {
         max_bytes: 200_000,
         redaction: Redaction::MaskParties,
         import_enabled: false,
+        writes_enabled: false,
     })
 }
 
@@ -140,6 +141,89 @@ async fn oversized_request_id_is_refused_before_a_tool_or_receipt() {
     assert_eq!(responses[1]["error"]["message"], "request_id_too_large");
     assert!(format!("{}\n", responses[1]).len() <= 256);
     assert!(!directory.path().join("agent-egress.jsonl").exists());
+}
+
+#[tokio::test]
+async fn structured_reconciliation_error_keeps_the_saved_batch_and_readback_payload() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = server(directory.path());
+    let batch_id = "bridge-00000000-0000-0000-0000-000000000001";
+    let result = json!({
+        "content": [{"type":"text","text":"reconciliation required"}],
+        "structuredContent": {
+            "result": {
+                "batch_id": batch_id,
+                "dispatch": {"state":"reconciliation_required", "resent":false},
+                "counters": {"created":1,"altered":0,"deleted":0},
+                "error": {"code":"import_reconciliation_required","message":"reconcile"}
+            },
+            "evidence": {"state":"partial"}
+        },
+        "isError": true
+    });
+    let mut output = Vec::new();
+    finish_response(
+        &server,
+        &mut output,
+        json!(17),
+        Ok(result),
+        None,
+        Some(batch_id.to_string()),
+        true,
+    )
+    .await
+    .unwrap();
+    let response: Value = serde_json::from_slice(&output).unwrap();
+    assert!(response.get("error").is_none());
+    let structured = &response["result"]["structuredContent"]["result"];
+    assert_eq!(structured["batch_id"], batch_id);
+    assert_eq!(structured["dispatch"]["state"], "reconciliation_required");
+    assert_eq!(structured["counters"]["created"], 1);
+    assert_eq!(
+        structured["error"]["code"],
+        "import_reconciliation_required"
+    );
+}
+
+#[test]
+fn compact_dispatch_response_keeps_wire_commitments_when_outcome_is_unavailable() {
+    let response = compact_dispatch_response(&json!({
+        "request_sha256":"a".repeat(64),
+        "response_sha256":"b".repeat(64),
+        "bytes": 42,
+        "outcome": null
+    }))
+    .expect("valid wire commitments");
+    assert_eq!(response["request_sha256"], "a".repeat(64));
+    assert_eq!(response["response_sha256"], "b".repeat(64));
+    assert_eq!(response["bytes"], 42);
+    assert!(response["outcome"].is_null());
+}
+
+#[test]
+fn recovery_egress_error_falls_back_to_the_batch_when_the_compact_response_exceeds_the_cap() {
+    let batch_id = "bridge-00000000-0000-0000-0000-000000000001";
+    let original = json!({"result":{"structuredContent":{"result":{
+        "attempt_recorded":true,
+        "dispatch_response":{
+            "request_sha256":"a".repeat(64),
+            "response_sha256":"b".repeat(64),
+            "bytes":42,
+            "outcome":{
+                "application_status":"success",
+                "counters":{"created":1,"altered":0,"deleted":0,"ignored":0,"errors":0,"cancelled":0,"exceptions":0,"line_error_count":0},
+                "exceptions_were_reported":true
+            }
+        }
+    }}}});
+    let response = recovery_error_with_dispatch(
+        json!(1),
+        Some(batch_id),
+        "egress_record_write_failed",
+        &original,
+        200,
+    );
+    assert_eq!(response["error"]["data"], json!({"batch_id":batch_id}));
 }
 
 #[tokio::test]
