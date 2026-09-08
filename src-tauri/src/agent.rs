@@ -37,6 +37,8 @@ mod vouchers;
 use outstandings::*;
 #[path = "agent_movement.rs"]
 mod movement;
+#[path = "agent_trial_balance.rs"]
+mod trial_balance;
 #[cfg(test)]
 use movement::parse_movement_vouchers;
 #[path = "agent_responses.rs"]
@@ -377,7 +379,11 @@ impl From<String> for ToolFailure {
 
 impl ToolFailure {
     fn from_runtime(code: &str, error: anyhow::Error) -> Self {
-        let code = if error.chain().any(|cause| {
+        let code = if let Some(error) = error.chain().find_map(|cause| {
+            cause.downcast_ref::<crate::tally::runtime::TrialBalanceReadError>()
+        }) {
+            error.safe_code()
+        } else if error.chain().any(|cause| {
             matches!(
                 cause.downcast_ref::<crate::tally::runtime::OpeningBoundaryObservationError>(),
                 Some(crate::tally::runtime::OpeningBoundaryObservationError::Period(_))
@@ -668,6 +674,7 @@ impl Server {
             "changed_since" => self.changed_since(args).await,
             "outstandings" => self.outstandings(args).await,
             "ledger_movement" => self.ledger_movement(args).await,
+            "trial_balance" => self.trial_balance(args).await,
             "read_evidence" => self.read_evidence(args).map_err(Into::into),
             "egress_log" => self.egress_log(args).map_err(Into::into),
             _ => Err("tool_not_found".to_string().into()),
