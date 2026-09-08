@@ -50,26 +50,29 @@ pub fn parse_native_trial_balance(
                 if path.is_empty() {
                     root_seen = true;
                 }
-                if path_is(&path, &[b"ENVELOPE"]) && name == b"HEADER" {
-                    if std::mem::replace(&mut header_seen, true) {
-                        return Err(NativeTrialBalanceError::InvalidResponse(
-                            "trial_balance_duplicate_header",
-                        ));
-                    }
+                if path_is(&path, &[b"ENVELOPE"])
+                    && name == b"HEADER"
+                    && std::mem::replace(&mut header_seen, true)
+                {
+                    return Err(NativeTrialBalanceError::InvalidResponse(
+                        "trial_balance_duplicate_header",
+                    ));
                 }
-                if path_is(&path, &[b"ENVELOPE"]) && name == b"BODY" {
-                    if std::mem::replace(&mut body_seen, true) {
-                        return Err(NativeTrialBalanceError::InvalidResponse(
-                            "trial_balance_duplicate_body",
-                        ));
-                    }
+                if path_is(&path, &[b"ENVELOPE"])
+                    && name == b"BODY"
+                    && std::mem::replace(&mut body_seen, true)
+                {
+                    return Err(NativeTrialBalanceError::InvalidResponse(
+                        "trial_balance_duplicate_body",
+                    ));
                 }
-                if path_is(&path, &[b"ENVELOPE", b"BODY"]) && name == b"DATA" {
-                    if std::mem::replace(&mut data_seen, true) {
-                        return Err(NativeTrialBalanceError::InvalidResponse(
-                            "trial_balance_duplicate_data",
-                        ));
-                    }
+                if path_is(&path, &[b"ENVELOPE", b"BODY"])
+                    && name == b"DATA"
+                    && std::mem::replace(&mut data_seen, true)
+                {
+                    return Err(NativeTrialBalanceError::InvalidResponse(
+                        "trial_balance_duplicate_data",
+                    ));
                 }
                 if name == b"LINEERROR" || name == b"ERROR" || name == b"DOCTYPE" {
                     return Err(NativeTrialBalanceError::TallyReportedFailure);
