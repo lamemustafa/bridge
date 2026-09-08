@@ -21,8 +21,8 @@ pub const ATTESTATION_SCHEMA_VERSION: u16 = 1;
 pub const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 /// Capacity deliberately reserved for one small cohesive surface change.
 pub const RESERVED_SURFACE_FILES: usize = 15;
-/// Bounded high enough for the additive Tally safety-migration, Trial Balance,
-/// and selected-ledger evidence surfaces while still rejecting an unexpectedly
+/// Bounded high enough for the additive Tally safety-migration, Trial Balance, selected-ledger evidence, and endpoint-reconnect
+/// helper surfaces while still rejecting an unexpectedly
 /// broad attestation surface.
 /// Every file under the Tally migration and report directories is required by a
 /// directory rule; `src/` and the protocol crates remain judgment-pinned
