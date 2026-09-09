@@ -30,7 +30,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 194;
+pub const MAX_SURFACE_FILES: usize = 195;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -38,6 +38,9 @@ pub const MAX_MATRIX_MARKDOWN_BYTES: usize = 1024 * 1024;
 const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1000;
 const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
     ["src-tauri/src/db/migrations", "src-tauri/src/reports"];
+/// The selected-ledger operation constructs its server through this file, so
+/// compatibility evidence must bind the constructor as well as its caller.
+const REQUIRED_SURFACE_FILES: [&str; 1] = ["src-tauri/src/agent_desktop_journal.rs"];
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CompatibilityError {
@@ -667,6 +670,11 @@ impl CompatibilitySurfaceManifest {
                 &mut required_paths,
             )?;
         }
+        required_paths.extend(
+            REQUIRED_SURFACE_FILES
+                .iter()
+                .map(|path| (*path).to_string()),
+        );
         if required_paths
             .iter()
             .any(|path| !sealed_paths.contains(path.as_str()))
@@ -1870,13 +1878,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         create_required_surface_directories(temp.path());
         fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
-        let file_sha = sha256_file(&temp.path().join("surface.txt")).unwrap();
         let surface = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: vec![SurfaceFile {
-                path: "surface.txt".to_string(),
-                sha256: file_sha,
-            }],
+            files: sealed_surface_files(temp.path(), &["surface.txt"]),
             manifest_sha256: String::new(),
         }
         .seal()
@@ -1931,10 +1935,7 @@ mod tests {
         fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
         let surface = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: vec![SurfaceFile {
-                path: "surface.txt".to_string(),
-                sha256: sha256_file(&temp.path().join("surface.txt")).unwrap(),
-            }],
+            files: sealed_surface_files(temp.path(), &["surface.txt"]),
             manifest_sha256: String::new(),
         }
         .seal()
@@ -2061,10 +2062,7 @@ mod tests {
         fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
         let surface = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: vec![SurfaceFile {
-                path: "surface.txt".to_string(),
-                sha256: sha256_file(&temp.path().join("surface.txt")).unwrap(),
-            }],
+            files: sealed_surface_files(temp.path(), &["surface.txt"]),
             manifest_sha256: String::new(),
         }
         .seal()
@@ -2289,16 +2287,30 @@ mod tests {
         fs::write(temp.path().join("surface.txt"), b"before").unwrap();
         let surface = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: vec![SurfaceFile {
-                path: "surface.txt".to_string(),
-                sha256: sha256_file(&temp.path().join("surface.txt")).unwrap(),
-            }],
+            files: sealed_surface_files(temp.path(), &["surface.txt"]),
             manifest_sha256: String::new(),
         }
         .seal()
         .unwrap();
         surface.validate_files(temp.path()).unwrap();
         fs::write(temp.path().join("surface.txt"), b"after").unwrap();
+        assert_eq!(
+            surface.validate_files(temp.path()).unwrap_err(),
+            invalid("surface_file_changed")
+        );
+    }
+
+    #[test]
+    fn surface_manifest_detects_required_constructor_drift() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+        let surface = sealed_surface(temp.path(), &["surface.txt"]);
+        fs::write(
+            temp.path().join("src-tauri/src/agent_desktop_journal.rs"),
+            b"changed selected-read constructor",
+        )
+        .unwrap();
+
         assert_eq!(
             surface.validate_files(temp.path()).unwrap_err(),
             invalid("surface_file_changed")
@@ -2437,10 +2449,10 @@ mod tests {
     }
 
     #[test]
-    fn surface_file_cap_refuses_195_entries() {
+    fn surface_file_cap_refuses_196_entries() {
         let oversized = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: (0..195)
+            files: (0..196)
                 .map(|index| SurfaceFile {
                     path: format!("pinned-{index:03}"),
                     sha256: "0".repeat(64),
@@ -2455,26 +2467,68 @@ mod tests {
         );
     }
 
+    #[test]
+    fn gate_rejects_an_unpinned_selected_read_constructor() {
+        let temp = tempfile::tempdir().unwrap();
+        create_required_surface_directories(temp.path());
+        fs::create_dir_all(temp.path().join("src-tauri/src")).unwrap();
+        fs::write(
+            temp.path().join("src-tauri/src/agent_desktop_journal.rs"),
+            b"selected-read constructor",
+        )
+        .unwrap();
+        fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+
+        assert_eq!(
+            CompatibilitySurfaceManifest {
+                schema_version: SURFACE_SCHEMA_VERSION,
+                files: vec![SurfaceFile {
+                    path: "surface.txt".to_string(),
+                    sha256: sha256_file(&temp.path().join("surface.txt")).unwrap(),
+                }],
+                manifest_sha256: String::new(),
+            }
+            .seal()
+            .unwrap()
+            .validate_files(temp.path())
+            .unwrap_err(),
+            invalid("surface_required_directory_file_unpinned")
+        );
+    }
+
     fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {
         create_required_surface_directories(repository_root);
         CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: paths
-                .iter()
-                .map(|path| SurfaceFile {
-                    path: (*path).to_string(),
-                    sha256: sha256_file(&repository_root.join(path)).unwrap(),
-                })
-                .collect(),
+            files: sealed_surface_files(repository_root, paths),
             manifest_sha256: String::new(),
         }
         .seal()
         .unwrap()
     }
 
+    fn sealed_surface_files(repository_root: &Path, paths: &[&str]) -> Vec<SurfaceFile> {
+        let mut files = paths
+            .iter()
+            .copied()
+            .chain(REQUIRED_SURFACE_FILES)
+            .map(|path| SurfaceFile {
+                path: path.to_string(),
+                sha256: sha256_file(&repository_root.join(path)).unwrap(),
+            })
+            .collect::<Vec<_>>();
+        files.sort_by(|left, right| left.path.cmp(&right.path));
+        files
+    }
+
     fn create_required_surface_directories(repository_root: &Path) {
         for directory in REQUIRED_SURFACE_DIRECTORIES {
             fs::create_dir_all(repository_root.join(directory)).unwrap();
+        }
+        for path in REQUIRED_SURFACE_FILES {
+            let path = repository_root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"required selected-read constructor").unwrap();
         }
     }
 
@@ -2500,7 +2554,17 @@ mod tests {
         let (rehashed, changed) = surface.rehash_files(temp.path()).unwrap();
 
         assert_eq!(changed, 1);
-        assert_ne!(rehashed.files[0].sha256, surface.files[0].sha256);
+        let rehashed_surface = rehashed
+            .files
+            .iter()
+            .find(|file| file.path == "surface.txt")
+            .unwrap();
+        let original_surface = surface
+            .files
+            .iter()
+            .find(|file| file.path == "surface.txt")
+            .unwrap();
+        assert_ne!(rehashed_surface.sha256, original_surface.sha256);
         assert_eq!(rehashed.manifest_sha256, surface.manifest_sha256);
         assert_eq!(
             rehashed.validate().unwrap_err(),
