@@ -745,6 +745,92 @@ impl Server {
     }
 }
 
+/// Desktop-only projection of the same selected-ledger voucher operation used
+/// by MCP. The caller has already performed the normal desktop company-tuple
+/// verification; this function owns no extra Tally request beyond the shared
+/// operation itself.
+pub(crate) struct DesktopSelectedVoucherRequest {
+    pub(crate) ledger: String,
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) offset: usize,
+    pub(crate) limit: usize,
+}
+
+pub(crate) async fn desktop_selected_vouchers(
+    runtime: &TallyRuntime,
+    config: TallyConfig,
+    identity: VerifiedCompanyIdentity,
+    request: DesktopSelectedVoucherRequest,
+) -> Result<Value, String> {
+    let DesktopSelectedVoucherRequest {
+        ledger,
+        from,
+        to,
+        offset,
+        limit,
+    } = request;
+    let server = Server::with_runtime(
+        Settings {
+            endpoint: config,
+            data_dir: default_data_dir(),
+            max_rows: 500,
+            max_bytes: 200_000,
+            // A local desktop view follows the existing desktop policy. MCP
+            // continues to apply its independently configured response policy.
+            redaction: Redaction::None,
+            import_enabled: false,
+            writes_enabled: false,
+        },
+        runtime.clone(),
+    );
+    let normalized_from = normalized_date(&from)?;
+    let normalized_to = normalized_date(&to)?;
+    let company_guid = identity.company_guid().to_string();
+    let company = TallyCompany {
+        name: identity.display_name().to_string(),
+        guid: Some(company_guid.clone()),
+        company_number: Some(identity.company_number().to_string()),
+        books_from: Some(identity.books_from_yyyymmdd().to_string()),
+    };
+    let outcome = vouchers::selected_voucher_operation_for_verified(
+        &server,
+        &json!({
+            "company_guid": company_guid,
+            "from": normalized_from,
+            "to": normalized_to,
+            "ledger": ledger,
+            "offset": offset,
+            "limit": limit,
+        }),
+        vouchers::VoucherOperationScope {
+            guid: company_guid,
+            from: normalized_from,
+            to: normalized_to,
+            company,
+            identity,
+            initial_evidence: None,
+        },
+    )
+    .await
+    .map_err(|failure| failure.code)?;
+    let response = json!({
+        "company": outcome.payload["company"].clone(),
+        "read_at": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        "evidence": outcome.evidence,
+        "truncated": outcome.truncated,
+        "result": outcome.payload["result"].clone(),
+    });
+    enforce_response_byte_cap(response, server.settings.max_bytes).map(
+        |(mut bounded, byte_truncated, _)| {
+            if byte_truncated {
+                bounded["truncated"] = Value::Bool(true);
+            }
+            bounded
+        },
+    )
+}
+
 fn ledger_master_fields(fields: &str) -> Result<bool, String> {
     match fields {
         "basic" => Ok(false),

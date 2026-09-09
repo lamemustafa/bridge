@@ -144,18 +144,32 @@ test("UX2 keeps report evidence distinct from Core Accounting history and hides 
   assert.match(advanced, /className="panel wide runtime-panel"/);
 });
 
-test("compatibility surface binds every UX1 Tally read entry control", async () => {
-  const [surfaceBytes, clientSwitcher, mirrorProof, trialBalance] = await Promise.all([
+test("compatibility surface binds every desktop Tally read entry control and selected-ledger boundary", async () => {
+  const [surfaceBytes, clientSwitcher, mirrorProof, trialBalance, ledgerEntries, selectedReadSources] = await Promise.all([
     readFile(new URL("../docs/tally/compatibility/compatibility-surface.json", import.meta.url), "utf8"),
     readFile(new URL("../src/ClientSwitcher.tsx", import.meta.url)),
     readFile(new URL("../src/MirrorProofScreen.tsx", import.meta.url)),
     readFile(new URL("../src/TrialBalanceScreen.tsx", import.meta.url)),
+    readFile(new URL("../src/LedgerEntriesScreen.tsx", import.meta.url)),
+    Promise.all([
+      "src-tauri/src/agent.rs",
+      "src-tauri/src/agent_read_profiles.rs",
+      "src-tauri/src/agent_voucher_parse.rs",
+      "src-tauri/src/agent_voucher_scalars.rs",
+      "src-tauri/src/agent_vouchers.rs",
+      "src-tauri/src/agent_read_validation.rs",
+      "src-tauri/src/tally/agent_read_request.rs",
+    ].map(async (path) => [path, await readFile(new URL(`../${path}`, import.meta.url))])),
   ]);
   const hashes = new Map(JSON.parse(surfaceBytes).files.map(({ path, sha256 }) => [path, sha256]));
 
   assert.equal(hashes.get("src/ClientSwitcher.tsx"), createHash("sha256").update(clientSwitcher).digest("hex"));
   assert.equal(hashes.get("src/MirrorProofScreen.tsx"), createHash("sha256").update(mirrorProof).digest("hex"));
   assert.equal(hashes.get("src/TrialBalanceScreen.tsx"), createHash("sha256").update(trialBalance).digest("hex"));
+  assert.equal(hashes.get("src/LedgerEntriesScreen.tsx"), createHash("sha256").update(ledgerEntries).digest("hex"));
+  for (const [path, source] of selectedReadSources) {
+    assert.equal(hashes.get(path), createHash("sha256").update(source).digest("hex"), `${path} must remain sealed`);
+  }
 });
 
 test("UX1 has reachable responsive rules and contains wide content", async () => {

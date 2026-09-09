@@ -34,6 +34,11 @@ test("local proposals survive shell navigation and save without source or Tally 
   await page.getByLabel("Proposed date", { exact: true }).fill("2026-04-02");
   await page.getByLabel("Preparation notes", { exact: true }).fill("Keep this question for review");
   await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("button", { name: "Investigate ledger", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Ledger entries", exact: true, level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "Back to Overview", exact: true }).click();
+  await page.getByRole("button", { name: "Trial Balance", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Trial Balance", exact: true, level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "Prepare file", exact: true }).click();
   await expect(page.getByLabel("Proposed date", { exact: true })).toHaveValue("2026-04-02");
   await expect(page.getByLabel("Preparation notes", { exact: true })).toHaveValue("Keep this question for review");
@@ -42,7 +47,7 @@ test("local proposals survive shell navigation and save without source or Tally 
   const calls = await page.evaluate(() => (window as unknown as { sourceDraftCalls: { command: string; args: unknown }[] }).sourceDraftCalls);
   const saved = calls.find((call) => call.command === "desktop_save_source_draft");
   expect(saved?.args).toEqual({ request: { draft_id: "11111111-1111-4111-8111-111111111111", revision: 1, proposals: [{ date: "20260402", voucher_type: null, narration: null, notes: "Keep this question for review", entries: [{ ledger: null, side: null, amount: null }] }] } });
-  expect(calls.filter((call) => /^(fetch_tally_|desktop_post_|build_import|post_import)/.test(call.command))).toEqual([]);
+  expect(calls.filter((call) => /^(fetch_tally_|fetch_selected_ledger_entries|fetch_standard_tally_ledger_catalog|desktop_post_|build_import|post_import)/.test(call.command))).toEqual([]);
   await page.getByLabel("Preparation notes", { exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

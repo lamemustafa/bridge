@@ -87,7 +87,7 @@ pub fn run_journal_confirmation_child_from_args(
     }
 }
 
-pub fn run() {
+pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
     tracing_subscriber::fmt::init();
 
     tauri::Builder::default()
@@ -116,6 +116,8 @@ pub fn run() {
             commands::export_party_ledger_master,
             commands::trial_balance::fetch_tally_trial_balance,
             commands::trial_balance::export_tally_trial_balance,
+            commands::trial_balance::query_tally_trial_balance_capture_parent,
+            commands::trial_balance::list_tally_trial_balance_capture_parents,
             commands::export_party_statement,
             commands::select_party_statement_destination,
             commands::revoke_party_statement_destination,
@@ -143,6 +145,7 @@ pub fn run() {
             commands::tally_telemetry_preview,
             commands::fetch_tally_companies,
             commands::fetch_tally_outstandings,
+            commands::fetch_selected_ledger_entries,
             commands::prepare_gst_return_draft,
             commands::detect_dsc_token,
             commands::extract_dsc_certificates,
@@ -162,7 +165,7 @@ pub fn run() {
             commands::select_document_files,
             commands::select_document_folder
         ])
-        .run(tauri::generate_context!())
+        .run(make_context())
         .expect("failed to run Bridge");
 }
 

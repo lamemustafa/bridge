@@ -473,6 +473,40 @@ runtime checks exercised six-, eight- and eleven-ledger synthetic companies;
 they do not qualify Education mode, other currencies, account types or
 production books.
 
+#### Parent follow-up query contract
+
+The retained-capture parent query is an exact row selector, not a qualified
+financial group balance. It compares the parsed `PARENT` observation as-is:
+returned text is case-preserving and case-sensitive, and a returned empty
+string is distinct from `NotObserved` (a `PARENT` element omitted by that
+response). It does not infer `Primary`, normalize a hierarchy, or turn either
+state into the other.
+
+The captured native fixtures include Tally's invalid numeric control reference
+form `&#4; Primary`; XML sanitization preserves it as a replacement-marker
+prefixed returned value. That marker remains an exact selectable value and is
+not renamed to `Primary`. The null and empty parent cases in the report-level
+tests are synthetic mutations that prove this distinction; they are not claims
+that those cases were observed in the captured native Trial Balance responses.
+The query only summarizes rows already present in the retained capture and
+reports numeric totals with their empty-amount counts.
+
+**Local discovery contract.** Parent discovery also uses only the opaque handle
+of that retained capture. It returns at most 100 distinct observations, exact
+row counts for those observations, and an overflow indicator. The backend
+retains only a bounded set of candidates while scanning borrowed capture rows;
+it does not build a second index of every distinct parent in the webview.
+Discovery runs away from the UI thread and never acquires Tally data.
+
+An empty search preserves source order without creating per-row search strings.
+A nonempty search ranks literal raw/display-label matches first, then exact
+matches using Unicode lowercase conversion, then lowercase substring matches.
+Source order breaks ties. This folding is for discovery only; the subsequent row selector
+still receives the original exact observation. Missing and empty fields use
+explicit field-state labels, while returned group strings use a `Group:` prefix
+in both the selector and report table. Large-capture resource tests are derived
+synthetic stress cases, not additional live-Tally or completeness evidence.
+
 ---
 
 ## 6. Crashes and rendering traps
@@ -1037,6 +1071,35 @@ against a schema that can contain same-GUID books.
 `(canonical_origin, COMPANYNUMBER, GUID, NAME, BOOKSFROM)`. Never migrate an older GUID-only
 pin by guessing fields from a current listing: re-observe and review the full tuple. This rule
 is implemented by the composite-identity migration and `snapshot_source_pin`.
+
+### 9.11c Extent reads must retain the verified company tuple — **VERIFIED on one endpoint**
+
+**VERIFIED 2026-09-09 field and versioned request observations on one endpoint.**
+A paired Company collection extent read returned 16 company rows, including a
+same-GUID split pair. Adding only `CompanyNumber` to the existing extent fetch
+returned that field on all 16 rows; removing the new field left the other response
+fields unchanged. The captured response is retained in
+[`native-company-book-extents-with-number.utf8.xml`](../../src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml),
+with an adjacent provenance note. Wire numbers contained leading whitespace;
+comparison uses the trimmed observed digit string and preserves leading zeros.
+
+**Design rule.** `CompanyBookExtentV2` selects the full verified
+`(NAME, GUID, COMPANYNUMBER, BOOKSFROM)` tuple. A same-GUID book with a different
+display scope may coexist; a presentation-equivalent sibling, duplicate tuple,
+missing or malformed number, or changed tuple refuses admission. Native clients
+and snapshot connectors retain the original verified identity for every opening
+and closing extent read. Neither GUID-only fallback nor a new database identity
+is needed. Paired equality, health checks, and the `ALTMSTID` master-change witness
+remain required independently of tuple selection.
+
+A separate single-attempt native runtime observation then used the exact V2
+renderer and production extent client. Opening and closing full-tuple extents
+agreed; the independently retained V2 paired response had the same decoded bytes
+as the field observation. Fresh Company collection and licensed-mode checks
+passed around the reads. This establishes the V2 extent boundary on that endpoint,
+not a financial report, another endpoint, a compatibility cell, or accounting
+writes. V1 remains for historical corpus interpretation; production extent reads
+use V2 without fallback.
 
 ## 9.10 Company creation over XML — **PARTIAL: symbol element found, formal-name element not**
 
