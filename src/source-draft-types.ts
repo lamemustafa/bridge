@@ -71,7 +71,9 @@ export type SourceDraftScreenProps = {
   onTallyReadActivityChange?: (active: boolean) => void;
   catalogScope?: SourceDraftCompanyScope;
   catalogScopeKey?: string;
-  isNativeLifecycleCompletionBlocked?: () => boolean;
-  onNativeLifecycleModalChange?: (open: boolean) => void;
-  onNativeLifecycleModalClosed?: (restoreFocus: () => void) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  editingEnabled?: boolean;
+  lifecycleInteractionBlocked?: boolean;
+  isLifecycleInteractionBlocked?: () => boolean;
+  protectionError?: string | null;
 };

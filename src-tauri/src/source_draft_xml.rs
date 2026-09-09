@@ -270,6 +270,12 @@ fn start(
         if entry.is_some() || current.is_none() {
             return Err(SourceXmlError::UnsupportedShape);
         }
+        let voucher = current.as_mut().ok_or(SourceXmlError::UnsupportedShape)?;
+        for attr in event.attributes().with_checks(true) {
+            let attr = attr.map_err(|_| SourceXmlError::UnsupportedShape)?;
+            let key = tag_name(attr.key.as_ref())?;
+            record_omitted_field(&mut voucher.omitted, format!("ENTRY/@{key}"))?;
+        }
         *entry = Some(WorkingEntry::default());
     } else if matches!(parent, Some("VOUCHER") | Some("ALLLEDGERENTRIES.LIST")) {
         let voucher = current.as_mut().ok_or(SourceXmlError::UnsupportedShape)?;
@@ -516,6 +522,19 @@ mod tests {
         assert_eq!(parsed.vouchers[0].narration.as_deref(), Some("Party & Co"));
         assert_eq!(parsed.vouchers[0].entries[0].polarity, None);
         assert_eq!(parsed.vouchers[0].omitted_fields, ["VOUCHER/VOUCHERNUMBER"]);
+
+        let with_entry_attribute = XML.replacen(
+            "<ALLLEDGERENTRIES.LIST>",
+            "<ALLLEDGERENTRIES.LIST OBSERVED=\"metadata\">",
+            1,
+        );
+        let parsed =
+            parse_source_xml(with_entry_attribute.as_bytes(), "source.xml".into()).unwrap();
+        assert_eq!(parsed.utf8, with_entry_attribute);
+        assert_eq!(
+            parsed.vouchers[0].omitted_fields,
+            ["ENTRY/@OBSERVED", "VOUCHER/VOUCHERNUMBER"]
+        );
     }
     #[test]
     fn rejects_doctype_and_nested_unknown_source_fields() {
@@ -667,6 +686,11 @@ mod tests {
             at_limit.replacen(
                 "</ALLLEDGERENTRIES.LIST>",
                 "<EXTRA/></ALLLEDGERENTRIES.LIST>",
+                1,
+            ),
+            at_limit.replacen(
+                "<ALLLEDGERENTRIES.LIST>",
+                "<ALLLEDGERENTRIES.LIST EXTRA=\"\">",
                 1,
             ),
         ] {

@@ -21,9 +21,18 @@ pub(crate) struct SourceDraftLifecycleRequest {
     pub(crate) kind: SourceDraftLifecycleKind,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum RendererLifecycleProtection {
+    #[default]
+    NeverReady,
+    Ready,
+    LostAfterReady,
+}
+
 #[derive(Default)]
 pub(crate) struct SourceDraftLifecycleGuard {
     pending: Mutex<Option<SourceDraftLifecycleRequest>>,
+    renderer_protection: Mutex<(RendererLifecycleProtection, Option<Uuid>)>,
     close_permitted: AtomicBool,
     exit_permitted: AtomicBool,
     main_close_permitted: AtomicBool,
@@ -31,6 +40,25 @@ pub(crate) struct SourceDraftLifecycleGuard {
 }
 
 impl SourceDraftLifecycleGuard {
+    /// Before the renderer completes its listener handshake, it cannot create
+    /// source-draft or Journal work. Native close stays available in that
+    /// narrow startup state. A renderer that was ready and later disappeared
+    /// remains guarded because local unsaved work may already exist.
+    pub(crate) fn requires_confirmation(&self) -> bool {
+        self.lock_renderer_protection().0 != RendererLifecycleProtection::NeverReady
+    }
+
+    pub(crate) fn renderer_registered(&self, token: Uuid) {
+        *self.lock_renderer_protection() = (RendererLifecycleProtection::Ready, Some(token));
+    }
+
+    pub(crate) fn renderer_unregistered(&self, token: Uuid) {
+        let mut protection = self.lock_renderer_protection();
+        if protection.0 == RendererLifecycleProtection::Ready && protection.1 == Some(token) {
+            *protection = (RendererLifecycleProtection::LostAfterReady, None);
+        }
+    }
+
     pub(crate) fn request(&self, kind: SourceDraftLifecycleKind) -> SourceDraftLifecycleRequest {
         let mut pending = self.lock_pending();
         pending
@@ -103,8 +131,21 @@ impl SourceDraftLifecycleGuard {
             .store(true, Ordering::Release);
     }
 
+    #[cfg(test)]
+    fn renderer_is_ready(&self) -> bool {
+        self.lock_renderer_protection().0 == RendererLifecycleProtection::Ready
+    }
+
     fn lock_pending(&self) -> std::sync::MutexGuard<'_, Option<SourceDraftLifecycleRequest>> {
         self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_renderer_protection(
+        &self,
+    ) -> std::sync::MutexGuard<'_, (RendererLifecycleProtection, Option<Uuid>)> {
+        self.renderer_protection
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -117,6 +158,7 @@ mod tests {
     #[test]
     fn stale_same_kind_completion_cannot_authorize_a_later_request() {
         let guard = SourceDraftLifecycleGuard::default();
+        guard.renderer_registered(Uuid::new_v4());
         let first = guard.request(SourceDraftLifecycleKind::Close);
         assert!(guard.cancel(&first));
 
@@ -131,6 +173,7 @@ mod tests {
     #[test]
     fn exit_consumes_every_permit_even_if_both_are_set() {
         let guard = SourceDraftLifecycleGuard::default();
+        guard.renderer_registered(Uuid::new_v4());
         let exit = guard.request(SourceDraftLifecycleKind::Exit);
         assert!(guard.authorize(&exit));
         let close = guard.request(SourceDraftLifecycleKind::Close);
@@ -145,6 +188,7 @@ mod tests {
     #[test]
     fn close_allows_a_chained_exit_only_after_main_window_destruction() {
         let guard = SourceDraftLifecycleGuard::default();
+        guard.renderer_registered(Uuid::new_v4());
         let close = guard.request(SourceDraftLifecycleKind::Close);
         assert!(guard.authorize(&close));
         assert!(guard.take_close_permit());
@@ -157,5 +201,22 @@ mod tests {
         let unapproved = SourceDraftLifecycleGuard::default();
         unapproved.main_window_destroyed();
         assert!(unapproved.take_exit_permit());
+    }
+    #[test]
+    fn startup_is_closable_but_a_lost_renderer_stays_protected() {
+        let guard = SourceDraftLifecycleGuard::default();
+        assert!(!guard.requires_confirmation());
+
+        let renderer_token = Uuid::new_v4();
+        guard.renderer_registered(renderer_token);
+        assert!(guard.requires_confirmation());
+
+        guard.renderer_unregistered(renderer_token);
+        assert!(guard.requires_confirmation());
+
+        let replacement_token = Uuid::new_v4();
+        guard.renderer_registered(replacement_token);
+        guard.renderer_unregistered(renderer_token);
+        assert!(guard.renderer_is_ready());
     }
 }
