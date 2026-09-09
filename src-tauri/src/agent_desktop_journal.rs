@@ -275,7 +275,7 @@ impl Settings {
 }
 
 impl Server {
-    fn with_runtime(settings: Settings, runtime: TallyRuntime) -> Self {
+    pub(crate) fn with_runtime(settings: Settings, runtime: TallyRuntime) -> Self {
         Self {
             settings,
             runtime,

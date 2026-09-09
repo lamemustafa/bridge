@@ -195,6 +195,31 @@ fn malformed_polarity_in_captured_voucher_is_refused_at_the_parse_boundary() {
     let rows = parse_agent_rows(&captured, CAPTURED_VOUCHER_COMPANY_GUID).unwrap();
     assert_eq!(rows[0]["amounts"][0]["is_deemed_positive"], "Yes");
     assert_eq!(rows[0]["amounts"][1]["is_deemed_positive"], "No");
+    // Tally logical values may carry surrounding presentation whitespace. The
+    // parser admits that observed representation, then emits its canonical
+    // protocol value so desktop debit/credit labeling never compares raw text.
+    for (raw, padded, entry_index, canonical) in
+        [("Yes", " Yes ", 0, "Yes"), ("No", " No ", 1, "No")]
+    {
+        let whitespace = captured.replacen(
+            &format!("\n      <ISDEEMEDPOSITIVE TYPE=\"Logical\">{raw}</ISDEEMEDPOSITIVE>"),
+            &format!("\n      <ISDEEMEDPOSITIVE TYPE=\"Logical\">{padded}</ISDEEMEDPOSITIVE>"),
+            1,
+        );
+        assert_ne!(whitespace, captured, "captured {raw} mutation must apply");
+        for accounting_state in [false, true] {
+            let rows = parse_agent_rows_with_accounting_state(
+                &whitespace,
+                accounting_state,
+                CAPTURED_VOUCHER_COMPANY_GUID,
+            )
+            .expect("whitespace around an observed logical value remains admissible");
+            assert_eq!(
+                rows[0]["amounts"][entry_index]["is_deemed_positive"],
+                canonical
+            );
+        }
+    }
     for invalid in ["Maybe", "true", "1"] {
         // Mutate only the captured ledger-entry polarity for negative testing.
         let damaged = captured.replacen(
