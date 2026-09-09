@@ -665,15 +665,12 @@ impl Server {
         let request = admit_standard_ledger_catalog_request(request_xml.clone())
             .map_err(|_| "ledger_export_invalid".to_string())?;
         let (xml, evidence) = self.post_read(identity, request_xml).await?;
-        let catalogue = parse_standard_ledger_catalog_response(
-            &xml,
-            company_name,
-            identity.company_guid(),
-        )
-        .map_err(|_| {
-            ToolFailure::from("ledger_export_invalid".to_string())
-                .with_prior_evidence(evidence.clone())
-        })?;
+        let catalogue =
+            parse_standard_ledger_catalog_response(&xml, company_name, identity.company_guid())
+                .map_err(|_| {
+                    ToolFailure::from("ledger_export_invalid".to_string())
+                        .with_prior_evidence(evidence.clone())
+                })?;
         Ok((
             catalogue.names().map(str::to_string).collect(),
             catalogue,

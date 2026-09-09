@@ -6,13 +6,14 @@
 use sha2::{Digest, Sha256};
 
 use bridge_tally_protocol::{
-    StandardLedgerCatalog, parse_standard_ledger_catalog_with_identities,
+    parse_standard_ledger_catalog_with_identities,
     xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName},
+    StandardLedgerCatalog,
 };
 
 use super::{
-    TallyConfig, VerifiedCompanyIdentity, agent_read_request::AgentReadRequest,
-    runtime::TallyRuntime,
+    agent_read_request::AgentReadRequest, runtime::TallyRuntime, TallyConfig,
+    VerifiedCompanyIdentity,
 };
 
 #[derive(Debug, Clone)]

@@ -20,19 +20,19 @@ use chrono::NaiveDate;
 use tauri::{Manager, State};
 use uuid::Uuid;
 
-use crate::source_draft_xml::{MAX_SOURCE_BYTES, ParsedSource, parse_source_xml};
+use crate::source_draft_xml::{parse_source_xml, ParsedSource, MAX_SOURCE_BYTES};
 
 use self::{
     files::{open_saved_draft, pick_file, save_path, serialize_draft, write_private_file},
     types::{
-        CommandResult, MAX_PROPOSAL_BYTES, MAX_TEXT_BYTES, SourceDraftDto, SourceDraftEntry,
+        command_error, error, CommandResult, SourceDraftDto, SourceDraftEntry,
         SourceDraftEntryProposal, SourceDraftProposal, SourceDraftRow, SourceDraftSaveRequest,
-        SourceDraftSourceNotice, command_error, error,
+        SourceDraftSourceNotice, MAX_PROPOSAL_BYTES, MAX_TEXT_BYTES,
     },
 };
 use catalog::{
-    CatalogCapture, SourceDraftCatalogApplyRequest, SourceDraftCatalogLoadRequest,
-    SourceDraftCatalogTargets, require_current_catalog_binding,
+    require_current_catalog_binding, CatalogCapture, SourceDraftCatalogApplyRequest,
+    SourceDraftCatalogLoadRequest, SourceDraftCatalogTargets,
 };
 
 #[derive(Default)]
@@ -438,8 +438,8 @@ mod tests {
     }
 
     #[test]
-    fn editable_optional_text_normalizes_empty_at_json_boundary_without_changing_source_empty_or_whitespace()
-     {
+    fn editable_optional_text_normalizes_empty_at_json_boundary_without_changing_source_empty_or_whitespace(
+    ) {
         let source = source();
         let mut saved: serde_json::Value =
             serde_json::from_slice(&serialize_draft(&source, &empty_proposals(&source)).unwrap())

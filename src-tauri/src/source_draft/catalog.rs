@@ -13,15 +13,15 @@ use bridge_tally_protocol::{StandardLedgerCatalog, StandardLedgerCatalogBinding}
 use crate::{
     commands::SelectedCompanyIdentity,
     tally::{
-        EndpointKey, TallyConfig, VerifiedCompanyIdentity,
-        standard_ledger_catalog::StandardLedgerCatalogRead,
+        standard_ledger_catalog::StandardLedgerCatalogRead, EndpointKey, TallyConfig,
+        VerifiedCompanyIdentity,
     },
 };
 
 use super::{
-    ActiveDraft, SourceDraftDto, SourceDraftProposal, SourceDraftStore, dto, error,
+    dto, error,
     types::{CommandResult, MAX_TEXT_BYTES},
-    validate_proposals,
+    validate_proposals, ActiveDraft, SourceDraftDto, SourceDraftProposal, SourceDraftStore,
 };
 
 #[derive(Debug, Deserialize)]
