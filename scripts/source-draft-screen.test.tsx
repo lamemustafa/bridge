@@ -502,6 +502,47 @@ test("keeps a dirty native lifecycle request local until the matching response",
   root.unmount();
 });
 
+test("reveals a hidden draft for a guarded native quit request", async () => {
+  enableNativeWindowRuntime();
+  let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    lifecycleListener = handler;
+    return mocks.unlisten;
+  });
+  const exit = { request_id: "exit-hidden", kind: "exit" as const };
+  let pending: typeof exit | null = null;
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    return Promise.resolve();
+  });
+
+  function HiddenDraftShell() {
+    const [visible, setVisible] = React.useState(false);
+    return (
+      <div data-testid="draft-shell" hidden={!visible}>
+        <SourceDraftScreen onNativeLifecycleRequested={() => setVisible(true)} />
+      </div>
+    );
+  }
+
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<HiddenDraftShell />));
+  const shell = host.querySelector<HTMLElement>("[data-testid=draft-shell]")!;
+  expect(shell.hidden).toBe(true);
+
+  await act(async () => button(host, "Choose source XML").click());
+  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+  pending = exit;
+  await act(async () => lifecycleListener?.({ payload: exit }));
+
+  expect(shell.hidden).toBe(false);
+  expect(host.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+  root.unmount();
+});
+
 test("ignores an event whose request is no longer pending", async () => {
   enableNativeWindowRuntime();
   let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;

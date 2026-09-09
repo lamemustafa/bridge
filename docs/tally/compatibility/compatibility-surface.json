@@ -503,7 +503,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "337e761032df2c6e3cc5bd2332a9c2bbe6a84e9a2146578453061113291cd0a6"
+      "sha256": "c6385b14761daaece76a8248071d331e31960c2bd8381301a6b08697880d4083"
     },
     {
       "path": "src-tauri/src/local_files/file.rs",
@@ -830,5 +830,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "2a307cf7ff76227caff0a01df7f7d675360b0bb2c9b7dfeb68f917be9ef6418c"
+  "manifest_sha256": "5b7e2fe6bb1f42a8511df42f81ea22a3f68a71f5067135e7e448a298f7ec44f2"
 }
