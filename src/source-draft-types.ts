@@ -51,5 +51,7 @@ export type SourceDraftAction = "choose" | "open" | "save" | null;
 
 export type SourceDraftScreenProps = {
   onBusyChange?: (busy: boolean) => void;
-  onNativeLifecycleRequested?: () => void;
+  isNativeLifecycleCompletionBlocked?: () => boolean;
+  onNativeLifecycleModalChange?: (open: boolean) => void;
+  onNativeLifecycleModalClosed?: (restoreFocus: () => void) => void;
 };

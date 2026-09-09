@@ -9,6 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 
 import { SourceDraftScreen } from "../src/SourceDraftScreen";
+import { JournalPostingScreen } from "../src/JournalPostingScreen";
 
 function row(position: number) {
   return {
@@ -31,6 +32,33 @@ const draft = {
   source_notices: [{ kind: "Non-voucher records retained", count: 3 }],
   rows: [row(1), row(2)],
 };
+
+const journalReview = {
+  batchId: "bridge-00000000-0000-4000-8000-000000000010",
+  sha256: "b".repeat(64),
+  company: {
+    name: "Synthetic Accounts",
+    guid: "00000000-0000-4000-8000-000000000011",
+    companyNumber: "100001",
+    booksFrom: "20260401",
+  },
+  builtAt: "2026-09-10T00:00:00Z",
+  dispatched: false,
+  responseRecorded: false,
+  details: {
+    date: "20260901",
+    reference: "REF-1",
+    narration: "Synthetic test only",
+    entries: [
+      { ledger: "Expense", side: "Dr" as const, amount: "12.50" },
+      { ledger: "Cash", side: "Cr" as const, amount: "12.50" },
+    ],
+    totalDebit: "12.50",
+    totalCredit: "12.50",
+  },
+};
+
+const journalConfig = { host: "127.0.0.1", port: 9001 };
 
 function button(host: HTMLElement, label: string) {
   const match = [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes(label));
@@ -234,10 +262,9 @@ test("keeps a dirty native lifecycle request local until the matching response",
     }
     return Promise.resolve();
   });
-  const reveal = vi.fn();
   const host = document.createElement("div");
   document.body.append(host);
-  const root = await mount(host, { onNativeLifecycleRequested: reveal });
+  const root = await mount(host);
   await act(async () => {});
   expect(mocks.listen).toHaveBeenCalledWith("source-draft-lifecycle-requested", expect.any(Function));
   await act(async () => button(host, "Choose source XML").click());
@@ -246,22 +273,21 @@ test("keeps a dirty native lifecycle request local until the matching response",
   const close = { request_id: "close-1", kind: "close" as const };
   pending = close;
   await act(async () => lifecycleListener?.({ payload: close }));
-  expect(reveal).toHaveBeenCalledTimes(1);
-  expect(host.textContent).toContain("Discard unsaved proposals and close this window?");
+  expect(document.body.textContent).toContain("Discard unsaved proposals and close this window?");
   expect(button(host, "Choose new source").disabled).toBe(true);
-  expect(button(host, "Keep editing").disabled).toBe(false);
-  await act(async () => button(host, "Keep editing").click());
+  expect(button(document.body, "Keep editing").disabled).toBe(false);
+  await act(async () => button(document.body, "Keep editing").click());
   expect(mocks.invoke).toHaveBeenCalledWith("desktop_cancel_source_draft_lifecycle_request", { request: close });
 
   const exit = { request_id: "exit-1", kind: "exit" as const };
   pending = exit;
   await act(async () => lifecycleListener?.({ payload: exit }));
-  await act(async () => button(host, "Discard and quit").click());
+  await act(async () => button(document.body, "Discard and quit").click());
   expect(mocks.invoke).toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: exit });
   root.unmount();
 });
 
-test("reveals a hidden draft for a guarded native quit request", async () => {
+test("keeps an active Journal mounted while a hidden source draft shows its native confirmation", async () => {
   enableNativeWindowRuntime();
   let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
   mocks.listen.mockImplementation(async (_event, handler) => {
@@ -270,17 +296,108 @@ test("reveals a hidden draft for a guarded native quit request", async () => {
   });
   const exit = { request_id: "exit-hidden", kind: "exit" as const };
   let pending: typeof exit | null = null;
+  let resolvePost!: (value: unknown) => void;
+  const pendingPost = new Promise((resolve) => { resolvePost = resolve; });
   mocks.invoke.mockImplementation((command: string) => {
     if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
     if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_pick_journal_for_review") return Promise.resolve(journalReview);
+    if (command === "desktop_post_reviewed_journal") return pendingPost;
+    if (command === "desktop_cancel_source_draft_lifecycle_request") {
+      pending = null;
+      return Promise.resolve();
+    }
     return Promise.resolve();
   });
 
-  function HiddenDraftShell() {
-    const [visible, setVisible] = React.useState(false);
+  function ActiveJournalShell() {
+    const journalBusy = React.useRef(false);
+    const [, rerender] = React.useState(0);
+    const onJournalBusyChange = (next: boolean) => {
+      journalBusy.current = next;
+      rerender((value) => value + 1);
+    };
+    const isNativeLifecycleCompletionBlocked = React.useCallback(() => journalBusy.current, []);
     return (
-      <div data-testid="draft-shell" hidden={!visible}>
-        <SourceDraftScreen onNativeLifecycleRequested={() => setVisible(true)} />
+      <>
+        <JournalPostingScreen config={journalConfig} onBusyChange={onJournalBusyChange} />
+        <div data-testid="draft-shell" hidden>
+          <SourceDraftScreen isNativeLifecycleCompletionBlocked={isNativeLifecycleCompletionBlocked} />
+        </div>
+      </>
+    );
+  }
+
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<ActiveJournalShell />));
+  const shell = host.querySelector<HTMLElement>("[data-testid=draft-shell]")!;
+  expect(shell.hidden).toBe(true);
+
+  await act(async () => button(host, "Choose Journal file").click());
+  await act(async () => {
+    button(host, "Post Journal").click();
+    await Promise.resolve();
+  });
+  await act(async () => button(host, "Choose source XML").click());
+  pending = exit;
+  await act(async () => lifecycleListener?.({ payload: exit }));
+
+  expect(shell.hidden).toBe(true);
+  expect(host.textContent).toContain("Review a Bridge Journal");
+  expect(button(host, "Review approval dialog").disabled).toBe(true);
+  expect(document.body.textContent).toContain("A Journal action is in progress.");
+  expect(button(document.body, "Discard and quit").disabled).toBe(true);
+  await act(async () => button(document.body, "Keep editing").click());
+  await act(async () => resolvePost({
+    batchId: journalReview.batchId,
+    result: { result: { dispatch: { state: "posted_verified", resent: false } } },
+  }));
+  expect(host.textContent).toContain("Bridge confirmed the original Journal and its saved batch.");
+  root.unmount();
+});
+
+test("restores the opener after the parent removes lifecycle inertness", async () => {
+  enableNativeWindowRuntime();
+  let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    lifecycleListener = handler;
+    return mocks.unlisten;
+  });
+  const exit = { request_id: "focus-exit", kind: "exit" as const };
+  let pending: typeof exit | null = null;
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_cancel_source_draft_lifecycle_request") {
+      pending = null;
+      return Promise.resolve();
+    }
+    return Promise.resolve();
+  });
+
+  function LifecycleFocusShell() {
+    const [lifecycleOpen, setLifecycleOpen] = React.useState(false);
+    const [restoreFocus, setRestoreFocus] = React.useState<(() => void) | null>(null);
+    const blockCompletion = React.useCallback(() => true, []);
+    const onClosed = React.useCallback((restore: () => void) => {
+      setRestoreFocus(() => restore);
+    }, []);
+    React.useEffect(() => {
+      if (lifecycleOpen || !restoreFocus) return;
+      restoreFocus();
+      setRestoreFocus(null);
+    }, [lifecycleOpen, restoreFocus]);
+    return (
+      <div data-testid="lifecycle-shell" inert={lifecycleOpen || undefined}>
+        <button type="button">Journal opener</button>
+        <div hidden>
+          <SourceDraftScreen
+            isNativeLifecycleCompletionBlocked={blockCompletion}
+            onNativeLifecycleModalChange={setLifecycleOpen}
+            onNativeLifecycleModalClosed={onClosed}
+          />
+        </div>
       </div>
     );
   }
@@ -288,17 +405,134 @@ test("reveals a hidden draft for a guarded native quit request", async () => {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
-  await act(async () => root.render(<HiddenDraftShell />));
-  const shell = host.querySelector<HTMLElement>("[data-testid=draft-shell]")!;
-  expect(shell.hidden).toBe(true);
+  await act(async () => root.render(<LifecycleFocusShell />));
+  const opener = button(host, "Journal opener");
+  opener.focus();
+  expect(document.activeElement).toBe(opener);
 
-  await act(async () => button(host, "Choose source XML").click());
-  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
   pending = exit;
   await act(async () => lifecycleListener?.({ payload: exit }));
+  const shell = host.querySelector<HTMLElement>("[data-testid=lifecycle-shell]")!;
+  expect(shell.hasAttribute("inert")).toBe(true);
+  expect(document.activeElement).toBe(document.body.querySelector("[role=alertdialog]"));
 
-  expect(shell.hidden).toBe(false);
-  expect(host.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+  await act(async () => button(document.body, "Keep editing").click());
+  expect(shell.hasAttribute("inert")).toBe(false);
+  expect(document.activeElement).toBe(opener);
+  root.unmount();
+});
+
+test("keeps a newer native request while an earlier cancellation reply resolves", async () => {
+  enableNativeWindowRuntime();
+  let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    lifecycleListener = handler;
+    return mocks.unlisten;
+  });
+  const first = { request_id: "close-a", kind: "close" as const };
+  const second = { request_id: "exit-b", kind: "exit" as const };
+  let pending: typeof first | typeof second | null = null;
+  let resolveCancel!: () => void;
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_cancel_source_draft_lifecycle_request") return new Promise<void>((resolve) => { resolveCancel = resolve; });
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  await act(async () => button(host, "Choose source XML").click());
+  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+
+  pending = first;
+  await act(async () => lifecycleListener?.({ payload: first }));
+  await act(async () => button(document.body, "Keep editing").click());
+
+  pending = second;
+  await act(async () => lifecycleListener?.({ payload: second }));
+  expect(document.body.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+
+  await act(async () => resolveCancel());
+  expect(document.body.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+  root.unmount();
+});
+
+test("blocks a clean native close synchronously while its completion is pending", async () => {
+  enableNativeWindowRuntime();
+  let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    lifecycleListener = handler;
+    return mocks.unlisten;
+  });
+  const close = { request_id: "clean-close", kind: "close" as const };
+  let pending: typeof close | null = null;
+  let resolveComplete!: () => void;
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_complete_source_draft_lifecycle_request") return new Promise<void>((resolve) => { resolveComplete = resolve; });
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  await act(async () => button(host, "Choose source XML").click());
+  const ledger = host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!;
+
+  pending = close;
+  await act(async () => {
+    lifecycleListener?.({ payload: close });
+    await Promise.resolve();
+  });
+  expect(ledger.disabled).toBe(true);
+  setValue(ledger, "Late proposal");
+  expect(ledger.value).toBe("");
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: close });
+
+  await act(async () => resolveComplete());
+  root.unmount();
+});
+
+test("waits for a Journal action before allowing a native lifecycle completion", async () => {
+  enableNativeWindowRuntime();
+  let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    lifecycleListener = handler;
+    return mocks.unlisten;
+  });
+  const exit = { request_id: "exit-during-journal", kind: "exit" as const };
+  let pending: typeof exit | null = null;
+  let blocked = true;
+  let rerender!: () => void;
+  const isBlocked = () => blocked;
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    return Promise.resolve();
+  });
+  function JournalBusyShell() {
+    const [, setRevision] = React.useState(0);
+    rerender = () => setRevision((value) => value + 1);
+    return <SourceDraftScreen isNativeLifecycleCompletionBlocked={isBlocked} />;
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<JournalBusyShell />));
+  await act(async () => button(host, "Choose source XML").click());
+
+  pending = exit;
+  await act(async () => lifecycleListener?.({ payload: exit }));
+  expect(document.body.textContent).toContain("A Journal action is in progress.");
+  expect(button(document.body, "Discard and quit").disabled).toBe(true);
+  expect(mocks.invoke).not.toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: exit });
+
+  blocked = false;
+  await act(async () => rerender());
+  expect(button(document.body, "Discard and quit").disabled).toBe(false);
+  await act(async () => button(document.body, "Discard and quit").click());
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: exit });
   root.unmount();
 });
 
@@ -323,9 +557,9 @@ test("ignores an event whose request is no longer pending", async () => {
   const current = { request_id: "close-b", kind: "close" as const };
   pending = current;
   await act(async () => lifecycleListener?.({ payload: { request_id: "close-a", kind: "close" } }));
-  expect(host.textContent).not.toContain("Discard unsaved proposals and close this window?");
+  expect(document.body.textContent).not.toContain("Discard unsaved proposals and close this window?");
   await act(async () => lifecycleListener?.({ payload: current }));
-  expect(host.textContent).toContain("Discard unsaved proposals and close this window?");
+  expect(document.body.textContent).toContain("Discard unsaved proposals and close this window?");
   root.unmount();
 });
 
@@ -361,19 +595,19 @@ test("does not let a late query for a cancelled request replace a newer dialog",
 
   pending = first;
   await act(async () => lifecycleListener?.({ payload: first }));
-  expect(host.textContent).toContain("Discard unsaved proposals and close this window?");
+  expect(document.body.textContent).toContain("Discard unsaved proposals and close this window?");
 
   deferFirst = true;
   lifecycleListener?.({ payload: first });
   await act(async () => {});
-  await act(async () => button(host, "Keep editing").click());
+  await act(async () => button(document.body, "Keep editing").click());
   pending = second;
   deferFirst = false;
   await act(async () => lifecycleListener?.({ payload: second }));
-  expect(host.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+  expect(document.body.textContent).toContain("Discard unsaved proposals and quit Bridge?");
 
   await act(async () => resolveFirst(first));
-  expect(host.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+  expect(document.body.textContent).toContain("Discard unsaved proposals and quit Bridge?");
   root.unmount();
 });
 

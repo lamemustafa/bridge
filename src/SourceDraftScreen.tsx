@@ -1,7 +1,9 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { FilePlus2, FolderOpen, Save, ShieldAlert, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { createDrawerFocusLifecycle, ensureDrawerFocus, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import "./source-draft.css";
 import {
   SourceDraft,
@@ -17,6 +19,7 @@ import {
 
 const PAGE_SIZE = 25;
 const VOUCHER_TYPES: SourceDraftVoucherType[] = ["Payment", "Receipt", "Journal", "Contra"];
+const neverBlockNativeLifecycleCompletion = () => false;
 
 function cloneProposal(proposal: SourceDraftProposal): SourceDraftProposal {
   return { ...proposal, entries: proposal.entries.map((entry) => ({ ...entry })) };
@@ -79,7 +82,12 @@ function hasNativeWindowRuntime() {
   return typeof internals?.metadata?.currentWindow?.label === "string";
 }
 
-export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: SourceDraftScreenProps) {
+export function SourceDraftScreen({
+  onBusyChange,
+  isNativeLifecycleCompletionBlocked = neverBlockNativeLifecycleCompletion,
+  onNativeLifecycleModalChange,
+  onNativeLifecycleModalClosed,
+}: SourceDraftScreenProps) {
   const [draft, setDraft] = React.useState<SourceDraft | null>(null);
   const [dirty, setDirty] = React.useState(false);
   const [selectedPosition, setSelectedPosition] = React.useState<number | null>(null);
@@ -94,9 +102,18 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
   const actionRef = React.useRef<SourceDraftAction>(null);
   const dirtyRef = React.useRef(false);
   const lifecycleEpoch = React.useRef(0);
-  const onNativeLifecycleRequestedRef = React.useRef(onNativeLifecycleRequested);
+  const nativeLifecycleRequestRef = React.useRef<NativeLifecycleRequest | null>(null);
+  const nativeLifecycleBusyRef = React.useRef(false);
+  const nativeLifecycleCompletingRef = React.useRef(false);
+  const lifecycleDialogRef = React.useRef<HTMLElement | null>(null);
+  const lifecycleDialogWasOpen = React.useRef(false);
+  const lifecycleFocusLifecycle = React.useRef(createDrawerFocusLifecycle()).current;
   dirtyRef.current = dirty;
-  onNativeLifecycleRequestedRef.current = onNativeLifecycleRequested;
+
+  const setCurrentNativeLifecycleRequest = React.useCallback((request: NativeLifecycleRequest | null) => {
+    nativeLifecycleRequestRef.current = request;
+    setNativeLifecycleRequest(request);
+  }, []);
 
   React.useEffect(() => {
     mounted.current = true;
@@ -105,6 +122,29 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
       if (actionRef.current !== null) onBusyChange?.(false);
     };
   }, [onBusyChange]);
+
+  React.useEffect(() => {
+    const open = nativeLifecycleRequest !== null;
+    onNativeLifecycleModalChange?.(open);
+    if (open) {
+      if (!lifecycleDialogWasOpen.current) {
+        lifecycleFocusLifecycle.captureOpener(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+        lifecycleDialogWasOpen.current = true;
+      }
+      ensureDrawerFocus(true, lifecycleDialogRef.current);
+    } else if (lifecycleDialogWasOpen.current) {
+      lifecycleDialogWasOpen.current = false;
+      const restoreFocus = () => {
+        lifecycleFocusLifecycle.restoreOpener();
+      };
+      if (onNativeLifecycleModalClosed) onNativeLifecycleModalClosed(restoreFocus);
+      else restoreFocus();
+    }
+  }, [nativeLifecycleRequest, onNativeLifecycleModalChange, onNativeLifecycleModalClosed, lifecycleFocusLifecycle]);
+
+  React.useEffect(() => () => {
+    onNativeLifecycleModalChange?.(false);
+  }, [onNativeLifecycleModalChange]);
 
   const selectedRow = draft?.rows.find((row) => row.position === selectedPosition) ?? null;
   const pageCount = Math.max(1, Math.ceil((draft?.rows.length ?? 0) / PAGE_SIZE));
@@ -137,17 +177,12 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
         return;
       }
       if (!active || epoch !== lifecycleEpoch.current || !pending || !sameNativeLifecycleRequest(pending, request)) return;
-      if (dirtyRef.current) {
-        onNativeLifecycleRequestedRef.current?.();
+      setCurrentNativeLifecycleRequest(request);
+      if (dirtyRef.current || lifecycleCompletionIsBlocked()) {
         setPendingAction(null);
-        setNativeLifecycleRequest(request);
         return;
       }
-      try {
-        await invoke("desktop_complete_source_draft_lifecycle_request", { request });
-      } catch (cause) {
-        if (active) setError(errorMessage(cause));
-      }
+      void completeNativeLifecycleRequest(request);
     };
 
     void (async () => {
@@ -171,10 +206,10 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
       active = false;
       unlisten?.();
     };
-  }, []);
+  }, [isNativeLifecycleCompletionBlocked, setCurrentNativeLifecycleRequest]);
 
   async function load(kind: Exclude<SourceDraftAction, "save" | null>) {
-    if (actionRef.current !== null) return;
+    if (actionRef.current !== null || nativeLifecycleCompletingRef.current) return;
     actionRef.current = kind;
     setAction(kind);
     setError(null);
@@ -205,13 +240,13 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
   }
 
   function requestLoad(kind: Exclude<SourceDraftAction, "save" | null>) {
-    if (actionRef.current !== null) return;
+    if (actionRef.current !== null || nativeLifecycleCompletingRef.current) return;
     if (dirty) setPendingAction(kind);
     else void load(kind);
   }
 
   async function save() {
-    if (!draft || actionRef.current !== null) return;
+    if (!draft || actionRef.current !== null || nativeLifecycleCompletingRef.current) return;
     actionRef.current = "save";
     setAction("save");
     setError(null);
@@ -239,7 +274,7 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
   }
 
   function updateProposal(change: (proposal: SourceDraftProposal) => SourceDraftProposal) {
-    if (selectedPosition === null) return;
+    if (selectedPosition === null || nativeLifecycleRequestRef.current !== null) return;
     dirtyRef.current = true;
     setDirty(true);
     setSavedPath(null);
@@ -247,6 +282,7 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
   }
 
   function changePage(change: (value: number) => number) {
+    if (nativeLifecycleCompletingRef.current) return;
     setSelectedPosition(null);
     setPage(change);
   }
@@ -256,43 +292,107 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
   }
 
   async function cancelNativeLifecycleRequest() {
-    if (!nativeLifecycleRequest || nativeLifecycleBusy) return;
+    const request = nativeLifecycleRequestRef.current;
+    if (!request || nativeLifecycleBusyRef.current) return;
     lifecycleEpoch.current += 1;
+    nativeLifecycleBusyRef.current = true;
     setNativeLifecycleBusy(true);
     setError(null);
     try {
-      await invoke("desktop_cancel_source_draft_lifecycle_request", { request: nativeLifecycleRequest });
-      if (mounted.current) setNativeLifecycleRequest(null);
+      await invoke("desktop_cancel_source_draft_lifecycle_request", { request });
+      if (mounted.current && sameNativeLifecycleRequest(nativeLifecycleRequestRef.current ?? request, request)) {
+        setCurrentNativeLifecycleRequest(null);
+      }
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
     } finally {
+      nativeLifecycleBusyRef.current = false;
       if (mounted.current) setNativeLifecycleBusy(false);
     }
   }
 
-  async function completeNativeLifecycleRequest() {
-    if (!nativeLifecycleRequest || nativeLifecycleBusy) return;
+  function lifecycleCompletionIsBlocked() {
+    return isNativeLifecycleCompletionBlocked() || actionRef.current !== null;
+  }
+
+  async function completeNativeLifecycleRequest(request = nativeLifecycleRequestRef.current) {
+    if (!request || nativeLifecycleBusyRef.current || lifecycleCompletionIsBlocked()) return;
     lifecycleEpoch.current += 1;
+    nativeLifecycleBusyRef.current = true;
+    nativeLifecycleCompletingRef.current = true;
+    setCurrentNativeLifecycleRequest(request);
     setNativeLifecycleBusy(true);
     setError(null);
     try {
-      await invoke("desktop_complete_source_draft_lifecycle_request", { request: nativeLifecycleRequest });
+      await invoke("desktop_complete_source_draft_lifecycle_request", { request });
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
     } finally {
+      nativeLifecycleCompletingRef.current = false;
+      nativeLifecycleBusyRef.current = false;
       if (mounted.current) setNativeLifecycleBusy(false);
     }
   }
 
   const busy = action !== null || nativeLifecycleRequest !== null;
   const confirmationBusy = action !== null || nativeLifecycleBusy;
+  const journalLifecycleCompletionBlocked = isNativeLifecycleCompletionBlocked();
+  const lifecycleCompletionBlocked = journalLifecycleCompletionBlocked || action !== null;
   const lifecycleIsExit = nativeLifecycleRequest?.kind === "exit";
   const lifecycleHeading = dirty
     ? lifecycleIsExit ? "Discard unsaved proposals and quit Bridge?" : "Discard unsaved proposals and close this window?"
     : lifecycleIsExit ? "Quit Bridge?" : "Close this window?";
-  const lifecycleDescription = dirty
+  const lifecycleDescription = journalLifecycleCompletionBlocked
+    ? "A Journal action is in progress. Wait for the result before closing Bridge."
+    : action !== null
+    ? "A local source-draft action is in progress. Wait for its result before closing Bridge."
+    : dirty
     ? "Unsaved proposal edits are local only and will be lost."
     : "No unsaved proposals remain.";
+  const nativeLifecycleConfirmation = nativeLifecycleRequest && createPortal(
+    <div className="source-draft-lifecycle-backdrop">
+      <section
+        className="source-draft-confirm source-draft-lifecycle-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="source-draft-lifecycle-heading"
+        tabIndex={-1}
+        ref={lifecycleDialogRef}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !confirmationBusy) {
+            void cancelNativeLifecycleRequest();
+            return;
+          }
+          trapDrawerTabKeydown(event);
+        }}
+      >
+        <div>
+          <h3 id="source-draft-lifecycle-heading">{lifecycleHeading}</h3>
+          <p>{lifecycleDescription}</p>
+          {error && <p className="error-banner" role="alert">{error}</p>}
+        </div>
+        <div className="source-draft-actions">
+          <button
+            className="primary"
+            type="button"
+            onClick={() => void completeNativeLifecycleRequest()}
+            disabled={confirmationBusy || lifecycleCompletionBlocked}
+          >
+            {lifecycleIsExit ? "Discard and quit" : "Discard and close"}
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={() => void cancelNativeLifecycleRequest()}
+            disabled={confirmationBusy}
+          >
+            Keep editing
+          </button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
   return (
     <section className="panel wide source-draft" aria-labelledby="source-draft-heading" aria-busy={busy}>
       <div className="source-draft-heading">
@@ -305,7 +405,6 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
 
       {error && <div className="error-banner" role="alert"><strong>Source draft action failed</strong><span>{error}</span></div>}
       {pendingAction && <div className="source-draft-confirm" role="alertdialog" aria-labelledby="source-draft-confirm-heading"><div><h3 id="source-draft-confirm-heading">Discard unsaved proposals?</h3><p>Opening another source will replace the current draft and its unsaved edits.</p></div><div className="source-draft-actions"><button className="primary" type="button" onClick={() => void load(pendingAction)} disabled={confirmationBusy}>Discard and open</button><button className="secondary-action" type="button" onClick={() => setPendingAction(null)} disabled={confirmationBusy}>Keep editing</button></div></div>}
-      {nativeLifecycleRequest && <div className="source-draft-confirm" role="alertdialog" aria-labelledby="source-draft-lifecycle-heading"><div><h3 id="source-draft-lifecycle-heading">{lifecycleHeading}</h3><p>{lifecycleDescription}</p></div><div className="source-draft-actions"><button className="primary" type="button" onClick={() => void completeNativeLifecycleRequest()} disabled={confirmationBusy}>{lifecycleIsExit ? "Discard and quit" : "Discard and close"}</button><button className="secondary-action" type="button" onClick={() => void cancelNativeLifecycleRequest()} disabled={confirmationBusy}>Keep editing</button></div></div>}
 
       {!draft ? (
         <div className="source-draft-empty">
@@ -329,6 +428,7 @@ export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: 
           </div>
         </>
       )}
+      {nativeLifecycleConfirmation}
     </section>
   );
 }
