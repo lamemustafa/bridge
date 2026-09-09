@@ -68,8 +68,10 @@ export type SourceDraftCatalogTargets = {
 
 export type SourceDraftScreenProps = {
   onBusyChange?: (busy: boolean) => void;
-  onNativeLifecycleRequested?: () => void;
   onTallyReadActivityChange?: (active: boolean) => void;
   catalogScope?: SourceDraftCompanyScope;
   catalogScopeKey?: string;
+  isNativeLifecycleCompletionBlocked?: () => boolean;
+  onNativeLifecycleModalChange?: (open: boolean) => void;
+  onNativeLifecycleModalClosed?: (restoreFocus: () => void) => void;
 };

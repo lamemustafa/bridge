@@ -500,6 +500,9 @@ function App() {
   const snapshotTransitionPending = tallyAction === "start" || tallyAction === "resume";
   const [journalActionBusy, setJournalActionBusy] = React.useState(false);
   const [sourceDraftBusy, setSourceDraftBusy] = React.useState(false);
+  const [sourceDraftLifecycleOpen, setSourceDraftLifecycleOpen] = React.useState(false);
+  const [sourceDraftLifecycleFocusRestore, setSourceDraftLifecycleFocusRestore] = React.useState<(() => void) | null>(null);
+  const journalActionBusyRef = React.useRef(false);
   const tallyResultsVersion = React.useRef(0);
   const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
@@ -574,6 +577,26 @@ function App() {
   const changeChildTallyReadActivity = React.useCallback((delta: 1 | -1) => {
     setChildTallyReadCount((current) => Math.max(0, current + delta));
   }, []);
+
+  const changeJournalActionBusy = React.useCallback((next: boolean) => {
+    journalActionBusyRef.current = next;
+    setJournalActionBusy(next);
+  }, []);
+
+  const isNativeLifecycleCompletionBlocked = React.useCallback(
+    () => journalActionBusyRef.current,
+    [],
+  );
+
+  const restoreSourceDraftLifecycleFocus = React.useCallback((restoreFocus: () => void) => {
+    setSourceDraftLifecycleFocusRestore(() => restoreFocus);
+  }, []);
+
+  React.useEffect(() => {
+    if (sourceDraftLifecycleOpen || !sourceDraftLifecycleFocusRestore) return;
+    sourceDraftLifecycleFocusRestore();
+    setSourceDraftLifecycleFocusRestore(null);
+  }, [sourceDraftLifecycleOpen, sourceDraftLifecycleFocusRestore]);
 
   // Both of these are backed by the encrypted mirror, and touching the mirror
   // resolves its key from the OS keychain -- which prompts. Running them on
@@ -1578,7 +1601,7 @@ function App() {
                   : "Run a read-only Core Accounting evidence read";
 
   return (
-    <div className="shell" inert={evidenceDrawerOpen || undefined} aria-hidden={evidenceDrawerOpen || undefined}>
+    <div className="shell" inert={evidenceDrawerOpen || sourceDraftLifecycleOpen || undefined} aria-hidden={evidenceDrawerOpen || sourceDraftLifecycleOpen || undefined}>
       <a className="skip-link" href="#main-content">Skip to active view</a>
       <aside className="sidebar">
         <div className="brand">
@@ -1930,17 +1953,19 @@ function App() {
           <ErrorBoundary key="source_draft" label="Prepare file">
             <SourceDraftScreen
               onBusyChange={setSourceDraftBusy}
-              onNativeLifecycleRequested={() => setView("source_draft")}
               onTallyReadActivityChange={(active) => changeChildTallyReadActivity(active ? 1 : -1)}
               catalogScope={sourceDraftCatalogScope}
               catalogScopeKey={sourceDraftCatalogScopeKey}
+              isNativeLifecycleCompletionBlocked={isNativeLifecycleCompletionBlocked}
+              onNativeLifecycleModalChange={setSourceDraftLifecycleOpen}
+              onNativeLifecycleModalClosed={restoreSourceDraftLifecycleFocus}
             />
           </ErrorBoundary>
         </div>
 
         {view === "journal" && (
           <ErrorBoundary key="journal" label="Review Journal">
-            <JournalPostingScreen config={config} postingBlocked={snapshotPostingBlocked} onBusyChange={setJournalActionBusy} />
+            <JournalPostingScreen config={config} postingBlocked={snapshotPostingBlocked} onBusyChange={changeJournalActionBusy} />
           </ErrorBoundary>
         )}
 
@@ -2183,7 +2208,11 @@ function App() {
 
         {evidenceDrawerOpen && (
           createPortal(
-            <div className="evidence-drawer-backdrop">
+            <div
+              className="evidence-drawer-backdrop"
+              inert={sourceDraftLifecycleOpen || undefined}
+              aria-hidden={sourceDraftLifecycleOpen || undefined}
+            >
             <aside
               className="evidence-drawer"
               role="dialog"
