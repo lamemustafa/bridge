@@ -35,11 +35,11 @@ import { DscScreen } from "./DscScreen";
 import { createDocumentsWorkspaceState, DocumentsScreen } from "./DocumentsScreen";
 import { AxalScreen } from "./AxalScreen";
 import { MirrorProofScreen } from "./MirrorProofScreen";
-import { ErrorBoundary } from "./ErrorBoundary";
+import { ErrorBoundary, ReloadGuardContext } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
 import { JournalPostingScreen } from "./JournalPostingScreen";
 import { SourceDraftScreen } from "./SourceDraftScreen";
-import { NativeLifecycleController, hasNativeWindowRuntime } from "./NativeLifecycleController";
+import { NativeLifecycleController, hasNativeWindowRuntime, type NativeLifecycleRequest } from "./NativeLifecycleController";
 import { TrialBalanceScreen } from "./TrialBalanceScreen";
 import { LedgerEntriesScreen } from "./LedgerEntriesScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
@@ -509,6 +509,21 @@ function App() {
   const sourceDraftDirtyRef = React.useRef(false);
   const sourceDraftActionBusyRef = React.useRef(false);
   const sourceDraftLifecyclePendingRef = React.useRef(false);
+  const sourceDraftReloadAdmissionRef = React.useRef<string | null>(null);
+  const sourceDraftAuthorizedReloadRef = React.useRef(false);
+  const inspectNativeLifecyclePending = React.useCallback(async () => {
+    if (!hasNativeWindowRuntime()) return false;
+    return (await invoke<NativeLifecycleRequest | null>("desktop_pending_source_draft_lifecycle_request")) !== null;
+  }, []);
+  const sourceDraftReloadGuard = React.useMemo(() => ({
+    sourceDraftDirtyRef,
+    sourceDraftActionBusyRef,
+    journalActionBusyRef,
+    lifecyclePendingRef: sourceDraftLifecyclePendingRef,
+    reloadAdmissionRef: sourceDraftReloadAdmissionRef,
+    authorizedReloadRef: sourceDraftAuthorizedReloadRef,
+    inspectNativeLifecyclePending,
+  }), [inspectNativeLifecyclePending]);
   const tallyResultsVersion = React.useRef(0);
   const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
@@ -1616,12 +1631,14 @@ function App() {
                   : "Run a read-only Core Accounting evidence read";
 
   return (
+    <ReloadGuardContext.Provider value={sourceDraftReloadGuard}>
     <>
       <NativeLifecycleController
         sourceDraftDirtyRef={sourceDraftDirtyRef}
         sourceDraftActionBusyRef={sourceDraftActionBusyRef}
         journalActionBusyRef={journalActionBusyRef}
         lifecyclePendingRef={sourceDraftLifecyclePendingRef}
+        authorizedReloadRef={sourceDraftAuthorizedReloadRef}
         onProtectionChange={changeSourceDraftLifecycleProtection}
         onModalChange={setSourceDraftLifecycleOpen}
         onModalClosed={restoreSourceDraftLifecycleFocus}
@@ -1987,7 +2004,7 @@ function App() {
               onDirtyChange={changeSourceDraftDirty}
               editingEnabled={sourceDraftLifecycleReady}
               lifecycleInteractionBlocked={sourceDraftLifecycleOpen}
-              isLifecycleInteractionBlocked={() => sourceDraftLifecyclePendingRef.current}
+              isLifecycleInteractionBlocked={() => sourceDraftLifecyclePendingRef.current || sourceDraftReloadAdmissionRef.current !== null}
               protectionError={sourceDraftLifecycleProtectionError}
             />
           </ErrorBoundary>
@@ -2001,7 +2018,7 @@ function App() {
               onBusyChange={changeJournalActionBusy}
               lifecycleAdmissionReady={sourceDraftLifecycleReady}
               lifecycleInteractionBlocked={sourceDraftLifecycleOpen}
-              isLifecycleInteractionBlocked={() => sourceDraftLifecyclePendingRef.current}
+              isLifecycleInteractionBlocked={() => sourceDraftLifecyclePendingRef.current || sourceDraftReloadAdmissionRef.current !== null}
               lifecycleAdmissionError={sourceDraftLifecycleProtectionError}
             />
           </ErrorBoundary>
@@ -2434,6 +2451,7 @@ function App() {
       </main>
     </div>
     </>
+    </ReloadGuardContext.Provider>
   );
 }
 

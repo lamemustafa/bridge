@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 
 import { SourceDraftScreen } from "../src/SourceDraftScreen";
 import { NativeLifecycleController } from "../src/NativeLifecycleController";
-import { ErrorBoundary } from "../src/ErrorBoundary";
+import { ErrorBoundary, ReloadGuardContext, type ReloadGuard } from "../src/ErrorBoundary";
 import { JournalPostingScreen } from "../src/JournalPostingScreen";
 
 function row(position: number) {
@@ -445,6 +445,7 @@ function ProtectedSourceShell({
   initialSourceBusy = false,
   catalogScope: protectedCatalogScope,
   catalogScopeKey,
+  authorizedReload = false,
 }: {
   crashAfterDirty?: boolean;
   crashAfterBusy?: boolean;
@@ -452,11 +453,14 @@ function ProtectedSourceShell({
   initialSourceBusy?: boolean;
   catalogScope?: React.ComponentProps<typeof SourceDraftScreen>["catalogScope"];
   catalogScopeKey?: string;
+  authorizedReload?: boolean;
 }) {
   const sourceDirtyRef = React.useRef(false);
   const sourceActionBusyRef = React.useRef(initialSourceBusy);
   const journalActionBusyRef = React.useRef(false);
   const lifecyclePendingRef = React.useRef(false);
+  const authorizedReloadRef = React.useRef(authorizedReload);
+  authorizedReloadRef.current = authorizedReload;
   const [ready, setReady] = React.useState(false);
   const [protectionError, setProtectionError] = React.useState<string | null>(null);
   const [lifecycleOpen, setLifecycleOpen] = React.useState(false);
@@ -489,6 +493,7 @@ function ProtectedSourceShell({
         sourceDraftActionBusyRef={sourceActionBusyRef}
         journalActionBusyRef={journalActionBusyRef}
         lifecyclePendingRef={lifecyclePendingRef}
+        authorizedReloadRef={authorizedReloadRef}
         onProtectionChange={onProtectionChange}
         onModalChange={setLifecycleOpen}
         onModalClosed={restore}
@@ -535,7 +540,7 @@ function ThrowingSourceDraft(): never {
   throw new Error("synthetic source screen failure");
 }
 
-async function mountProtected(host: HTMLElement, options: { crashAfterDirty?: boolean; crashAfterBusy?: boolean; showJournal?: boolean; initialSourceBusy?: boolean; catalogScope?: React.ComponentProps<typeof SourceDraftScreen>["catalogScope"]; catalogScopeKey?: string } = {}) {
+async function mountProtected(host: HTMLElement, options: { crashAfterDirty?: boolean; crashAfterBusy?: boolean; showJournal?: boolean; initialSourceBusy?: boolean; catalogScope?: React.ComponentProps<typeof SourceDraftScreen>["catalogScope"]; catalogScopeKey?: string; authorizedReload?: boolean } = {}) {
   const root = createRoot(host);
   await act(async () => root.render(<ProtectedSourceShell {...options} />));
   return root;
@@ -662,6 +667,195 @@ test("uses the controller after the source screen ErrorBoundary unmounts", async
   expect(mocks.invoke).not.toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: exit });
   await act(async () => button(document.body, "Keep editing").click());
   root.unmount();
+});
+
+test("keeps the reload guard after a dirty source screen render failure and leaves clean reloads alone", async () => {
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    return Promise.resolve();
+  });
+  const dirtyHost = document.createElement("div");
+  document.body.append(dirtyHost);
+  const dirtyRoot = await mountProtected(dirtyHost, { crashAfterDirty: true });
+  await act(async () => button(dirtyHost, "Choose source XML").click());
+  setValue(dirtyHost.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+  expect(dirtyHost.textContent).toContain("Prepare file hit a problem");
+  const dirtyReload = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(dirtyReload);
+  expect(dirtyReload.defaultPrevented).toBe(true);
+  dirtyRoot.unmount();
+
+  const cleanHost = document.createElement("div");
+  document.body.append(cleanHost);
+  const cleanRoot = await mountProtected(cleanHost);
+  const cleanReload = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(cleanReload);
+  expect(cleanReload.defaultPrevented).toBe(false);
+  cleanRoot.unmount();
+});
+
+test("consumes an authorized reload without clearing the dirty source-draft signal", async () => {
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mountProtected(host, { authorizedReload: true });
+  await act(async () => button(host, "Choose source XML").click());
+  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+  const reload = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(reload);
+  expect(reload.defaultPrevented).toBe(false);
+  const laterReload = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(laterReload);
+  expect(laterReload.defaultPrevented).toBe(true);
+  root.unmount();
+});
+
+test("uses the fallback Reload button to confirm dirty proposals and block active lifecycle or Journal work", async () => {
+  const renderFallback = async (guard: ReloadGuard, onReload: () => void) => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => root.render(
+      <ReloadGuardContext.Provider value={guard}>
+        <ErrorBoundary label="Prepare file" onReload={onReload}>
+          <ThrowingSourceDraft />
+        </ErrorBoundary>
+      </ReloadGuardContext.Provider>,
+    ));
+    return { host, root };
+  };
+  const ref = <T,>(value: T) => ({ current: value }) as React.MutableRefObject<T>;
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    let dirtyChecks = 0;
+    let resolveDirtyConfirmation!: (value: boolean) => void;
+    const dirtyGuard: ReloadGuard = {
+      sourceDraftDirtyRef: ref(true),
+      sourceDraftActionBusyRef: ref(false),
+      journalActionBusyRef: ref(false),
+      lifecyclePendingRef: ref(false),
+      reloadAdmissionRef: ref<string | null>(null),
+      authorizedReloadRef: ref(false),
+      inspectNativeLifecyclePending: () => {
+        dirtyChecks += 1;
+        return dirtyChecks <= 2 ? Promise.resolve(false) : new Promise((resolve) => { resolveDirtyConfirmation = resolve; });
+      },
+    };
+    let dirtyReloads = 0;
+    let dirtyReloadAuthorized = false;
+    const dirty = await renderFallback(dirtyGuard, () => {
+      dirtyReloadAuthorized = dirtyGuard.authorizedReloadRef.current;
+      dirtyReloads += 1;
+    });
+    await act(async () => button(dirty.host, "Reload").click());
+    expect(dirty.host.textContent).toContain("Discard unsaved proposals and reload?");
+    await act(async () => button(dirty.host, "Keep current window").click());
+    expect(dirtyReloads).toBe(0);
+    expect(dirtyGuard.sourceDraftDirtyRef.current).toBe(true);
+    await act(async () => button(dirty.host, "Reload").click());
+    expect(dirty.host.textContent).toContain("Discard unsaved proposals and reload?");
+    await act(async () => {
+      button(dirty.host, "Reload and discard").click();
+      await Promise.resolve();
+    });
+    expect(button(dirty.host, "Keep current window").disabled).toBe(true);
+    await act(async () => resolveDirtyConfirmation(false));
+    expect(dirtyReloads).toBe(1);
+    expect(dirtyReloadAuthorized).toBe(true);
+    expect(dirtyGuard.authorizedReloadRef.current).toBe(false);
+    dirty.root.unmount();
+
+    const blockedGuard: ReloadGuard = {
+      sourceDraftDirtyRef: ref(false),
+      sourceDraftActionBusyRef: ref(false),
+      journalActionBusyRef: ref(false),
+      lifecyclePendingRef: ref(true),
+      reloadAdmissionRef: ref<string | null>(null),
+      authorizedReloadRef: ref(false),
+      inspectNativeLifecyclePending: async () => false,
+    };
+    let blockedReloads = 0;
+    const blocked = await renderFallback(blockedGuard, () => { blockedReloads += 1; });
+    await act(async () => button(blocked.host, "Reload").click());
+    expect(blocked.host.textContent).toContain("native close request is still pending");
+    blockedGuard.lifecyclePendingRef.current = false;
+    blockedGuard.journalActionBusyRef.current = true;
+    await act(async () => button(blocked.host, "Reload").click());
+    expect(blocked.host.textContent).toContain("Journal action is still in progress");
+    blockedGuard.journalActionBusyRef.current = false;
+    blockedGuard.sourceDraftActionBusyRef.current = true;
+    await act(async () => button(blocked.host, "Reload").click());
+    expect(blocked.host.textContent).toContain("source-draft action is still in progress");
+    expect(blockedReloads).toBe(0);
+    blocked.root.unmount();
+
+    const cleanGuard: ReloadGuard = {
+      sourceDraftDirtyRef: ref(false),
+      sourceDraftActionBusyRef: ref(false),
+      journalActionBusyRef: ref(false),
+      lifecyclePendingRef: ref(false),
+      reloadAdmissionRef: ref<string | null>(null),
+      authorizedReloadRef: ref(false),
+      inspectNativeLifecyclePending: async () => false,
+    };
+    let cleanReloads = 0;
+    const clean = await renderFallback(cleanGuard, () => { cleanReloads += 1; });
+    await act(async () => button(clean.host, "Reload").click());
+    expect(cleanReloads).toBe(1);
+    clean.root.unmount();
+
+    let resolveNativeCheck!: (value: boolean) => void;
+    const raceGuard: ReloadGuard = {
+      sourceDraftDirtyRef: ref(false),
+      sourceDraftActionBusyRef: ref(false),
+      journalActionBusyRef: ref(false),
+      lifecyclePendingRef: ref(false),
+      reloadAdmissionRef: ref<string | null>(null),
+      authorizedReloadRef: ref(false),
+      inspectNativeLifecyclePending: () => new Promise((resolve) => { resolveNativeCheck = resolve; }),
+    };
+    let raceReloads = 0;
+    const race = await renderFallback(raceGuard, () => { raceReloads += 1; });
+    await act(async () => button(race.host, "Reload").click());
+    expect(raceGuard.reloadAdmissionRef.current).not.toBeNull();
+    raceGuard.lifecyclePendingRef.current = true;
+    await act(async () => resolveNativeCheck(false));
+    expect(race.host.textContent).toContain("native close request is still pending");
+    expect(raceGuard.reloadAdmissionRef.current).toBeNull();
+    expect(raceReloads).toBe(0);
+    race.root.unmount();
+
+    const deferredResolvers: Array<(value: boolean) => void> = [];
+    const ownerGuard: ReloadGuard = {
+      sourceDraftDirtyRef: ref(false),
+      sourceDraftActionBusyRef: ref(false),
+      journalActionBusyRef: ref(false),
+      lifecyclePendingRef: ref(false),
+      reloadAdmissionRef: ref<string | null>(null),
+      authorizedReloadRef: ref(false),
+      inspectNativeLifecyclePending: () => new Promise((resolve) => { deferredResolvers.push(resolve); }),
+    };
+    const firstBoundary = await renderFallback(ownerGuard, () => undefined);
+    await act(async () => button(firstBoundary.host, "Reload").click());
+    const firstToken = ownerGuard.reloadAdmissionRef.current;
+    expect(firstToken).not.toBeNull();
+    firstBoundary.root.unmount();
+    expect(ownerGuard.reloadAdmissionRef.current).toBeNull();
+
+    const secondBoundary = await renderFallback(ownerGuard, () => undefined);
+    await act(async () => button(secondBoundary.host, "Reload").click());
+    const secondToken = ownerGuard.reloadAdmissionRef.current;
+    expect(secondToken).not.toBeNull();
+    expect(secondToken).not.toBe(firstToken);
+    await act(async () => deferredResolvers[0](false));
+    expect(ownerGuard.reloadAdmissionRef.current).toBe(secondToken);
+    secondBoundary.root.unmount();
+  } finally {
+    consoleError.mockRestore();
+  }
 });
 
 test("does not let a late failed request lookup replace a newer dialog", async () => {

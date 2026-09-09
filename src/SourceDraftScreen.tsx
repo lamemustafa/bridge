@@ -167,16 +167,6 @@ export function SourceDraftScreen({
   const pageRows = draft?.rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) ?? [];
   const rowsWithoutProposal = draft?.rows.filter((row) => !hasStartedProposal(row)).length ?? 0;
 
-  React.useEffect(() => {
-    if (!dirty) return;
-    const beforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", beforeUnload);
-    return () => window.removeEventListener("beforeunload", beforeUnload);
-  }, [dirty]);
-
   async function load(kind: "choose" | "open") {
     if (!editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null) return;
     actionRef.current = kind;

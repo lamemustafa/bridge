@@ -35,6 +35,7 @@ type Props = {
   sourceDraftActionBusyRef: React.RefObject<boolean>;
   journalActionBusyRef: React.RefObject<boolean>;
   lifecyclePendingRef: React.RefObject<boolean>;
+  authorizedReloadRef: React.RefObject<boolean>;
   onProtectionChange: (ready: boolean, error: string | null) => void;
   onModalChange: (open: boolean) => void;
   onModalClosed: (restoreFocus: () => void) => void;
@@ -45,6 +46,7 @@ export function NativeLifecycleController({
   sourceDraftActionBusyRef,
   journalActionBusyRef,
   lifecyclePendingRef,
+  authorizedReloadRef,
   onProtectionChange,
   onModalChange,
   onModalClosed,
@@ -67,6 +69,20 @@ export function NativeLifecycleController({
     lifecyclePendingRef.current = next !== null;
     setRequest(next);
   }, [lifecyclePendingRef]);
+
+  React.useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!sourceDraftDirtyRef.current) return;
+      if (authorizedReloadRef.current) {
+        authorizedReloadRef.current = false;
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [authorizedReloadRef, sourceDraftDirtyRef]);
 
   const completionBlocked = React.useCallback(
     () => sourceDraftActionBusyRef.current || journalActionBusyRef.current,
