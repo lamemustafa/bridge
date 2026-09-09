@@ -90,7 +90,7 @@ pub fn run_journal_confirmation_child_from_args(
 pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
     tracing_subscriber::fmt::init();
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(tally::TallyRuntime::default())
         .manage(source_draft::SourceDraftStore::default())
         .manage(source_draft::SourceDraftLifecycleGuard::default())
@@ -102,7 +102,23 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
             let app_data_directory = app.path().app_data_dir()?;
             app.manage(LazyTallyMirror::new(app_data_directory));
             Ok(())
-        })
+        });
+
+    // The default macOS Quit item invokes Cocoa termination directly, before
+    // Tauri can expose a preventable RunEvent::ExitRequested. Replace only
+    // that item with an ordinary menu event; all other default menu items stay
+    // unchanged.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(guarded_macos_menu)
+        .on_menu_event(|app, event| {
+            if let Some(kind) = lifecycle_kind_for_menu_item(event.id().as_ref()) {
+                let lifecycle_guard = app.state::<source_draft::SourceDraftLifecycleGuard>();
+                emit_source_draft_lifecycle_request(app, &lifecycle_guard, kind);
+            }
+        });
+
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             commands::check_tally_connection,
             commands::probe_tally,
@@ -218,6 +234,87 @@ fn emit_source_draft_lifecycle_request(
     // A failed renderer event cannot release the native lifecycle guard; the
     // renderer can recover the same pending request with the command at mount.
     let _ = app.emit("source-draft-lifecycle-requested", pending);
+}
+
+#[cfg(target_os = "macos")]
+const GUARDED_QUIT_MENU_ITEM_ID: &str = "source-draft-guarded-quit";
+
+#[cfg(target_os = "macos")]
+fn lifecycle_kind_for_menu_item(item_id: &str) -> Option<source_draft::SourceDraftLifecycleKind> {
+    (item_id == GUARDED_QUIT_MENU_ITEM_ID).then_some(source_draft::SourceDraftLifecycleKind::Exit)
+}
+
+#[cfg(target_os = "macos")]
+fn guarded_macos_menu(
+    app: &tauri::AppHandle<tauri::Wry>,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{AboutMetadata, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
+
+    let menu = Menu::default(app)?;
+    // Tauri's default macOS menu puts the application submenu first. Its
+    // predefined item IDs are generated, so construct this submenu explicitly
+    // rather than attempting to look up a predefined Quit by a guessed ID.
+    let default_app_menu = menu
+        .items()?
+        .into_iter()
+        .next()
+        .ok_or_else(|| std::io::Error::other("The default application menu is missing"))?;
+    match &default_app_menu {
+        MenuItemKind::Submenu(submenu) if submenu.text()? == app.package_info().name => {}
+        _ => return Err(std::io::Error::other("Unexpected default application menu").into()),
+    }
+    let guarded_quit = MenuItem::with_id(
+        app,
+        GUARDED_QUIT_MENU_ITEM_ID,
+        format!("Quit {}", app.package_info().name),
+        true,
+        Some("cmd+q"),
+    )?;
+    let about = AboutMetadata {
+        name: Some(app.package_info().name.clone()),
+        version: Some(app.package_info().version.to_string()),
+        copyright: app.config().bundle.copyright.clone(),
+        authors: app
+            .config()
+            .bundle
+            .publisher
+            .clone()
+            .map(|publisher| vec![publisher]),
+        ..Default::default()
+    };
+    let app_menu = Submenu::with_items(
+        app,
+        app.package_info().name.clone(),
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, Some(about))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &guarded_quit,
+        ],
+    )?;
+    menu.remove(&default_app_menu)?;
+    menu.insert(&app_menu, 0)?;
+    Ok(menu)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod source_draft_macos_menu_tests {
+    use super::*;
+
+    #[test]
+    fn guarded_quit_menu_item_routes_only_to_exit_lifecycle() {
+        assert_eq!(
+            lifecycle_kind_for_menu_item(GUARDED_QUIT_MENU_ITEM_ID),
+            Some(source_draft::SourceDraftLifecycleKind::Exit)
+        );
+        assert_eq!(lifecycle_kind_for_menu_item("quit"), None);
+        assert_eq!(lifecycle_kind_for_menu_item("unrelated-menu-item"), None);
+    }
 }
 
 #[cfg(test)]
