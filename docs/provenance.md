@@ -118,3 +118,11 @@ build directories on disposable runners, restores their bytes, and retains
 fresh native-build timings plus source and installation hashes. It does not
 save a distribution or compiler cache, change production prerequisites, or
 establish a cache-extraction speed improvement.
+
+The archive measurement helper and its controls are project-authored. It reuses
+the installed inventory, directory-move control and bounded log capture helpers.
+Its disposable Windows workflow uses the existing GNU tar/zstd commands and
+performs full byte/hash round trips before reporting timings. The prior cold
+native comparison is retained in run 34332893760 at commit 67fa357; the archive
+stage does not rerun native tests or save production caches. Archive payloads
+stay on the disposable runner; uploaded evidence contains metadata and logs.
