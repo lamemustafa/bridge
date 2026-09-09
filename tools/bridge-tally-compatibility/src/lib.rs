@@ -30,7 +30,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 207;
+pub const MAX_SURFACE_FILES: usize = 208;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -39,12 +39,13 @@ const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1000;
 const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
     ["src-tauri/src/db/migrations", "src-tauri/src/reports"];
 /// Compatibility evidence binds the selected-ledger constructor and the native
-/// lifecycle implementation and its two frontend admission points, rather than
+/// lifecycle implementation, error fallback, and frontend admission points, rather than
 /// trusting only their callers.
-const REQUIRED_SURFACE_FILES: [&str; 4] = [
+const REQUIRED_SURFACE_FILES: [&str; 5] = [
     "src-tauri/src/agent_desktop_journal.rs",
     "src-tauri/src/source_draft/lifecycle.rs",
     "src/JournalPostingScreen.tsx",
+    "src/ErrorBoundary.tsx",
     "src/NativeLifecycleController.tsx",
 ];
 
@@ -2455,10 +2456,10 @@ mod tests {
     }
 
     #[test]
-    fn surface_file_cap_refuses_208_entries() {
+    fn surface_file_cap_refuses_209_entries() {
         let oversized = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: (0..208)
+            files: (0..209)
                 .map(|index| SurfaceFile {
                     path: format!("pinned-{index:03}"),
                     sha256: "0".repeat(64),
