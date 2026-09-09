@@ -4679,7 +4679,7 @@ pub(crate) mod tests {
         let company_guid = plan.company.identity.company_guid.clone();
         let company_extent = || {
             format!(
-                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260731</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20260701</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{company_guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+                r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260731</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20260401</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
             )
         };
         let company_list = || {
