@@ -14,7 +14,8 @@ use bridge_tally_protocol::{
         NativeLedgerExportPeriod,
     },
     outstandings_shared::{
-        parse_company_book_extent, require_master_witness, CompanyBookExtent, DateBoundaryProfile,
+        parse_company_book_extent_v2, require_master_witness, CompanyBookExtent,
+        DateBoundaryProfile,
     },
     parse_companies_from_collection, parse_ledger_period_balance_report,
     parse_native_group_source_records_with_evidence,
@@ -135,6 +136,7 @@ impl RuntimeTallyConnector {
         &self,
         context: &RequestContext,
         boundary_profile: DateBoundaryProfile,
+        identity: &VerifiedCompanyIdentity,
     ) -> Result<CanonicalPackWindow, TallyError> {
         if context.company.identity != self.company.identity {
             return Err(invalid_data("company_identity_mismatch"));
@@ -148,8 +150,18 @@ impl RuntimeTallyConnector {
             });
         }
 
-        let company_name = self.company.display_name.clone();
-        let expected_guid = self.company.identity.company_guid.clone();
+        if company_source_identity(
+            &self.company.identity.bridge_source_lineage,
+            identity.company_guid(),
+            identity.company_number.as_str(),
+            identity.display_name(),
+            identity.books_from_yyyymmdd.as_str(),
+        ) != self.company.identity
+        {
+            return Err(invalid_data("company_identity_mismatch"));
+        }
+        let company_name = identity.display_name().to_owned();
+        let expected_guid = identity.company_guid().to_owned();
         // Native Collection exports deliberately carry no company GUID. Bind
         // the group rows out-of-band: each extent response is GUID-verified,
         // each extent is internally paired, and the unchanged opening/closing
@@ -157,9 +169,7 @@ impl RuntimeTallyConnector {
         // than the retired report field: Tally renders FIELD amounts for
         // display and has been observed dropping their sign, so it cannot be
         // a trustworthy company-authentication channel for a money path.
-        let opening_extent = self
-            .read_pinned_company_book_extent(&company_name, &expected_guid)
-            .await?;
+        let opening_extent = self.read_pinned_company_book_extent(identity).await?;
         let native_group_request = render_native_group_snapshot_request(&company_name);
         let first_group_xml = self
             .post_xml_validated(native_group_request.clone(), {
@@ -181,9 +191,7 @@ impl RuntimeTallyConnector {
             return Err(invalid_data("native_group_snapshot_drifted"));
         }
         let groups = native_groups_for_core_window(&first_group_xml, &expected_guid)?;
-        let closing_extent = self
-            .read_pinned_company_book_extent(&company_name, &expected_guid)
-            .await?;
+        let closing_extent = self.read_pinned_company_book_extent(identity).await?;
         if closing_extent != opening_extent {
             return Err(invalid_data("company_book_changed_during_group_read"));
         }
@@ -193,9 +201,7 @@ impl RuntimeTallyConnector {
         // GUID-verified book extent used above, then require at least one row
         // to bind to the selected company. A foreign per-row prefix remains
         // evidence, not a hard failure: imported masters may retain it.
-        let ledger_opening_extent = self
-            .read_pinned_company_book_extent(&company_name, &expected_guid)
-            .await?;
+        let ledger_opening_extent = self.read_pinned_company_book_extent(identity).await?;
         let ledger_period = NativeLedgerExportPeriod::new(
             boundary_profile,
             ledger_opening_extent.books_from().clone(),
@@ -222,9 +228,7 @@ impl RuntimeTallyConnector {
         let ledgers =
             parse_native_ledger_source_records_with_evidence(&first_ledger_xml, &expected_guid)
                 .map_err(|_| protocol_error("ledger_export_invalid"))?;
-        let ledger_closing_extent = self
-            .read_pinned_company_book_extent(&company_name, &expected_guid)
-            .await?;
+        let ledger_closing_extent = self.read_pinned_company_book_extent(identity).await?;
         if ledger_closing_extent != ledger_opening_extent {
             return Err(invalid_data("company_book_changed_during_ledger_read"));
         }
@@ -249,9 +253,7 @@ impl RuntimeTallyConnector {
         // non-empty response its row GUIDs bind the company; for a valid
         // empty window the same unchanged, GUID-verified book extent bracket
         // used for groups authenticates the selected book out of band.
-        let voucher_opening_extent = self
-            .read_pinned_company_book_extent(&company_name, &expected_guid)
-            .await?;
+        let voucher_opening_extent = self.read_pinned_company_book_extent(identity).await?;
         // Fail closed: `from`/`to` feed a quoted `$$Date:"..."` TDL formula
         // argument, where XML escaping alone cannot contain an embedded
         // quote (Tally decodes `&quot;` back to `"` before evaluating the
@@ -276,9 +278,7 @@ impl RuntimeTallyConnector {
         let vouchers =
             parse_native_voucher_source_records_with_evidence(&voucher_xml, &expected_guid)
                 .map_err(|_| protocol_error("voucher_export_invalid"))?;
-        let voucher_closing_extent = self
-            .read_pinned_company_book_extent(&company_name, &expected_guid)
-            .await?;
+        let voucher_closing_extent = self.read_pinned_company_book_extent(identity).await?;
         if voucher_closing_extent != voucher_opening_extent {
             return Err(invalid_data("company_book_changed_during_voucher_read"));
         }
@@ -288,34 +288,32 @@ impl RuntimeTallyConnector {
 
     async fn read_pinned_company_book_extent(
         &self,
-        company_name: &str,
-        expected_guid: &str,
+        identity: &VerifiedCompanyIdentity,
     ) -> Result<CompanyBookExtent, TallyError> {
-        let company = ValidatedCompanyName::new(company_name.to_owned())
+        let company = ValidatedCompanyName::new(identity.display_name().to_owned())
             .map_err(|_| invalid_data("company_name_invalid"))?;
-        let request = ReadOnlyProfile::CompanyBookExtentV1 { company: &company }.render();
-        let first_guid = expected_guid.to_owned();
+        let expectation = identity
+            .company_book_extent_expectation()
+            .map_err(|_| invalid_data("company_identity_invalid"))?;
+        let request = ReadOnlyProfile::CompanyBookExtentV2 { company: &company }.render();
         let first_xml = self
-            .post_xml_validated(request.clone(), move |xml| {
-                parse_company_book_extent(xml, company_name, &first_guid).is_ok()
+            .post_xml_validated(request.clone(), |xml| {
+                parse_company_book_extent_v2(xml, &expectation).is_ok()
             })
             .await?;
-        let second_guid = expected_guid.to_owned();
         let second_xml = self
-            .post_xml_validated(request, move |xml| {
-                parse_company_book_extent(xml, company_name, &second_guid).is_ok()
+            .post_xml_validated(request, |xml| {
+                parse_company_book_extent_v2(xml, &expectation).is_ok()
             })
             .await?;
-        let first = parse_company_book_extent(&first_xml, company_name, expected_guid)
+        let first = parse_company_book_extent_v2(&first_xml, &expectation)
             .map_err(|_| invalid_data("company_identity_mismatch"))?;
-        let second = parse_company_book_extent(&second_xml, company_name, expected_guid)
+        let second = parse_company_book_extent_v2(&second_xml, &expectation)
             .map_err(|_| invalid_data("company_identity_mismatch"))?;
         if first != second {
             return Err(invalid_data("company_book_extent_drifted"));
         }
-        // The parser stays tolerant of an absent ALTMSTID (older captures still parse), but this
-        // is the core-window bracket itself: fail closed here so a witness-less pair can never be
-        // mistaken for a stable one. See `require_master_witness` for why.
+        // Identity selection does not replace the master-change witness.
         require_master_witness(&first).map_err(|_| invalid_data("company_altmstid_missing"))?;
         Ok(first)
     }
@@ -326,15 +324,15 @@ impl RuntimeTallyConnector {
             .snapshot_probe_with_observation(self.config.clone(), &self.company.display_name)
             .await
             .map_err(map_transport_error)?;
-        self.verify_snapshot_identity_from_companies(&result.companies)?;
+        let identity = self.verify_snapshot_identity_from_companies(&result.companies)?;
         let boundary_profile = self.observe_snapshot_profile(&result.profile)?;
         let source_read = self
-            .extract_core_window(&self.canary_context, boundary_profile)
+            .extract_core_window(&self.canary_context, boundary_profile, &identity)
             .await;
         // A failed source read is still a source-read attempt. Always make the
         // closing full-tuple observation, while preserving the source error as
         // the decisive capability evidence when both operations fail.
-        let closing_identity = self.verify_snapshot_identity().await;
+        let closing_identity = self.verify_closing_snapshot_identity(&identity).await;
         let core_evidence = match (source_read, closing_identity) {
             (Ok(window), Ok(())) => core_canary_capability(&window),
             (Ok(_), Err(error)) => CapabilityEvidence {
@@ -361,7 +359,7 @@ impl RuntimeTallyConnector {
     fn verify_snapshot_identity_from_companies(
         &self,
         companies: &[TallyCompany],
-    ) -> Result<(), TallyError> {
+    ) -> Result<VerifiedCompanyIdentity, TallyError> {
         let matching = companies
             .iter()
             .filter(|company| {
@@ -398,7 +396,6 @@ impl RuntimeTallyConnector {
             books_from.to_string(),
             companies,
         )
-        .map(|_| ())
         .map_err(|error| match error {
             VerifiedCompanyIdentityError::InvalidCompanyNumber => {
                 protocol_error("company_number_invalid")
@@ -416,7 +413,7 @@ impl RuntimeTallyConnector {
         })
     }
 
-    async fn verify_snapshot_identity(&self) -> Result<(), TallyError> {
+    async fn verify_snapshot_identity(&self) -> Result<VerifiedCompanyIdentity, TallyError> {
         let companies = self
             .runtime
             .fetch_companies(self.config.clone())
@@ -425,14 +422,26 @@ impl RuntimeTallyConnector {
         self.verify_snapshot_identity_from_companies(&companies)
     }
 
+    async fn verify_closing_snapshot_identity(
+        &self,
+        opening: &VerifiedCompanyIdentity,
+    ) -> Result<(), TallyError> {
+        let closing = self.verify_snapshot_identity().await?;
+        if closing != *opening {
+            return Err(protocol_error("company_identity_changed_during_read"));
+        }
+        Ok(())
+    }
+
     /// Every source read gets a closing identity check. A closing mismatch
     /// invalidates a successful source response, but it must not replace an
     /// earlier source failure with a later, unrelated company-list failure.
     async fn finish_snapshot_source_read<T>(
         &self,
         source_read: Result<T, TallyError>,
+        opening: &VerifiedCompanyIdentity,
     ) -> Result<T, TallyError> {
-        let closing_identity = self.verify_snapshot_identity().await;
+        let closing_identity = self.verify_closing_snapshot_identity(opening).await;
         match (source_read, closing_identity) {
             (Ok(value), Ok(())) => Ok(value),
             (Ok(_), Err(error)) => Err(error),
@@ -511,9 +520,11 @@ impl TallyConnector for RuntimeTallyConnector {
             .read()
             .map_err(|_| invalid_data("snapshot_boundary_profile_unavailable"))?
             .ok_or_else(|| invalid_data("snapshot_boundary_profile_unavailable"))?;
-        self.verify_snapshot_identity().await?;
-        let window = self.extract_core_window(context, boundary_profile).await;
-        self.finish_snapshot_source_read(window).await
+        let identity = self.verify_snapshot_identity().await?;
+        let window = self
+            .extract_core_window(context, boundary_profile, &identity)
+            .await;
+        self.finish_snapshot_source_read(window, &identity).await
     }
 
     async fn read_core_period_balance_report(
@@ -533,7 +544,7 @@ impl TallyConnector for RuntimeTallyConnector {
         let validation_company_guid = expected_company_guid.clone();
         let validation_from = expected_from.clone();
         let validation_to = expected_to.clone();
-        self.verify_snapshot_identity().await?;
+        let identity = self.verify_snapshot_identity().await?;
         let xml = self
             .post_xml_validated(
                 tdl_engine::ledger_period_balances_request(
@@ -551,7 +562,7 @@ impl TallyConnector for RuntimeTallyConnector {
                 },
             )
             .await;
-        let xml = self.finish_snapshot_source_read(xml).await?;
+        let xml = self.finish_snapshot_source_read(xml, &identity).await?;
         let parsed = parse_ledger_period_balance_report(&xml)
             .map_err(|_| protocol_error("period_report_invalid"))?;
         if !company_guids_equal(
@@ -853,7 +864,7 @@ mod tests {
     }
 
     /// Carries `ALTMSTID` -- unlike a plain company-list row -- because this
-    /// is the shape of `CompanyBookExtentV1`'s response, and every core-window
+    /// is the observed shape of `CompanyBookExtentV2`'s response, and every core-window
     /// bracket test below routes an extent read through the production
     /// bracket (`read_pinned_company_book_extent`), which now requires that
     /// witness to be present. See `core_window_bracket_fails_closed_when_altmstid_is_absent`
@@ -868,8 +879,29 @@ mod tests {
         books_from: &str,
     ) -> String {
         format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="{company_name}"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">{books_from}</BOOKSFROM><NAME TYPE="String">{company_name}</NAME><GUID TYPE="String">{company_guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
+            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="{company_name}"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">{books_from}</BOOKSFROM><NAME TYPE="String">{company_name}</NAME><GUID TYPE="String">{company_guid}</GUID><COMPANYNUMBER TYPE="Number">100001</COMPANYNUMBER><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
         )
+    }
+
+    fn observed_identity(
+        name: &str,
+        guid: &str,
+        number: &str,
+        books_from: &str,
+    ) -> VerifiedCompanyIdentity {
+        VerifiedCompanyIdentity::from_observed_companies(
+            name.to_owned(),
+            guid.to_owned(),
+            number.to_owned(),
+            books_from.to_owned(),
+            &[TallyCompany {
+                name: name.to_owned(),
+                guid: Some(guid.to_owned()),
+                company_number: Some(number.to_owned()),
+                books_from: Some(books_from.to_owned()),
+            }],
+        )
+        .expect("complete test company tuple")
     }
 
     fn native_groups(company_guid: &str, groups: &[(&str, &str)]) -> String {
@@ -1587,35 +1619,23 @@ mod tests {
         assert_eq!(methods, ["POST"]);
     }
 
-    /// The core-window bracket (`read_pinned_company_book_extent`, feeding
-    /// `extract_core_window`/`read_pack_window`) must fail closed with a
-    /// typed error when both paired reads agree but neither carries
-    /// `ALTMSTID` -- the exact case the review flagged: two witness-less
-    /// extents compare equal, so an ordinary `first != second` drift check
-    /// alone cannot tell a stable book from one where a GROUP/LEDGER master
-    /// moved mid-window without a signal to detect it. This uses the real,
-    /// unmodified `unit_a_company_extent_live.xml` capture -- from before
-    /// `ALTMSTID` was added to the fetch list -- rather than a synthetic
-    /// response, so the absence being tested is the one Tally has actually
-    /// produced.
+    /// A negative mutation of a captured V2 response keeps the identity intact
+    /// while removing only the selected company's master witness. Equal paired
+    /// responses must still fail with the missing-witness error.
     #[tokio::test]
     async fn core_window_bracket_fails_closed_when_altmstid_is_absent() {
         let _simulator_guard = simulator_test_lock().lock().await;
-        const COMPANY_EXTENT_WITHOUT_ALTMSTID: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+        const CAPTURE: &str = include_str!(
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
         );
-        const COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
-        const COMPANY: &str = "Aarav Trading Company Demo";
-        assert!(
-            !COMPANY_EXTENT_WITHOUT_ALTMSTID.contains("ALTMSTID"),
-            "this fixture must predate the ALTMSTID fetch for this test to prove anything"
-        );
-
-        let (address, server) = spawn_method_routed_server(vec![
-            COMPANY_EXTENT_WITHOUT_ALTMSTID.to_string(),
-            COMPANY_EXTENT_WITHOUT_ALTMSTID.to_string(),
-        ])
-        .await;
+        const COMPANY_GUID: &str = "ec4454ae-5c4c-4bfa-b3b0-68182a749689";
+        const COMPANY: &str = "BRIDGE PROBE B SANDBOX";
+        let witness = "<ALTMSTID TYPE=\"Number\"> 229</ALTMSTID>";
+        assert_eq!(CAPTURE.matches(witness).count(), 1);
+        let missing_witness = CAPTURE.replace(witness, "");
+        let identity = observed_identity(COMPANY, COMPANY_GUID, "100005", "20250401");
+        let (address, server) =
+            spawn_method_routed_server(vec![missing_witness.clone(), missing_witness]).await;
         let config = TallyConfig {
             host: address.ip().to_string(),
             port: address.port(),
@@ -1624,9 +1644,9 @@ mod tests {
             identity: company_source_identity(
                 &format!("tally_xml_http:http://{address}"),
                 COMPANY_GUID,
-                "100001",
+                "100005",
                 COMPANY,
-                "20260401",
+                "20250401",
             ),
             display_name: COMPANY.to_string(),
         };
@@ -1647,7 +1667,7 @@ mod tests {
                 .unwrap();
 
         let error = connector
-            .extract_core_window(&context, DateBoundaryProfile::ModeAgnostic)
+            .extract_core_window(&context, DateBoundaryProfile::ModeAgnostic, &identity)
             .await
             .expect_err("a core-window bracket formed without ALTMSTID must fail closed");
         assert!(
@@ -1976,6 +1996,7 @@ mod tests {
     async fn same_context_snapshot_read_does_not_reuse_pre_run_canary_rows() {
         let _simulator_guard = simulator_test_lock().lock().await;
         let company_guid = "synthetic-company-guid";
+        let identity = observed_identity("Synthetic Company", company_guid, "100001", "20240101");
         let empty_native_groups = native_groups(company_guid, &[]);
         let second_group = native_groups(company_guid, &[("Post-start Assets", "Primary")]);
         let plans = [
@@ -2055,7 +2076,7 @@ mod tests {
         .unwrap();
 
         let pre_run_canary = connector
-            .extract_core_window(&context, DateBoundaryProfile::ModeAgnostic)
+            .extract_core_window(&context, DateBoundaryProfile::ModeAgnostic, &identity)
             .await
             .unwrap();
         let PackBatch::CoreAccounting(pre_run_batch) = pre_run_canary.batch else {
@@ -2065,7 +2086,7 @@ mod tests {
         assert_eq!(pre_run_batch.groups[0].name, "Primary");
 
         let snapshot_window = connector
-            .extract_core_window(&context, DateBoundaryProfile::ModeAgnostic)
+            .extract_core_window(&context, DateBoundaryProfile::ModeAgnostic, &identity)
             .await
             .unwrap();
         let PackBatch::CoreAccounting(snapshot_batch) = snapshot_window.batch else {

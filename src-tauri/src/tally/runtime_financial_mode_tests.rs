@@ -19,8 +19,9 @@ fn companies() -> String {
     "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"))
 }
 fn extents() -> String {
-    decode(include_bytes!(
-    "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"))
+    include_str!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+    ).to_owned()
 }
 fn company_identity(xml: &str) -> VerifiedCompanyIdentity {
     identity_for_guid(xml, GUID)
@@ -62,10 +63,9 @@ fn assertion(
         assertion: OutstandingsCurrencyAssertion::Inr,
         decimal_places: 2,
         currency_read_extent:
-            bridge_tally_protocol::outstandings_shared::parse_company_book_extent(
+            bridge_tally_protocol::outstandings_shared::parse_company_book_extent_v2(
                 extent,
-                identity.display_name(),
-                GUID,
+                &identity.company_book_extent_expectation().unwrap(),
             )
             .unwrap(),
     }

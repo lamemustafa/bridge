@@ -1893,12 +1893,7 @@ impl TallyRuntime {
                             observe_read_boundary(&client).await?;
                         evidence = opening_evidence;
                         bracket_verified_company_identity(&client, &identity).await?;
-                        let opening_extent = client
-                            .fetch_company_book_extent(
-                                identity.display_name(),
-                                identity.company_guid(),
-                            )
-                            .await?;
+                        let opening_extent = client.fetch_company_book_extent(&identity).await?;
                         let period = ledger_opening_period(
                             boundary_profile,
                             opening_extent.books_from(),
@@ -1918,12 +1913,7 @@ impl TallyRuntime {
                         ));
                         let ledgers =
                             admit_native_ledger_opening_rows(&body, identity.company_guid())?;
-                        let closing_extent = client
-                            .fetch_company_book_extent(
-                                identity.display_name(),
-                                identity.company_guid(),
-                            )
-                            .await?;
+                        let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != opening_extent {
                             return Err(anyhow::Error::new(
                                 PairedReadValidationError::NativeLedgerExtent,
@@ -1978,8 +1968,7 @@ impl TallyRuntime {
                         bracket_verified_company_identity(&client, &identity).await?;
                         let source = client
                             .fetch_party_ledger_master_source(
-                                identity.display_name(),
-                                identity.company_guid(),
+                                &identity,
                                 boundary_profile,
                                 currency_assertion,
                             )
@@ -2145,14 +2134,7 @@ impl TallyRuntime {
                 let to = to.clone();
                 async move {
                     bracket_verified_company_identity(&client, &identity).await?;
-                    let vouchers = client
-                        .fetch_vouchers(
-                            identity.display_name(),
-                            identity.company_guid(),
-                            &from,
-                            &to,
-                        )
-                        .await?;
+                    let vouchers = client.fetch_vouchers(&identity, &from, &to).await?;
                     bracket_verified_company_identity(&client, &identity).await?;
                     Ok(vouchers)
                 }
@@ -2411,9 +2393,7 @@ impl TallyRuntime {
                         bracket_verified_company_identity(&client, &identity).await?;
                         let company = identity.display_name();
                         let expected_company_guid = identity.company_guid();
-                        let extent = client
-                            .fetch_company_book_extent(company, expected_company_guid)
-                            .await?;
+                        let extent = client.fetch_company_book_extent(&identity).await?;
                         let currency_assertion = match &currency_assertion {
                             NativeOutstandingsCurrency::Operator(assertion) => *assertion,
                             NativeOutstandingsCurrency::Observed(witness) => {
@@ -2549,9 +2529,7 @@ impl TallyRuntime {
                         // GUID-checked individually, so an unchanged extent across
                         // the whole sequence is the only identity evidence
                         // available.
-                        let closing_extent = client
-                            .fetch_company_book_extent(company, expected_company_guid)
-                            .await?;
+                        let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != extent {
                             return Ok((
                                 partial_result("book_changed_during_read"),
@@ -2694,24 +2672,14 @@ impl TallyRuntime {
                         bracket_verified_company_identity(&client, &identity).await?;
                         // Pin identity first: a currency read against the wrong
                         // company is worse than none.
-                        let extent = client
-                            .fetch_company_book_extent(
-                                identity.display_name(),
-                                identity.company_guid(),
-                            )
-                            .await?;
+                        let extent = client.fetch_company_book_extent(&identity).await?;
                         let request = render_company_currency_request(identity.display_name());
                         let body = client.fetch_native_report_paired(request.clone()).await?;
                         let (body, encoded_bytes, encoded_sha256) =
                             body.require_stable(PairedReadValidationError::CurrencyMaster)?;
                         evidence =
                             RuntimeReadEvidence::paired(&request, encoded_sha256, encoded_bytes);
-                        let closing_extent = client
-                            .fetch_company_book_extent(
-                                identity.display_name(),
-                                identity.company_guid(),
-                            )
-                            .await?;
+                        let closing_extent = client.fetch_company_book_extent(&identity).await?;
                         if closing_extent != extent {
                             return Err(anyhow::Error::new(
                                 PairedReadValidationError::CurrencyExtent,
@@ -2848,7 +2816,7 @@ impl TallyRuntime {
                         let company = identity.display_name();
                         let expected_company_guid = identity.company_guid();
                         let extent = client
-                            .fetch_company_book_extent(company, expected_company_guid)
+                            .fetch_company_book_extent(&identity)
                             .await?;
                         // The reporting window must never run past the as-of date.
                         // A future-dated voucher pushes LastVoucherDate beyond
@@ -3106,10 +3074,7 @@ impl TallyRuntime {
                         // partition witnesses must describe one book state before
                         // a Complete result can be assembled.
                         let closing_extent = client
-                            .fetch_company_book_extent(
-                                extent.company().name(),
-                                extent.company().guid(),
-                            )
+                            .fetch_company_book_extent(&identity)
                             .await?;
                         if closing_extent != extent {
                             return Ok(partial_result("book_changed_during_scan"));
@@ -3502,6 +3467,32 @@ mod tests {
         VerifiedCompanyIdentity::test_fixture(name, guid)
     }
 
+    fn captured_aarav_company_list_and_identity() -> (String, VerifiedCompanyIdentity) {
+        let bytes = include_bytes!("../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml");
+        let xml = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
+            bytes,
+            "text/xml; charset=utf-16",
+            bridge_tally_protocol::ExpectedTallyTextEncoding::Utf16Le,
+            bytes.len(),
+        )
+        .expect("captured Company collection decodes")
+        .text;
+        let rows = parse_companies_from_collection(&xml).unwrap();
+        let row = rows
+            .iter()
+            .find(|row| row.name == "Aarav Trading Company Demo")
+            .unwrap();
+        let identity = VerifiedCompanyIdentity::from_observed_companies(
+            row.name.clone(),
+            row.guid.clone().unwrap(),
+            row.company_number.clone().unwrap(),
+            row.books_from.clone().unwrap(),
+            &rows,
+        )
+        .unwrap();
+        (xml, identity)
+    }
+
     #[test]
     fn agent_company_list_evidence_hashes_the_encoded_utf16_response_bytes() {
         let response = "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"Book\"><GUID>g-1</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>".to_string();
@@ -3715,11 +3706,8 @@ mod tests {
 
     #[tokio::test]
     async fn single_company_read_returns_the_forex_capture_partial() {
-        const LICENSED_DISCOVERY_CAPTURE: &[u8] = include_bytes!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
-        );
         const EXTENT: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
         );
         const FOREX_LEDGER_CAPTURE: &[u8] = include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/ledgers_forex_composite_live.utf16le.xml"
@@ -3731,14 +3719,9 @@ mod tests {
             "../../crates/bridge-tally-protocol/tests/fixtures/native/bills_payable_aarav.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
-        let company_list = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Aarav Trading Company Demo"><GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><COMPANYNUMBER TYPE="Number">1</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let (company_list, identity) = captured_aarav_company_list_and_identity();
 
-        let extent = EXTENT.replacen(
-            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
-            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
-            1,
-        );
-        assert_ne!(extent, EXTENT, "the extent witness injection must apply");
+        let extent = EXTENT;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -3772,18 +3755,11 @@ mod tests {
                     if xml.contains("<ID>BridgeCompanyExtent</ID>")
                         && !xml.contains("<SVCURRENTCOMPANY>")
                     {
-                        // The first/last global discovery reads observe mode;
-                        // the two inner reads pin this test's single-company tuple.
-                        let response = if matches!(company_post_index, 0 | 3) {
-                            utf16_xml_response_bytes(LICENSED_DISCOVERY_CAPTURE)
-                        } else {
-                            utf16_xml_response(company_list)
-                        };
                         company_post_index += 1;
-                        response
+                        utf16_xml_response(&company_list)
                     } else {
                         let response = match source_post_index {
-                            0 | 1 | 10 | 11 => utf16_xml_response(&extent),
+                            0 | 1 | 10 | 11 => utf16_xml_response(extent),
                             2 | 3 => utf16_xml_response(RECEIVABLE),
                             6 | 7 => utf16_xml_response(PAYABLE),
                             _ => utf16_xml_response_bytes(FOREX_LEDGER_CAPTURE),
@@ -3804,10 +3780,7 @@ mod tests {
                     host: address.ip().to_string(),
                     port: address.port(),
                 },
-                &verified_identity(
-                    "Aarav Trading Company Demo",
-                    "bb8ad19e-6aef-4239-a917-87fec0c6215e",
-                ),
+                &identity,
                 TallyDate::parse("20260401").expect("captured book as-of"),
                 OutstandingsCurrencyAssertion::Inr,
                 OutstandingsAgeingAnchor::DueDate,
@@ -4149,13 +4122,13 @@ mod tests {
     #[tokio::test]
     async fn detect_base_currency_rejects_book_drift_after_the_currency_read() {
         const EXTENT: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
+            "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
         );
         const CURRENCY: &[u8] = include_bytes!(
             "../../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
-        let company_list = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Aarav Trading Company Demo"><GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><COMPANYNUMBER TYPE="Number">1</COMPANYNUMBER><BOOKSFROM TYPE="Date">20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
+        let (company_list, identity) = captured_aarav_company_list_and_identity();
 
         let currency = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
             CURRENCY,
@@ -4166,21 +4139,14 @@ mod tests {
         .expect("captured currency response decodes")
         .text;
 
-        // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
-        // (`fetch_company_book_extent`) now requires that witness, so inject it into this
-        // in-memory copy -- the committed fixture bytes are left untouched.
-        let opening_extent = EXTENT.replacen(
-            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
-            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
-            1,
-        );
-        assert_ne!(
-            opening_extent, EXTENT,
-            "the injection must actually change the fixture for this test to prove anything"
-        );
+        let opening_extent = EXTENT;
         let closing_extent = opening_extent.replace(
             "<LASTVOUCHERDATE TYPE=\"Date\">20260401</LASTVOUCHERDATE>",
             "<LASTVOUCHERDATE TYPE=\"Date\">20260402</LASTVOUCHERDATE>",
+        );
+        assert_ne!(
+            closing_extent, opening_extent,
+            "the drift mutation must apply"
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -4194,9 +4160,7 @@ mod tests {
                         .await
                         .expect("currency request timed out")
                         .expect("accept currency request");
-                let mut request = [0_u8; 16 * 1024];
-                let bytes_read = socket.read(&mut request).await.expect("read request");
-                let request = &request[..bytes_read];
+                let request = read_http_request(&mut socket).await;
                 let response = if request.starts_with(b"GET /status") {
                     utf8_status_response(STATUS)
                 } else {
@@ -4215,10 +4179,10 @@ mod tests {
                     if xml.contains("<ID>BridgeCompanyExtent</ID>")
                         && !xml.contains("<SVCURRENTCOMPANY>")
                     {
-                        utf16_xml_response(company_list)
+                        utf16_xml_response(&company_list)
                     } else {
                         let response = match source_post_index {
-                            0 | 1 => utf16_xml_response(&opening_extent),
+                            0 | 1 => utf16_xml_response(opening_extent),
                             2 | 3 => utf16_xml_response(&currency),
                             _ => utf16_xml_response(&closing_extent),
                         };
@@ -4237,18 +4201,16 @@ mod tests {
                     host: address.ip().to_string(),
                     port: address.port(),
                 },
-                &verified_identity(
-                    "Aarav Trading Company Demo",
-                    "bb8ad19e-6aef-4239-a917-87fec0c6215e",
-                ),
+                &identity,
             )
             .await;
 
         let error = result.expect_err("closing extent drift must reject the currency");
         assert!(
-            error
-                .to_string()
-                .contains("book changed during currency detection"),
+            error.chain().any(|cause| matches!(
+                cause.downcast_ref::<PairedReadValidationError>(),
+                Some(PairedReadValidationError::CurrencyExtent)
+            )),
             "unexpected error: {error:#}"
         );
         server.await.expect("synthetic currency server task");

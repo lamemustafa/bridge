@@ -14,9 +14,9 @@ use crate::outstandings::{
     render_empty_partition_witness_template, render_ledger_opening_coverage,
     render_outstandings_template, render_outstandings_vouchers, AlterIdRange, NarrowDateWindow,
 };
-use crate::outstandings_shared::render_company_book_extent;
 #[cfg(feature = "voucher-scan")]
 use crate::outstandings_shared::PinnedCompany;
+use crate::outstandings_shared::{render_company_book_extent, render_company_book_extent_v2};
 use crate::{
     encode_tally_xml_request_utf16le, BRIDGE_LEDGER_EXPORT_SCHEMA,
     BRIDGE_LEDGER_WRITE_READBACK_SCHEMA,
@@ -176,6 +176,7 @@ pub enum ReadOnlyProfileId {
     CompanyListV1,
     CompanyListV2,
     CompanyBookExtentV1,
+    CompanyBookExtentV2,
     #[cfg(feature = "voucher-scan")]
     LedgerOpeningCoverageV1,
     StandardLedgerIdentityV1,
@@ -196,6 +197,7 @@ impl ReadOnlyProfileId {
             Self::CompanyListV1 => "company_list_v1",
             Self::CompanyListV2 => "company_list_v2",
             Self::CompanyBookExtentV1 => "company_book_extent_v1",
+            Self::CompanyBookExtentV2 => "company_book_extent_v2",
             #[cfg(feature = "voucher-scan")]
             Self::LedgerOpeningCoverageV1 => "ledger_opening_coverage_v1",
             Self::StandardLedgerIdentityV1 => "standard_ledger_identity_v1",
@@ -219,6 +221,7 @@ impl ReadOnlyProfileId {
             Self::CompanyListV1 => render_company_list(),
             Self::CompanyListV2 => render_company_list_v2(),
             Self::CompanyBookExtentV1 => render_company_book_extent(TEMPLATE_COMPANY),
+            Self::CompanyBookExtentV2 => render_company_book_extent_v2(TEMPLATE_COMPANY),
             #[cfg(feature = "voucher-scan")]
             Self::LedgerOpeningCoverageV1 => render_ledger_opening_coverage(TEMPLATE_COMPANY),
             Self::StandardLedgerIdentityV1 => render_standard_ledger_identity(TEMPLATE_COMPANY),
@@ -267,6 +270,11 @@ pub enum ReadOnlyProfile<'a> {
         company: &'a ValidatedCompanyName,
     },
     CompanyBookExtentV1 {
+        company: &'a ValidatedCompanyName,
+    },
+    /// A versioned Company collection that includes the observed company
+    /// number required to distinguish year-split sibling books.
+    CompanyBookExtentV2 {
         company: &'a ValidatedCompanyName,
     },
     /// A narrow compatibility bootstrap for Tally responders that reject
@@ -320,6 +328,7 @@ impl ReadOnlyProfile<'_> {
             Self::CompanyListV1 => ReadOnlyProfileId::CompanyListV1,
             Self::CompanyListV2 => ReadOnlyProfileId::CompanyListV2,
             Self::CompanyBookExtentV1 { .. } => ReadOnlyProfileId::CompanyBookExtentV1,
+            Self::CompanyBookExtentV2 { .. } => ReadOnlyProfileId::CompanyBookExtentV2,
             #[cfg(feature = "voucher-scan")]
             Self::LedgerOpeningCoverageV1 { .. } => ReadOnlyProfileId::LedgerOpeningCoverageV1,
             Self::StandardLedgerIdentityV1 { .. } => ReadOnlyProfileId::StandardLedgerIdentityV1,
@@ -346,6 +355,9 @@ impl ReadOnlyProfile<'_> {
             Self::CompanyListV1 => render_company_list(),
             Self::CompanyListV2 => render_company_list_v2(),
             Self::CompanyBookExtentV1 { company } => render_company_book_extent(company.as_str()),
+            Self::CompanyBookExtentV2 { company } => {
+                render_company_book_extent_v2(company.as_str())
+            }
             #[cfg(feature = "voucher-scan")]
             Self::LedgerOpeningCoverageV1 { company } => {
                 render_ledger_opening_coverage(company.as_str())
@@ -908,10 +920,11 @@ mod tests {
         range: &'a ValidatedDateRange,
         canary_ledger: &'a ValidatedCanaryLedgerName,
         identity_query_sha256: &'a ValidatedIdentityQuerySha256,
-    ) -> [ReadOnlyProfile<'a>; 8] {
+    ) -> [ReadOnlyProfile<'a>; 9] {
         [
             ReadOnlyProfile::CompanyListV1,
             ReadOnlyProfile::CompanyListV2,
+            ReadOnlyProfile::CompanyBookExtentV2 { company },
             ReadOnlyProfile::StandardLedgerIdentityV1 { company },
             ReadOnlyProfile::StandardLedgerCatalogV1 { company },
             ReadOnlyProfile::LedgersV1 { company },
@@ -1047,6 +1060,14 @@ mod tests {
         assert!(!extent_request.contains("<TALLYREQUEST>IMPORT"));
         assert!(extent_request.contains("&lt;/SVCURRENTCOMPANY&gt;"));
 
+        let extent_v2_request = ReadOnlyProfile::CompanyBookExtentV2 {
+            company: &injection,
+        }
+        .render();
+        assert_eq!(extent_v2_request.matches("<TALLYREQUEST>").count(), 1);
+        assert!(!extent_v2_request.contains("<TALLYREQUEST>IMPORT"));
+        assert!(extent_v2_request.contains("&lt;/SVCURRENTCOMPANY&gt;"));
+
         #[cfg(feature = "voucher-scan")]
         {
             let pinned = PinnedCompany::verified(injection.clone(), "synthetic-guid".to_string())
@@ -1131,6 +1152,10 @@ mod tests {
             (
                 ReadOnlyProfileId::CompanyBookExtentV1,
                 "f46420fd96ee567069d1bf70c7895e76c75482b5370fc52e97aea64b8950d3a5",
+            ),
+            (
+                ReadOnlyProfileId::CompanyBookExtentV2,
+                "28ffc66bfaee2172ac5de37ab358951ae2439ec2f2fc6b5aeb220624d8d87fdc",
             ),
             (
                 ReadOnlyProfileId::StandardLedgerIdentityV1,
