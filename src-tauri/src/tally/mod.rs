@@ -38,7 +38,7 @@ pub use xml_parser::{TallyCompany, TallyImportResult, TallyLedger, TallyVoucher}
 ///
 /// The fields are intentionally private: a bare GUID cannot authorize a
 /// company-scoped read after a year-end split.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedCompanyIdentity {
     display_name: String,
     company_guid: String,
@@ -55,7 +55,7 @@ pub enum VerifiedCompanyIdentityError {
     DisplayScopeAmbiguous,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ObservedCompanyNumber(String);
 
 impl ObservedCompanyNumber {
@@ -89,7 +89,10 @@ impl VerifiedCompanyIdentity {
             .map_err(|_| VerifiedCompanyIdentityError::InvalidBooksFrom)?;
         let identity = Self {
             display_name,
-            company_guid,
+            // All company-list and extent comparisons use ASCII-insensitive
+            // GUID semantics. Keep the stored value canonical so derived
+            // equality preserves that same contract across a read bracket.
+            company_guid: company_guid.to_ascii_lowercase(),
             company_number,
             books_from_yyyymmdd,
         };
@@ -117,7 +120,7 @@ impl VerifiedCompanyIdentity {
     ) -> Self {
         Self {
             display_name: display_name.into(),
-            company_guid: company_guid.into(),
+            company_guid: company_guid.into().to_ascii_lowercase(),
             company_number: ObservedCompanyNumber::parse("1".to_string())
                 .expect("fixed fixture company number is valid"),
             books_from_yyyymmdd: bridge_tally_core::TallyDate::parse("20260401")
@@ -163,6 +166,20 @@ impl VerifiedCompanyIdentity {
         self.books_from_yyyymmdd.as_str()
     }
 
+    pub(crate) fn company_book_extent_expectation(
+        &self,
+    ) -> Result<
+        bridge_tally_protocol::outstandings_shared::CompanyBookExtentExpectation,
+        bridge_tally_protocol::outstandings_shared::CompanyBookExtentExpectationError,
+    > {
+        bridge_tally_protocol::outstandings_shared::CompanyBookExtentExpectation::new(
+            self.display_name.clone(),
+            self.company_guid.clone(),
+            self.company_number.as_str().to_owned(),
+            self.books_from_yyyymmdd.as_str().to_owned(),
+        )
+    }
+
     pub(crate) fn matches_observed_company(&self, company: &TallyCompany) -> bool {
         company.name == self.display_name
             && company
@@ -183,5 +200,61 @@ impl VerifiedCompanyIdentity {
                 .trim()
                 .eq_ignore_ascii_case(self.display_name.trim())
             && !self.matches_observed_company(company)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CAPTURED_EXTENT_V2: &str = include_str!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+    );
+    const CAPTURED_NAME: &str = "BRIDGE PROBE B SANDBOX";
+    const CAPTURED_GUID: &str = "ec4454ae-5c4c-4bfa-b3b0-68182a749689";
+    const CAPTURED_NUMBER: &str = "100005";
+    const CAPTURED_BOOKS_FROM: &str = "20250401";
+
+    fn captured_identity(xml: &str, guid: &str) -> VerifiedCompanyIdentity {
+        let companies = bridge_tally_protocol::parse_companies_from_collection(xml)
+            .expect("captured CompanyBookExtentV2 response parses as a Company collection");
+        VerifiedCompanyIdentity::from_observed_companies(
+            CAPTURED_NAME.to_string(),
+            guid.to_string(),
+            CAPTURED_NUMBER.to_string(),
+            CAPTURED_BOOKS_FROM.to_string(),
+            &companies,
+        )
+        .expect("captured full tuple remains uniquely observed")
+    }
+
+    #[test]
+    fn verified_identity_canonicalizes_captured_guid_case_for_closing_comparison() {
+        let target_start = CAPTURED_EXTENT_V2
+            .find(&format!(r#"<COMPANY NAME="{CAPTURED_NAME}""#))
+            .expect("captured target company row exists");
+        let target_end = target_start
+            + CAPTURED_EXTENT_V2[target_start..]
+                .find("</COMPANY>")
+                .expect("captured target company row closes")
+            + "</COMPANY>".len();
+        let target = &CAPTURED_EXTENT_V2[target_start..target_end];
+        let upper_guid = CAPTURED_GUID.to_ascii_uppercase();
+        let changed_target = target.replacen(CAPTURED_GUID, &upper_guid, 1);
+        assert_ne!(
+            changed_target, target,
+            "captured GUID case mutation must apply"
+        );
+        let closing = CAPTURED_EXTENT_V2.replacen(target, &changed_target, 1);
+        assert_ne!(
+            closing, CAPTURED_EXTENT_V2,
+            "captured response mutation must apply"
+        );
+
+        assert_eq!(
+            captured_identity(CAPTURED_EXTENT_V2, CAPTURED_GUID),
+            captured_identity(&closing, &upper_guid),
+            "GUID casing alone must not make a verified closing identity drift"
+        );
     }
 }

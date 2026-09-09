@@ -23,9 +23,10 @@ fn companies() -> String {
 }
 
 fn extents() -> String {
-    decode(include_bytes!(
-        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"
-    ))
+    include_str!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+    )
+    .to_string()
 }
 
 fn trial_balance() -> String {

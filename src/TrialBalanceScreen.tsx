@@ -11,6 +11,10 @@ type Company = {
 };
 
 type Amount = { state: "present"; value: string } | { state: "present_empty" };
+type ParentObservation = string | null;
+type TrialBalanceRow = { name: string; guid: string; parent: ParentObservation; opening: Amount; debit: Amount; credit: Amount; closing: Amount };
+type ObservedAmountTotal = { sum: string; empty_count: number };
+type TrialBalanceTotals = { opening: ObservedAmountTotal; debit: ObservedAmountTotal; credit: ObservedAmountTotal; closing: ObservedAmountTotal };
 
 type TrialBalanceResult = {
   read: {
@@ -19,12 +23,31 @@ type TrialBalanceResult = {
     from: string;
     to: string;
     currency: { symbol: string; mailing_name: string; currency_count: number; decimal_places: number; is_inr: boolean };
-    report: { rows: Array<{ name: string; guid: string; opening: Amount; debit: Amount; credit: Amount; closing: Amount }> };
-    totals: { opening: { sum: string; empty_count: number }; debit: { sum: string; empty_count: number }; credit: { sum: string; empty_count: number }; closing: { sum: string; empty_count: number } };
+    report: { rows: TrialBalanceRow[] };
+    totals: TrialBalanceTotals;
     read_at: string;
     evidence: { request_sha256: string; response_sha256: string; bytes: number };
   };
   export_id: string;
+};
+
+type TrialBalanceCaptureParentQuery = {
+  query: { parent: ParentObservation; selected_rows: TrialBalanceRow[]; totals: TrialBalanceTotals; source_row_count: number };
+  capture: { company_guid: string; company_name: string; from: string; to: string; read_at: string; request_sha256: string; response_sha256: string; source_bytes: number; expires_in_seconds: number };
+};
+
+type TrialBalanceCaptureParentOption = { parent: ParentObservation; row_count: number };
+type TrialBalanceCaptureParents = {
+  options: TrialBalanceCaptureParentOption[];
+  has_more: boolean;
+  source_row_count: number;
+};
+
+type ParentOption = {
+  key: string;
+  parent: ParentObservation;
+  rowCount: number;
+  displayLabel: string;
 };
 
 type Props = {
@@ -37,6 +60,7 @@ type Props = {
 };
 
 const TABLE_PAGE_SIZE = 100;
+const PARENT_OPTION_LIMIT = 100;
 
 function toInputDate(value: string) {
   return value.length === 8 ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}` : value;
@@ -80,28 +104,81 @@ function readScope(company: Company | undefined, config: Props["config"], from: 
   return JSON.stringify([config.host, config.port, company?.name, company?.guid, company?.company_number, company?.books_from_yyyymmdd, company?.canonical_origin, from, to]);
 }
 
+function parentKey(parent: ParentObservation) {
+  return parent === null ? "not-observed" : `returned:${JSON.stringify(parent)}`;
+}
+
+function formatParent(parent: ParentObservation) {
+  if (parent === null) return "Missing field: Parent not returned";
+  return parent === "" ? "Empty field: Parent returned empty" : `Group: ${parent}`;
+}
+
+function parentOption(option: TrialBalanceCaptureParentOption): ParentOption {
+  return {
+    key: parentKey(option.parent),
+    parent: option.parent,
+    rowCount: option.row_count,
+    displayLabel: formatParent(option.parent),
+  };
+}
+
 export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, liveReadSuppressed, onChangeSetup, onTallyReadActivityChange }: Props) {
   const [from, setFrom] = React.useState(toInputDate(company?.books_from_yyyymmdd ?? ""));
   const [to, setTo] = React.useState("");
   const [captured, setCaptured] = React.useState<{ scope: string; result: TrialBalanceResult } | null>(null);
+  const [selectedParentKey, setSelectedParentKey] = React.useState("");
+  const [parentSearch, setParentSearch] = React.useState("");
+  const [parentQuery, setParentQuery] = React.useState<TrialBalanceCaptureParentQuery | null>(null);
+  const [parentQueryError, setParentQueryError] = React.useState<string | null>(null);
+  const [parentOptions, setParentOptions] = React.useState<ParentOption[]>([]);
+  const [parentOptionsHasMore, setParentOptionsHasMore] = React.useState(false);
+  const [parentSourceRowCount, setParentSourceRowCount] = React.useState(0);
+  const [parentDiscoveryError, setParentDiscoveryError] = React.useState<string | null>(null);
+  const [discoveringParents, setDiscoveringParents] = React.useState(false);
+  const [selectedParent, setSelectedParent] = React.useState<ParentOption | null>(null);
+  const [queryingParent, setQueryingParent] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [exportPath, setExportPath] = React.useState<string | null>(null);
   const [page, setPage] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
   const requestVersion = React.useRef(0);
+  const latestCapture = React.useRef<{ scope: string; result: TrialBalanceResult } | null>(null);
+  const parentDiscoveryEpoch = React.useRef(0);
+  const parentDiscoveryTimer = React.useRef<number | null>(null);
+  const parentDiscoveryInFlight = React.useRef(false);
+  const queuedParentDiscovery = React.useRef<{ scope: string; exportId: string; search: string; epoch: number } | null>(null);
   const scope = readScope(company, config, from, to);
   const latestScope = React.useRef(scope);
   latestScope.current = scope;
 
+  React.useEffect(() => () => {
+    parentDiscoveryEpoch.current += 1;
+    queuedParentDiscovery.current = null;
+    if (parentDiscoveryTimer.current !== null) window.clearTimeout(parentDiscoveryTimer.current);
+    parentDiscoveryTimer.current = null;
+  }, []);
+
   React.useEffect(() => {
     requestVersion.current += 1;
     setCaptured(null);
+    setSelectedParentKey("");
+    setParentSearch("");
+    setParentQuery(null);
+    setParentQueryError(null);
+    setParentOptions([]);
+    setParentOptionsHasMore(false);
+    setParentSourceRowCount(0);
+    setParentDiscoveryError(null);
+    setDiscoveringParents(false);
+    setSelectedParent(null);
     setError(null);
     setExportPath(null);
     setPage(0);
     setLoading(false);
     setExporting(false);
+    setQueryingParent(false);
+    queuedParentDiscovery.current = null;
     setFrom(toInputDate(company?.books_from_yyyymmdd ?? ""));
     setTo("");
     return () => {
@@ -121,6 +198,16 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
     setLoading(true);
     setError(null);
     setCaptured(null);
+    setSelectedParentKey("");
+    setParentSearch("");
+    setParentQuery(null);
+    setParentQueryError(null);
+    setParentOptions([]);
+    setParentOptionsHasMore(false);
+    setParentSourceRowCount(0);
+    setParentDiscoveryError(null);
+    setDiscoveringParents(false);
+    setSelectedParent(null);
     setExportPath(null);
     setPage(0);
     onTallyReadActivityChange(1);
@@ -150,6 +237,67 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
     }
   }
 
+  async function queryCapturedParent() {
+    const result = captured?.scope === scope ? captured.result : null;
+    if (!result || !selectedParent || queryingParent || loading || exporting) return;
+    const version = requestVersion.current;
+    const capturedScope = captured!.scope;
+    setQueryingParent(true);
+    setParentQuery(null);
+    setParentQueryError(null);
+    try {
+      const next = await invoke<TrialBalanceCaptureParentQuery>("query_tally_trial_balance_capture_parent", {
+        request: { export_id: result.export_id, parent: selectedParent.parent },
+      });
+      if (version === requestVersion.current && capturedScope === latestScope.current) {
+        setParentQuery(next);
+        setPage(0);
+      }
+    } catch (cause) {
+      if (version === requestVersion.current && capturedScope === latestScope.current) setParentQueryError(formatInvokeError(cause));
+    } finally {
+      if (version === requestVersion.current) setQueryingParent(false);
+    }
+  }
+
+  async function discoverParentOptions(search: string, epoch: number, expectedScope: string, exportId: string) {
+    const currentCapture = latestCapture.current;
+    if (!currentCapture || currentCapture.scope !== expectedScope || currentCapture.result.export_id !== exportId) return;
+    if (parentDiscoveryInFlight.current) {
+      queuedParentDiscovery.current = { scope: expectedScope, exportId, search, epoch };
+      return;
+    }
+    parentDiscoveryInFlight.current = true;
+    setDiscoveringParents(true);
+    try {
+      const next = await invoke<TrialBalanceCaptureParents>("list_tally_trial_balance_capture_parents", {
+        request: { export_id: exportId, search },
+      });
+      const latest = latestCapture.current;
+      if (epoch === parentDiscoveryEpoch.current && expectedScope === latestScope.current && latest?.scope === expectedScope && latest.result.export_id === exportId) {
+        const nextOptions = next.options.map(parentOption);
+        setParentOptions(nextOptions);
+        setParentOptionsHasMore(next.has_more);
+        setParentSourceRowCount(next.source_row_count);
+        setSelectedParent((current) => {
+          if (!current) return current;
+          return nextOptions.find((option) => option.key === current.key) ?? current;
+        });
+      }
+    } catch (cause) {
+      if (epoch === parentDiscoveryEpoch.current && expectedScope === latestScope.current) setParentDiscoveryError(formatInvokeError(cause));
+    } finally {
+      parentDiscoveryInFlight.current = false;
+      const queued = queuedParentDiscovery.current;
+      queuedParentDiscovery.current = null;
+      if (queued && queued.epoch === parentDiscoveryEpoch.current && queued.scope === latestScope.current) {
+        void discoverParentOptions(queued.search, queued.epoch, queued.scope, queued.exportId);
+      } else if (epoch === parentDiscoveryEpoch.current) {
+        setDiscoveringParents(false);
+      }
+    }
+  }
+
   async function exportReport() {
     if (!captured || exporting || captured.scope !== scope) return;
     const exportingScope = captured.scope;
@@ -172,12 +320,43 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
   const result = captured?.scope === scope ? captured.result : null;
   const read = result?.read;
   const currency = read?.currency;
-  const totalRows = read?.report.rows.length ?? 0;
+  latestCapture.current = result ? { scope, result } : null;
+  React.useEffect(() => {
+    parentDiscoveryEpoch.current += 1;
+    const epoch = parentDiscoveryEpoch.current;
+    if (parentDiscoveryTimer.current !== null) window.clearTimeout(parentDiscoveryTimer.current);
+    parentDiscoveryTimer.current = null;
+    setParentDiscoveryError(null);
+    if (!result) {
+      queuedParentDiscovery.current = null;
+      setParentOptions([]);
+      setParentOptionsHasMore(false);
+      setParentSourceRowCount(0);
+      setDiscoveringParents(false);
+      setSelectedParent(null);
+      return;
+    }
+    const delay = parentSearch === "" ? 0 : 175;
+    parentDiscoveryTimer.current = window.setTimeout(() => {
+      parentDiscoveryTimer.current = null;
+      void discoverParentOptions(parentSearch, epoch, scope, result.export_id);
+    }, delay);
+    return () => {
+      if (parentDiscoveryTimer.current !== null) window.clearTimeout(parentDiscoveryTimer.current);
+      parentDiscoveryTimer.current = null;
+    };
+  }, [parentSearch, result?.export_id, scope]);
+  const visibleOptions = parentOptions.slice(0, PARENT_OPTION_LIMIT);
+  const selectedOutsideSearch = selectedParent && !visibleOptions.some((option) => option.key === selectedParent.key);
+  const queried = parentQuery && result ? parentQuery : null;
+  const displayedRows = queried?.query.selected_rows ?? read?.report.rows ?? [];
+  const displayedTotals = queried?.query.totals ?? read?.totals;
+  const totalRows = displayedRows.length;
   const pageCount = Math.max(1, Math.ceil(totalRows / TABLE_PAGE_SIZE));
   const firstRow = totalRows === 0 ? 0 : page * TABLE_PAGE_SIZE + 1;
   const lastRow = Math.min((page + 1) * TABLE_PAGE_SIZE, totalRows);
-  const visibleRows = read?.report.rows.slice(page * TABLE_PAGE_SIZE, (page + 1) * TABLE_PAGE_SIZE) ?? [];
-  const disabled = liveReadNavigationLocked || liveReadSuppressed || loading || exporting;
+  const visibleRows = displayedRows.slice(page * TABLE_PAGE_SIZE, (page + 1) * TABLE_PAGE_SIZE);
+  const disabled = liveReadNavigationLocked || liveReadSuppressed || loading || exporting || queryingParent;
 
   if (!company) {
     return <section className="panel wide trial-balance-empty"><h2>Trial Balance</h2><p>Select and verify a Tally company before reading its report.</p><button className="secondary-action" type="button" onClick={onChangeSetup}>Choose company</button></section>;
@@ -192,37 +371,46 @@ export function TrialBalanceScreen({ config, company, liveReadNavigationLocked, 
         </div>
         <div className="trial-balance-actions">
           <button className="primary" type="button" onClick={() => void refresh()} disabled={disabled}><RefreshCw size={17} aria-hidden="true" />{loading ? "Reading…" : "Refresh report"}</button>
-          <button className="secondary-action" type="button" onClick={() => void exportReport()} disabled={!result || exporting || captured?.scope !== scope}><Download size={17} aria-hidden="true" />{exporting ? "Exporting…" : "Excel"}</button>
+          <button className="secondary-action" type="button" onClick={() => void exportReport()} disabled={!result || exporting || queryingParent || captured?.scope !== scope}><Download size={17} aria-hidden="true" />{exporting ? "Exporting…" : "Excel full capture"}</button>
         </div>
       </div>
       <div className="toolbar trial-balance-toolbar">
-        <label>From<input type="date" value={from} min={toInputDate(company.books_from_yyyymmdd)} onChange={(event) => { setFrom(event.target.value); setCaptured(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
-        <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setCaptured(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
+        <label>From<input type="date" value={from} min={toInputDate(company.books_from_yyyymmdd)} onChange={(event) => { setFrom(event.target.value); setCaptured(null); setSelectedParentKey(""); setParentSearch(""); setParentQuery(null); setParentQueryError(null); setParentOptions([]); setParentOptionsHasMore(false); setParentSourceRowCount(0); setParentDiscoveryError(null); setDiscoveringParents(false); setSelectedParent(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
+        <label>To<input type="date" value={to} onChange={(event) => { setTo(event.target.value); setCaptured(null); setSelectedParentKey(""); setParentSearch(""); setParentQuery(null); setParentQueryError(null); setParentOptions([]); setParentOptionsHasMore(false); setParentSourceRowCount(0); setParentDiscoveryError(null); setDiscoveringParents(false); setSelectedParent(null); setError(null); setExportPath(null); }} disabled={disabled} /></label>
       </div>
       <p className="section-note trial-balance-date-note">
         Choose the end date before reading. This report currently requires Licensed TallyPrime and one observed INR currency master.
       </p>
       <p className="section-note">Preview: validated with small synthetic companies. Compare this report with Tally before relying on it for production work.</p>
       {error && <div className="error-banner" role="alert"><span>{error}</span></div>}
+      {parentQueryError && <div className="error-banner" role="alert"><span>{parentQueryError}</span></div>}
       {exportPath && <div className="trial-balance-success" role="status">Trial Balance export saved to <code>{exportPath}</code></div>}
       {loading && <div className="panel wide trial-balance-loading" role="status">Reading the selected company for the exact date range…</div>}
       {!loading && !result && !error && <div className="panel wide trial-balance-empty"><p>Refresh to read the native report for this company and date range.</p></div>}
       {read && currency && (
         <div className="panel wide trial-balance-report">
-          <div className="trial-balance-meta"><span>{read.company_name}</span><span>{toInputDate(read.from)} → {toInputDate(read.to)}</span><span>Fresh at {new Date(read.read_at).toLocaleString()}</span><span>Source scope: {read.report.rows.length} ledger rows</span></div>
+          <div className="trial-balance-meta"><span>{read.company_name}</span><span>{toInputDate(read.from)} → {toInputDate(read.to)}</span><span>Fresh at {new Date(read.read_at).toLocaleString()}</span><span>Capture source: {read.report.rows.length} ledger rows · {read.evidence.bytes.toLocaleString()} bytes · expires within 15 minutes</span></div>
+          <div className="toolbar trial-balance-parent-query">
+            <label>Find a parent<input type="search" value={parentSearch} onChange={(event) => setParentSearch(event.target.value)} placeholder="Search parent values" aria-describedby="trial-balance-parent-search-note" disabled={disabled} /></label>
+            <label>Parent returned by this capture<select value={selectedParentKey} onChange={(event) => { const next = visibleOptions.find((option) => option.key === event.target.value) ?? (selectedOutsideSearch && selectedParent?.key === event.target.value ? selectedParent : null); setSelectedParentKey(event.target.value); setSelectedParent(next); setParentQuery(null); setParentQueryError(null); setPage(0); }} disabled={disabled} aria-describedby="trial-balance-parent-search-note"><option value="">All captured rows</option>{selectedOutsideSearch && <option value={selectedParent.key}>{selectedParent.displayLabel} ({selectedParent.rowCount} rows · current selection)</option>}{visibleOptions.map((option) => <option key={option.key} value={option.key}>{option.displayLabel} ({option.rowCount} rows)</option>)}</select></label>
+            <button className="secondary-action" type="button" onClick={() => void queryCapturedParent()} disabled={disabled || !selectedParent}>{queryingParent ? "Selecting…" : "View selected rows"}</button>
+          </div>
+          <p id="trial-balance-parent-search-note" className="section-note">{parentDiscoveryError ?? (discoveringParents ? "Finding parent values in this capture…" : parentOptionsHasMore ? `Showing the first ${PARENT_OPTION_LIMIT} matching parent values. Refine the search to find another.` : parentOptions.length === 0 ? "No matching parent values. Change or clear the search; your current selection stays available." : `${parentOptions.length} matching parent values from ${parentSourceRowCount} captured rows. Search and selection use this capture without rereading Tally.`)}</p>
+          {queried && <p className="section-note">Selected rows: {queried.query.selected_rows.length} of {queried.query.source_row_count} from this capture. These exact observed-parent totals are a subset, not a qualified financial group balance. The capture had {queried.capture.expires_in_seconds} seconds remaining when this selection was derived and this query did not read Tally.</p>}
           <dl className="trial-balance-totals">
-            <div><dt>{read.totals.opening.empty_count === 0 ? "Difference in opening balances" : "Observed opening net"}</dt><dd>{formatBalance({ state: "present", value: read.totals.opening.sum }, currency.symbol, currency.decimal_places)}{read.totals.opening.empty_count ? ` · ${read.totals.opening.empty_count} empty source values` : ""}</dd></div>
-            <div><dt>Debit total</dt><dd>{formatAmount({ state: "present", value: read.totals.debit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.debit.empty_count ? ` · ${read.totals.debit.empty_count} empty` : ""}</dd></div>
-            <div><dt>Credit total</dt><dd>{formatAmount({ state: "present", value: read.totals.credit.sum }, currency.symbol, currency.decimal_places, true)}{read.totals.credit.empty_count ? ` · ${read.totals.credit.empty_count} empty` : ""}</dd></div>
-            <div><dt>Closing total</dt><dd>{formatBalance({ state: "present", value: read.totals.closing.sum }, currency.symbol, currency.decimal_places)}{read.totals.closing.empty_count ? ` · ${read.totals.closing.empty_count} empty source values` : ""}</dd></div>
+            <div><dt>{queried ? "Selected opening net" : displayedTotals?.opening.empty_count === 0 ? "Difference in opening balances" : "Observed opening net"}</dt><dd>{displayedTotals && formatBalance({ state: "present", value: displayedTotals.opening.sum }, currency.symbol, currency.decimal_places)}{displayedTotals?.opening.empty_count ? ` · ${displayedTotals.opening.empty_count} empty source values` : ""}</dd></div>
+            <div><dt>{queried ? "Selected debit total" : "Debit total"}</dt><dd>{displayedTotals && formatAmount({ state: "present", value: displayedTotals.debit.sum }, currency.symbol, currency.decimal_places, true)}{displayedTotals?.debit.empty_count ? ` · ${displayedTotals.debit.empty_count} empty` : ""}</dd></div>
+            <div><dt>{queried ? "Selected credit total" : "Credit total"}</dt><dd>{displayedTotals && formatAmount({ state: "present", value: displayedTotals.credit.sum }, currency.symbol, currency.decimal_places, true)}{displayedTotals?.credit.empty_count ? ` · ${displayedTotals.credit.empty_count} empty` : ""}</dd></div>
+            <div><dt>{queried ? "Selected closing total" : "Closing total"}</dt><dd>{displayedTotals && formatBalance({ state: "present", value: displayedTotals.closing.sum }, currency.symbol, currency.decimal_places)}{displayedTotals?.closing.empty_count ? ` · ${displayedTotals.closing.empty_count} empty source values` : ""}</dd></div>
           </dl>
           <div className="trial-balance-table-wrap">
-            <table className="trial-balance-table"><caption className="visually-hidden">Trial Balance ledger totals</caption><thead><tr><th scope="col">Ledger</th><th scope="col">Opening</th><th scope="col">Debit (Dr)</th><th scope="col">Credit (Cr)</th><th scope="col">Closing</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={row.guid}><th scope="row">{row.name}</th><td>{formatBalance(row.opening, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.debit, currency.symbol, currency.decimal_places, true)}</td><td>{formatAmount(row.credit, currency.symbol, currency.decimal_places, true)}</td><td>{formatBalance(row.closing, currency.symbol, currency.decimal_places)}</td></tr>)}</tbody></table>
+            <table className="trial-balance-table"><caption className="visually-hidden">Trial Balance ledger totals</caption><thead><tr><th scope="col">Ledger</th><th scope="col">Parent</th><th scope="col">Opening</th><th scope="col">Debit (Dr)</th><th scope="col">Credit (Cr)</th><th scope="col">Closing</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={row.guid}><th scope="row">{row.name}</th><td>{formatParent(row.parent)}</td><td>{formatBalance(row.opening, currency.symbol, currency.decimal_places)}</td><td>{formatAmount(row.debit, currency.symbol, currency.decimal_places, true)}</td><td>{formatAmount(row.credit, currency.symbol, currency.decimal_places, true)}</td><td>{formatBalance(row.closing, currency.symbol, currency.decimal_places)}</td></tr>)}</tbody></table>
           </div>
           <div className="trial-balance-pagination" aria-label="Trial Balance rows">
-            <span>Rows {firstRow}–{lastRow} of {totalRows}</span>
+            <span>{queried ? "Selected rows" : "Rows"} {firstRow}–{lastRow} of {totalRows}</span>
             <div><button className="secondary-action" type="button" onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={page === 0}>Previous</button><button className="secondary-action" type="button" onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))} disabled={page >= pageCount - 1}>Next</button></div>
           </div>
+          <details className="trial-balance-provenance"><summary>Capture provenance and limits</summary><p>Company GUID: {read.company_guid}. Period: {toInputDate(read.from)} → {toInputDate(read.to)}. Captured at: {new Date(read.read_at).toLocaleString()}. Request checksum: {read.evidence.request_sha256}. Response checksum: {read.evidence.response_sha256}. The retained capture expires after 15 minutes and queries never acquire Tally data.</p></details>
           <p className="section-note">Currency: {currency.mailing_name || currency.symbol}. This native read is tied to the selected company and date range; it may include dormant ledger masters and is not an atomic snapshot of concurrent Tally changes.</p>
         </div>
       )}

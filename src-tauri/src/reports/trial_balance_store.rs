@@ -21,6 +21,11 @@ struct StoredRead {
     read: Arc<TrialBalanceRead>,
 }
 
+pub struct StoredTrialBalanceCapture {
+    pub read: Arc<TrialBalanceRead>,
+    pub expires_in: Duration,
+}
+
 #[derive(Default)]
 pub struct TrialBalanceExportStore {
     entry: Mutex<Option<StoredRead>>,
@@ -52,6 +57,15 @@ impl TrialBalanceExportStore {
     }
 
     pub fn get(&self, id: &str) -> Result<Arc<TrialBalanceRead>, TrialBalanceExportStoreError> {
+        self.get_capture(id).map(|capture| capture.read)
+    }
+
+    /// Returns only the backend-retained capture bound to an opaque handle.
+    /// The remaining lifetime lets read-only follow-ups disclose their expiry.
+    pub fn get_capture(
+        &self,
+        id: &str,
+    ) -> Result<StoredTrialBalanceCapture, TrialBalanceExportStoreError> {
         if id.len() > 64 || Uuid::parse_str(id).is_err() {
             return Err(TrialBalanceExportStoreError::InvalidOrExpired);
         }
@@ -69,7 +83,10 @@ impl TrialBalanceExportStore {
         if stored.id != id {
             return Err(TrialBalanceExportStoreError::InvalidOrExpired);
         }
-        Ok(Arc::clone(&stored.read))
+        Ok(StoredTrialBalanceCapture {
+            read: Arc::clone(&stored.read),
+            expires_in: stored.expires_at.saturating_duration_since(Instant::now()),
+        })
     }
 
     pub fn clear(&self) -> Result<(), TrialBalanceExportStoreError> {
@@ -169,6 +186,15 @@ mod tests {
             TrialBalanceExportStoreError::InvalidOrExpired
         );
         assert_eq!(store.get(&current).unwrap().company_name, "current");
+    }
+
+    #[test]
+    fn current_capture_reports_its_bounded_remaining_lifetime() {
+        let store = TrialBalanceExportStore::default();
+        let id = store.insert(captured_read("current")).unwrap();
+        let capture = store.get_capture(&id).unwrap();
+        assert!(!capture.expires_in.is_zero());
+        assert!(capture.expires_in <= TTL);
     }
 
     #[test]

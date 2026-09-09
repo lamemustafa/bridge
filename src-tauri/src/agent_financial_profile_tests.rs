@@ -51,9 +51,10 @@ async fn monetary_tools_refuse_unobserved_mode_or_unsupported_product_with_compl
         assert_ne!(altered, companies);
         altered
     });
-    let extents = captured(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"
-    ));
+    let extents = include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+    )
+    .to_owned();
     let currency = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/currency_inr_modern_live.utf16le.xml"
     ));
