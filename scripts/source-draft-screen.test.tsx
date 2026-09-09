@@ -112,6 +112,21 @@ test("allows an untouched new source draft to be saved locally", async () => {
   root.unmount();
 });
 
+test("clears saved status when a proposal changes after saving", async () => {
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce({ ...draft, revision: 2 });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Save draft").click());
+  expect(host.textContent).toContain("Draft saved locally as JSON.");
+
+  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+  expect(host.textContent).not.toContain("Draft saved locally as JSON.");
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.value).toBe("Unsaved ledger");
+  root.unmount();
+});
+
 test("preserves dirty edits through native cancel, failed save, and explicit discard confirmation", async () => {
   mocks.invoke.mockResolvedValueOnce(draft);
   const host = document.createElement("div");
@@ -156,9 +171,11 @@ test("keeps edits scoped to a row across 25-row pagination", async () => {
   const root = await mount(host);
   await act(async () => button(host, "Choose source XML").click());
   await act(async () => button(host, "Next").click());
+  expect(host.querySelector("#source-draft-editor-heading")).toBeNull();
   await act(async () => button(host, "#26").click());
   setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Second page ledger");
   await act(async () => button(host, "Previous").click());
+  expect(host.querySelector("#source-draft-editor-heading")).toBeNull();
   await act(async () => button(host, "#1").click());
   expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.value).toBe("");
   await act(async () => button(host, "Next").click());

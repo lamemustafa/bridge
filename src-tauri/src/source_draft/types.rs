@@ -117,6 +117,10 @@ pub(super) fn error(code: &'static str) -> SourceDraftCommandError {
             "The selected XML is not a supported voucher-import document.",
             "Choose the original source XML without modifying it.",
         ),
+        "source_draft_notice_limit_exceeded" => (
+            "The selected XML has too many distinct non-voucher record types.",
+            "Choose a supported source XML with fewer non-voucher record types.",
+        ),
         _ => (
             "Bridge could not prepare this source draft.",
             "Review the selected local file and try again.",

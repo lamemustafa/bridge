@@ -17,6 +17,7 @@ const MAX_ENTRIES: usize = 20;
 const MAX_TEXT_BYTES: usize = 4_096;
 const MAX_DEPTH: usize = 32;
 const MAX_TAG_BYTES: usize = 128;
+const MAX_SOURCE_NOTICE_KINDS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedSource {
@@ -62,6 +63,7 @@ pub(crate) enum SourceXmlError {
     InvalidText,
     VoucherLimit,
     EntryLimit,
+    SourceNoticeLimit,
     RequiredFieldMissing,
 }
 
@@ -76,6 +78,7 @@ impl SourceXmlError {
             Self::InvalidText => "source_draft_source_text_invalid",
             Self::VoucherLimit => "source_draft_voucher_limit_exceeded",
             Self::EntryLimit => "source_draft_entry_limit_exceeded",
+            Self::SourceNoticeLimit => "source_draft_notice_limit_exceeded",
             Self::RequiredFieldMissing => "source_draft_required_field_missing",
         }
     }
@@ -233,17 +236,11 @@ fn start(
         return Err(SourceXmlError::UnsupportedShape);
     }
     if parent == Some("TALLYMESSAGE") && tag != "VOUCHER" {
-        *notices
-            .entry(format!("Ignored TALLYMESSAGE/{tag}"))
-            .or_insert(0) += 1;
+        record_notice(notices, format!("Ignored TALLYMESSAGE/{tag}"))?;
     } else if parent == Some("ENVELOPE") && tag == "HEADER" {
-        *notices
-            .entry("Ignored ENVELOPE/HEADER metadata".into())
-            .or_insert(0) += 1;
+        record_notice(notices, "Ignored ENVELOPE/HEADER metadata".into())?;
     } else if parent == Some("IMPORTDATA") && tag == "REQUESTDESC" {
-        *notices
-            .entry("Ignored IMPORTDATA/REQUESTDESC metadata".into())
-            .or_insert(0) += 1;
+        record_notice(notices, "Ignored IMPORTDATA/REQUESTDESC metadata".into())?;
     }
     if tag == "VOUCHER" && direct_message {
         if current.is_some() {
@@ -308,6 +305,17 @@ fn start(
         *saw_root = true;
     }
     stack.push(tag);
+    Ok(())
+}
+
+fn record_notice(
+    notices: &mut BTreeMap<String, usize>,
+    kind: String,
+) -> Result<(), SourceXmlError> {
+    if !notices.contains_key(&kind) && notices.len() >= MAX_SOURCE_NOTICE_KINDS {
+        return Err(SourceXmlError::SourceNoticeLimit);
+    }
+    *notices.entry(kind).or_insert(0) += 1;
     Ok(())
 }
 
@@ -564,6 +572,47 @@ mod tests {
         assert_eq!(
             parse_source_xml(duplicate.as_bytes(), "x.xml".into()),
             Err(SourceXmlError::UnsupportedShape)
+        );
+    }
+    #[test]
+    fn distinct_source_notice_categories_are_bounded() {
+        let at_limit = (0..MAX_SOURCE_NOTICE_KINDS)
+            .map(|index| format!("<NOTICE{index}/>"))
+            .collect::<String>();
+        let at_limit_xml = XML.replacen("<VOUCHER", &format!("{at_limit}<VOUCHER"), 1);
+        assert_eq!(
+            parse_source_xml(at_limit_xml.as_bytes(), "x.xml".into())
+                .unwrap()
+                .source_notices
+                .len(),
+            MAX_SOURCE_NOTICE_KINDS
+        );
+        let repeated = parse_source_xml(
+            at_limit_xml
+                .replacen("<VOUCHER", "<NOTICE0/><VOUCHER", 1)
+                .as_bytes(),
+            "x.xml".into(),
+        )
+        .unwrap();
+        assert_eq!(repeated.source_notices.len(), MAX_SOURCE_NOTICE_KINDS);
+        assert_eq!(
+            repeated
+                .source_notices
+                .iter()
+                .find(|notice| notice.kind == "Ignored TALLYMESSAGE/NOTICE0")
+                .map(|notice| notice.count),
+            Some(2)
+        );
+        let over_limit = (0..=MAX_SOURCE_NOTICE_KINDS)
+            .map(|index| format!("<NOTICE{index}/>"))
+            .collect::<String>();
+        assert_eq!(
+            parse_source_xml(
+                XML.replacen("<VOUCHER", &format!("{over_limit}<VOUCHER"), 1)
+                    .as_bytes(),
+                "x.xml".into()
+            ),
+            Err(SourceXmlError::SourceNoticeLimit)
         );
     }
 }
