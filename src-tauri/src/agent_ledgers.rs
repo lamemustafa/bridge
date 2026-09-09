@@ -78,3 +78,142 @@ impl Server {
         result.map_err(|failure| failure.with_prior_evidence(evidence))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bridge_tally_core::TallyDate;
+    use bridge_tally_protocol::{
+        native_outstandings::{render_party_ledger_master_request, NativeLedgerExportPeriod},
+        outstandings_shared::DateBoundaryProfile,
+        parse_native_party_ledger_master_records_with_evidence, GstDutyHead,
+        GstDutyHeadObservation, PartyLedgerMasterFieldObservation,
+    };
+
+    const COMPANY_GUID: &str = "ae1490be-52c5-4544-9ffc-4b7da85f9797";
+
+    /// A minimized parser fixture built from the task's measured field values
+    /// and record shape. It is not a live-response evidence capture.
+    fn measured_ledger_master_response() -> String {
+        let ledger = |name: &str, master_id: u8, tax_type: &str, duty_head: Option<&str>| {
+            let duty_head = duty_head
+                .map(|value| format!("<GSTDUTYHEAD>{value}</GSTDUTYHEAD>"))
+                .unwrap_or_default();
+            format!(
+                "<LEDGER NAME=\"{name}\" RESERVEDNAME=\"\"><GUID>{COMPANY_GUID}-000000{master_id:02x}</GUID><BRIDGECOMPANYGUID>{COMPANY_GUID}</BRIDGECOMPANYGUID><MASTERID>{master_id}</MASTERID><ALTERID>{master_id}</ALTERID><PARENT>Duties &amp; Taxes</PARENT><TAXTYPE>{tax_type}</TAXTYPE>{duty_head}<OPENINGBALANCE>0.00</OPENINGBALANCE><LANGUAGENAME.LIST><NAME.LIST><NAME>Localized {name}</NAME></NAME.LIST></LANGUAGENAME.LIST></LEDGER>"
+            )
+        };
+        format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><CMPINFO><LEDGER>107</LEDGER></CMPINFO><COLLECTION>{}{}{}{}</COLLECTION></DATA></BODY></ENVELOPE>",
+            ledger("Input CGST", 1, "GST", Some("CGST")),
+            ledger("Input SGST", 2, "GST", Some("SGST")),
+            ledger("GST Head Absent", 3, "GST", None),
+            ledger("Non-tax ledger", 4, "Others", None),
+        )
+    }
+
+    #[test]
+    fn party_ledger_master_request_fetches_tax_type_and_gst_duty_head() {
+        let period = NativeLedgerExportPeriod::new(
+            DateBoundaryProfile::ModeAgnostic,
+            TallyDate::parse("20260401").unwrap(),
+            TallyDate::parse("20260910").unwrap(),
+        )
+        .unwrap();
+
+        let request = render_party_ledger_master_request("BRIDGE GST RECON LAB", &period);
+        assert!(request.contains("TAXTYPE, GSTDUTYHEAD"));
+    }
+
+    #[test]
+    fn compliance_ledger_duty_heads_preserve_raw_values_and_name_attributes() {
+        let parsed = parse_native_party_ledger_master_records_with_evidence(
+            &measured_ledger_master_response(),
+            COMPANY_GUID,
+        )
+        .expect("measured duty-head response shape parses");
+
+        assert_eq!(parsed.records.len(), 4, "CMPINFO ledger count is not a row");
+        let cgst = &parsed.records[0].record;
+        assert_eq!(
+            cgst.ledger.name, "Input CGST",
+            "identity is the NAME attribute"
+        );
+        assert_eq!(
+            cgst.fields.tax_type,
+            PartyLedgerMasterFieldObservation::Returned("GST".to_string())
+        );
+        assert_eq!(
+            cgst.fields.gst_duty_head,
+            GstDutyHeadObservation::Recognized {
+                raw: "CGST".to_string(),
+                head: GstDutyHead::Cgst,
+            }
+        );
+        assert_eq!(
+            parsed.records[1].record.fields.gst_duty_head,
+            GstDutyHeadObservation::Unrecognized {
+                raw: "SGST".to_string(),
+            },
+            "unmeasured SGST spelling must not be normalized into State Tax"
+        );
+        assert_eq!(
+            parsed.records[2].record.fields.gst_duty_head,
+            GstDutyHeadObservation::Absent,
+            "a GST ledger with no returned head is not a default tax head"
+        );
+        assert_eq!(
+            parsed.records[3].record.fields.gst_duty_head,
+            GstDutyHeadObservation::NotTaxLedger {
+                tax_type: "Others".to_string(),
+            },
+            "a non-GST ledger remains distinct from an absent GST duty head"
+        );
+
+        let compliance = serde_json::to_value(&cgst.fields).unwrap();
+        assert_eq!(compliance["tax_type"], "GST");
+        assert_eq!(compliance["gst_duty_head"]["observation"], "recognized");
+        assert_eq!(compliance["gst_duty_head"]["raw"], "CGST");
+        assert_eq!(compliance["gst_duty_head"]["head"], "cgst");
+    }
+
+    #[test]
+    fn gst_duty_head_vocabulary_is_explicit_and_irregular() {
+        for (raw, head) in [
+            ("CGST", GstDutyHead::Cgst),
+            ("IGST", GstDutyHead::Igst),
+            ("State Tax", GstDutyHead::StateTax),
+            ("UT Tax", GstDutyHead::UtTax),
+            ("Cess", GstDutyHead::Cess),
+        ] {
+            assert_eq!(
+                GstDutyHeadObservation::from_observations(
+                    &PartyLedgerMasterFieldObservation::Returned("GST".to_string()),
+                    &PartyLedgerMasterFieldObservation::Returned(raw.to_string()),
+                ),
+                GstDutyHeadObservation::Recognized {
+                    raw: raw.to_string(),
+                    head,
+                }
+            );
+        }
+        for raw in [
+            "SGST",
+            "Central Tax",
+            "Integrated Tax",
+            "Central",
+            "State",
+            "Integrated",
+            "Union Territory Tax",
+        ] {
+            assert_eq!(
+                GstDutyHeadObservation::from_observations(
+                    &PartyLedgerMasterFieldObservation::Returned("GST".to_string()),
+                    &PartyLedgerMasterFieldObservation::Returned(raw.to_string()),
+                ),
+                GstDutyHeadObservation::Unrecognized {
+                    raw: raw.to_string(),
+                }
+            );
+        }
+    }
+}
