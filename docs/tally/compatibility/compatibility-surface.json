@@ -695,7 +695,7 @@
     },
     {
       "path": "src/SourceDraftScreen.tsx",
-      "sha256": "41b56994b0ff82b1319dbec815e85b09ad5b4b2bf2e0c6f1032748f49f10bc2f"
+      "sha256": "0af0473c2b6071fa0a68646e4e8d3e97e5cbfc9fdea411f9b3e480cc0e0c7c3a"
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
@@ -822,5 +822,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "eed724f193ff53c2bed87a171a3c7126b4d971c13539e2b375dbb97fd461e30c"
+  "manifest_sha256": "b40d7f721cc2188b94d87dc4743184bd10d540724e5eca94fa0aac6c06135764"
 }

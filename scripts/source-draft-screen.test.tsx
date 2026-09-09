@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { act } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
@@ -389,16 +390,28 @@ test("restores the opener after the parent removes lifecycle inertness", async (
       setRestoreFocus(null);
     }, [lifecycleOpen, restoreFocus]);
     return (
-      <div data-testid="lifecycle-shell" inert={lifecycleOpen || undefined}>
-        <button type="button">Journal opener</button>
-        <div hidden>
-          <SourceDraftScreen
-            isNativeLifecycleCompletionBlocked={blockCompletion}
-            onNativeLifecycleModalChange={setLifecycleOpen}
-            onNativeLifecycleModalClosed={onClosed}
-          />
+      <>
+        <div data-testid="lifecycle-shell" inert={lifecycleOpen || undefined}>
+          <button type="button">Journal opener</button>
+          <div hidden>
+            <SourceDraftScreen
+              isNativeLifecycleCompletionBlocked={blockCompletion}
+              onNativeLifecycleModalChange={setLifecycleOpen}
+              onNativeLifecycleModalClosed={onClosed}
+            />
+          </div>
         </div>
-      </div>
+        {createPortal(
+          <aside
+            data-testid="evidence-drawer"
+            inert={lifecycleOpen || undefined}
+            aria-hidden={lifecycleOpen || undefined}
+          >
+            Evidence drawer
+          </aside>,
+          document.body,
+        )}
+      </>
     );
   }
 
@@ -413,11 +426,16 @@ test("restores the opener after the parent removes lifecycle inertness", async (
   pending = exit;
   await act(async () => lifecycleListener?.({ payload: exit }));
   const shell = host.querySelector<HTMLElement>("[data-testid=lifecycle-shell]")!;
+  const drawer = document.body.querySelector<HTMLElement>("[data-testid=evidence-drawer]")!;
   expect(shell.hasAttribute("inert")).toBe(true);
+  expect(drawer.hasAttribute("inert")).toBe(true);
+  expect(drawer.getAttribute("aria-hidden")).toBe("true");
   expect(document.activeElement).toBe(document.body.querySelector("[role=alertdialog]"));
 
   await act(async () => button(document.body, "Keep editing").click());
   expect(shell.hasAttribute("inert")).toBe(false);
+  expect(drawer.hasAttribute("inert")).toBe(false);
+  expect(drawer.hasAttribute("aria-hidden")).toBe(false);
   expect(document.activeElement).toBe(opener);
   root.unmount();
 });

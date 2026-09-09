@@ -123,7 +123,7 @@ export function SourceDraftScreen({
     };
   }, [onBusyChange]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const open = nativeLifecycleRequest !== null;
     onNativeLifecycleModalChange?.(open);
     if (open) {
@@ -142,7 +142,7 @@ export function SourceDraftScreen({
     }
   }, [nativeLifecycleRequest, onNativeLifecycleModalChange, onNativeLifecycleModalClosed, lifecycleFocusLifecycle]);
 
-  React.useEffect(() => () => {
+  React.useLayoutEffect(() => () => {
     onNativeLifecycleModalChange?.(false);
   }, [onNativeLifecycleModalChange]);
 
