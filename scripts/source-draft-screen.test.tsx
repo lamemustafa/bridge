@@ -2,10 +2,11 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), unlisten: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 
 import { SourceDraftScreen } from "../src/SourceDraftScreen";
 
@@ -31,10 +32,34 @@ const draft = {
   rows: [row(1), row(2)],
 };
 
+const catalogScope = {
+  config: { host: "127.0.0.1", port: 9000 },
+  selected_company: {
+    display_name: "Synthetic review company",
+    company_guid: "00000000-0000-4000-8000-000000000001",
+    company_number: "1",
+    books_from_yyyymmdd: "20260401",
+  },
+};
+
+const catalog = {
+  capture_id: "00000000-0000-4000-8000-000000000099",
+  source_sha256: draft.source_sha256,
+  targets: ["Existing target"],
+  evidence: { request_sha256: "b".repeat(64), response_sha256: "c".repeat(64), bytes: 100, state: "complete" as const },
+};
+
 function button(host: HTMLElement, label: string) {
   const match = [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes(label));
   if (!match) throw new Error(`Missing button: ${label}`);
   return match;
+}
+
+function enableNativeWindowRuntime() {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: { metadata: { currentWindow: { label: "main" } } },
+  });
 }
 
 function setValue(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
@@ -51,9 +76,16 @@ async function mount(host: HTMLElement, props: React.ComponentProps<typeof Sourc
   return root;
 }
 
+beforeEach(() => {
+  mocks.listen.mockImplementation(() => new Promise<never>(() => {}));
+});
+
 afterEach(() => {
   document.body.replaceChildren();
   mocks.invoke.mockReset();
+  mocks.listen.mockReset();
+  mocks.unlisten.mockReset();
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 });
 
 test("keeps source observations read-only and saves only row-ordered proposals", async () => {
@@ -124,6 +156,179 @@ test("clears saved status when a proposal changes after saving", async () => {
   setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
   expect(host.textContent).not.toContain("Draft saved locally as JSON.");
   expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.value).toBe("Unsaved ledger");
+  root.unmount();
+});
+
+test("requires an explicit current-session re-read before treating a saved matching target as selected, then clears and reloads it", async () => {
+  const savedTarget = {
+    ...draft,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] },
+    } : item),
+  };
+  const applied = { ...savedTarget, revision: 2 };
+  mocks.invoke
+    .mockResolvedValueOnce(savedTarget)
+    .mockResolvedValueOnce(catalog)
+    .mockResolvedValueOnce(applied)
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce(catalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  expect(target.value).toBe("");
+  expect(host.textContent).toContain("Saved unverified target: Existing target. Select it to check it against this current capture.");
+
+  await act(async () => setValue(target, "Existing target"));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_apply_source_draft_existing_ledger_target", {
+    request: expect.objectContaining({
+      draft_id: draft.draft_id,
+      revision: draft.revision,
+      capture_id: catalog.capture_id,
+      row_position: 1,
+      entry_position: 1,
+      target_name: "Existing target",
+      proposals: savedTarget.rows.map((item) => item.proposal),
+    }),
+  });
+  expect(host.textContent).toContain("This current-session target was re-read and bound. It remains an unapproved proposal.");
+
+  await act(async () => button(host, "Clear target").click());
+  expect(mocks.invoke).toHaveBeenNthCalledWith(4, "desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.value).toBe("");
+  expect(host.textContent).toContain("Load existing ledgers to choose a target.");
+
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(mocks.invoke).toHaveBeenNthCalledWith(5, "desktop_load_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, ...catalogScope },
+  });
+  expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")?.value).toBe("");
+  root.unmount();
+});
+
+test("clears the visible catalogue and blocks a new read until the native company-scope invalidation completes", async () => {
+  let resolveFirstInvalidation!: () => void;
+  let resolveSecondInvalidation!: () => void;
+  const firstInvalidation = new Promise<void>((resolve) => { resolveFirstInvalidation = resolve; });
+  const secondInvalidation = new Promise<void>((resolve) => { resolveSecondInvalidation = resolve; });
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(catalog)
+    .mockReturnValueOnce(firstInvalidation)
+    .mockReturnValueOnce(secondInvalidation);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")).toBeTruthy();
+
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(button(host, "Load existing ledgers").disabled).toBe(true);
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')).toBeTruthy();
+
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-three" />));
+  expect(mocks.invoke).toHaveBeenCalledTimes(3);
+  resolveFirstInvalidation();
+  await act(async () => { await firstInvalidation; });
+  expect(mocks.invoke).toHaveBeenNthCalledWith(4, "desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(button(host, "Load existing ledgers").disabled).toBe(true);
+
+  resolveSecondInvalidation();
+  await act(async () => { await secondInvalidation; });
+  expect(button(host, "Load existing ledgers").disabled).toBe(false);
+  root.unmount();
+});
+
+test("keeps the Tally read lock through parent rerenders until catalog reads settle", async () => {
+  let resolveLoad!: (value: unknown) => void;
+  let resolveApply!: (value: unknown) => void;
+  const pendingLoad = new Promise((resolve) => { resolveLoad = resolve; });
+  const pendingApply = new Promise((resolve) => { resolveApply = resolve; });
+  const applied = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0
+      ? { ...item, proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] } }
+      : item),
+  };
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_load_source_draft_existing_ledger_targets") return pendingLoad;
+    if (command === "desktop_apply_source_draft_existing_ledger_target") return pendingApply;
+    return Promise.resolve();
+  });
+  const tallyReadStates: boolean[] = [];
+  function RerenderingParent() {
+    const [, setBusy] = React.useState(false);
+    return <SourceDraftScreen
+      onBusyChange={setBusy}
+      onTallyReadActivityChange={(active) => tallyReadStates.push(active)}
+      catalogScope={catalogScope}
+      catalogScopeKey="company-one"
+    />;
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<RerenderingParent />));
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(tallyReadStates).toEqual([true]);
+  resolveLoad(catalog);
+  await act(async () => { await pendingLoad; });
+  expect(tallyReadStates).toEqual([true, false]);
+
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Existing target"));
+  expect(tallyReadStates).toEqual([true, false, true]);
+  resolveApply(applied);
+  await act(async () => { await pendingApply; });
+  expect(tallyReadStates).toEqual([true, false, true, false]);
+  root.unmount();
+});
+
+test("reconciles a catalog apply committed before a concurrent scope invalidation", async () => {
+  let resolveApply!: (value: unknown) => void;
+  let resolveInvalidation!: () => void;
+  const pendingApply = new Promise((resolve) => { resolveApply = resolve; });
+  const pendingInvalidation = new Promise<void>((resolve) => { resolveInvalidation = resolve; });
+  const applied = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0
+      ? { ...item, proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] } }
+      : item),
+  };
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_load_source_draft_existing_ledger_targets") return Promise.resolve(catalog);
+    if (command === "desktop_apply_source_draft_existing_ledger_target") return pendingApply;
+    if (command === "desktop_invalidate_source_draft_existing_ledger_targets") return pendingInvalidation;
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Existing target"));
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />));
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_invalidate_source_draft_existing_ledger_targets");
+
+  resolveApply(applied);
+  await act(async () => { await pendingApply; });
+  expect(host.textContent).toContain("revision 2");
+  expect(host.querySelector("#source-draft-1-entry-0-ledger")?.tagName).toBe("INPUT");
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.value).toBe("Existing target");
+
+  resolveInvalidation();
+  await act(async () => { await pendingInvalidation; });
   root.unmount();
 });
 
@@ -200,4 +405,214 @@ test("does not update state after a late save result on unmount", async () => {
   resolveSave(draft);
   await act(async () => { await pendingSave; });
   expect(busyStates).toEqual([true, false, true, false]);
+});
+
+test("holds a native close until a pending catalog apply settles and an operator explicitly confirms", async () => {
+  enableNativeWindowRuntime();
+  let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    lifecycleListener = handler;
+    return mocks.unlisten;
+  });
+  let pending: { request_id: string; kind: "close" | "exit" } | null = null;
+  let resolveApply!: (value: unknown) => void;
+  const pendingApply = new Promise((resolve) => { resolveApply = resolve; });
+  const applied = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0
+      ? { ...item, proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] } }
+      : item),
+  };
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_load_source_draft_existing_ledger_targets") return Promise.resolve(catalog);
+    if (command === "desktop_apply_source_draft_existing_ledger_target") return pendingApply;
+    if (command === "desktop_complete_source_draft_lifecycle_request") return Promise.resolve();
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => {});
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  await act(async () => setValue(target, "Existing target"));
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_apply_source_draft_existing_ledger_target", expect.anything());
+
+  const close = { request_id: "close-during-apply", kind: "close" as const };
+  pending = close;
+  await act(async () => lifecycleListener?.({ payload: close }));
+  expect(host.textContent).toContain("Close this window?");
+  expect(mocks.invoke).not.toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: close });
+  expect(button(host, "Discard and close").disabled).toBe(true);
+  expect(button(host, "Keep editing").disabled).toBe(true);
+
+  resolveApply(applied);
+  await act(async () => { await pendingApply; });
+  expect(button(host, "Discard and close").disabled).toBe(false);
+  await act(async () => button(host, "Discard and close").click());
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: close });
+  root.unmount();
+});
+
+test("keeps a dirty native lifecycle request local until the matching response", async () => {
+  enableNativeWindowRuntime();
+  let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    lifecycleListener = handler;
+    return mocks.unlisten;
+  });
+  let pending: { request_id: string; kind: "close" | "exit" } | null = null;
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_cancel_source_draft_lifecycle_request") {
+      pending = null;
+      return Promise.resolve();
+    }
+    return Promise.resolve();
+  });
+  const reveal = vi.fn();
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { onNativeLifecycleRequested: reveal });
+  await act(async () => {});
+  expect(mocks.listen).toHaveBeenCalledWith("source-draft-lifecycle-requested", expect.any(Function));
+  await act(async () => button(host, "Choose source XML").click());
+  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+
+  const close = { request_id: "close-1", kind: "close" as const };
+  pending = close;
+  await act(async () => lifecycleListener?.({ payload: close }));
+  expect(reveal).toHaveBeenCalledTimes(1);
+  expect(host.textContent).toContain("Discard unsaved proposals and close this window?");
+  expect(button(host, "Choose new source").disabled).toBe(true);
+  expect(button(host, "Keep editing").disabled).toBe(false);
+  await act(async () => button(host, "Keep editing").click());
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_cancel_source_draft_lifecycle_request", { request: close });
+
+  const exit = { request_id: "exit-1", kind: "exit" as const };
+  pending = exit;
+  await act(async () => lifecycleListener?.({ payload: exit }));
+  await act(async () => button(host, "Discard and quit").click());
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: exit });
+  root.unmount();
+});
+
+test("ignores an event whose request is no longer pending", async () => {
+  enableNativeWindowRuntime();
+  let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    lifecycleListener = handler;
+    return mocks.unlisten;
+  });
+  let pending: { request_id: string; kind: "close" | "exit" } | null = null;
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  await act(async () => button(host, "Choose source XML").click());
+  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+  const current = { request_id: "close-b", kind: "close" as const };
+  pending = current;
+  await act(async () => lifecycleListener?.({ payload: { request_id: "close-a", kind: "close" } }));
+  expect(host.textContent).not.toContain("Discard unsaved proposals and close this window?");
+  await act(async () => lifecycleListener?.({ payload: current }));
+  expect(host.textContent).toContain("Discard unsaved proposals and close this window?");
+  root.unmount();
+});
+
+test("does not let a late query for a cancelled request replace a newer dialog", async () => {
+  enableNativeWindowRuntime();
+  let lifecycleListener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    lifecycleListener = handler;
+    return mocks.unlisten;
+  });
+  const first = { request_id: "close-a", kind: "close" as const };
+  const second = { request_id: "exit-b", kind: "exit" as const };
+  let pending: typeof first | typeof second | null = null;
+  let deferFirst = false;
+  let resolveFirst!: (request: typeof first) => void;
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") {
+      if (deferFirst && pending === first) return new Promise(resolve => { resolveFirst = resolve; });
+      return Promise.resolve(pending);
+    }
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_cancel_source_draft_lifecycle_request") {
+      pending = null;
+      return Promise.resolve();
+    }
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  await act(async () => button(host, "Choose source XML").click());
+  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+
+  pending = first;
+  await act(async () => lifecycleListener?.({ payload: first }));
+  expect(host.textContent).toContain("Discard unsaved proposals and close this window?");
+
+  deferFirst = true;
+  lifecycleListener?.({ payload: first });
+  await act(async () => {});
+  await act(async () => button(host, "Keep editing").click());
+  pending = second;
+  deferFirst = false;
+  await act(async () => lifecycleListener?.({ payload: second }));
+  expect(host.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+
+  await act(async () => resolveFirst(first));
+  expect(host.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+  root.unmount();
+});
+
+test("reports native listener registration failure", async () => {
+  enableNativeWindowRuntime();
+  mocks.listen.mockRejectedValueOnce(new Error("event permission denied"));
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  await act(async () => {});
+  expect(host.textContent).toContain("Bridge could not install native close protection: event permission denied");
+  root.unmount();
+});
+
+test("completes a native lifecycle request that was pending before listener registration", async () => {
+  enableNativeWindowRuntime();
+  mocks.listen.mockResolvedValueOnce(mocks.unlisten);
+  const pending = { request_id: "pending-1", kind: "exit" as const };
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  await act(async () => {});
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: pending });
+  root.unmount();
+});
+
+test("unregisters a listener that resolves after the source draft unmounts", async () => {
+  enableNativeWindowRuntime();
+  let resolveListen!: (unlisten: () => void) => void;
+  mocks.listen.mockImplementation(() => new Promise(resolve => { resolveListen = resolve; }));
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host);
+  root.unmount();
+  await act(async () => resolveListen(mocks.unlisten));
+  expect(mocks.unlisten).toHaveBeenCalledTimes(1);
+  expect(mocks.invoke).not.toHaveBeenCalledWith("desktop_pending_source_draft_lifecycle_request");
 });

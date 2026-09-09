@@ -18,6 +18,7 @@ const MAX_TEXT_BYTES: usize = 4_096;
 const MAX_DEPTH: usize = 32;
 const MAX_TAG_BYTES: usize = 128;
 const MAX_SOURCE_NOTICE_KINDS: usize = 64;
+const MAX_OMITTED_FIELDS_PER_VOUCHER: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedSource {
@@ -64,6 +65,7 @@ pub(crate) enum SourceXmlError {
     VoucherLimit,
     EntryLimit,
     SourceNoticeLimit,
+    OmittedFieldLimit,
     RequiredFieldMissing,
 }
 
@@ -79,6 +81,7 @@ impl SourceXmlError {
             Self::VoucherLimit => "source_draft_voucher_limit_exceeded",
             Self::EntryLimit => "source_draft_entry_limit_exceeded",
             Self::SourceNoticeLimit => "source_draft_notice_limit_exceeded",
+            Self::OmittedFieldLimit => "source_draft_omitted_field_limit_exceeded",
             Self::RequiredFieldMissing => "source_draft_required_field_missing",
         }
     }
@@ -258,7 +261,7 @@ fn start(
                 "REMOTEID" => claim(&mut row.remote_id, value)?,
                 "VCHTYPE" => claim(&mut row.voucher_type, value)?,
                 _ => {
-                    row.omitted.insert(format!("VOUCHER/@{key}"));
+                    record_omitted_field(&mut row.omitted, format!("VOUCHER/@{key}"))?;
                 }
             }
         }
@@ -280,7 +283,7 @@ fn start(
                 return Err(SourceXmlError::UnsupportedShape);
             }
         } else if parent == Some("VOUCHER") && tag != "ALLLEDGERENTRIES.LIST" {
-            voucher.omitted.insert(format!("VOUCHER/{tag}"));
+            record_omitted_field(&mut voucher.omitted, format!("VOUCHER/{tag}"))?;
         }
         if parent == Some("ALLLEDGERENTRIES.LIST")
             && matches!(tag.as_str(), "LEDGERNAME" | "AMOUNT" | "ISDEEMEDPOSITIVE")
@@ -295,7 +298,7 @@ fn start(
                 return Err(SourceXmlError::UnsupportedShape);
             }
         } else if parent == Some("ALLLEDGERENTRIES.LIST") {
-            voucher.omitted.insert(format!("ENTRY/{tag}"));
+            record_omitted_field(&mut voucher.omitted, format!("ENTRY/{tag}"))?;
         }
         if event.attributes().next().is_some() {
             return Err(SourceXmlError::UnsupportedShape);
@@ -316,6 +319,17 @@ fn record_notice(
         return Err(SourceXmlError::SourceNoticeLimit);
     }
     *notices.entry(kind).or_insert(0) += 1;
+    Ok(())
+}
+
+fn record_omitted_field(
+    omitted: &mut BTreeSet<String>,
+    field: String,
+) -> Result<(), SourceXmlError> {
+    if !omitted.contains(&field) && omitted.len() >= MAX_OMITTED_FIELDS_PER_VOUCHER {
+        return Err(SourceXmlError::OmittedFieldLimit);
+    }
+    omitted.insert(field);
     Ok(())
 }
 
@@ -614,5 +628,52 @@ mod tests {
             ),
             Err(SourceXmlError::SourceNoticeLimit)
         );
+    }
+
+    #[test]
+    fn omitted_categories_share_one_row_bound_across_all_routes() {
+        let attributes = (0..21).map(|i| format!(" A{i}=\"\"")).collect::<String>();
+        let voucher_fields = (0..21).map(|i| format!("<F{i}/>")).collect::<String>();
+        let entry_fields = (0..22).map(|i| format!("<E{i}/>")).collect::<String>();
+        let at_limit = XML
+            .replacen("<VOUCHER ", &format!("<VOUCHER{attributes} "), 1)
+            .replacen("<VOUCHERNUMBER>1</VOUCHERNUMBER>", &voucher_fields, 1)
+            .replacen(
+                "</ALLLEDGERENTRIES.LIST>",
+                &format!("{entry_fields}</ALLLEDGERENTRIES.LIST>"),
+                1,
+            );
+        let parsed = parse_source_xml(at_limit.as_bytes(), "x.xml".into()).unwrap();
+        assert_eq!(
+            parsed.vouchers[0].omitted_fields.len(),
+            MAX_OMITTED_FIELDS_PER_VOUCHER
+        );
+        assert_eq!(parsed.utf8, at_limit);
+        let repeated =
+            at_limit
+                .replacen("<F0/>", "<F0/><F0/>", 1)
+                .replacen("<E0/>", "<E0/><E0/>", 1);
+        assert_eq!(
+            parse_source_xml(repeated.as_bytes(), "x.xml".into())
+                .unwrap()
+                .vouchers[0]
+                .omitted_fields
+                .len(),
+            MAX_OMITTED_FIELDS_PER_VOUCHER
+        );
+        for over_limit in [
+            at_limit.replacen("<VOUCHER ", "<VOUCHER EXTRA=\"\" ", 1),
+            at_limit.replacen("</VOUCHER>", "<EXTRA/></VOUCHER>", 1),
+            at_limit.replacen(
+                "</ALLLEDGERENTRIES.LIST>",
+                "<EXTRA/></ALLLEDGERENTRIES.LIST>",
+                1,
+            ),
+        ] {
+            assert_eq!(
+                parse_source_xml(over_limit.as_bytes(), "x.xml".into()),
+                Err(SourceXmlError::OmittedFieldLimit)
+            );
+        }
     }
 }

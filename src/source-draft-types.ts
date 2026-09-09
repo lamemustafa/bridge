@@ -47,8 +47,29 @@ export type SourceDraft = {
   rows: SourceDraftRow[];
 };
 
-export type SourceDraftAction = "choose" | "open" | "save" | null;
+export type SourceDraftAction = "choose" | "open" | "save" | "catalog_load" | "catalog_apply" | "catalog_clear" | null;
+
+export type SourceDraftCompanyScope = {
+  config: { host: string; port: number };
+  selected_company: {
+    display_name: string;
+    company_guid: string;
+    company_number: string;
+    books_from_yyyymmdd: string;
+  };
+};
+
+export type SourceDraftCatalogTargets = {
+  capture_id: string;
+  source_sha256: string;
+  targets: string[];
+  evidence: { request_sha256: string; response_sha256: string; bytes: number; state: "complete" };
+};
 
 export type SourceDraftScreenProps = {
   onBusyChange?: (busy: boolean) => void;
+  onNativeLifecycleRequested?: () => void;
+  onTallyReadActivityChange?: (active: boolean) => void;
+  catalogScope?: SourceDraftCompanyScope;
+  catalogScopeKey?: string;
 };

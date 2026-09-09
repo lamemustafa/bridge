@@ -1435,6 +1435,29 @@ function App() {
       && selectedCompanyRecord?.canonical_endpoint === currentProbeCanonicalOrigin,
     companySaved: Boolean(selectedCompanyRecord?.mirror_company_id),
   }).companyReady;
+  const sourceDraftCatalogScope = setupConnectionComplete
+    && selectedCompanyLive
+    && selectedCompanyRecord?.canonical_endpoint === currentProbeCanonicalOrigin
+    && selectedCompanyRecord?.guid
+    && selectedCompanyRecord.company_number
+    && selectedCompanyRecord.books_from_yyyymmdd
+    ? {
+        config: { host: config.host, port: config.port },
+        selected_company: {
+          display_name: selectedCompanyRecord.name,
+          company_guid: selectedCompanyRecord.guid,
+          company_number: selectedCompanyRecord.company_number,
+          books_from_yyyymmdd: selectedCompanyRecord.books_from_yyyymmdd,
+        },
+      }
+    : undefined;
+  const sourceDraftCatalogScopeKey = JSON.stringify(sourceDraftCatalogScope && {
+    canonical_endpoint: selectedCompanyRecord?.canonical_endpoint ?? "",
+    host: config.host,
+    port: config.port,
+    ...sourceDraftCatalogScope.selected_company,
+    company_guid: sourceDraftCatalogScope.selected_company.company_guid.toLowerCase(),
+  }) ?? "unavailable";
   // An unsaved identity is only usable at the endpoint that returned it. Saved
   // profiles remain available for local Mirror & Proof review even when no
   // endpoint is currently checked.
@@ -1905,7 +1928,13 @@ function App() {
         {/* Keep local proposals mounted when navigating; switching views must not discard edits. */}
         <div hidden={view !== "source_draft"}>
           <ErrorBoundary key="source_draft" label="Prepare file">
-            <SourceDraftScreen onBusyChange={setSourceDraftBusy} />
+            <SourceDraftScreen
+              onBusyChange={setSourceDraftBusy}
+              onNativeLifecycleRequested={() => setView("source_draft")}
+              onTallyReadActivityChange={(active) => changeChildTallyReadActivity(active ? 1 : -1)}
+              catalogScope={sourceDraftCatalogScope}
+              catalogScopeKey={sourceDraftCatalogScopeKey}
+            />
           </ErrorBoundary>
         </div>
 

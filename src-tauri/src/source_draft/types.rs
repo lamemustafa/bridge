@@ -121,6 +121,38 @@ pub(super) fn error(code: &'static str) -> SourceDraftCommandError {
             "The selected XML has too many distinct non-voucher record types.",
             "Choose a supported source XML with fewer non-voucher record types.",
         ),
+        "source_draft_omitted_field_limit_exceeded" => (
+            "A source row has too many distinct omitted field names.",
+            "Choose a supported source XML with fewer distinct fields per voucher.",
+        ),
+        "source_draft_lifecycle_request_not_pending" => (
+            "The requested close action is no longer pending.",
+            "Continue editing or request the close action again.",
+        ),
+        "source_draft_lifecycle_unavailable" => (
+            "Bridge could not complete the requested native close action.",
+            "Continue editing and try the close action again.",
+        ),
+        "source_draft_catalogue_scope_invalid" => (
+            "Bridge could not verify the current Tally company selection.",
+            "Check Tally and select the intended current company, then load existing ledgers again.",
+        ),
+        "source_draft_catalogue_invalidated" => (
+            "The existing-ledger capture is no longer current for this draft or company.",
+            "Load existing ledgers again before selecting a target.",
+        ),
+        "source_draft_catalogue_read_failed" => (
+            "Bridge could not read a complete current existing-ledger list.",
+            "Check Tally and retry the read; no target was applied.",
+        ),
+        "source_draft_catalogue_target_invalid" => (
+            "The requested target was not a valid current existing ledger.",
+            "Choose a listed target and try again.",
+        ),
+        "source_draft_catalogue_target_changed" => (
+            "The selected existing ledger changed before Bridge could apply it.",
+            "Load existing ledgers again and make a fresh selection.",
+        ),
         _ => (
             "Bridge could not prepare this source draft.",
             "Review the selected local file and try again.",

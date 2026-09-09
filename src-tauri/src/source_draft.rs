@@ -1,26 +1,38 @@
 //! Local, source-linked draft preparation. This is deliberately disconnected
 //! from Tally transport, posting, approvals, and saved Journal batches.
 
+#[path = "source_draft/catalog.rs"]
+mod catalog;
 #[path = "source_draft/files.rs"]
 mod files;
+#[path = "source_draft/lifecycle.rs"]
+mod lifecycle;
 #[path = "source_draft/types.rs"]
 mod types;
+
+pub(crate) use lifecycle::{
+    SourceDraftLifecycleGuard, SourceDraftLifecycleKind, SourceDraftLifecycleRequest,
+};
 
 use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDate;
-use tauri::State;
+use tauri::{Manager, State};
 use uuid::Uuid;
 
-use crate::source_draft_xml::{parse_source_xml, ParsedSource, MAX_SOURCE_BYTES};
+use crate::source_draft_xml::{MAX_SOURCE_BYTES, ParsedSource, parse_source_xml};
 
 use self::{
     files::{open_saved_draft, pick_file, save_path, serialize_draft, write_private_file},
     types::{
-        command_error, error, CommandResult, SourceDraftDto, SourceDraftEntry,
+        CommandResult, MAX_PROPOSAL_BYTES, MAX_TEXT_BYTES, SourceDraftDto, SourceDraftEntry,
         SourceDraftEntryProposal, SourceDraftProposal, SourceDraftRow, SourceDraftSaveRequest,
-        SourceDraftSourceNotice, MAX_PROPOSAL_BYTES, MAX_TEXT_BYTES,
+        SourceDraftSourceNotice, command_error, error,
     },
+};
+use catalog::{
+    CatalogCapture, SourceDraftCatalogApplyRequest, SourceDraftCatalogLoadRequest,
+    SourceDraftCatalogTargets, require_current_catalog_binding,
 };
 
 #[derive(Default)]
@@ -34,6 +46,8 @@ struct ActiveDraft {
     revision: u64,
     source: ParsedSource,
     proposals: Vec<SourceDraftProposal>,
+    catalog_generation: u64,
+    catalog: Option<CatalogCapture>,
 }
 
 #[tauri::command]
@@ -57,6 +71,8 @@ pub(crate) async fn desktop_pick_source_draft(
         id: Uuid::new_v4(),
         revision: 1,
         proposals: empty_proposals(&source),
+        catalog_generation: 0,
+        catalog: None,
         source,
     };
     store.replace(active).map(Some)
@@ -88,8 +104,80 @@ pub(crate) async fn desktop_open_source_draft(
             revision: 1,
             source,
             proposals,
+            catalog_generation: 0,
+            catalog: None,
         })
         .map(Some)
+}
+
+#[tauri::command]
+pub(crate) async fn desktop_load_source_draft_existing_ledger_targets(
+    store: State<'_, SourceDraftStore>,
+    runtime: State<'_, crate::tally::TallyRuntime>,
+    request: SourceDraftCatalogLoadRequest,
+) -> CommandResult<SourceDraftCatalogTargets> {
+    let snapshot = store.catalog_load_snapshot(&request)?;
+    let endpoint = crate::tally::EndpointKey::from_config(&request.config)
+        .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    let identity = crate::commands::verify_observed_company_tuple(
+        &runtime,
+        &request.config,
+        &request.selected_company,
+    )
+    .await
+    .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    let read = crate::tally::standard_ledger_catalog::read_standard_ledger_catalog(
+        &runtime,
+        request.config,
+        &identity,
+    )
+    .await
+    .map_err(|_| error("source_draft_catalogue_read_failed"))?;
+    store.install_catalog(snapshot, endpoint, identity, read)
+}
+
+#[tauri::command]
+pub(crate) async fn desktop_apply_source_draft_existing_ledger_target(
+    store: State<'_, SourceDraftStore>,
+    runtime: State<'_, crate::tally::TallyRuntime>,
+    request: SourceDraftCatalogApplyRequest,
+) -> CommandResult<SourceDraftDto> {
+    let snapshot = store.catalog_apply_snapshot(&request)?;
+    let endpoint = crate::tally::EndpointKey::from_config(&request.config)
+        .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    if endpoint != snapshot.endpoint {
+        return Err(error("source_draft_catalogue_invalidated"));
+    }
+    let identity = crate::commands::verify_observed_company_tuple(
+        &runtime,
+        &request.config,
+        &request.selected_company,
+    )
+    .await
+    .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    if identity != snapshot.identity {
+        return Err(error("source_draft_catalogue_invalidated"));
+    }
+    let binding = snapshot
+        .catalog
+        .bind_selected([request.target_name.clone()])
+        .map_err(|_| error("source_draft_catalogue_target_invalid"))?;
+    let fresh = crate::tally::standard_ledger_catalog::read_standard_ledger_catalog(
+        &runtime,
+        request.config.clone(),
+        &identity,
+    )
+    .await
+    .map_err(|_| error("source_draft_catalogue_read_failed"))?;
+    require_current_catalog_binding(&binding, &fresh.body, &identity)?;
+    store.commit_catalog_target(snapshot, request, binding)
+}
+
+#[tauri::command]
+pub(crate) fn desktop_invalidate_source_draft_existing_ledger_targets(
+    store: State<'_, SourceDraftStore>,
+) -> CommandResult<()> {
+    store.invalidate_catalogue()
 }
 
 #[tauri::command]
@@ -109,6 +197,53 @@ pub(crate) async fn desktop_save_source_draft(
         .await
         .map_err(|_| error("source_draft_state_unavailable"))?
         .map(Some)
+}
+
+#[tauri::command]
+pub(crate) fn desktop_pending_source_draft_lifecycle_request(
+    guard: State<'_, SourceDraftLifecycleGuard>,
+) -> Option<SourceDraftLifecycleRequest> {
+    guard.pending()
+}
+
+#[tauri::command]
+pub(crate) fn desktop_cancel_source_draft_lifecycle_request(
+    guard: State<'_, SourceDraftLifecycleGuard>,
+    request: SourceDraftLifecycleRequest,
+) -> CommandResult<()> {
+    if guard.cancel(&request) {
+        Ok(())
+    } else {
+        Err(error("source_draft_lifecycle_request_not_pending"))
+    }
+}
+
+#[tauri::command]
+pub(crate) fn desktop_complete_source_draft_lifecycle_request(
+    app: tauri::AppHandle,
+    guard: State<'_, SourceDraftLifecycleGuard>,
+    request: SourceDraftLifecycleRequest,
+) -> CommandResult<()> {
+    let window = match request.kind {
+        SourceDraftLifecycleKind::Close => app
+            .get_webview_window("main")
+            .ok_or_else(|| error("source_draft_lifecycle_unavailable"))?,
+        SourceDraftLifecycleKind::Exit => {
+            if !guard.authorize(&request) {
+                return Err(error("source_draft_lifecycle_request_not_pending"));
+            }
+            app.exit(0);
+            return Ok(());
+        }
+    };
+    if !guard.authorize(&request) {
+        return Err(error("source_draft_lifecycle_request_not_pending"));
+    }
+    if window.close().is_err() {
+        guard.restore_after_failed_close(request);
+        return Err(error("source_draft_lifecycle_unavailable"));
+    }
+    Ok(())
 }
 
 impl SourceDraftStore {
@@ -277,6 +412,7 @@ fn commit_after_persist(
     let bytes = serialize_draft(&current.source, &request.proposals)?;
     write_private_file(&path, &bytes)?;
     let current = guard.as_mut().expect("active draft checked");
+    SourceDraftStore::remove_changed_bindings(current, &request.proposals);
     current.proposals = request.proposals;
     current.revision = next_revision;
     Ok(dto(current))
@@ -302,8 +438,8 @@ mod tests {
     }
 
     #[test]
-    fn editable_optional_text_normalizes_empty_at_json_boundary_without_changing_source_empty_or_whitespace(
-    ) {
+    fn editable_optional_text_normalizes_empty_at_json_boundary_without_changing_source_empty_or_whitespace()
+     {
         let source = source();
         let mut saved: serde_json::Value =
             serde_json::from_slice(&serialize_draft(&source, &empty_proposals(&source)).unwrap())
@@ -425,6 +561,8 @@ mod tests {
             id: Uuid::new_v4(),
             revision: 1,
             proposals: empty_proposals(&source_data),
+            catalog_generation: 0,
+            catalog: None,
             source: source_data,
         };
         let dto = store.replace(active).unwrap();

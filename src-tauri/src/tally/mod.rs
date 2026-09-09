@@ -1,5 +1,6 @@
 pub(crate) mod agent_read_request;
 pub(crate) mod approved_import;
+pub(crate) mod standard_ledger_catalog;
 pub mod capability_packs;
 pub mod connection;
 pub mod connector;

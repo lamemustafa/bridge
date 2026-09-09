@@ -59,6 +59,17 @@
   flex-wrap: wrap;
 }
 
+.source-draft-catalogue-state {
+  color: #52645b;
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.source-draft-clear-target {
+  justify-self: start;
+}
+
 .source-draft-toolbar {
   border-bottom: 1px solid #dfe6e1;
   padding-bottom: 14px;
