@@ -14,13 +14,19 @@ fn captured(bytes: &[u8]) -> ScenarioPlan {
         .with_framing(ResponseFraming::ContentLength)
 }
 
+fn captured_utf8(body: &str) -> ScenarioPlan {
+    ScenarioPlan::new(Fixture::SyntheticXml(body.to_owned()))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength)
+}
+
 #[tokio::test]
 async fn movement_refuses_voucher_changes_even_when_period_openings_match() {
     let company = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"
     ));
-    let extent = captured(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"
+    let extent = captured_utf8(include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
     ));
     let ledger = captured(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-period-opening.utf16le.xml"

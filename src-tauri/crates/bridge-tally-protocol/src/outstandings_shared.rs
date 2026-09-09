@@ -144,7 +144,7 @@ impl PinnedCompany {
         }
         Ok(Self {
             name,
-            guid: Arc::from(guid),
+            guid: Arc::from(guid.to_ascii_lowercase()),
         })
     }
 
@@ -214,6 +214,91 @@ pub struct CompanyBookExtent {
     last_voucher_date: TallyDate,
     voucher_alter_id_high_water: Option<VoucherAlterIdHighWater>,
     master_alter_id_high_water: Option<MasterAlterIdHighWater>,
+}
+
+/// The complete tuple that a V2 company-book-extent response must echo before
+/// it can select a book. This is an expectation, not an admission capability:
+/// callers construct it only from their separately verified fresh Company
+/// collection observation.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CompanyBookExtentExpectation {
+    name: ValidatedCompanyName,
+    guid: String,
+    company_number: String,
+    books_from: TallyDate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompanyBookExtentExpectationError {
+    Name,
+    Guid,
+    CompanyNumber,
+    BooksFrom,
+}
+
+impl fmt::Display for CompanyBookExtentExpectationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Name => "company extent expectation name was invalid",
+            Self::Guid => "company extent expectation GUID was invalid",
+            Self::CompanyNumber => "company extent expectation number was invalid",
+            Self::BooksFrom => "company extent expectation books-from was invalid",
+        })
+    }
+}
+
+impl std::error::Error for CompanyBookExtentExpectationError {}
+
+impl CompanyBookExtentExpectation {
+    pub fn new(
+        name: String,
+        guid: String,
+        company_number: String,
+        books_from_yyyymmdd: String,
+    ) -> Result<Self, CompanyBookExtentExpectationError> {
+        let name =
+            ValidatedCompanyName::new(name).map_err(|_| CompanyBookExtentExpectationError::Name)?;
+        if guid.trim() != guid
+            || guid.is_empty()
+            || guid.len() > 255
+            || guid.chars().any(char::is_control)
+        {
+            return Err(CompanyBookExtentExpectationError::Guid);
+        }
+        if !is_valid_company_number(&company_number) {
+            return Err(CompanyBookExtentExpectationError::CompanyNumber);
+        }
+        let books_from = TallyDate::parse(books_from_yyyymmdd)
+            .map_err(|_| CompanyBookExtentExpectationError::BooksFrom)?;
+        Ok(Self {
+            name,
+            guid: guid.to_ascii_lowercase(),
+            company_number,
+            books_from,
+        })
+    }
+
+    fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    fn guid(&self) -> &str {
+        &self.guid
+    }
+
+    fn company_number(&self) -> &str {
+        &self.company_number
+    }
+
+    fn books_from(&self) -> &TallyDate {
+        &self.books_from
+    }
+}
+
+impl fmt::Debug for CompanyBookExtentExpectation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CompanyBookExtentExpectation([verified tuple])")
+    }
 }
 
 impl CompanyBookExtent {
@@ -350,6 +435,8 @@ struct RawCompany {
     name: Value,
     #[serde(rename = "GUID")]
     guid: Value,
+    #[serde(rename = "COMPANYNUMBER", default)]
+    company_number: Option<Value>,
     #[serde(rename = "BOOKSFROM")]
     books_from: Value,
     #[serde(rename = "LASTVOUCHERDATE")]
@@ -385,8 +472,79 @@ pub fn parse_company_book_extent(
             "company_identity_ambiguous",
         ));
     }
-    let name = required(raw.name.text, "company_name_missing")?;
-    let guid = required(raw.guid.text, "company_guid_missing")?;
+    company_book_extent_from_raw(&raw, expected_name, expected_guid)
+}
+
+/// Parses the V2 company-book-extent response against the complete expected
+/// company tuple. V1 remains available for historical captures that did not
+/// fetch `COMPANYNUMBER`; production callers must not fall back to it.
+pub fn parse_company_book_extent_v2(
+    xml: &str,
+    expected: &CompanyBookExtentExpectation,
+) -> Result<CompanyBookExtent, OutstandingsError> {
+    require_complete_envelope(xml)?;
+    let sanitized = sanitize_invalid_numeric_references(xml);
+    let parsed: Envelope<CompanyCollection> = quick_xml::de::from_str(&sanitized)
+        .map_err(|_| OutstandingsError::InvalidResponse("company_extent_xml_invalid"))?;
+    require_success(&parsed.header)?;
+
+    let mut exact = Vec::new();
+    for raw in parsed.body.data.collection.companies {
+        if !raw.guid.text.trim().eq_ignore_ascii_case(expected.guid()) {
+            continue;
+        }
+        let name = raw.name.text.trim();
+        // `COMPANY @NAME` is the Tally display selector, while nested `NAME`
+        // is the returned presentation. A same-GUID row with disagreement is
+        // an ambiguous company scope even if another row matches the tuple.
+        if raw.attribute_name != name {
+            return Err(OutstandingsError::InvalidResponse(
+                "company_identity_presentation_collision",
+            ));
+        }
+        let company_number = raw.company_number.as_ref().map(|value| value.text.trim());
+        let books_from = raw.books_from.text.trim();
+        if name.eq_ignore_ascii_case(expected.name()) {
+            if raw.attribute_name != expected.name()
+                || name != expected.name()
+                || books_from != expected.books_from().as_str()
+            {
+                return Err(OutstandingsError::InvalidResponse(
+                    "company_identity_presentation_collision",
+                ));
+            }
+            let company_number = company_number
+                .ok_or(OutstandingsError::InvalidResponse("company_number_missing"))?;
+            if !is_valid_company_number(company_number) {
+                return Err(OutstandingsError::InvalidResponse("company_number_invalid"));
+            }
+            if company_number != expected.company_number() {
+                return Err(OutstandingsError::InvalidResponse(
+                    "company_identity_presentation_collision",
+                ));
+            }
+            exact.push(raw);
+        }
+    }
+    let [raw] = exact.as_slice() else {
+        return if exact.is_empty() {
+            Err(OutstandingsError::CompanyIdentityMismatch)
+        } else {
+            Err(OutstandingsError::InvalidResponse(
+                "company_identity_ambiguous",
+            ))
+        };
+    };
+    company_book_extent_from_raw(raw, expected.name(), expected.guid())
+}
+
+fn company_book_extent_from_raw(
+    raw: &RawCompany,
+    expected_name: &str,
+    expected_guid: &str,
+) -> Result<CompanyBookExtent, OutstandingsError> {
+    let name = required(raw.name.text.clone(), "company_name_missing")?;
+    let guid = required(raw.guid.text.clone(), "company_guid_missing")?;
     if raw.attribute_name != name
         || name != expected_name
         || !guid.eq_ignore_ascii_case(expected_guid)
@@ -396,14 +554,16 @@ pub fn parse_company_book_extent(
     let name =
         ValidatedCompanyName::new(name).map_err(|_| OutstandingsError::InvalidCompanyIdentity)?;
     let company = PinnedCompany::verified(name, guid)?;
-    let books_from = parse_date(raw.books_from.text)?;
-    let last_voucher_date = parse_date(raw.last_voucher_date.text)?;
+    let books_from = parse_date(raw.books_from.text.clone())?;
+    let last_voucher_date = parse_date(raw.last_voucher_date.text.clone())?;
     let voucher_alter_id_high_water = raw
         .alter_voucher_id
+        .as_ref()
         .map(|value| VoucherAlterIdHighWater::parse(&value.text))
         .transpose()?;
     let master_alter_id_high_water = raw
         .alter_master_id
+        .as_ref()
         .map(|value| MasterAlterIdHighWater::parse(&value.text))
         .transpose()?;
     if books_from > last_voucher_date {
@@ -476,12 +636,39 @@ fn parse_date(value: String) -> Result<TallyDate, OutstandingsError> {
         .map_err(|_| OutstandingsError::InvalidResponse("tally_date_invalid"))
 }
 
+fn is_valid_company_number(value: &str) -> bool {
+    (1..=16).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 // --- Request rendering for the paired `CompanyBookExtentV1` read. ---
 
 const COMPANY_EXTENT_COLLECTION_NAME: &str = "BridgeCompanyBookExtentV1";
 const COMPANY_EXTENT_FETCH: &str = "Name, GUID, BooksFrom, LastVoucherDate, ALTVCHID, ALTMSTID";
+const COMPANY_EXTENT_V2_COLLECTION_NAME: &str = "BridgeCompanyBookExtentV2";
+const COMPANY_EXTENT_V2_FETCH: &str =
+    "Name, GUID, CompanyNumber, BooksFrom, LastVoucherDate, ALTVCHID, ALTMSTID";
 
 pub(crate) fn render_company_book_extent(company: &str) -> String {
+    render_company_book_extent_with_contract(
+        company,
+        COMPANY_EXTENT_COLLECTION_NAME,
+        COMPANY_EXTENT_FETCH,
+    )
+}
+
+pub(crate) fn render_company_book_extent_v2(company: &str) -> String {
+    render_company_book_extent_with_contract(
+        company,
+        COMPANY_EXTENT_V2_COLLECTION_NAME,
+        COMPANY_EXTENT_V2_FETCH,
+    )
+}
+
+fn render_company_book_extent_with_contract(
+    company: &str,
+    collection: &str,
+    fetch: &str,
+) -> String {
     format!(
         r#"<ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>{collection}</ID></HEADER>
@@ -490,9 +677,9 @@ pub(crate) fn render_company_book_extent(company: &str) -> String {
     <TDL><TDLMESSAGE><COLLECTION NAME="{collection}" ISMODIFY="No"><TYPE>Company</TYPE><FETCH>{fetch}</FETCH></COLLECTION></TDLMESSAGE></TDL>
   </DESC></BODY>
 </ENVELOPE>"#,
-        collection = COMPANY_EXTENT_COLLECTION_NAME,
+        collection = collection,
         company = xml_escape(company),
-        fetch = COMPANY_EXTENT_FETCH,
+        fetch = fetch,
     )
 }
 
@@ -516,8 +703,16 @@ mod tests {
         assert!(xml.contains("ALTVCHID"));
         assert!(xml.contains("ALTMSTID"));
         assert!(xml.contains("Synthetic &amp; Company"));
+        assert!(!xml.contains("CompanyNumber"));
         assert!(!xml.contains("<COMPUTE>"));
         assert!(!xml.contains("$$NumItems"));
+
+        let v2 = render_company_book_extent_v2("Synthetic & Company");
+        assert!(v2.contains("<ID>BridgeCompanyBookExtentV2</ID>"));
+        assert!(v2.contains(
+            "<FETCH>Name, GUID, CompanyNumber, BooksFrom, LastVoucherDate, ALTVCHID, ALTMSTID</FETCH>"
+        ));
+        assert!(v2.contains("ISMODIFY=\"No\""));
     }
 
     fn synthetic_extent(

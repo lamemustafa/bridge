@@ -335,8 +335,10 @@ async fn book_start_opening_requires_stable_mode_and_commits_probe_sources() {
     };
     let captured_company = decode(include_bytes!(
         "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"));
-    let captured_extent = decode(include_bytes!(
-        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"));
+    let captured_extent = include_str!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+    )
+    .to_string();
     let captured_ledger = decode(include_bytes!(
         "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-period-opening.utf16le.xml"
     ));

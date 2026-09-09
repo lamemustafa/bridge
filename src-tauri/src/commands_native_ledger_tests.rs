@@ -44,8 +44,10 @@ async fn captured_native_ledger_refusals_reach_command_validation_classification
     };
     let companies_xml = decode(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-licensed-release-companies.utf16le.xml"));
-    let extent_xml = decode(include_bytes!(
-        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents.utf16le.xml"));
+    let extent_xml = include_str!(
+        "../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+    )
+    .to_string();
     let ledger_xml = decode(include_bytes!(
         "../crates/bridge-tally-protocol/tests/fixtures/agent/native-period-opening.utf16le.xml"
     ));

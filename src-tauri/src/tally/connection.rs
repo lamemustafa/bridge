@@ -14,6 +14,7 @@ use super::{
     tdl_engine,
     validators::{normalize_company_guid, normalize_company_name},
     xml_parser::{self, TallyCompany},
+    VerifiedCompanyIdentity,
 };
 use crate::reports::party_ledger_master::{
     PartyLedgerMasterGroup, PartyLedgerMasterRow, PartyLedgerMasterSource,
@@ -42,7 +43,8 @@ use bridge_tally_protocol::{
         NativeOutstandingsError,
     },
     outstandings_shared::{
-        parse_company_book_extent, require_master_witness, CompanyBookExtent, DateBoundaryProfile,
+        parse_company_book_extent_v2, require_master_witness, CompanyBookExtent,
+        DateBoundaryProfile,
     },
     parse_companies_for_interactive_discovery, parse_company_gateway_capability_observation,
     parse_ledger_source_records_with_evidence, parse_native_ledger_source_records_with_evidence,
@@ -1002,13 +1004,10 @@ impl TallyClient {
 
     pub async fn fetch_ledgers(
         &self,
-        company: &str,
-        expected_company_guid: &str,
+        identity: &VerifiedCompanyIdentity,
         boundary_profile: DateBoundaryProfile,
     ) -> anyhow::Result<Vec<TallyLedger>> {
-        let opening_extent = self
-            .fetch_company_book_extent(company, expected_company_guid)
-            .await?;
+        let opening_extent = self.fetch_company_book_extent(identity).await?;
         let period = NativeLedgerExportPeriod::new(
             boundary_profile,
             opening_extent.books_from().clone(),
@@ -1020,15 +1019,16 @@ impl TallyClient {
             )
         })?;
         let paired = self
-            .fetch_native_report_paired(render_native_ledger_export_request(company, &period))
+            .fetch_native_report_paired(render_native_ledger_export_request(
+                identity.display_name(),
+                &period,
+            ))
             .await?;
         let (body, _, _) =
             paired.require_stable(PairedReadValidationError::NativeLedgerCollection)?;
         let parsed =
-            parse_native_ledger_source_records_with_evidence(&body, expected_company_guid)?;
-        let closing_extent = self
-            .fetch_company_book_extent(company, expected_company_guid)
-            .await?;
+            parse_native_ledger_source_records_with_evidence(&body, identity.company_guid())?;
+        let closing_extent = self.fetch_company_book_extent(identity).await?;
         if closing_extent != opening_extent {
             return Err(anyhow::Error::new(
                 PairedReadValidationError::NativeLedgerExtent,
@@ -1047,16 +1047,13 @@ impl TallyClient {
     /// before any `(name, parent)` join can attach money to a master.
     pub(crate) async fn fetch_party_ledger_master_source(
         &self,
-        company: &str,
-        expected_company_guid: &str,
+        identity: &VerifiedCompanyIdentity,
         boundary_profile: DateBoundaryProfile,
         currency_assertion: PartyLedgerMasterCurrencyAssertion,
     ) -> anyhow::Result<PartyLedgerMasterSource> {
         let mut evidence = RuntimeReadEvidence::empty();
         let result = async {
-            let opening_extent = self
-                .fetch_company_book_extent(company, expected_company_guid)
-                .await?;
+            let opening_extent = self.fetch_company_book_extent(identity).await?;
             let currency = currency_assertion.require_opening_extent(&opening_extent)?;
             let master_period = NativeLedgerExportPeriod::new(
                 boundary_profile,
@@ -1075,9 +1072,9 @@ impl TallyClient {
                 anyhow::Error::new(PartyLedgerMasterSourceValidationError::BalancePeriod)
             })?;
             let requests = [
-                render_party_ledger_master_request(company, &master_period),
-                render_native_ledger_snapshot_request(company, &balance_period),
-                render_native_group_snapshot_request(company),
+                render_party_ledger_master_request(identity.display_name(), &master_period),
+                render_native_ledger_snapshot_request(identity.display_name(), &balance_period),
+                render_native_group_snapshot_request(identity.display_name()),
             ];
             let request_sha256 = party_ledger_request_commitment(&requests);
             let [master_request, balance_request, group_request] = requests;
@@ -1093,7 +1090,7 @@ impl TallyClient {
             ));
             let master = parse_native_party_ledger_master_records_with_evidence(
                 &master_body,
-                expected_company_guid,
+                identity.company_guid(),
             )
             .map_err(party_ledger_master_master_snapshot_error)?;
             if !master.evidence.duplicate_identities.is_empty() {
@@ -1112,7 +1109,7 @@ impl TallyClient {
                 balance_response_bytes,
             ));
             let balances =
-                parse_native_ledger_snapshot_for_company(&balance_body, expected_company_guid)
+                parse_native_ledger_snapshot_for_company(&balance_body, identity.company_guid())
                     .map_err(party_ledger_master_balance_snapshot_error)?;
             let group_pair = self
                 .fetch_native_report_paired(group_request.clone())
@@ -1125,7 +1122,7 @@ impl TallyClient {
                 group_response_bytes,
             ));
             let groups =
-                parse_native_group_snapshot_with_evidence(&group_body, expected_company_guid)
+                parse_native_group_snapshot_with_evidence(&group_body, identity.company_guid())
                     .map_err(party_ledger_master_group_snapshot_error)?
                     .into_iter()
                     .map(|entry| PartyLedgerMasterGroup {
@@ -1134,9 +1131,7 @@ impl TallyClient {
                         reserved_name: entry.record.reserved_name,
                     })
                     .collect();
-            let closing_extent = self
-                .fetch_company_book_extent(company, expected_company_guid)
-                .await?;
+            let closing_extent = self.fetch_company_book_extent(identity).await?;
             if closing_extent != opening_extent {
                 return Err(anyhow::Error::new(
                     PairedReadValidationError::PartyLedgerExtent,
@@ -1207,8 +1202,8 @@ impl TallyClient {
             }
             rows.sort_by(|left, right| left.name.cmp(&right.name).then(left.guid.cmp(&right.guid)));
             Ok(PartyLedgerMasterSource {
-                company: company.to_string(),
-                company_guid: expected_company_guid.to_string(),
+                company: identity.display_name().to_string(),
+                company_guid: identity.company_guid().to_string(),
                 currency_assertion: currency.assertion,
                 currency_decimal_places: currency.decimal_places,
                 from: master_period.from().clone(),
@@ -1282,11 +1277,11 @@ impl TallyClient {
 
     pub async fn fetch_company_book_extent(
         &self,
-        company: &str,
-        expected_company_guid: &str,
+        identity: &VerifiedCompanyIdentity,
     ) -> anyhow::Result<CompanyBookExtent> {
-        let company_name = ValidatedCompanyName::new(company.to_string())?;
-        let request = ReadOnlyProfile::CompanyBookExtentV1 {
+        let expectation = identity.company_book_extent_expectation()?;
+        let company_name = ValidatedCompanyName::new(identity.display_name().to_owned())?;
+        let request = ReadOnlyProfile::CompanyBookExtentV2 {
             company: &company_name,
         }
         .render();
@@ -1300,8 +1295,8 @@ impl TallyClient {
             .get_status_decoded()
             .await
             .context("Tally health check after company extent reads failed")?;
-        let first = parse_company_book_extent(&first, company, expected_company_guid)?;
-        let second = parse_company_book_extent(&second, company, expected_company_guid)?;
+        let first = parse_company_book_extent_v2(&first, &expectation)?;
+        let second = parse_company_book_extent_v2(&second, &expectation)?;
         if first != second {
             return Err(anyhow::Error::new(
                 PairedReadValidationError::CompanyBookExtent,
@@ -1515,8 +1510,7 @@ impl TallyClient {
 
     pub async fn fetch_vouchers(
         &self,
-        company: &str,
-        expected_company_guid: &str,
+        identity: &VerifiedCompanyIdentity,
         from: &str,
         to: &str,
     ) -> anyhow::Result<Vec<TallyVoucher>> {
@@ -1530,10 +1524,14 @@ impl TallyClient {
         let to = bridge_tally_core::TallyDate::parse(to)
             .context("voucher export to-date must be a valid YYYYMMDD date")?;
         let xml = self
-            .post_xml(render_native_voucher_export_request(company, &from, &to))
+            .post_xml(render_native_voucher_export_request(
+                identity.display_name(),
+                &from,
+                &to,
+            ))
             .await?;
         let parsed =
-            parse_native_voucher_source_records_with_evidence(&xml, expected_company_guid)?;
+            parse_native_voucher_source_records_with_evidence(&xml, identity.company_guid())?;
         if parsed.records.is_empty() {
             // A native Voucher collection carries no envelope company GUID,
             // so a zero-row response has no per-row identity to bind to the
@@ -1547,11 +1545,9 @@ impl TallyClient {
             // in connector.rs), instead of accepting the empty result as-is.
             // Paid only here: a non-empty response keeps its existing
             // row-GUID binding and issues no extra request.
-            self.fetch_company_book_extent(company, expected_company_guid)
-                .await
-                .context(
-                    "empty voucher response could not confirm the pinned company book extent",
-                )?;
+            self.fetch_company_book_extent(identity).await.context(
+                "empty voucher response could not confirm the pinned company book extent",
+            )?;
         }
         Ok(parsed
             .records
@@ -2066,7 +2062,7 @@ mod tests {
         canonical_loopback_origin, decode_xml_bytes, detect_product,
         has_presentation_equivalent_guid_siblings, normalize_discovered_companies,
         party_ledger_master_balance_period, party_ledger_master_openings_agree, tally_endpoint,
-        unique_company_identities, TallyClient, TallyConfig, TallyProduct,
+        unique_company_identities, TallyClient, TallyConfig, TallyProduct, VerifiedCompanyIdentity,
     };
     use bridge_tally_core::{
         CapabilityFeatureId, CapabilityPackId, CapabilityState, EvidenceConfidence, TallyDate,
@@ -2078,6 +2074,38 @@ mod tests {
     use tally_protocol_simulator::{Fixture, ScenarioPlan, Simulator, WireEncoding};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    const COMPANY_EXTENT_V2: &str = include_str!(
+        "../../crates/bridge-tally-protocol/tests/fixtures/agent/native-company-book-extents-with-number.utf8.xml"
+    );
+    const CAPTURED_COMPANY_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+
+    fn identity_from_company_extent(xml: &str) -> VerifiedCompanyIdentity {
+        let companies = bridge_tally_protocol::parse_companies_from_collection(xml)
+            .expect("captured company extent must parse as a Company collection");
+        let company = companies
+            .iter()
+            .find(|company| company.guid.as_deref() == Some(CAPTURED_COMPANY_GUID))
+            .expect("captured target company must remain present");
+        VerifiedCompanyIdentity::from_observed_companies(
+            company.name.clone(),
+            company.guid.clone().expect("captured target company GUID"),
+            company
+                .company_number
+                .clone()
+                .expect("captured target company number"),
+            company
+                .books_from
+                .clone()
+                .expect("captured target company books-from"),
+            &companies,
+        )
+        .expect("captured target company tuple must remain uniquely admissible")
+    }
+
+    fn captured_company_identity() -> VerifiedCompanyIdentity {
+        identity_from_company_extent(COMPANY_EXTENT_V2)
+    }
 
     #[test]
     fn party_master_snapshot_uses_the_next_common_admissible_boundary() {
@@ -2543,25 +2571,11 @@ mod tests {
     #[cfg(feature = "voucher-scan")]
     #[tokio::test]
     async fn paired_outstandings_reads_health_check_between_and_after_requests() {
-        const COMPANY_EXTENT: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
-        );
         const OPTIONAL_VOUCHERS: &str = include_str!(
             "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_optional_voucher_live.xml"
         );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
-        // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
-        // (`fetch_company_book_extent`) now requires that witness, so inject it into this
-        // in-memory copy -- the committed fixture bytes are left untouched.
-        let company_extent = COMPANY_EXTENT.replacen(
-            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
-            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
-            1,
-        );
-        assert_ne!(
-            company_extent, COMPANY_EXTENT,
-            "the injection must actually change the fixture for this test to prove anything"
-        );
+        let identity = captured_company_identity();
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -2600,7 +2614,7 @@ mod tests {
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let body = match index {
-                    0 | 2 | 12 | 14 => company_extent.as_str(),
+                    0 | 2 | 12 | 14 => COMPANY_EXTENT_V2,
                     4 | 6 | 8 | 10 => OPTIONAL_VOUCHERS,
                     _ => STATUS,
                 };
@@ -2622,10 +2636,7 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         let extent = client
-            .fetch_company_book_extent(
-                "Aarav Trading Company Demo",
-                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
-            )
+            .fetch_company_book_extent(&identity)
             .await
             .expect("paired extent reads remain stable");
         let reporting_window = bridge_tally_protocol::outstandings::DateWindow::parse(
@@ -2671,10 +2682,7 @@ mod tests {
             "captured witness fixture unexpectedly had no identity rows"
         );
         let closing_extent = client
-            .fetch_company_book_extent(
-                "Aarav Trading Company Demo",
-                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
-            )
+            .fetch_company_book_extent(&identity)
             .await
             .expect("closing paired extent reads remain stable");
         assert_eq!(closing_extent, extent, "synthetic book did not change");
@@ -2695,22 +2703,8 @@ mod tests {
     #[cfg(feature = "voucher-scan")]
     #[tokio::test]
     async fn paired_ledger_opening_coverage_reports_intra_pair_drift() {
-        const COMPANY_EXTENT: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
-        );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
-        // The captured fixture predates the ALTMSTID fetch. The outstandings bracket
-        // (`fetch_company_book_extent`) now requires that witness, so inject it into this
-        // in-memory copy -- the committed fixture bytes are left untouched.
-        let company_extent = COMPANY_EXTENT.replacen(
-            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>"#,
-            r#"<GUID TYPE="String">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID><ALTMSTID TYPE="Number">1</ALTMSTID>"#,
-            1,
-        );
-        assert_ne!(
-            company_extent, COMPANY_EXTENT,
-            "the injection must actually change the fixture for this test to prove anything"
-        );
+        let identity = captured_company_identity();
 
         let coverage = |name: &str| {
             format!(
@@ -2722,9 +2716,9 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let responses = vec![
-            company_extent.clone(),
+            COMPANY_EXTENT_V2.to_string(),
             STATUS.to_string(),
-            company_extent,
+            COMPANY_EXTENT_V2.to_string(),
             STATUS.to_string(),
             coverage("Before Rename"),
             STATUS.to_string(),
@@ -2766,10 +2760,7 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         let extent = client
-            .fetch_company_book_extent(
-                "Aarav Trading Company Demo",
-                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
-            )
+            .fetch_company_book_extent(&identity)
             .await
             .expect("paired extent reads remain stable");
         assert!(matches!(
@@ -2789,19 +2780,48 @@ mod tests {
     /// witness-less extents compare equal, so the ordinary `first != second`
     /// drift check alone cannot tell a stable book from one where a
     /// GROUP/LEDGER master moved mid-window without a signal to detect it.
-    /// Uses the real, unmodified `unit_a_company_extent_live.xml` capture --
-    /// from before `ALTMSTID` was added to the fetch list -- rather than a
-    /// synthetic response, so the absence being tested is the one Tally has
-    /// actually produced.
+    /// Uses only a targeted mutation of the captured V2 response. The
+    /// production parser must continue refusing a stable pair without the
+    /// master witness instead of accepting a fabricated positive fixture.
     #[tokio::test]
     async fn outstandings_bracket_fails_closed_when_altmstid_is_absent() {
-        const COMPANY_EXTENT_WITHOUT_ALTMSTID: &str = include_str!(
-            "../../crates/bridge-tally-protocol/tests/fixtures/unit_a_company_extent_live.xml"
-        );
         const STATUS: &str = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
+        const CAPTURED_TARGET_WITNESS: &str = concat!(
+            "<GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>\r\n",
+            "     <COMPANYNUMBER TYPE=\"Number\"> 100000</COMPANYNUMBER>\r\n",
+            "     <ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>\r\n",
+            "     <ALTMSTID TYPE=\"Number\"> 328</ALTMSTID>"
+        );
+        const CAPTURED_TARGET_WITHOUT_WITNESS: &str = concat!(
+            "<GUID TYPE=\"String\">bb8ad19e-6aef-4239-a917-87fec0c6215e</GUID>\r\n",
+            "     <COMPANYNUMBER TYPE=\"Number\"> 100000</COMPANYNUMBER>\r\n",
+            "     <ALTVCHID TYPE=\"Number\"> 101605</ALTVCHID>"
+        );
+        let identity = captured_company_identity();
+        assert_eq!(
+            COMPANY_EXTENT_V2.matches(CAPTURED_TARGET_WITNESS).count(),
+            1,
+            "the exact captured target witness must appear once before mutation"
+        );
+        let company_extent_without_altmstid =
+            COMPANY_EXTENT_V2.replacen(CAPTURED_TARGET_WITNESS, CAPTURED_TARGET_WITHOUT_WITNESS, 1);
         assert!(
-            !COMPANY_EXTENT_WITHOUT_ALTMSTID.contains("ALTMSTID"),
-            "this fixture must predate the ALTMSTID fetch for this test to prove anything"
+            !company_extent_without_altmstid.contains(CAPTURED_TARGET_WITNESS),
+            "the captured target witness mutation must apply"
+        );
+        let parsed_without_witness =
+            bridge_tally_protocol::outstandings_shared::parse_company_book_extent_v2(
+                &company_extent_without_altmstid,
+                &identity
+                    .company_book_extent_expectation()
+                    .expect("captured expectation"),
+            )
+            .expect("the captured negative mutation must remain a parseable extent");
+        assert!(
+            parsed_without_witness
+                .master_alter_id_high_water()
+                .is_none(),
+            "the target witness mutation must remove only the target ALTMSTID"
         );
 
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -2809,10 +2829,10 @@ mod tests {
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let responses = [
-            COMPANY_EXTENT_WITHOUT_ALTMSTID,
-            STATUS,
-            COMPANY_EXTENT_WITHOUT_ALTMSTID,
-            STATUS,
+            company_extent_without_altmstid.clone(),
+            STATUS.to_string(),
+            company_extent_without_altmstid,
+            STATUS.to_string(),
         ];
         let server = tokio::spawn(async move {
             for (index, body) in responses.into_iter().enumerate() {
@@ -2832,9 +2852,9 @@ mod tests {
                     "request {index} did not follow the required read/health-check sequence"
                 );
                 let response = if index % 2 == 0 {
-                    utf16_xml_response(body)
+                    utf16_xml_response(&body)
                 } else {
-                    utf8_status_response(body)
+                    utf8_status_response(&body)
                 };
                 socket
                     .write_all(&response)
@@ -2849,10 +2869,7 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         let error = client
-            .fetch_company_book_extent(
-                "Aarav Trading Company Demo",
-                "bb8ad19e-6aef-4239-a917-87fec0c6215e",
-            )
+            .fetch_company_book_extent(&identity)
             .await
             .expect_err("a stable pair without ALTMSTID must still fail closed");
         server.await.expect("synthetic Tally server task");
@@ -2869,16 +2886,16 @@ mod tests {
 
     #[tokio::test]
     async fn http_success_with_tally_status_zero_is_not_an_empty_success() {
+        let identity = captured_company_identity();
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
             for (index, body) in [
-                extent,
+                COMPANY_EXTENT_V2,
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
-                extent,
+                COMPANY_EXTENT_V2,
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
                 "<ENVELOPE><HEADER><STATUS>0</STATUS></HEADER><BODY /></ENVELOPE>",
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
@@ -2912,9 +2929,9 @@ mod tests {
                     .expect("native ledger POST uses decodable UTF-16 XML")
                     .text;
                     assert!(
-                        request_xml.contains(r#"<SVFROMDATE TYPE="Date">20240101</SVFROMDATE>"#)
+                        request_xml.contains(r#"<SVFROMDATE TYPE="Date">20240401</SVFROMDATE>"#)
                     );
-                    assert!(request_xml.contains(r#"<SVTODATE TYPE="Date">20260701</SVTODATE>"#));
+                    assert!(request_xml.contains(r#"<SVTODATE TYPE="Date">20260401</SVTODATE>"#));
                 }
                 let response = if index == 1 || index == 3 || index == 5 || index == 7 {
                     utf8_status_response(body)
@@ -2934,11 +2951,7 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         let error = client
-            .fetch_ledgers(
-                "Synthetic Company",
-                "synthetic-company-guid",
-                DateBoundaryProfile::ModeAgnostic,
-            )
+            .fetch_ledgers(&identity, DateBoundaryProfile::ModeAgnostic)
             .await
             .expect_err("STATUS 0 must not become an empty ledger result");
         server.await.expect("synthetic Tally server task");
@@ -2952,16 +2965,19 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_book_extent_stops_ledger_export_without_a_date_fallback() {
+        let identity = captured_company_identity();
+        let invalid_extent =
+            COMPANY_EXTENT_V2.replacen(r#"<BOOKSFROM TYPE="Date">20240401</BOOKSFROM>"#, "", 1);
+        assert_ne!(invalid_extent, COMPANY_EXTENT_V2);
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let invalid_extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
             for (index, body) in [
-                invalid_extent,
+                invalid_extent.as_str(),
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
-                invalid_extent,
+                invalid_extent.as_str(),
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
             ]
             .into_iter()
@@ -3002,11 +3018,7 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         client
-            .fetch_ledgers(
-                "Synthetic Company",
-                "synthetic-company-guid",
-                DateBoundaryProfile::ModeAgnostic,
-            )
+            .fetch_ledgers(&identity, DateBoundaryProfile::ModeAgnostic)
             .await
             .expect_err("missing BOOKSFROM must fail closed");
         server.await.expect("synthetic Tally server task");
@@ -3014,16 +3026,21 @@ mod tests {
 
     #[tokio::test]
     async fn education_profile_rejects_an_unsupported_books_from_before_ledger_export() {
+        let extent = COMPANY_EXTENT_V2.replacen(
+            r#"<BOOKSFROM TYPE="Date">20240401</BOOKSFROM>"#,
+            r#"<BOOKSFROM TYPE="Date">20240115</BOOKSFROM>"#,
+            1,
+        );
+        let identity = identity_from_company_extent(&extent);
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let server = tokio::spawn(async move {
-            let extent = r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240115</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">synthetic-company-guid</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#;
             for (index, body) in [
-                extent,
+                extent.as_str(),
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
-                extent,
+                extent.as_str(),
                 "<RESPONSE>TallyPrime Server is Running</RESPONSE>",
             ]
             .into_iter()
@@ -3064,11 +3081,7 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         let error = client
-            .fetch_ledgers(
-                "Synthetic Company",
-                "synthetic-company-guid",
-                DateBoundaryProfile::EducationRestricted,
-            )
+            .fetch_ledgers(&identity, DateBoundaryProfile::EducationRestricted)
             .await
             .expect_err("unsupported boundary must not reach the ledger export");
         server.await.expect("synthetic Tally server task");
@@ -3087,15 +3100,6 @@ mod tests {
         )
     }
 
-    /// Carries `ALTMSTID` so callers that need the production bracket to
-    /// accept a stable pair (rather than exercise the master-witness guard
-    /// itself) can use it as-is.
-    fn synthetic_company_book_extent_xml(guid: &str) -> String {
-        format!(
-            r#"<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME="Synthetic Company"><LASTVOUCHERDATE TYPE="Date">20260701</LASTVOUCHERDATE><BOOKSFROM TYPE="Date">20240101</BOOKSFROM><NAME TYPE="String">Synthetic Company</NAME><GUID TYPE="String">{guid}</GUID><ALTMSTID TYPE="Number">1</ALTMSTID></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"#
-        )
-    }
-
     const SYNTHETIC_VOUCHER_ROW: &str = r#"<VOUCHER REMOTEID="synthetic-company-guid-00000001"><DATE TYPE="Date">20260401</DATE><GUID TYPE="String">synthetic-company-guid-00000001</GUID><MASTERID TYPE="Number">1</MASTERID><ALTERID TYPE="Number">1</ALTERID><VOUCHERTYPENAME TYPE="String">Payment</VOUCHERTYPENAME><ISCANCELLED TYPE="String">No</ISCANCELLED><ISOPTIONAL TYPE="String">No</ISOPTIONAL><ALLLEDGERENTRIES.LIST><LEDGERNAME TYPE="String">Cash</LEDGERNAME><AMOUNT TYPE="Amount">-100.00</AMOUNT><ISDEEMEDPOSITIVE TYPE="String">Yes</ISDEEMEDPOSITIVE></ALLLEDGERENTRIES.LIST></VOUCHER>"#;
 
     /// A native Voucher collection carries no envelope company GUID, and a
@@ -3108,12 +3112,14 @@ mod tests {
     /// confirm the pinned company instead observes a different one.
     #[tokio::test]
     async fn empty_voucher_response_is_rejected_when_pinned_company_cannot_be_confirmed() {
+        let identity = captured_company_identity();
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let empty_vouchers = native_voucher_collection_xml(&[]);
-        let substituted_extent = synthetic_company_book_extent_xml("substituted-company-guid");
+        let substituted_extent =
+            COMPANY_EXTENT_V2.replacen(CAPTURED_COMPANY_GUID, "substituted-company-guid", 1);
         let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
         let steps: Vec<(&str, String, bool)> = vec![
             ("POST / HTTP/1.1", empty_vouchers, false),
@@ -3157,12 +3163,7 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         let error = client
-            .fetch_vouchers(
-                "Synthetic Company",
-                "synthetic-company-guid",
-                "20260401",
-                "20260401",
-            )
+            .fetch_vouchers(&identity, "20260401", "20260401")
             .await
             .expect_err(
                 "an empty voucher response must not be accepted when the pinned company book \
@@ -3182,12 +3183,13 @@ mod tests {
     /// stable -- so the empty result is accepted.
     #[tokio::test]
     async fn empty_voucher_response_is_accepted_when_bracket_confirms_pinned_company() {
+        let identity = captured_company_identity();
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
         let empty_vouchers = native_voucher_collection_xml(&[]);
-        let confirmed_extent = synthetic_company_book_extent_xml("synthetic-company-guid");
+        let confirmed_extent = COMPANY_EXTENT_V2.to_string();
         let status = "<RESPONSE>TallyPrime Server is Running</RESPONSE>";
         let steps: Vec<(&str, String, bool)> = vec![
             ("POST / HTTP/1.1", empty_vouchers, false),
@@ -3227,12 +3229,7 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         let vouchers = client
-            .fetch_vouchers(
-                "Synthetic Company",
-                "synthetic-company-guid",
-                "20260401",
-                "20260401",
-            )
+            .fetch_vouchers(&identity, "20260401", "20260401")
             .await
             .expect("an empty voucher response confirmed by the extent bracket must be accepted");
         server.await.expect("synthetic Tally server task");
@@ -3248,11 +3245,14 @@ mod tests {
     /// request.
     #[tokio::test]
     async fn non_empty_voucher_response_issues_no_extra_request() {
+        let identity = captured_company_identity();
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind synthetic Tally server");
         let address = listener.local_addr().expect("synthetic Tally address");
-        let non_empty_vouchers = native_voucher_collection_xml(&[SYNTHETIC_VOUCHER_ROW]);
+        let voucher_row =
+            SYNTHETIC_VOUCHER_ROW.replace("synthetic-company-guid", CAPTURED_COMPANY_GUID);
+        let non_empty_vouchers = native_voucher_collection_xml(&[&voucher_row]);
 
         let server = tokio::spawn(async move {
             let (mut socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
@@ -3284,12 +3284,7 @@ mod tests {
         })
         .expect("build synthetic Tally client");
         let vouchers = client
-            .fetch_vouchers(
-                "Synthetic Company",
-                "synthetic-company-guid",
-                "20260401",
-                "20260401",
-            )
+            .fetch_vouchers(&identity, "20260401", "20260401")
             .await
             .expect("non-empty voucher fetch must still succeed exactly as today");
         server.await.expect("synthetic Tally server task");
