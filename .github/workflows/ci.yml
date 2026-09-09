@@ -392,9 +392,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: 1.96.0
+      - name: Match macOS cache inputs to the Tauri deployment target
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          const target = config.bundle?.macOS?.minimumSystemVersion;
+          if (typeof target !== 'string' || !/^\d+\.\d+(?:\.\d+)?$/.test(target)) {
+            throw new Error('Expected an explicit macOS minimumSystemVersion in tauri.conf.json');
+          }
+          appendFileSync(process.env.GITHUB_ENV, `MACOSX_DEPLOYMENT_TARGET=${target}\n`);
+          JS
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri -> target
+          # Tauri sets this inside its process; include it before cache lookup so
+          # artifacts from a plain Cargo build cannot masquerade as a warm bundle.
+          env-vars: ${{ runner.os == 'macOS' && 'MACOSX_DEPLOYMENT_TARGET' || '' }}
       - name: Set up Windows native prerequisites
         id: windows-bundle-prerequisites
         if: runner.os == 'Windows'
@@ -421,7 +437,7 @@ jobs:
         run: |
           python3 scripts/capture-package-log.test.py
           set -o pipefail
-          corepack pnpm run tauri:build 2>&1 | python3 scripts/capture-package-log.py
+          corepack pnpm run tauri:build -- --timings 2>&1 | python3 scripts/capture-package-log.py
       - name: Collect failed macOS bundle context
         if: ${{ failure() && runner.os == 'macOS' && steps.macos-bundle.outcome == 'failure' }}
         run: |
@@ -436,6 +452,7 @@ jobs:
           path: |
             package-diagnostics/**
             src-tauri/target/release/bundle/dmg/bundle_dmg.sh
+            src-tauri/target/cargo-timings/*.html
           if-no-files-found: warn
           retention-days: 7
       - name: Verify Windows installer legal resources
