@@ -19,6 +19,12 @@ spec.loader.exec_module(cold)
 SEQUENCE = ("full", "reduced", "full", "reduced", "reduced", "full")
 
 
+def write_archive_manifest(path, root):
+    # Match @actions/cache's byte write: Windows text translation would add CR
+    # to the filename GNU tar reads from this one-entry manifest.
+    path.write_bytes(root.as_posix().encode("utf-8"))
+
+
 def sha(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -189,7 +195,7 @@ def main():
                             not r["path"].startswith(tuple(p + "/" for p in cold.PREFIXES))]
                 archive = workspace / f"{case}.tzst"
                 manifest = workspace / f"{case}-manifest.txt"
-                manifest.write_text(root.as_posix() + "\n", encoding="utf-8")
+                write_archive_manifest(manifest, root)
                 with cold.distribution_variant(root, case == "reduced"):
                     assert cold.inventory.inventory(root)["files"] == expected
                     seconds = cold.execute([str(tar), "--posix", "-cf", archive.as_posix(), "--exclude", archive.as_posix(),

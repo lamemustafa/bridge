@@ -2,7 +2,7 @@
 import hashlib
 import importlib.util
 import io
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import tarfile
 import tempfile
 import unittest
@@ -27,6 +27,12 @@ def archive(name="C:/Strawberry/control.py", content=SOURCE, link=False):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_windows_manifest_has_no_translated_line_ending(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "manifest.txt"
+            module.write_archive_manifest(path, PureWindowsPath("C:/Strawberry"))
+            self.assertEqual(path.read_bytes(), b"C:/Strawberry")
+
     def test_parses_actual_source_bytes(self):
         self.assertEqual(module.verify_tar(archive(), EXPECTED, "C:/Strawberry")["verified_files"], 1)
 
