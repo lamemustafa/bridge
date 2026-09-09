@@ -85,7 +85,7 @@ pub fn run_journal_confirmation_child_from_args(
     }
 }
 
-pub fn run() {
+pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
     tracing_subscriber::fmt::init();
 
     tauri::Builder::default()
@@ -159,7 +159,7 @@ pub fn run() {
             commands::select_document_files,
             commands::select_document_folder
         ])
-        .run(tauri::generate_context!())
+        .run(make_context())
         .expect("failed to run Bridge");
 }
 
