@@ -3153,6 +3153,33 @@ button.outstandings-party {
   text-align: left;
 }
 
+.trial-balance-table th:nth-child(2),
+.trial-balance-table td:nth-child(2) {
+  max-width: 240px;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+}
+
+.trial-balance-parent-query {
+  margin-top: 18px;
+}
+
+.trial-balance-provenance {
+  margin-top: 18px;
+  color: #52645b;
+  font-size: 13px;
+}
+
+.trial-balance-provenance summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.trial-balance-provenance p {
+  overflow-wrap: anywhere;
+}
+
 .trial-balance-pagination {
   display: flex;
   align-items: center;
