@@ -2183,6 +2183,23 @@ pub struct VoucherRequest {
     pub to: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SelectedLedgerEntriesRequest {
+    pub config: TallyConfig,
+    pub selected_company: SelectedCompanyIdentity,
+    pub ledger: String,
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default = "selected_ledger_entries_default_limit")]
+    pub limit: usize,
+}
+
+fn selected_ledger_entries_default_limit() -> usize {
+    100
+}
+
 async fn verify_observed_company_tuple(
     runtime: &TallyRuntime,
     config: &TallyConfig,
@@ -2399,6 +2416,66 @@ pub async fn fetch_tally_vouchers(
         .fetch_vouchers(request.config, &identity, request.from, request.to)
         .await
         .map_err(tally_runtime_command_error)
+}
+
+/// Returns selected-ledger voucher entries using the MCP's captured-source
+/// selection pipeline. Pagination limits this response only: the shared
+/// operation validates the complete requested window before filtering.
+#[tauri::command]
+pub async fn fetch_selected_ledger_entries(
+    request: SelectedLedgerEntriesRequest,
+    runtime: State<'_, TallyRuntime>,
+) -> Result<serde_json::Value, TallyCommandError> {
+    if request.limit == 0 || request.limit > 500 {
+        return Err(tally_command_error(
+            "selected_ledger_entries_limit_invalid",
+            "Operation",
+            "Choose between 1 and 500 entries per displayed page.",
+            "after_change",
+            false,
+            "Adjust the display page size, then try again.",
+        ));
+    }
+    validate_date_range(&request.from, &request.to).map_err(|message| {
+        tally_command_error(
+            "accounting_period_invalid",
+            "Endpoint configuration",
+            message,
+            "after_change",
+            false,
+            "Choose a valid accounting period, then repeat the read-only action.",
+        )
+    })?;
+    let identity =
+        verify_observed_company_tuple(&runtime, &request.config, &request.selected_company).await?;
+    crate::agent::desktop_selected_vouchers(
+        &runtime,
+        request.config,
+        identity,
+        crate::agent::DesktopSelectedVoucherRequest {
+            ledger: request.ledger,
+            from: request.from,
+            to: request.to,
+            offset: request.offset,
+            limit: request.limit,
+        },
+    )
+    .await
+    .map_err(|code| {
+        tally_command_error(
+            "selected_ledger_entries_refused",
+            "Tally application",
+            "Bridge withheld this ledger investigation because its source could not be verified.",
+            "after_change",
+            false,
+            match code.as_str() {
+                "ledger_not_found" | "ledger_ambiguous" => {
+                    "Choose a ledger from the verified company and try again."
+                }
+                _ => "Refresh the selected company and try a narrower date range.",
+            },
+        )
+    })
 }
 
 fn requested_outstandings_as_of(

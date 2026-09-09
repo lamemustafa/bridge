@@ -142,6 +142,7 @@ pub fn run() {
             commands::tally_telemetry_preview,
             commands::fetch_tally_companies,
             commands::fetch_tally_outstandings,
+            commands::fetch_selected_ledger_entries,
             commands::prepare_gst_return_draft,
             commands::detect_dsc_token,
             commands::extract_dsc_certificates,

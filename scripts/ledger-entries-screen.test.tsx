@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: Apache-2.0
+// @vitest-environment jsdom
+
+import React from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, expect, test, vi } from "vitest";
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+
+import { LedgerEntriesScreen } from "../src/LedgerEntriesScreen";
+
+const company = {
+  name: "Synthetic company",
+  guid: "11111111-1111-1111-1111-111111111111",
+  company_number: "100001",
+  books_from_yyyymmdd: "20250401",
+  canonical_origin: "http://127.0.0.1:9000",
+};
+
+function enter(input: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+afterEach(() => {
+  document.body.replaceChildren();
+  mocks.invoke.mockReset();
+});
+
+test("ledger investigation has no automatic read and only invokes after Show entries", async () => {
+  mocks.invoke.mockResolvedValue({ company: {}, read_at: "2026-09-08T00:00:00Z", evidence: { state: "complete", bytes: 1 }, truncated: false, result: { state: "complete", items: [], offset: 0, total: 0, profile: "agent_vouchers_v1_filters" } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<LedgerEntriesScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} locked={false} onReadActivity={() => {}} />);
+  });
+  expect(mocks.invoke).not.toHaveBeenCalled();
+
+  const inputs = host.querySelectorAll<HTMLInputElement>("input");
+  await act(async () => {
+    enter(inputs[0], "Cash");
+    enter(inputs[1], "2026-04-01");
+    enter(inputs[2], "2026-04-30");
+  });
+  expect(mocks.invoke).not.toHaveBeenCalled();
+  await act(async () => {
+    host.querySelector<HTMLFormElement>("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(mocks.invoke).toHaveBeenCalledWith("fetch_selected_ledger_entries", expect.objectContaining({
+    request: expect.objectContaining({ ledger: "Cash", from: "20260401", to: "20260430", offset: 0, limit: 100 }),
+  }));
+  expect(host.textContent).toContain("This observation contained no matching vouchers; it does not establish source completeness.");
+  expect(host.textContent).toContain("Observed");
+  expect(host.textContent).toContain("requested ledger Cash, 2026-04-01 to 2026-04-30.");
+  root.unmount();
+});
+
+test("changing the selected period or company clears a stale result without another read", async () => {
+  mocks.invoke.mockResolvedValue({ company: {}, read_at: "2026-09-08T00:00:00Z", evidence: { state: "complete", bytes: 1 }, truncated: false, result: { state: "complete", items: [], offset: 0, total: 0, profile: "agent_vouchers_v1_filters" } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<LedgerEntriesScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} locked={false} onReadActivity={() => {}} />);
+  });
+  const inputs = host.querySelectorAll<HTMLInputElement>("input");
+  await act(async () => {
+    enter(inputs[0], "Cash"); enter(inputs[1], "2026-04-01"); enter(inputs[2], "2026-04-30");
+    host.querySelector<HTMLFormElement>("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(host.textContent).toContain("This observation contained no matching vouchers; it does not establish source completeness.");
+  mocks.invoke.mockClear();
+  await act(async () => { enter(inputs[2], "2026-05-01"); });
+  expect(host.textContent).not.toContain("This observation contained no matching vouchers; it does not establish source completeness.");
+  expect(mocks.invoke).not.toHaveBeenCalled();
+  root.unmount();
+});
+
+test("a partial source never presents zero matches as a complete result", async () => {
+  mocks.invoke.mockResolvedValue({ company: {}, read_at: "2026-09-08T00:00:00Z", evidence: { state: "partial", reason_code: "window_contradicted", bytes: 1 }, truncated: false, result: { state: "partial", items: [], offset: 0, total: 0, profile: "agent_vouchers_v1_filters" } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<LedgerEntriesScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} locked={false} onReadActivity={() => {}} />); });
+  const inputs = host.querySelectorAll<HTMLInputElement>("input");
+  await act(async () => {
+    enter(inputs[0], "Cash"); enter(inputs[1], "2026-04-01"); enter(inputs[2], "2026-04-30");
+    host.querySelector<HTMLFormElement>("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(host.textContent).toContain("This observation contained no matching vouchers; it does not establish source completeness.");
+  expect(host.textContent).toContain("Source evidence is partial (window_contradicted).");
+  root.unmount();
+});
+
+
+test("scope turnover clears the pending indicator before the obsolete read settles", async () => {
+  let resolveRead: ((value: unknown) => void) | undefined;
+  mocks.invoke.mockImplementation(() => new Promise((resolve) => { resolveRead = resolve; }));
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<LedgerEntriesScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} locked={false} onReadActivity={() => {}} />); });
+  const inputs = host.querySelectorAll<HTMLInputElement>("input");
+  await act(async () => {
+    enter(inputs[0], "Cash"); enter(inputs[1], "2026-04-01"); enter(inputs[2], "2026-04-30");
+    host.querySelector<HTMLFormElement>("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(host.textContent).toContain("Reading entries…");
+  await act(async () => { enter(inputs[2], "2026-05-01"); });
+  expect(host.textContent).toContain("Show entries");
+  expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
+  await act(async () => { resolveRead?.({ company: {}, read_at: "2026-09-08T00:00:00Z", evidence: { state: "complete", bytes: 1 }, truncated: false, result: { state: "complete", items: [], offset: 0, total: 0, profile: "agent_vouchers_v1_filters" } }); });
+  expect(host.textContent).not.toContain("This observation contained no matching vouchers; it does not establish source completeness.");
+  root.unmount();
+});
+
+test("a refused read shows the backend recovery step and allows correction", async () => {
+  mocks.invoke.mockRejectedValue({
+    code: "selected_ledger_entries_refused",
+    message: "Bridge withheld this ledger investigation because its source could not be verified.",
+    remediation: "Choose a ledger from the verified company and try again.",
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<LedgerEntriesScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} locked={false} onReadActivity={() => {}} />); });
+  const inputs = host.querySelectorAll<HTMLInputElement>("input");
+  await act(async () => { enter(inputs[0], "Unknown ledger"); enter(inputs[1], "2026-04-01"); enter(inputs[2], "2026-04-30"); });
+  await act(async () => { host.querySelector<HTMLFormElement>("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Choose a ledger from the verified company and try again.");
+  expect(inputs[0].disabled).toBe(false);
+  expect(host.textContent).not.toContain("This observation contained no matching vouchers; it does not establish source completeness.");
+  await act(async () => { root.unmount(); });
+});
+
+test("an exhausted fresh page prompts restart instead of reporting zero matches", async () => {
+  mocks.invoke.mockResolvedValue({ company: {}, read_at: "2026-09-08T00:00:00Z", evidence: { state: "complete", bytes: 1 }, truncated: false, result: { state: "complete", items: [], offset: 100, total: 3, profile: "agent_vouchers_v1_filters" } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<LedgerEntriesScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} locked={false} onReadActivity={() => {}} />); });
+  const inputs = host.querySelectorAll<HTMLInputElement>("input");
+  await act(async () => {
+    enter(inputs[0], "Cash"); enter(inputs[1], "2026-04-01"); enter(inputs[2], "2026-04-30");
+    host.querySelector<HTMLFormElement>("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(host.textContent).toContain("3 matching vouchers observed in this response.");
+  expect(host.textContent).toContain("This observation has no entries at this offset.");
+  expect(host.textContent).not.toContain("This observation contained no matching vouchers");
+  const restart = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Show first entries");
+  expect(restart).toBeDefined();
+  mocks.invoke.mockClear();
+  await act(async () => { restart?.click(); });
+  expect(mocks.invoke).toHaveBeenCalledWith("fetch_selected_ledger_entries", expect.objectContaining({
+    request: expect.objectContaining({ offset: 0, limit: 100 }),
+  }));
+  root.unmount();
+});
+
+test("a voucher displays cancelled and optional accounting states together", async () => {
+  mocks.invoke.mockResolvedValue({ company: {}, read_at: "2026-09-08T00:00:00Z", evidence: { state: "complete", bytes: 1 }, truncated: false, result: { state: "complete", items: [{ date: "20260401", voucher_number: "V-1", voucher_type: "Journal", party: null, narration: null, guid: "voucher-1", alter_id: 1, master_id: "1", amounts: [{ ledger: "Cash", amount: "-1.00", is_deemed_positive: "Yes" }], cancelled: true, optional: true }], offset: 0, total: 1, profile: "agent_vouchers_v1_filters" } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<LedgerEntriesScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} locked={false} onReadActivity={() => {}} />); });
+  const inputs = host.querySelectorAll<HTMLInputElement>("input");
+  await act(async () => {
+    enter(inputs[0], "Cash"); enter(inputs[1], "2026-04-01"); enter(inputs[2], "2026-04-30");
+    host.querySelector<HTMLFormElement>("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(host.textContent).toContain("Accounting state: cancelled and optional.");
+  root.unmount();
+});
