@@ -25,7 +25,7 @@ const report = {
     to: "20260908",
     currency: { symbol: "₹", mailing_name: "Indian Rupee", currency_count: 1, decimal_places: 2, is_inr: true },
     report: {
-      rows: [{ name: "Cash", guid: "cash", opening: { state: "present", value: "1234567.89" }, debit: { state: "present", value: "-1.25" }, credit: { state: "present", value: "100.00" }, closing: { state: "present", value: "-7277.00" } }],
+      rows: [{ name: "Cash", guid: "cash", parent: "Sundry Debtors", opening: { state: "present", value: "1234567.89" }, debit: { state: "present", value: "-1.25" }, credit: { state: "present", value: "100.00" }, closing: { state: "present", value: "-7277.00" } }],
     },
     totals: { opening: { sum: "-1234567.89", empty_count: 0 }, debit: { sum: "-1.25", empty_count: 0 }, credit: { sum: "100.00", empty_count: 0 }, closing: { sum: "1234467.80", empty_count: 0 } },
     read_at: "2026-09-08T10:00:00Z",
@@ -33,6 +33,42 @@ const report = {
   },
   export_id: "export-1",
 };
+
+const defaultParentDiscovery = {
+  options: [{ parent: "Sundry Debtors", row_count: 1 }],
+  has_more: false,
+  source_row_count: 1,
+};
+
+function rejected(value: unknown) {
+  return { __reject: value };
+}
+
+function settled(value: unknown) {
+  if (value && typeof value === "object" && "__reject" in value) return Promise.reject((value as { __reject: unknown }).__reject);
+  return Promise.resolve(value);
+}
+
+function parentDiscoveryFor(parents: (string | null)[], sourceRowCount = parents.length) {
+  const counts = new Map<string, { parent: string | null; row_count: number }>();
+  for (const parent of parents) {
+    const key = parent === null ? "not-observed" : `returned:${JSON.stringify(parent)}`;
+    const current = counts.get(key);
+    if (current) current.row_count += 1;
+    else counts.set(key, { parent, row_count: 1 });
+  }
+  const options = [...counts.values()];
+  return { options: options.slice(0, 100), has_more: options.length > 100, source_row_count: sourceRowCount };
+}
+
+function queueInvoke({ responses = [], discoveries = [defaultParentDiscovery] }: { responses?: unknown[]; discoveries?: unknown[] } = {}) {
+  const responseQueue = [...responses];
+  const discoveryQueue = [...discoveries];
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "list_tally_trial_balance_capture_parents") return settled(discoveryQueue.shift() ?? defaultParentDiscovery);
+    return settled(responseQueue.shift());
+  });
+}
 
 function button(host: HTMLElement, text: string) {
   const match = [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes(text));
@@ -50,10 +86,24 @@ async function chooseEndDate(host: HTMLElement) {
   });
 }
 
+async function waitForParentDiscovery(delay = 0) {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  });
+}
+
 function setDate(input: HTMLInputElement, value: string) {
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   setValue?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function selectParent(host: HTMLElement, value: string) {
+  const input = host.querySelector<HTMLSelectElement>(".trial-balance-parent-query select");
+  if (!input) throw new Error("Missing parent selector");
+  const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+  setValue?.call(input, value);
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
@@ -67,7 +117,7 @@ test("preserves extra fractional precision when currency decimals are zero", () 
 });
 
 test("renders exact amounts and exports the captured report without another Tally read", async () => {
-  mocks.invoke.mockResolvedValueOnce(report).mockResolvedValueOnce("/tmp/trial-balance.xlsx");
+  queueInvoke({ responses: [report, "/tmp/trial-balance.xlsx"] });
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -86,10 +136,111 @@ test("renders exact amounts and exports the captured report without another Tall
   root.unmount();
 });
 
+test("queries an exact retained parent only on request and keeps Excel as the full capture", async () => {
+  const parentQuery = {
+    query: {
+      parent: "Sundry Debtors",
+      selected_rows: report.read.report.rows,
+      totals: report.read.totals,
+      source_row_count: 1,
+    },
+    capture: {
+      company_guid: company.guid,
+      company_name: company.name,
+      from: "20260401",
+      to: "20260908",
+      read_at: "2026-09-08T10:00:00Z",
+      request_sha256: "a",
+      response_sha256: "b",
+      source_bytes: 10,
+      expires_in_seconds: 899,
+    },
+  };
+  queueInvoke({ responses: [report, parentQuery, "/tmp/trial-balance.xlsx"] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  expect(host.textContent).toContain("All captured rows");
+  expect(mocks.invoke).toHaveBeenLastCalledWith("list_tally_trial_balance_capture_parents", {
+    request: { export_id: "export-1", search: "" },
+  });
+  await act(async () => selectParent(host, 'returned:"Sundry Debtors"'));
+  expect(mocks.invoke.mock.calls.map(([command]) => command)).toEqual([
+    "fetch_tally_trial_balance",
+    "list_tally_trial_balance_capture_parents",
+  ]);
+  await act(async () => button(host, "View selected rows").click());
+  expect(mocks.invoke).toHaveBeenLastCalledWith("query_tally_trial_balance_capture_parent", {
+    request: { export_id: "export-1", parent: "Sundry Debtors" },
+  });
+  expect(host.textContent).toContain("Selected rows: 1 of 1");
+  expect(host.textContent).toContain("not a qualified financial group balance");
+  expect(host.textContent).toContain("did not read Tally");
+  expect(host.textContent).toContain("Selected opening net");
+  await act(async () => button(host, "Excel full capture").click());
+  expect(mocks.invoke).toHaveBeenLastCalledWith("export_tally_trial_balance", { exportId: "export-1" });
+  root.unmount();
+});
+
+test("reports a retained-parent query failure without rereading Tally", async () => {
+  queueInvoke({ responses: [report, rejected({
+    code: "trial_balance_capture_expired",
+    message: "This captured Trial Balance is no longer available for a follow-up query.",
+    remediation: "Refresh the report before selecting a parent again.",
+  })] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  await act(async () => selectParent(host, 'returned:"Sundry Debtors"'));
+  await act(async () => button(host, "View selected rows").click());
+  expect(host.textContent).toContain("no longer available for a follow-up query");
+  expect(mocks.invoke).toHaveBeenCalledTimes(3);
+  expect(mocks.invoke.mock.calls.map(([command]) => command)).toEqual([
+    "fetch_tally_trial_balance",
+    "list_tally_trial_balance_capture_parents",
+    "query_tally_trial_balance_capture_parent",
+  ]);
+  root.unmount();
+});
+
+test("drops a delayed retained-parent result after the date changes", async () => {
+  let resolve!: (value: unknown) => void;
+  const pending = new Promise((done) => { resolve = done; });
+  queueInvoke({ responses: [report, pending] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  await act(async () => selectParent(host, 'returned:"Sundry Debtors"'));
+  await act(async () => button(host, "View selected rows").click());
+  const dates = host.querySelectorAll<HTMLInputElement>('input[type="date"]');
+  await act(async () => setDate(dates[1]!, "2026-04-29"));
+  await act(async () => { resolve({ query: { parent: "Sundry Debtors", selected_rows: report.read.report.rows, totals: report.read.totals, source_row_count: 1 }, capture: {} }); await pending; });
+  expect(host.querySelector(".trial-balance-report")).toBeNull();
+  expect(host.textContent).not.toContain("Selected rows: 1 of 1");
+  expect(mocks.invoke.mock.calls.map(([command]) => command)).toEqual([
+    "fetch_tally_trial_balance",
+    "list_tally_trial_balance_capture_parents",
+    "query_tally_trial_balance_capture_parent",
+  ]);
+  root.unmount();
+});
+
 test("drops a stale response after the report scope changes", async () => {
   let resolve!: (value: unknown) => void;
   const pending = new Promise((done) => { resolve = done; });
-  mocks.invoke.mockReturnValueOnce(pending);
+  queueInvoke({ responses: [pending] });
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -126,25 +277,30 @@ test("paginates captured rows locally without rereading or changing totals", asy
   const manyRows = Array.from({ length: 101 }, (_, index) => ({
     name: `Ledger ${index + 1}`,
     guid: `ledger-${index + 1}`,
+    parent: null,
     opening: { state: "present_empty" as const },
     debit: { state: "present_empty" as const },
     credit: { state: "present_empty" as const },
     closing: { state: "present_empty" as const },
   }));
-  mocks.invoke.mockResolvedValueOnce({ ...report, read: { ...report.read, report: { rows: manyRows } } });
+  queueInvoke({ responses: [{ ...report, read: { ...report.read, report: { rows: manyRows } } }] });
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
   await chooseEndDate(host);
   await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
   expect(host.textContent).toContain("Rows 1–100 of 101");
   expect(host.textContent).toContain("Difference in opening balances₹12,34,567.89 Dr");
   expect(host.textContent).toContain("Closing total₹12,34,467.80 Cr");
   await act(async () => button(host, "Next").click());
   expect(host.textContent).toContain("Rows 101–101 of 101");
   expect(host.textContent).toContain("Difference in opening balances₹12,34,567.89");
-  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  expect(mocks.invoke.mock.calls.map(([command]) => command)).toEqual([
+    "fetch_tally_trial_balance",
+    "list_tally_trial_balance_capture_parents",
+  ]);
   root.unmount();
 });
 
@@ -165,7 +321,7 @@ test("locks date controls and activity navigation while Excel export saves", asy
   let resolveExport!: (value: string) => void;
   const exportPending = new Promise<string>((resolve) => { resolveExport = resolve; });
   const activity: number[] = [];
-  mocks.invoke.mockResolvedValueOnce(report).mockReturnValueOnce(exportPending);
+  queueInvoke({ responses: [report, exportPending] });
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -176,7 +332,7 @@ test("locks date controls and activity navigation while Excel export saves", asy
   expect(host.querySelector<HTMLInputElement>('input[type="date"]')?.disabled).toBe(true);
   expect(activity).toEqual([1, -1, 1]);
   await act(async () => button(host, "Refresh report").click());
-  expect(mocks.invoke).toHaveBeenCalledTimes(2);
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_trial_balance")).toHaveLength(1);
   resolveExport("/tmp/trial-balance.xlsx");
   await act(async () => { await exportPending; });
   expect(activity).toEqual([1, -1, 1, -1]);
@@ -185,7 +341,7 @@ test("locks date controls and activity navigation while Excel export saves", asy
 });
 
 test("unlocks the screen when Excel export fails and reports the error", async () => {
-  mocks.invoke.mockResolvedValueOnce(report).mockRejectedValueOnce(new Error("save failed"));
+  queueInvoke({ responses: [report, rejected(new Error("save failed"))] });
   const activity: number[] = [];
   const host = document.createElement("div");
   document.body.append(host);
@@ -202,7 +358,7 @@ test("unlocks the screen when Excel export fails and reports the error", async (
 
 test("shows the observed closing empty count", async () => {
   const incomplete = { ...report, read: { ...report.read, totals: { ...report.read.totals, closing: { sum: "0", empty_count: 2 } } } };
-  mocks.invoke.mockResolvedValueOnce(incomplete);
+  queueInvoke({ responses: [incomplete] });
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -212,4 +368,228 @@ test("shows the observed closing empty count", async () => {
   expect(host.textContent).toContain("Closing total");
   expect(host.textContent).toContain("2 empty source values");
   root.unmount();
+});
+
+
+test("bounds parent options and finds later values without rereading or losing selection", async () => {
+  const rows = Array.from({ length: 1000 }, (_, index) => ({ ...report.read.report.rows[0], name: `Ledger ${index}`, guid: `ledger-${index}`, parent: index === 999 ? "Parent" : `Parent ${index}` }));
+  const initial = parentDiscoveryFor(rows.map((row) => row.parent));
+  const bounded = { ...initial, options: [{ parent: "Parent", row_count: 1 }, ...initial.options.slice(0, 99)] };
+  const exact = parentDiscoveryFor(["Parent 998"]);
+  const none = parentDiscoveryFor([]);
+  queueInvoke({ discoveries: [initial, bounded, exact, none, initial, bounded], responses: [{ ...report, read: { ...report.read, report: { rows } } }] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  const select = host.querySelector<HTMLSelectElement>("select")!;
+  const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  expect(select.options).toHaveLength(101);
+  expect(host.textContent).toContain("Showing the first 100 matching parent values");
+  await act(async () => setDate(search, "parent"));
+  await waitForParentDiscovery(200);
+  expect(select.options[1]?.value).toBe('returned:"Parent"');
+  expect(select.options.length).toBeLessThanOrEqual(101);
+  expect(host.textContent).toContain("Showing the first 100 matching parent values");
+  await act(async () => setDate(search, "pArEnT 998"));
+  await waitForParentDiscovery(200);
+  expect(select.options).toHaveLength(2);
+  await act(async () => selectParent(host, 'returned:"Parent 998"'));
+  await act(async () => setDate(search, "no such parent"));
+  await waitForParentDiscovery(200);
+  expect(select.value).toBe('returned:"Parent 998"');
+  expect(select.selectedOptions[0].textContent).toContain("current selection");
+  expect(host.textContent).toContain("No matching parent values");
+  expect(button(host, "View selected rows").disabled).toBe(false);
+  await act(async () => setDate(search, ""));
+  await waitForParentDiscovery();
+  expect(select.options).toHaveLength(102);
+  expect(select.value).toBe('returned:"Parent 998"');
+  await act(async () => setDate(search, "Parent"));
+  await waitForParentDiscovery(200);
+  expect(select.options).toHaveLength(102);
+  expect([...select.options].some((option) => option.value === 'returned:"Parent"')).toBe(true);
+  await act(async () => selectParent(host, 'returned:"Parent"'));
+  expect(select.value).toBe('returned:"Parent"');
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_trial_balance")).toHaveLength(1);
+  await act(async () => root.unmount());
+});
+
+test("keeps a literal case variant reachable while bounding over 100 folded matches", async () => {
+  const variants = Array.from({ length: 128 }, (_, index) => {
+    const suffix = [..."abcdefgh"].map((letter, bit) => index & (1 << bit) ? letter.toUpperCase() : letter).join("");
+    return `Parent${suffix}`;
+  });
+  const parents = ["parentabcdefgh", ...variants];
+  const rows = parents.map((parent, index) => ({ ...report.read.report.rows[0], name: `Ledger ${index}`, guid: `ledger-${index}`, parent }));
+  const initial = parentDiscoveryFor(rows.map((row) => row.parent));
+  queueInvoke({ discoveries: [initial, initial], responses: [{ ...report, read: { ...report.read, report: { rows } } }] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  const select = host.querySelector<HTMLSelectElement>("select")!;
+  const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  await act(async () => setDate(search, "parentabcdefgh"));
+  await waitForParentDiscovery(200);
+  expect(select.options[1]?.value).toBe('returned:"parentabcdefgh"');
+  expect(select.options.length).toBe(101);
+  expect(host.textContent).toContain("Showing the first 100 matching parent values");
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_trial_balance")).toHaveLength(1);
+  root.unmount();
+});
+
+test("distinguishes missing and empty Parent fields from literal group names", async () => {
+  const parents = [null, "", "Not observed", "Returned empty", "Missing field: Parent not returned", "Empty field: Parent returned empty"];
+  const rows = parents.map((parent, index) => ({ ...report.read.report.rows[0], name: `Ledger ${index}`, guid: `ledger-${index}`, parent }));
+  queueInvoke({ discoveries: [parentDiscoveryFor(parents)], responses: [{ ...report, read: { ...report.read, report: { rows } } }] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  const options = [...host.querySelectorAll("select option")];
+  expect(new Set(options.map((option) => option.textContent)).size).toBe(7);
+  expect(options.find((option) => option.value === "not-observed")?.textContent).toBe("Missing field: Parent not returned (1 rows)");
+  expect(options.find((option) => option.value === 'returned:""')?.textContent).toBe("Empty field: Parent returned empty (1 rows)");
+  expect(options.find((option) => option.value === 'returned:"Not observed"')?.textContent).toBe("Group: Not observed (1 rows)");
+  expect([...host.querySelectorAll("tbody tr")].map((row) => row.querySelector("td")?.textContent)).toEqual([
+    "Missing field: Parent not returned",
+    "Empty field: Parent returned empty",
+    "Group: Not observed",
+    "Group: Returned empty",
+    "Group: Missing field: Parent not returned",
+    "Group: Empty field: Parent returned empty",
+  ]);
+  expect(mocks.invoke.mock.calls.map(([command]) => command)).toEqual([
+    "fetch_tally_trial_balance",
+    "list_tally_trial_balance_capture_parents",
+  ]);
+  await act(async () => root.unmount());
+});
+
+test("coalesces a delayed local discovery and drops it after the capture scope changes", async () => {
+  let resolveDiscovery!: (value: unknown) => void;
+  const pendingDiscovery = new Promise((resolve) => { resolveDiscovery = resolve; });
+  queueInvoke({ responses: [report], discoveries: [pendingDiscovery, parentDiscoveryFor(["Should not appear"])] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  await act(async () => setDate(search, "later"));
+  await waitForParentDiscovery(200);
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "list_tally_trial_balance_capture_parents")).toHaveLength(1);
+  const dates = host.querySelectorAll<HTMLInputElement>('input[type="date"]');
+  await act(async () => setDate(dates[1]!, "2026-04-29"));
+  await act(async () => { resolveDiscovery(parentDiscoveryFor(["Should not appear"])); await pendingDiscovery; });
+  expect(host.querySelector(".trial-balance-report")).toBeNull();
+  expect(host.textContent).not.toContain("Should not appear");
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_trial_balance")).toHaveLength(1);
+  root.unmount();
+});
+
+test("clears a local discovery error on the next search without retrying Tally", async () => {
+  const discoveryError = { code: "trial_balance_capture_expired", message: "This captured Trial Balance is no longer available." };
+  queueInvoke({ responses: [report], discoveries: [rejected(discoveryError), parentDiscoveryFor(["Sundry Debtors"])] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  expect(host.textContent).toContain("This captured Trial Balance is no longer available");
+  const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  await act(async () => setDate(search, "Sundry"));
+  await waitForParentDiscovery(200);
+  expect(host.textContent).not.toContain("This captured Trial Balance is no longer available");
+  expect(host.textContent).toContain("Group: Sundry Debtors");
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_trial_balance")).toHaveLength(1);
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "list_tally_trial_balance_capture_parents")).toHaveLength(2);
+  root.unmount();
+});
+
+test("coalesces several searches and runs only the latest after the current discovery settles", async () => {
+  let resolveDiscovery!: (value: unknown) => void;
+  const pendingDiscovery = new Promise((resolve) => { resolveDiscovery = resolve; });
+  queueInvoke({ responses: [report], discoveries: [pendingDiscovery, parentDiscoveryFor(["Latest result"])] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  await act(async () => setDate(search, "first"));
+  await waitForParentDiscovery(200);
+  await act(async () => setDate(search, "latest"));
+  await waitForParentDiscovery(200);
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "list_tally_trial_balance_capture_parents")).toHaveLength(1);
+  resolveDiscovery(parentDiscoveryFor(["Initial result"]));
+  await act(async () => { await pendingDiscovery; });
+  await waitForParentDiscovery();
+  const discoveryCalls = mocks.invoke.mock.calls.filter(([command]) => command === "list_tally_trial_balance_capture_parents");
+  expect(discoveryCalls).toHaveLength(2);
+  expect(discoveryCalls[1]?.[1]).toEqual({ request: { export_id: "export-1", search: "latest" } });
+  expect(host.textContent).toContain("Group: Latest result");
+  root.unmount();
+});
+
+test("replaces a same-scope capture and never applies its old discovery result", async () => {
+  let resolveOldDiscovery!: (value: unknown) => void;
+  const pendingOldDiscovery = new Promise((resolve) => { resolveOldDiscovery = resolve; });
+  const replacement = { ...report, export_id: "export-2" };
+  queueInvoke({ responses: [report, replacement], discoveries: [pendingOldDiscovery, parentDiscoveryFor(["New capture result"])] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  resolveOldDiscovery(parentDiscoveryFor(["Old capture result"]));
+  await act(async () => { await pendingOldDiscovery; });
+  await waitForParentDiscovery();
+  const discoveryCalls = mocks.invoke.mock.calls.filter(([command]) => command === "list_tally_trial_balance_capture_parents");
+  expect(discoveryCalls).toHaveLength(2);
+  expect(discoveryCalls[1]?.[1]).toEqual({ request: { export_id: "export-2", search: "" } });
+  expect(host.textContent).toContain("Group: New capture result");
+  expect(host.textContent).not.toContain("Group: Old capture result");
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "fetch_tally_trial_balance")).toHaveLength(2);
+  root.unmount();
+});
+
+test("invalidates pending and queued discovery work on unmount", async () => {
+  let resolveDiscovery!: (value: unknown) => void;
+  const pendingDiscovery = new Promise((resolve) => { resolveDiscovery = resolve; });
+  queueInvoke({ responses: [report], discoveries: [pendingDiscovery, parentDiscoveryFor(["Should not dispatch"])] });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<TrialBalanceScreen config={{ host: "127.0.0.1", port: 9000 }} company={company} liveReadNavigationLocked={false} liveReadSuppressed={false} onChangeSetup={() => {}} onTallyReadActivityChange={() => {}} />));
+  await chooseEndDate(host);
+  await act(async () => button(host, "Refresh report").click());
+  await waitForParentDiscovery();
+  const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  await act(async () => setDate(search, "queued"));
+  await waitForParentDiscovery(200);
+  root.unmount();
+  resolveDiscovery(parentDiscoveryFor(["Should not dispatch"]));
+  await act(async () => { await pendingDiscovery; });
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "list_tally_trial_balance_capture_parents")).toHaveLength(1);
 });
