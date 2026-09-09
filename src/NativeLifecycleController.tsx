@@ -56,6 +56,8 @@ export function NativeLifecycleController({
   const epoch = React.useRef(0);
   const requestRef = React.useRef<NativeLifecycleRequest | null>(null);
   const busyRef = React.useRef(false);
+  const queuedRequestRef = React.useRef<NativeLifecycleRequest | null>(null);
+  const handleRequestRef = React.useRef<((request: NativeLifecycleRequest) => void) | undefined>(undefined);
   const dialogRef = React.useRef<HTMLElement | null>(null);
   const dialogWasOpen = React.useRef(false);
   const focusLifecycle = React.useRef(createDrawerFocusLifecycle()).current;
@@ -84,6 +86,9 @@ export function NativeLifecycleController({
     } finally {
       busyRef.current = false;
       if (mounted.current) setBusy(false);
+      const queued = queuedRequestRef.current;
+      queuedRequestRef.current = null;
+      if (mounted.current && queued) void handleRequestRef.current?.(queued);
     }
   }, [completionBlocked]);
 
@@ -96,14 +101,22 @@ export function NativeLifecycleController({
     setRequestError(null);
     try {
       await invoke("desktop_cancel_source_draft_lifecycle_request", { request: next });
-      if (mounted.current && sameRequest(requestRef.current ?? next, next)) setCurrentRequest(null);
+      if (mounted.current && sameRequest(requestRef.current ?? next, next)) {
+        const preservePendingAdmission = queuedRequestRef.current !== null;
+        requestRef.current = null;
+        lifecyclePendingRef.current = preservePendingAdmission;
+        setRequest(null);
+      }
     } catch (cause) {
       if (mounted.current) setRequestError(errorMessage(cause));
     } finally {
       busyRef.current = false;
       if (mounted.current) setBusy(false);
+      const queued = queuedRequestRef.current;
+      queuedRequestRef.current = null;
+      if (mounted.current && queued) void handleRequestRef.current?.(queued);
     }
-  }, [setCurrentRequest]);
+  }, [lifecyclePendingRef]);
 
   React.useLayoutEffect(() => {
     const open = request !== null;
@@ -141,7 +154,17 @@ export function NativeLifecycleController({
     const registrationToken = crypto.randomUUID();
 
     const handleRequest = async (next: NativeLifecycleRequest) => {
-      if (!active || busyRef.current) return;
+      if (!active) return;
+      // Native requested a close before this lookup can settle. Block local
+      // admission immediately; a same-epoch negative lookup may clear it.
+      lifecyclePendingRef.current = true;
+      if (busyRef.current) {
+        if (!requestRef.current || !sameRequest(requestRef.current, next)) {
+          const queued = queuedRequestRef.current;
+          if (!queued || !sameRequest(queued, next)) queuedRequestRef.current = next;
+        }
+        return;
+      }
       const currentEpoch = ++epoch.current;
       let pending: NativeLifecycleRequest | null;
       try {
@@ -153,12 +176,24 @@ export function NativeLifecycleController({
         }
         return;
       }
-      if (!active || currentEpoch !== epoch.current || !pending || !sameRequest(pending, next)) return;
+      if (!active || currentEpoch !== epoch.current) return;
+      if (!pending) {
+        if (requestRef.current === null) lifecyclePendingRef.current = false;
+        return;
+      }
+      if (!sameRequest(pending, next)) {
+        setRequestError(null);
+        setCurrentRequest(pending);
+        if (sourceDraftDirtyRef.current || completionBlocked()) return;
+        void complete(pending);
+        return;
+      }
       setRequestError(null);
       setCurrentRequest(next);
       if (sourceDraftDirtyRef.current || completionBlocked()) return;
       void complete(next);
     };
+    handleRequestRef.current = handleRequest;
 
     void (async () => {
       try {
@@ -187,6 +222,7 @@ export function NativeLifecycleController({
     return () => {
       active = false;
       mounted.current = false;
+      handleRequestRef.current = undefined;
       unlisten?.();
       if (registered) void invoke("desktop_unregister_source_draft_lifecycle_renderer", { token: registrationToken });
     };

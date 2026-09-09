@@ -544,6 +544,112 @@ test("does not reopen a cancelled request from a duplicate event", async () => {
   root.unmount();
 });
 
+test("blocks source admission until a deferred native close lookup proves no request is pending", async () => {
+  enableNativeWindowRuntime();
+  let listener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  let deferLookup = false;
+  let resolveLookup!: (value: null) => void;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    listener = handler;
+    return mocks.unlisten;
+  });
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") {
+      if (deferLookup) return new Promise<null>((resolve) => { resolveLookup = resolve; });
+      return Promise.resolve(null);
+    }
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mountProtected(host);
+  deferLookup = true;
+  listener?.({ payload: { request_id: "close-before-lookup", kind: "close" } });
+  await act(async () => {});
+  await act(async () => button(host, "Choose source XML").click());
+  expect(mocks.invoke).not.toHaveBeenCalledWith("desktop_pick_source_draft");
+
+  await act(async () => resolveLookup(null));
+  await act(async () => button(host, "Choose source XML").click());
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_pick_source_draft");
+  root.unmount();
+});
+
+test("promotes a newer native request returned by a deferred lookup instead of unlocking local admission", async () => {
+  enableNativeWindowRuntime();
+  let listener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  let deferLookup = false;
+  let resolveLookup!: (value: { request_id: string; kind: "close" | "exit" }) => void;
+  let pending: { request_id: string; kind: "close" | "exit" } | null = null;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    listener = handler;
+    return mocks.unlisten;
+  });
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") {
+      if (deferLookup) {
+        deferLookup = false;
+        return new Promise((resolve) => { resolveLookup = resolve; });
+      }
+      return Promise.resolve(pending);
+    }
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mountProtected(host);
+  await act(async () => button(host, "Choose source XML").click());
+  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+
+  deferLookup = true;
+  listener?.({ payload: { request_id: "delayed-a", kind: "close" } });
+  const newer = { request_id: "authoritative-b", kind: "exit" as const };
+  pending = newer;
+  await act(async () => resolveLookup(newer));
+  expect(document.body.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+  expect(mocks.invoke).not.toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: newer });
+  root.unmount();
+});
+
+test("re-queries a newer native request received while cancelling the current one", async () => {
+  enableNativeWindowRuntime();
+  let listener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  let pending: { request_id: string; kind: "close" | "exit" } | null = null;
+  let resolveCancel!: () => void;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    listener = handler;
+    return mocks.unlisten;
+  });
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_cancel_source_draft_lifecycle_request") {
+      return new Promise<void>((resolve) => { resolveCancel = resolve; });
+    }
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mountProtected(host);
+  await act(async () => button(host, "Choose source XML").click());
+  setValue(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')!, "Unsaved ledger");
+
+  const first = { request_id: "cancel-a", kind: "close" as const };
+  pending = first;
+  await act(async () => listener?.({ payload: first }));
+  await act(async () => button(document.body, "Keep editing").click());
+
+  const second = { request_id: "cancel-b", kind: "exit" as const };
+  pending = second;
+  listener?.({ payload: second });
+  await act(async () => resolveCancel());
+  expect(document.body.textContent).toContain("Discard unsaved proposals and quit Bridge?");
+  expect(mocks.invoke).not.toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: second });
+  root.unmount();
+});
+
 test("keeps the mounted Journal outcome and blocks lifecycle completion while posting", async () => {
   enableNativeWindowRuntime();
   let listener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
@@ -629,7 +735,7 @@ test("blocks a clean close synchronously before its native completion resolves",
   root.unmount();
 });
 
-test("ignores a native event whose request is no longer pending", async () => {
+test("uses the authoritative native pending request when an event payload is stale", async () => {
   enableNativeWindowRuntime();
   let listener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
   mocks.listen.mockImplementation(async (_event, handler) => {
@@ -651,9 +757,8 @@ test("ignores a native event whose request is no longer pending", async () => {
 
   pending = current;
   await act(async () => listener?.({ payload: { request_id: "close-stale", kind: "close" } }));
-  expect(document.body.textContent).not.toContain("Discard unsaved proposals and close this window?");
-  await act(async () => listener?.({ payload: current }));
   expect(document.body.textContent).toContain("Discard unsaved proposals and close this window?");
+  expect(mocks.invoke).not.toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: current });
   root.unmount();
 });
 
