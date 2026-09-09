@@ -175,14 +175,12 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                             .get("ISDEEMEDPOSITIVE")
                             .filter(|value| !value.trim().is_empty())
                             .ok_or_else(|| "agent_read_protocol_invalid".to_string())?;
-                        validate_tally_entry_polarity(
-                            &parsed_amount,
-                            required_tally_bool(Some(polarity))?,
-                        )?;
+                        let is_deemed_positive = required_tally_bool(Some(polarity))?;
+                        validate_tally_entry_polarity(&parsed_amount, is_deemed_positive)?;
                         entries.push(json!({
                             "ledger": ledger,
                             "amount": amount,
-                            "is_deemed_positive": polarity,
+                            "is_deemed_positive": if is_deemed_positive { "Yes" } else { "No" },
                         }));
                     }
                 } else if scope.row("VOUCHER") {
