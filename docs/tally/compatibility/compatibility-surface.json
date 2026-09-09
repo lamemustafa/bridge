@@ -699,7 +699,7 @@
     },
     {
       "path": "src/NativeLifecycleController.tsx",
-      "sha256": "ecc4568ee551cd9c0438e3df1f7c2a3fcaea3feace1fc1c72b5919fbafe49dcc"
+      "sha256": "f88de56db41cf1a77e5bf56a94f83397c84b43446ab260c5987786f65bf6bc44"
     },
     {
       "path": "src/OutstandingsEvidencePanel.tsx",
@@ -838,5 +838,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "418c2e49dbc7d10f1ff59caa11cd96b07c4659ad8cfa98d614fddf9cfcb74273"
+  "manifest_sha256": "b1f78f6aa60cf0df4f935f92a92c56d8b7833172af7b52ec74eb337762ca586c"
 }
