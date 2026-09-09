@@ -1178,6 +1178,46 @@ binaries; Cargo then passed the two doctests separately. These local shared-Mac
 samples justify a hosted trial, not a Windows performance forecast. Record the
 hosted candidate, cache state and complete checks in the PR before adopting it.
 
+### Package compiler cache
+
+Windows/macOS package build commands use the pinned sccache version through
+`RUSTC_WORKSPACE_WRAPPER`, with `CARGO_INCREMENTAL=0` for those commands. This
+caches workspace Rust compilation; it does not replace native dependency
+caching or establish that native C compilation and linking were skipped. Local
+development profiles retain their existing incremental behavior.
+
+Keep the Tauri context factory in `src-tauri/src/main.rs`, outside the cached
+rlib, and preserve its existing startup construction point and child dispatch.
+The factory file is explicitly included in the compatibility surface. Changes
+to this boundary or the wrapper need Windows/macOS controls for configuration,
+asset edits/additions/removal, Rust edits and restoration; an unchanged-source
+hit alone cannot establish correct invalidation.
+
+Only `refs/heads/master` uses sccache `READ_WRITE`; PRs and every other ref use
+`READ_ONLY`. The local cache cap is `SCCACHE_CACHE_SIZE=64M`. Restore keys include
+OS, architecture, toolchain and Cargo.lock identity; saved keys additionally
+include source SHA and run ID. Publish a new snapshot only after a successful
+master package build with a positive `stats.cache_writes` count. An unchanged
+cache must not create another immutable snapshot. Keep the
+`package-compiler-cache-*` statistics artifacts so misses and read-only behavior
+remain distinguishable from measured reuse.
+
+The local size cap does not bound accumulated remote snapshots. A separate
+master-only retention job keeps the newest two package compiler-cache snapshots
+per OS across source/toolchain generations. Its `actions:write` permission stays
+isolated from the package jobs. `scripts/prune-package-compiler-cache.mjs`
+defaults to dry run; its apply path validates the complete inventory, deletes
+only obsolete master entries in the exact `bridge-package-sccache-v1-` namespace,
+and verifies the remaining inventory. Preserve dependency caches, PR entries
+and unrelated namespaces. Run its focused checks with
+`node --test scripts/prune-package-compiler-cache.test.mjs`.
+
+Preserve both native platforms, test selection, doctests, warning-denying lint,
+compatibility claims and seals, installer signature/legal-resource checks, and
+packaged MCPB schema/execution checks. A cache miss still runs the complete
+package build. Record cold, warm and changed-input results separately; package
+command speedups are not whole-CI or release-readiness guarantees.
+
 ### Compare complete measurements
 
 Record runner/toolchain, exact source, selected features, cold/warm state,
