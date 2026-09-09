@@ -1,0 +1,43 @@
+name: Windows Perl installed inventory experiment
+
+on:
+  push:
+    branches: [tapish-codex/windows-perl-inventory-20260909]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-perl-inventory-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    name: Inventory unchanged pinned Windows Perl
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Restore normal Windows prerequisites without saving a cache
+        id: prerequisites
+        uses: ./.github/actions/setup-windows-native
+        with:
+          save-cache: "false"
+      - name: Inventory installed distribution
+        shell: pwsh
+        env:
+          PERL_CACHE_HIT: ${{ steps.prerequisites.outputs.cache-hit }}
+        run: >-
+          python scripts/inventory-windows-perl.py
+          --root 'C:\Strawberry'
+          --output "$env:RUNNER_TEMP/perl-inventory/installed.json.gz"
+      - name: Retain inventory metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-perl-installed-inventory
+          path: ${{ runner.temp }}/perl-inventory/installed.json.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

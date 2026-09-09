@@ -100,3 +100,11 @@ actual image linkage and refusal of a different executable. Apple's
 defines frame image indexes and binary image UUID/architecture fields. Native
 CI still disables debug information; retaining a binary does not restore absent
 source line tables or identify which individual nextest test executed it.
+
+## Windows Perl inventory experiment
+
+The installed-distribution inventory script, tests and dedicated experiment
+workflow are project-authored under this repository's Apache-2.0 license.
+Artifacts contain relative file names, byte counts, SHA-256 digests and scoped
+Perl runtime identity. The distribution is supplied by the existing pinned
+Windows prerequisite action, retaining its upstream attribution resources.
