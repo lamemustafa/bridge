@@ -127,6 +127,7 @@ jobs:
         with:
           toolchain: 1.96.0
       - run: node scripts/check-ci-workflow-consistency.mjs
+      - run: node --test scripts/prune-package-compiler-cache.test.mjs
       - run: python3 scripts/collect-macos-test-crashes.test.py
       - run: python3 scripts/retain-macos-test-binaries.test.py
 
@@ -517,11 +518,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Retain package compiler cache statistics
+        id: package-sccache-stats
         if: ${{ always() && steps.package-sccache-start.outcome == 'success' }}
         shell: bash
         run: |
           sccache --show-stats --stats-format json > package-compiler-cache.json
           sccache --stop-server
+          node --input-type=module <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const writes = JSON.parse(readFileSync('package-compiler-cache.json', 'utf8')).stats.cache_writes;
+          if (!Number.isSafeInteger(writes) || writes < 0) throw new Error('Invalid compiler-cache write count');
+          appendFileSync(process.env.GITHUB_OUTPUT, `has-writes=${writes > 0}\n`);
+          JS
       - name: Upload package compiler cache statistics
         if: ${{ always() && steps.package-sccache-start.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -531,11 +539,35 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Save qualified master compiler objects
-        if: ${{ success() && github.ref == 'refs/heads/master' && steps.package-sccache-cache.outputs.cache-hit != 'true' }}
+        if: ${{ success() && github.ref == 'refs/heads/master' && steps.package-sccache-stats.outputs.has-writes == 'true' && steps.package-sccache-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.SCCACHE_DIR }}
           key: ${{ steps.package-sccache-cache.outputs.cache-primary-key }}
+
+  compiler-cache-retention:
+    name: Retain two compiler-cache snapshots per OS
+    needs: [bundle-smoke, workflow-consistency]
+    if: ${{ always() && github.ref == 'refs/heads/master' && needs.workflow-consistency.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    concurrency:
+      group: package-compiler-cache-retention
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version-file: .node-version
+      - name: Prune only obsolete master package compiler objects
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/prune-package-compiler-cache.mjs --apply
 
   required-checks:
     name: Required checks
@@ -546,7 +578,7 @@ jobs:
     # this context instead of the individual matrix jobs so docs-only PRs are
     # not blocked by skipped native/bundle checks.
     if: ${{ always() }}
-    needs: [changes, frontend, rust-format, workflow-consistency, tally-portable, native, bundle-smoke]
+    needs: [changes, frontend, rust-format, workflow-consistency, tally-portable, native, bundle-smoke, compiler-cache-retention]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

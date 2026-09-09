@@ -29,7 +29,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 178;
+pub const MAX_SURFACE_FILES: usize = 179;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -2420,10 +2420,10 @@ mod tests {
     }
 
     #[test]
-    fn surface_capacity_admits_combined_migration_and_endpoint_pins_but_not_more() {
+    fn surface_capacity_admits_the_context_factory_pin_but_not_more() {
         let mut surface = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: (0..178)
+            files: (0..179)
                 .map(|index| SurfaceFile {
                     path: format!("surface-{index:03}.txt"),
                     sha256: "0".repeat(64),
@@ -2433,7 +2433,7 @@ mod tests {
         };
         surface.validate_shape(false).unwrap();
         surface.files.push(SurfaceFile {
-            path: "surface-178.txt".to_string(),
+            path: "surface-179.txt".to_string(),
             sha256: "0".repeat(64),
         });
         assert_eq!(
@@ -2451,6 +2451,10 @@ mod tests {
         )
         .unwrap();
         surface.validate_files(&repository_root).unwrap();
+        assert!(surface
+            .files
+            .iter()
+            .any(|file| file.path == "src-tauri/src/main.rs"));
         // `<=` lets pinned files consume the deliberate reserve without raising
         // the cap: `validate_shape` protects the upper bound by rejecting a
         // surface above `MAX_SURFACE_FILES`, while this assertion protects the
