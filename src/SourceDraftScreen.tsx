@@ -1,6 +1,7 @@
 import React from "react";
 import { FilePlus2, FolderOpen, Save, ShieldAlert, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./source-draft.css";
 import {
   SourceDraft,
@@ -60,7 +61,25 @@ function sourceEntryLabel(entry: SourceDraftSourceEntry) {
   return `${displayObserved(entry.source_ledger, "Empty source ledger")} · ${displayObserved(entry.source_polarity, "Empty source polarity")} · ${displayObserved(entry.source_amount, "Empty source amount")}`;
 }
 
-export function SourceDraftScreen({ onBusyChange }: SourceDraftScreenProps) {
+type NativeLifecycleKind = "close" | "exit";
+
+type NativeLifecycleRequest = {
+  request_id: string;
+  kind: NativeLifecycleKind;
+};
+
+function sameNativeLifecycleRequest(left: NativeLifecycleRequest, right: NativeLifecycleRequest) {
+  return left.request_id === right.request_id && left.kind === right.kind;
+}
+
+function hasNativeWindowRuntime() {
+  const internals = (window as unknown as {
+    __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: unknown } } };
+  }).__TAURI_INTERNALS__;
+  return typeof internals?.metadata?.currentWindow?.label === "string";
+}
+
+export function SourceDraftScreen({ onBusyChange, onNativeLifecycleRequested }: SourceDraftScreenProps) {
   const [draft, setDraft] = React.useState<SourceDraft | null>(null);
   const [dirty, setDirty] = React.useState(false);
   const [selectedPosition, setSelectedPosition] = React.useState<number | null>(null);
@@ -69,8 +88,15 @@ export function SourceDraftScreen({ onBusyChange }: SourceDraftScreenProps) {
   const [pendingAction, setPendingAction] = React.useState<Exclude<SourceDraftAction, "save" | null> | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [savedPath, setSavedPath] = React.useState<string | null>(null);
+  const [nativeLifecycleRequest, setNativeLifecycleRequest] = React.useState<NativeLifecycleRequest | null>(null);
+  const [nativeLifecycleBusy, setNativeLifecycleBusy] = React.useState(false);
   const mounted = React.useRef(true);
   const actionRef = React.useRef<SourceDraftAction>(null);
+  const dirtyRef = React.useRef(false);
+  const lifecycleEpoch = React.useRef(0);
+  const onNativeLifecycleRequestedRef = React.useRef(onNativeLifecycleRequested);
+  dirtyRef.current = dirty;
+  onNativeLifecycleRequestedRef.current = onNativeLifecycleRequested;
 
   React.useEffect(() => {
     mounted.current = true;
@@ -95,6 +121,58 @@ export function SourceDraftScreen({ onBusyChange }: SourceDraftScreenProps) {
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
 
+  React.useEffect(() => {
+    if (!hasNativeWindowRuntime()) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+
+    const handleRequest = async (request: NativeLifecycleRequest) => {
+      if (!active) return;
+      const epoch = ++lifecycleEpoch.current;
+      let pending: NativeLifecycleRequest | null;
+      try {
+        pending = await invoke<NativeLifecycleRequest | null>("desktop_pending_source_draft_lifecycle_request");
+      } catch (cause) {
+        if (active) setError(errorMessage(cause));
+        return;
+      }
+      if (!active || epoch !== lifecycleEpoch.current || !pending || !sameNativeLifecycleRequest(pending, request)) return;
+      if (dirtyRef.current) {
+        onNativeLifecycleRequestedRef.current?.();
+        setPendingAction(null);
+        setNativeLifecycleRequest(request);
+        return;
+      }
+      try {
+        await invoke("desktop_complete_source_draft_lifecycle_request", { request });
+      } catch (cause) {
+        if (active) setError(errorMessage(cause));
+      }
+    };
+
+    void (async () => {
+      try {
+        const registeredUnlisten = await listen<NativeLifecycleRequest>("source-draft-lifecycle-requested", (event) => {
+          void handleRequest(event.payload);
+        });
+        if (!active) {
+          registeredUnlisten();
+          return;
+        }
+        unlisten = registeredUnlisten;
+        const pending = await invoke<NativeLifecycleRequest | null>("desktop_pending_source_draft_lifecycle_request");
+        if (active && pending) await handleRequest(pending);
+      } catch (cause) {
+        if (active) setError(`Bridge could not install native close protection: ${errorMessage(cause)}`);
+      }
+    })();
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+
   async function load(kind: Exclude<SourceDraftAction, "save" | null>) {
     if (actionRef.current !== null) return;
     actionRef.current = kind;
@@ -109,6 +187,7 @@ export function SourceDraftScreen({ onBusyChange }: SourceDraftScreenProps) {
       }
       const copy = cloneDraft(next);
       setDraft(copy);
+      dirtyRef.current = false;
       setDirty(false);
       setSelectedPosition(copy.rows[0]?.position ?? null);
       setPage(0);
@@ -145,6 +224,7 @@ export function SourceDraftScreen({ onBusyChange }: SourceDraftScreenProps) {
       if (!mounted.current || !next) return;
       const copy = cloneDraft(next);
       setDraft(copy);
+      dirtyRef.current = false;
       setDirty(false);
       setSavedPath("Draft saved locally as JSON.");
     } catch (cause) {
@@ -160,6 +240,7 @@ export function SourceDraftScreen({ onBusyChange }: SourceDraftScreenProps) {
 
   function updateProposal(change: (proposal: SourceDraftProposal) => SourceDraftProposal) {
     if (selectedPosition === null) return;
+    dirtyRef.current = true;
     setDirty(true);
     setSavedPath(null);
     setDraft((current) => current && ({ ...current, rows: current.rows.map((row) => row.position === selectedPosition ? { ...row, proposal: change(cloneProposal(row.proposal)) } : row) }));
@@ -174,7 +255,44 @@ export function SourceDraftScreen({ onBusyChange }: SourceDraftScreenProps) {
     updateProposal((proposal) => ({ ...proposal, entries: proposal.entries.map((entry, index) => index === position ? change({ ...entry }) : entry) }));
   }
 
-  const busy = action !== null;
+  async function cancelNativeLifecycleRequest() {
+    if (!nativeLifecycleRequest || nativeLifecycleBusy) return;
+    lifecycleEpoch.current += 1;
+    setNativeLifecycleBusy(true);
+    setError(null);
+    try {
+      await invoke("desktop_cancel_source_draft_lifecycle_request", { request: nativeLifecycleRequest });
+      if (mounted.current) setNativeLifecycleRequest(null);
+    } catch (cause) {
+      if (mounted.current) setError(errorMessage(cause));
+    } finally {
+      if (mounted.current) setNativeLifecycleBusy(false);
+    }
+  }
+
+  async function completeNativeLifecycleRequest() {
+    if (!nativeLifecycleRequest || nativeLifecycleBusy) return;
+    lifecycleEpoch.current += 1;
+    setNativeLifecycleBusy(true);
+    setError(null);
+    try {
+      await invoke("desktop_complete_source_draft_lifecycle_request", { request: nativeLifecycleRequest });
+    } catch (cause) {
+      if (mounted.current) setError(errorMessage(cause));
+    } finally {
+      if (mounted.current) setNativeLifecycleBusy(false);
+    }
+  }
+
+  const busy = action !== null || nativeLifecycleRequest !== null;
+  const confirmationBusy = action !== null || nativeLifecycleBusy;
+  const lifecycleIsExit = nativeLifecycleRequest?.kind === "exit";
+  const lifecycleHeading = dirty
+    ? lifecycleIsExit ? "Discard unsaved proposals and quit Bridge?" : "Discard unsaved proposals and close this window?"
+    : lifecycleIsExit ? "Quit Bridge?" : "Close this window?";
+  const lifecycleDescription = dirty
+    ? "Unsaved proposal edits are local only and will be lost."
+    : "No unsaved proposals remain.";
   return (
     <section className="panel wide source-draft" aria-labelledby="source-draft-heading" aria-busy={busy}>
       <div className="source-draft-heading">
@@ -186,7 +304,8 @@ export function SourceDraftScreen({ onBusyChange }: SourceDraftScreenProps) {
       </div>
 
       {error && <div className="error-banner" role="alert"><strong>Source draft action failed</strong><span>{error}</span></div>}
-      {pendingAction && <div className="source-draft-confirm" role="alertdialog" aria-labelledby="source-draft-confirm-heading"><div><h3 id="source-draft-confirm-heading">Discard unsaved proposals?</h3><p>Opening another source will replace the current draft and its unsaved edits.</p></div><div className="source-draft-actions"><button className="primary" type="button" onClick={() => void load(pendingAction)} disabled={busy}>Discard and open</button><button className="secondary-action" type="button" onClick={() => setPendingAction(null)} disabled={busy}>Keep editing</button></div></div>}
+      {pendingAction && <div className="source-draft-confirm" role="alertdialog" aria-labelledby="source-draft-confirm-heading"><div><h3 id="source-draft-confirm-heading">Discard unsaved proposals?</h3><p>Opening another source will replace the current draft and its unsaved edits.</p></div><div className="source-draft-actions"><button className="primary" type="button" onClick={() => void load(pendingAction)} disabled={confirmationBusy}>Discard and open</button><button className="secondary-action" type="button" onClick={() => setPendingAction(null)} disabled={confirmationBusy}>Keep editing</button></div></div>}
+      {nativeLifecycleRequest && <div className="source-draft-confirm" role="alertdialog" aria-labelledby="source-draft-lifecycle-heading"><div><h3 id="source-draft-lifecycle-heading">{lifecycleHeading}</h3><p>{lifecycleDescription}</p></div><div className="source-draft-actions"><button className="primary" type="button" onClick={() => void completeNativeLifecycleRequest()} disabled={confirmationBusy}>{lifecycleIsExit ? "Discard and quit" : "Discard and close"}</button><button className="secondary-action" type="button" onClick={() => void cancelNativeLifecycleRequest()} disabled={confirmationBusy}>Keep editing</button></div></div>}
 
       {!draft ? (
         <div className="source-draft-empty">

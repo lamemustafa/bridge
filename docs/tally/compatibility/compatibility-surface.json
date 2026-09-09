@@ -503,7 +503,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "506aceeccae1928c541221d6ca1c44cb80f8e28dfc7c2fd587095bb3d7477c58"
+      "sha256": "2aa6d9d903b8c464be2be649922ca81564941558e84ba42c6f64aee71b748090"
     },
     {
       "path": "src-tauri/src/local_files/file.rs",
@@ -571,19 +571,23 @@
     },
     {
       "path": "src-tauri/src/source_draft.rs",
-      "sha256": "5e77847d1f2a8b13f3a28e85ab07934a04d1b7375c68a033c5eb17b2b5eaeb43"
+      "sha256": "3e8318685c3ce7f6223880c9441fd90f6d8ca23b39a18ee4eec3888847568e18"
     },
     {
       "path": "src-tauri/src/source_draft/files.rs",
       "sha256": "1d220d9274e32c400023ebb5e71246533f66416bc968b1edc807b7a3baac348d"
     },
     {
+      "path": "src-tauri/src/source_draft/lifecycle.rs",
+      "sha256": "9d01e4d00e7916a0c68a8bb0f6c6adbe1377f8e161a269dcec48933c620134d7"
+    },
+    {
       "path": "src-tauri/src/source_draft/types.rs",
-      "sha256": "37213fd7e51dd9c90b7359d13fcce542e5eb8785315a931401c2b76d8b729dce"
+      "sha256": "018d6475dddd655d2226ca57f97951a472ba7d3de291cef0dd5bc49fde690e03"
     },
     {
       "path": "src-tauri/src/source_draft_xml.rs",
-      "sha256": "c0432a0acf92827e6777f592d2be6d941a7ce2f9575c771a004d043416e0e9f6"
+      "sha256": "ba0ca5cd33784bcba9f7003d976be62656514fa8a483ea6cec1fe77f4d5d39c5"
     },
     {
       "path": "src-tauri/src/sync/coordinator.rs",
@@ -691,7 +695,7 @@
     },
     {
       "path": "src/SourceDraftScreen.tsx",
-      "sha256": "5fbb6bb5ff2479dcdac86bab261af15b8c8059b467f0769b6ec4b3a2042afa98"
+      "sha256": "bfd4c04a538dca876d3838b23177e1cdc122cb60dfa5537924b92106e7058694"
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
@@ -719,7 +723,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "c70bb67a9a8f71e155677d2182372dfd6ba22d99f13e1dd0bf899c123cf44fa0"
+      "sha256": "109ff3181f2e7ccdf2b4c0fd72fcef541a8b73ca2db705e862d2f4ba8543bd24"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -747,7 +751,7 @@
     },
     {
       "path": "src/source-draft-types.ts",
-      "sha256": "4e11d3f40a4775f00b4d26a4583049e642de79ec0499b06bee6b18ad2a54e74b"
+      "sha256": "5ac7eab13e2ee21d46e721fc17dab7d50b54783ed9f0f2e5c85e551e653bdaaf"
     },
     {
       "path": "src/source-draft.css",
@@ -783,7 +787,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "06da64b7e773e0e70d39f1a6dc23629c1cbb6ddab70128c046dfa417fcdcb78d"
+      "sha256": "f05121964b4ff4c7f8768379989b96120e932036d5acd3d9461a855cc4c6d71b"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -818,5 +822,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "22f8961ded916f7881fe869f2896dc88fa59c72a95197a3df205f30d8706b419"
+  "manifest_sha256": "27f18891fd07e47ba43787f378c713505d7bc57e6756e8976694a19f8f899669"
 }

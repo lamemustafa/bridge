@@ -21,7 +21,7 @@ pub mod tally;
 pub mod warning_codes;
 
 use std::path::PathBuf;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::sync::OnceCell;
 
 /// Holds everything needed to open the encrypted Tally mirror without doing any of the actual
@@ -90,9 +90,10 @@ pub fn run_journal_confirmation_child_from_args(
 pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
     tracing_subscriber::fmt::init();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(tally::TallyRuntime::default())
         .manage(source_draft::SourceDraftStore::default())
+        .manage(source_draft::SourceDraftLifecycleGuard::default())
         .manage(reports::bulk_party_statement::PartyStatementDestinationApprovals::default())
         .manage(reports::outstandings_working_paper_store::WorkingPaperExportStore::default())
         .manage(reports::trial_balance_store::TrialBalanceExportStore::default())
@@ -159,14 +160,64 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
             source_draft::desktop_pick_source_draft,
             source_draft::desktop_open_source_draft,
             source_draft::desktop_save_source_draft,
+            source_draft::desktop_pending_source_draft_lifecycle_request,
+            source_draft::desktop_cancel_source_draft_lifecycle_request,
+            source_draft::desktop_complete_source_draft_lifecycle_request,
             commands::desktop_pick_journal_for_review,
             commands::desktop_post_reviewed_journal,
             commands::desktop_reconcile_reviewed_journal,
             commands::select_document_files,
             commands::select_document_folder
         ])
-        .run(make_context())
-        .expect("failed to run Bridge");
+        .build(make_context())
+        .expect("failed to build Bridge");
+
+    app.run(|app, event| {
+        let lifecycle_guard = app.state::<source_draft::SourceDraftLifecycleGuard>();
+        match event {
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } if label == "main" => {
+                if !lifecycle_guard.take_close_permit() {
+                    api.prevent_close();
+                    emit_source_draft_lifecycle_request(
+                        app,
+                        &lifecycle_guard,
+                        source_draft::SourceDraftLifecycleKind::Close,
+                    );
+                }
+            }
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                if !lifecycle_guard.take_exit_permit() {
+                    api.prevent_exit();
+                    emit_source_draft_lifecycle_request(
+                        app,
+                        &lifecycle_guard,
+                        source_draft::SourceDraftLifecycleKind::Exit,
+                    );
+                }
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } if label == "main" => lifecycle_guard.main_window_destroyed(),
+            _ => {}
+        }
+    });
+}
+
+fn emit_source_draft_lifecycle_request(
+    app: &tauri::AppHandle,
+    guard: &source_draft::SourceDraftLifecycleGuard,
+    kind: source_draft::SourceDraftLifecycleKind,
+) {
+    let pending = guard.request(kind);
+    // A failed renderer event cannot release the native lifecycle guard; the
+    // renderer can recover the same pending request with the command at mount.
+    let _ = app.emit("source-draft-lifecycle-requested", pending);
 }
 
 #[cfg(test)]
@@ -252,13 +303,14 @@ mod lazy_tally_mirror_concurrency_tests {
 #[cfg(test)]
 mod security_config_tests {
     #[test]
-    fn renderer_does_not_receive_tauri_core_default_permissions() {
+    fn renderer_receives_only_native_lifecycle_event_permissions() {
         let capability: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/default.json"))
                 .expect("valid capability JSON");
-        assert!(capability["permissions"]
-            .as_array()
-            .is_some_and(|permissions| permissions.is_empty()));
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!(["core:event:allow-listen", "core:event:allow-unlisten"])
+        );
     }
 
     #[test]

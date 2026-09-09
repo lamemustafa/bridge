@@ -3,13 +3,19 @@
 
 #[path = "source_draft/files.rs"]
 mod files;
+#[path = "source_draft/lifecycle.rs"]
+mod lifecycle;
 #[path = "source_draft/types.rs"]
 mod types;
+
+pub(crate) use lifecycle::{
+    SourceDraftLifecycleGuard, SourceDraftLifecycleKind, SourceDraftLifecycleRequest,
+};
 
 use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDate;
-use tauri::State;
+use tauri::{Manager, State};
 use uuid::Uuid;
 
 use crate::source_draft_xml::{parse_source_xml, ParsedSource, MAX_SOURCE_BYTES};
@@ -109,6 +115,53 @@ pub(crate) async fn desktop_save_source_draft(
         .await
         .map_err(|_| error("source_draft_state_unavailable"))?
         .map(Some)
+}
+
+#[tauri::command]
+pub(crate) fn desktop_pending_source_draft_lifecycle_request(
+    guard: State<'_, SourceDraftLifecycleGuard>,
+) -> Option<SourceDraftLifecycleRequest> {
+    guard.pending()
+}
+
+#[tauri::command]
+pub(crate) fn desktop_cancel_source_draft_lifecycle_request(
+    guard: State<'_, SourceDraftLifecycleGuard>,
+    request: SourceDraftLifecycleRequest,
+) -> CommandResult<()> {
+    if guard.cancel(&request) {
+        Ok(())
+    } else {
+        Err(error("source_draft_lifecycle_request_not_pending"))
+    }
+}
+
+#[tauri::command]
+pub(crate) fn desktop_complete_source_draft_lifecycle_request(
+    app: tauri::AppHandle,
+    guard: State<'_, SourceDraftLifecycleGuard>,
+    request: SourceDraftLifecycleRequest,
+) -> CommandResult<()> {
+    let window = match request.kind {
+        SourceDraftLifecycleKind::Close => app
+            .get_webview_window("main")
+            .ok_or_else(|| error("source_draft_lifecycle_unavailable"))?,
+        SourceDraftLifecycleKind::Exit => {
+            if !guard.authorize(&request) {
+                return Err(error("source_draft_lifecycle_request_not_pending"));
+            }
+            app.exit(0);
+            return Ok(());
+        }
+    };
+    if !guard.authorize(&request) {
+        return Err(error("source_draft_lifecycle_request_not_pending"));
+    }
+    if window.close().is_err() {
+        guard.restore_after_failed_close(request);
+        return Err(error("source_draft_lifecycle_unavailable"));
+    }
+    Ok(())
 }
 
 impl SourceDraftStore {

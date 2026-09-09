@@ -121,6 +121,18 @@ pub(super) fn error(code: &'static str) -> SourceDraftCommandError {
             "The selected XML has too many distinct non-voucher record types.",
             "Choose a supported source XML with fewer non-voucher record types.",
         ),
+        "source_draft_omitted_field_limit_exceeded" => (
+            "A source row has too many distinct omitted field names.",
+            "Choose a supported source XML with fewer distinct fields per voucher.",
+        ),
+        "source_draft_lifecycle_request_not_pending" => (
+            "The requested close action is no longer pending.",
+            "Continue editing or request the close action again.",
+        ),
+        "source_draft_lifecycle_unavailable" => (
+            "Bridge could not complete the requested native close action.",
+            "Continue editing and try the close action again.",
+        ),
         _ => (
             "Bridge could not prepare this source draft.",
             "Review the selected local file and try again.",

@@ -1905,7 +1905,7 @@ function App() {
         {/* Keep local proposals mounted when navigating; switching views must not discard edits. */}
         <div hidden={view !== "source_draft"}>
           <ErrorBoundary key="source_draft" label="Prepare file">
-            <SourceDraftScreen onBusyChange={setSourceDraftBusy} />
+            <SourceDraftScreen onBusyChange={setSourceDraftBusy} onNativeLifecycleRequested={() => setView("source_draft")} />
           </ErrorBoundary>
         </div>
 
