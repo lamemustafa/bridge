@@ -2,6 +2,7 @@
 use super::*;
 
 const CAPTURED_VOUCHER_COMPANY_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
+const CAPTURED_BILL_ALLOCATION_COMPANY_GUID: &str = "74d7e825-396a-4667-90b2-83f593f06a36";
 
 fn captured_native_vouchers() -> String {
     let bytes = include_bytes!(
@@ -14,6 +15,66 @@ fn captured_native_vouchers() -> String {
             .collect::<Vec<_>>(),
     )
     .unwrap()
+}
+
+fn captured_bill_allocation_vouchers() -> String {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/vouchers_agst_ref_reopen_live.utf16le.xml"
+    );
+    String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn captured_bill_allocations_preserve_raw_fields_and_empty_entries() {
+    let captured = captured_bill_allocation_vouchers();
+    let rows = parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID).unwrap();
+    assert_eq!(
+        rows[0]["amounts"][0]["bill_allocations"],
+        json!([{"name": "SET-INV-001", "bill_type": "New Ref", "amount": "-1137.50"}])
+    );
+    assert_eq!(rows[0]["amounts"][1]["bill_allocations"], json!([]));
+
+    let padded_reference = captured.replacen(
+        "<NAME>SET-INV-001</NAME>",
+        "<NAME>  SET-INV-001  </NAME>",
+        1,
+    );
+    let padded =
+        parse_agent_rows(&padded_reference, CAPTURED_BILL_ALLOCATION_COMPANY_GUID).unwrap();
+    assert_eq!(
+        padded[0]["amounts"][0]["bill_allocations"][0]["name"],
+        "  SET-INV-001  "
+    );
+}
+
+#[test]
+fn incomplete_bill_allocations_are_refused_instead_of_becoming_empty() {
+    let captured = captured_bill_allocation_vouchers();
+    for field in ["NAME", "BILLTYPE", "AMOUNT"] {
+        let start = captured.find("<BILLALLOCATIONS.LIST>").unwrap();
+        let field_start = start + captured[start..].find(&format!("<{field}")).unwrap();
+        let field_end = field_start
+            + captured[field_start..]
+                .find(&format!("</{field}>"))
+                .unwrap()
+            + field.len()
+            + 3;
+        for replacement in [String::new(), format!("<{field}></{field}>")] {
+            let mut damaged = captured.clone();
+            damaged.replace_range(field_start..field_end, &replacement);
+            assert_eq!(
+                parse_agent_rows(&damaged, CAPTURED_BILL_ALLOCATION_COMPANY_GUID),
+                Err("bill_allocation_field_missing".into()),
+                "{field}"
+            );
+        }
+    }
 }
 
 #[test]

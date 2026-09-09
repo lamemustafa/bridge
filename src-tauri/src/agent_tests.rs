@@ -56,24 +56,34 @@ fn ordinary_vouchers_reject_missing_or_empty_core_fields_before_selection() {
 }
 
 #[test]
-fn movement_profile_fetches_the_flags_required_by_accounting_admission() {
-    let request = render_agent_vouchers("Book", "20260901", "20260902", None).unwrap();
-    let mut reader = quick_xml::Reader::from_str(&request);
-    let mut fields = Vec::new();
-    loop {
-        match reader.read_event().unwrap() {
-            quick_xml::events::Event::Start(event) if event.name().as_ref() == b"FETCH" => {
-                fields = String::from_utf8_lossy(&reader.read_text(event.name()).unwrap())
-                    .split(',')
-                    .map(str::to_string)
-                    .collect();
+fn voucher_profiles_fetch_accounting_state_and_bill_allocations() {
+    for request in [
+        render_agent_vouchers("Book", "20260901", "20260902", None).unwrap(),
+        render_agent_changed_vouchers("Book", 1, 2),
+    ] {
+        let mut reader = quick_xml::Reader::from_str(&request);
+        let mut fields = Vec::new();
+        loop {
+            match reader.read_event().unwrap() {
+                quick_xml::events::Event::Start(event) if event.name().as_ref() == b"FETCH" => {
+                    fields = String::from_utf8_lossy(&reader.read_text(event.name()).unwrap())
+                        .split(',')
+                        .map(str::to_string)
+                        .collect();
+                }
+                quick_xml::events::Event::Eof => break,
+                _ => {}
             }
-            quick_xml::events::Event::Eof => break,
-            _ => {}
         }
-    }
-    for field in ["ISCANCELLED", "ISOPTIONAL"] {
-        assert!(fields.iter().any(|value| value == field), "missing {field}");
+        for field in [
+            "ISCANCELLED",
+            "ISOPTIONAL",
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.NAME",
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE",
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.AMOUNT",
+        ] {
+            assert!(fields.iter().any(|value| value == field), "missing {field}");
+        }
     }
     let xml = voucher_collection_xml().replace(
         "<GUID>",
