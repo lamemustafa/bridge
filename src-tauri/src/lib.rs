@@ -114,7 +114,11 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
         .on_menu_event(|app, event| {
             if let Some(kind) = lifecycle_kind_for_menu_item(event.id().as_ref()) {
                 let lifecycle_guard = app.state::<source_draft::SourceDraftLifecycleGuard>();
-                emit_source_draft_lifecycle_request(app, &lifecycle_guard, kind);
+                if lifecycle_guard.requires_confirmation() {
+                    emit_source_draft_lifecycle_request(app, &lifecycle_guard, kind);
+                } else {
+                    app.exit(0);
+                }
             }
         });
 
@@ -176,6 +180,8 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
             source_draft::desktop_pick_source_draft,
             source_draft::desktop_open_source_draft,
             source_draft::desktop_save_source_draft,
+            source_draft::desktop_register_source_draft_lifecycle_renderer,
+            source_draft::desktop_unregister_source_draft_lifecycle_renderer,
             source_draft::desktop_pending_source_draft_lifecycle_request,
             source_draft::desktop_cancel_source_draft_lifecycle_request,
             source_draft::desktop_complete_source_draft_lifecycle_request,
@@ -196,7 +202,7 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } if label == "main" => {
-                if !lifecycle_guard.take_close_permit() {
+                if lifecycle_guard.requires_confirmation() && !lifecycle_guard.take_close_permit() {
                     api.prevent_close();
                     emit_source_draft_lifecycle_request(
                         app,
@@ -206,7 +212,7 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
                 }
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
-                if !lifecycle_guard.take_exit_permit() {
+                if lifecycle_guard.requires_confirmation() && !lifecycle_guard.take_exit_permit() {
                     api.prevent_exit();
                     emit_source_draft_lifecycle_request(
                         app,

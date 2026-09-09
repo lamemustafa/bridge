@@ -503,7 +503,7 @@
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "sha256": "c0e72b33a2fad0b3dd606d4dd431c96bba47d8e3e7c134af15e6a5c65d0ff2f5"
+      "sha256": "c60e6d6e5106b20de69c9dfa6f5b300a05cf844dd6ef106d912c4c14f1c7c5fe"
     },
     {
       "path": "src-tauri/src/local_files/file.rs",
@@ -571,7 +571,7 @@
     },
     {
       "path": "src-tauri/src/source_draft.rs",
-      "sha256": "3e8318685c3ce7f6223880c9441fd90f6d8ca23b39a18ee4eec3888847568e18"
+      "sha256": "52ecf04bb350eb80d0290a50144dc73b6da3843690173843ec0b25e0d8003f2b"
     },
     {
       "path": "src-tauri/src/source_draft/files.rs",
@@ -579,7 +579,7 @@
     },
     {
       "path": "src-tauri/src/source_draft/lifecycle.rs",
-      "sha256": "9d01e4d00e7916a0c68a8bb0f6c6adbe1377f8e161a269dcec48933c620134d7"
+      "sha256": "e5b26511ea082c4ee796c4e9cc37e766c77d2796a8ee88e07b1340e6f14c8f58"
     },
     {
       "path": "src-tauri/src/source_draft/types.rs",
@@ -587,7 +587,7 @@
     },
     {
       "path": "src-tauri/src/source_draft_xml.rs",
-      "sha256": "ba0ca5cd33784bcba9f7003d976be62656514fa8a483ea6cec1fe77f4d5d39c5"
+      "sha256": "8c54f2fc59da5f7b64aa7b68f969b223bd65de914e92cb9350a7c714e6e48b4e"
     },
     {
       "path": "src-tauri/src/sync/coordinator.rs",
@@ -678,12 +678,20 @@
       "sha256": "52b784448067bc6bbe89fea64cf509668ad196e686316c72823262bde04c9ec1"
     },
     {
+      "path": "src/JournalPostingScreen.tsx",
+      "sha256": "362b2db96621b582df478943d8e871e7d32a5d93de9e7e93d9e7390b17da4e87"
+    },
+    {
       "path": "src/LedgerEntriesScreen.tsx",
       "sha256": "9fe95889c7ec216e0783f5d1e2f8e472333de392eae59520f6c93730327f0f1d"
     },
     {
       "path": "src/MirrorProofScreen.tsx",
       "sha256": "090ce413b9d2b4876c17128db419d814d2e5eeee95007cb0070b7d1eca771379"
+    },
+    {
+      "path": "src/NativeLifecycleController.tsx",
+      "sha256": "ecc4568ee551cd9c0438e3df1f7c2a3fcaea3feace1fc1c72b5919fbafe49dcc"
     },
     {
       "path": "src/OutstandingsEvidencePanel.tsx",
@@ -695,7 +703,7 @@
     },
     {
       "path": "src/SourceDraftScreen.tsx",
-      "sha256": "0af0473c2b6071fa0a68646e4e8d3e97e5cbfc9fdea411f9b3e480cc0e0c7c3a"
+      "sha256": "75bec9ef26a9b3e37f3c95f2edfd7bf905650c130fcb84951e6ede4289673cae"
     },
     {
       "path": "src/TallyReadinessFlow.tsx",
@@ -723,7 +731,7 @@
     },
     {
       "path": "src/main.tsx",
-      "sha256": "4346d69d1412b5d298831ac8e57c9729af74abff6034d837268b92aa272b125b"
+      "sha256": "76cafb3b972d7183890051610fa876430a12588889e5178fb98a5e730f2dfaff"
     },
     {
       "path": "src/outstandings-as-of.ts",
@@ -751,7 +759,7 @@
     },
     {
       "path": "src/source-draft-types.ts",
-      "sha256": "f387a7bc441399191640dfc2fc63d78be795cb25ce7606520084072bcda488b0"
+      "sha256": "2a5394fda74d4e3f513f156726ea5ed622c3636a917269ec20c35fa40229dd59"
     },
     {
       "path": "src/source-draft.css",
@@ -787,7 +795,7 @@
     },
     {
       "path": "tools/bridge-tally-compatibility/src/lib.rs",
-      "sha256": "f05121964b4ff4c7f8768379989b96120e932036d5acd3d9461a855cc4c6d71b"
+      "sha256": "43287b79bd2c37e6e05969ddb06156bfda138e06286144da44edce24fc023d21"
     },
     {
       "path": "tools/bridge-tally-compatibility/src/main.rs",
@@ -822,5 +830,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "b40d7f721cc2188b94d87dc4743184bd10d540724e5eca94fa0aac6c06135764"
+  "manifest_sha256": "18679dd15e8bef27d3ef8230dd9edda6607f58a27930b680e995b8bbab00a8c6"
 }

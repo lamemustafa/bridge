@@ -118,6 +118,22 @@ pub(crate) async fn desktop_save_source_draft(
 }
 
 #[tauri::command]
+pub(crate) fn desktop_register_source_draft_lifecycle_renderer(
+    guard: State<'_, SourceDraftLifecycleGuard>,
+    token: uuid::Uuid,
+) {
+    guard.renderer_registered(token);
+}
+
+#[tauri::command]
+pub(crate) fn desktop_unregister_source_draft_lifecycle_renderer(
+    guard: State<'_, SourceDraftLifecycleGuard>,
+    token: uuid::Uuid,
+) {
+    guard.renderer_unregistered(token);
+}
+
+#[tauri::command]
 pub(crate) fn desktop_pending_source_draft_lifecycle_request(
     guard: State<'_, SourceDraftLifecycleGuard>,
 ) -> Option<SourceDraftLifecycleRequest> {

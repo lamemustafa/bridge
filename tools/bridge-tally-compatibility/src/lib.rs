@@ -30,7 +30,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 205;
+pub const MAX_SURFACE_FILES: usize = 207;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -39,10 +39,13 @@ const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1000;
 const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
     ["src-tauri/src/db/migrations", "src-tauri/src/reports"];
 /// Compatibility evidence binds the selected-ledger constructor and the native
-/// source-draft lifecycle guard, rather than trusting only their callers.
-const REQUIRED_SURFACE_FILES: [&str; 2] = [
+/// lifecycle implementation and its two frontend admission points, rather than
+/// trusting only their callers.
+const REQUIRED_SURFACE_FILES: [&str; 4] = [
     "src-tauri/src/agent_desktop_journal.rs",
     "src-tauri/src/source_draft/lifecycle.rs",
+    "src/JournalPostingScreen.tsx",
+    "src/NativeLifecycleController.tsx",
 ];
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -2452,10 +2455,10 @@ mod tests {
     }
 
     #[test]
-    fn surface_file_cap_refuses_206_entries() {
+    fn surface_file_cap_refuses_208_entries() {
         let oversized = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: (0..206)
+            files: (0..208)
                 .map(|index| SurfaceFile {
                     path: format!("pinned-{index:03}"),
                     sha256: "0".repeat(64),
@@ -2500,20 +2503,21 @@ mod tests {
     }
 
     #[test]
-    fn gate_rejects_an_omitted_source_draft_lifecycle_guard() {
-        let temp = tempfile::tempdir().unwrap();
-        fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
-        let mut surface = sealed_surface(temp.path(), &["surface.txt"]);
-        surface
-            .files
-            .retain(|file| file.path != "src-tauri/src/source_draft/lifecycle.rs");
-        surface.manifest_sha256.clear();
-        let surface = surface.seal().unwrap();
+    fn gate_rejects_each_omitted_required_lifecycle_path() {
+        for omitted_path in REQUIRED_SURFACE_FILES {
+            let temp = tempfile::tempdir().unwrap();
+            fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+            let mut surface = sealed_surface(temp.path(), &["surface.txt"]);
+            surface.files.retain(|file| file.path != omitted_path);
+            surface.manifest_sha256.clear();
+            let surface = surface.seal().unwrap();
 
-        assert_eq!(
-            surface.validate_files(temp.path()).unwrap_err(),
-            invalid("surface_required_directory_file_unpinned")
-        );
+            assert_eq!(
+                surface.validate_files(temp.path()).unwrap_err(),
+                invalid("surface_required_directory_file_unpinned"),
+                "{omitted_path} must remain pinned"
+            );
+        }
     }
 
     fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {

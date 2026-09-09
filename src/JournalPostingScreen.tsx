@@ -105,9 +105,21 @@ type JournalPostingScreenProps = {
   config: TallyConfig;
   onBusyChange?: (busy: boolean) => void;
   postingBlocked?: boolean;
+  lifecycleAdmissionReady?: boolean;
+  lifecycleInteractionBlocked?: boolean;
+  isLifecycleInteractionBlocked?: () => boolean;
+  lifecycleAdmissionError?: string | null;
 };
 
-export function JournalPostingScreen({ config, onBusyChange, postingBlocked = false }: JournalPostingScreenProps) {
+export function JournalPostingScreen({
+  config,
+  onBusyChange,
+  postingBlocked = false,
+  lifecycleAdmissionReady = true,
+  lifecycleInteractionBlocked = false,
+  isLifecycleInteractionBlocked = () => false,
+  lifecycleAdmissionError = null,
+}: JournalPostingScreenProps) {
   const [review, setReview] = React.useState<JournalReview | null>(null);
   const [actionResult, setActionResult] = React.useState<JournalActionResponse | null>(null);
   const [action, setAction] = React.useState<Action>(null);
@@ -117,7 +129,7 @@ export function JournalPostingScreen({ config, onBusyChange, postingBlocked = fa
   const actionRef = React.useRef<Action>(null);
 
   async function chooseJournal() {
-    if (actionRef.current !== null) return;
+    if (!lifecycleAdmissionReady || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null) return;
     onBusyChange?.(true);
     actionRef.current = "pick";
     setAction("pick");
@@ -140,7 +152,7 @@ export function JournalPostingScreen({ config, onBusyChange, postingBlocked = fa
   }
 
   async function runAction(kind: "post" | "reconcile") {
-    if (!review || actionRef.current !== null || (kind === "post" && postingBlocked)) return;
+    if (!lifecycleAdmissionReady || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || !review || actionRef.current !== null || (kind === "post" && postingBlocked)) return;
     const requestedConfig = reviewConfig ?? config;
     onBusyChange?.(true);
     actionRef.current = kind;
@@ -198,13 +210,13 @@ export function JournalPostingScreen({ config, onBusyChange, postingBlocked = fa
         <FileText size={24} aria-hidden="true" />
       </div>
 
-      {error && <div className="error-banner" role="alert"><strong>Journal action failed</strong><span>{error}</span></div>}
+      {(lifecycleAdmissionError || error) && <div className="error-banner" role="alert"><strong>{lifecycleAdmissionError ? "Native close protection unavailable" : "Journal action failed"}</strong><span>{lifecycleAdmissionError ?? error}</span></div>}
 
       {!review ? (
         <div className="journal-empty-state">
           <ShieldCheck size={28} aria-hidden="true" />
           <p>No Journal is open for review.</p>
-          <button className="primary" type="button" onClick={() => void chooseJournal()} disabled={action !== null}>
+          <button className="primary" type="button" onClick={() => void chooseJournal()} disabled={action !== null || !lifecycleAdmissionReady || lifecycleInteractionBlocked}>
             <FileText size={18} aria-hidden="true" />
             {action === "pick" ? "Opening file picker…" : "Choose Journal file"}
           </button>
@@ -271,17 +283,17 @@ export function JournalPostingScreen({ config, onBusyChange, postingBlocked = fa
           {!postingBlocked && !verified && !reconciliationRequired && <p className="journal-action-note">Review the approval dialog; Bridge then checks and posts this saved batch.</p>}
           <div className="journal-actions">
             {journalState.canReconcile ? (
-              <button className="primary" type="button" onClick={() => void runAction("reconcile")} disabled={action !== null}>
+              <button className="primary" type="button" onClick={() => void runAction("reconcile")} disabled={action !== null || !lifecycleAdmissionReady || lifecycleInteractionBlocked}>
                 <RotateCcw size={18} aria-hidden="true" />
                 {action === "reconcile" ? "Reconciling original batch…" : "Reconcile original batch"}
               </button>
             ) : journalState.canPost ? (
-              <button className="primary" type="button" onClick={() => void runAction("post")} disabled={action !== null || postingBlocked}>
+              <button className="primary" type="button" onClick={() => void runAction("post")} disabled={action !== null || postingBlocked || !lifecycleAdmissionReady || lifecycleInteractionBlocked}>
                 <ShieldCheck size={18} aria-hidden="true" />
                 {action === "post" ? "Review approval dialog…" : "Post Journal"}
               </button>
             ) : null}
-            {journalState.canChooseAnother && <button className="secondary-action" type="button" onClick={() => void chooseJournal()} disabled={action !== null}>Choose another file</button>}
+            {journalState.canChooseAnother && <button className="secondary-action" type="button" onClick={() => void chooseJournal()} disabled={action !== null || !lifecycleAdmissionReady || lifecycleInteractionBlocked}>Choose another file</button>}
           </div>
         </>
       )}

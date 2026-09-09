@@ -39,6 +39,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { ClientSwitcher, type ClientSwitcherClient } from "./ClientSwitcher";
 import { JournalPostingScreen } from "./JournalPostingScreen";
 import { SourceDraftScreen } from "./SourceDraftScreen";
+import { NativeLifecycleController, hasNativeWindowRuntime } from "./NativeLifecycleController";
 import { TrialBalanceScreen } from "./TrialBalanceScreen";
 import { LedgerEntriesScreen } from "./LedgerEntriesScreen";
 import { createDrawerFocusLifecycle, ensureDrawerFocus, shouldFocusMainContentAfterViewTransition, trapDrawerTabKeydown } from "./evidence-drawer-focus";
@@ -502,7 +503,12 @@ function App() {
   const [sourceDraftBusy, setSourceDraftBusy] = React.useState(false);
   const [sourceDraftLifecycleOpen, setSourceDraftLifecycleOpen] = React.useState(false);
   const [sourceDraftLifecycleFocusRestore, setSourceDraftLifecycleFocusRestore] = React.useState<(() => void) | null>(null);
+  const [sourceDraftLifecycleReady, setSourceDraftLifecycleReady] = React.useState(() => !hasNativeWindowRuntime());
+  const [sourceDraftLifecycleProtectionError, setSourceDraftLifecycleProtectionError] = React.useState<string | null>(null);
   const journalActionBusyRef = React.useRef(false);
+  const sourceDraftDirtyRef = React.useRef(false);
+  const sourceDraftActionBusyRef = React.useRef(false);
+  const sourceDraftLifecyclePendingRef = React.useRef(false);
   const tallyResultsVersion = React.useRef(0);
   const persistedCompanyProfileLoadVersion = React.useRef(0);
   const proofPreviewRequestVersion = React.useRef(0);
@@ -583,10 +589,19 @@ function App() {
     setJournalActionBusy(next);
   }, []);
 
-  const isNativeLifecycleCompletionBlocked = React.useCallback(
-    () => journalActionBusyRef.current,
-    [],
-  );
+  const changeSourceDraftBusy = React.useCallback((next: boolean) => {
+    sourceDraftActionBusyRef.current = next;
+    setSourceDraftBusy(next);
+  }, []);
+
+  const changeSourceDraftDirty = React.useCallback((next: boolean) => {
+    sourceDraftDirtyRef.current = next;
+  }, []);
+
+  const changeSourceDraftLifecycleProtection = React.useCallback((ready: boolean, error: string | null) => {
+    setSourceDraftLifecycleReady(ready);
+    setSourceDraftLifecycleProtectionError(error);
+  }, []);
 
   const restoreSourceDraftLifecycleFocus = React.useCallback((restoreFocus: () => void) => {
     setSourceDraftLifecycleFocusRestore(() => restoreFocus);
@@ -1578,6 +1593,16 @@ function App() {
                   : "Run a read-only Core Accounting evidence read";
 
   return (
+    <>
+      <NativeLifecycleController
+        sourceDraftDirtyRef={sourceDraftDirtyRef}
+        sourceDraftActionBusyRef={sourceDraftActionBusyRef}
+        journalActionBusyRef={journalActionBusyRef}
+        lifecyclePendingRef={sourceDraftLifecyclePendingRef}
+        onProtectionChange={changeSourceDraftLifecycleProtection}
+        onModalChange={setSourceDraftLifecycleOpen}
+        onModalClosed={restoreSourceDraftLifecycleFocus}
+      />
     <div className="shell" inert={evidenceDrawerOpen || sourceDraftLifecycleOpen || undefined} aria-hidden={evidenceDrawerOpen || sourceDraftLifecycleOpen || undefined}>
       <a className="skip-link" href="#main-content">Skip to active view</a>
       <aside className="sidebar">
@@ -1626,6 +1651,9 @@ function App() {
         {journalActionBusy && (
           <p className="future-sections-note" id="journal-action-busy-note" role="status">A Journal action is still in progress. Wait for Bridge to finish before leaving this review.</p>
         )}
+        {!sourceDraftLifecycleReady && sourceDraftLifecycleProtectionError && (
+          <p className="future-sections-note" id="native-lifecycle-protection-note" role="status">Native close protection is unavailable. Reopen Bridge before preparing a source draft or reviewing a Journal.</p>
+        )}
       </aside>
 
       <main className="content" id="main-content" ref={mainContentRef} tabIndex={-1} aria-labelledby="active-view-title">
@@ -1672,7 +1700,7 @@ function App() {
               {view === "outstandings" && <button className="secondary-action" type="button" disabled={shellNavigationLocked} onClick={() => setView("ledger_entries")}>
                 <Search size={18} aria-hidden="true" /> Investigate ledger
               </button>}
-              <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotPostingBlocked} onClick={() => setView("journal")}>
+              <button className="secondary-action" type="button" disabled={shellNavigationLocked || snapshotPostingBlocked || !sourceDraftLifecycleReady} aria-describedby={!sourceDraftLifecycleReady ? "native-lifecycle-protection-note" : undefined} onClick={() => setView("journal")}>
                 <FileText size={18} aria-hidden="true" /> Review Journal file
               </button>
             </div>
@@ -1929,17 +1957,27 @@ function App() {
         <div hidden={view !== "source_draft"}>
           <ErrorBoundary key="source_draft" label="Prepare file">
             <SourceDraftScreen
-              onBusyChange={setSourceDraftBusy}
-              isNativeLifecycleCompletionBlocked={isNativeLifecycleCompletionBlocked}
-              onNativeLifecycleModalChange={setSourceDraftLifecycleOpen}
-              onNativeLifecycleModalClosed={restoreSourceDraftLifecycleFocus}
+              onBusyChange={changeSourceDraftBusy}
+              onDirtyChange={changeSourceDraftDirty}
+              editingEnabled={sourceDraftLifecycleReady}
+              lifecycleInteractionBlocked={sourceDraftLifecycleOpen}
+              isLifecycleInteractionBlocked={() => sourceDraftLifecyclePendingRef.current}
+              protectionError={sourceDraftLifecycleProtectionError}
             />
           </ErrorBoundary>
         </div>
 
         {view === "journal" && (
           <ErrorBoundary key="journal" label="Review Journal">
-            <JournalPostingScreen config={config} postingBlocked={snapshotPostingBlocked} onBusyChange={changeJournalActionBusy} />
+            <JournalPostingScreen
+              config={config}
+              postingBlocked={snapshotPostingBlocked}
+              onBusyChange={changeJournalActionBusy}
+              lifecycleAdmissionReady={sourceDraftLifecycleReady}
+              lifecycleInteractionBlocked={sourceDraftLifecycleOpen}
+              isLifecycleInteractionBlocked={() => sourceDraftLifecyclePendingRef.current}
+              lifecycleAdmissionError={sourceDraftLifecycleProtectionError}
+            />
           </ErrorBoundary>
         )}
 
@@ -2369,6 +2407,7 @@ function App() {
         )}
       </main>
     </div>
+    </>
   );
 }
 

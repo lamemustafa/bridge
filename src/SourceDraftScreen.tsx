@@ -1,9 +1,6 @@
 import React from "react";
-import { createPortal } from "react-dom";
 import { FilePlus2, FolderOpen, Save, ShieldAlert, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { createDrawerFocusLifecycle, ensureDrawerFocus, trapDrawerTabKeydown } from "./evidence-drawer-focus";
 import "./source-draft.css";
 import {
   SourceDraft,
@@ -19,7 +16,6 @@ import {
 
 const PAGE_SIZE = 25;
 const VOUCHER_TYPES: SourceDraftVoucherType[] = ["Payment", "Receipt", "Journal", "Contra"];
-const neverBlockNativeLifecycleCompletion = () => false;
 
 function cloneProposal(proposal: SourceDraftProposal): SourceDraftProposal {
   return { ...proposal, entries: proposal.entries.map((entry) => ({ ...entry })) };
@@ -64,29 +60,13 @@ function sourceEntryLabel(entry: SourceDraftSourceEntry) {
   return `${displayObserved(entry.source_ledger, "Empty source ledger")} · ${displayObserved(entry.source_polarity, "Empty source polarity")} · ${displayObserved(entry.source_amount, "Empty source amount")}`;
 }
 
-type NativeLifecycleKind = "close" | "exit";
-
-type NativeLifecycleRequest = {
-  request_id: string;
-  kind: NativeLifecycleKind;
-};
-
-function sameNativeLifecycleRequest(left: NativeLifecycleRequest, right: NativeLifecycleRequest) {
-  return left.request_id === right.request_id && left.kind === right.kind;
-}
-
-function hasNativeWindowRuntime() {
-  const internals = (window as unknown as {
-    __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: unknown } } };
-  }).__TAURI_INTERNALS__;
-  return typeof internals?.metadata?.currentWindow?.label === "string";
-}
-
 export function SourceDraftScreen({
   onBusyChange,
-  isNativeLifecycleCompletionBlocked = neverBlockNativeLifecycleCompletion,
-  onNativeLifecycleModalChange,
-  onNativeLifecycleModalClosed,
+  onDirtyChange,
+  editingEnabled = true,
+  lifecycleInteractionBlocked = false,
+  isLifecycleInteractionBlocked = () => false,
+  protectionError = null,
 }: SourceDraftScreenProps) {
   const [draft, setDraft] = React.useState<SourceDraft | null>(null);
   const [dirty, setDirty] = React.useState(false);
@@ -96,55 +76,23 @@ export function SourceDraftScreen({
   const [pendingAction, setPendingAction] = React.useState<Exclude<SourceDraftAction, "save" | null> | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [savedPath, setSavedPath] = React.useState<string | null>(null);
-  const [nativeLifecycleRequest, setNativeLifecycleRequest] = React.useState<NativeLifecycleRequest | null>(null);
-  const [nativeLifecycleBusy, setNativeLifecycleBusy] = React.useState(false);
   const mounted = React.useRef(true);
   const actionRef = React.useRef<SourceDraftAction>(null);
   const dirtyRef = React.useRef(false);
-  const lifecycleEpoch = React.useRef(0);
-  const nativeLifecycleRequestRef = React.useRef<NativeLifecycleRequest | null>(null);
-  const nativeLifecycleBusyRef = React.useRef(false);
-  const nativeLifecycleCompletingRef = React.useRef(false);
-  const lifecycleDialogRef = React.useRef<HTMLElement | null>(null);
-  const lifecycleDialogWasOpen = React.useRef(false);
-  const lifecycleFocusLifecycle = React.useRef(createDrawerFocusLifecycle()).current;
   dirtyRef.current = dirty;
 
-  const setCurrentNativeLifecycleRequest = React.useCallback((request: NativeLifecycleRequest | null) => {
-    nativeLifecycleRequestRef.current = request;
-    setNativeLifecycleRequest(request);
-  }, []);
+  const setDraftDirty = React.useCallback((next: boolean) => {
+    dirtyRef.current = next;
+    setDirty(next);
+    onDirtyChange?.(next);
+  }, [onDirtyChange]);
 
   React.useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      if (actionRef.current !== null) onBusyChange?.(false);
     };
   }, [onBusyChange]);
-
-  React.useLayoutEffect(() => {
-    const open = nativeLifecycleRequest !== null;
-    onNativeLifecycleModalChange?.(open);
-    if (open) {
-      if (!lifecycleDialogWasOpen.current) {
-        lifecycleFocusLifecycle.captureOpener(document.activeElement instanceof HTMLElement ? document.activeElement : null);
-        lifecycleDialogWasOpen.current = true;
-      }
-      ensureDrawerFocus(true, lifecycleDialogRef.current);
-    } else if (lifecycleDialogWasOpen.current) {
-      lifecycleDialogWasOpen.current = false;
-      const restoreFocus = () => {
-        lifecycleFocusLifecycle.restoreOpener();
-      };
-      if (onNativeLifecycleModalClosed) onNativeLifecycleModalClosed(restoreFocus);
-      else restoreFocus();
-    }
-  }, [nativeLifecycleRequest, onNativeLifecycleModalChange, onNativeLifecycleModalClosed, lifecycleFocusLifecycle]);
-
-  React.useLayoutEffect(() => () => {
-    onNativeLifecycleModalChange?.(false);
-  }, [onNativeLifecycleModalChange]);
 
   const selectedRow = draft?.rows.find((row) => row.position === selectedPosition) ?? null;
   const pageCount = Math.max(1, Math.ceil((draft?.rows.length ?? 0) / PAGE_SIZE));
@@ -161,55 +109,8 @@ export function SourceDraftScreen({
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty]);
 
-  React.useEffect(() => {
-    if (!hasNativeWindowRuntime()) return;
-    let active = true;
-    let unlisten: (() => void) | undefined;
-
-    const handleRequest = async (request: NativeLifecycleRequest) => {
-      if (!active) return;
-      const epoch = ++lifecycleEpoch.current;
-      let pending: NativeLifecycleRequest | null;
-      try {
-        pending = await invoke<NativeLifecycleRequest | null>("desktop_pending_source_draft_lifecycle_request");
-      } catch (cause) {
-        if (active) setError(errorMessage(cause));
-        return;
-      }
-      if (!active || epoch !== lifecycleEpoch.current || !pending || !sameNativeLifecycleRequest(pending, request)) return;
-      setCurrentNativeLifecycleRequest(request);
-      if (dirtyRef.current || lifecycleCompletionIsBlocked()) {
-        setPendingAction(null);
-        return;
-      }
-      void completeNativeLifecycleRequest(request);
-    };
-
-    void (async () => {
-      try {
-        const registeredUnlisten = await listen<NativeLifecycleRequest>("source-draft-lifecycle-requested", (event) => {
-          void handleRequest(event.payload);
-        });
-        if (!active) {
-          registeredUnlisten();
-          return;
-        }
-        unlisten = registeredUnlisten;
-        const pending = await invoke<NativeLifecycleRequest | null>("desktop_pending_source_draft_lifecycle_request");
-        if (active && pending) await handleRequest(pending);
-      } catch (cause) {
-        if (active) setError(`Bridge could not install native close protection: ${errorMessage(cause)}`);
-      }
-    })();
-
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  }, [isNativeLifecycleCompletionBlocked, setCurrentNativeLifecycleRequest]);
-
   async function load(kind: Exclude<SourceDraftAction, "save" | null>) {
-    if (actionRef.current !== null || nativeLifecycleCompletingRef.current) return;
+    if (!editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null) return;
     actionRef.current = kind;
     setAction(kind);
     setError(null);
@@ -222,8 +123,7 @@ export function SourceDraftScreen({
       }
       const copy = cloneDraft(next);
       setDraft(copy);
-      dirtyRef.current = false;
-      setDirty(false);
+      setDraftDirty(false);
       setSelectedPosition(copy.rows[0]?.position ?? null);
       setPage(0);
       setSavedPath(null);
@@ -232,21 +132,19 @@ export function SourceDraftScreen({
       if (mounted.current) setError(errorMessage(cause));
     } finally {
       actionRef.current = null;
-      if (mounted.current) {
-        setAction(null);
-        onBusyChange?.(false);
-      }
+      onBusyChange?.(false);
+      if (mounted.current) setAction(null);
     }
   }
 
   function requestLoad(kind: Exclude<SourceDraftAction, "save" | null>) {
-    if (actionRef.current !== null || nativeLifecycleCompletingRef.current) return;
+    if (!editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null) return;
     if (dirty) setPendingAction(kind);
     else void load(kind);
   }
 
   async function save() {
-    if (!draft || actionRef.current !== null || nativeLifecycleCompletingRef.current) return;
+    if (!editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || !draft || actionRef.current !== null) return;
     actionRef.current = "save";
     setAction("save");
     setError(null);
@@ -259,30 +157,26 @@ export function SourceDraftScreen({
       if (!mounted.current || !next) return;
       const copy = cloneDraft(next);
       setDraft(copy);
-      dirtyRef.current = false;
-      setDirty(false);
+      setDraftDirty(false);
       setSavedPath("Draft saved locally as JSON.");
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
     } finally {
       actionRef.current = null;
-      if (mounted.current) {
-        setAction(null);
-        onBusyChange?.(false);
-      }
+      onBusyChange?.(false);
+      if (mounted.current) setAction(null);
     }
   }
 
   function updateProposal(change: (proposal: SourceDraftProposal) => SourceDraftProposal) {
-    if (selectedPosition === null || nativeLifecycleRequestRef.current !== null) return;
-    dirtyRef.current = true;
-    setDirty(true);
+    if (!editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || selectedPosition === null) return;
+    setDraftDirty(true);
     setSavedPath(null);
     setDraft((current) => current && ({ ...current, rows: current.rows.map((row) => row.position === selectedPosition ? { ...row, proposal: change(cloneProposal(row.proposal)) } : row) }));
   }
 
   function changePage(change: (value: number) => number) {
-    if (nativeLifecycleCompletingRef.current) return;
+    if (!editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked()) return;
     setSelectedPosition(null);
     setPage(change);
   }
@@ -291,110 +185,10 @@ export function SourceDraftScreen({
     updateProposal((proposal) => ({ ...proposal, entries: proposal.entries.map((entry, index) => index === position ? change({ ...entry }) : entry) }));
   }
 
-  async function cancelNativeLifecycleRequest() {
-    const request = nativeLifecycleRequestRef.current;
-    if (!request || nativeLifecycleBusyRef.current) return;
-    lifecycleEpoch.current += 1;
-    nativeLifecycleBusyRef.current = true;
-    setNativeLifecycleBusy(true);
-    setError(null);
-    try {
-      await invoke("desktop_cancel_source_draft_lifecycle_request", { request });
-      if (mounted.current && sameNativeLifecycleRequest(nativeLifecycleRequestRef.current ?? request, request)) {
-        setCurrentNativeLifecycleRequest(null);
-      }
-    } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
-    } finally {
-      nativeLifecycleBusyRef.current = false;
-      if (mounted.current) setNativeLifecycleBusy(false);
-    }
-  }
-
-  function lifecycleCompletionIsBlocked() {
-    return isNativeLifecycleCompletionBlocked() || actionRef.current !== null;
-  }
-
-  async function completeNativeLifecycleRequest(request = nativeLifecycleRequestRef.current) {
-    if (!request || nativeLifecycleBusyRef.current || lifecycleCompletionIsBlocked()) return;
-    lifecycleEpoch.current += 1;
-    nativeLifecycleBusyRef.current = true;
-    nativeLifecycleCompletingRef.current = true;
-    setCurrentNativeLifecycleRequest(request);
-    setNativeLifecycleBusy(true);
-    setError(null);
-    try {
-      await invoke("desktop_complete_source_draft_lifecycle_request", { request });
-    } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
-    } finally {
-      nativeLifecycleCompletingRef.current = false;
-      nativeLifecycleBusyRef.current = false;
-      if (mounted.current) setNativeLifecycleBusy(false);
-    }
-  }
-
-  const busy = action !== null || nativeLifecycleRequest !== null;
-  const confirmationBusy = action !== null || nativeLifecycleBusy;
-  const journalLifecycleCompletionBlocked = isNativeLifecycleCompletionBlocked();
-  const lifecycleCompletionBlocked = journalLifecycleCompletionBlocked || action !== null;
-  const lifecycleIsExit = nativeLifecycleRequest?.kind === "exit";
-  const lifecycleHeading = dirty
-    ? lifecycleIsExit ? "Discard unsaved proposals and quit Bridge?" : "Discard unsaved proposals and close this window?"
-    : lifecycleIsExit ? "Quit Bridge?" : "Close this window?";
-  const lifecycleDescription = journalLifecycleCompletionBlocked
-    ? "A Journal action is in progress. Wait for the result before closing Bridge."
-    : action !== null
-    ? "A local source-draft action is in progress. Wait for its result before closing Bridge."
-    : dirty
-    ? "Unsaved proposal edits are local only and will be lost."
-    : "No unsaved proposals remain.";
-  const nativeLifecycleConfirmation = nativeLifecycleRequest && createPortal(
-    <div className="source-draft-lifecycle-backdrop">
-      <section
-        className="source-draft-confirm source-draft-lifecycle-dialog"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="source-draft-lifecycle-heading"
-        tabIndex={-1}
-        ref={lifecycleDialogRef}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && !confirmationBusy) {
-            void cancelNativeLifecycleRequest();
-            return;
-          }
-          trapDrawerTabKeydown(event);
-        }}
-      >
-        <div>
-          <h3 id="source-draft-lifecycle-heading">{lifecycleHeading}</h3>
-          <p>{lifecycleDescription}</p>
-          {error && <p className="error-banner" role="alert">{error}</p>}
-        </div>
-        <div className="source-draft-actions">
-          <button
-            className="primary"
-            type="button"
-            onClick={() => void completeNativeLifecycleRequest()}
-            disabled={confirmationBusy || lifecycleCompletionBlocked}
-          >
-            {lifecycleIsExit ? "Discard and quit" : "Discard and close"}
-          </button>
-          <button
-            className="secondary-action"
-            type="button"
-            onClick={() => void cancelNativeLifecycleRequest()}
-            disabled={confirmationBusy}
-          >
-            Keep editing
-          </button>
-        </div>
-      </section>
-    </div>,
-    document.body,
-  );
+  const busy = action !== null;
+  const interactionDisabled = busy || !editingEnabled || lifecycleInteractionBlocked;
   return (
-    <section className="panel wide source-draft" aria-labelledby="source-draft-heading" aria-busy={busy}>
+    <section className="panel wide source-draft" aria-labelledby="source-draft-heading" aria-busy={interactionDisabled}>
       <div className="source-draft-heading">
         <div>
           <h2 id="source-draft-heading">Prepare a source draft</h2>
@@ -403,32 +197,31 @@ export function SourceDraftScreen({
         <FilePlus2 size={24} aria-hidden="true" />
       </div>
 
-      {error && <div className="error-banner" role="alert"><strong>Source draft action failed</strong><span>{error}</span></div>}
-      {pendingAction && <div className="source-draft-confirm" role="alertdialog" aria-labelledby="source-draft-confirm-heading"><div><h3 id="source-draft-confirm-heading">Discard unsaved proposals?</h3><p>Opening another source will replace the current draft and its unsaved edits.</p></div><div className="source-draft-actions"><button className="primary" type="button" onClick={() => void load(pendingAction)} disabled={confirmationBusy}>Discard and open</button><button className="secondary-action" type="button" onClick={() => setPendingAction(null)} disabled={confirmationBusy}>Keep editing</button></div></div>}
+      {(protectionError || error) && <div className="error-banner" role="alert"><strong>{protectionError ? "Native close protection unavailable" : "Source draft action failed"}</strong><span>{protectionError ?? error}</span></div>}
+      {pendingAction && <div className="source-draft-confirm" role="alertdialog" aria-labelledby="source-draft-confirm-heading"><div><h3 id="source-draft-confirm-heading">Discard unsaved proposals?</h3><p>Opening another source will replace the current draft and its unsaved edits.</p></div><div className="source-draft-actions"><button className="primary" type="button" onClick={() => void load(pendingAction)} disabled={interactionDisabled}>Discard and open</button><button className="secondary-action" type="button" onClick={() => setPendingAction(null)} disabled={interactionDisabled}>Keep editing</button></div></div>}
 
       {!draft ? (
         <div className="source-draft-empty">
           <ShieldAlert size={28} aria-hidden="true" />
           <div><h3>No source draft is open</h3><p>Choose an XML source to create a local preparation draft, or open a saved <code>.bridge-draft.json</code>. Nothing is uploaded or posted from this screen.</p></div>
-          <div className="source-draft-actions"><button className="primary" type="button" onClick={() => requestLoad("choose")} disabled={busy}><FilePlus2 size={18} aria-hidden="true" />{action === "choose" ? "Opening source…" : "Choose source XML"}</button><button className="secondary-action" type="button" onClick={() => requestLoad("open")} disabled={busy}><FolderOpen size={18} aria-hidden="true" />{action === "open" ? "Opening draft…" : "Open saved draft"}</button></div>
+          <div className="source-draft-actions"><button className="primary" type="button" onClick={() => requestLoad("choose")} disabled={interactionDisabled}><FilePlus2 size={18} aria-hidden="true" />{action === "choose" ? "Opening source…" : "Choose source XML"}</button><button className="secondary-action" type="button" onClick={() => requestLoad("open")} disabled={interactionDisabled}><FolderOpen size={18} aria-hidden="true" />{action === "open" ? "Opening draft…" : "Open saved draft"}</button></div>
         </div>
       ) : (
         <>
-          <div className="source-draft-toolbar"><div><strong>{draft.source_filename}</strong><span>{draft.rows.length} source rows · {rowsWithoutProposal} rows without a proposal · revision {draft.revision}</span></div><div className="source-draft-actions"><button className="secondary-action" type="button" onClick={() => requestLoad("choose")} disabled={busy}>{action === "choose" ? "Opening source…" : "Choose new source"}</button><button className="secondary-action" type="button" onClick={() => requestLoad("open")} disabled={busy}>{action === "open" ? "Opening draft…" : "Open saved draft"}</button><button className="primary" type="button" onClick={() => void save()} disabled={busy}><Save size={17} aria-hidden="true" />{action === "save" ? "Saving draft…" : "Save draft"}</button></div></div>
+          <div className="source-draft-toolbar"><div><strong>{draft.source_filename}</strong><span>{draft.rows.length} source rows · {rowsWithoutProposal} rows without a proposal · revision {draft.revision}</span></div><div className="source-draft-actions"><button className="secondary-action" type="button" onClick={() => requestLoad("choose")} disabled={interactionDisabled}>{action === "choose" ? "Opening source…" : "Choose new source"}</button><button className="secondary-action" type="button" onClick={() => requestLoad("open")} disabled={interactionDisabled}>{action === "open" ? "Opening draft…" : "Open saved draft"}</button><button className="primary" type="button" onClick={() => void save()} disabled={interactionDisabled}><Save size={17} aria-hidden="true" />{action === "save" ? "Saving draft…" : "Save draft"}</button></div></div>
           <p className="source-draft-boundary">Source values are immutable observations. Proposed ledgers are unverified text until a later mapping step; this preparation screen cannot approve or post anything to Tally.</p>
           <details className="source-draft-file-evidence"><summary>Source file evidence</summary><dl><div><dt>Source file</dt><dd>{draft.source_filename}</dd></div><div><dt>Source SHA-256</dt><dd><code>{draft.source_sha256}</code></dd></div></dl></details>
           {((draft.source_notices ?? []).length > 0) && <details className="source-draft-notices"><summary>Source-level notices ({(draft.source_notices ?? []).length})</summary><ul>{(draft.source_notices ?? []).map((notice, index) => <li key={`${notice.kind}-${index}`}><strong>{notice.kind}</strong><span>{notice.count} retained records</span></li>)}</ul></details>}
           {savedPath && <p className="source-draft-saved" role="status">{savedPath}</p>}
           <div className="source-draft-layout">
             <div className="source-draft-list-wrap">
-              <table className="source-draft-list"><caption className="visually-hidden">Source rows</caption><thead><tr><th scope="col">Row</th><th scope="col">Source observation</th><th scope="col">Proposal</th></tr></thead><tbody>{pageRows.map((row) => <tr key={row.position} className={row.position === selectedPosition ? "is-selected" : ""}><th scope="row"><button type="button" className="source-draft-row-button" onClick={() => setSelectedPosition(row.position)} aria-pressed={row.position === selectedPosition}>#{row.position}</button></th><td><strong>{displayDate(row.source_date)}</strong><span>{displayObserved(row.source_voucher_type, "Empty voucher type")}</span><span>{displayObserved(row.source_narration, "Empty narration")}</span></td><td><span className="source-draft-state">{hasStartedProposal(row) ? "Proposal started" : "No proposal"}</span><span>{row.proposal.entries.length} entry lines</span></td></tr>)}</tbody></table>
-              <div className="source-draft-pagination"><span>Rows {draft.rows.length === 0 ? 0 : page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, draft.rows.length)} of {draft.rows.length}</span><div><button className="secondary-action" type="button" onClick={() => changePage((value) => Math.max(0, value - 1))} disabled={page === 0 || busy}>Previous</button><button className="secondary-action" type="button" onClick={() => changePage((value) => Math.min(pageCount - 1, value + 1))} disabled={page >= pageCount - 1 || busy}>Next</button></div></div>
+              <table className="source-draft-list"><caption className="visually-hidden">Source rows</caption><thead><tr><th scope="col">Row</th><th scope="col">Source observation</th><th scope="col">Proposal</th></tr></thead><tbody>{pageRows.map((row) => <tr key={row.position} className={row.position === selectedPosition ? "is-selected" : ""}><th scope="row"><button type="button" className="source-draft-row-button" onClick={() => setSelectedPosition(row.position)} disabled={interactionDisabled} aria-pressed={row.position === selectedPosition}>#{row.position}</button></th><td><strong>{displayDate(row.source_date)}</strong><span>{displayObserved(row.source_voucher_type, "Empty voucher type")}</span><span>{displayObserved(row.source_narration, "Empty narration")}</span></td><td><span className="source-draft-state">{hasStartedProposal(row) ? "Proposal started" : "No proposal"}</span><span>{row.proposal.entries.length} entry lines</span></td></tr>)}</tbody></table>
+              <div className="source-draft-pagination"><span>Rows {draft.rows.length === 0 ? 0 : page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, draft.rows.length)} of {draft.rows.length}</span><div><button className="secondary-action" type="button" onClick={() => changePage((value) => Math.max(0, value - 1))} disabled={page === 0 || interactionDisabled}>Previous</button><button className="secondary-action" type="button" onClick={() => changePage((value) => Math.min(pageCount - 1, value + 1))} disabled={page >= pageCount - 1 || interactionDisabled}>Next</button></div></div>
             </div>
-            {selectedRow && <SourceDraftEditor row={selectedRow} disabled={busy} onUpdateProposal={updateProposal} onUpdateEntry={updateEntry} onClose={() => setSelectedPosition(null)} />}
+            {selectedRow && <SourceDraftEditor row={selectedRow} disabled={interactionDisabled} onUpdateProposal={updateProposal} onUpdateEntry={updateEntry} onClose={() => setSelectedPosition(null)} />}
           </div>
         </>
       )}
-      {nativeLifecycleConfirmation}
     </section>
   );
 }

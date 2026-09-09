@@ -362,3 +362,16 @@ test("an active or unresolved snapshot blocks posting from an already-open revie
   expect(host.textContent).toContain("Bridge confirmed the original Journal and its saved batch.");
   root.unmount();
 });
+
+
+test("does not admit Journal actions before native lifecycle protection is ready", async () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<JournalPostingScreen config={config} lifecycleAdmissionReady={false} lifecycleAdmissionError="Bridge could not install native close protection." />); });
+  expect(host.textContent).toContain("Native close protection unavailable");
+  expect(button(host, "Choose Journal file").disabled).toBe(true);
+  await act(async () => { button(host, "Choose Journal file").click(); });
+  expect(mocks.invoke).not.toHaveBeenCalled();
+  root.unmount();
+});
