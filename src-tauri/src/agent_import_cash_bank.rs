@@ -22,21 +22,37 @@
 use bridge_tally_protocol::TallyNamedMaster;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Reserved Tally group identities that hold a cash or bank balance.
+/// Every reserved Tally group identity that holds money, and whether Bridge
+/// admits a ledger under it onto a leg that must hold money.
 ///
-/// Only identities actually present in a captured live `List of Groups`
-/// response are listed. `Bank OCC A/c` is a documented Tally group but appears
-/// in neither captured company's group set, so it is deliberately absent: a
-/// book that uses one is refused rather than matched against an unobserved
-/// spelling. Held in Tally's own spelling and normalized at comparison time,
-/// so the matched entry is directly reportable.
-const CASH_BANK_RESERVED_GROUPS: &[&str] = &["Bank Accounts", "Bank OD A/c", "Cash-in-Hand"];
+/// The two are not the same question, and one table answers both so they
+/// cannot drift apart. Admission needs the identity to have been present in a
+/// captured live `List of Groups` response. `Bank OCC A/c` is documented by
+/// Tally and appears in neither captured company's group set, so it is not
+/// admitted — but it plainly holds money, and pretending otherwise on the
+/// counterparty side would wave through the bank-to-bank Payment that the
+/// counterparty rule exists to catch. Both refusals are the same ignorance
+/// pointed in the safe direction, so a voucher touching such a ledger is
+/// refused on either side.
+///
+/// Held in Tally's own spelling and normalized at comparison time, so the
+/// matched entry is directly reportable.
+const MONEY_RESERVED_GROUPS: &[(&str, bool)] = &[
+    ("Bank Accounts", true),
+    ("Bank OD A/c", true),
+    ("Cash-in-Hand", true),
+    ("Bank OCC A/c", false),
+];
 
 /// A ledger's cash/bank standing, as established by observed masters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum CashBankState {
-    /// Ancestry reached a reserved cash/bank group identity.
+    /// Ancestry reached a reserved money identity Bridge admits.
     Established { reserved_group: &'static str },
+    /// Ancestry reached a reserved identity that holds money but that Bridge
+    /// has never observed in a captured group set. Known money, and admitted
+    /// on neither side.
+    UnadmittedMoney { reserved_group: &'static str },
     /// Ancestry reached a different predefined group identity. The ledger is
     /// established, and established as something other than cash or bank.
     OtherReservedGroup { reserved_group: String },
@@ -46,14 +62,25 @@ pub(super) enum CashBankState {
 }
 
 impl CashBankState {
+    /// Whether a leg that must hold money may name this ledger.
     pub(super) fn is_established(&self) -> bool {
         matches!(self, Self::Established { .. })
+    }
+
+    /// Whether this ledger holds money at all — the question the counterparty
+    /// side asks, and a wider one than admission.
+    pub(super) fn is_known_money(&self) -> bool {
+        matches!(
+            self,
+            Self::Established { .. } | Self::UnadmittedMoney { .. }
+        )
     }
 
     /// A stable machine-readable label for the tool result.
     pub(super) fn state(&self) -> &'static str {
         match self {
             Self::Established { .. } => "cash_bank",
+            Self::UnadmittedMoney { .. } => "cash_bank_unadmitted",
             Self::OtherReservedGroup { .. } => "not_cash_bank",
             Self::NotEstablished { .. } => "not_established",
         }
@@ -63,6 +90,9 @@ impl CashBankState {
         match self {
             Self::Established { reserved_group } => format!(
                 "The ledger's group ancestry reaches the reserved {reserved_group} identity."
+            ),
+            Self::UnadmittedMoney { reserved_group } => format!(
+                "The ledger's group ancestry reaches the reserved {reserved_group} identity, which holds money but has never been observed in a captured group set. Bridge admits it on neither side of a voucher."
             ),
             Self::OtherReservedGroup { reserved_group } => format!(
                 "The ledger's group ancestry reaches the reserved {reserved_group} identity, which holds no cash or bank balance."
@@ -150,12 +180,15 @@ impl ObservedMasters {
             };
             if !reserved_name.is_empty() {
                 let reserved = normalize(reserved_name);
-                return match CASH_BANK_RESERVED_GROUPS
+                return match MONEY_RESERVED_GROUPS
                     .iter()
-                    .find(|candidate| normalize(candidate) == reserved)
+                    .find(|(candidate, _)| normalize(candidate) == reserved)
                 {
                     // The reserved identity, not the book's spelling of it.
-                    Some(reserved_group) => CashBankState::Established { reserved_group },
+                    Some((reserved_group, true)) => CashBankState::Established { reserved_group },
+                    Some((reserved_group, false)) => {
+                        CashBankState::UnadmittedMoney { reserved_group }
+                    }
                     None => CashBankState::OtherReservedGroup {
                         reserved_group: reserved_name.to_string(),
                     },

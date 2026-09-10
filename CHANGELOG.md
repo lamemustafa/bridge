@@ -38,9 +38,10 @@ current source.
   files it under. Each of the three is admitted only as two entries over two
   distinct ledgers carrying neither a voucher number nor a reference. The side
   that must hold money is refused unless that ledger's live group ancestry
-  reaches a reserved Bank Accounts, Bank OD A/c or Cash-in-Hand identity, and
-  the counterparty side is refused if it reaches one too, because money on both
-  sides is a Contra whatever the voucher says. A build that names a
+  reaches a reserved Bank Accounts, Bank OD A/c or Cash-in-Hand identity. The
+  counterparty side is refused if it reaches any money group at all, including
+  the Bank OCC A/c that the money side will not accept either, because money on
+  both sides is a Contra whatever the voucher says. A build that names a
   counterparty warns that its amount lands On Account. Native posting is
   unchanged and still accepts only one unnumbered Journal.
 - A local-first Tally Truth Layer with capability passports, explicit truth

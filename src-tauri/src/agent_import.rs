@@ -131,8 +131,10 @@ enum LegRequirement {
     /// not be established" — a positive fact is required and absent.
     Money,
     /// The counterparty side, which is also what `PARTYLEDGERNAME` names. Only
-    /// a leg established *as* cash or bank refuses it: money on both sides of
-    /// a Payment or Receipt is a Contra wearing another type's name (§9.13),
+    /// a leg established as holding money refuses it — including a money group
+    /// Bridge declines to admit on the other side, which is money all the
+    /// same. Money on both sides of a Payment or Receipt is a Contra wearing
+    /// another type's name (§9.13),
     /// and admitting it recreates exactly the wrong-register misfiling this
     /// gate exists to prevent. A counterparty that cannot be classified is not
     /// evidence of that, so it passes; refusing it would cost a build nothing
@@ -338,7 +340,7 @@ impl Server {
                 "a Journal takes any balanced set of entries and may carry a voucher_number",
                 "Payment, Receipt and Contra take exactly two entries over two distinct ledgers, and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
                 "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts, Bank OD A/c or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
-                "the other leg of a Payment or Receipt must not be one of those: money on both sides is a Contra whatever the type says, and booking it as a Payment files it in the wrong register",
+                "the other leg of a Payment or Receipt must hold no money at all, which is a wider test than the admitted three: a ledger under Bank OCC A/c is refused there too, because money on both sides is a Contra whatever the type says",
                 "each voucher has at least two entries and exact debit total equals credit total",
                 "amounts are positive decimal strings with exactly two fractional digits",
                 "dates must be within the selected company's BOOKSFROM through today",
@@ -1315,7 +1317,11 @@ fn cash_bank_report(payload: &ImportPayload, observed: &ObservedMasters) -> (Vec
                 .clone();
             let admitted = match requirement {
                 LegRequirement::Money => state.is_established(),
-                LegRequirement::Counterparty => !state.is_established(),
+                // The wider question: a group Bridge knows holds money but
+                // will not admit is still money on this side. Asking only
+                // whether it was *admitted* would wave through the very
+                // bank-to-bank Payment this leg exists to catch.
+                LegRequirement::Counterparty => !state.is_known_money(),
             };
             admitted_batch &= admitted;
             let requires = match requirement {

@@ -214,8 +214,10 @@ fn exactly_the_captured_cash_and_bank_reserved_groups_are_admitted() {
         ["Bank Accounts", "Bank OD A/c", "Cash-in-Hand"],
         "captured group set admits only these as cash or bank"
     );
-    // `Bank OCC A/c` is a documented Tally group that neither capture contains.
-    // A book using one is refused rather than matched on an unobserved name.
+    // `Bank OCC A/c` is a documented Tally group that neither capture contains,
+    // so a ledger under it is refused rather than matched on an unobserved
+    // name. Bridge still knows it holds money — see
+    // `a_money_group_bridge_will_not_admit_is_still_money_on_the_counterparty_side`.
     assert!(!groups.iter().any(|group| group.name == "Bank OCC A/c"));
     assert_eq!(
         observed(&under("Bank OCC A/c"), groups)
@@ -536,6 +538,66 @@ fn a_payment_between_two_money_ledgers_is_refused_as_a_contra() {
         let (_, admitted) = cash_bank_report(&demo_batch(voucher_type, dr, cr), &masters);
         assert!(admitted, "{voucher_type} {dr} / {cr}");
     }
+}
+
+#[test]
+fn a_money_group_bridge_will_not_admit_is_still_money_on_the_counterparty_side() {
+    // `Bank OCC A/c` is documented by Tally and appears in neither captured
+    // group set, so a ledger under it is refused on a leg that must hold
+    // money. Asking only whether the counterparty was *admitted* would then
+    // read that same refusal as "not money" and wave through exactly the
+    // bank-to-bank Payment the counterparty leg exists to catch.
+    //
+    // The group row here is synthetic — that is the whole scenario, a book
+    // carrying a group no capture in this tree contains.
+    let mut groups = captured_demo_groups();
+    groups.push(TallyNamedMaster {
+        name: "Bank OCC A/c".into(),
+        parent: PartyLedgerMasterFieldObservation::Returned("Loans (Liability)".into()),
+        reserved_name: Some("Bank OCC A/c".into()),
+    });
+    let mut ledgers = captured_demo_ledger_parents();
+    ledgers.push(("Cash Credit Account".into(), Some("Bank OCC A/c".into())));
+    let masters = observed(&ledgers, groups);
+    assert_eq!(
+        masters.classify("Cash Credit Account"),
+        CashBankState::UnadmittedMoney {
+            reserved_group: "Bank OCC A/c"
+        }
+    );
+    // Refused on the money leg: the identity has never been observed.
+    let (_, admitted) = cash_bank_report(
+        &demo_batch("Payment", "Gujarat Poly Industries", "Cash Credit Account"),
+        &masters,
+    );
+    assert!(!admitted, "an unobserved money group funds nothing");
+    // And refused on the counterparty leg: it is money, so this is a Contra.
+    let (legs, admitted) = cash_bank_report(
+        &demo_batch(
+            "Payment",
+            "Cash Credit Account",
+            "HDFC Bank Current Account",
+        ),
+        &masters,
+    );
+    assert!(!admitted, "money on both sides is a Contra");
+    let counterparty = legs
+        .iter()
+        .find(|leg| leg["requires"] == "not_cash_bank")
+        .expect("the counterparty leg is classified");
+    assert_eq!(counterparty["state"], "cash_bank_unadmitted");
+    assert!(counterparty["refused_because"]
+        .as_str()
+        .expect("a refused leg says why")
+        .contains("Contra"));
+    // A Contra between the two is refused as well, because the money leg's
+    // rule still applies. Both refusals are the same ignorance, and neither
+    // side quietly assumes the other's answer.
+    let (_, admitted) = cash_bank_report(
+        &demo_batch("Contra", "Cash Credit Account", "HDFC Bank Current Account"),
+        &masters,
+    );
+    assert!(!admitted);
 }
 
 #[test]

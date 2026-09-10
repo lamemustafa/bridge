@@ -970,19 +970,26 @@ Both legs are classified, not just the funding one:
 
 | leg | requirement | refused by |
 | --- | --- | --- |
-| Payment credit, Receipt debit, both Contra legs | must be cash or bank | anything else, **including "could not be established"** — a positive fact is required and absent |
-| the counterparty leg of a Payment or Receipt | must not be cash or bank | only a leg *established* as cash or bank |
+| Payment credit, Receipt debit, both Contra legs | must be a **admitted** money group | anything else, **including "could not be established"** — a positive fact is required and absent |
+| the counterparty leg of a Payment or Receipt | must not be **any known** money group | only a leg established as holding money |
 
 The asymmetry is deliberate. Money on both sides of a Payment is a Contra wearing another
 type's name, and admitting it recreates the wrong-register misfiling this table exists to
 prevent; but a counterparty Bridge cannot classify is not evidence of that, and refusing it
 would cost a build with nothing wrong with it.
 
+The two columns also ask different questions of the same group, and that gap matters.
+**Admitted** means the reserved identity was present in a captured `List of Groups` response:
+`Bank Accounts`, `Bank OD A/c` and `Cash-in-Hand`. **Known money** additionally covers
+`Bank OCC A/c`, which Tally documents and neither capture contains. A ledger under it is refused
+on a money leg for want of an observed spelling — and refused on a counterparty leg because it
+plainly holds money. Both refusals are the same ignorance pointed in the safe direction; reading
+"not admitted" as "not money" would wave through exactly the bank-to-bank Payment the
+counterparty rule exists to catch.
+
 Classification walks the ledger's group ancestry through `RESERVEDNAME` per §8.2a, so a renamed
-predefined group still classifies. `Bank OCC A/c` is a documented Tally group that appears in
-neither captured group set, so a book using one is refused rather than matched against an
-unobserved spelling — as is any book whose money ledger sits under a group the Group collection
-does not carry.
+predefined group still classifies. A book whose money ledger sits under a group the Group
+collection does not carry at all is refused the same way.
 
 **What it still does not do.** Nothing detects a party ledger configured for bill-wise
 accounting: the catalogue Bridge reads carries no such flag, and adding one would mean
