@@ -1326,12 +1326,31 @@ pub fn parse_standard_ledger_identity_observation(
 /// or desktop review.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandardLedgerCatalog {
-    entries: Vec<(String, String)>,
+    entries: Vec<StandardLedgerCatalogEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StandardLedgerCatalogEntry {
+    name: String,
+    guid: String,
+    /// The immediate `PARENT` group Tally returned for this ledger, or `None`
+    /// when it returned none. A ledger exposes no `PARENTSTRUCTURE`, so this
+    /// single hop is all the ancestry one catalog response carries; a caller
+    /// that needs the group's own identity must read the Group collection.
+    parent: Option<String>,
 }
 
 impl StandardLedgerCatalog {
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.entries.iter().map(|(name, _)| name.as_str())
+        self.entries.iter().map(|entry| entry.name.as_str())
+    }
+
+    /// Each ledger paired with the immediate parent group Tally returned for
+    /// it. `None` is an unobserved parent, never an empty group name.
+    pub fn parents(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.parent.as_deref()))
     }
 
     pub fn bind_selected(
@@ -1344,14 +1363,14 @@ impl StandardLedgerCatalog {
         let entries = requested
             .into_iter()
             .map(|name| {
-                let (_, guid) = self
+                let entry = self
                     .entries
                     .iter()
-                    .find(|(candidate, _)| candidate == &name)
+                    .find(|candidate| candidate.name == name)
                     .ok_or_else(|| {
                         anyhow::anyhow!("standard ledger catalog omitted requested ledger")
                     })?;
-                Ok((name, guid.clone()))
+                Ok((name, entry.guid.clone()))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(StandardLedgerCatalogBinding { entries })
@@ -1379,8 +1398,8 @@ impl StandardLedgerCatalogBinding {
         // TALLY_PROTOCOL_REFERENCE.md §12a.9: Tally can retain a GUID while
         // changing a visible ledger name, so admission binds the selected pair.
         Ok(self.entries.iter().all(|(name, guid)| {
-            current.entries.iter().any(|(candidate, current_guid)| {
-                candidate == name && current_guid.eq_ignore_ascii_case(guid)
+            current.entries.iter().any(|candidate| {
+                &candidate.name == name && candidate.guid.eq_ignore_ascii_case(guid)
             })
         }))
     }
@@ -1399,7 +1418,15 @@ pub fn parse_standard_ledger_catalog_with_identities(
     Ok(StandardLedgerCatalog {
         entries: rows
             .into_iter()
-            .map(|row| (row.ledger.name, row.guid))
+            .map(|row| StandardLedgerCatalogEntry {
+                name: row.ledger.name,
+                guid: row.guid,
+                parent: row
+                    .ledger
+                    .parent
+                    .nonempty_returned_text()
+                    .map(str::to_string),
+            })
             .collect(),
     })
 }

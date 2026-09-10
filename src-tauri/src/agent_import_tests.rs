@@ -1649,6 +1649,9 @@ fn test_duplicates(observed: &[ReadVoucher]) -> Result<Vec<Value>, String> {
 #[path = "agent_import_qualification_tests.rs"]
 mod qualification_tests;
 
+#[path = "agent_import_bank_tests.rs"]
+mod bank_tests;
+
 fn qualified_import_cycle_plans() -> Vec<ScenarioPlan> {
     let cycle = import_cycle_plans();
     let probe = mode_tests::licensed_import_probe();

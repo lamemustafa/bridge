@@ -33,6 +33,13 @@ current source.
 
 ### Added
 
+- Local import files may now carry Payment, Receipt and Contra vouchers as well
+  as Journals, so a bank statement can be expressed in the voucher types Tally
+  files it under. Each of the three is admitted only as two entries over two
+  distinct ledgers with no supplied voucher number, and the side that must hold
+  money is refused unless that ledger's live group ancestry reaches a reserved
+  Bank Accounts, Bank OD A/c or Cash-in-Hand identity. Native posting is
+  unchanged and still accepts only one unnumbered Journal.
 - A local-first Tally Truth Layer with capability passports, explicit truth
   states, encrypted mirror evidence, resumable/adaptive snapshots, Proof of
   Sync and Gap Map output, and a safer operator console. The migrations are

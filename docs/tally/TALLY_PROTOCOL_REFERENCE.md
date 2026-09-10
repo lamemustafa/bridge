@@ -643,6 +643,38 @@ company profile described here. It does **not** establish that other releases,
 modes, or Group shapes emit the field; Bridge must continue to fail closed when
 the response lacks or mismatches the selected company GUID.
 
+### 8.2a `RESERVEDNAME` is a group's rename-proof identity, and `NAME` is not — **VERIFIED 2026-08-20**
+
+**Why this matters:** any rule of the form "ledgers under Sundry Debtors are parties" or
+"ledgers under Bank Accounts hold money" is written against a name a user is free to change.
+
+Three observations on the §8.2 collection, over two synthetic companies (28 and 29 groups) on
+TallyPrime 7.1:
+
+1. **Every predefined group carries a non-empty `RESERVEDNAME`, and a user-created group
+   carries an empty one.** The empty value is Tally's own positive signal that the row is
+   user-created — it is not a missing field, and a reader that never requested the attribute
+   at all must be kept distinct from both.
+2. **A predefined group can be renamed over XML and `RESERVEDNAME` survives it.** An
+   `Import Data` / `All Masters` `<GROUP ACTION="Alter">` carrying a `NAME.LIST` renamed the
+   predefined `Suspense A/c` — `ALTERED=1`, group count unchanged, and the readback returned
+   `<GROUP NAME="WR5 Renamed Suspense" RESERVEDNAME="Suspense A/c">`. The book was restored
+   afterwards and the group set verified identical to the committed fixture. Renaming
+   predefined groups is not exotic in books migrated from other software.
+3. **`RESERVENAME` is a different field with the opposite meaning.** In the same readback,
+   `RESERVEDNAME` held the original predefined identity and `RESERVENAME` held the *current*
+   name. They differ by one letter; reaching for the wrong one silently restores the bug.
+
+A group also exposes `PARENTSTRUCTURE` — its whole ancestry chain, separated by raw `U+0003` —
+but **ledgers do not**: fetched explicitly against all 88 ledgers of one company it returned
+zero occurrences. So a ledger-to-group ancestry walk climbs one `PARENT` hop at a time through
+the Group collection; `PARENTSTRUCTURE` is a shortcut for the group tree only. A top-level
+group's `PARENT` is the control-marked reserved root of §1.1, not the word `Primary`.
+
+> **RULE: classify a group by `RESERVEDNAME`; treat an empty one as "user-created, keep
+> climbing"; treat an absent one as no evidence at all.** §9.13's cash/bank gate is built on
+> exactly this.
+
 ---
 
 ## 9. Writes (import)
@@ -864,6 +896,77 @@ returned `CREATED=1`.
 
 Note also that `EXCEPTIONS=1` arrived with **no `LINEERROR`** — a parser must treat a
 non-zero `EXCEPTIONS` as failure on its own, without waiting for an error string.
+
+### 9.13 Payment, Receipt and Contra — the bank-statement voucher shapes
+
+**VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold; five files imported by hand through
+Gateway of Tally → Import → Vouchers).** 148 vouchers in total. `CREATED` equalled the voucher
+count on every file with zero errors and zero exceptions, and each affected bank ledger
+reproduced, on readback, the debit total, credit total and closing balance its own statement
+printed.
+
+**A bank statement cannot be expressed as Journals.** Booking bank lines as Journals reconciles
+arithmetically and misfiles every one of them: wrong voucher register, wrong day book grouping,
+and visibly unlike the book's existing entries. The type decides which side holds the money:
+
+| statement line | voucher | entries |
+| --- | --- | --- |
+| withdrawal | **Payment** | Dr party, Cr bank |
+| deposit | **Receipt** | Dr bank, Cr party |
+| own-account or cash movement | **Contra** | both legs cash/bank |
+
+The imported element shape, per voucher:
+
+```xml
+<VOUCHER VCHTYPE="Payment" ACTION="Create" OBJVIEW="Accounting Voucher View" REMOTEID="...">
+  <DATE>20260801</DATE>
+  <EFFECTIVEDATE>20260801</EFFECTIVEDATE>
+  <VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>
+  <PARTYLEDGERNAME>...</PARTYLEDGERNAME>       <!-- omitted on Contra -->
+  <NARRATION>...</NARRATION>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>...</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-100000.00</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  ...
+</VOUCHER>
+```
+
+Four properties of it are not guessable, and each was measured:
+
+1. **A debit is `ISDEEMEDPOSITIVE Yes` with a NEGATIVE `AMOUNT`.** The flag and the sign say the
+   same thing and must agree; they are not independent fields.
+2. **`EFFECTIVEDATE` accompanied `DATE` on every voucher**, always equal to it. Whether these
+   types import without it was not tested, so omitting it is outside this measurement.
+3. **No `<VOUCHERNUMBER>`.** These types numbered automatically in the observed book, and §9.8
+   established that automatic numbering discards a supplied number in silence. Tally assigned
+   its own. The bank's reference goes in the narration, which survives.
+4. **`REMOTEID` on every voucher.** By §9.7 a voucher cannot be altered or cancelled over XML
+   and Delete by `REMOTEID` is the only working correction path, so a batch imported without
+   one cannot be cleanly withdrawn.
+
+§9.1b applies unchanged and bites hardest here: a single unescaped `&` in a counterparty name
+rejects the whole file with no field hint.
+
+**Correcting a posted batch — reallocation Journals, not delete-and-recreate.** Lines whose
+counterparty could not be identified were booked against a suspense ledger and corrected later
+by a Journal moving the amount off suspense onto the real ledger. That leaves the bank side
+untouched, keeps the correction auditable, and sidesteps the no-Alter restriction entirely; 10
+such Journals were verified the same day.
+
+**Scope and limits.** One company, one build, two statement layouts, and files imported through
+the UI rather than dispatched by Bridge. Bill-wise allocation was never exercised — every party
+amount landed On Account, which is **not** established as correct for a book that reconciles
+bills. This qualifies the three file shapes. It does not qualify a Bridge dispatch of them,
+which remains one unnumbered Journal (§9.8).
+
+**What Bridge builds from it.** `build_import_xml` renders exactly this shape for Payment,
+Receipt and Contra, and leaves the Journal shape byte-identical to the file §9.8's own
+measurement ran on. Each of the three is admitted only as two entries over two distinct ledgers
+with no supplied voucher number, and the side that must hold money is refused unless that
+ledger's live group ancestry reaches a reserved `Bank Accounts`, `Bank OD A/c` or `Cash-in-Hand`
+identity — walked through `RESERVEDNAME` per §8.2a, so a renamed predefined group still
+classifies. `Bank OCC A/c` is a documented Tally group that appears in neither captured group
+set, so a book using one is refused rather than matched against an unobserved spelling.
 
 ### 9.9 Bulk import throughput
 
@@ -1920,3 +2023,4 @@ rename behaviour, other releases, and other configurations remain unverified.
 | 2026-08-02 | Added §12a from a live measurement session: built-in named reports (qualifying §2.2), per-kind ageing semantics, the two ageing methods, eight import rewrites (extending §9), configuration as a non-diagnostic, the unallocated remainder and its recovery, the `Company` collection ignoring `SVCURRENTCOMPANY` (qualifying §9.11), and a linear volume model with a cheap pre-flight count. |
 | 2026-08-22 | Updated §5.3 with the observed Education `{1,2,31}` boundary rule and the limited TallyPrime Silver arbitrary-day observations; this settles #115 item 1 for the recorded profile. |
 | 2026-08-28 | Added §8.1's read-only ledger-master field-presence observation and explicit public-fixture privacy boundary. |
+| 2026-09-10 | Added §9.13's Payment/Receipt/Contra import shapes from a licensed 7.1 Gold bank-statement import, and §8.2a's `RESERVEDNAME` group-identity rule that its cash/bank gate is built on. |
