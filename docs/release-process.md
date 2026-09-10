@@ -67,6 +67,36 @@ On Unix, replacement preserves an existing destination's mode; a new
 destination uses the normal `0666` mode subject to the process umask. Windows
 uses its normal ACL semantics rather than POSIX mode bits.
 
+#### Adding or removing a pin
+
+The three commands above assume the surface is already valid and only the
+*contents* of pinned files changed. Adding or removing an entry is different:
+editing the file list invalidates `manifest_sha256` immediately, and
+`rehash-surface` validates that checksum before it does anything. Run in the
+documented order it fails with `surface_checksum_mismatch` and changes nothing.
+
+So when the pin set itself changes, run `seal-surface` first to attest the new
+file list, then run the ordinary three-command sequence in full.
+
+This is the one case that inverts the standing rule against sealing before
+rehashing. That rule exists because `seal-surface` never reads the repository,
+so sealing stale hashes hides stale source under a fresh digest. Here the
+concern does not apply: the first seal only re-attests a file list whose one
+new digest was computed from disk, and the `rehash-surface` that follows
+re-reads every pin, including the new one, before the second seal. Never stop
+after that first seal.
+
+Two further constraints apply:
+
+- `MAX_SURFACE_FILES` caps the pin count, and `RESERVED_SURFACE_FILES` bounds
+  how far the cap may exceed it. When the surface is at its cap, adding a pin
+  requires raising the constant, which the constant's own comment calls an
+  explicit compatibility-surface decision -- record the reason in the commit.
+- The tool pins its own source, so editing `tools/bridge-tally-compatibility`
+  to raise that cap stales its digest and needs another reseal after the edit.
+  Expect two passes, and run the tool's tests between them: a cap change can
+  invalidate a test that hard-codes the old bound.
+
 The PowerShell commands are intended for Windows PowerShell 5.1 and PowerShell
 7+. They deliberately do not use `>`: Windows PowerShell 5.1 redirection was
 measured to produce UTF-16LE. The output-path procedure is reasoned from the
