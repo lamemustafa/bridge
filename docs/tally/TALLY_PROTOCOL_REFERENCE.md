@@ -1004,11 +1004,19 @@ Classification walks the ledger's group ancestry through `RESERVEDNAME` per §8.
 predefined group still classifies. A book whose money ledger sits under a group the Group
 collection does not carry at all is refused the same way.
 
-**What it still does not do.** Nothing detects a party ledger configured for bill-wise
-accounting: the catalogue Bridge reads carries no such flag, and adding one would mean
-authoring a request shape with no live capture behind it. Every party amount therefore lands On
-Account, exactly as the measured import did, and every build naming a counterparty says so in
-its warnings rather than leaving the operator to discover it in the ledger.
+**What it still does not do.** Two gaps, both stated here rather than left to be discovered.
+
+Nothing detects a party ledger configured for bill-wise accounting: the catalogue Bridge reads
+carries no such flag, and adding one would mean authoring a request shape with no live capture
+behind it. Every party amount therefore lands On Account, exactly as the measured import did,
+and every build naming a counterparty says so in its warnings.
+
+**`EFFECTIVEDATE` is written but not verified.** The verification collection of §9.8 does not
+`FETCH` it, so `verify_import` compares the date, voucher type and signed entries and cannot see
+whether Tally kept, rewrote or dropped the effective date — or whether an operator later edited
+it. A readback with a wrong effective date still reports `posted_verified`. Closing this needs
+one live check that the collection returns the field at all: fetching an element never observed
+in a response, and then requiring it, would refuse every legitimate verification instead.
 
 ### 9.9 Bulk import throughput
 

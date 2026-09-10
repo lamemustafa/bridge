@@ -210,9 +210,14 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
 3. Call `build_import_xml` with the payload. It checks exact decimal balance,
    company date extent, live masters, and local journal integrity,
    repeats the full catalogue to reject intervening changes, then writes `<data_dir>/imports/<batch_id>.xml` and records an append-only
-   `agent-import-ledger.jsonl` line. `voucher_number` is optional: when absent,
-   Tally applies the voucher type's own numbering configuration; when supplied,
-   it is validated and sent so a Manual-type duplicate policy can reject it.
+   `agent-import-ledger.jsonl` line. On a `Journal`, `voucher_number` and
+   `reference` are optional: when a number is absent Tally applies the voucher
+   type's own numbering configuration, and when supplied it is validated and
+   sent so a Manual-type duplicate policy can reject it. On `Payment`,
+   `Receipt` and `Contra` **both fields are refused** — neither element's fate
+   has been observed on those types, and the bank's own reference belongs in
+   the narration, which survives. A payload carrying one is rejected before any
+   live read.
 4. In Tally, with the intended company open, use **Gateway of Tally → Import →
    Vouchers** to import the file. Bridge does not dispatch this manual step.
    Alternatively, use the separately approved MCP or desktop Journal posting
@@ -220,13 +225,17 @@ licence mode, or manually imported file, and only an unnumbered single-voucher
 5. Call `verify_import` with the company GUID and batch ID. It reads the date
    window back, compares the exact signed ledger entries, reports missing or
    divergent rows and duplicates, writes `.proof.json` and `.proof.md`, and
-   appends the verification status to the local import ledger.
+   appends the verification status to the local import ledger. It compares the
+   date, voucher type and entries; it does **not** compare `EFFECTIVEDATE`,
+   which `Payment`, `Receipt` and `Contra` files carry — see the limit noted in
+   reference §9.13.
 
 The file path is deliberately not a direct-posting path. Masters must already
 exist and match exactly. File generation requires fresh supported product/mode
 observations; the checks do not make a later manual import atomic with the earlier reads.
-Education-mode Journal dates must be on day 1, 2, or 31. A different requested
-date is refused as `education_voucher_date_unsupported`; Bridge does not move it.
+In Education mode, voucher dates must be on day 1, 2, or 31 — for every
+voucher type, not only `Journal`. A different requested date is refused as
+`education_voucher_date_unsupported`; Bridge does not move it.
 Optional narration and reference must contain 1–2,000 Unicode characters when
 supplied; omit them when unused. Control characters and the reserved attribution
 marker are refused, including XML entity-encoded marker spellings. Voucher

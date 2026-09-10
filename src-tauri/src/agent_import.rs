@@ -480,11 +480,12 @@ impl Server {
                 let (groups, evidence) = self.read_group_collection(&identity, &company.name).await?;
                 accumulated = combine_evidence(accumulated.clone(), evidence.clone());
                 let observed = ObservedMasters::new(ledger_masters.parents(), groups);
-                let (legs, established) = cash_bank_report(&payload, &observed);
-                if !established {
+                let refusals = cash_bank_refusals(&payload, &observed);
+                if !refusals.ledgers.is_empty() {
                     return Ok(ToolOutcome {
                         payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
-                            "state":"refused", "reason":"cash_bank_ledger_not_established", "legs":legs,
+                            "state":"refused", "reason":"cash_bank_ledger_not_established",
+                            "refused_ledgers":refusals.ledgers, "refused_leg_count":refusals.legs,
                             "group_evidence_sha256":evidence.response_sha256,
                             "next_step":"A leg marked cash_bank must name a ledger whose group ancestry reaches Bank Accounts or Cash-in-Hand: the credit on a Payment, the debit on a Receipt, both legs on a Contra. The counterparty leg must hold no money at all, which also rules out Bank OD A/c and Bank OCC A/c — money on both sides is a Contra, whatever the type says. Bridge admits a money group only where a captured ledger sits under it, so an overdraft or cash-credit ledger is refused on either side for now. Correct the payload or the ledger's group in Tally, then build a new batch. No file was written."
                         }}),
@@ -1305,50 +1306,76 @@ fn constrained_legs(
 /// One row per constrained leg, in payload order, whether or not it passed.
 /// A refusal names every failing leg at once: a caller fixing them one build
 /// at a time pays a full live read cycle for each.
-fn cash_bank_report(payload: &ImportPayload, observed: &ObservedMasters) -> (Vec<Value>, bool) {
+/// What a batch's constrained legs refuse, and why.
+///
+/// Empty `ledgers` means every constrained leg was admitted.
+struct CashBankRefusals {
+    /// One row per distinct failing (ledger, requirement), not per leg. A
+    /// ledger in the wrong group fails identically in every voucher that names
+    /// it, and 400 copies of one problem is not 400 problems.
+    ///
+    /// This is what bounds the result. `validate_payload` already caps a batch
+    /// at `MAX_MASTER_NAMES` distinct ledger names, and a ledger can be
+    /// constrained at most once per side, so these rows cannot exceed 200
+    /// however many vouchers the batch carries. Emitting one row per leg had no
+    /// such bound: a 1,000-voucher batch produced up to 2,000 rows, and once
+    /// that passed the response cap the whole actionable refusal collapsed into
+    /// a generic size error.
+    ledgers: Vec<Value>,
+    /// Failing legs before deduplication, so a caller can tell one misfiled
+    /// ledger from one that poisons the entire batch.
+    legs: usize,
+}
+
+fn cash_bank_refusals(payload: &ImportPayload, observed: &ObservedMasters) -> CashBankRefusals {
     let mut classified = BTreeMap::<&str, CashBankState>::new();
-    let mut admitted_batch = true;
-    let legs = constrained_legs(payload)
-        .into_iter()
-        .map(|(voucher, side, ledger, requirement)| {
-            let state = classified
-                .entry(ledger)
-                .or_insert_with(|| observed.classify(ledger))
-                .clone();
-            let admitted = match requirement {
-                LegRequirement::Money => state.is_established(),
-                // The wider question: a group Bridge knows holds money but
-                // will not admit is still money on this side. Asking only
-                // whether it was *admitted* would wave through the very
-                // bank-to-bank Payment this leg exists to catch.
-                LegRequirement::Counterparty => !state.is_known_money(),
-            };
-            admitted_batch &= admitted;
-            let requires = match requirement {
-                LegRequirement::Money => "cash_bank",
-                LegRequirement::Counterparty => "not_cash_bank",
-            };
-            let refusal = (!admitted).then(|| match requirement {
-                LegRequirement::Money => state.detail(),
-                LegRequirement::Counterparty => format!(
-                    "{} Money on both sides of a {} is a Contra; book it as one.",
-                    state.detail(),
-                    voucher.voucher_type.as_str()
-                ),
-            });
+    let mut refused = BTreeMap::<(&str, &'static str), Value>::new();
+    let mut legs = 0_usize;
+    for (voucher, side, ledger, requirement) in constrained_legs(payload) {
+        let state = classified
+            .entry(ledger)
+            .or_insert_with(|| observed.classify(ledger))
+            .clone();
+        let admitted = match requirement {
+            LegRequirement::Money => state.is_established(),
+            // The wider question: a group Bridge knows holds money but will
+            // not admit is still money on this side. Asking only whether it
+            // was *admitted* would wave through the very bank-to-bank Payment
+            // this leg exists to catch.
+            LegRequirement::Counterparty => !state.is_known_money(),
+        };
+        if admitted {
+            continue;
+        }
+        legs += 1;
+        let requires = match requirement {
+            LegRequirement::Money => "cash_bank",
+            LegRequirement::Counterparty => "not_cash_bank",
+        };
+        refused.entry((ledger, requires)).or_insert_with(|| {
             json!({
-                "bridge_txn_id": voucher.bridge_txn_id,
-                "voucher_type": voucher.voucher_type.as_str(),
-                "side": side,
                 "ledger": party_name(ledger),
                 "requires": requires,
+                "side": side,
                 "state": state.state(),
-                "admitted": admitted,
-                "refused_because": refusal,
+                "refused_because": match requirement {
+                    LegRequirement::Money => state.detail(),
+                    LegRequirement::Counterparty => format!(
+                        "{} Money on both sides of a {} is a Contra; book it as one.",
+                        state.detail(),
+                        voucher.voucher_type.as_str()
+                    ),
+                },
+                // One voucher a caller can open to see the problem, rather
+                // than every voucher that repeats it.
+                "first_bridge_txn_id": voucher.bridge_txn_id,
             })
-        })
-        .collect();
-    (legs, admitted_batch)
+        });
+    }
+    CashBankRefusals {
+        ledgers: refused.into_values().collect(),
+        legs,
+    }
 }
 
 fn contains_reserved_marker(value: &str) -> bool {

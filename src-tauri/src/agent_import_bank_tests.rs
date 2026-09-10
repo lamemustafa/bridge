@@ -513,14 +513,13 @@ fn a_payment_between_two_money_ledgers_is_refused_as_a_contra() {
         ("Payment", "Cash", "HDFC Bank Current Account", "Dr"),
         ("Receipt", "HDFC Bank Current Account", "Cash", "Cr"),
     ] {
-        let (legs, admitted) = cash_bank_report(&demo_batch(voucher_type, dr, cr), &masters);
-        assert!(!admitted, "{voucher_type} between two money ledgers");
-        let refused = legs
+        let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters);
+        let refused = refusals
+            .ledgers
             .iter()
             .find(|leg| leg["requires"] == "not_cash_bank")
             .expect("the counterparty leg is classified too");
         assert_eq!(refused["side"], json!(counterparty_side));
-        assert_eq!(refused["admitted"], json!(false));
         assert!(refused["refused_because"]
             .as_str()
             .expect("a refused leg says why")
@@ -533,8 +532,8 @@ fn a_payment_between_two_money_ledgers_is_refused_as_a_contra() {
         ("Payment", party, "HDFC Bank Current Account"),
         ("Receipt", "HDFC Bank Current Account", party),
     ] {
-        let (_, admitted) = cash_bank_report(&demo_batch(voucher_type, dr, cr), &masters);
-        assert!(admitted, "{voucher_type} {dr} / {cr}");
+        let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters);
+        assert!(refusals.ledgers.is_empty(), "{voucher_type} {dr} / {cr}");
     }
 }
 
@@ -563,8 +562,8 @@ fn a_captured_money_group_with_no_captured_ledger_is_not_admitted() {
         ("Payment", "Overdraft Account", "HDFC Bank Current Account"),
         ("Contra", "Overdraft Account", "HDFC Bank Current Account"),
     ] {
-        let (_, admitted) = cash_bank_report(&demo_batch(voucher_type, dr, cr), &masters);
-        assert!(!admitted, "{voucher_type} {dr} / {cr}");
+        let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters);
+        assert!(!refusals.ledgers.is_empty(), "{voucher_type} {dr} / {cr}");
     }
 }
 
@@ -594,13 +593,16 @@ fn a_money_group_bridge_will_not_admit_is_still_money_on_the_counterparty_side()
         }
     );
     // Refused on the money leg: the identity has never been observed.
-    let (_, admitted) = cash_bank_report(
+    let refusals = cash_bank_refusals(
         &demo_batch("Payment", "Gujarat Poly Industries", "Cash Credit Account"),
         &masters,
     );
-    assert!(!admitted, "an unobserved money group funds nothing");
+    assert!(
+        !refusals.ledgers.is_empty(),
+        "an unobserved money group funds nothing"
+    );
     // And refused on the counterparty leg: it is money, so this is a Contra.
-    let (legs, admitted) = cash_bank_report(
+    let refusals = cash_bank_refusals(
         &demo_batch(
             "Payment",
             "Cash Credit Account",
@@ -608,8 +610,12 @@ fn a_money_group_bridge_will_not_admit_is_still_money_on_the_counterparty_side()
         ),
         &masters,
     );
-    assert!(!admitted, "money on both sides is a Contra");
-    let counterparty = legs
+    assert!(
+        !refusals.ledgers.is_empty(),
+        "money on both sides is a Contra"
+    );
+    let counterparty = refusals
+        .ledgers
         .iter()
         .find(|leg| leg["requires"] == "not_cash_bank")
         .expect("the counterparty leg is classified");
@@ -621,11 +627,72 @@ fn a_money_group_bridge_will_not_admit_is_still_money_on_the_counterparty_side()
     // A Contra between the two is refused as well, because the money leg's
     // rule still applies. Both refusals are the same ignorance, and neither
     // side quietly assumes the other's answer.
-    let (_, admitted) = cash_bank_report(
+    let refusals = cash_bank_refusals(
         &demo_batch("Contra", "Cash Credit Account", "HDFC Bank Current Account"),
         &masters,
     );
-    assert!(!admitted);
+    assert!(!refusals.ledgers.is_empty());
+}
+
+#[test]
+fn one_misfiled_ledger_reports_once_however_many_vouchers_repeat_it() {
+    // A refusal has to stay small enough to survive the response cap, or the
+    // caller gets a generic size error instead of the thing to fix. Reporting
+    // per leg had no bound — a 1,000-voucher batch produced up to 2,000 rows.
+    // Per distinct ledger, the payload's own MAX_MASTER_NAMES limit caps it.
+    let masters = observed(&captured_demo_ledger_parents(), captured_demo_groups());
+    let mut batch = demo_batch("Payment", "Cash", "HDFC Bank Current Account");
+    let template = batch.vouchers[0].clone();
+    for index in 1..200 {
+        let mut voucher = template.clone();
+        voucher.bridge_txn_id = format!("txn-{index:03}");
+        batch.vouchers.push(voucher);
+    }
+    let refusals = cash_bank_refusals(&batch, &masters);
+    assert_eq!(refusals.legs, 200, "every failing leg is still counted");
+    assert_eq!(
+        refusals.ledgers.len(),
+        1,
+        "200 copies of one problem is one problem"
+    );
+    // The count is what tells a caller this poisons the batch rather than one
+    // voucher, and the first label is where to look.
+    assert_eq!(refusals.ledgers[0]["first_bridge_txn_id"], "txn-001");
+    // Deduplication is per (ledger, requirement), not per ledger: one ledger
+    // can fail as funding in one voucher and as counterparty in another, and
+    // those are two different things to fix. `Cash Credit Account` is money
+    // Bridge will not admit, so it fails on both.
+    let mut groups = captured_demo_groups();
+    groups.push(TallyNamedMaster {
+        name: "Bank OCC A/c".into(),
+        parent: PartyLedgerMasterFieldObservation::Returned("Loans (Liability)".into()),
+        reserved_name: Some("Bank OCC A/c".into()),
+    });
+    let mut ledgers = captured_demo_ledger_parents();
+    ledgers.push(("Cash Credit Account".into(), Some("Bank OCC A/c".into())));
+    let masters = observed(&ledgers, groups);
+    let mut both_ways = demo_batch("Payment", "Gujarat Poly Industries", "Cash Credit Account");
+    let mut counterparty = demo_batch(
+        "Payment",
+        "Cash Credit Account",
+        "HDFC Bank Current Account",
+    )
+    .vouchers
+    .remove(0);
+    counterparty.bridge_txn_id = "txn-002".into();
+    both_ways.vouchers.push(counterparty);
+    let refusals = cash_bank_refusals(&both_ways, &masters);
+    assert_eq!(refusals.legs, 2);
+    assert_eq!(refusals.ledgers.len(), 2, "one ledger, two things to fix");
+    let named = serde_json::to_value(party_name("Cash Credit Account")).unwrap();
+    assert!(refusals.ledgers.iter().all(|row| row["ledger"] == named));
+    let mut requirements = refusals
+        .ledgers
+        .iter()
+        .map(|row| row["requires"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    requirements.sort();
+    assert_eq!(requirements, ["cash_bank", "not_cash_bank"]);
 }
 
 #[test]
@@ -642,14 +709,12 @@ fn a_counterparty_that_cannot_be_classified_is_not_refused() {
         masters.classify("Imported Party").state(),
         "not_established"
     );
-    let (legs, admitted) = cash_bank_report(
+    let refusals = cash_bank_refusals(
         &demo_batch("Payment", "Imported Party", "HDFC Bank Current Account"),
         &masters,
     );
-    assert!(admitted);
-    assert!(legs
-        .iter()
-        .all(|leg| leg["admitted"] == json!(true) && leg["refused_because"].is_null()));
+    assert!(refusals.ledgers.is_empty());
+    assert_eq!(refusals.legs, 0);
 }
 
 #[tokio::test]
@@ -706,13 +771,18 @@ async fn a_contra_leg_outside_cash_and_bank_is_refused_without_writing_a_file() 
     let result = &refused.payload["result"];
     assert_eq!(result["state"], "refused");
     assert_eq!(result["reason"], "cash_bank_ledger_not_established");
-    let legs = result["legs"].as_array().expect("classified legs");
-    assert_eq!(legs.len(), 2);
-    // Both legs are reported, so a caller fixing them pays one build, not two.
-    assert_eq!(legs[0]["side"], json!("Dr"));
-    assert_eq!(legs[0]["state"], "not_cash_bank");
-    assert_eq!(legs[1]["side"], json!("Cr"));
-    assert_eq!(legs[1]["state"], "cash_bank");
+    // Only the failing leg is reported, and it is reported per ledger rather
+    // than per voucher: the admitted `Cash` leg needs no action, and a ledger
+    // in the wrong group fails identically in every voucher that names it.
+    let refused = result["refused_ledgers"]
+        .as_array()
+        .expect("refused ledgers");
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0]["side"], json!("Dr"));
+    assert_eq!(refused[0]["state"], "not_cash_bank");
+    assert_eq!(refused[0]["requires"], "cash_bank");
+    assert_eq!(refused[0]["first_bridge_txn_id"], "txn-001");
+    assert_eq!(result["refused_leg_count"], 1);
     assert!(result["group_evidence_sha256"].as_str().is_some_and(
         |digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
     ));
