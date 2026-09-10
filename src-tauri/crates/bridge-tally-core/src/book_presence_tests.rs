@@ -1213,3 +1213,77 @@ fn an_untruncated_empty_candidate_list_still_permits_absent() {
     assert!(resolution.compare_keys.is_empty());
     assert!(!resolution.incomplete);
 }
+
+/// The overloaded-empty-vector shape has now been got wrong twice in two
+/// surfaces, so this contract's *own* output must not repeat it. Here an empty
+/// candidate list is one fact and not three: it happens only when the party
+/// comparison could not run, and truncation only ever cuts a list that is
+/// otherwise full. Held by construction today; held by test from now on.
+#[test]
+fn an_empty_candidate_list_means_exactly_one_thing_in_this_contract() {
+    let window = window(&[
+        BookRow::new("book-1", "20260812", "AA0118"),
+        BookRow::new("book-2", "20260812", "AA0118").party("Bravo Industries"),
+        BookRow::new("book-3", "20260819", "AA0130").party("Charlie Minerals"),
+    ]);
+    let mut names: Vec<String> = (1..=30)
+        .map(|index| format!("Echo Party {index:03}"))
+        .collect();
+    names.extend(LEDGERS.iter().map(|name| (*name).to_string()));
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("catalog");
+    let proposals = [
+        // Collides on a number carried by two book vouchers.
+        ProposalRow::new(0, "20260812", "AA0118").build(),
+        // Resembles on date, party and amount.
+        ProposalRow::new(1, "20260812", "AA0777").build(),
+        // Party is an undistinguishable family: withheld, not absent.
+        ProposalRow::new(2, "20260812", "AA0778")
+            .party("Echo Party 0")
+            .rows(vec![["Echo Party 0", "-99.00"], ["Sales Account", "99.00"]])
+            .build(),
+        // Nothing resembles it at all.
+        ProposalRow::new(3, "20260812", "AA0779")
+            .party("Charlie Minerals")
+            .rows(vec![
+                ["Charlie Minerals", "-13.00"],
+                ["Sales Account", "13.00"],
+            ])
+            .build(),
+    ];
+    let report = run(
+        &window,
+        &catalog,
+        &numbering(NumberingMethod::Manual),
+        &proposals,
+    );
+
+    let mut seen_empty = 0;
+    for entry in report.vouchers() {
+        let Some(undecided) = entry.undecided() else {
+            continue;
+        };
+        if undecided.candidates.is_empty() {
+            seen_empty += 1;
+            assert_eq!(
+                undecided.reason,
+                UndecidedReason::PartyNotDecidable,
+                "an empty candidate list may only mean the comparison did not run"
+            );
+            assert!(!undecided.candidates_truncated);
+            assert_eq!(undecided.candidate_count, 0);
+        } else {
+            // A listed count and a true count that disagree must say so.
+            assert_eq!(
+                undecided.candidates_truncated,
+                undecided.candidates.len() < undecided.candidate_count
+            );
+        }
+    }
+    assert_eq!(seen_empty, 1, "the withheld-family case must be exercised");
+    // And the whole run still partitions.
+    let totals = report.totals();
+    assert_eq!(
+        totals.present + totals.possibly_present + totals.absent,
+        totals.requested
+    );
+}
