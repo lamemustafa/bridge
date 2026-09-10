@@ -194,11 +194,9 @@ fn exactly_the_captured_cash_and_bank_reserved_groups_are_admitted() {
     // establishes `Bank Accounts` and `Cash-in-Hand` from captured ledgers, and
     // this one establishes that no *other* predefined group joins them.
     //
-    // `Bank OD A/c` is the one admitted group with no captured ledger beneath
-    // it in either captured company, so its edge rests on a ledger `PARENT`
-    // behaving the same way it demonstrably does for the other two rather than
-    // on a row of its own. That is the weakest link in this gate; a capture of
-    // an overdraft book would close it.
+    // `Bank OD A/c` is captured as a group in both companies and still not
+    // admitted, because no captured ledger sits beneath it: admission needs the
+    // whole edge, not just its far end.
     let groups = captured_groups();
     let admitted = groups
         .iter()
@@ -211,7 +209,7 @@ fn exactly_the_captured_cash_and_bank_reserved_groups_are_admitted() {
         .collect::<Vec<_>>();
     assert_eq!(
         admitted,
-        ["Bank Accounts", "Bank OD A/c", "Cash-in-Hand"],
+        ["Bank Accounts", "Cash-in-Hand"],
         "captured group set admits only these as cash or bank"
     );
     // `Bank OCC A/c` is a documented Tally group that neither capture contains,
@@ -537,6 +535,36 @@ fn a_payment_between_two_money_ledgers_is_refused_as_a_contra() {
     ] {
         let (_, admitted) = cash_bank_report(&demo_batch(voucher_type, dr, cr), &masters);
         assert!(admitted, "{voucher_type} {dr} / {cr}");
+    }
+}
+
+#[test]
+fn a_captured_money_group_with_no_captured_ledger_is_not_admitted() {
+    // `Bank OD A/c` is a captured group row in both companies, so its identity
+    // is not in doubt — but no captured ledger's `PARENT` resolves to it, and
+    // that edge is what classification reads. Admitting it on the group row
+    // alone would ship the money leg's whole claim on half its evidence.
+    let mut ledgers = captured_demo_ledger_parents();
+    ledgers.push(("Overdraft Account".into(), Some("Bank OD A/c".into())));
+    let masters = observed(&ledgers, captured_demo_groups());
+    assert!(captured_demo_groups()
+        .iter()
+        .any(|group| group.reserved_name.as_deref() == Some("Bank OD A/c")));
+    assert_eq!(
+        masters.classify("Overdraft Account"),
+        CashBankState::UnadmittedMoney {
+            reserved_group: "Bank OD A/c"
+        }
+    );
+    // Refused as funding, and refused as a counterparty, exactly as any other
+    // money group Bridge will not admit.
+    for (voucher_type, dr, cr) in [
+        ("Payment", "Gujarat Poly Industries", "Overdraft Account"),
+        ("Payment", "Overdraft Account", "HDFC Bank Current Account"),
+        ("Contra", "Overdraft Account", "HDFC Bank Current Account"),
+    ] {
+        let (_, admitted) = cash_bank_report(&demo_batch(voucher_type, dr, cr), &masters);
+        assert!(!admitted, "{voucher_type} {dr} / {cr}");
     }
 }
 

@@ -35,7 +35,7 @@
     },
     {
       "path": "docs/tally/TALLY_PROTOCOL_REFERENCE.md",
-      "sha256": "0559aa2297dfdc9d375e4cf5775525f545d7b1c7165fcb4ba2dc58e52ea3d067"
+      "sha256": "db535076f8f601e0ce6ad40fe4644396830bd23d9745260e5a645cbee4a6aa88"
     },
     {
       "path": "docs/tally/compatibility/README.md",
@@ -327,7 +327,7 @@
     },
     {
       "path": "src-tauri/src/agent_import.rs",
-      "sha256": "3262c2c72d89df0de98587443850cf5c03e2266b7cfb7a55308d89126bc8e0cb"
+      "sha256": "ff061bbc4e538f33a9ff06a8c2a73a8cfba7e4b3c9d6d30a093789b349300b5a"
     },
     {
       "path": "src-tauri/src/agent_read_profiles.rs",
@@ -842,5 +842,5 @@
       "sha256": "a8ac2714fecf51947f2822c8c46d7ce2e8602c732780ff60566a7771f0836f9a"
     }
   ],
-  "manifest_sha256": "510848fc3aba52aa7b6a073ddc302b35bcb23151e96d9c35e7fccc063232fa4f"
+  "manifest_sha256": "ae425583b3c9e392693c7e7af0ea5751b9f92b0c8416c37140a31a45480b80b6"
 }

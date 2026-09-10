@@ -26,21 +26,31 @@ use std::collections::{BTreeMap, BTreeSet};
 /// admits a ledger under it onto a leg that must hold money.
 ///
 /// The two are not the same question, and one table answers both so they
-/// cannot drift apart. Admission needs the identity to have been present in a
-/// captured live `List of Groups` response. `Bank OCC A/c` is documented by
-/// Tally and appears in neither captured company's group set, so it is not
-/// admitted — but it plainly holds money, and pretending otherwise on the
-/// counterparty side would wave through the bank-to-bank Payment that the
-/// counterparty rule exists to catch. Both refusals are the same ignorance
-/// pointed in the safe direction, so a voucher touching such a ledger is
-/// refused on either side.
+/// cannot drift apart.
+///
+/// **Admission needs a captured ledger sitting under a captured group** — the
+/// whole edge the gate walks, not just its far end. A group row alone proves
+/// the identity exists; it does not show a ledger's `PARENT` resolving to it,
+/// which is what classification actually reads. Both admitted entries below
+/// have such a row in `ledgers_native_aarav.utf16le.xml`.
+///
+/// The unadmitted entries hold money all the same, and saying otherwise on the
+/// counterparty side would wave through the bank-to-bank Payment that rule
+/// exists to catch. So a voucher touching one is refused on either side: the
+/// money leg for want of an observed edge, the counterparty leg because it is
+/// money. Both refusals are the same ignorance pointed in the safe direction.
+///
+/// - `Bank OD A/c` — group captured in both companies, but no captured ledger
+///   beneath it. One `List of Ledgers` read against a book with an overdraft
+///   or cash-credit account promotes it.
+/// - `Bank OCC A/c` — documented by Tally, in neither captured group set.
 ///
 /// Held in Tally's own spelling and normalized at comparison time, so the
 /// matched entry is directly reportable.
 const MONEY_RESERVED_GROUPS: &[(&str, bool)] = &[
     ("Bank Accounts", true),
-    ("Bank OD A/c", true),
     ("Cash-in-Hand", true),
+    ("Bank OD A/c", false),
     ("Bank OCC A/c", false),
 ];
 

@@ -339,8 +339,8 @@ impl Server {
                 "new files accept Journal, Payment, Receipt and Contra, the voucher types with recorded live import/readback evidence",
                 "a Journal takes any balanced set of entries and may carry a voucher_number",
                 "Payment, Receipt and Contra take exactly two entries over two distinct ledgers, and neither voucher_number nor reference: neither element's fate on these types has been observed, and the bank's own reference belongs in the narration, which survives",
-                "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts, Bank OD A/c or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
-                "the other leg of a Payment or Receipt must hold no money at all, which is a wider test than the admitted three: a ledger under Bank OCC A/c is refused there too, because money on both sides is a Contra whatever the type says",
+                "a Payment credits, and a Receipt debits, a ledger whose live group ancestry reaches Bank Accounts or Cash-in-Hand; both Contra legs must name one, and a leg that cannot be established is refused",
+                "the other leg of a Payment or Receipt must hold no money at all, which is a wider test than the admitted two: a ledger under Bank OD A/c or Bank OCC A/c is refused there as well, because money on both sides is a Contra whatever the type says",
                 "each voucher has at least two entries and exact debit total equals credit total",
                 "amounts are positive decimal strings with exactly two fractional digits",
                 "dates must be within the selected company's BOOKSFROM through today",
@@ -486,7 +486,7 @@ impl Server {
                         payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
                             "state":"refused", "reason":"cash_bank_ledger_not_established", "legs":legs,
                             "group_evidence_sha256":evidence.response_sha256,
-                            "next_step":"A leg marked cash_bank must name a ledger whose group ancestry reaches Bank Accounts, Bank OD A/c or Cash-in-Hand: the credit on a Payment, the debit on a Receipt, both legs on a Contra. The counterparty leg must not be one of those — money on both sides is a Contra, whatever the type says. Correct the payload or the ledger's group in Tally, then build a new batch. No file was written."
+                            "next_step":"A leg marked cash_bank must name a ledger whose group ancestry reaches Bank Accounts or Cash-in-Hand: the credit on a Payment, the debit on a Receipt, both legs on a Contra. The counterparty leg must hold no money at all, which also rules out Bank OD A/c and Bank OCC A/c — money on both sides is a Contra, whatever the type says. Bridge admits a money group only where a captured ledger sits under it, so an overdraft or cash-credit ledger is refused on either side for now. Correct the payload or the ledger's group in Tally, then build a new batch. No file was written."
                         }}),
                         evidence: accumulated.clone(),
                         company_guid: Some(payload.company_guid),

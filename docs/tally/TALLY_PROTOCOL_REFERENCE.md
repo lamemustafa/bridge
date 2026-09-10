@@ -979,13 +979,26 @@ prevent; but a counterparty Bridge cannot classify is not evidence of that, and 
 would cost a build with nothing wrong with it.
 
 The two columns also ask different questions of the same group, and that gap matters.
-**Admitted** means the reserved identity was present in a captured `List of Groups` response:
-`Bank Accounts`, `Bank OD A/c` and `Cash-in-Hand`. **Known money** additionally covers
-`Bank OCC A/c`, which Tally documents and neither capture contains. A ledger under it is refused
-on a money leg for want of an observed spelling — and refused on a counterparty leg because it
-plainly holds money. Both refusals are the same ignorance pointed in the safe direction; reading
-"not admitted" as "not money" would wave through exactly the bank-to-bank Payment the
-counterparty rule exists to catch.
+
+**Admitted** means a captured ledger was observed sitting under a captured group — the whole
+edge the classifier walks, not just its far end. A group row proves the identity exists; it does
+not show a ledger's `PARENT` resolving to it. Two identities clear that bar: `Bank Accounts` and
+`Cash-in-Hand`.
+
+**Known money** is wider, and covers two more:
+
+| identity | group row captured | ledger under it captured | admitted |
+| --- | --- | --- | --- |
+| `Bank Accounts`, `Cash-in-Hand` | yes | yes | yes |
+| `Bank OD A/c` | yes | **no** | no |
+| `Bank OCC A/c` | **no** | no | no |
+
+A ledger under either unadmitted identity is refused on a money leg for want of an observed edge,
+and refused on a counterparty leg because it plainly holds money. Both refusals are the same
+ignorance pointed in the safe direction; reading "not admitted" as "not money" would wave through
+exactly the bank-to-bank Payment the counterparty rule exists to catch. The practical cost is
+that an overdraft or cash-credit book cannot be imported through Bridge yet — one
+`List of Ledgers` read against such a book promotes `Bank OD A/c` and removes it.
 
 Classification walks the ledger's group ancestry through `RESERVEDNAME` per §8.2a, so a renamed
 predefined group still classifies. A book whose money ledger sits under a group the Group
