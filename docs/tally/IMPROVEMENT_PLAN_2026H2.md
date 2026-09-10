@@ -401,6 +401,8 @@ Re-sending the identical voucher payload, same `VOUCHERNUMBER`, produced `CREATE
 
 **Confirms §3.1.2 as load-bearing rather than defensive:** the UDF `BridgeTxnID` + `(date, amount, ledger-set, voucher-type)` fingerprint is the *only* thing standing between a crash-retry and a duplicated client voucher.
 
+> **Superseded 2026-09-11 — do not build the fingerprint on the strength of this.** The measurement holds: without a client `REMOTEID`, a repeated payload creates a second voucher. But it is not the *only* thing available, because the vouchers measured here carried no client `REMOTEID` and Tally therefore assigned its own. `IMPLEMENTATION_GUIDE.md` §3.3a measures the controlled case: with a client-supplied `REMOTEID`, a byte-identical re-import returns `CREATED=0, ALTERED=1` and leaves **one** voucher. That is real idempotency and a real correction path without a TDL plugin, a UDF or an outbox. See also `TALLY_PROTOCOL_REFERENCE.md` §9.3, whose title carried the same overgeneralisation until it was corrected.
+
 ### 8.5 Re-creating an existing master silently becomes an Alter
 
 Re-sending the identical ledger `ACTION="Create"` returned `CREATED=0, ALTERED=1` — no error. A retry silently **overwrites** the existing master with the retry payload, including any defaulted fields.

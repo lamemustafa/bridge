@@ -719,11 +719,31 @@ do not infer missing evidence or resend it to obtain a cleaner receipt.
 `LINEERROR` text is **untrustworthy for cause attribution** — an out-of-range date produced
 "Voucher date is missing" when the date was present.
 
-### 9.3 No natural idempotency for vouchers
+### 9.3 Voucher idempotency depends on `REMOTEID` — **this section's title used to say the opposite**
 
 **VERIFIED.** Re-sending an identical voucher payload with the same `VOUCHERNUMBER` created a
-**second voucher**. Tally does not dedupe. A crash-retry duplicates client data unless the
-integrator prevents it.
+**second voucher**. Tally does not dedupe on the voucher number. A crash-retry duplicates client
+data unless the integrator prevents it.
+
+**That measurement stands; the conclusion drawn from it did not.** This section was headed *"No
+natural idempotency for vouchers"*, and it was read — including by me, repeatedly — as saying no
+idempotency mechanism exists. `IMPLEMENTATION_GUIDE.md` §3.3a supersedes that reading:
+
+```
+import #1  REMOTEID="…-001"  ->  CREATED=1  ALTERED=0
+import #2  byte-identical    ->  CREATED=0  ALTERED=1
+vouchers in Tally afterwards ->  1
+```
+
+**With a client-supplied `REMOTEID`, a re-import upserts. It does not duplicate.** The vouchers
+measured here carried **no** client `REMOTEID`, so Tally assigned its own and every send was a new
+object — that was the uncontrolled variable, and the title generalised past it.
+
+Consequences, since a stale reading of this section is expensive in both directions: an integrator
+who believes there is no idempotency builds an outbox, a dedup table or a narration hack it does
+not need, and one who supplies a `REMOTEID` without knowing it upserts can silently **overwrite** an
+earlier voucher by reusing a key. §3.3a has the full table, including that `ACTION="Alter"` with a
+`REMOTEID` creates a duplicate — inverted from intuition — so the correction path is `Create`.
 
 ### 9.4 Master re-create is a silent Alter
 
