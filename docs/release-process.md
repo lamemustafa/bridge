@@ -86,6 +86,48 @@ new digest was computed from disk, and the `rehash-surface` that follows
 re-reads every pin, including the new one, before the second seal. Never stop
 after that first seal.
 
+#### When the surface itself conflicts in a merge or rebase
+
+The surface and the matrix are **generated artifacts**. Never hand-merge them.
+
+The reason is not that a hand-merge could slip through. It could not: `validate_files`
+re-reads the raw bytes of every pinned file from the repository and compares the
+SHA-256, so a surface pinning stale content fails the gate with
+`surface_file_changed`. Resealing to silence a checksum complaint does not rescue
+it -- measured, a stale pin still fails after both `seal-surface` and
+`repoint-matrix`. The gate is byte-exact and fail-closed.
+
+Hand-merging is futile rather than unsafe. Every wrong resolution is a loud
+failure, and the only route to a green gate is to regenerate.
+
+**What does matter is the order.** Resolve every genuine *source* conflict first,
+and only then regenerate. `tools/bridge-tally-compatibility/src/lib.rs` is itself a
+pinned file: the tool pins its own source into the surface it produces. Regenerate
+before that file is final and you pin a half-merged copy -- the gate will catch it,
+but only after you have spent the cycle.
+
+1. Resolve every non-generated conflict and settle those files completely.
+2. Take **one side wholesale** for `compatibility-surface.json` and
+   `compatibility-matrix.json`. The choice is provisional, because step 4 rewrites
+   their content; take whichever side's pin set is closer to the intended union.
+3. Re-add the pins your branch introduces that the taken side lacks. The `sha256`
+   may be a placeholder -- `rehash-surface` computes it from disk.
+4. Regenerate: if the pin *set* changed, `seal-surface` first as described above,
+   then the ordinary three; otherwise just the ordinary three.
+5. Run the gate. `rehash-surface` reports its changed-entry count, which is a
+   useful check on your own reasoning -- if you edited the cap and added one pin,
+   expect exactly two.
+
+A rebase carrying several commits that touch pinned files needs this at **each**
+commit that does, not once at the end. CI gates the final tree, but a history whose
+intermediate commits do not gate is not bisectable.
+
+**Two branches will conflict on `MAX_SURFACE_FILES` by construction.** The
+convention is to pin exactly the count in use, so any branch adding a pin must
+raise it, and any two such branches collide on that line. That is expected, and the
+cap is the only line that should collide -- the cap *test* derives its size from the
+constant precisely so that raising the cap does not also rewrite the test.
+
 Two further constraints apply:
 
 - `MAX_SURFACE_FILES` caps the pin count, and `RESERVED_SURFACE_FILES` bounds

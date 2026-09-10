@@ -14,12 +14,14 @@ pub(crate) mod local_files;
 // one consumer inside this crate, so it does not need to be reachable from outside `bridge_lib`.
 mod observability;
 pub mod reports;
+pub(crate) mod source_draft;
+pub(crate) mod source_draft_xml;
 pub mod sync;
 pub mod tally;
 pub mod warning_codes;
 
 use std::path::PathBuf;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::sync::OnceCell;
 
 /// Holds everything needed to open the encrypted Tally mirror without doing any of the actual
@@ -88,8 +90,10 @@ pub fn run_journal_confirmation_child_from_args(
 pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
     tracing_subscriber::fmt::init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(tally::TallyRuntime::default())
+        .manage(source_draft::SourceDraftStore::default())
+        .manage(source_draft::SourceDraftLifecycleGuard::default())
         .manage(reports::bulk_party_statement::PartyStatementDestinationApprovals::default())
         .manage(reports::outstandings_working_paper_store::WorkingPaperExportStore::default())
         .manage(reports::trial_balance_store::TrialBalanceExportStore::default())
@@ -97,8 +101,30 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
         .setup(|app| {
             let app_data_directory = app.path().app_data_dir()?;
             app.manage(LazyTallyMirror::new(app_data_directory));
+            #[cfg(target_os = "macos")]
+            install_macos_cocoa_termination_guard(app.handle())?;
             Ok(())
-        })
+        });
+
+    // The default macOS Quit item invokes Cocoa termination directly, before
+    // Tauri can expose a preventable RunEvent::ExitRequested. Replace only
+    // that item with an ordinary menu event; all other default menu items stay
+    // unchanged.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(guarded_macos_menu)
+        .on_menu_event(|app, event| {
+            if let Some(kind) = lifecycle_kind_for_menu_item(event.id().as_ref()) {
+                let lifecycle_guard = app.state::<source_draft::SourceDraftLifecycleGuard>();
+                if lifecycle_guard.requires_confirmation() {
+                    emit_source_draft_lifecycle_request(app, &lifecycle_guard, kind);
+                } else {
+                    app.exit(0);
+                }
+            }
+        });
+
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             commands::check_tally_connection,
             commands::probe_tally,
@@ -153,14 +179,313 @@ pub fn run(make_context: fn() -> tauri::Context<tauri::Wry>) {
             commands::scan_document_paths,
             commands::sync_documents_to_axal,
             commands::revoke_document_authorizations,
+            source_draft::desktop_pick_source_draft,
+            source_draft::desktop_open_source_draft,
+            source_draft::desktop_save_source_draft,
+            source_draft::desktop_register_source_draft_lifecycle_renderer,
+            source_draft::desktop_unregister_source_draft_lifecycle_renderer,
+            source_draft::desktop_pending_source_draft_lifecycle_request,
+            source_draft::desktop_cancel_source_draft_lifecycle_request,
+            source_draft::desktop_complete_source_draft_lifecycle_request,
+            source_draft::desktop_load_source_draft_existing_ledger_targets,
+            source_draft::desktop_apply_source_draft_existing_ledger_target,
+            source_draft::desktop_invalidate_source_draft_existing_ledger_targets,
             commands::desktop_pick_journal_for_review,
             commands::desktop_post_reviewed_journal,
             commands::desktop_reconcile_reviewed_journal,
             commands::select_document_files,
             commands::select_document_folder
         ])
-        .run(make_context())
-        .expect("failed to run Bridge");
+        .build(make_context())
+        .expect("failed to build Bridge");
+
+    app.run(|app, event| {
+        let lifecycle_guard = app.state::<source_draft::SourceDraftLifecycleGuard>();
+        match event {
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } if label == "main" => {
+                if lifecycle_guard.requires_confirmation() && !lifecycle_guard.take_close_permit() {
+                    api.prevent_close();
+                    emit_source_draft_lifecycle_request(
+                        app,
+                        &lifecycle_guard,
+                        source_draft::SourceDraftLifecycleKind::Close,
+                    );
+                }
+            }
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                if lifecycle_guard.requires_confirmation() && !lifecycle_guard.take_exit_permit() {
+                    api.prevent_exit();
+                    emit_source_draft_lifecycle_request(
+                        app,
+                        &lifecycle_guard,
+                        source_draft::SourceDraftLifecycleKind::Exit,
+                    );
+                }
+            }
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } if label == "main" => lifecycle_guard.main_window_destroyed(),
+            _ => {}
+        }
+    });
+}
+
+fn emit_source_draft_lifecycle_request(
+    app: &tauri::AppHandle,
+    guard: &source_draft::SourceDraftLifecycleGuard,
+    kind: source_draft::SourceDraftLifecycleKind,
+) {
+    let pending = guard.request(kind);
+    // A failed renderer event cannot release the native lifecycle guard; the
+    // renderer can recover the same pending request with the command at mount.
+    let _ = app.emit("source-draft-lifecycle-requested", pending);
+}
+
+#[cfg(target_os = "macos")]
+static MACOS_COCOA_TERMINATION_APP: std::sync::OnceLock<tauri::AppHandle> =
+    std::sync::OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn install_macos_cocoa_termination_guard(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use objc2::{runtime::AnyObject, MainThreadMarker};
+    use objc2_app_kit::NSApplication;
+
+    let main_thread = MainThreadMarker::new().ok_or_else(|| {
+        std::io::Error::other("refusing to install Cocoa termination guard outside the main thread")
+    })?;
+    let ns_app = NSApplication::sharedApplication(main_thread);
+    let delegate = ns_app
+        .delegate()
+        .ok_or_else(|| std::io::Error::other("Cocoa application delegate is unavailable"))?;
+    let delegate_object: &AnyObject = <objc2::runtime::ProtocolObject<
+        dyn objc2_app_kit::NSApplicationDelegate,
+    > as AsRef<AnyObject>>::as_ref(&delegate);
+    let delegate_class = delegate_object.class();
+    let selector = objc2::sel!(applicationShouldTerminate:);
+
+    if delegate_class.responds_to(selector) {
+        return Err(std::io::Error::other(
+            "refusing to replace existing Cocoa applicationShouldTerminate: implementation",
+        )
+        .into());
+    }
+    MACOS_COCOA_TERMINATION_APP.set(app.clone()).map_err(|_| {
+        std::io::Error::other("Cocoa termination guard was installed more than once")
+    })?;
+    // `Q@:@` is the macOS Objective-C encoding for an NSUInteger reply and
+    // one NSApplication object argument. The callback has that exact ABI.
+    let implementation: objc2::runtime::Imp = unsafe {
+        std::mem::transmute(
+            macos_application_should_terminate as unsafe extern "C-unwind" fn(_, _, _) -> _,
+        )
+    };
+    let added = unsafe {
+        objc2::ffi::class_addMethod(
+            delegate_class as *const _ as *mut _,
+            selector,
+            implementation,
+            c"Q@:@".as_ptr(),
+        )
+        .as_bool()
+    };
+    if !added {
+        return Err(std::io::Error::other(
+            "Cocoa application delegate refused applicationShouldTerminate: guard",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C-unwind" fn macos_application_should_terminate(
+    _delegate: &objc2::runtime::AnyObject,
+    _selector: objc2::runtime::Sel,
+    _sender: &objc2_app_kit::NSApplication,
+) -> objc2_app_kit::NSApplicationTerminateReply {
+    let Some(app) = MACOS_COCOA_TERMINATION_APP.get() else {
+        tracing::error!(
+            "Cocoa termination guard has no application context; cancelling termination"
+        );
+        return objc2_app_kit::NSApplicationTerminateReply::TerminateCancel;
+    };
+    let guard = app.state::<source_draft::SourceDraftLifecycleGuard>();
+    guarded_cocoa_termination_reply(&guard, |kind| {
+        emit_source_draft_lifecycle_request(app, &guard, kind);
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn guarded_cocoa_termination_reply(
+    guard: &source_draft::SourceDraftLifecycleGuard,
+    emit_lifecycle_request: impl FnOnce(source_draft::SourceDraftLifecycleKind),
+) -> objc2_app_kit::NSApplicationTerminateReply {
+    let requires_confirmation = guard.requires_confirmation();
+    let exit_permit = requires_confirmation && guard.take_exit_permit();
+    let reply = termination_reply(requires_confirmation, exit_permit);
+    if reply == objc2_app_kit::NSApplicationTerminateReply::TerminateCancel {
+        emit_lifecycle_request(source_draft::SourceDraftLifecycleKind::Exit);
+    }
+    reply
+}
+
+#[cfg(target_os = "macos")]
+const fn termination_reply(
+    requires_confirmation: bool,
+    exit_permit: bool,
+) -> objc2_app_kit::NSApplicationTerminateReply {
+    if requires_confirmation && !exit_permit {
+        objc2_app_kit::NSApplicationTerminateReply::TerminateCancel
+    } else {
+        objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+    }
+}
+
+#[cfg(target_os = "macos")]
+const GUARDED_QUIT_MENU_ITEM_ID: &str = "source-draft-guarded-quit";
+
+#[cfg(target_os = "macos")]
+fn lifecycle_kind_for_menu_item(item_id: &str) -> Option<source_draft::SourceDraftLifecycleKind> {
+    (item_id == GUARDED_QUIT_MENU_ITEM_ID).then_some(source_draft::SourceDraftLifecycleKind::Exit)
+}
+
+#[cfg(target_os = "macos")]
+fn guarded_macos_menu(
+    app: &tauri::AppHandle<tauri::Wry>,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{AboutMetadata, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
+
+    let menu = Menu::default(app)?;
+    // Tauri's default macOS menu puts the application submenu first. Its
+    // predefined item IDs are generated, so construct this submenu explicitly
+    // rather than attempting to look up a predefined Quit by a guessed ID.
+    let default_app_menu = menu
+        .items()?
+        .into_iter()
+        .next()
+        .ok_or_else(|| std::io::Error::other("The default application menu is missing"))?;
+    match &default_app_menu {
+        MenuItemKind::Submenu(submenu) if submenu.text()? == app.package_info().name => {}
+        _ => return Err(std::io::Error::other("Unexpected default application menu").into()),
+    }
+    let guarded_quit = MenuItem::with_id(
+        app,
+        GUARDED_QUIT_MENU_ITEM_ID,
+        format!("Quit {}", app.package_info().name),
+        true,
+        Some("cmd+q"),
+    )?;
+    let about = AboutMetadata {
+        name: Some(app.package_info().name.clone()),
+        version: Some(app.package_info().version.to_string()),
+        copyright: app.config().bundle.copyright.clone(),
+        authors: app
+            .config()
+            .bundle
+            .publisher
+            .clone()
+            .map(|publisher| vec![publisher]),
+        ..Default::default()
+    };
+    let app_menu = Submenu::with_items(
+        app,
+        app.package_info().name.clone(),
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, Some(about))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &guarded_quit,
+        ],
+    )?;
+    menu.remove(&default_app_menu)?;
+    menu.insert(&app_menu, 0)?;
+    Ok(menu)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod source_draft_macos_menu_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn guarded_quit_menu_item_routes_only_to_exit_lifecycle() {
+        assert_eq!(
+            lifecycle_kind_for_menu_item(GUARDED_QUIT_MENU_ITEM_ID),
+            Some(source_draft::SourceDraftLifecycleKind::Exit)
+        );
+        assert_eq!(lifecycle_kind_for_menu_item("quit"), None);
+        assert_eq!(lifecycle_kind_for_menu_item("unrelated-menu-item"), None);
+    }
+
+    #[test]
+    fn cocoa_termination_with_confirmation_emits_an_exit_request_and_cancels() {
+        let guard = source_draft::SourceDraftLifecycleGuard::default();
+        guard.renderer_registered(Uuid::new_v4());
+        let mut emitted = None;
+
+        assert_eq!(
+            termination_reply(true, false),
+            objc2_app_kit::NSApplicationTerminateReply::TerminateCancel
+        );
+        let reply = guarded_cocoa_termination_reply(&guard, |kind| emitted = Some(kind));
+
+        assert_eq!(
+            reply,
+            objc2_app_kit::NSApplicationTerminateReply::TerminateCancel
+        );
+        assert_eq!(emitted, Some(source_draft::SourceDraftLifecycleKind::Exit));
+    }
+
+    #[test]
+    fn cocoa_termination_with_exit_permit_proceeds_without_another_request() {
+        let guard = source_draft::SourceDraftLifecycleGuard::default();
+        guard.renderer_registered(Uuid::new_v4());
+        let request = guard.request(source_draft::SourceDraftLifecycleKind::Exit);
+        assert!(guard.authorize(&request));
+        let mut emitted = false;
+
+        assert_eq!(
+            termination_reply(true, true),
+            objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+        );
+        let reply = guarded_cocoa_termination_reply(&guard, |_| emitted = true);
+
+        assert_eq!(
+            reply,
+            objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+        );
+        assert!(!emitted);
+        assert!(!guard.take_exit_permit());
+    }
+
+    #[test]
+    fn cocoa_termination_without_confirmation_proceeds() {
+        let guard = source_draft::SourceDraftLifecycleGuard::default();
+        let mut emitted = false;
+
+        let reply = guarded_cocoa_termination_reply(&guard, |_| emitted = true);
+
+        assert_eq!(
+            reply,
+            objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+        );
+        assert!(!emitted);
+        assert_eq!(
+            termination_reply(false, false),
+            objc2_app_kit::NSApplicationTerminateReply::TerminateNow
+        );
+    }
 }
 
 #[cfg(test)]
@@ -246,13 +571,14 @@ mod lazy_tally_mirror_concurrency_tests {
 #[cfg(test)]
 mod security_config_tests {
     #[test]
-    fn renderer_does_not_receive_tauri_core_default_permissions() {
+    fn renderer_receives_only_native_lifecycle_event_permissions() {
         let capability: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/default.json"))
                 .expect("valid capability JSON");
-        assert!(capability["permissions"]
-            .as_array()
-            .is_some_and(|permissions| permissions.is_empty()));
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!(["core:event:allow-listen", "core:event:allow-unlisten"])
+        );
     }
 
     #[test]

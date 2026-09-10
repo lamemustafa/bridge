@@ -30,7 +30,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 212;
+pub const MAX_SURFACE_FILES: usize = 211;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -38,9 +38,16 @@ pub const MAX_MATRIX_MARKDOWN_BYTES: usize = 1024 * 1024;
 const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1000;
 const REQUIRED_SURFACE_DIRECTORIES: [&str; 2] =
     ["src-tauri/src/db/migrations", "src-tauri/src/reports"];
-/// The selected-ledger operation constructs its server through this file, so
-/// compatibility evidence must bind the constructor as well as its caller.
-const REQUIRED_SURFACE_FILES: [&str; 1] = ["src-tauri/src/agent_desktop_journal.rs"];
+/// Compatibility evidence binds the selected-ledger constructor and the native
+/// lifecycle implementation, error fallback, and frontend admission points, rather than
+/// trusting only their callers.
+const REQUIRED_SURFACE_FILES: [&str; 5] = [
+    "src-tauri/src/agent_desktop_journal.rs",
+    "src-tauri/src/source_draft/lifecycle.rs",
+    "src/JournalPostingScreen.tsx",
+    "src/ErrorBoundary.tsx",
+    "src/NativeLifecycleController.tsx",
+];
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CompatibilityError {
@@ -2494,6 +2501,24 @@ mod tests {
             .unwrap_err(),
             invalid("surface_required_directory_file_unpinned")
         );
+    }
+
+    #[test]
+    fn gate_rejects_each_omitted_required_lifecycle_path() {
+        for omitted_path in REQUIRED_SURFACE_FILES {
+            let temp = tempfile::tempdir().unwrap();
+            fs::write(temp.path().join("surface.txt"), b"surface").unwrap();
+            let mut surface = sealed_surface(temp.path(), &["surface.txt"]);
+            surface.files.retain(|file| file.path != omitted_path);
+            surface.manifest_sha256.clear();
+            let surface = surface.seal().unwrap();
+
+            assert_eq!(
+                surface.validate_files(temp.path()).unwrap_err(),
+                invalid("surface_required_directory_file_unpinned"),
+                "{omitted_path} must remain pinned"
+            );
+        }
     }
 
     fn sealed_surface(repository_root: &Path, paths: &[&str]) -> CompatibilitySurfaceManifest {

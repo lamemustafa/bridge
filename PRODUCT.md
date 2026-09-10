@@ -12,6 +12,8 @@ Accountants and chartered-accountancy teams using Tally on a desktop during day-
 
 For Unit A, Bridge reads one verified Tally company and presents an in-memory outstandings view: receivable and payable totals, four ageing buckets, top parties, oldest-bill age, and a clear freshness line. Success means the numbers are correct, locally computed from vouchers and bill allocations, and visibly tied to a complete or explicitly partial live read.
 
+A separate local preparation screen lets an operator inspect supported XML source rows, enter proposed accounting choices, and save or reopen a draft. Source values stay visible and unchanged. Drafts do not establish existing-ledger mappings or authorize posting; those steps require their own qualification and review.
+
 ## Brand Personality
 
 Trustworthy, restrained, evidence-led.

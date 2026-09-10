@@ -35,6 +35,8 @@ product, mode, dates and currency for the financial read; other or unobserved
 products/modes, no currency master, non-INR, or multiple currency masters are
 refused.
 
+The desktop also offers [local XML draft preparation](./docs/source-drafts.md) through **Prepare file**. It preserves source observations beside editable proposals and saves a local draft for later review.
+
 For contributors, use the setup and development path below.
 
 ## Supported development hosts

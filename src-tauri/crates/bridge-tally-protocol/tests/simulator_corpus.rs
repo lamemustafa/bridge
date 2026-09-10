@@ -8,8 +8,8 @@ use bridge_tally_protocol::{
     parse_voucher_source_records_with_evidence, parse_voucher_type_source_records_with_evidence,
     parse_vouchers, parse_vouchers_with_evidence, validate_exact_selected_export_structure,
     verify_company_context, verify_selected_voucher_window_context, ParsedSourceIdentityKind,
-    PartyLedgerMasterFieldObservation, TallyExportStatus, BRIDGE_GROUP_EXPORT_SCHEMA,
-    BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
+    PartyLedgerMasterFieldObservation, StandardLedgerCatalogError, TallyExportStatus,
+    BRIDGE_GROUP_EXPORT_SCHEMA, BRIDGE_LEDGER_EXPORT_SCHEMA, BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA,
     BRIDGE_VOUCHER_EXPORT_SCHEMA, BRIDGE_VOUCHER_TYPE_EXPORT_SCHEMA,
     MAX_INTERACTIVE_DISCOVERY_COMPANIES,
 };
@@ -962,6 +962,65 @@ fn opaque_catalog_binding_rejects_a_same_name_replacement_guid() {
             )
             .expect("single-GUID captured-fixture mutation remains structurally valid"),
         "the public name alone cannot rebind an approved ledger"
+    );
+}
+
+#[test]
+fn standard_ledger_catalog_keeps_the_exact_observed_name_for_binding() {
+    let bytes = include_bytes!("fixtures/agent/native-ledger-catalogue.utf16le.xml");
+    let captured = String::from_utf16(
+        &bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    )
+    .expect("captured catalog is UTF-16LE");
+    let original = "Cash";
+    let observed = " Cash ";
+    let spaced = captured.replacen(
+        &format!(r#"NAME="{original}""#),
+        &format!(r#"NAME="{observed}""#),
+        1,
+    );
+    assert_ne!(
+        spaced, captured,
+        "the captured catalog has the selected ledger"
+    );
+
+    let catalog = parse_standard_ledger_catalog_with_identities(
+        &spaced,
+        "WR2 Unicode Lab",
+        "61c6de69-1748-461c-ad3f-162cb949df9f",
+    )
+    .expect("a derived captured response with a distinct observed spelling remains valid");
+    assert!(catalog.names().any(|name| name == observed));
+    let binding = catalog
+        .bind_selected([observed.to_string()])
+        .expect("the exact observed spelling binds");
+    assert!(binding
+        .matches(
+            &spaced,
+            "WR2 Unicode Lab",
+            "61c6de69-1748-461c-ad3f-162cb949df9f",
+        )
+        .expect("the fresh response preserves the exact binding"));
+}
+
+#[test]
+fn standard_ledger_catalog_refuses_typed_identity_ambiguity() {
+    let row = |tag: &str, name: &str, guid: &str| {
+        format!(
+            r#"<{tag} NAME="{name}" RESERVEDNAME=""><GUID TYPE="String">{guid}</GUID><PARENT TYPE="String">Primary</PARENT><BRIDGECOMPANYGUID TYPE="String">company-guid</BRIDGECOMPANYGUID><BRIDGECOMPANYNAME TYPE="String">Synthetic Company</BRIDGECOMPANYNAME></{tag}>"#
+        )
+    };
+    let document = format!(
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC><CMPINFO /></DESC><DATA><COLLECTION MSTDEPTYPE=\"Ledger\" ISMSTDEPTYPE=\"Yes\">{}{}</COLLECTION></DATA></BODY></ENVELOPE>",
+        row("SyntheticLedgerOne", "Cash", "ledger-guid-one"),
+        row("SyntheticLedgerTwo", "cash", "ledger-guid-two"),
+    );
+    assert_eq!(
+        parse_standard_ledger_catalog(&document, "Synthetic Company", "company-guid").unwrap_err(),
+        StandardLedgerCatalogError::DuplicateIdentity
     );
 }
 
