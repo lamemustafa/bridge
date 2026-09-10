@@ -133,7 +133,7 @@ fn captured_ledgers_under_captured_money_groups_are_established() {
     }
     let established = ledgers
         .iter()
-        .filter(|(name, _)| masters.classify(name).is_established())
+        .filter(|(name, _)| LegRequirement::Money.admits(&masters.classify(name)))
         .count();
     assert_eq!(
         established, 5,
@@ -179,7 +179,7 @@ fn captured_masters_establish_cash_and_refuse_every_other_captured_ledger() {
     );
     for (name, _) in &ledgers {
         assert_eq!(
-            masters.classify(name).is_established(),
+            LegRequirement::Money.admits(&masters.classify(name)),
             name == "Cash",
             "{name} classified against the captured group tree"
         );
@@ -201,9 +201,8 @@ fn exactly_the_captured_cash_and_bank_reserved_groups_are_admitted() {
     let admitted = groups
         .iter()
         .filter(|group| {
-            observed(&under(&group.name), groups.clone())
-                .classify("Probe Ledger")
-                .is_established()
+            LegRequirement::Money
+                .admits(&observed(&under(&group.name), groups.clone()).classify("Probe Ledger"))
         })
         .map(|group| group.name.clone())
         .collect::<Vec<_>>();
@@ -577,7 +576,7 @@ fn a_payment_between_two_money_ledgers_is_refused_as_a_contra() {
         ("Payment", "Cash", "HDFC Bank Current Account", "Dr"),
         ("Receipt", "HDFC Bank Current Account", "Cash", "Cr"),
     ] {
-        let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters);
+        let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters, 200_000);
         let refused = refusals
             .ledgers
             .iter()
@@ -596,7 +595,7 @@ fn a_payment_between_two_money_ledgers_is_refused_as_a_contra() {
         ("Payment", party, "HDFC Bank Current Account"),
         ("Receipt", "HDFC Bank Current Account", party),
     ] {
-        let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters);
+        let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters, 200_000);
         assert!(refusals.ledgers.is_empty(), "{voucher_type} {dr} / {cr}");
     }
 }
@@ -633,7 +632,7 @@ fn a_captured_money_group_with_no_captured_ledger_is_not_admitted() {
         ("Payment", "Overdraft Account", "HDFC Bank Current Account"),
         ("Contra", "Overdraft Account", "HDFC Bank Current Account"),
     ] {
-        let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters);
+        let refusals = cash_bank_refusals(&demo_batch(voucher_type, dr, cr), &masters, 200_000);
         assert!(!refusals.ledgers.is_empty(), "{voucher_type} {dr} / {cr}");
     }
 }
@@ -668,6 +667,7 @@ fn a_money_group_bridge_will_not_admit_is_still_money_on_the_counterparty_side()
     let refusals = cash_bank_refusals(
         &demo_batch("Payment", "Gujarat Poly Industries", "Cash Credit Account"),
         &masters,
+        200_000,
     );
     assert!(
         !refusals.ledgers.is_empty(),
@@ -681,6 +681,7 @@ fn a_money_group_bridge_will_not_admit_is_still_money_on_the_counterparty_side()
             "HDFC Bank Current Account",
         ),
         &masters,
+        200_000,
     );
     assert!(
         !refusals.ledgers.is_empty(),
@@ -702,6 +703,7 @@ fn a_money_group_bridge_will_not_admit_is_still_money_on_the_counterparty_side()
     let refusals = cash_bank_refusals(
         &demo_batch("Contra", "Cash Credit Account", "HDFC Bank Current Account"),
         &masters,
+        200_000,
     );
     assert!(!refusals.ledgers.is_empty());
 }
@@ -720,7 +722,7 @@ fn one_misfiled_ledger_reports_once_however_many_vouchers_repeat_it() {
         voucher.bridge_txn_id = format!("txn-{index:03}");
         batch.vouchers.push(voucher);
     }
-    let refusals = cash_bank_refusals(&batch, &masters);
+    let refusals = cash_bank_refusals(&batch, &masters, 200_000);
     assert_eq!(refusals.legs, 200, "every failing leg is still counted");
     assert_eq!(
         refusals.ledgers.len(),
@@ -753,7 +755,7 @@ fn one_misfiled_ledger_reports_once_however_many_vouchers_repeat_it() {
     .remove(0);
     counterparty.bridge_txn_id = "txn-002".into();
     both_ways.vouchers.push(counterparty);
-    let refusals = cash_bank_refusals(&both_ways, &masters);
+    let refusals = cash_bank_refusals(&both_ways, &masters, 200_000);
     assert_eq!(refusals.legs, 2);
     assert_eq!(refusals.ledgers.len(), 2, "one ledger, two things to fix");
     let named = serde_json::to_value(party_name("Cash Credit Account")).unwrap();
@@ -788,6 +790,7 @@ fn a_counterparty_that_cannot_be_classified_is_refused() {
     let refusals = cash_bank_refusals(
         &demo_batch("Payment", "Imported Party", "HDFC Bank Current Account"),
         &masters,
+        200_000,
     );
     assert_eq!(refusals.ledgers.len(), 1);
     assert_eq!(refusals.ledgers[0]["requires"], "not_cash_bank");
@@ -805,6 +808,7 @@ fn a_counterparty_that_cannot_be_classified_is_refused() {
             "HDFC Bank Current Account",
         ),
         &masters,
+        200_000,
     );
     assert!(refusals.ledgers.is_empty());
     assert_eq!(refusals.legs, 0);
@@ -834,7 +838,7 @@ fn refusal_diagnostics_stay_inside_a_byte_budget() {
         batch.vouchers.push(voucher);
     }
     let masters = observed(&ledgers, captured_demo_groups());
-    let refusals = cash_bank_refusals(&batch, &masters);
+    let refusals = cash_bank_refusals(&batch, &masters, 200_000);
     assert_eq!(refusals.legs, MAX_MASTER_NAMES);
     assert!(refusals.omitted > 0, "this batch does not fit");
     assert_eq!(
@@ -847,9 +851,15 @@ fn refusal_diagnostics_stay_inside_a_byte_budget() {
         .unwrap()
         .len();
     assert!(
-        bytes <= MAX_REFUSAL_DIAGNOSTIC_BYTES + MAX_MASTER_NAME_CHARS * 2,
+        bytes <= refusal_diagnostic_budget(200_000) + MAX_MASTER_NAME_CHARS * 2,
         "diagnostics stayed within budget, got {bytes}"
     );
+    // A caller configured far below the default gets a proportionally smaller
+    // budget, and still gets one actionable row rather than a bare count.
+    let tight = cash_bank_refusals(&batch, &masters, 256);
+    assert_eq!(tight.ledgers.len(), 1);
+    assert_eq!(tight.omitted, MAX_MASTER_NAMES - 1);
+    assert!(refusal_diagnostic_budget(256) < refusal_diagnostic_budget(200_000));
     // A ledger name is reported whole, never trimmed to fit.
     let reported = refusals.ledgers[0]["ledger"].to_string();
     assert!(reported.contains(&"N".repeat(MAX_MASTER_NAME_CHARS - 4)));

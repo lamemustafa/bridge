@@ -22,7 +22,7 @@ use std::io::{Seek, SeekFrom, Write};
 
 #[path = "agent_import_cash_bank.rs"]
 mod cash_bank;
-use cash_bank::{CashBankState, ObservedMasters};
+use cash_bank::{CashBankState, LegRequirement, ObservedMasters};
 #[path = "agent_import_identity.rs"]
 mod identity;
 use identity::{import_identity, ImportIdentityScheme};
@@ -118,33 +118,6 @@ impl VoucherType {
             Self::Contra => "Contra",
         }
     }
-}
-
-/// What one constrained leg of a bank voucher must be.
-///
-/// The two requirements are deliberately not mirror images, because the facts
-/// they need are not mirror images either.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LegRequirement {
-    /// Tally needs the company's own money on this side, so the ledger must be
-    /// *established* as cash or bank. Anything else refuses, including "could
-    /// not be established" — a positive fact is required and absent.
-    Money,
-    /// The counterparty side, which is also what `PARTYLEDGERNAME` names. It
-    /// must be *established* as holding no money, so an unresolved ancestry
-    /// refuses just as a money one does.
-    ///
-    /// This was once the looser of the two, on the reasoning that an
-    /// unclassifiable counterparty is not evidence of a disguised Contra and
-    /// refusing it would cost a legitimate build. Both halves were weaker than
-    /// they sounded. An ordinary party never lands unclassified — one under
-    /// `Sundry Debtors` resolves directly and one under a user-created group
-    /// walks up to its reserved ancestor — so only anomalies reach that state.
-    /// And the consequences are not symmetric: a misjudged money leg makes
-    /// Tally reject the import, which is loud, while a misjudged counterparty
-    /// files a Contra into the Payment register, which is silent and found
-    /// later. The silent failure earns the stricter rule, not the looser one.
-    Counterparty,
 }
 
 /// Which sides of a voucher type are constrained, and how.
@@ -477,15 +450,12 @@ impl Server {
             // collection, so a Journal-only batch keeps the request sequence its
             // own qualification was measured on.
             let mut group_evidence = None;
-            if payload
-                .vouchers
-                .iter()
-                .any(|voucher| voucher.voucher_type.bank_shape().is_some())
-            {
+            if renders_bank_shape(&payload.vouchers) {
                 let (groups, evidence) = self.read_group_collection(&identity, &company.name).await?;
                 accumulated = combine_evidence(accumulated.clone(), evidence.clone());
                 let observed = ObservedMasters::new(ledger_masters.parents(), groups);
-                let refusals = cash_bank_refusals(&payload, &observed);
+                let refusals =
+                    cash_bank_refusals(&payload, &observed, self.settings.max_bytes);
                 if !refusals.ledgers.is_empty() {
                     return Ok(ToolOutcome {
                         payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
@@ -609,9 +579,7 @@ impl Server {
             let (warnings, next_step) = build_import_guidance(
                 self.settings.writes_enabled,
                 native_post_eligible,
-                line.vouchers
-                    .iter()
-                    .any(|voucher| voucher.voucher_type.bank_shape().is_some()),
+                renders_bank_shape(&line.vouchers),
                 line.vouchers.iter().any(|voucher| {
                     voucher
                         .voucher_type
@@ -1178,6 +1146,17 @@ fn refuse_unqualified_types(
         .ok_or_else(|| "import_voucher_type_unqualified".to_string())
 }
 
+/// Whether this batch renders the bank shape at all.
+///
+/// After `validate_payload` a batch is homogeneous by shape, so this is both
+/// "any" and "all" — the group read, the guidance and the evidence record can
+/// each ask it once and get a whole-batch answer.
+fn renders_bank_shape(vouchers: &[ImportVoucher]) -> bool {
+    vouchers
+        .iter()
+        .any(|voucher| voucher.voucher_type.bank_shape().is_some())
+}
+
 /// A file may carry more than one voucher type — the measured statement files
 /// mixed Payment and Receipt freely, 61+54 in one and 20+8 in another, both
 /// imported clean. What it may not do is mix two rendered *shapes*.
@@ -1370,18 +1349,26 @@ struct CashBankRefusals {
     omitted: usize,
 }
 
-/// How many serialized bytes the refusal diagnostics may occupy.
+/// How many serialized bytes the refusal diagnostics may occupy, given the
+/// caller's configured response cap.
 ///
 /// Row count alone is not a bound on size: a batch may carry
-/// `MAX_MASTER_NAMES` names of `MAX_MASTER_NAME_CHARS` each, which exceeds the
-/// default response cap on names alone before any detail text. The transport
-/// also repeats structured content as text, so the budget is set well under
-/// half the smallest expected cap. Names are never truncated — the exact live
-/// spelling is the one thing a caller needs to fix the batch — so a budget is
-/// spent on whole rows and the remainder is counted.
-const MAX_REFUSAL_DIAGNOSTIC_BYTES: usize = 32 * 1024;
+/// `MAX_MASTER_NAMES` names of `MAX_MASTER_NAME_CHARS` each, which passes even
+/// the default cap on names alone before any detail text. The share is a
+/// quarter because the diagnostics are one field among several in the refusal
+/// and the transport repeats structured content as text, so the frame carries
+/// roughly twice what is measured here. `max_bytes` is configurable down to
+/// 256, where a quarter leaves room for nothing — which is why one row always
+/// goes out regardless, and the rest are counted rather than dropped silently.
+fn refusal_diagnostic_budget(max_bytes: usize) -> usize {
+    (max_bytes / 4).min(32 * 1024)
+}
 
-fn cash_bank_refusals(payload: &ImportPayload, observed: &ObservedMasters) -> CashBankRefusals {
+fn cash_bank_refusals(
+    payload: &ImportPayload,
+    observed: &ObservedMasters,
+    max_bytes: usize,
+) -> CashBankRefusals {
     let mut classified = BTreeMap::<&str, CashBankState>::new();
     let mut refused = BTreeMap::<(&str, &'static str), Value>::new();
     let mut legs = 0_usize;
@@ -1390,11 +1377,7 @@ fn cash_bank_refusals(payload: &ImportPayload, observed: &ObservedMasters) -> Ca
             .entry(ledger)
             .or_insert_with(|| observed.classify(ledger))
             .clone();
-        // Both legs need a positive fact; they differ only in which one.
-        let admitted = match requirement {
-            LegRequirement::Money => state.is_established(),
-            LegRequirement::Counterparty => state.is_established_non_money(),
-        };
+        let admitted = requirement.admits(&state);
         if admitted {
             continue;
         }
@@ -1409,29 +1392,14 @@ fn cash_bank_refusals(payload: &ImportPayload, observed: &ObservedMasters) -> Ca
                 "requires": requires,
                 "side": side,
                 "state": state.state(),
-                "refused_because": match requirement {
-                    LegRequirement::Money => state.detail(),
-                    // Two different problems wear the same refusal, and the
-                    // fix differs: one is the wrong voucher type, the other a
-                    // ledger whose group Bridge could not resolve.
-                    LegRequirement::Counterparty if state.is_known_money() => format!(
-                        "{} Money on both sides of a {} is a Contra; book it as one.",
-                        state.detail(),
-                        voucher.voucher_type.as_str()
-                    ),
-                    LegRequirement::Counterparty => format!(
-                        "{} A {} counterparty must be established as holding no money, and this one could not be classified either way.",
-                        state.detail(),
-                        voucher.voucher_type.as_str()
-                    ),
-                },
+                "refused_because": requirement.refusal(&state, voucher.voucher_type.as_str()),
                 // One voucher a caller can open to see the problem, rather
                 // than every voucher that repeats it.
                 "first_bridge_txn_id": voucher.bridge_txn_id,
             })
         });
     }
-    let mut budget = MAX_REFUSAL_DIAGNOSTIC_BYTES;
+    let mut budget = refusal_diagnostic_budget(max_bytes);
     let distinct = refused.len();
     let ledgers = refused
         .into_values()

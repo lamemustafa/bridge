@@ -113,6 +113,13 @@ pub(super) enum CashBankState {
     },
     /// Ancestry reached a different predefined group identity. The ledger is
     /// established, and established as something other than cash or bank.
+    ///
+    /// The name here is safe to repeat back in a refusal without redaction,
+    /// and only because of where it comes from: this variant is constructed
+    /// solely from a *non-empty* `RESERVEDNAME`, which §8.2a establishes is
+    /// Tally's own predefined identity. A user-created group carries an empty
+    /// one and the walk keeps climbing, so a book's own naming never reaches
+    /// here. Widen that construction and this becomes a leak.
     OtherReservedGroup { reserved_group: String },
     /// Ancestry ran out before any predefined identity was reached. This is a
     /// refusal, not a weaker acceptance.
@@ -120,28 +127,13 @@ pub(super) enum CashBankState {
 }
 
 impl CashBankState {
-    /// Whether a leg that must hold money may name this ledger.
-    pub(super) fn is_established(&self) -> bool {
-        matches!(self, Self::Established { .. })
-    }
-
     /// Whether this ledger holds money at all — a wider question than
     /// admission, and the one a counterparty leg must answer "no" to.
-    pub(super) fn is_known_money(&self) -> bool {
+    fn is_known_money(&self) -> bool {
         matches!(
             self,
             Self::Established { .. } | Self::UnadmittedMoney { .. }
         )
-    }
-
-    /// Whether this ledger is *established* as holding no money. A counterparty
-    /// leg needs this positively, not merely the absence of money evidence.
-    ///
-    /// The distinction is the whole of it: `NotEstablished` means the walk ran
-    /// out, which is not the same as reaching a predefined identity that holds
-    /// no cash or bank balance.
-    pub(super) fn is_established_non_money(&self) -> bool {
-        matches!(self, Self::OtherReservedGroup { .. })
     }
 
     /// A stable machine-readable label for the tool result.
@@ -170,6 +162,73 @@ impl CashBankState {
             ),
             Self::NotEstablished { reason } => (*reason).to_string(),
         }
+    }
+}
+
+/// What one constrained leg of a bank voucher must be.
+///
+/// This lives beside [`CashBankState`] because the two are one idea: the state
+/// is what a ledger *is*, and this is what a side *needs*. Splitting them put
+/// the asymmetry below in one module and the states it reasons about in
+/// another, which is how it came to be got wrong twice.
+///
+/// The two requirements are deliberately not mirror images, because the facts
+/// they need are not mirror images either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LegRequirement {
+    /// Tally needs the company's own money on this side, so the ledger must be
+    /// *established* as cash or bank. Anything else refuses, including "could
+    /// not be established" — a positive fact is required and absent.
+    Money,
+    /// The counterparty side, which is also what `PARTYLEDGERNAME` names. It
+    /// must be *established* as holding no money, so an unresolved ancestry
+    /// refuses just as a money one does.
+    ///
+    /// This was once the looser of the two, on the reasoning that an
+    /// unclassifiable counterparty is not evidence of a disguised Contra and
+    /// refusing it would cost a legitimate build. Both halves were weaker than
+    /// they sounded. An ordinary party never lands unclassified — one under
+    /// `Sundry Debtors` resolves directly and one under a user-created group
+    /// walks up to its reserved ancestor — so only anomalies reach that state.
+    /// And the consequences are not symmetric: a misjudged money leg makes
+    /// Tally reject the import, which is loud, while a misjudged counterparty
+    /// files a Contra into the Payment register, which is silent and found
+    /// later. The silent failure earns the stricter rule, not the looser one.
+    Counterparty,
+}
+
+impl LegRequirement {
+    /// Whether a ledger in this state may occupy this side. Both arms demand a
+    /// positive fact and differ only in which one, so an unresolved ancestry
+    /// refuses either way.
+    pub(super) fn admits(self, state: &CashBankState) -> bool {
+        match self {
+            Self::Money => matches!(state, CashBankState::Established { .. }),
+            Self::Counterparty => matches!(state, CashBankState::OtherReservedGroup { .. }),
+        }
+    }
+
+    /// Why this leg was refused, or `None` if it was admitted.
+    ///
+    /// A counterparty fails two different ways and the fixes differ: money
+    /// there means the voucher is really a Contra, while an unresolvable group
+    /// means nobody has classified the ledger, and advising a Contra would be
+    /// wrong about a ledger nobody has classified.
+    pub(super) fn refusal(self, state: &CashBankState, voucher_type: &str) -> Option<String> {
+        if self.admits(state) {
+            return None;
+        }
+        Some(match self {
+            Self::Money => state.detail(),
+            Self::Counterparty if state.is_known_money() => format!(
+                "{} Money on both sides of a {voucher_type} is a Contra; book it as one.",
+                state.detail()
+            ),
+            Self::Counterparty => format!(
+                "{} A {voucher_type} counterparty must be established as holding no money, and this one could not be classified either way.",
+                state.detail()
+            ),
+        })
     }
 }
 
