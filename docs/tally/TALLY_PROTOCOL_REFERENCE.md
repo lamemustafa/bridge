@@ -276,7 +276,8 @@ on the demo company.
 | `VoucherType` | 24 | |
 | `Voucher` | 150 (whole book) | See §5 for date scoping |
 
-**UNVERIFIED:** stock items, godowns, cost centres, currencies, units, budgets — never probed.
+**UNVERIFIED:** godowns, cost centres, currencies, units, budgets — never probed. Stock items
+are unprobed *as a collection read*; for writing them inside an invoice see §9.12.
 
 ---
 
@@ -1373,6 +1374,87 @@ at all, so the currency schema may already be solved and simply masked by the al
 setup step; Bridge's users already have companies. This is worth completing only if
 unattended provisioning becomes a requirement. It is **not** on Bridge's critical path, and
 the remaining unknown is the one field that no export can reveal.
+
+### 9.12 Item invoices — `ALLLEDGERENTRIES.LIST` is silently DISCARDED — **TRAP**
+
+**VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold, hand import through Gateway of Tally >
+Import > Vouchers, into a live book).** This is the first item-invoice write recorded here; §5's
+inventory note still stands for reads, and units, godowns and batches remain unprobed.
+
+A sales invoice was sent as `ISINVOICE=Yes` / `OBJVIEW="Invoice Voucher View"` with the party and
+two GST ledgers in **`ALLLEDGERENTRIES.LIST`** — correct for every accounting voucher, and the
+element every other write in this document uses — plus item lines in `ALLINVENTORYENTRIES.LIST`.
+
+Tally **created the voucher** and kept the inventory half exactly as sent: both item lines, the
+quantity, the rate, and a service line carrying an amount with no quantity. It **discarded all
+three ledger entries**. The stored voucher had a blank party, no CGST, no SGST, and a total of
+just the item lines — a one-sided sales voucher, credited to a sales ledger with no debit
+anywhere.
+
+**In an invoice voucher the element is `LEDGERENTRIES.LIST`.** Re-sent unchanged except for that
+element name, the voucher posted correctly.
+
+This is §9.2's silent-discard family in its widest form yet: not one field, the entire accounting
+half. It is also **not visible in the import counters** — it surfaces only in Tally's own
+`Import Exceptions` report, as *"Mismatch in total amount between Credit and Debit entries"*.
+
+> **RULE: `ALLLEDGERENTRIES.LIST` for an accounting voucher, `LEDGERENTRIES.LIST` for an invoice
+> voucher (`ISINVOICE=Yes`). The wrong element is accepted, not refused.**
+
+**`Import Exceptions` accumulates across imports.** The same report also listed 25 unrelated
+`Duplicate Voucher No.` entries from that book's earlier history, and the Gateway was already
+flagging data exceptions before the import ran. **Its counts are not attributable to your import**
+— read the dates and voucher numbers before concluding anything.
+
+### 9.12a The shape that works
+
+```xml
+<VOUCHER VCHTYPE="…" ACTION="Create" OBJVIEW="Invoice Voucher View" REMOTEID="…">
+ <DATE>…</DATE><EFFECTIVEDATE>…</EFFECTIVEDATE>
+ <VOUCHERTYPENAME>…</VOUCHERTYPENAME><VOUCHERNUMBER>…</VOUCHERNUMBER>
+ <PARTYLEDGERNAME>…</PARTYLEDGERNAME><BASICBASEPARTYNAME>…</BASICBASEPARTYNAME>
+ <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW><ISINVOICE>Yes</ISINVOICE>
+ <LEDGERENTRIES.LIST>                       <!-- party: debit, negative -->
+  <LEDGERNAME>…</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-336.67</AMOUNT>
+  <BILLALLOCATIONS.LIST>
+   <NAME>…invoice no…</NAME><BILLTYPE>New Ref</BILLTYPE><AMOUNT>-336.67</AMOUNT>
+  </BILLALLOCATIONS.LIST>
+ </LEDGERENTRIES.LIST>
+ <LEDGERENTRIES.LIST>…each tax ledger: credit, positive…</LEDGERENTRIES.LIST>
+ <ALLINVENTORYENTRIES.LIST>
+  <STOCKITEMNAME>…</STOCKITEMNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+  <RATE>244.91/Nos</RATE><ACTUALQTY>1 Nos</ACTUALQTY><BILLEDQTY>1 Nos</BILLEDQTY>
+  <AMOUNT>244.91</AMOUNT>
+  <ACCOUNTINGALLOCATIONS.LIST>                <!-- per line; no voucher-level sales ledger -->
+   <LEDGERNAME>…sales ledger…</LEDGERNAME>
+   <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>244.91</AMOUNT>
+  </ACCOUNTINGALLOCATIONS.LIST>
+ </ALLINVENTORYENTRIES.LIST>
+</VOUCHER>
+```
+
+Four further observations, each measured:
+
+1. **Every inventory line needs its own `ACCOUNTINGALLOCATIONS.LIST`** naming the sales ledger and
+   repeating the line amount. There is no voucher-level sales-ledger element.
+2. **A service line carries an amount and no quantity** — omit `RATE`, `ACTUALQTY` and `BILLEDQTY`
+   entirely and the line posts with a blank quantity, matching hand entry.
+3. **The party line needs `BILLALLOCATIONS.LIST` / `New Ref`**, or the amount lands On Account and
+   cannot be aged (§9.x bill-wise behaviour applies unchanged).
+4. **Tax rounds per line, then sums.** An invoice with 7,165.07 taxable at 9% stores **644.84**, not
+   the 644.86 that 9% of the total gives — 644.84 being the sum of per-line rounded tax. A writer
+   that taxes the invoice total will be a paisa or two out on every multi-line invoice.
+
+The whole voucher must still sum to zero across `LEDGERENTRIES` **and** `ALLINVENTORYENTRIES`.
+
+### 9.12b `ACTION="Delete"` by `REMOTEID` — confirmed working on a live book
+
+The one-sided voucher above was removed with `ACTION="Delete"` keyed by `REMOTEID`, and a corrected
+voucher created in its place. That is the first live confirmation of the Delete + Create path §9.7
+argues for, outside the lab. `Alter` remains unusable.
+
+**A hand-keyed voucher carries no `REMOTEID` you supplied**, so this path exists only for vouchers
+you imported. Correct an operator-entered voucher by hand or with a journal.
 
 ## 10. Change detection
 
