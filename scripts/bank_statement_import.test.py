@@ -154,18 +154,36 @@ SBI_PAGE_2 = page(
 # end-to-end parsing, from bbox-layout output                                  #
 # --------------------------------------------------------------------------- #
 
-def narration_digest(rows):
-    """Every de-wrap decision on every row of a capture, in one value.
+def digest(values):
+    """A tripwire over every row, not a spot check on the ones I thought to name.
 
-    The wrap heuristic decides per printed line whether to insert a space, and
-    a spot-check on one row leaves most of those decisions unpinned — moving
-    the cell edge from 240 to 200 changes three rows of the HDFC capture and
-    none of the ones a readable assertion would name. When this fails, print
-    the narrations and read the diff; the digest is a tripwire, not an
-    explanation.
+    Both of the defects a capture is here to catch were *in* the capture and
+    passed anyway, because the assertions named specific rows or a property too
+    weak to separate right from wrong. The wrap heuristic decides per printed
+    line whether to insert a space; the party extractor decides where a name
+    ends. Neither is checkable one row at a time.
+
+    In particular "no row is UNRESOLVED" is not enough: a name that has run on
+    into the next field is resolved, just wrong. Only pinning the values
+    catches that.
+
+    When this fails, print the list and read the diff — the digest says
+    something changed, never what.
     """
-    return hashlib.sha256(
-        "\n".join(row["narr"] for row in rows).encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256("\n".join(values).encode("utf-8")).hexdigest()[:16]
+
+
+def narration_digest(rows):
+    return digest(row["narr"] for row in rows)
+
+
+def party_digest(rows, bank):
+    return digest(bank.party(row) for row in rows)
+
+
+def reference_digest(rows, bank):
+    return digest(f"{mode}:{value}" for mode, value in
+                  (bank.reference(row) for row in rows))
 
 
 def capture(name):
@@ -192,6 +210,13 @@ def test_parse_real_hdfc_capture(m):
     # unidentifiable payer.
     unresolved = [r["narr"] for r in rows if bank.party(r) == "UNRESOLVED"]
     assert not unresolved, unresolved
+    # ... and the resolved names are pinned, because a name that has run on into
+    # the following field is resolved too. That defect was in this very capture
+    # and survived the assertion above; it took running the tool against the
+    # unsanitised statement to see it.
+    assert party_digest(rows, bank) == "e3f7e87a3b0ee37f", [bank.party(r) for r in rows]
+    assert reference_digest(rows, bank) == "5397aeea8be588eb", \
+        [bank.reference(r) for r in rows]
 
     # a narration wrapped across four printed lines, rejoined in full. Asserted
     # whole rather than by prefix: the wrap heuristic decides, per line, whether
@@ -239,6 +264,9 @@ def test_parse_real_sbi_capture(m):
     rows = m.parse_pages(pages, bank)
     assert len(rows) == 3, len(rows)
     assert not [r for r in rows if bank.party(r) == "UNRESOLVED"]
+    assert party_digest(rows, bank) == "c5fe29a8186a900d", [bank.party(r) for r in rows]
+    assert reference_digest(rows, bank) == "77c010016a189596", \
+        [bank.reference(r) for r in rows]
 
     for row in rows:
         # "31 Jul" over "2026" in one cell, concatenated without a separator
