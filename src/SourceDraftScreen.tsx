@@ -5,6 +5,7 @@ import "./source-draft.css";
 import {
   SourceDraft,
   SourceDraftAction,
+  SourceDraftCatalogTargets,
   SourceDraftProposedEntry,
   SourceDraftProposal,
   SourceDraftRow,
@@ -16,6 +17,17 @@ import {
 
 const PAGE_SIZE = 25;
 const VOUCHER_TYPES: SourceDraftVoucherType[] = ["Payment", "Receipt", "Journal", "Contra"];
+
+function catalogSelectionKey(rowPosition: number, entryPosition: number) {
+  return `${rowPosition}:${entryPosition}`;
+}
+
+function retainCurrentSessionSelections(draft: SourceDraft, selections: Record<string, string>) {
+  return Object.fromEntries(Object.entries(selections).filter(([key, target]) => {
+    const [rowPosition, entryPosition] = key.split(":").map(Number);
+    return draft.rows.find((row) => row.position === rowPosition)?.proposal.entries[entryPosition - 1]?.ledger === target;
+  }));
+}
 
 function cloneProposal(proposal: SourceDraftProposal): SourceDraftProposal {
   return { ...proposal, entries: proposal.entries.map((entry) => ({ ...entry })) };
@@ -47,6 +59,10 @@ function displayObserved(value: string | null, emptyLabel = "Empty field returne
   return value === "" ? emptyLabel : value;
 }
 
+function displayCatalogTarget(target: string) {
+  return target.replace(/(^ +| +$| {2,})/g, (spaces) => "␠".repeat(spaces.length));
+}
+
 function hasStartedProposal(row: SourceDraftRow) {
   const proposal = row.proposal;
   return Boolean(proposal.date || proposal.voucher_type || proposal.narration !== null || proposal.notes.trim() || proposal.entries.some((entry) => entry.ledger !== null || entry.side !== null || entry.amount !== null));
@@ -62,6 +78,9 @@ function sourceEntryLabel(entry: SourceDraftSourceEntry) {
 
 export function SourceDraftScreen({
   onBusyChange,
+  onTallyReadActivityChange,
+  catalogScope,
+  catalogScopeKey = "unavailable",
   onDirtyChange,
   editingEnabled = true,
   lifecycleInteractionBlocked = false,
@@ -73,38 +92,91 @@ export function SourceDraftScreen({
   const [selectedPosition, setSelectedPosition] = React.useState<number | null>(null);
   const [page, setPage] = React.useState(0);
   const [action, setAction] = React.useState<SourceDraftAction>(null);
-  const [pendingAction, setPendingAction] = React.useState<Exclude<SourceDraftAction, "save" | null> | null>(null);
+  const [pendingAction, setPendingAction] = React.useState<"choose" | "open" | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [savedPath, setSavedPath] = React.useState<string | null>(null);
+  const [catalog, setCatalog] = React.useState<SourceDraftCatalogTargets | null>(null);
+  const [catalogSelections, setCatalogSelections] = React.useState<Record<string, string>>({});
+  const [catalogInvalidating, setCatalogInvalidating] = React.useState(false);
   const mounted = React.useRef(true);
   const actionRef = React.useRef<SourceDraftAction>(null);
   const dirtyRef = React.useRef(false);
+  const onBusyChangeRef = React.useRef(onBusyChange);
+  const onTallyReadActivityChangeRef = React.useRef(onTallyReadActivityChange);
+  const busyLeaseCountRef = React.useRef(0);
+  const catalogReadActiveRef = React.useRef(false);
   dirtyRef.current = dirty;
+  onBusyChangeRef.current = onBusyChange;
+  onTallyReadActivityChangeRef.current = onTallyReadActivityChange;
 
   const setDraftDirty = React.useCallback((next: boolean) => {
     dirtyRef.current = next;
-    setDirty(next);
+    if (mounted.current) setDirty(next);
     onDirtyChange?.(next);
   }, [onDirtyChange]);
+  const operationGeneration = React.useRef(0);
+  const previousCatalogScope = React.useRef(catalogScopeKey);
+  const catalogInvalidationTail = React.useRef<Promise<unknown>>(Promise.resolve());
+
+  function beginBusy() {
+    if (busyLeaseCountRef.current++ === 0) onBusyChangeRef.current?.(true);
+  }
+
+  function endBusy() {
+    if (busyLeaseCountRef.current === 0) return;
+    if (--busyLeaseCountRef.current === 0) onBusyChangeRef.current?.(false);
+  }
+
+  function invalidateNativeCatalog() {
+    beginBusy();
+    const next = catalogInvalidationTail.current
+      .catch(() => undefined)
+      .then(() => invoke("desktop_invalidate_source_draft_existing_ledger_targets"));
+    catalogInvalidationTail.current = next;
+    void next.finally(endBusy).catch(() => undefined);
+    return next;
+  }
+
+  function releaseCatalogReadActivity() {
+    if (!catalogReadActiveRef.current) return;
+    catalogReadActiveRef.current = false;
+    onTallyReadActivityChangeRef.current?.(false);
+  }
 
   React.useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
-  }, [onBusyChange]);
+  }, []);
+
+  React.useEffect(() => {
+    if (previousCatalogScope.current === catalogScopeKey) return;
+    previousCatalogScope.current = catalogScopeKey;
+    const invalidationGeneration = ++operationGeneration.current;
+    setCatalog(null);
+    setCatalogSelections({});
+    setCatalogInvalidating(true);
+    void invalidateNativeCatalog()
+      .catch((cause) => {
+        if (mounted.current && operationGeneration.current === invalidationGeneration) setError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (mounted.current && operationGeneration.current === invalidationGeneration) setCatalogInvalidating(false);
+      });
+  }, [catalogScopeKey]);
 
   const selectedRow = draft?.rows.find((row) => row.position === selectedPosition) ?? null;
   const pageCount = Math.max(1, Math.ceil((draft?.rows.length ?? 0) / PAGE_SIZE));
   const pageRows = draft?.rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) ?? [];
   const rowsWithoutProposal = draft?.rows.filter((row) => !hasStartedProposal(row)).length ?? 0;
 
-  async function load(kind: Exclude<SourceDraftAction, "save" | null>) {
+  async function load(kind: "choose" | "open") {
     if (!editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null) return;
     actionRef.current = kind;
     setAction(kind);
     setError(null);
-    onBusyChange?.(true);
+    beginBusy();
     try {
       const next = await invoke<SourceDraft | null>(kind === "choose" ? "desktop_pick_source_draft" : "desktop_open_source_draft");
       if (!mounted.current || !next) {
@@ -117,29 +189,35 @@ export function SourceDraftScreen({
       setSelectedPosition(copy.rows[0]?.position ?? null);
       setPage(0);
       setSavedPath(null);
+      setCatalog(null);
+      setCatalogSelections({});
+      operationGeneration.current += 1;
+      setCatalogInvalidating(false);
       setPendingAction(null);
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
     } finally {
       actionRef.current = null;
-      onBusyChange?.(false);
-      if (mounted.current) setAction(null);
+      endBusy();
+      if (mounted.current) {
+        setAction(null);
+      }
     }
   }
 
-  function requestLoad(kind: Exclude<SourceDraftAction, "save" | null>) {
+  function requestLoad(kind: "choose" | "open") {
     if (!editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null) return;
     if (dirty) setPendingAction(kind);
     else void load(kind);
   }
 
   async function save() {
-    if (!editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || !draft || actionRef.current !== null) return;
+    if (!draft || !editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null) return;
     actionRef.current = "save";
     setAction("save");
     setError(null);
     setSavedPath(null);
-    onBusyChange?.(true);
+    beginBusy();
     try {
       const next = await invoke<SourceDraft | null>("desktop_save_source_draft", {
         request: { draft_id: draft.draft_id, revision: draft.revision, proposals: draft.rows.map((row) => row.proposal) },
@@ -148,13 +226,100 @@ export function SourceDraftScreen({
       const copy = cloneDraft(next);
       setDraft(copy);
       setDraftDirty(false);
+      setCatalogSelections((current) => retainCurrentSessionSelections(copy, current));
       setSavedPath("Draft saved locally as JSON.");
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
     } finally {
       actionRef.current = null;
-      onBusyChange?.(false);
-      if (mounted.current) setAction(null);
+      endBusy();
+      if (mounted.current) {
+        setAction(null);
+      }
+    }
+  }
+
+  async function loadExistingLedgerTargets() {
+    if (!draft || !catalogScope || catalogInvalidating || previousCatalogScope.current !== catalogScopeKey || !editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null) return;
+    const generation = operationGeneration.current;
+    actionRef.current = "catalog_load";
+    setAction("catalog_load");
+    setError(null);
+    beginBusy();
+    catalogReadActiveRef.current = true;
+    onTallyReadActivityChange?.(true);
+    try {
+      const next = await invoke<SourceDraftCatalogTargets>("desktop_load_source_draft_existing_ledger_targets", {
+        request: { draft_id: draft.draft_id, ...catalogScope },
+      });
+      if (!mounted.current || generation !== operationGeneration.current) return;
+      setCatalog(next);
+      setCatalogSelections({});
+    } catch (cause) {
+      if (mounted.current && generation === operationGeneration.current) setError(errorMessage(cause));
+    } finally {
+      actionRef.current = null;
+      endBusy();
+      releaseCatalogReadActivity();
+      if (mounted.current) {
+        setAction(null);
+      }
+    }
+  }
+
+  async function applyExistingLedgerTarget(rowPosition: number, entryPosition: number, targetName: string) {
+    if (!draft || !catalog || !catalogScope || catalogInvalidating || previousCatalogScope.current !== catalogScopeKey || !editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null || !targetName) return;
+    const generation = operationGeneration.current;
+    actionRef.current = "catalog_apply";
+    setAction("catalog_apply");
+    setError(null);
+    beginBusy();
+    catalogReadActiveRef.current = true;
+    onTallyReadActivityChange?.(true);
+    try {
+      const next = await invoke<SourceDraft>("desktop_apply_source_draft_existing_ledger_target", {
+        request: {
+          draft_id: draft.draft_id,
+          revision: draft.revision,
+          capture_id: catalog.capture_id,
+          ...catalogScope,
+          row_position: rowPosition,
+          entry_position: entryPosition,
+          target_name: targetName,
+          proposals: draft.rows.map((row) => cloneProposal(row.proposal)),
+        },
+      });
+      // The native apply may have committed even if this screen was removed by
+      // its error boundary while it was pending. Record that fact in the
+      // stable parent before deciding whether child state may still be updated.
+      setDraftDirty(true);
+      if (!mounted.current) return;
+      const copy = cloneDraft(next);
+      if (generation !== operationGeneration.current) {
+        // The native apply may have committed before a concurrent company-scope
+        // invalidation reached it. Keep its new revision visible, but never
+        // present the old capture or session binding as current for this scope.
+        setDraft(copy);
+        setCatalog(null);
+        setCatalogSelections({});
+        setSavedPath(null);
+        return;
+      }
+      setDraft(copy);
+      setCatalogSelections((current) => ({
+        ...retainCurrentSessionSelections(copy, current),
+        [catalogSelectionKey(rowPosition, entryPosition)]: targetName,
+      }));
+      setSavedPath(null);
+    } catch (cause) {
+      if (mounted.current && generation === operationGeneration.current) setError(errorMessage(cause));
+    } finally {
+      actionRef.current = null;
+      endBusy();
+      releaseCatalogReadActivity();
+      if (mounted.current) {
+        setAction(null);
+      }
     }
   }
 
@@ -173,6 +338,46 @@ export function SourceDraftScreen({
 
   function updateEntry(position: number, change: (entry: SourceDraftProposedEntry) => SourceDraftProposedEntry) {
     updateProposal((proposal) => ({ ...proposal, entries: proposal.entries.map((entry, index) => index === position ? change({ ...entry }) : entry) }));
+  }
+
+  async function clearExistingLedgerTarget(rowPosition: number, entryPosition: number) {
+    if (!draft || !catalog || !editingEnabled || lifecycleInteractionBlocked || isLifecycleInteractionBlocked() || actionRef.current !== null) return;
+    const generation = ++operationGeneration.current;
+    actionRef.current = "catalog_clear";
+    setAction("catalog_clear");
+    setError(null);
+    setCatalogInvalidating(true);
+    beginBusy();
+    try {
+      await invalidateNativeCatalog();
+      if (!mounted.current || generation !== operationGeneration.current) return;
+      setCatalog(null);
+      setCatalogSelections({});
+      setDraft((current) => current && ({
+        ...current,
+        rows: current.rows.map((row) => row.position === rowPosition ? {
+          ...row,
+          proposal: {
+            ...row.proposal,
+            entries: row.proposal.entries.map((entry, index) => index === entryPosition - 1 ? { ...entry, ledger: null } : entry),
+          },
+        } : row),
+      }));
+      setDraftDirty(true);
+      setSavedPath(null);
+      setCatalogInvalidating(false);
+    } catch (cause) {
+      if (mounted.current && generation === operationGeneration.current) setError(errorMessage(cause));
+    } finally {
+      actionRef.current = null;
+      endBusy();
+      if (mounted.current && generation === operationGeneration.current) {
+        setCatalogInvalidating(false);
+      }
+      if (mounted.current) {
+        setAction(null);
+      }
+    }
   }
 
   const busy = action !== null;
@@ -199,7 +404,8 @@ export function SourceDraftScreen({
       ) : (
         <>
           <div className="source-draft-toolbar"><div><strong>{draft.source_filename}</strong><span>{draft.rows.length} source rows · {rowsWithoutProposal} rows without a proposal · revision {draft.revision}</span></div><div className="source-draft-actions"><button className="secondary-action" type="button" onClick={() => requestLoad("choose")} disabled={interactionDisabled}>{action === "choose" ? "Opening source…" : "Choose new source"}</button><button className="secondary-action" type="button" onClick={() => requestLoad("open")} disabled={interactionDisabled}>{action === "open" ? "Opening draft…" : "Open saved draft"}</button><button className="primary" type="button" onClick={() => void save()} disabled={interactionDisabled}><Save size={17} aria-hidden="true" />{action === "save" ? "Saving draft…" : "Save draft"}</button></div></div>
-          <p className="source-draft-boundary">Source values are immutable observations. Proposed ledgers are unverified text until a later mapping step; this preparation screen cannot approve or post anything to Tally.</p>
+          <p className="source-draft-boundary">Source values are immutable observations. A target chosen from the current ledger list remains an unverified proposal; this preparation screen cannot approve or post anything to Tally.</p>
+          <div className="source-draft-actions"><button className="secondary-action" type="button" disabled={interactionDisabled || catalogInvalidating || !catalogScope} onClick={() => void loadExistingLedgerTargets()}>{action === "catalog_load" ? "Loading existing ledgers…" : catalog ? "Refresh existing ledgers" : "Load existing ledgers"}</button>{!catalogScope && <span className="source-draft-catalogue-state">Check Tally and select a current company before loading existing ledgers.</span>}{catalogInvalidating && <span className="source-draft-catalogue-state">Existing-ledger context is changing.</span>}{catalog && <span className="source-draft-catalogue-state">{catalog.targets.length} existing ledgers captured for this source. Choosing one remains unverified.</span>}</div>
           <details className="source-draft-file-evidence"><summary>Source file evidence</summary><dl><div><dt>Source file</dt><dd>{draft.source_filename}</dd></div><div><dt>Source SHA-256</dt><dd><code>{draft.source_sha256}</code></dd></div></dl></details>
           {((draft.source_notices ?? []).length > 0) && <details className="source-draft-notices"><summary>Source-level notices ({(draft.source_notices ?? []).length})</summary><ul>{(draft.source_notices ?? []).map((notice, index) => <li key={`${notice.kind}-${index}`}><strong>{notice.kind}</strong><span>{notice.count} retained records</span></li>)}</ul></details>}
           {savedPath && <p className="source-draft-saved" role="status">{savedPath}</p>}
@@ -208,7 +414,7 @@ export function SourceDraftScreen({
               <table className="source-draft-list"><caption className="visually-hidden">Source rows</caption><thead><tr><th scope="col">Row</th><th scope="col">Source observation</th><th scope="col">Proposal</th></tr></thead><tbody>{pageRows.map((row) => <tr key={row.position} className={row.position === selectedPosition ? "is-selected" : ""}><th scope="row"><button type="button" className="source-draft-row-button" onClick={() => setSelectedPosition(row.position)} disabled={interactionDisabled} aria-pressed={row.position === selectedPosition}>#{row.position}</button></th><td><strong>{displayDate(row.source_date)}</strong><span>{displayObserved(row.source_voucher_type, "Empty voucher type")}</span><span>{displayObserved(row.source_narration, "Empty narration")}</span></td><td><span className="source-draft-state">{hasStartedProposal(row) ? "Proposal started" : "No proposal"}</span><span>{row.proposal.entries.length} entry lines</span></td></tr>)}</tbody></table>
               <div className="source-draft-pagination"><span>Rows {draft.rows.length === 0 ? 0 : page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, draft.rows.length)} of {draft.rows.length}</span><div><button className="secondary-action" type="button" onClick={() => changePage((value) => Math.max(0, value - 1))} disabled={page === 0 || interactionDisabled}>Previous</button><button className="secondary-action" type="button" onClick={() => changePage((value) => Math.min(pageCount - 1, value + 1))} disabled={page >= pageCount - 1 || interactionDisabled}>Next</button></div></div>
             </div>
-            {selectedRow && <SourceDraftEditor row={selectedRow} disabled={interactionDisabled} onUpdateProposal={updateProposal} onUpdateEntry={updateEntry} onClose={() => setSelectedPosition(null)} />}
+            {selectedRow && <SourceDraftEditor row={selectedRow} disabled={interactionDisabled || catalogInvalidating} catalog={catalog} catalogSelections={catalogSelections} onSelectExistingLedger={applyExistingLedgerTarget} onClearExistingLedger={clearExistingLedgerTarget} onUpdateProposal={updateProposal} onUpdateEntry={updateEntry} onClose={() => setSelectedPosition(null)} />}
           </div>
         </>
       )}
@@ -216,7 +422,7 @@ export function SourceDraftScreen({
   );
 }
 
-function SourceDraftEditor({ row, disabled, onUpdateProposal, onUpdateEntry, onClose }: { row: SourceDraftRow; disabled: boolean; onUpdateProposal: (change: (proposal: SourceDraftProposal) => SourceDraftProposal) => void; onUpdateEntry: (position: number, change: (entry: SourceDraftProposedEntry) => SourceDraftProposedEntry) => void; onClose: () => void }) {
+function SourceDraftEditor({ row, disabled, catalog, catalogSelections, onSelectExistingLedger, onClearExistingLedger, onUpdateProposal, onUpdateEntry, onClose }: { row: SourceDraftRow; disabled: boolean; catalog: SourceDraftCatalogTargets | null; catalogSelections: Record<string, string>; onSelectExistingLedger: (rowPosition: number, entryPosition: number, targetName: string) => void; onClearExistingLedger: (rowPosition: number, entryPosition: number) => void; onUpdateProposal: (change: (proposal: SourceDraftProposal) => SourceDraftProposal) => void; onUpdateEntry: (position: number, change: (entry: SourceDraftProposedEntry) => SourceDraftProposedEntry) => void; onClose: () => void }) {
   const proposal = row.proposal;
   const fieldId = (name: string) => `source-draft-${row.position}-${name}`;
   return (
@@ -244,7 +450,20 @@ function SourceDraftEditor({ row, disabled, onUpdateProposal, onUpdateEntry, onC
             const entryId = (name: string) => fieldId(`entry-${index}-${name}`);
             return <div className="source-draft-entry" key={`${row.position}-${index}`}>
               <p><span>Source line {index + 1}</span>{sourceEntryLabel(row.entries[index] ?? { position: index, source_ledger: "", source_amount: "", source_polarity: "" })}</p>
-              <div className="source-draft-field"><label htmlFor={entryId("ledger")}>Ledger</label><input id={entryId("ledger")} value={entry.ledger ?? ""} placeholder="Unverified ledger name" onChange={(event) => onUpdateEntry(index, (current) => ({ ...current, ledger: emptyToNull(event.target.value) }))} disabled={disabled} /></div>
+              <div className="source-draft-field">
+                <label htmlFor={entryId("ledger")}>Existing target ledger</label>
+                {catalog ? <>
+                  <select id={entryId("ledger")} value={catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? entry.ledger ?? "" : ""} onChange={(event) => event.target.value && onSelectExistingLedger(row.position, index + 1, event.target.value)} disabled={disabled}>
+                    <option value="">Choose existing ledger</option>
+                    {catalog.targets.map((target) => <option key={target} value={target}>{displayCatalogTarget(target)}</option>)}
+                  </select>
+                  {entry.ledger && <button className="secondary-action source-draft-clear-target" type="button" onClick={() => onClearExistingLedger(row.position, index + 1)} disabled={disabled}>Clear target</button>}
+                  <p className="source-draft-catalogue-state">{catalogSelections[catalogSelectionKey(row.position, index + 1)] === entry.ledger ? "This current-session target was re-read and bound. It remains an unapproved proposal." : entry.ledger ? `Saved unverified target: ${entry.ledger}. Select it to check it against this current capture.` : "Choose a current existing ledger to make an unapproved proposal."}</p>
+                </> : <>
+                  <input id={entryId("ledger")} placeholder="Unverified ledger name" value={entry.ledger ?? ""} onChange={(event) => onUpdateEntry(index, (current) => ({ ...current, ledger: emptyToNull(event.target.value) }))} disabled={disabled} />
+                  <p className="source-draft-catalogue-state">{entry.ledger ? `Saved unverified target: ${entry.ledger}` : "Load existing ledgers to choose a target."}</p>
+                </>}
+              </div>
               <div className="source-draft-field"><label htmlFor={entryId("side")}>Side</label><select id={entryId("side")} value={entry.side ?? ""} onChange={(event) => onUpdateEntry(index, (current) => ({ ...current, side: event.target.value ? event.target.value as SourceDraftSide : null }))} disabled={disabled}><option value="">Choose side</option><option value="Dr">Dr</option><option value="Cr">Cr</option></select></div>
               <div className="source-draft-field"><label htmlFor={entryId("amount")}>Amount</label><input id={entryId("amount")} inputMode="decimal" value={entry.amount ?? ""} onChange={(event) => onUpdateEntry(index, (current) => ({ ...current, amount: emptyToNull(event.target.value) }))} disabled={disabled} /></div>
             </div>;

@@ -53,6 +53,32 @@ pub const BRIDGE_SELECTED_VOUCHER_EXPORT_SCHEMA: &str = "bridge.tally.vouchers/3
 pub const BRIDGE_LEDGER_PERIOD_BALANCE_SCHEMA: &str = "bridge.tally.ledger-period-balances/1";
 pub const MAX_INTERACTIVE_DISCOVERY_COMPANIES: usize = 100;
 pub const MAX_STANDARD_LEDGER_IDENTITY_ROWS: usize = 1_000;
+
+/// A failed standard-ledger catalog is never a usable catalog. Keep the
+/// failure class at the XML boundary so callers can retain their fail-closed
+/// behavior without interpreting parser text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandardLedgerCatalogError {
+    MalformedResponse,
+    CompanyIdentityMismatch,
+    DuplicateIdentity,
+    BoundsViolation,
+}
+
+impl std::fmt::Display for StandardLedgerCatalogError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::MalformedResponse => "standard ledger catalog response was malformed",
+            Self::CompanyIdentityMismatch => {
+                "standard ledger catalog did not confirm the selected company"
+            }
+            Self::DuplicateIdentity => "standard ledger catalog contained a duplicate identity",
+            Self::BoundsViolation => "standard ledger catalog exceeded a safety bound",
+        })
+    }
+}
+
+impl std::error::Error for StandardLedgerCatalogError {}
 /// The sanitized representation of Tally's U+0004 metadata prefix.
 ///
 /// `tolerant_xml` produces this exact form for an illegal `&#4;` reference;
@@ -1344,7 +1370,7 @@ impl StandardLedgerCatalogBinding {
         xml: &str,
         expected_company_name: &str,
         expected_company_guid: &str,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, StandardLedgerCatalogError> {
         let current = parse_standard_ledger_catalog_with_identities(
             xml,
             expected_company_name,
@@ -1367,7 +1393,7 @@ pub fn parse_standard_ledger_catalog_with_identities(
     xml: &str,
     expected_company_name: &str,
     expected_company_guid: &str,
-) -> anyhow::Result<StandardLedgerCatalog> {
+) -> Result<StandardLedgerCatalog, StandardLedgerCatalogError> {
     let rows =
         parse_standard_ledger_catalog_rows(xml, expected_company_name, expected_company_guid)?;
     Ok(StandardLedgerCatalog {
@@ -1385,7 +1411,7 @@ pub fn parse_standard_ledger_catalog(
     xml: &str,
     expected_company_name: &str,
     expected_company_guid: &str,
-) -> anyhow::Result<Vec<TallyLedger>> {
+) -> Result<Vec<TallyLedger>, StandardLedgerCatalogError> {
     Ok(
         parse_standard_ledger_catalog_rows(xml, expected_company_name, expected_company_guid)?
             .into_iter()
@@ -1403,41 +1429,47 @@ fn parse_standard_ledger_catalog_rows(
     xml: &str,
     expected_company_name: &str,
     expected_company_guid: &str,
-) -> anyhow::Result<Vec<StandardLedgerCatalogRow>> {
-    validate_export_response(xml)?;
-    let expected_company_name = normalized_standard_value(expected_company_name, "company name")?;
-    let expected_company_guid = normalized_standard_company_guid(expected_company_guid)?;
+) -> Result<Vec<StandardLedgerCatalogRow>, StandardLedgerCatalogError> {
+    validate_export_response(xml).map_err(|_| StandardLedgerCatalogError::MalformedResponse)?;
+    let expected_company_name = normalized_standard_value(expected_company_name, "company name")
+        .map_err(|_| StandardLedgerCatalogError::BoundsViolation)?;
+    let expected_company_guid = normalized_standard_company_guid(expected_company_guid)
+        .map_err(|_| StandardLedgerCatalogError::BoundsViolation)?;
     let mut reader = configured_reader(xml);
     let mut path = Vec::<Vec<u8>>::new();
     let mut rows = Vec::new();
     let mut seen_names = HashSet::new();
     let mut seen_guids = HashSet::new();
     loop {
-        match reader.read_event()? {
+        match reader
+            .read_event()
+            .map_err(|_| StandardLedgerCatalogError::MalformedResponse)?
+        {
             Event::Start(element)
                 if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"]) =>
             {
                 if rows.len() >= MAX_STANDARD_LEDGER_IDENTITY_ROWS {
-                    anyhow::bail!("standard ledger catalog exceeded the safe row limit");
+                    return Err(StandardLedgerCatalogError::BoundsViolation);
                 }
-                let observed = parse_standard_ledger_identity_row(&mut reader, &element, true)?;
+                let observed = parse_standard_ledger_identity_row(&mut reader, &element, true)
+                    .map_err(|_| StandardLedgerCatalogError::MalformedResponse)?;
                 if observed.company_name != expected_company_name
                     || !observed
                         .company_guid
                         .eq_ignore_ascii_case(&expected_company_guid)
                 {
-                    anyhow::bail!("standard ledger catalog did not confirm the selected company");
+                    return Err(StandardLedgerCatalogError::CompanyIdentityMismatch);
                 }
-                let ledger_name = observed.ledger_name.ok_or_else(|| {
-                    anyhow::anyhow!("standard ledger catalog omitted ledger name")
-                })?;
-                let ledger_guid = observed.ledger_guid.ok_or_else(|| {
-                    anyhow::anyhow!("standard ledger catalog omitted ledger GUID")
-                })?;
-                if !seen_names.insert(ledger_name.to_lowercase())
+                let ledger_name = observed
+                    .ledger_name
+                    .ok_or(StandardLedgerCatalogError::MalformedResponse)?;
+                let ledger_guid = observed
+                    .ledger_guid
+                    .ok_or(StandardLedgerCatalogError::MalformedResponse)?;
+                if !seen_names.insert(standard_ledger_name_comparison_key(&ledger_name))
                     || !seen_guids.insert(ledger_guid.to_ascii_lowercase())
                 {
-                    anyhow::bail!("standard ledger catalog contained duplicate ledger identity");
+                    return Err(StandardLedgerCatalogError::DuplicateIdentity);
                 }
                 rows.push(StandardLedgerCatalogRow {
                     ledger: TallyLedger {
@@ -1451,9 +1483,10 @@ fn parse_standard_ledger_catalog_rows(
             }
             Event::Start(element) => path.push(element.name().as_ref().to_ascii_uppercase()),
             Event::Empty(_) if path_eq(&path, &[b"ENVELOPE", b"BODY", b"DATA", b"COLLECTION"]) => {
-                anyhow::bail!("standard ledger catalog contained an empty row");
+                return Err(StandardLedgerCatalogError::MalformedResponse);
             }
-            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())?,
+            Event::End(element) => pop_expected_path(&mut path, element.name().as_ref())
+                .map_err(|_| StandardLedgerCatalogError::MalformedResponse)?,
             Event::Eof => break,
             _ => {}
         }
@@ -1461,7 +1494,7 @@ fn parse_standard_ledger_catalog_rows(
     if path.is_empty() && !rows.is_empty() {
         Ok(rows)
     } else {
-        anyhow::bail!("standard ledger catalog did not return usable rows")
+        Err(StandardLedgerCatalogError::MalformedResponse)
     }
 }
 
@@ -1482,7 +1515,7 @@ fn parse_standard_ledger_identity_row(
     let mut ledger_name = include_ledger_name
         .then(|| attr_value(reader, element, b"NAME"))
         .flatten()
-        .map(|value| normalized_standard_ledger_name(&value))
+        .map(|value| observed_standard_ledger_name(&value))
         .transpose()?;
     let row_name = element.name().as_ref().to_ascii_uppercase();
     let mut company_name = None;
@@ -1498,7 +1531,7 @@ fn parse_standard_ledger_identity_row(
                     b"NAME" if include_ledger_name => {
                         validate_only_attributes(&child, &[b"TYPE"])?;
                         if ledger_name
-                            .replace(normalized_standard_ledger_name(&read_required_text(
+                            .replace(observed_standard_ledger_name(&read_required_text(
                                 reader,
                                 child.name(),
                             )?)?)
@@ -1674,12 +1707,15 @@ fn normalized_standard_value(value: &str, label: &str) -> anyhow::Result<String>
     Ok(value.to_string())
 }
 
-fn normalized_standard_ledger_name(value: &str) -> anyhow::Result<String> {
-    let value = value.trim();
-    if value.is_empty() || value.len() > 512 || value.chars().any(unsafe_display_character) {
-        anyhow::bail!("standard ledger collection contained an invalid ledger name");
+fn observed_standard_ledger_name(value: &str) -> Result<String, StandardLedgerCatalogError> {
+    if value.trim().is_empty() || value.len() > 512 || value.chars().any(unsafe_display_character) {
+        return Err(StandardLedgerCatalogError::MalformedResponse);
     }
     Ok(value.to_string())
+}
+
+fn standard_ledger_name_comparison_key(value: &str) -> String {
+    value.to_lowercase()
 }
 
 fn normalized_standard_company_guid(value: &str) -> anyhow::Result<String> {

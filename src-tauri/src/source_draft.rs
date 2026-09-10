@@ -1,6 +1,8 @@
 //! Local, source-linked draft preparation. This is deliberately disconnected
 //! from Tally transport, posting, approvals, and saved Journal batches.
 
+#[path = "source_draft/catalog.rs"]
+mod catalog;
 #[path = "source_draft/files.rs"]
 mod files;
 #[path = "source_draft/lifecycle.rs"]
@@ -28,6 +30,10 @@ use self::{
         SourceDraftSourceNotice, MAX_PROPOSAL_BYTES, MAX_TEXT_BYTES,
     },
 };
+use catalog::{
+    CatalogCapture, SourceDraftCatalogApplyRequest, SourceDraftCatalogLoadRequest,
+    SourceDraftCatalogTargets,
+};
 
 #[derive(Default)]
 pub(crate) struct SourceDraftStore {
@@ -40,6 +46,8 @@ struct ActiveDraft {
     revision: u64,
     source: ParsedSource,
     proposals: Vec<SourceDraftProposal>,
+    catalog_generation: u64,
+    catalog: Option<CatalogCapture>,
 }
 
 #[tauri::command]
@@ -63,6 +71,8 @@ pub(crate) async fn desktop_pick_source_draft(
         id: Uuid::new_v4(),
         revision: 1,
         proposals: empty_proposals(&source),
+        catalog_generation: 0,
+        catalog: None,
         source,
     };
     store.replace(active).map(Some)
@@ -94,8 +104,35 @@ pub(crate) async fn desktop_open_source_draft(
             revision: 1,
             source,
             proposals,
+            catalog_generation: 0,
+            catalog: None,
         })
         .map(Some)
+}
+
+#[tauri::command]
+pub(crate) async fn desktop_load_source_draft_existing_ledger_targets(
+    store: State<'_, SourceDraftStore>,
+    runtime: State<'_, crate::tally::TallyRuntime>,
+    request: SourceDraftCatalogLoadRequest,
+) -> CommandResult<SourceDraftCatalogTargets> {
+    catalog::load_existing_ledger_targets(store.inner(), runtime.inner(), request).await
+}
+
+#[tauri::command]
+pub(crate) async fn desktop_apply_source_draft_existing_ledger_target(
+    store: State<'_, SourceDraftStore>,
+    runtime: State<'_, crate::tally::TallyRuntime>,
+    request: SourceDraftCatalogApplyRequest,
+) -> CommandResult<SourceDraftDto> {
+    catalog::apply_existing_ledger_target(store.inner(), runtime.inner(), request).await
+}
+
+#[tauri::command]
+pub(crate) fn desktop_invalidate_source_draft_existing_ledger_targets(
+    store: State<'_, SourceDraftStore>,
+) -> CommandResult<()> {
+    store.invalidate_catalogue()
 }
 
 #[tauri::command]
@@ -346,6 +383,7 @@ fn commit_after_persist(
     let bytes = serialize_draft(&current.source, &request.proposals)?;
     write_private_file(&path, &bytes)?;
     let current = guard.as_mut().expect("active draft checked");
+    SourceDraftStore::remove_changed_bindings(current, &request.proposals);
     current.proposals = request.proposals;
     current.revision = next_revision;
     Ok(dto(current))
@@ -494,6 +532,8 @@ mod tests {
             id: Uuid::new_v4(),
             revision: 1,
             proposals: empty_proposals(&source_data),
+            catalog_generation: 0,
+            catalog: None,
             source: source_data,
         };
         let dto = store.replace(active).unwrap();

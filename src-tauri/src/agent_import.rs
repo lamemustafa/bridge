@@ -4,10 +4,12 @@ use super::{
     ToolFailure, ToolOutcome,
 };
 use crate::tally::agent_read_request::AgentReadRequest;
+use crate::tally::standard_ledger_catalog::{
+    admit_standard_ledger_catalog_request, parse_standard_ledger_catalog_response,
+    render_standard_ledger_catalog_request,
+};
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
-use bridge_tally_protocol::parse_standard_ledger_catalog_with_identities;
-use bridge_tally_protocol::xml_read_profiles::{ReadOnlyProfile, ValidatedCompanyName};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -658,21 +660,17 @@ impl Server {
         ),
         ToolFailure,
     > {
-        let name = ValidatedCompanyName::new(company_name.to_string())
+        let request_xml = render_standard_ledger_catalog_request(company_name)
             .map_err(|_| "company_name_invalid".to_string())?;
-        let request_xml = ReadOnlyProfile::StandardLedgerCatalogV1 { company: &name }.render();
-        let request = AgentReadRequest::parse(request_xml.clone())
+        let request = admit_standard_ledger_catalog_request(request_xml.clone())
             .map_err(|_| "ledger_export_invalid".to_string())?;
         let (xml, evidence) = self.post_read(identity, request_xml).await?;
-        let catalogue = parse_standard_ledger_catalog_with_identities(
-            &xml,
-            company_name,
-            identity.company_guid(),
-        )
-        .map_err(|_| {
-            ToolFailure::from("ledger_export_invalid".to_string())
-                .with_prior_evidence(evidence.clone())
-        })?;
+        let catalogue =
+            parse_standard_ledger_catalog_response(&xml, company_name, identity.company_guid())
+                .map_err(|_| {
+                    ToolFailure::from("ledger_export_invalid".to_string())
+                        .with_prior_evidence(evidence.clone())
+                })?;
         Ok((
             catalogue.names().map(str::to_string).collect(),
             catalogue,

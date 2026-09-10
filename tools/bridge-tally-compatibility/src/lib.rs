@@ -30,7 +30,7 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 208;
+pub const MAX_SURFACE_FILES: usize = 210;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -2456,10 +2456,10 @@ mod tests {
     }
 
     #[test]
-    fn surface_file_cap_refuses_209_entries() {
+    fn surface_file_cap_refuses_211_entries() {
         let oversized = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: (0..209)
+            files: (0..211)
                 .map(|index| SurfaceFile {
                     path: format!("pinned-{index:03}"),
                     sha256: "0".repeat(64),

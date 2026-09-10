@@ -5,16 +5,14 @@ import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), unlisten: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 
 import { SourceDraftScreen } from "../src/SourceDraftScreen";
-import { JournalPostingScreen } from "../src/JournalPostingScreen";
 import { NativeLifecycleController } from "../src/NativeLifecycleController";
 import { ErrorBoundary, ReloadGuardContext, type ReloadGuard } from "../src/ErrorBoundary";
+import { JournalPostingScreen } from "../src/JournalPostingScreen";
 
 function row(position: number) {
   return {
@@ -36,6 +34,23 @@ const draft = {
   source_sha256: "a".repeat(64),
   source_notices: [{ kind: "Non-voucher records retained", count: 3 }],
   rows: [row(1), row(2)],
+};
+
+const catalogScope = {
+  config: { host: "127.0.0.1", port: 9000 },
+  selected_company: {
+    display_name: "Synthetic review company",
+    company_guid: "00000000-0000-4000-8000-000000000001",
+    company_number: "1",
+    books_from_yyyymmdd: "20260401",
+  },
+};
+
+const catalog = {
+  capture_id: "00000000-0000-4000-8000-000000000099",
+  source_sha256: draft.source_sha256,
+  targets: ["Existing target"],
+  evidence: { request_sha256: "b".repeat(64), response_sha256: "c".repeat(64), bytes: 100, state: "complete" as const },
 };
 
 const journalReview = {
@@ -175,6 +190,228 @@ test("clears saved status when a proposal changes after saving", async () => {
   root.unmount();
 });
 
+test("requires an explicit current-session re-read before treating a saved matching target as selected, then clears and reloads it", async () => {
+  const savedTarget = {
+    ...draft,
+    rows: draft.rows.map((item, index) => index === 0 ? {
+      ...item,
+      proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] },
+    } : item),
+  };
+  const applied = { ...savedTarget, revision: 2 };
+  mocks.invoke
+    .mockResolvedValueOnce(savedTarget)
+    .mockResolvedValueOnce(catalog)
+    .mockResolvedValueOnce(applied)
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValueOnce(catalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  expect(target.value).toBe("");
+  expect(host.textContent).toContain("Saved unverified target: Existing target. Select it to check it against this current capture.");
+
+  await act(async () => setValue(target, "Existing target"));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_apply_source_draft_existing_ledger_target", {
+    request: expect.objectContaining({
+      draft_id: draft.draft_id,
+      revision: draft.revision,
+      capture_id: catalog.capture_id,
+      row_position: 1,
+      entry_position: 1,
+      target_name: "Existing target",
+      proposals: savedTarget.rows.map((item) => item.proposal),
+    }),
+  });
+  expect(host.textContent).toContain("This current-session target was re-read and bound. It remains an unapproved proposal.");
+
+  await act(async () => button(host, "Clear target").click());
+  expect(mocks.invoke).toHaveBeenNthCalledWith(4, "desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.value).toBe("");
+  expect(host.textContent).toContain("Load existing ledgers to choose a target.");
+
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(mocks.invoke).toHaveBeenNthCalledWith(5, "desktop_load_source_draft_existing_ledger_targets", {
+    request: { draft_id: draft.draft_id, ...catalogScope },
+  });
+  expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")?.value).toBe("");
+  root.unmount();
+});
+
+test("renders unusual ledger spaces visibly while binding the exact selected catalog target", async () => {
+  const whitespaceCatalog = { ...catalog, targets: ["Cash", " Cash "] };
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(whitespaceCatalog)
+    .mockResolvedValueOnce({ ...draft, revision: 2 });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  const options = [...target.options];
+  expect(options.find((option) => option.value === "Cash")?.text).toBe("Cash");
+  expect(options.find((option) => option.value === " Cash ")?.text).toBe("␠Cash␠");
+  expect(options.find((option) => option.value === "Cash")?.text).not.toBe(options.find((option) => option.value === " Cash ")?.text);
+
+  await act(async () => setValue(target, " Cash "));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_apply_source_draft_existing_ledger_target", {
+    request: expect.objectContaining({ target_name: " Cash " }),
+  });
+  root.unmount();
+});
+
+test("clears the visible catalogue and blocks a new read until the native company-scope invalidation completes", async () => {
+  let resolveFirstInvalidation!: () => void;
+  let resolveSecondInvalidation!: () => void;
+  const firstInvalidation = new Promise<void>((resolve) => { resolveFirstInvalidation = resolve; });
+  const secondInvalidation = new Promise<void>((resolve) => { resolveSecondInvalidation = resolve; });
+  mocks.invoke
+    .mockResolvedValueOnce(draft)
+    .mockResolvedValueOnce(catalog)
+    .mockReturnValueOnce(firstInvalidation)
+    .mockReturnValueOnce(secondInvalidation);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")).toBeTruthy();
+
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />));
+  expect(mocks.invoke).toHaveBeenNthCalledWith(3, "desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(button(host, "Load existing ledgers").disabled).toBe(true);
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')).toBeTruthy();
+
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-three" />));
+  expect(mocks.invoke).toHaveBeenCalledTimes(3);
+  resolveFirstInvalidation();
+  await act(async () => { await firstInvalidation; });
+  expect(mocks.invoke).toHaveBeenNthCalledWith(4, "desktop_invalidate_source_draft_existing_ledger_targets");
+  expect(button(host, "Load existing ledgers").disabled).toBe(true);
+
+  resolveSecondInvalidation();
+  await act(async () => { await secondInvalidation; });
+  expect(button(host, "Load existing ledgers").disabled).toBe(false);
+  root.unmount();
+});
+
+test("returns the editor and ledger read control to the current scope after native invalidation rejects", async () => {
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_invalidate_source_draft_existing_ledger_targets") {
+      return Promise.reject(new Error("native invalidation unavailable"));
+    }
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+
+  await act(async () => {
+    root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />);
+    await Promise.resolve();
+  });
+
+  expect(host.textContent).toContain("native invalidation unavailable");
+  expect(button(host, "Load existing ledgers").disabled).toBe(false);
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.disabled).toBe(false);
+  root.unmount();
+});
+
+test("keeps the Tally read lock through parent rerenders until catalog reads settle", async () => {
+  let resolveLoad!: (value: unknown) => void;
+  let resolveApply!: (value: unknown) => void;
+  const pendingLoad = new Promise((resolve) => { resolveLoad = resolve; });
+  const pendingApply = new Promise((resolve) => { resolveApply = resolve; });
+  const applied = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0
+      ? { ...item, proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] } }
+      : item),
+  };
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_load_source_draft_existing_ledger_targets") return pendingLoad;
+    if (command === "desktop_apply_source_draft_existing_ledger_target") return pendingApply;
+    return Promise.resolve();
+  });
+  const tallyReadStates: boolean[] = [];
+  function RerenderingParent() {
+    const [, setBusy] = React.useState(false);
+    return <SourceDraftScreen
+      onBusyChange={setBusy}
+      onTallyReadActivityChange={(active) => tallyReadStates.push(active)}
+      catalogScope={catalogScope}
+      catalogScopeKey="company-one"
+    />;
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<RerenderingParent />));
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(tallyReadStates).toEqual([true]);
+  resolveLoad(catalog);
+  await act(async () => { await pendingLoad; });
+  expect(tallyReadStates).toEqual([true, false]);
+
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Existing target"));
+  expect(tallyReadStates).toEqual([true, false, true]);
+  resolveApply(applied);
+  await act(async () => { await pendingApply; });
+  expect(tallyReadStates).toEqual([true, false, true, false]);
+  root.unmount();
+});
+
+test("reconciles a catalog apply committed before a concurrent scope invalidation", async () => {
+  let resolveApply!: (value: unknown) => void;
+  let resolveInvalidation!: () => void;
+  const pendingApply = new Promise((resolve) => { resolveApply = resolve; });
+  const pendingInvalidation = new Promise<void>((resolve) => { resolveInvalidation = resolve; });
+  const applied = {
+    ...draft,
+    revision: 2,
+    rows: draft.rows.map((item, index) => index === 0
+      ? { ...item, proposal: { ...item.proposal, entries: [{ ...item.proposal.entries[0], ledger: "Existing target" }] } }
+      : item),
+  };
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_load_source_draft_existing_ledger_targets") return Promise.resolve(catalog);
+    if (command === "desktop_apply_source_draft_existing_ledger_target") return pendingApply;
+    if (command === "desktop_invalidate_source_draft_existing_ledger_targets") return pendingInvalidation;
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Existing target"));
+  await act(async () => root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />));
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_invalidate_source_draft_existing_ledger_targets");
+
+  resolveApply(applied);
+  await act(async () => { await pendingApply; });
+  expect(host.textContent).toContain("revision 2");
+  expect(host.querySelector("#source-draft-1-entry-0-ledger")?.tagName).toBe("INPUT");
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.value).toBe("Existing target");
+
+  resolveInvalidation();
+  await act(async () => { await pendingInvalidation; });
+  root.unmount();
+});
+
 test("preserves dirty edits through native cancel, failed save, and explicit discard confirmation", async () => {
   mocks.invoke.mockResolvedValueOnce(draft);
   const host = document.createElement("div");
@@ -197,7 +434,7 @@ test("preserves dirty edits through native cancel, failed save, and explicit dis
 
   await act(async () => button(host, "Choose new source").click());
   expect(host.textContent).toContain("Discard unsaved proposals?");
-  await act(async () => button(host, "Keep editing").click());
+  await act(async () => button(document.body, "Keep editing").click());
   expect(host.textContent).not.toContain("Discard unsaved proposals?");
   expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.value).toBe("Local proposal");
 
@@ -255,12 +492,16 @@ function ProtectedSourceShell({
   crashAfterBusy = false,
   showJournal = false,
   initialSourceBusy = false,
+  catalogScope: protectedCatalogScope,
+  catalogScopeKey,
   authorizedReload = false,
 }: {
   crashAfterDirty?: boolean;
   crashAfterBusy?: boolean;
   showJournal?: boolean;
   initialSourceBusy?: boolean;
+  catalogScope?: React.ComponentProps<typeof SourceDraftScreen>["catalogScope"];
+  catalogScopeKey?: string;
   authorizedReload?: boolean;
 }) {
   const sourceDirtyRef = React.useRef(false);
@@ -274,6 +515,7 @@ function ProtectedSourceShell({
   const [lifecycleOpen, setLifecycleOpen] = React.useState(false);
   const [crash, setCrash] = React.useState(false);
   const [restoreFocus, setRestoreFocus] = React.useState<(() => void) | null>(null);
+  const [, setBusyRevision] = React.useState(0);
   const onProtectionChange = React.useCallback((next: boolean, error: string | null) => {
     setReady(next);
     setProtectionError(error);
@@ -284,6 +526,7 @@ function ProtectedSourceShell({
   }, [crashAfterDirty]);
   const onBusyChange = React.useCallback((next: boolean) => {
     sourceActionBusyRef.current = next;
+    setBusyRevision((value) => value + 1);
     if (next && crashAfterBusy) setCrash(true);
   }, [crashAfterBusy]);
   const restore = React.useCallback((next: () => void) => setRestoreFocus(() => next), []);
@@ -325,6 +568,8 @@ function ProtectedSourceShell({
                 lifecycleInteractionBlocked={lifecycleOpen}
                 isLifecycleInteractionBlocked={() => lifecyclePendingRef.current}
                 protectionError={protectionError}
+                catalogScope={protectedCatalogScope}
+                catalogScopeKey={catalogScopeKey}
               />
             )}
           </ErrorBoundary>
@@ -344,11 +589,56 @@ function ThrowingSourceDraft(): never {
   throw new Error("synthetic source screen failure");
 }
 
-async function mountProtected(host: HTMLElement, options: { crashAfterDirty?: boolean; crashAfterBusy?: boolean; showJournal?: boolean; initialSourceBusy?: boolean; authorizedReload?: boolean } = {}) {
+async function mountProtected(host: HTMLElement, options: { crashAfterDirty?: boolean; crashAfterBusy?: boolean; showJournal?: boolean; initialSourceBusy?: boolean; catalogScope?: React.ComponentProps<typeof SourceDraftScreen>["catalogScope"]; catalogScopeKey?: string; authorizedReload?: boolean } = {}) {
   const root = createRoot(host);
   await act(async () => root.render(<ProtectedSourceShell {...options} />));
   return root;
 }
+
+test("holds a native close through a pending catalog apply, then requires an explicit discard", async () => {
+  enableNativeWindowRuntime();
+  let listener: ((event: { payload: { request_id: string; kind: "close" | "exit" } }) => void) | undefined;
+  mocks.listen.mockImplementation(async (_event, handler) => {
+    listener = handler;
+    return mocks.unlisten;
+  });
+  const close = { request_id: "close-during-catalog-apply", kind: "close" as const };
+  let pending: typeof close | null = null;
+  let resolveApply!: (value: typeof draft) => void;
+  const pendingApply = new Promise<typeof draft>((resolve) => { resolveApply = resolve; });
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pending_source_draft_lifecycle_request") return Promise.resolve(pending);
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_load_source_draft_existing_ledger_targets") return Promise.resolve(catalog);
+    if (command === "desktop_apply_source_draft_existing_ledger_target") return pendingApply;
+    if (command === "desktop_complete_source_draft_lifecycle_request") return Promise.resolve();
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mountProtected(host, {
+    crashAfterDirty: true,
+    catalogScope,
+    catalogScopeKey: "company-one",
+  });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  await act(async () => setValue(host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!, "Existing target"));
+
+  pending = close;
+  await act(async () => listener?.({ payload: close }));
+  expect(document.body.textContent).toContain("A local source-draft action is in progress.");
+  expect(button(document.body, "Discard and close").disabled).toBe(true);
+  expect(mocks.invoke).not.toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: close });
+
+  resolveApply({ ...draft, revision: 2 });
+  await act(async () => { await pendingApply; });
+  expect(host.textContent).toContain("Prepare file hit a problem");
+  expect(button(document.body, "Discard and close").disabled).toBe(false);
+  await act(async () => button(document.body, "Discard and close").click());
+  expect(mocks.invoke).toHaveBeenCalledWith("desktop_complete_source_draft_lifecycle_request", { request: close });
+  root.unmount();
+});
 
 test("keeps a dirty lifecycle request local through the stable controller", async () => {
   enableNativeWindowRuntime();

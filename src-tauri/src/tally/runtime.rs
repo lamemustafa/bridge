@@ -215,7 +215,7 @@ fn agent_company_list_from_response(
 }
 
 #[derive(Debug, thiserror::Error)]
-enum CompanyIdentityBracketError {
+pub(crate) enum CompanyIdentityBracketError {
     #[error(
         "Tally returned a presentation-equivalent same-GUID company with a distinct book tuple"
     )]

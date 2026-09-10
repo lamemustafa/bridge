@@ -1237,7 +1237,11 @@ impl TallyClient {
         let xml = self
             .post_xml(tdl_engine::standard_ledger_catalog_request(company))
             .await?;
-        parse_standard_ledger_catalog(&xml, company, expected_company_guid)
+        Ok(parse_standard_ledger_catalog(
+            &xml,
+            company,
+            expected_company_guid,
+        )?)
     }
 
     /// One extra paired read per scan: bill-wise OPENING balances live on

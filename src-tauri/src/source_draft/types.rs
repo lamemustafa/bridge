@@ -133,6 +133,50 @@ pub(super) fn error(code: &'static str) -> SourceDraftCommandError {
             "Bridge could not complete the requested native close action.",
             "Continue editing and try the close action again.",
         ),
+        "source_draft_catalogue_scope_invalid" => (
+            "Bridge could not verify the current Tally company selection.",
+            "Check Tally and select the intended current company, then load existing ledgers again.",
+        ),
+        "source_draft_catalogue_invalidated" => (
+            "The existing-ledger capture is no longer current for this draft or company.",
+            "Load existing ledgers again before selecting a target.",
+        ),
+        "source_draft_catalogue_read_failed" => (
+            "Bridge could not read a complete current existing-ledger list.",
+            "Check Tally and retry the read; no target was applied.",
+        ),
+        "source_draft_catalogue_transport_failed" => (
+            "Bridge could not reach Tally for the current existing-ledger list.",
+            "Check Tally and retry the read; no target was applied.",
+        ),
+        "source_draft_catalogue_unstable" => (
+            "The existing-ledger list changed while Bridge was reading it.",
+            "Wait for Tally to settle, then load existing ledgers again; no target was applied.",
+        ),
+        "source_draft_catalogue_identity_mismatch" => (
+            "Tally did not confirm the selected company for the existing-ledger list.",
+            "Check Tally and select the intended current company, then load existing ledgers again.",
+        ),
+        "source_draft_catalogue_duplicate_identity" => (
+            "Tally returned an ambiguous existing-ledger identity.",
+            "Resolve the duplicate ledger identity in Tally, then load existing ledgers again.",
+        ),
+        "source_draft_catalogue_bounds_invalid" => (
+            "The existing-ledger list exceeded a safety limit.",
+            "Reduce the list or contact support; no target was applied.",
+        ),
+        "source_draft_catalogue_malformed_response" => (
+            "Tally returned an unusable existing-ledger list.",
+            "Check Tally and retry the read; no target was applied.",
+        ),
+        "source_draft_catalogue_target_invalid" => (
+            "The requested target was not a valid current existing ledger.",
+            "Choose a listed target and try again.",
+        ),
+        "source_draft_catalogue_target_changed" => (
+            "The selected existing ledger changed before Bridge could apply it.",
+            "Load existing ledgers again and make a fresh selection.",
+        ),
         _ => (
             "Bridge could not prepare this source draft.",
             "Review the selected local file and try again.",

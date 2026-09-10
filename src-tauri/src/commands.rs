@@ -2200,7 +2200,7 @@ fn selected_ledger_entries_default_limit() -> usize {
     100
 }
 
-async fn verify_observed_company_tuple(
+pub(crate) async fn verify_observed_company_tuple(
     runtime: &TallyRuntime,
     config: &TallyConfig,
     selected: &SelectedCompanyIdentity,
