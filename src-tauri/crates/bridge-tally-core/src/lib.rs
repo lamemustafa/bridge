@@ -8,6 +8,7 @@ pub use bridge_tally_primitives::{
 };
 
 pub mod bills_reconciliation;
+pub mod master_binding;
 mod pack_models;
 pub mod reconciliation;
 pub mod report_tie_out;

@@ -8,6 +8,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use bridge_tally_core::master_binding::{
+    self, BindingBasis, BindingStatus, MasterCatalog, MasterClass, SourceEntity,
+};
 use bridge_tally_protocol::{StandardLedgerCatalog, StandardLedgerCatalogBinding};
 
 use crate::{
@@ -51,7 +54,29 @@ pub(crate) struct SourceDraftCatalogTargets {
     pub(crate) capture_id: String,
     pub(crate) source_sha256: String,
     pub(crate) targets: Vec<String>,
+    pub(crate) bindings: Vec<SourceDraftCatalogBinding>,
     pub(crate) evidence: SourceDraftCatalogEvidence,
+}
+
+/// One source entry's deterministic binding against the capture, so an
+/// operator sees the few relevant ledgers rather than the whole catalog.
+///
+/// This narrows a list and grants nothing. `bound_target` names a live ledger
+/// only where the rules in `bridge_tally_core::master_binding` decided it
+/// outright; a near-miss carries candidates and no target. Applying any of
+/// them still goes through the unchanged apply path, which rereads the catalog
+/// and proves the selection is current — matching text remains never a
+/// selected or approved target.
+#[derive(Debug, Serialize)]
+pub(crate) struct SourceDraftCatalogBinding {
+    pub(crate) row_position: usize,
+    pub(crate) entry_position: usize,
+    pub(crate) bound_target: Option<String>,
+    pub(crate) bound_basis: Option<BindingBasis>,
+    pub(crate) unbound_reason: Option<&'static str>,
+    pub(crate) candidates: Vec<String>,
+    pub(crate) candidate_count: usize,
+    pub(crate) candidates_truncated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,6 +123,71 @@ pub(super) struct CatalogApplySnapshot {
     pub(super) endpoint: EndpointKey,
     pub(super) identity: VerifiedCompanyIdentity,
     pub(super) catalog: StandardLedgerCatalog,
+}
+
+/// Binds every source entry's observed ledger name against the captured
+/// catalog. Advisory only: an empty or unusable capture narrows nothing rather
+/// than failing the read the operator just performed, and every returned name
+/// is still revalidated by the apply path before it can become a target.
+fn source_entry_bindings(
+    source: &crate::source_draft_xml::ParsedSource,
+    targets: &[String],
+) -> Vec<SourceDraftCatalogBinding> {
+    let Ok(catalog) = MasterCatalog::new(MasterClass::Ledger, targets) else {
+        return Vec::new();
+    };
+    let mut located = Vec::new();
+    let mut entities = Vec::new();
+    for voucher in &source.vouchers {
+        for entry in &voucher.entries {
+            let Ok(entity) = SourceEntity::new(entities.len(), &entry.ledger) else {
+                continue;
+            };
+            located.push((voucher.position, entry.position));
+            entities.push(entity);
+        }
+    }
+    let Ok(report) = master_binding::bind(&catalog, &entities) else {
+        return Vec::new();
+    };
+    report
+        .entities()
+        .iter()
+        .zip(located)
+        .map(
+            |(binding, (row_position, entry_position))| match &binding.status {
+                BindingStatus::Bound {
+                    catalog_name,
+                    basis,
+                } => SourceDraftCatalogBinding {
+                    row_position,
+                    entry_position,
+                    bound_target: Some(catalog_name.clone()),
+                    bound_basis: Some(*basis),
+                    unbound_reason: None,
+                    candidates: Vec::new(),
+                    candidate_count: 0,
+                    candidates_truncated: false,
+                },
+                BindingStatus::Ambiguous(unresolved) | BindingStatus::Unmatched(unresolved) => {
+                    SourceDraftCatalogBinding {
+                        row_position,
+                        entry_position,
+                        bound_target: None,
+                        bound_basis: None,
+                        unbound_reason: Some(unresolved.reason.safe_reason_code()),
+                        candidates: unresolved
+                            .candidates
+                            .iter()
+                            .map(|candidate| candidate.catalog_name.clone())
+                            .collect(),
+                        candidate_count: unresolved.candidate_count,
+                        candidates_truncated: unresolved.candidates_truncated,
+                    }
+                }
+            },
+        )
+        .collect()
 }
 
 pub(super) fn require_current_catalog_binding(
@@ -244,6 +334,7 @@ impl SourceDraftStore {
             return Err(error("source_draft_catalogue_invalidated"));
         }
         let targets = read.catalog.names().map(str::to_owned).collect::<Vec<_>>();
+        let bindings = source_entry_bindings(&current.source, &targets);
         let capture = CatalogCapture {
             id: Uuid::new_v4(),
             draft_id: current.id,
@@ -258,6 +349,7 @@ impl SourceDraftStore {
             capture_id: capture.id.to_string(),
             source_sha256: capture.source_sha256.clone(),
             targets,
+            bindings,
             evidence: SourceDraftCatalogEvidence {
                 request_sha256: read.request_sha256,
                 response_sha256: read.response_sha256,
@@ -426,6 +518,65 @@ mod tests {
     use tally_protocol_simulator::{
         Fixture, ProductStatus, ResponseFraming, ScenarioPlan, SequenceSimulator, WireEncoding,
     };
+
+    /// Fabricated from a placeholder alphabet; nothing here is edited down
+    /// from an observed book.
+    fn fabricated_source() -> crate::source_draft_xml::ParsedSource {
+        parse_source_xml(
+            concat!(
+                "<ENVELOPE><BODY><IMPORTDATA><REQUESTDATA><TALLYMESSAGE>",
+                "<VOUCHER REMOTEID=\"ph-1\" VCHTYPE=\"Receipt\"><DATE>20260901</DATE>",
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>alpha traders</LEDGERNAME><AMOUNT>1</AMOUNT></ALLLEDGERENTRIES.LIST>",
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>GAMMA. EPSILON 5550000001</LEDGERNAME><AMOUNT>-1</AMOUNT></ALLLEDGERENTRIES.LIST>",
+                "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Zeta Placeholder</LEDGERNAME><AMOUNT>0</AMOUNT></ALLLEDGERENTRIES.LIST>",
+                "</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
+            )
+            .as_bytes(),
+            "source.xml".into(),
+        )
+        .expect("fabricated source parses")
+    }
+
+    #[test]
+    fn a_capture_narrows_each_source_entry_without_deciding_a_near_miss() {
+        let targets = [
+            "Alpha Traders".to_string(),
+            "GAMMA (5550000001)".to_string(),
+            "GAMMA ALPHA".to_string(),
+            "Beta Supply".to_string(),
+        ];
+        let bindings = source_entry_bindings(&fabricated_source(), &targets);
+        assert_eq!(bindings.len(), 3);
+
+        // Case alone does not defeat a bind, and the live spelling is named.
+        assert_eq!(bindings[0].row_position, 1);
+        assert_eq!(bindings[0].entry_position, 1);
+        assert_eq!(bindings[0].bound_target.as_deref(), Some("Alpha Traders"));
+        assert_eq!(bindings[0].bound_basis, Some(BindingBasis::NormalizedName));
+
+        // The number the operator buried in the ledger name decides where the
+        // name offers a wrong candidate.
+        assert_eq!(
+            bindings[1].bound_target.as_deref(),
+            Some("GAMMA (5550000001)")
+        );
+        assert_eq!(bindings[1].bound_basis, Some(BindingBasis::Identifier));
+
+        // Nothing defensible stays unbound with no target of any kind.
+        assert!(bindings[2].bound_target.is_none());
+        assert_eq!(
+            bindings[2].unbound_reason,
+            Some("master_binding_no_candidate")
+        );
+        assert!(bindings[2].candidates.is_empty());
+    }
+
+    #[test]
+    fn narrowing_is_advisory_and_never_fails_a_completed_capture() {
+        // An unusable capture narrows nothing rather than discarding a read the
+        // operator just performed. The apply path still owns every refusal.
+        assert!(source_entry_bindings(&fabricated_source(), &[]).is_empty());
+    }
 
     const CAPTURED_COMPANY: &str = "WR2 Unicode Lab";
     const CAPTURED_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";

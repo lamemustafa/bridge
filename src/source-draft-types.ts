@@ -59,10 +59,26 @@ export type SourceDraftCompanyScope = {
   };
 };
 
+/// One source entry's deterministic binding against the captured catalog.
+/// Advisory: it narrows the target list and confers no authority. Applying a
+/// name still goes through the unchanged assign path, which rereads the
+/// catalog and proves the selection is current.
+export type SourceDraftCatalogBinding = {
+  row_position: number;
+  entry_position: number;
+  bound_target: string | null;
+  bound_basis: "identifier" | "exact_name" | "normalized_name" | null;
+  unbound_reason: string | null;
+  candidates: string[];
+  candidate_count: number;
+  candidates_truncated: boolean;
+};
+
 export type SourceDraftCatalogTargets = {
   capture_id: string;
   source_sha256: string;
   targets: string[];
+  bindings: SourceDraftCatalogBinding[];
   evidence: { request_sha256: string; response_sha256: string; bytes: number; state: "complete" };
 };
 

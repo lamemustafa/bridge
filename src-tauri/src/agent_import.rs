@@ -8,6 +8,9 @@ use crate::tally::standard_ledger_catalog::{
     admit_standard_ledger_catalog_request, parse_standard_ledger_catalog_response,
     render_standard_ledger_catalog_request,
 };
+use bridge_tally_core::master_binding::{
+    self, BindingBasis, BindingStatus, EntityBinding, MasterCatalog, MasterClass, SourceEntity,
+};
 use bridge_tally_core::ExactDecimal;
 use bridge_tally_protocol::outstandings_shared::DateBoundaryProfile;
 use chrono::{SecondsFormat, Utc};
@@ -39,7 +42,6 @@ mod persistence;
 #[path = "agent_import_post.rs"]
 mod post;
 use std::path::{Path, PathBuf};
-use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 struct ImportProfileObservation {
@@ -279,10 +281,11 @@ impl Server {
             .read_ledger_catalogue(&identity, &company.name)
             .await
             .map_err(|failure| failure.with_prior_evidence(identity_evidence.clone()))?;
-        let report = ledgers
-            .into_iter()
-            .map(|wanted| master_match(wanted, &catalogue))
-            .collect::<Vec<_>>();
+        let report = master_report(
+            &ledgers.into_iter().map(str::to_string).collect::<Vec<_>>(),
+            &catalogue,
+        )
+        .map_err(|code| ToolFailure::from(code).with_prior_evidence(identity_evidence.clone()))?;
         let hash = sha256_json(&catalogue);
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"masters": report, "catalogue_evidence_sha256": hash}}),
@@ -369,7 +372,7 @@ impl Server {
             let (catalogue, catalogue_evidence) =
                 self.read_ledger_catalogue(&identity, &company.name).await?;
             accumulated = combine_evidence(accumulated.clone(), catalogue_evidence.clone());
-            let report = masters_for_payload(&payload, &catalogue);
+            let report = masters_for_payload(&payload, &catalogue)?;
             if report.iter().any(|value| value["match_state"] != "exact") {
                 return Ok(ToolOutcome {
                     payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {
@@ -1109,11 +1112,11 @@ fn totals(vouchers: &[ImportVoucher]) -> Result<(ExactDecimal, ExactDecimal), St
     Ok((debit, credit))
 }
 
-fn masters_for_payload(payload: &ImportPayload, catalogue: &[String]) -> Vec<Value> {
-    requested_ledger_names(payload)
-        .into_iter()
-        .map(|name| master_match(&name, catalogue))
-        .collect()
+fn masters_for_payload(
+    payload: &ImportPayload,
+    catalogue: &[String],
+) -> Result<Vec<Value>, String> {
+    master_report(&requested_ledger_names(payload), catalogue)
 }
 
 fn requested_ledger_names(payload: &ImportPayload) -> Vec<String> {
@@ -1127,51 +1130,91 @@ fn requested_ledger_names(payload: &ImportPayload) -> Vec<String> {
         .collect()
 }
 
-fn master_match(wanted: &str, catalogue: &[String]) -> Value {
-    if catalogue.iter().any(|name| name == wanted) {
-        return json!({"requested": party_name(wanted), "match_state":"exact", "exact_live_spelling":party_name(wanted)});
-    }
-    let key = master_key(wanted);
-    let candidates = catalogue
+/// Bounds the candidate names one unbound entity may copy into a tool result.
+/// The binding contract bounds the candidate *count*; this bounds their bytes,
+/// which is an egress concern rather than a matching one.
+const MAX_CANDIDATE_RESULT_BYTES: usize = 8_192;
+
+/// Binds requested ledger names against the observed catalogue.
+///
+/// The rules live in `bridge_tally_core::master_binding` so this tool and the
+/// desktop preparation screen cannot drift apart; see
+/// `docs/adr/0016-master-binding-authority.md`. This function only renders the
+/// report, and it never promotes a candidate into a spelling.
+fn master_report(requested: &[String], catalogue: &[String]) -> Result<Vec<Value>, String> {
+    let catalog = MasterCatalog::new(MasterClass::Ledger, catalogue)
+        .map_err(|error| error.safe_reason_code().to_string())?;
+    let entities = requested
         .iter()
-        .filter(|name| {
-            let candidate = master_key(name);
-            candidate == key || candidate.starts_with(&key) || key.starts_with(&candidate)
-        })
-        .collect::<BTreeSet<_>>();
-    let candidate_count = candidates.len();
-    if candidate_count == 0 {
-        json!({"requested":party_name(wanted),"match_state":"missing"})
-    } else {
-        let mut bytes = 0_usize;
-        let candidates = candidates
-            .into_iter()
-            .take(25)
-            .take_while(|name| {
-                bytes = bytes.saturating_add(name.len());
-                bytes <= 8192
-            })
-            .map(|name| party_name(name.clone()))
-            .collect::<Vec<_>>();
-        json!({"requested":party_name(wanted),"match_state":"near_miss",
-            "exact_live_spelling":candidates.first(),"candidate_count":candidate_count,
-            "candidates_truncated":candidates.len() < candidate_count,"candidates":candidates})
-    }
+        .enumerate()
+        .map(|(position, name)| SourceEntity::new(position, name))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.safe_reason_code().to_string())?;
+    let report = master_binding::bind(&catalog, &entities)
+        .map_err(|error| error.safe_reason_code().to_string())?;
+    Ok(report.entities().iter().map(master_match_json).collect())
 }
 
-fn master_key(value: &str) -> String {
-    value
-        .nfc()
-        .flat_map(|character| match character {
-            '–' | '—' | '−' | '‐' | '‑' => "-".chars().collect::<Vec<_>>(),
-            '‘' | '’' | '‚' | '‛' => "'".chars().collect(),
-            '“' | '”' | '„' | '‟' => "\"".chars().collect(),
-            other => other.to_lowercase().collect(),
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+fn master_match_json(binding: &EntityBinding) -> Value {
+    let requested = party_name(binding.source_name.clone());
+    match &binding.status {
+        BindingStatus::Bound {
+            catalog_name,
+            basis,
+        } => {
+            // Only byte-exact equality may be reported as `exact`: the import
+            // file carries the name verbatim, and build_import_xml admits
+            // nothing else.
+            let match_state = match basis {
+                BindingBasis::ExactName => "exact",
+                BindingBasis::NormalizedName => "normalized",
+                BindingBasis::Identifier => "identifier",
+            };
+            json!({
+                "requested": requested,
+                "match_state": match_state,
+                "exact_live_spelling": party_name(catalog_name.clone()),
+            })
+        }
+        BindingStatus::Ambiguous(unresolved) | BindingStatus::Unmatched(unresolved) => {
+            let mut bytes = 0_usize;
+            let candidates = unresolved
+                .candidates
+                .iter()
+                .take_while(|candidate| {
+                    bytes = bytes.saturating_add(candidate.catalog_name.len());
+                    bytes <= MAX_CANDIDATE_RESULT_BYTES
+                })
+                .map(|candidate| {
+                    json!({
+                        "name": party_name(candidate.catalog_name.clone()),
+                        "rule": candidate.rule,
+                    })
+                })
+                .collect::<Vec<_>>();
+            // No `exact_live_spelling`. Naming one candidate as the live
+            // spelling is the auto-resolution that rejected a batch once.
+            json!({
+                "requested": requested,
+                "match_state": match binding.status {
+                    BindingStatus::Unmatched(_) => "missing",
+                    _ => "near_miss",
+                },
+                "reason": unresolved.reason.safe_reason_code(),
+                "candidate_count": unresolved.candidate_count,
+                "candidates_truncated": candidates.len() < unresolved.candidate_count,
+                "candidates": candidates,
+                "unresolved_identity": unresolved
+                    .unresolved_identity
+                    .iter()
+                    .map(|identifier| json!({
+                        "kind": identifier.kind,
+                        "value": party_name(identifier.value.clone()),
+                    }))
+                    .collect::<Vec<_>>(),
+            })
+        }
+    }
 }
 
 fn render_import_xml(company: &str, vouchers: &[ImportVoucher], batch_id: &str) -> String {

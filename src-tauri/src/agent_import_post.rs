@@ -146,7 +146,7 @@ impl Server {
                 .read_import_ledger_catalogue(&identity, &company.name)
                 .await?;
             accumulated = combine_evidence(accumulated.clone(), evidence);
-            if masters_for_payload(&payload, &catalogue)
+            if masters_for_payload(&payload, &catalogue)?
                 .iter()
                 .any(|item| item["match_state"] != "exact")
             {
