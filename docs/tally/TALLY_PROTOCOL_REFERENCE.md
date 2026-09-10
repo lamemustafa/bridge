@@ -1377,9 +1377,16 @@ the remaining unknown is the one field that no export can reveal.
 
 ### 9.12 Item invoices — `ALLLEDGERENTRIES.LIST` is silently DISCARDED — **TRAP**
 
-**VERIFIED 2026-09-10 (licensed TallyPrime 7.1 Gold, hand import through Gateway of Tally >
-Import > Vouchers, into a live book).** This is the first item-invoice write recorded here; §5's
-inventory note still stands for reads, and units, godowns and batches remain unprobed.
+**PARTIAL 2026-09-10 (licensed TallyPrime 7.1 Gold, hand import through Gateway of Tally >
+Import > Vouchers, into a live book).** Read the marker: this document defines VERIFIED as a
+captured live request *and response*, and a desktop-UI import produces no gateway response. The
+payload and the read-back voucher are the evidence; the HTTP exchange is not. **The same payload
+has not been replayed through the XML gateway**, so nothing below establishes what the gateway
+returns — only what Tally stores. Everything measured is a stored-state observation and holds as
+such.
+
+This is the first item-invoice write recorded here; §5's inventory note still stands for reads,
+and units, godowns and batches remain unprobed.
 
 A sales invoice was sent as `ISINVOICE=Yes` / `OBJVIEW="Invoice Voucher View"` with the party and
 two GST ledgers in **`ALLLEDGERENTRIES.LIST`** — correct for every accounting voucher, and the
@@ -1395,11 +1402,20 @@ anywhere.
 element name, the voucher posted correctly.
 
 This is §9.2's silent-discard family in its widest form yet: not one field, the entire accounting
-half. It is also **not visible in the import counters** — it surfaces only in Tally's own
-`Import Exceptions` report, as *"Mismatch in total amount between Credit and Debit entries"*.
+half. **The UI import summary named no problem** — the discard surfaced only in Tally's own
+`Import Exceptions` report, as *"Mismatch in total amount between Credit and Debit entries"*. What
+the **gateway** counters report for this payload is untested; do not assume they are silent too.
+Either way the §9.2 rule covers it: read the voucher back.
 
-> **RULE: `ALLLEDGERENTRIES.LIST` for an accounting voucher, `LEDGERENTRIES.LIST` for an invoice
-> voucher (`ISINVOICE=Yes`). The wrong element is accepted, not refused.**
+> **RULE (sales item invoices): `ALLLEDGERENTRIES.LIST` for an accounting voucher,
+> `LEDGERENTRIES.LIST` for a sales invoice voucher (`ISINVOICE=Yes`). The wrong element is
+> accepted, not refused.**
+
+**Scope.** One sales invoice, one company, one Gold instance. The other `ISINVOICE=Yes` shapes —
+purchase, debit note, credit note — are **UNVERIFIED**: they plausibly behave the same way, since
+the element belongs to the invoice view rather than to the voucher type, but that has not been
+tested. Treat `LEDGERENTRIES.LIST` as the safe default for any invoice voucher and confirm on the
+first write of each new type by reading the voucher back.
 
 **`Import Exceptions` accumulates across imports.** The same report also listed 25 unrelated
 `Duplicate Voucher No.` entries from that book's earlier history, and the Gateway was already
@@ -1440,21 +1456,48 @@ Four further observations, each measured:
 2. **A service line carries an amount and no quantity** — omit `RATE`, `ACTUALQTY` and `BILLEDQTY`
    entirely and the line posts with a blank quantity, matching hand entry.
 3. **The party line needs `BILLALLOCATIONS.LIST` / `New Ref`**, or the amount lands On Account and
-   cannot be aged (§9.x bill-wise behaviour applies unchanged).
+   cannot be aged (§9.x bill-wise behaviour applies unchanged). **Preflight `ISBILLWISEON=Yes` on
+   the party ledger first — it is mandatory, not advisory.** §12a.4 row 5 records that an
+   allocation on a ledger with `ISBILLWISEON=No` is *silently discarded* and the entry stores with
+   no allocations at all. Sending `New Ref` does not by itself prevent an unaged amount: on a
+   non-bill-wise party the invoice posts, the counters report success, and the reference is gone.
 4. **Tax rounds per line, then sums.** An invoice with 7,165.07 taxable at 9% stores **644.84**, not
-   the 644.86 that 9% of the total gives — 644.84 being the sum of per-line rounded tax. A writer
-   that taxes the invoice total will be a paisa or two out on every multi-line invoice.
+   the 644.86 that 9% of the total gives — 644.84 being the sum of per-line rounded tax. **Compute
+   tax per line and sum; do not tax the invoice total.**
+
+   **PARTIAL — the mechanism is measured, the magnitude is not.** One invoice was measured, and two
+   paise is that invoice's discrepancy, not a bound. Taxing the total is not always wrong (two
+   ₹100 lines at 9% agree under either method) and when it is wrong the error is not capped at two
+   paise — each line contributes up to half a paisa of rounding, so the worst case grows with the
+   line count. So: never derive a validation tolerance from the ₹0.02 here. Compare against the sum
+   of per-line rounded tax, which is exact, rather than allowing a fixed slack.
 
 The whole voucher must still sum to zero across `LEDGERENTRIES` **and** `ALLINVENTORYENTRIES`.
 
 ### 9.12b `ACTION="Delete"` by `REMOTEID` — confirmed working on a live book
 
-The one-sided voucher above was removed with `ACTION="Delete"` keyed by `REMOTEID`, and a corrected
-voucher created in its place. That is the first live confirmation of the Delete + Create path §9.7
-argues for, outside the lab. `Alter` remains unusable.
+The one-sided voucher above was removed with `ACTION="Delete"` keyed by the **client-supplied**
+`REMOTEID`, and a corrected voucher created in its place. That is the first live confirmation of
+the Delete + Create path §9.7 argues for, outside the lab.
 
-**A hand-keyed voucher carries no `REMOTEID` you supplied**, so this path exists only for vouchers
-you imported. Correct an operator-entered voucher by hand or with a journal.
+Worth noting against `IMPLEMENTATION_GUIDE.md` §3.3a, which records that Tally overwrites the
+attribute with a value of its own: the client-supplied string still **worked as a delete key**
+afterwards. Whatever the export shows, the value you sent remains addressable.
+
+**`Alter` is UNVERIFIED on this profile — not ruled out.** This experiment exercised only `Delete`.
+The `Alter` failures on record (§9.6, and `IMPLEMENTATION_GUIDE.md` §3.1) came from an
+Education/Edit Log instance, and §3.1a says itself that every alter attempt targeted vouchers
+outside the company's current period, which may be the whole explanation — it calls for an
+in-period licensed retest before concluding Alter is unavailable. Nothing here promotes that result
+to a licensed conclusion. Use Delete + Create because it is the path that is confirmed, not because
+`Alter` is known to fail.
+
+**Whether an operator-entered voucher can be deleted this way is UNVERIFIED.** The intuitive limit
+— "no `REMOTEID` you supplied, so no key" — does not follow: `IMPLEMENTATION_GUIDE.md` §3.3a
+records that Tally assigns its own `REMOTEID` to every voucher and exports it, and the native
+voucher parser requires the attribute on every returned voucher. So an exported Tally-generated
+`REMOTEID` is a candidate key that has simply not been tried. **Test a delete against an operator
+voucher's exported ID before telling anyone that hand correction is their only option.**
 
 ## 10. Change detection
 
