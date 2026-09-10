@@ -31,6 +31,8 @@ mod changes;
 mod ledgers;
 #[path = "agent_outstandings.rs"]
 mod outstandings;
+#[path = "agent_presence.rs"]
+mod presence;
 #[path = "agent_vouchers.rs"]
 mod vouchers;
 #[cfg(test)]
@@ -671,6 +673,7 @@ impl Server {
             "verify_import" => self.verify_import(args).await,
             "ledger_masters" => self.ledger_masters(args).await,
             "vouchers" => self.vouchers(args).await,
+            "voucher_presence" => self.voucher_presence(args).await,
             "changed_since" => self.changed_since(args).await,
             "outstandings" => self.outstandings(args).await,
             "ledger_movement" => self.ledger_movement(args).await,

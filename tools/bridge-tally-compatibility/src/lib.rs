@@ -38,7 +38,17 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// digest unchanged and let existing evidence attest behaviour it never
 /// covered. This is the deliberate decision the paragraph above requires, and
 /// it is one file for one named reason — not headroom.
-pub const MAX_SURFACE_FILES: usize = 211;
+///
+/// Raised again from 211 to 213 to admit
+/// `src-tauri/crates/bridge-tally-core/src/book_presence.rs` and
+/// `src-tauri/src/agent_presence.rs`. Together they decide whether a proposed
+/// voucher is reported as already in the book. Tally has no idempotency
+/// (`TALLY_PROTOCOL_REFERENCE.md` §9.3), so an edit confined to either file
+/// could turn a `present` into an `absent` — duplicating a filed invoice — or
+/// the reverse, dropping one silently, while the surface digest and the
+/// evidence attesting the reads beneath both stayed unchanged. Two files for
+/// one named reason, one per surface; still not headroom.
+pub const MAX_SURFACE_FILES: usize = 213;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
