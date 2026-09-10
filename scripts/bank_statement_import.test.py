@@ -679,6 +679,37 @@ def cli(m, **overrides):
     return argv
 
 
+def test_preflight_runs_before_the_pdf_is_opened(m):
+    """Split out of main so it is reachable on its own: a mistyped flag should
+    cost nothing, and none of these checks needs the statement."""
+    parser = m.build_parser()
+    args = parser.parse_args(cli(m, **{"--from": "2026-08-01", "--to": "2026-08-31"}))
+    window, expected = m.preflight(args)
+    assert window == (datetime.date(2026, 8, 1), datetime.date(2026, 8, 31))
+    assert set(expected) == {"opening", "closing", "debits", "credits"}
+    assert expected["opening"] == D("0")
+    # a window open at either end is legal — it means "no bound on that side"
+    assert m.preflight(parser.parse_args(cli(m)))[0] == (None, None)
+
+
+def test_control_totals_are_all_three_compared(m):
+    bank = m.HDFC()
+    rows = [{"date": "01/08/26", "dr": "", "cr": "100.00", "bal": "1100.00"},
+            {"date": "02/08/26", "dr": "50.00", "cr": "", "bal": "1050.00"}]
+    expected = {"debits": D("50.00"), "credits": D("100.00")}
+    assert m.verify_against_statement(rows, bank, expected) == expected
+    for wrong in ({"debits": D("60.00"), "credits": D("100.00")},
+                  {"debits": D("50.00"), "credits": D("110.00")}):
+        refuses(m, "control_total_mismatch", m.verify_against_statement, rows, bank, wrong)
+
+
+def test_manifest_rows_always_carry_every_column(m):
+    """csv.DictWriter raises on an unexpected key — after the XML is written."""
+    row = m._manifest_row(row=1, voucher_type="Payment")
+    assert set(row) == set(m.MANIFEST_COLUMNS)
+    assert row["narration"] == "" and row["row"] == 1
+
+
 def test_cli_refuses_before_reading_anything(m):
     """Every one of these produced a successful-looking run that wrote nothing
     useful, wrote to the wrong place, or wrote an empty import."""

@@ -524,8 +524,27 @@ def _ledger_key(name):
 # --------------------------------------------------------------------------- #
 
 def _matches(group, anchors):
+    """Does this visual line carry every word of any one anchor group?
+
+    Whole groups rather than single words, so a counterparty called
+    "... LIMITED" is not mistaken for the "HDFC BANK LIMITED" footer.
+    """
     words = {t for *_, t in group}
     return any(all(token in words for token in anchor) for anchor in anchors)
+
+
+def _table_top(lines, bank):
+    """y of the line that starts this page's transaction table, or None.
+
+    Anchors are tried in order, so a profile can put its strongest marker
+    first: HDFC's page 1 carries the column header, later pages only the
+    period line.
+    """
+    for anchor in bank.top_anchors:
+        found = next((y for y, group in lines if _matches(group, (anchor,))), None)
+        if found is not None:
+            return found
+    return None
 
 
 def parse_pages(pages, bank):
@@ -540,12 +559,7 @@ def parse_pages(pages, bank):
         if stop:
             break
         lines = _lines(page)
-        top = None
-        for anchor in bank.top_anchors:
-            top = next((y for y, group in lines
-                        if all(any(t == token for *_, t in group) for token in anchor)), None)
-            if top is not None:
-                break
+        top = _table_top(lines, bank)
         if top is None:
             continue
         if bank.end_anchors and any(_matches(g, bank.end_anchors) for _, g in lines):
@@ -594,16 +608,6 @@ def parse(pdf, password, bank):
     """Statement rows plus the pages they came from."""
     pages = _pdf_pages(pdf, password)
     return parse_pages(pages, bank), pages
-
-
-def _table_top(lines, bank):
-    """y of the line that starts this page's transaction table, or None."""
-    for anchor in bank.top_anchors:
-        found = next((y for y, group in lines
-                      if all(any(t == token for *_, t in group) for token in anchor)), None)
-        if found is not None:
-            return found
-    return None
 
 
 def header_digit_runs(pages, bank):
@@ -977,8 +981,26 @@ MANIFEST_COLUMNS = ("row", "date", "voucher_type", "amount", "dr_ledger", "cr_le
                     "suspense", "remoteid", "party", "narration")
 
 
+def _manifest_row(**values):
+    """One manifest record, with every column present.
+
+    Written from `MANIFEST_COLUMNS` rather than from a literal so a column can
+    never exist in one kind of row and not the other — `csv.DictWriter` would
+    raise on the mismatch, after the XML had already been written.
+    """
+    unknown = set(values) - set(MANIFEST_COLUMNS)
+    assert not unknown, unknown
+    return {column: values.get(column, "") for column in MANIFEST_COLUMNS}
+
+
 def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
           date_from=None, date_to=None):
+    """Vouchers and a manifest row per statement row, in printed order.
+
+    The manifest is not a log. It is the operator's record of what each voucher
+    was made from and, through `remoteid`, the only way to remove one
+    afterwards — including for rows this run deliberately did not emit.
+    """
     vouchers, manifest, seen = [], [], {}
     for index, row in enumerate(rows, 1):
         raw_date = f"{row[bank.date_column]}".strip()
@@ -1012,11 +1034,11 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
             # sitting in the book. Omitting a voucher from a re-import does not
             # remove it — a re-import upserts what is present and ignores what
             # is not.
-            manifest.append({"row": index, "date": date.isoformat(), "voucher_type": "SKIPPED",
-                             "amount": f"{amount:.2f}", "dr_ledger": "", "cr_ledger": "",
-                             "suspense": "", "remoteid": _remote_id(account_tail, date, row, bank),
-                             "party": party,
-                             "narration": "excluded: carried by the other account's contra"})
+            manifest.append(_manifest_row(
+                row=index, date=date.isoformat(), voucher_type="SKIPPED",
+                amount=f"{amount:.2f}", party=party,
+                remoteid=_remote_id(account_tail, date, row, bank),
+                narration="excluded: carried by the other account's contra"))
             continue
         kind = "Contra" if treatment == "contra" else ("Payment" if outward else "Receipt")
         mode, reference = bank.reference(row)
@@ -1047,11 +1069,11 @@ def build(rows, bank, company, bank_ledger, suspense, mapping, account_tail,
             kind, date, remote_id, narration, debit_ledger, credit_ledger, amount,
             party_ledger=None if kind == "Contra" else ledger,
         ))
-        manifest.append({"row": index, "date": date.isoformat(), "voucher_type": kind,
-                         "amount": f"{amount:.2f}", "dr_ledger": debit_ledger,
-                         "cr_ledger": credit_ledger,
-                         "suspense": "YES" if unidentified else "",
-                         "remoteid": remote_id, "party": party, "narration": narration})
+        manifest.append(_manifest_row(
+            row=index, date=date.isoformat(), voucher_type=kind,
+            amount=f"{amount:.2f}", dr_ledger=debit_ledger, cr_ledger=credit_ledger,
+            suspense="YES" if unidentified else "", remoteid=remote_id,
+            party=party, narration=narration))
     return vouchers, manifest
 
 
@@ -1162,7 +1184,118 @@ def _check_paths(args):
         resolved[real] = flag
 
 
-def main(argv=None):
+def preflight(args):
+    """Everything that can be refused before the PDF is opened.
+
+    Kept together and run first on purpose: a mistyped flag should cost
+    nothing, and none of these checks needs the statement. Returns the parsed
+    control values so `main` never re-parses a string it has already validated.
+    """
+    if args.confirm_open_company != args.company:
+        raise Refusal(
+            "company_unconfirmed",
+            f"--company {args.company!r} and --confirm-open-company "
+            f"{args.confirm_open_company!r} differ. They must match exactly; read the "
+            "name off the open Tally window rather than copying it from this command.",
+        )
+    if not (args.out or args.manifest or args.dry_run):
+        raise Refusal(
+            "no_output_requested",
+            "nothing would be written. Pass --out and/or --manifest to keep the "
+            "generated document, or --dry-run to review the mapping without writing.",
+        )
+    _check_paths(args)
+
+    as_date = lambda text: datetime.date.fromisoformat(text) if text else None
+    window = (as_date(args.date_from), as_date(args.date_to))
+    if all(window) and window[0] > window[1]:
+        raise Refusal(
+            "reversed_date_window",
+            f"--from {window[0]} is after --to {window[1]}; every transaction would be "
+            "excluded and the run would report a successful zero-voucher import",
+        )
+    # a balance may be negative on an overdrawn account; a total of withdrawals
+    # or deposits may not
+    return window, {
+        "opening": control_value(args.opening, "--opening", signed=True),
+        "closing": control_value(args.expect_closing, "--expect-closing", signed=True),
+        "debits": control_value(args.expect_debits, "--expect-debits"),
+        "credits": control_value(args.expect_credits, "--expect-credits"),
+    }
+
+
+def verify_against_statement(rows, bank, expected):
+    """Prove the parse reproduces every control total the statement prints.
+
+    Three comparisons, and all three are needed. The running balance (already
+    replayed in `reconcile`) proves each row's arithmetic; the closing balance
+    proves the chain ends where the statement says; and the debit and credit
+    totals are the only ones that see a dropped tail whose two sides cancel,
+    because the closing balance is their net.
+    """
+    totals = {
+        "debits": sum(_money(row[bank.debit_column], bank.debit_column, index) or D(0)
+                      for index, row in enumerate(rows, 1)),
+        "credits": sum(_money(row[bank.credit_column], bank.credit_column, index) or D(0)
+                       for index, row in enumerate(rows, 1)),
+    }
+    for label, actual in totals.items():
+        if actual != expected[label]:
+            raise Refusal(
+                "control_total_mismatch",
+                f"{label} total {actual} does not match the statement's printed "
+                f"{expected[label]}. Rows are missing or misread — the closing balance "
+                "alone cannot see this, because it is the net of the two.")
+    return totals
+
+
+def _write_csv(path, records):
+    writer_target = io.StringIO()
+    writer = csv.DictWriter(writer_target, fieldnames=list(MANIFEST_COLUMNS))
+    writer.writeheader()
+    writer.writerows(records)
+    _write_private(path, writer_target.getvalue())
+
+
+def _print_dry_run(manifest):
+    totals = {}
+    for record in manifest:
+        key = (record["party"], record["voucher_type"], record["suspense"])
+        totals[key] = totals.get(key, D(0)) + D(record["amount"])
+    print(f"\n{'COUNTERPARTY':<34}{'TYPE':<10}{'TOTAL':>14}  SUSPENSE")
+    for (party, kind, suspense), total in sorted(totals.items(), key=lambda kv: -kv[1]):
+        print(f"{party[:33]:<34}{kind:<10}{total:>14,}  {suspense}")
+
+
+def _print_operator_notes(company, skipped):
+    """The three things that decide whether this file lands correctly.
+
+    Printed after the write rather than before it, because that is when the
+    operator turns to Tally, and none of them is enforceable from here.
+    """
+    print("\nBEFORE IMPORTING: confirm the open company in Tally is "
+          f"{company!r}. Tally will not check it for you (9.11d).")
+    if skipped:
+        print("\nIF THIS STATEMENT WAS ALREADY IMPORTED: the "
+              f"{skipped} skipped row(s) are omitted from this file, and omission "
+              "is not deletion — a re-import upserts what is present and leaves the "
+              "rest standing. Delete those vouchers by the REMOTEIDs in the manifest, "
+              "or the transfer they represent is counted twice.")
+    print("\nTO CORRECT A BATCH ALREADY IMPORTED: delete by the REMOTEIDs in the manifest, "
+          "then import the corrected file. Do NOT rely on re-importing over the top — "
+          "upsert-by-REMOTEID is verified for Journal only (9.8), this file is "
+          "Payment/Receipt/Contra, and a re-import carrying CORRECTED values is a further "
+          "untested case again (3.3a). If you do test it, read the import summary rather "
+          "than the voucher count: a rejected repeat also leaves the count unchanged.")
+
+
+def build_parser():
+    """The command line, kept apart from the run so it can be read as a whole.
+
+    Every `required=True` here is a review finding: each was optional once, and
+    each optional one was a way to produce a confident-looking file that was
+    wrong. See `preflight` for the checks argparse cannot express.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pdf", required=True)
     parser.add_argument("--bank", required=True, choices=sorted(BANKS))
@@ -1200,104 +1333,44 @@ def main(argv=None):
     parser.add_argument("--manifest")
     parser.add_argument("--dry-run", action="store_true",
                         help="list counterparties and totals; write nothing")
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
     args = parser.parse_args(argv)
-
-    if args.confirm_open_company != args.company:
-        raise Refusal(
-            "company_unconfirmed",
-            f"--company {args.company!r} and --confirm-open-company "
-            f"{args.confirm_open_company!r} differ. They must match exactly; read the "
-            "name off the open Tally window rather than copying it from this command.",
-        )
-    if not (args.out or args.manifest or args.dry_run):
-        raise Refusal(
-            "no_output_requested",
-            "nothing would be written. Pass --out and/or --manifest to keep the "
-            "generated document, or --dry-run to review the mapping without writing.",
-        )
-    _check_paths(args)
-
-    fmt = lambda text: datetime.date.fromisoformat(text) if text else None
-    date_from, date_to = fmt(args.date_from), fmt(args.date_to)
-    if date_from and date_to and date_from > date_to:
-        raise Refusal(
-            "reversed_date_window",
-            f"--from {date_from} is after --to {date_to}; every transaction would be "
-            "excluded and the run would report a successful zero-voucher import",
-        )
-
-    # a balance may be negative on an overdrawn account; a total of withdrawals
-    # or deposits may not
-    opening = control_value(args.opening, "--opening", signed=True)
-    expect_closing = control_value(args.expect_closing, "--expect-closing", signed=True)
-    expect_debits = control_value(args.expect_debits, "--expect-debits")
-    expect_credits = control_value(args.expect_credits, "--expect-credits")
+    window, expected = preflight(args)
 
     bank = BANKS[args.bank]()
     rows, pages = parse(pathlib.Path(args.pdf), read_password(), bank)
     require_account_match(pages, bank, args.account_tail)
-    closing = reconcile(rows, bank, opening, expect_closing)
-    debits = sum(_money(r[bank.debit_column], bank.debit_column, i) or D(0)
-                 for i, r in enumerate(rows, 1))
-    credits = sum(_money(r[bank.credit_column], bank.credit_column, i) or D(0)
-                  for i, r in enumerate(rows, 1))
+    closing = reconcile(rows, bank, expected["opening"], expected["closing"])
+    totals = verify_against_statement(rows, bank, expected)
     print(f"parsed {len(rows)} rows; running balance reproduced on every row")
-    print(f"  debits {debits:,}  credits {credits:,}  closing {closing:,}")
-    for label, actual, printed in (("debits", debits, expect_debits),
-                                   ("credits", credits, expect_credits)):
-        if actual != printed:
-            raise Refusal(
-                "control_total_mismatch",
-                f"{label} total {actual} does not match the statement's printed "
-                f"{printed}. Rows are missing or misread — the closing balance alone "
-                "cannot see this, because it is the net of the two.")
+    print(f"  debits {totals['debits']:,}  credits {totals['credits']:,}  closing {closing:,}")
     print("  debits, credits and closing all match the statement's printed totals")
 
     vouchers, manifest = build(
         rows, bank, args.company, args.bank_ledger, args.suspense,
-        load_mapping(args.mapping), args.account_tail,
-        date_from, date_to,
+        load_mapping(args.mapping), args.account_tail, *window,
     )
     if args.dry_run:
-        counts = {}
-        for record in manifest:
-            key = (record["party"], record["voucher_type"], record["suspense"])
-            counts[key] = counts.get(key, D(0)) + D(record["amount"])
-        print(f"\n{'COUNTERPARTY':<34}{'TYPE':<10}{'TOTAL':>14}  SUSPENSE")
-        for (party, kind, susp), total in sorted(counts.items(), key=lambda kv: -kv[1]):
-            print(f"{party[:33]:<34}{kind:<10}{total:>14,}  {susp}")
+        _print_dry_run(manifest)
         return 0
 
     xml_text = envelope(args.company, vouchers)
     count, outward, inward = selfcheck(xml_text, args.bank_ledger, manifest)
-    skipped = [r for r in manifest if r["voucher_type"] == "SKIPPED"]
-    print(f"\n{count} vouchers; {len(skipped)} skipped as already carried elsewhere")
+    skipped = sum(1 for record in manifest if record["voucher_type"] == "SKIPPED")
+    print(f"\n{count} vouchers; {skipped} skipped as already carried elsewhere")
     print(f"  bank ledger out {outward:,}  in {inward:,}")
-    print(f"  suspense vouchers {sum(1 for r in manifest if r['suspense'])}")
+    print(f"  suspense vouchers {sum(1 for record in manifest if record['suspense'])}")
     if args.out:
         _write_private(args.out, xml_text)
         print(f"  wrote {args.out} (mode 0600)")
     if args.manifest:
-        buffer = io.StringIO()
-        writer = csv.DictWriter(buffer, fieldnames=list(MANIFEST_COLUMNS))
-        writer.writeheader()
-        writer.writerows(manifest)
-        _write_private(args.manifest, buffer.getvalue())
+        _write_csv(args.manifest, manifest)
         print(f"  wrote {args.manifest} (mode 0600)")
-    print("\nBEFORE IMPORTING: confirm the open company in Tally is "
-          f"{args.company!r}. Tally will not check it for you (9.11d).")
-    if skipped:
-        print("\nIF THIS STATEMENT WAS ALREADY IMPORTED: the "
-              f"{len(skipped)} skipped row(s) are omitted from this file, and omission "
-              "is not deletion — a re-import upserts what is present and leaves the "
-              "rest standing. Delete those vouchers by the REMOTEIDs in the manifest, "
-              "or the transfer they represent is counted twice.")
-    print("\nTO CORRECT A BATCH ALREADY IMPORTED: delete by the REMOTEIDs in the manifest, "
-          "then import the corrected file. Do NOT rely on re-importing over the top — "
-          "upsert-by-REMOTEID is verified for Journal only (9.8), this file is "
-          "Payment/Receipt/Contra, and a re-import carrying CORRECTED values is a further "
-          "untested case again (3.3a). If you do test it, read the import summary rather "
-          "than the voucher count: a rejected repeat also leaves the count unchanged.")
+    _print_operator_notes(args.company, skipped)
     return 0
 
 
