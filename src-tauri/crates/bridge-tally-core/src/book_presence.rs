@@ -557,6 +557,18 @@ pub enum DifferenceField {
 /// A field on which an identified voucher disagrees with its source. The match
 /// was decided by identity, so a difference is a finding about the book — not
 /// evidence against the match.
+///
+/// **It is a finding for a person, and the obvious way to act on it in code is
+/// destructive.** On the observed instance a voucher `Alter` returns
+/// `CREATED=1, ALTERED=0` and makes a duplicate while leaving the target
+/// untouched (`TALLY_PROTOCOL_REFERENCE.md` §9.7, four keys tested and all four
+/// duplicating), and `Cancel` behaves the same way (§9.6). A caller that reads
+/// "amount differs" and reaches for an `Alter` creates the duplicate this whole
+/// contract exists to prevent, and Tally's counters report success. The only
+/// correction that works is re-import under the same client `REMOTEID`
+/// (`IMPLEMENTATION_GUIDE.md` §3.3a), which reaches only vouchers Bridge itself
+/// wrote — so for the hand-keyed voucher this contract is built for there is no
+/// programmatic correction path at all, and the operator fixes it in Tally.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Difference {
     pub field: DifferenceField,
