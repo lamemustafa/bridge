@@ -31,10 +31,15 @@ capability from assumption, and a completed request from a verified snapshot.
 - [`scripts/bank_statement_import.py`](../../scripts/bank_statement_import.py) turns a
   password-protected bank-statement PDF into TallyPrime import XML (Payment / Receipt /
   Contra), for hand-import through Gateway of Tally > Import > Vouchers. Offline; it never
-  contacts Tally. SBI and HDFC statement layouts are supported. It refuses to emit rows
-  whose running balance does not reproduce every printed closing balance, and re-parses its
-  own output before writing. Contract tests:
-  `python3 scripts/bank_statement_import.test.py`.
+  contacts Tally. SBI and HDFC statement layouts are supported.
+
+  What it proves before it writes anything: every row reproduces its printed running
+  balance, the chain lands on the closing balance the statement itself prints (so a parse
+  that stopped early cannot pass), and the account's own digits appear in the document (so
+  the wrong statement cannot be posted to the ledger you named). It then re-parses its own
+  output. What it *cannot* prove is which company Tally has open — see 9.11c — so
+  `--confirm-open-company` makes that an explicit operator step rather than a silent one.
+  Contract tests run in CI: `python3 scripts/bank_statement_import.test.py`.
 
   It was written because Bridge's own writer could not express a bank statement at all: it
   qualified **Journal only**, while money out is a Payment, money in a Receipt, and an
