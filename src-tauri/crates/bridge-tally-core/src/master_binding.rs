@@ -260,7 +260,12 @@ pub enum Candidates {
     /// Nothing resembles this name. An absence of masters, not of information.
     None,
     /// Every master found, listed.
-    Listed(Vec<Candidate>),
+    ///
+    /// A struct variant, not a newtype: under Serde's internally tagged
+    /// representation a tag cannot be merged into a sequence, and a newtype
+    /// here failed to serialize at runtime — on the most common unresolved
+    /// result, while the other three variants succeeded.
+    Listed { listed: Vec<Candidate> },
     /// More were found than could be listed — the per-entity cap, or the
     /// report's aggregate byte budget.
     Truncated {
@@ -279,7 +284,7 @@ impl Candidates {
     pub fn listed(&self) -> &[Candidate] {
         match self {
             Self::None | Self::Withheld { .. } => &[],
-            Self::Listed(listed) | Self::Truncated { listed, .. } => listed,
+            Self::Listed { listed } | Self::Truncated { listed, .. } => listed,
         }
     }
 
@@ -287,7 +292,7 @@ impl Candidates {
     pub fn found(&self) -> usize {
         match self {
             Self::None => 0,
-            Self::Listed(listed) => listed.len(),
+            Self::Listed { listed } => listed.len(),
             Self::Truncated { found, .. } | Self::Withheld { found } => *found,
         }
     }
@@ -961,7 +966,7 @@ fn unresolved_from(
         if listed.len() < found {
             Candidates::Truncated { listed, found }
         } else {
-            Candidates::Listed(listed)
+            Candidates::Listed { listed }
         }
     };
     let unresolved = Unresolved {
@@ -984,6 +989,28 @@ fn collect_candidates(
     entity: &SourceEntity,
     identifier_matches: &BTreeSet<usize>,
 ) -> (Vec<(usize, CandidateRule)>, usize) {
+    // Masters this name reaches by prefix. The key index is ordered, so this is
+    // a range walk rather than a scan of the catalog per entity.
+    let extending = if entity.key.chars().count() >= MIN_PREFIX_KEY_CHARS {
+        catalog
+            .by_key
+            .range(entity.key.clone()..)
+            .take_while(|(key, _)| key.starts_with(&entity.key))
+            .filter(|(key, _)| *key != &entity.key)
+            .flat_map(|(_, holders)| holders.iter().copied())
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+    // Beyond the bound they are a family this name does not separate, and an
+    // arbitrary capped slice of one omitted the right master about a third of
+    // the time against live books. Counted, and withheld rather than listed.
+    let withheld = if extending.len() > MAX_PREFIX_FAMILY {
+        extending.clone()
+    } else {
+        BTreeSet::new()
+    };
+
     let mut best: BTreeMap<usize, CandidateRule> = BTreeMap::new();
     let mut offer = |index: usize, rule: CandidateRule| {
         best.entry(index)
@@ -995,46 +1022,41 @@ fn collect_candidates(
             .or_insert(rule);
     };
 
+    // A decisive rule reaches a master on its own evidence, so it still applies
+    // to a member of a withheld family: the identifier, or the whole key, is
+    // exactly what separates that one from its siblings.
     for index in identifier_matches {
         offer(*index, CandidateRule::SharedIdentifier);
     }
-    if let Some(holders) = catalog.by_key.get(&entity.key) {
-        for index in holders {
-            offer(*index, CandidateRule::NormalizedEqual);
+    for index in catalog.by_key.get(&entity.key).into_iter().flatten() {
+        offer(*index, CandidateRule::NormalizedEqual);
+    }
+    if withheld.is_empty() {
+        for index in &extending {
+            offer(*index, CandidateRule::CatalogPrefix);
         }
     }
-    let mut suppressed_family: BTreeSet<usize> = BTreeSet::new();
-    if entity.key.chars().count() >= MIN_PREFIX_KEY_CHARS {
-        // The key index is ordered, so both prefix directions are range or
-        // point lookups rather than a scan of the whole catalog per entity.
-        let extending = catalog
-            .by_key
-            .range(entity.key.clone()..)
-            .take_while(|(key, _)| key.starts_with(&entity.key))
-            .filter(|(key, _)| *key != &entity.key)
-            .flat_map(|(_, holders)| holders.iter().copied())
-            .collect::<Vec<_>>();
-        // A prefix matching a whole family distinguishes nothing inside it, and
-        // an arbitrary capped slice is worse than none: measured against live
-        // books, that slice omitted the right master about a third of the time.
-        if extending.len() <= MAX_PREFIX_FAMILY {
-            for index in extending {
-                offer(index, CandidateRule::CatalogPrefix);
-            }
-        } else {
-            suppressed_family.extend(extending);
-        }
-        // One pass, carrying the character count forward. Recomputing
-        // `chars().count()` per prefix made this quadratic in the name length,
-        // and the source parser admits 4 KiB fields.
+
+    // Weaker rules must not reinstate what the prefix pass withheld. A token
+    // shared across a family *is* the family, and re-listing 25 of them is the
+    // arbitrary slice the withholding exists to prevent — reachable whenever
+    // the family stays under the common-token threshold, as 30 rows in a
+    // 330-master catalog do.
+    if !entity.key.is_empty() {
+        // One pass over character boundaries; recomputing a prefix length per
+        // split made this quadratic in a field the source parser admits at 4 KiB.
         for (characters, (split, _)) in entity.key.char_indices().enumerate() {
             if characters < MIN_PREFIX_KEY_CHARS {
                 continue;
             }
-            if let Some(holders) = catalog.by_key.get(&entity.key[..split]) {
-                for index in holders {
-                    offer(*index, CandidateRule::SourcePrefix);
-                }
+            for index in catalog
+                .by_key
+                .get(&entity.key[..split])
+                .into_iter()
+                .flatten()
+                .filter(|index| !withheld.contains(index))
+            {
+                offer(*index, CandidateRule::SourcePrefix);
             }
         }
     }
@@ -1042,26 +1064,28 @@ fn collect_candidates(
         if catalog.common_tokens.contains(&token) {
             continue;
         }
-        if let Some(holders) = catalog.by_token.get(&token) {
-            for index in holders {
-                offer(*index, CandidateRule::SharedToken);
-            }
+        for index in catalog
+            .by_token
+            .get(&token)
+            .into_iter()
+            .flatten()
+            .filter(|index| !withheld.contains(index))
+        {
+            offer(*index, CandidateRule::SharedToken);
         }
     }
 
-    // The reported total is the union: a suppressed family and the candidates
-    // still worth listing are not necessarily the same masters, so taking the
-    // larger of the two counts would under-report what the name actually
-    // reaches.
+    // The total is the union: a withheld family and the candidates still worth
+    // listing are not necessarily the same masters, so the larger of the two
+    // counts would under-report what the name reaches.
     let found = best
         .keys()
         .copied()
-        .chain(suppressed_family)
+        .chain(withheld)
         .collect::<BTreeSet<_>>()
         .len();
-    // Indices, not names. Cloning every match before the cap and the budget
-    // discarded most of the work for an entity whose identifier is shared by
-    // many rows, and an admitted draft repeats that per entry.
+    // Indices, not names — cloning every match before the cap and the budget
+    // discarded most of the work, once per entry of an admitted draft.
     (best.into_iter().collect(), found)
 }
 

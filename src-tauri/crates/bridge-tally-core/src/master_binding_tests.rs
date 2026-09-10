@@ -677,7 +677,7 @@ fn the_listing_variant_says_what_an_absent_candidate_means() {
     let listed = ledgers(&["ALPHA SALE", "ALPHA SALES", "SALES - ALPHA", "Beta Supply"]);
     let binding = bind_one_name(&listed, "ALPHA");
     let candidates = &binding.unresolved().expect("unbound").candidates;
-    assert!(matches!(candidates, Candidates::Listed(_)));
+    assert!(matches!(candidates, Candidates::Listed { .. }));
     assert_eq!(candidates.found(), 3);
 }
 
@@ -686,7 +686,7 @@ fn only_an_incomplete_listing_may_withhold_an_absence() {
     // The predicate a consumer needs before reporting "nothing like this is
     // present". `None` permits that conclusion; the other two forbid it.
     assert!(!Candidates::None.is_incomplete());
-    assert!(!Candidates::Listed(Vec::new()).is_incomplete());
+    assert!(!Candidates::Listed { listed: Vec::new() }.is_incomplete());
     assert!(Candidates::Withheld { found: 30 }.is_incomplete());
     assert!(Candidates::Truncated {
         listed: Vec::new(),
@@ -729,6 +729,38 @@ fn a_prefix_matching_a_whole_family_is_counted_and_deliberately_not_listed() {
     assert!(unresolved.candidates.listed().is_empty());
     assert_eq!(unresolved.candidates.found(), MAX_PREFIX_FAMILY + 5);
     assert!(unresolved.candidates.is_incomplete());
+}
+
+#[test]
+fn a_weaker_rule_cannot_reinstate_a_withheld_family() {
+    // A token shared across a family *is* the family. Where the catalog is
+    // large enough that the token stays under the common-token threshold — 30
+    // rows among 330 is 9% — the shared-token pass was re-offering exactly the
+    // rows the prefix pass had withheld, restoring the arbitrary capped slice
+    // the withholding exists to prevent.
+    let mut names = (0..30)
+        .map(|index| format!("Acme Branch {index:03}"))
+        .collect::<Vec<_>>();
+    names.extend((0..300).map(|index| format!("Unrelated Ledger {index:03}")));
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    // The scenario only exercises the path while the token stays
+    // discriminating: 10% of 330 is 33, and a 30-row family sits below it.
+    assert!(
+        30 <= names.len() * COMMON_TOKEN_PERCENT / 100,
+        "the family would be suppressed as a common token, proving nothing"
+    );
+
+    let binding = bind_one_name(&catalog, "Acme Branch");
+    let unresolved = binding.unresolved().expect("unbound");
+    assert_eq!(reason(&binding), UnboundReason::NoDiscriminatingCandidate);
+    assert!(unresolved.candidates.listed().is_empty());
+    assert_eq!(unresolved.candidates.found(), 30);
+
+    // A decisive rule still reaches a family member on its own evidence: the
+    // whole key separates that one from its siblings, which is the difference
+    // between withholding a family and hiding a match.
+    let exact = bind_one_name(&catalog, "Acme Branch 017");
+    assert_eq!(exact.bound_name(), Some("Acme Branch 017"));
 }
 
 #[test]
@@ -979,6 +1011,32 @@ fn reason_and_error_codes_are_stable_and_safe() {
         MasterBindingError::CatalogEmpty.safe_reason_code(),
         "master_catalog_empty"
     );
+}
+
+#[test]
+fn every_unresolved_shape_survives_serialization() {
+    // A newtype variant under internal tagging cannot carry a sequence, and it
+    // failed at runtime on the *most common* unresolved result while the other
+    // three variants serialized fine. No test caught it because none had ever
+    // serialized an `Unresolved` — only a `Bound`.
+    let listed = ledgers(&["ALPHA SALE", "ALPHA SALES", "SALES - ALPHA", "Beta Supply"]);
+    let family = (0..MAX_PREFIX_FAMILY + 5)
+        .map(|index| format!("ALPHAGROUP UNIT {index:02}"))
+        .collect::<Vec<_>>();
+    let family = MasterCatalog::new(MasterClass::Ledger, &family).expect("valid");
+    let missing = ledgers(&["Alpha Traders", "Beta Supply"]);
+
+    for (label, binding) in [
+        ("listed", bind_one_name(&listed, "ALPHA")),
+        ("withheld", bind_one_name(&family, "ALPHAGROUP")),
+        ("none", bind_one_name(&missing, "Zeta Placeholder")),
+    ] {
+        let json = serde_json::to_string(&binding)
+            .unwrap_or_else(|error| panic!("{label} failed to serialize: {error}"));
+        let back: EntityBinding = serde_json::from_str(&json)
+            .unwrap_or_else(|error| panic!("{label} failed to deserialize: {error}"));
+        assert_eq!(back, binding, "{label} did not round-trip");
+    }
 }
 
 #[test]
