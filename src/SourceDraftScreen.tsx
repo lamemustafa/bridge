@@ -154,11 +154,11 @@ export function SourceDraftScreen({
     setCatalogSelections({});
     setCatalogInvalidating(true);
     void invalidateNativeCatalog()
-      .then(() => {
-        if (mounted.current && operationGeneration.current === invalidationGeneration) setCatalogInvalidating(false);
-      })
       .catch((cause) => {
         if (mounted.current && operationGeneration.current === invalidationGeneration) setError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (mounted.current && operationGeneration.current === invalidationGeneration) setCatalogInvalidating(false);
       });
   }, [catalogScopeKey]);
 
@@ -188,6 +188,7 @@ export function SourceDraftScreen({
       setCatalog(null);
       setCatalogSelections({});
       operationGeneration.current += 1;
+      setCatalogInvalidating(false);
       setPendingAction(null);
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
@@ -366,6 +367,9 @@ export function SourceDraftScreen({
     } finally {
       actionRef.current = null;
       endBusy();
+      if (mounted.current && generation === operationGeneration.current) {
+        setCatalogInvalidating(false);
+      }
       if (mounted.current) {
         setAction(null);
       }

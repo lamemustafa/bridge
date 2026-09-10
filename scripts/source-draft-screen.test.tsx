@@ -277,6 +277,30 @@ test("clears the visible catalogue and blocks a new read until the native compan
   root.unmount();
 });
 
+test("returns the editor and ledger read control to the current scope after native invalidation rejects", async () => {
+  mocks.invoke.mockImplementation((command: string) => {
+    if (command === "desktop_pick_source_draft") return Promise.resolve(draft);
+    if (command === "desktop_invalidate_source_draft_existing_ledger_targets") {
+      return Promise.reject(new Error("native invalidation unavailable"));
+    }
+    return Promise.resolve();
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+
+  await act(async () => {
+    root.render(<SourceDraftScreen catalogScope={catalogScope} catalogScopeKey="company-two" />);
+    await Promise.resolve();
+  });
+
+  expect(host.textContent).toContain("native invalidation unavailable");
+  expect(button(host, "Load existing ledgers").disabled).toBe(false);
+  expect(host.querySelector<HTMLInputElement>('input[placeholder="Unverified ledger name"]')?.disabled).toBe(false);
+  root.unmount();
+});
+
 test("keeps the Tally read lock through parent rerenders until catalog reads settle", async () => {
   let resolveLoad!: (value: unknown) => void;
   let resolveApply!: (value: unknown) => void;

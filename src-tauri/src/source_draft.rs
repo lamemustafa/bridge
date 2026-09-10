@@ -132,7 +132,7 @@ pub(crate) async fn desktop_load_source_draft_existing_ledger_targets(
         &identity,
     )
     .await
-    .map_err(|_| error("source_draft_catalogue_read_failed"))?;
+    .map_err(|cause| error(cause.command_code()))?;
     store.install_catalog(snapshot, endpoint, identity, read)
 }
 
@@ -168,7 +168,7 @@ pub(crate) async fn desktop_apply_source_draft_existing_ledger_target(
         &identity,
     )
     .await
-    .map_err(|_| error("source_draft_catalogue_read_failed"))?;
+    .map_err(|cause| error(cause.command_code()))?;
     require_current_catalog_binding(&binding, &fresh.body, &identity)?;
     store.commit_catalog_target(snapshot, request, binding)
 }

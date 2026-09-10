@@ -13,8 +13,8 @@ use bridge_tally_protocol::{StandardLedgerCatalog, StandardLedgerCatalogBinding}
 use crate::{
     commands::SelectedCompanyIdentity,
     tally::{
-        standard_ledger_catalog::StandardLedgerCatalogRead, EndpointKey, TallyConfig,
-        VerifiedCompanyIdentity,
+        standard_ledger_catalog::{StandardLedgerCatalogRead, StandardLedgerCatalogReadError},
+        EndpointKey, TallyConfig, VerifiedCompanyIdentity,
     },
 };
 
@@ -107,7 +107,7 @@ pub(super) fn require_current_catalog_binding(
 ) -> CommandResult<()> {
     let still_current = binding
         .matches(fresh_body, identity.display_name(), identity.company_guid())
-        .map_err(|_| error("source_draft_catalogue_read_failed"))?;
+        .map_err(|cause| error(StandardLedgerCatalogReadError::from(cause).command_code()))?;
     if still_current {
         Ok(())
     } else {
