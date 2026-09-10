@@ -148,8 +148,11 @@ fn source_entry_bindings(
     let mut entities = Vec::new();
     for voucher in &source.vouchers {
         for entry in &voucher.entries {
+            // Dropping an unusable entry would return fewer bindings than the
+            // source has rows while still claiming completeness, and the row
+            // that vanished is exactly the one an operator needs to look at.
             let Ok(entity) = SourceEntity::new(entities.len(), &entry.ledger) else {
-                continue;
+                return (Vec::new(), "unavailable");
             };
             located.push((voucher.position, entry.position));
             entities.push(entity);

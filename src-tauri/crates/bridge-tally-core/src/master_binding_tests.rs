@@ -487,6 +487,35 @@ fn a_family_within_the_bound_is_still_listed_in_full() {
 }
 
 #[test]
+fn the_reported_count_is_the_union_of_suppressed_and_listed_candidates() {
+    // A suppressed family and the candidates still worth listing are not the
+    // same masters. Reporting the larger of the two counts under-reports what
+    // the name actually reaches, and candidate_count is promised as the total
+    // found before truncation.
+    let mut names = (0..MAX_PREFIX_FAMILY + 5)
+        .map(|index| format!("Alpha Beta {index:02}"))
+        .collect::<Vec<_>>();
+    names.push("Alpha".to_string());
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    let binding = bind_one_name(&catalog, "Alpha Beta");
+    let unresolved = binding.unresolved().expect("unbound");
+    // The shorter master is still listed; the family behind it is not.
+    assert_eq!(candidate_names(&binding), ["Alpha"]);
+    assert_eq!(unresolved.candidate_count, MAX_PREFIX_FAMILY + 6);
+    assert!(unresolved.candidates_truncated);
+}
+
+#[test]
+fn an_identifier_hint_is_bounded_before_anything_scans_it() {
+    let huge = "5".repeat(MAX_NAME_CHARS + 1);
+    assert_eq!(
+        SourceEntity::with_identifier_hints(0, "Alpha Traders", [huge.as_str()]),
+        Err(MasterBindingError::NameTooLong)
+    );
+}
+
+#[test]
 fn candidate_order_is_rule_then_name_and_never_a_ranking() {
     let catalog = ledgers(&[
         "ALPHA (5550000002)",

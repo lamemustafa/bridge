@@ -475,6 +475,9 @@ impl SourceEntity {
         let name = validated_name(name)?;
         let mut identifiers = extract_identifiers(&name)?;
         for hint in hints {
+            // A hint is caller-supplied document text like any other name, and
+            // must clear the same bound before anything scans or copies it.
+            validate_name_bounds(hint)?;
             let extracted = extract_identifiers(hint)?;
             if extracted.is_empty() {
                 return Err(MasterBindingError::IdentifierHintUnusable);
@@ -721,16 +724,16 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
                 &identifier_matches,
             ),
             None => {
-                let (candidates, prefix_family) =
+                let (candidates, masters_found) =
                     collect_candidates(catalog, entity, &identifier_matches);
                 let reason = if !candidates.is_empty() {
                     UnboundReason::NearMiss
-                } else if prefix_family > MAX_PREFIX_FAMILY {
+                } else if masters_found > MAX_PREFIX_FAMILY {
                     UnboundReason::NoDiscriminatingCandidate
                 } else {
                     UnboundReason::NoCandidate
                 };
-                unresolved_from(entity, reason, candidates, prefix_family)
+                unresolved_from(entity, reason, candidates, masters_found)
             }
         }
     };
@@ -749,21 +752,21 @@ fn unresolved_status(
     exact: Option<usize>,
     identifier_matches: &BTreeSet<usize>,
 ) -> BindingStatus {
-    let (mut candidates, prefix_family) = collect_candidates(catalog, entity, identifier_matches);
+    let (mut candidates, masters_found) = collect_candidates(catalog, entity, identifier_matches);
     if let Some(index) = exact {
         let name = catalog.entries[index].name.as_str();
         if !candidates.iter().any(|(candidate, _)| candidate == name) {
             candidates.push((name.to_string(), CandidateRule::NormalizedEqual));
         }
     }
-    unresolved_from(entity, reason, candidates, prefix_family)
+    unresolved_from(entity, reason, candidates, masters_found)
 }
 
 fn unresolved_from(
     entity: &SourceEntity,
     reason: UnboundReason,
     candidates: Vec<(String, CandidateRule)>,
-    prefix_family: usize,
+    masters_found: usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
     ordered.sort_by(|left, right| {
@@ -774,7 +777,7 @@ fn unresolved_from(
     });
     // A suppressed family is still counted. The operator is told how many
     // masters the name reaches even when none of them is worth listing.
-    let candidate_count = ordered.len().max(prefix_family);
+    let candidate_count = ordered.len().max(masters_found);
     let candidates_truncated = candidate_count > ordered.len().min(MAX_CANDIDATES_PER_ENTITY);
     let candidates = ordered
         .into_iter()
@@ -822,7 +825,7 @@ fn collect_candidates(
             offer(*index, CandidateRule::NormalizedEqual);
         }
     }
-    let mut prefix_family = 0_usize;
+    let mut suppressed_family: BTreeSet<usize> = BTreeSet::new();
     if entity.key.chars().count() >= MIN_PREFIX_KEY_CHARS {
         // The key index is ordered, so both prefix directions are range or
         // point lookups rather than a scan of the whole catalog per entity.
@@ -833,14 +836,15 @@ fn collect_candidates(
             .filter(|(key, _)| *key != &entity.key)
             .flat_map(|(_, holders)| holders.iter().copied())
             .collect::<Vec<_>>();
-        prefix_family = extending.len();
         // A prefix matching a whole family distinguishes nothing inside it, and
         // an arbitrary capped slice is worse than none: measured against live
         // books, that slice omitted the right master about a third of the time.
-        if prefix_family <= MAX_PREFIX_FAMILY {
+        if extending.len() <= MAX_PREFIX_FAMILY {
             for index in extending {
                 offer(index, CandidateRule::CatalogPrefix);
             }
+        } else {
+            suppressed_family.extend(extending);
         }
         for split in MIN_PREFIX_KEY_CHARS..entity.key.len() {
             if !entity.key.is_char_boundary(split) {
@@ -868,11 +872,21 @@ fn collect_candidates(
         }
     }
 
+    // The reported total is the union: a suppressed family and the candidates
+    // still worth listing are not necessarily the same masters, so taking the
+    // larger of the two counts would under-report what the name actually
+    // reaches.
+    let found = best
+        .keys()
+        .copied()
+        .chain(suppressed_family)
+        .collect::<BTreeSet<_>>()
+        .len();
     (
         best.into_iter()
             .map(|(index, rule)| (catalog.entries[index].name.clone(), rule))
             .collect(),
-        prefix_family,
+        found,
     )
 }
 
