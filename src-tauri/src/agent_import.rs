@@ -285,7 +285,15 @@ impl Server {
             &ledgers.into_iter().map(str::to_string).collect::<Vec<_>>(),
             &catalogue,
         )
-        .map_err(|code| ToolFailure::from(code).with_prior_evidence(identity_evidence.clone()))?;
+        // The catalogue read already succeeded, so its request/response
+        // commitments belong in the failure too; attaching identity evidence
+        // alone would omit a Tally read that actually happened.
+        .map_err(|code| {
+            ToolFailure::from(code).with_prior_evidence(combine_evidence(
+                identity_evidence.clone(),
+                evidence.clone(),
+            ))
+        })?;
         let hash = sha256_json(&catalogue);
         Ok(ToolOutcome {
             payload: json!({"company": company_json(&company, std::slice::from_ref(&company)), "result": {"masters": report, "catalogue_evidence_sha256": hash}}),

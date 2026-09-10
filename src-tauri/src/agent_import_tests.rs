@@ -1505,11 +1505,25 @@ fn master_match_bounds_suggestions_before_copying_names_and_preserves_ambiguity(
         .map(|index| format!("Ledger {index:03}"))
         .collect::<Vec<_>>();
     let borrowed = catalogue.iter().map(String::as_str).collect::<Vec<_>>();
+    // A name reaching a whole family distinguishes none of it. Measured against
+    // live books, listing an arbitrary capped slice omitted the right master
+    // about a third of the time, so the family is counted and not listed.
     let matched = one_master_match("Ledger", &borrowed);
     assert_eq!(matched["match_state"], "near_miss");
+    assert_eq!(
+        matched["reason"],
+        "master_binding_no_discriminating_candidate"
+    );
     assert_eq!(matched["candidate_count"], 100);
     assert_eq!(matched["candidates_truncated"], true);
-    assert_eq!(matched["candidates"].as_array().unwrap().len(), 25);
+    assert!(matched["candidates"].as_array().unwrap().is_empty());
+    // A family inside the bound is still listed in full.
+    let small = (0..5)
+        .map(|index| format!("Small {index:02}"))
+        .collect::<Vec<_>>();
+    let small_ref = small.iter().map(String::as_str).collect::<Vec<_>>();
+    let listed = one_master_match("Small", &small_ref);
+    assert_eq!(listed["candidates"].as_array().unwrap().len(), 5);
     assert_eq!(
         one_master_match("Ledger 099", &borrowed)["match_state"],
         "exact"

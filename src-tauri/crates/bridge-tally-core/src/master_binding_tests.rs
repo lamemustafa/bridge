@@ -352,6 +352,94 @@ fn separated_digit_groups_do_not_fuse_into_an_identifier() {
     assert!(entity.identifiers().is_empty());
 }
 
+// --- the review findings, pinned -------------------------------------------
+
+#[test]
+fn a_byte_exact_name_carrying_a_number_is_reported_exact_not_identifier() {
+    // The write gate admits `ExactName` only. Reporting `Identifier` when the
+    // two agree made every ledger with a number in its name permanently
+    // unimportable — the exact population this contract exists to serve.
+    let catalog = ledgers(&["GAMMA (5550000001)", "GAMMA ALPHA"]);
+    let binding = bind_one_name(&catalog, "GAMMA (5550000001)");
+    assert_eq!(
+        binding.status,
+        BindingStatus::Bound {
+            catalog_name: "GAMMA (5550000001)".to_string(),
+            basis: BindingBasis::ExactName,
+        }
+    );
+}
+
+#[test]
+fn a_trailing_space_never_claims_byte_equality() {
+    // `Bank ` against live `Bank` must not report exact: the import file would
+    // still carry the trailing space. Normalized is the correct, loud outcome —
+    // the write gate refuses it.
+    let catalog = ledgers(&["Bank"]);
+    let binding = bind_one_name(&catalog, "Bank ");
+    assert_eq!(
+        binding.status,
+        BindingStatus::Bound {
+            catalog_name: "Bank".to_string(),
+            basis: BindingBasis::NormalizedName,
+        }
+    );
+    assert_eq!(
+        binding.source_name, "Bank ",
+        "the requested value is echoed verbatim"
+    );
+}
+
+#[test]
+fn digits_inside_a_mixed_code_are_not_also_a_standalone_identifier() {
+    // Otherwise `Part AB12345678` collides with an unrelated `Bank 12345678`.
+    let entity = entity("Part AB12345678");
+    assert_eq!(
+        entity.identifiers(),
+        [Identifier {
+            kind: IdentifierKind::Code,
+            value: "AB12345678".to_string(),
+        }]
+    );
+    let catalog = ledgers(&["Bank 12345678", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "Part AB12345678");
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a part code must not reach a bank ledger"
+    );
+}
+
+#[test]
+fn an_eight_digit_date_in_any_admitted_order_is_not_an_identifier() {
+    for date in ["20260910", "01012026", "31122026", "12312026"] {
+        assert!(
+            entity(&format!("Period {date}")).identifiers().is_empty(),
+            "{date} was treated as an identifier"
+        );
+    }
+    // A number that reads as no calendar date at all still is one.
+    assert_eq!(entity("Party 55500001").identifiers().len(), 1);
+}
+
+#[test]
+fn more_identifiers_than_the_bound_is_refused_not_truncated() {
+    // Keeping the first few can discard the identifier that pointed at a
+    // different master, turning a conflict into a bind.
+    let many = (0..MAX_IDENTIFIERS_PER_NAME + 1)
+        .map(|index| format!("5550{index:04}00"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(
+        SourceEntity::new(0, &many),
+        Err(MasterBindingError::TooManyIdentifiers)
+    );
+    assert_eq!(
+        MasterBindingError::TooManyIdentifiers.safe_reason_code(),
+        "master_identifiers_too_many"
+    );
+}
+
 // --- candidate discipline --------------------------------------------------
 
 #[test]
@@ -367,16 +455,35 @@ fn a_catalog_wide_token_stops_discriminating() {
 }
 
 #[test]
-fn candidates_are_capped_with_the_true_count_retained() {
-    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+fn a_prefix_matching_a_whole_family_is_counted_and_deliberately_not_listed() {
+    // Measured against live books: listing an arbitrary capped slice of a name
+    // family put the right master out of view about a third of the time,
+    // because the slice is ordered by name and the family is uniform. Counting
+    // the family and listing none of it is the honest answer — the source name
+    // genuinely does not distinguish one from another.
+    let names = (0..MAX_PREFIX_FAMILY + 5)
         .map(|index| format!("ALPHAGROUP UNIT {index:02}"))
         .collect::<Vec<_>>();
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
     let binding = bind_one_name(&catalog, "ALPHAGROUP");
     let unresolved = binding.unresolved().expect("unbound");
-    assert_eq!(unresolved.candidates.len(), MAX_CANDIDATES_PER_ENTITY);
-    assert_eq!(unresolved.candidate_count, MAX_CANDIDATES_PER_ENTITY + 5);
+    assert_eq!(reason(&binding), UnboundReason::NoDiscriminatingCandidate);
+    assert!(unresolved.candidates.is_empty());
+    assert_eq!(unresolved.candidate_count, MAX_PREFIX_FAMILY + 5);
     assert!(unresolved.candidates_truncated);
+}
+
+#[test]
+fn a_family_within_the_bound_is_still_listed_in_full() {
+    let names = (0..MAX_PREFIX_FAMILY)
+        .map(|index| format!("ALPHAGROUP UNIT {index:02}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let binding = bind_one_name(&catalog, "ALPHAGROUP");
+    let unresolved = binding.unresolved().expect("unbound");
+    assert_eq!(reason(&binding), UnboundReason::NearMiss);
+    assert_eq!(unresolved.candidates.len(), MAX_PREFIX_FAMILY);
+    assert!(!unresolved.candidates_truncated);
 }
 
 #[test]
