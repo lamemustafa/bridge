@@ -30,9 +30,12 @@ fn captured_catalogue_payload() -> ImportPayload {
     input
 }
 
+/// The shared valid batch. Its Payment and Receipt carry no `reference`,
+/// which these types refuse: the qualified bank shape has no such element.
+/// `agent_import_post_tests` covers reference rendering on a Journal.
 fn payload() -> ImportPayload {
     serde_json::from_value(json!({"company_guid":GUID,"vouchers":[
-        {"bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":"Payment","narration":"Paid & settled","reference":"REF-1","entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},{"ledger":"Bank","amount":"12.50","side":"Cr"}]},
+        {"bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":"Payment","narration":"Paid & settled","entries":[{"ledger":"Expense","amount":"12.50","side":"Dr"},{"ledger":"Bank","amount":"12.50","side":"Cr"}]},
         {"bridge_txn_id":"txn-002","date":"2026-09-02","voucher_type":"Receipt","entries":[{"ledger":"Bank","amount":"7.50","side":"Dr"},{"ledger":"Income","amount":"7.50","side":"Cr"}]}
     ]})).expect("sample payload")
 }
@@ -1312,7 +1315,9 @@ async fn simulator_verification_is_independent_of_the_output_row_limit() {
         assert_eq!(saved.txn_ids, ["txn-001", "txn-002"]);
         assert_eq!(
             built.payload["result"]["live_evidence"],
-            "synthetic_lab_readback"
+            json!([{"observation":"synthetic_lab_readback",
+                "report":"docs/agent/ASSESSMENT-2026-09-06.md",
+                "voucher_types":["Journal"]}])
         );
         assert!(directory
             .path()

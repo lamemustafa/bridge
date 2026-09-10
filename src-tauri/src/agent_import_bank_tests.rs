@@ -62,6 +62,85 @@ fn under(group: &str) -> Vec<(String, Option<String>)> {
     vec![("Probe Ledger".to_string(), Some(group.to_string()))]
 }
 
+/// The 28-group `List of Groups` capture from the licensed 7.1 demo company,
+/// and the 88-row ledger capture from that same company. Together they carry
+/// real ledgers sitting under real cash and bank groups, which the smaller
+/// company used elsewhere in this file does not: its only money ledger is
+/// `Cash`. See `fixtures/native/PROVENANCE.md`.
+const AARAV_GUID: &str = "bb8ad19e-6aef-4239-a917-87fec0c6215e";
+
+fn captured_demo_groups() -> Vec<TallyNamedMaster> {
+    bridge_tally_protocol::native_outstandings::parse_native_group_snapshot(
+        include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/native/group_snapshot_aarav_with_computed_company_guid.xml"
+        ),
+        AARAV_GUID,
+    )
+    .expect("captured demo group rows")
+}
+
+fn captured_demo_ledger_parents() -> Vec<(String, Option<String>)> {
+    let bytes = include_bytes!(
+        "../crates/bridge-tally-protocol/tests/fixtures/native/ledgers_native_aarav.utf16le.xml"
+    );
+    let xml = bridge_tally_protocol::decode_tally_xml_response_bytes_limited(
+        bytes,
+        "text/xml; charset=utf-16",
+        bridge_tally_protocol::ExpectedTallyTextEncoding::Utf16Le,
+        bytes.len(),
+    )
+    .expect("captured BOM-less UTF-16LE ledger response")
+    .text;
+    bridge_tally_protocol::parse_native_ledger_source_records_with_evidence(&xml, AARAV_GUID)
+        .expect("captured demo ledger rows")
+        .records
+        .into_iter()
+        .map(|source| {
+            (
+                source.record.name,
+                source
+                    .record
+                    .parent
+                    .nonempty_returned_text()
+                    .map(str::to_string),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn captured_ledgers_under_captured_money_groups_are_established() {
+    // Both sides of every edge here are verbatim live captures of one company,
+    // parsed by the production readers. Nothing about a ledger's relationship
+    // to `Bank Accounts` or `Cash-in-Hand` is authored by this test, so a
+    // captured bank row that did not look the way the gate assumes would fail
+    // it rather than be assumed away.
+    let ledgers = captured_demo_ledger_parents();
+    assert_eq!(ledgers.len(), 88, "the whole captured catalogue is swept");
+    let masters = observed(&ledgers, captured_demo_groups());
+    for (ledger, reserved_group) in [
+        ("HDFC Bank Current Account", "Bank Accounts"),
+        ("ICICI Bank CA 4471", "Bank Accounts"),
+        ("Cash", "Cash-in-Hand"),
+        ("Petty Cash", "Cash-in-Hand"),
+        ("Petty Cash Counter", "Cash-in-Hand"),
+    ] {
+        assert_eq!(
+            masters.classify(ledger),
+            CashBankState::Established { reserved_group },
+            "captured ledger {ledger}"
+        );
+    }
+    let established = ledgers
+        .iter()
+        .filter(|(name, _)| masters.classify(name).is_established())
+        .count();
+    assert_eq!(
+        established, 5,
+        "no other captured ledger of the 88 is admitted as money"
+    );
+}
+
 #[test]
 fn captured_masters_establish_cash_and_refuse_every_other_captured_ledger() {
     let ledgers = captured_ledger_parents();
@@ -87,11 +166,16 @@ fn captured_masters_establish_cash_and_refuse_every_other_captured_ledger() {
             reserved_group: "Sales Accounts".into()
         }
     );
-    // Section 8.2a: the reserved account root arrives control-marked, and it is
-    // not a group row. Reaching it establishes nothing.
-    assert_eq!(
-        masters.classify("Profit & Loss A/c").state(),
-        "not_established"
+    // `Profit & Loss A/c` is the one captured ledger parented on the reserved
+    // account root. The catalogue reader refuses a control-bearing parent
+    // outright rather than returning it, so the classifier sees no parent at
+    // all — which is still a refusal, and the reason says the true thing.
+    let root = masters.classify("Profit & Loss A/c");
+    assert_eq!(root.state(), "not_established");
+    assert!(
+        root.detail().contains("no parent group"),
+        "an unreturned parent is reported as one: {}",
+        root.detail()
     );
     for (name, _) in &ledgers {
         assert_eq!(
@@ -104,8 +188,17 @@ fn captured_masters_establish_cash_and_refuse_every_other_captured_ledger() {
 
 #[test]
 fn exactly_the_captured_cash_and_bank_reserved_groups_are_admitted() {
-    // Sweep every predefined group the live capture contains. This is what
-    // pins the admitted set to observation rather than to recollection.
+    // Sweep every predefined group the live capture contains, to pin the
+    // admitted set to observation rather than to recollection. The ledger side
+    // of each edge is synthetic here, which is the point: the test above
+    // establishes `Bank Accounts` and `Cash-in-Hand` from captured ledgers, and
+    // this one establishes that no *other* predefined group joins them.
+    //
+    // `Bank OD A/c` is the one admitted group with no captured ledger beneath
+    // it in either captured company, so its edge rests on a ledger `PARENT`
+    // behaving the same way it demonstrably does for the other two rather than
+    // on a row of its own. That is the weakest link in this gate; a capture of
+    // an overdraft book would close it.
     let groups = captured_groups();
     let admitted = groups
         .iter()
@@ -130,6 +223,38 @@ fn exactly_the_captured_cash_and_bank_reserved_groups_are_admitted() {
             .state(),
         "not_established"
     );
+}
+
+#[test]
+fn a_user_created_group_at_the_account_root_ends_the_walk_as_the_root() {
+    // A user may create a group directly under the account root, and a ledger
+    // under it then walks to a parent that is no group row at all. The root
+    // reaches this module through the tolerant reader, which repairs the
+    // illegal `&#4;` character reference into a replacement marker — so it is
+    // NOT a raw control character, and a classifier testing for one would
+    // report "absent from the group collection" and hide the real shape.
+    // The captured Group collection is what pins the spelling.
+    let captured_root = captured_groups()
+        .into_iter()
+        .find(|group| group.name == "Capital Account")
+        .and_then(|group| group.parent.nonempty_returned_text().map(str::to_string))
+        .expect("a captured top-level group names the reserved root");
+    assert!(captured_root.contains("Primary") && captured_root != "Primary");
+    for spelling in [captured_root.as_str(), "\u{4} Primary", "Primary"] {
+        let mut rows = captured_groups();
+        rows.push(TallyNamedMaster {
+            name: "House Accounts".into(),
+            parent: PartyLedgerMasterFieldObservation::Returned(spelling.to_string()),
+            reserved_name: Some(String::new()),
+        });
+        let state = observed(&under("House Accounts"), rows).classify("Probe Ledger");
+        assert_eq!(state.state(), "not_established");
+        assert!(
+            state.detail().contains("account root"),
+            "{spelling:?} reads as the reserved root: {}",
+            state.detail()
+        );
+    }
 }
 
 #[test]
@@ -366,6 +491,114 @@ async fn a_payment_and_receipt_batch_builds_against_the_captured_masters() {
     assert_eq!(simulator.finish().expect("requests").len(), 44);
 }
 
+fn demo_batch(voucher_type: &str, dr: &str, cr: &str) -> ImportPayload {
+    serde_json::from_value(json!({"company_guid":AARAV_GUID,"vouchers":[
+        {"bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":voucher_type,
+         "entries":[{"ledger":dr,"amount":"1000.00","side":"Dr"},
+                    {"ledger":cr,"amount":"1000.00","side":"Cr"}]}
+    ]}))
+    .expect("demo batch")
+}
+
+#[test]
+fn a_payment_between_two_money_ledgers_is_refused_as_a_contra() {
+    // `Dr Cash, Cr HDFC Bank Current Account` balances, names two distinct
+    // captured ledgers, and puts money on the side Tally requires — every
+    // structural rule passes. It is still a Contra, and admitting it as a
+    // Payment files it in the Payment register: exactly the misfiling this
+    // gate exists to stop. Only classifying the counterparty leg catches it.
+    let masters = observed(&captured_demo_ledger_parents(), captured_demo_groups());
+    let party = "Gujarat Poly Industries";
+    for (voucher_type, dr, cr, counterparty_side) in [
+        ("Payment", "Cash", "HDFC Bank Current Account", "Dr"),
+        ("Receipt", "HDFC Bank Current Account", "Cash", "Cr"),
+    ] {
+        let (legs, admitted) = cash_bank_report(&demo_batch(voucher_type, dr, cr), &masters);
+        assert!(!admitted, "{voucher_type} between two money ledgers");
+        let refused = legs
+            .iter()
+            .find(|leg| leg["requires"] == "not_cash_bank")
+            .expect("the counterparty leg is classified too");
+        assert_eq!(refused["side"], json!(counterparty_side));
+        assert_eq!(refused["admitted"], json!(false));
+        assert!(refused["refused_because"]
+            .as_str()
+            .expect("a refused leg says why")
+            .contains("Contra"));
+    }
+    // The same two ledgers as a Contra are exactly right, and each type is
+    // admitted when its counterparty really is one.
+    for (voucher_type, dr, cr) in [
+        ("Contra", "Cash", "HDFC Bank Current Account"),
+        ("Payment", party, "HDFC Bank Current Account"),
+        ("Receipt", "HDFC Bank Current Account", party),
+    ] {
+        let (_, admitted) = cash_bank_report(&demo_batch(voucher_type, dr, cr), &masters);
+        assert!(admitted, "{voucher_type} {dr} / {cr}");
+    }
+}
+
+#[test]
+fn a_counterparty_that_cannot_be_classified_is_not_refused() {
+    // The two requirements are deliberately not mirror images. The money side
+    // needs a positive fact and refuses without it; the counterparty side only
+    // refuses on the positive fact that it *is* money. A party under a group
+    // the collection does not carry is unclassifiable, not wrong, and refusing
+    // it would cost a build with nothing wrong with it.
+    let mut ledgers = captured_demo_ledger_parents();
+    ledgers.push(("Imported Party".into(), Some("Migrated Debtors".into())));
+    let masters = observed(&ledgers, captured_demo_groups());
+    assert_eq!(
+        masters.classify("Imported Party").state(),
+        "not_established"
+    );
+    let (legs, admitted) = cash_bank_report(
+        &demo_batch("Payment", "Imported Party", "HDFC Bank Current Account"),
+        &masters,
+    );
+    assert!(admitted);
+    assert!(legs
+        .iter()
+        .all(|leg| leg["admitted"] == json!(true) && leg["refused_because"].is_null()));
+}
+
+#[tokio::test]
+async fn a_bank_voucher_carrying_a_reference_is_refused_before_any_read() {
+    // Section 9.13's measured shape has no REFERENCE element, and nothing
+    // downstream would notice if Tally dropped or rewrote one: verify_import
+    // compares accounting entries, not this annotation.
+    for voucher_type in [
+        VoucherType::Payment,
+        VoucherType::Receipt,
+        VoucherType::Contra,
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let server = bank_server(directory.path(), 9);
+        let mut input = captured_bank_payload();
+        input.vouchers.truncate(1);
+        input.vouchers[0].voucher_type = voucher_type;
+        input.vouchers[0].reference = Some("NEFT-REF".into());
+        let error = server
+            .build_import_xml(&serde_json::to_value(input).unwrap())
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.code, "voucher_reference_unqualified_for_type");
+        assert!(error.evidence.is_none(), "refusal precedes any source read");
+    }
+    // A Journal still carries one; this is a per-type rule, not a new global.
+    let mut journal = payload().vouchers.remove(0);
+    journal.voucher_type = VoucherType::Journal;
+    journal.reference = Some("JV-REF".into());
+    assert_eq!(
+        validate_payload(&ImportPayload {
+            company_guid: GUID.into(),
+            vouchers: vec![journal],
+        }),
+        Ok(())
+    );
+}
+
 #[tokio::test]
 async fn a_contra_leg_outside_cash_and_bank_is_refused_without_writing_a_file() {
     let plans = bank_build_plans();
@@ -411,4 +644,79 @@ async fn a_journal_only_batch_reads_no_group_collection() {
         .await
         .unwrap();
     assert_eq!(simulator.finish().expect("requests").len(), 32);
+}
+
+#[tokio::test]
+async fn a_bank_batch_verifies_through_the_rewrites_tally_makes_to_it() {
+    // Two rewrites are already recorded against the import path: under
+    // automatic numbering Tally assigns its own voucher number (section 9.8),
+    // and it does not promise to return entries in the order they were sent
+    // (section 12a.4). Readback must survive both — a batch that posts
+    // correctly and then fails its own verification is worse than useless.
+    for voucher_type in [
+        VoucherType::Payment,
+        VoucherType::Receipt,
+        VoucherType::Contra,
+    ] {
+        let mut voucher = payload().vouchers.remove(0);
+        voucher.voucher_type = voucher_type.clone();
+        voucher.voucher_number = None;
+        let line = ImportLedgerLine {
+            endpoint_origin: None,
+            identity_scheme: None,
+            batch_id: "batch-bank".into(),
+            company_guid: GUID.into(),
+            company: None,
+            txn_ids: vec![voucher.bridge_txn_id.clone()],
+            date_from: "20260901".into(),
+            date_to: "20260901".into(),
+            sha256: "hash".into(),
+            built_at: now(),
+            status: "built".into(),
+            pre_import_mark: PreImportMark {
+                kind: "company_high_water".into(),
+                value: Some(10),
+                master_value: Some(10),
+            },
+            vouchers: vec![voucher.clone()],
+        };
+        let mut entries = voucher
+            .entries
+            .iter()
+            .map(|entry| ReadEntry {
+                ledger: entry.ledger.clone(),
+                amount: match entry.side {
+                    EntrySide::Dr => format!("-{}", entry.amount),
+                    EntrySide::Cr => entry.amount.clone(),
+                },
+                is_deemed_positive: entry.side.tally_positive().into(),
+            })
+            .collect::<Vec<_>>();
+        entries.reverse();
+        let observed = vec![ReadVoucher {
+            remote_id: Some("remote-bank".into()),
+            guid: Some("guid-bank".into()),
+            master_id: Some("41".into()),
+            alter_id: Some(63),
+            date: Some(normalized_date(&voucher.date).unwrap()),
+            voucher_type: Some(voucher_type.as_str().into()),
+            narration: Some(format!("[BRIDGE:{}]", voucher.bridge_txn_id)),
+            // Tally's own number, which Bridge never sent and must not compare.
+            voucher_number: Some("463".into()),
+            cancelled: Some(false),
+            optional: Some(false),
+            entries,
+        }];
+        let result = verify_observed_batch(&line, &observed).unwrap();
+        assert_eq!(result["counts"]["posted_verified"], 1);
+        assert_eq!(verification_status(&result, 1), "posted_verified");
+        assert_eq!(result["duplicates"], json!([]));
+        // A readback that disagrees on the type is a different voucher, and
+        // says so rather than passing on matching amounts alone.
+        let mut mistyped = observed.clone();
+        mistyped[0].voucher_type = Some("Journal".into());
+        let result = verify_observed_batch(&line, &mistyped).unwrap();
+        assert_eq!(result["counts"]["posted_verified"], 0);
+        assert_ne!(verification_status(&result, 1), "posted_verified");
+    }
 }

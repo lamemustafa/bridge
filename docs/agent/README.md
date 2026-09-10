@@ -175,17 +175,31 @@ valid empty collection remains distinguishable from invalid discovery.
 The MCPB extension exposes `verify_import` by default as a read-only recovery
 tool. `build_import_xml` remains behind `BRIDGE_AGENT_ENABLE_IMPORT=1` for a
 command-line installation, or is enabled with Journal posting as described
-below. A licensed synthetic-lab Journal file cycle and
-exact-file repeat import were observed on 2026-09-06. New file generation accepts
-only `Journal`, with freshly observed supported TallyPrime product and licence mode
-before and after build reads. Release and licence tier are returned as observed
-facts; they do not independently refuse a Journal file. `tally_status` reports
-the observed release and licence tier; the optional status-page banner cannot
-supply these facts. `Payment`, `Receipt`, and `Contra` are refused until each has
-live import/readback evidence. Historical batch records remain readable. The response records
-`live_evidence: "synthetic_lab_readback"` and links to
-[the assessment](ASSESSMENT-2026-09-06.md). This does not qualify every voucher
-type, host, licence mode, or manually imported file.
+below. New file generation accepts `Journal`, `Payment`, `Receipt` and `Contra`, each
+with freshly observed supported TallyPrime product and licence mode before and
+after the build reads. Release and licence tier are returned as observed facts;
+they do not independently refuse a file. `tally_status` reports the observed
+release and licence tier; the optional status-page banner cannot supply these
+facts. Every other voucher type is refused.
+
+The four rest on different observations, and each build reports its own in
+`live_evidence` rather than a single blanket claim:
+
+- `Journal` — a licensed synthetic-lab file cycle and exact-file repeat import
+  observed 2026-09-06; see [the assessment](ASSESSMENT-2026-09-06.md).
+- `Payment`, `Receipt`, `Contra` — a licensed TallyPrime 7.1 Gold bank-statement
+  import observed 2026-09-10; see
+  [reference §9.13](../tally/TALLY_PROTOCOL_REFERENCE.md). These three are
+  admitted only as two entries over two distinct ledgers with no voucher number
+  and no reference, and their money side must be a ledger whose live group
+  ancestry reaches a reserved `Bank Accounts`, `Bank OD A/c` or `Cash-in-Hand`
+  identity, while their counterparty side must not — money on both sides is a
+  `Contra`. Bill-wise allocation is not supported: every party amount lands On
+  Account, and a build that names a counterparty warns so.
+
+Historical batch records remain readable. None of this qualifies every host,
+licence mode, or manually imported file, and only an unnumbered single-voucher
+`Journal` batch is eligible for native posting.
 
 1. Call `voucher_schema` and produce a payload matching its schema. Transaction
    IDs are client-supplied, unique within the batch, and retained in the local import ledger.

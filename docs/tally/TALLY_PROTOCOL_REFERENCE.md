@@ -961,12 +961,34 @@ which remains one unnumbered Journal (§9.8).
 
 **What Bridge builds from it.** `build_import_xml` renders exactly this shape for Payment,
 Receipt and Contra, and leaves the Journal shape byte-identical to the file §9.8's own
-measurement ran on. Each of the three is admitted only as two entries over two distinct ledgers
-with no supplied voucher number, and the side that must hold money is refused unless that
-ledger's live group ancestry reaches a reserved `Bank Accounts`, `Bank OD A/c` or `Cash-in-Hand`
-identity — walked through `RESERVEDNAME` per §8.2a, so a renamed predefined group still
-classifies. `Bank OCC A/c` is a documented Tally group that appears in neither captured group
-set, so a book using one is refused rather than matched against an unobserved spelling.
+measurement ran on. Each of the three is admitted only as two entries over two distinct ledgers,
+carrying neither a supplied voucher number nor a `REFERENCE`: no file carrying either has been
+imported and read back on these types, and `verify_import` compares accounting entries rather
+than those annotations, so nothing downstream would notice Tally dropping or rewriting one.
+
+Both legs are classified, not just the funding one:
+
+| leg | requirement | refused by |
+| --- | --- | --- |
+| Payment credit, Receipt debit, both Contra legs | must be cash or bank | anything else, **including "could not be established"** — a positive fact is required and absent |
+| the counterparty leg of a Payment or Receipt | must not be cash or bank | only a leg *established* as cash or bank |
+
+The asymmetry is deliberate. Money on both sides of a Payment is a Contra wearing another
+type's name, and admitting it recreates the wrong-register misfiling this table exists to
+prevent; but a counterparty Bridge cannot classify is not evidence of that, and refusing it
+would cost a build with nothing wrong with it.
+
+Classification walks the ledger's group ancestry through `RESERVEDNAME` per §8.2a, so a renamed
+predefined group still classifies. `Bank OCC A/c` is a documented Tally group that appears in
+neither captured group set, so a book using one is refused rather than matched against an
+unobserved spelling — as is any book whose money ledger sits under a group the Group collection
+does not carry.
+
+**What it still does not do.** Nothing detects a party ledger configured for bill-wise
+accounting: the catalogue Bridge reads carries no such flag, and adding one would mean
+authoring a request shape with no live capture behind it. Every party amount therefore lands On
+Account, exactly as the measured import did, and every build naming a counterparty says so in
+its warnings rather than leaving the operator to discover it in the ledger.
 
 ### 9.9 Bulk import throughput
 

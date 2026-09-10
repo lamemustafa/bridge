@@ -176,13 +176,22 @@ impl ObservedMasters {
 }
 
 /// Tally marks the reserved account root with `U+0004` before `" Primary"`
-/// rather than the bare word (§1.1), and a report rendering of the same value
-/// drops the marker. Accept both readings; neither is a group row.
+/// rather than the bare word (§1.1), so none of its spellings is a group row
+/// and reaching one ends the walk.
+///
+/// The marker arrives as the character reference `&#4;`, which is illegal in
+/// XML 1.0, so the tolerant reader replaces its `&` and the value reaches this
+/// module as `U+FFFD` `#4; Primary` — that is the form the captured Group
+/// collections actually produce, and it is the one a naive control-character
+/// test misses. The raw `U+0004` form and the bare word are accepted too: a
+/// report rendering of the same value drops the marker entirely (§12a.1).
 fn is_reserved_root(normalized: &str) -> bool {
-    normalized
-        .trim_matches(|character: char| character.is_control())
-        .trim()
-        == "primary"
+    const ROOT_MARKERS: &[&str] = &["\u{fffd}#4;", "\u{4}"];
+    let bare = ROOT_MARKERS
+        .iter()
+        .find_map(|marker| normalized.strip_prefix(marker))
+        .unwrap_or(normalized);
+    bare.trim() == "primary"
 }
 
 fn normalize(value: &str) -> String {

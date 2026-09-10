@@ -17,6 +17,42 @@ fn the_admitted_schema_offers_exactly_the_qualified_voucher_types() {
 }
 
 #[test]
+fn the_published_rules_name_every_qualified_type_and_claim_no_other() {
+    // voucher_schema is where an agent reads the contract, and its prose sits
+    // beside the generated enum rather than in it. That is exactly how it went
+    // stale once: the enum widened and the sentence still said "only Journal".
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::new(super::super::super::Settings {
+        endpoint: TallyEndpointConfig {
+            host: "127.0.0.1".into(),
+            port: 9,
+        },
+        data_dir: directory.path().into(),
+        max_rows: 10,
+        max_bytes: 200_000,
+        redaction: super::super::super::Redaction::None,
+        import_enabled: true,
+        writes_enabled: false,
+    });
+    let published = server.voucher_schema().unwrap().payload;
+    let prose = format!(
+        "{}{}",
+        published["result"]["rules"], published["result"]["limits"]
+    );
+    for voucher_type in LIVE_QUALIFIED_VOUCHER_TYPES {
+        assert!(
+            prose.contains(voucher_type.as_str()),
+            "the rules name {}",
+            voucher_type.as_str()
+        );
+    }
+    assert!(!prose.contains("only Journal"));
+    assert!(!prose.contains("Journal is the only"));
+    // The schema returned alongside the prose is the one the build gate reads.
+    assert_eq!(published["result"]["schema"], voucher_input_schema());
+}
+
+#[test]
 fn a_voucher_type_outside_the_qualified_list_is_refused() {
     // Every declared type is qualified today, so the gate is exercised against
     // a narrowed list. It is what refuses a type added ahead of its evidence,
