@@ -14,7 +14,7 @@ use crate::{
     commands::SelectedCompanyIdentity,
     tally::{
         standard_ledger_catalog::{StandardLedgerCatalogRead, StandardLedgerCatalogReadError},
-        EndpointKey, TallyConfig, VerifiedCompanyIdentity,
+        EndpointKey, TallyConfig, TallyRuntime, VerifiedCompanyIdentity,
     },
 };
 
@@ -113,6 +113,75 @@ pub(super) fn require_current_catalog_binding(
     } else {
         Err(error("source_draft_catalogue_target_changed"))
     }
+}
+
+/// Loads a company-scoped catalog into the current source-draft capture.
+///
+/// This application service owns the complete admission sequence; callers
+/// provide ordinary application handles rather than Tauri state wrappers.
+pub(super) async fn load_existing_ledger_targets(
+    store: &SourceDraftStore,
+    runtime: &TallyRuntime,
+    request: SourceDraftCatalogLoadRequest,
+) -> CommandResult<SourceDraftCatalogTargets> {
+    let snapshot = store.catalog_load_snapshot(&request)?;
+    let endpoint = EndpointKey::from_config(&request.config)
+        .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    let identity = crate::commands::verify_observed_company_tuple(
+        runtime,
+        &request.config,
+        &request.selected_company,
+    )
+    .await
+    .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    let read = crate::tally::standard_ledger_catalog::read_standard_ledger_catalog(
+        runtime,
+        request.config,
+        &identity,
+    )
+    .await
+    .map_err(|cause| error(cause.command_code()))?;
+    store.install_catalog(snapshot, endpoint, identity, read)
+}
+
+/// Revalidates and commits one captured existing-ledger selection.
+///
+/// This application service owns the complete admission sequence; callers
+/// provide ordinary application handles rather than Tauri state wrappers.
+pub(super) async fn apply_existing_ledger_target(
+    store: &SourceDraftStore,
+    runtime: &TallyRuntime,
+    request: SourceDraftCatalogApplyRequest,
+) -> CommandResult<SourceDraftDto> {
+    let snapshot = store.catalog_apply_snapshot(&request)?;
+    let endpoint = EndpointKey::from_config(&request.config)
+        .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    if endpoint != snapshot.endpoint {
+        return Err(error("source_draft_catalogue_invalidated"));
+    }
+    let identity = crate::commands::verify_observed_company_tuple(
+        runtime,
+        &request.config,
+        &request.selected_company,
+    )
+    .await
+    .map_err(|_| error("source_draft_catalogue_scope_invalid"))?;
+    if identity != snapshot.identity {
+        return Err(error("source_draft_catalogue_invalidated"));
+    }
+    let binding = snapshot
+        .catalog
+        .bind_selected([request.target_name.clone()])
+        .map_err(|_| error("source_draft_catalogue_target_invalid"))?;
+    let fresh = crate::tally::standard_ledger_catalog::read_standard_ledger_catalog(
+        runtime,
+        request.config.clone(),
+        &identity,
+    )
+    .await
+    .map_err(|cause| error(cause.command_code()))?;
+    require_current_catalog_binding(&binding, &fresh.body, &identity)?;
+    store.commit_catalog_target(snapshot, request, binding)
 }
 
 impl SourceDraftStore {
@@ -339,6 +408,9 @@ mod tests {
         source_draft_xml::parse_source_xml,
     };
     use bridge_tally_protocol::parse_standard_ledger_catalog_with_identities;
+    use tally_protocol_simulator::{
+        Fixture, ProductStatus, ResponseFraming, ScenarioPlan, SequenceSimulator, WireEncoding,
+    };
 
     const CAPTURED_COMPANY: &str = "WR2 Unicode Lab";
     const CAPTURED_GUID: &str = "61c6de69-1748-461c-ad3f-162cb949df9f";
@@ -373,6 +445,25 @@ mod tests {
             company_number: "1".into(),
             books_from_yyyymmdd: "20260401".into(),
         }
+    }
+
+    fn company_plan(name: &str, guid: &str) -> ScenarioPlan {
+        ScenarioPlan::new(Fixture::SyntheticXml(format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><COMPANY NAME=\"{name}\"><GUID>{guid}</GUID><COMPANYNUMBER>1</COMPANYNUMBER><BOOKSFROM>20260401</BOOKSFROM></COMPANY></COLLECTION></DATA></BODY></ENVELOPE>"
+        )))
+        .with_encoding(WireEncoding::Utf16Le)
+        .with_framing(ResponseFraming::ContentLength)
+    }
+
+    fn catalog_plan(xml: String) -> ScenarioPlan {
+        ScenarioPlan::new(Fixture::SyntheticXml(xml))
+            .with_encoding(WireEncoding::Utf16Le)
+            .with_framing(ResponseFraming::ContentLength)
+    }
+
+    fn status_plan() -> ScenarioPlan {
+        ScenarioPlan::new(Fixture::ProductStatus(ProductStatus::TallyPrime))
+            .with_framing(ResponseFraming::ContentLength)
     }
 
     fn install_active_catalog(store: &SourceDraftStore) -> (Uuid, Uuid, Vec<String>, String) {
@@ -427,6 +518,85 @@ mod tests {
             target_name,
             proposals,
         }
+    }
+
+    #[tokio::test]
+    async fn catalog_services_load_then_refuse_an_identity_invalidated_apply_without_tauri_state() {
+        let store = SourceDraftStore::default();
+        let parsed_source = source();
+        let draft_id = Uuid::new_v4();
+        store
+            .replace(ActiveDraft {
+                id: draft_id,
+                revision: 1,
+                proposals: empty_proposals(&parsed_source),
+                source: parsed_source,
+                catalog_generation: 0,
+                catalog: None,
+            })
+            .expect("active source draft");
+        let (_, catalog_xml) = captured_catalog_and_xml();
+        let alternate_guid = "11111111-1111-4111-8111-111111111111";
+        let simulator = SequenceSimulator::spawn(vec![
+            company_plan(CAPTURED_COMPANY, CAPTURED_GUID),
+            company_plan(CAPTURED_COMPANY, CAPTURED_GUID),
+            catalog_plan(catalog_xml.clone()),
+            status_plan(),
+            catalog_plan(catalog_xml),
+            status_plan(),
+            company_plan(CAPTURED_COMPANY, CAPTURED_GUID),
+            company_plan("WR3 Separate Lab", alternate_guid),
+        ])
+        .expect("catalog service simulator");
+        let config = TallyConfig {
+            host: simulator.address().ip().to_string(),
+            port: simulator.address().port(),
+        };
+        let runtime = TallyRuntime::default();
+        let loaded = load_existing_ledger_targets(
+            &store,
+            &runtime,
+            SourceDraftCatalogLoadRequest {
+                draft_id: draft_id.to_string(),
+                config: config.clone(),
+                selected_company: selected_company(),
+            },
+        )
+        .await
+        .expect("service load admits the current captured catalog");
+        assert!(!loaded.targets.is_empty());
+        let proposals = store
+            .active
+            .lock()
+            .expect("active store")
+            .as_ref()
+            .expect("active source draft")
+            .proposals
+            .clone();
+        let error = apply_existing_ledger_target(
+            &store,
+            &runtime,
+            SourceDraftCatalogApplyRequest {
+                draft_id: draft_id.to_string(),
+                revision: 1,
+                capture_id: loaded.capture_id,
+                config,
+                selected_company: SelectedCompanyIdentity {
+                    display_name: "WR3 Separate Lab".into(),
+                    company_guid: alternate_guid.into(),
+                    company_number: "1".into(),
+                    books_from_yyyymmdd: "20260401".into(),
+                },
+                row_position: 1,
+                entry_position: 1,
+                target_name: loaded.targets[0].clone(),
+                proposals,
+            },
+        )
+        .await
+        .expect_err("a reverified different identity invalidates the captured catalog");
+        assert_eq!(error.code, "source_draft_catalogue_invalidated");
+        assert_eq!(simulator.finish().expect("all requests observed").len(), 8);
     }
 
     #[test]
