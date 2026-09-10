@@ -104,6 +104,14 @@ book with systematic party naming `NoDiscriminatingCandidate` is expected to be
 common, and a third of the `Absent` verdicts it would otherwise license would
 have been wrong.
 
+The trap this guards is not hypothetical, and it is not confined to this
+contract. A sibling surface consuming the same state rendered an
+undiscriminable family as "0 possible ledgers are listed first" — a count of
+nothing, presented to an operator as a result. An empty candidate list means
+"nothing survived to be shown", never "nothing exists"; every consumer of
+`master_binding` has to decide which of those it is reporting, and the two
+readings are one word apart in the output.
+
 ### 2. A window is a *claim about a window*, and it must be complete
 
 `BookWindow::observed` is a boundary parse. It refuses, rather than degrades,
