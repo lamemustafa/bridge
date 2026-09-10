@@ -482,8 +482,16 @@ New files use `identity_scheme: "batch_v1"`. Each voucher's wire `REMOTEID` and
 narration marker share a UUID derived from the generated batch ID and caller's
 `bridge_txn_id`. The caller ID remains the local transaction label; it is not
 sent directly as Tally's upsert key. Reused labels in independent batches therefore
-have different wire identities. Retry the saved file: rebuilding after losing the
-batch journal creates a new identity and does not deduplicate the business event.
+have different wire identities, so rebuilding after losing the batch journal
+creates a new identity and does not deduplicate the business event.
+
+**Whether to retry the saved file depends on the voucher type.** Exact-file
+repeat is qualified for `Journal` only: a repeat import of the identical file
+returned `CREATED=0, ALTERED=1` and left one voucher. Nothing establishes that
+for `Payment`, `Receipt` or `Contra` — each measured bank file was imported
+exactly once — so a second import of one may create a second set of vouchers.
+For those three, do not re-import: call `verify_import`, which reads the window
+back without writing.
 Historical records without an identity scheme retain their original raw-label
 interpretation. Unknown schemes are refused. Narration markers support readback
 attribution; they are not authenticated provenance.

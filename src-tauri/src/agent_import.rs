@@ -1133,8 +1133,9 @@ fn build_import_guidance(
 /// 2026-09-06 assessment — a report that in the same breath records Payment,
 /// Receipt and Contra being refused. Those three rest on the licensed 7.1
 /// import recorded as reference §9.13 instead. Citing either for the other
-/// would look auditable and be wrong, and a bank-statement batch carrying a
-/// reallocation Journal genuinely rests on both.
+/// would look auditable and be wrong. The two never share a file — mixing the
+/// rendered shapes is refused — but the map stays general so a batch of several
+/// bank types reports the one source they share, once.
 fn live_evidence(vouchers: &[ImportVoucher]) -> Vec<Value> {
     let mut sources = BTreeMap::<(&str, &str), BTreeSet<&str>>::new();
     for voucher in vouchers {
@@ -1177,7 +1178,28 @@ fn refuse_unqualified_types(
         .ok_or_else(|| "import_voucher_type_unqualified".to_string())
 }
 
+/// A file may carry more than one voucher type — the measured statement files
+/// mixed Payment and Receipt freely, 61+54 in one and 20+8 in another, both
+/// imported clean. What it may not do is mix two rendered *shapes*.
+///
+/// The three bank types share one shape: `EFFECTIVEDATE` beside `DATE`, a party
+/// on the counterparty side, never a number or reference. A Journal's shape
+/// carries none of that and comes from a separate qualification lineage
+/// (§9.8 against §9.13). No file mixing the two has been imported — the
+/// reallocation Journals went in on their own — so the union is refused rather
+/// than assumed from holding both citations at once.
+fn refuse_mixed_shapes(vouchers: &[ImportVoucher]) -> Result<(), String> {
+    let bank = vouchers
+        .iter()
+        .filter(|voucher| voucher.voucher_type.bank_shape().is_some())
+        .count();
+    (bank == 0 || bank == vouchers.len())
+        .then_some(())
+        .ok_or_else(|| "voucher_type_shapes_mixed".to_string())
+}
+
 fn validate_payload(payload: &ImportPayload) -> Result<(), String> {
+    refuse_mixed_shapes(&payload.vouchers)?;
     if payload.company_guid.trim().is_empty()
         || payload.vouchers.is_empty()
         || payload.vouchers.len() > MAX_VOUCHERS
@@ -1637,12 +1659,23 @@ fn render_voucher_xml(voucher: &ImportVoucher, remote_id: Uuid, attribution_id: 
         .as_deref()
         .map(|value| format!("<VOUCHERNUMBER>{}</VOUCHERNUMBER>", xml_escape(value)))
         .unwrap_or_default();
-    let entries = voucher.entries.iter().map(|entry| {
+    let shape = voucher.voucher_type.bank_shape();
+    // §9.13's measured files put the debit first in every voucher, and a
+    // caller's ordering is not a fact about the batch. Canonicalise rather than
+    // refuse: it costs the caller nothing and removes the variance entirely.
+    // A Journal keeps the caller's order, since its own measured file did.
+    let mut ordered = voucher.entries.iter().collect::<Vec<_>>();
+    if shape.is_some() {
+        ordered.sort_by_key(|entry| match entry.side {
+            EntrySide::Dr => 0,
+            EntrySide::Cr => 1,
+        });
+    }
+    let entries = ordered.iter().map(|entry| {
         let amount = match entry.side { EntrySide::Dr => format!("-{}", entry.amount), EntrySide::Cr => entry.amount.clone() };
         format!("<ALLLEDGERENTRIES.LIST><LEDGERNAME>{}</LEDGERNAME><ISDEEMEDPOSITIVE>{}</ISDEEMEDPOSITIVE><AMOUNT>{}</AMOUNT></ALLLEDGERENTRIES.LIST>", xml_escape(&entry.ledger), entry.side.tally_positive(), amount)
     }).collect::<String>();
     let date = normalized_date(&voucher.date).unwrap_or_default();
-    let shape = voucher.voucher_type.bank_shape();
     // §9.13: the imported Payment/Receipt/Contra files carried EFFECTIVEDATE
     // beside DATE, and named the party on the side opposite the money. The
     // Journal shape qualified in §9.8 carries neither element, and is left

@@ -11,6 +11,13 @@ current source.
 
 ### Changed
 
+- `build_import_xml` now reports `live_evidence` as an array of
+  `{observation, report, voucher_types}` records rather than a single string,
+  and no longer emits `live_evidence_report`. The previous shape could name
+  only one source for a whole batch, so a Payment build cited a report that
+  records Payment being refused. A client branching on the old string value
+  needs updating; the accompanying voucher types make the provenance readable
+  without one.
 - Relicensed future Bridge distributions from the MIT License to the Apache
   License, Version 2.0. The previously published `v0.1.0` release remains
   available under the MIT License that accompanied that release.

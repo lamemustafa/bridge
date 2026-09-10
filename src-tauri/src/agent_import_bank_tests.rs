@@ -389,6 +389,70 @@ fn a_bank_voucher_renders_the_verified_element_shape() {
 }
 
 #[test]
+fn a_bank_voucher_renders_its_debit_first_whatever_order_the_caller_used() {
+    // Every measured file put the debit first. A caller's ordering is not a
+    // fact about the batch, so it is canonicalised rather than refused — which
+    // costs nothing and removes the variance instead of pushing it back.
+    let credit_first: ImportVoucher = serde_json::from_value(json!({
+        "bridge_txn_id":"txn-001","date":"2026-09-01","voucher_type":"Payment",
+        "entries":[{"ledger":"Bank","amount":"1000.00","side":"Cr"},
+                   {"ledger":"Supplier","amount":"1000.00","side":"Dr"}]
+    }))
+    .expect("voucher");
+    let xml = render_import_xml(
+        "Synthetic Book",
+        std::slice::from_ref(&credit_first),
+        "batch-render",
+    );
+    let debit = xml
+        .find("<LEDGERNAME>Supplier</LEDGERNAME>")
+        .expect("debit leg");
+    let credit = xml
+        .find("<LEDGERNAME>Bank</LEDGERNAME>")
+        .expect("credit leg");
+    assert!(debit < credit, "the debit is rendered first");
+    // Reordering is a bank-shape rule; a Journal keeps the caller's order,
+    // because its own measured file is what its byte-identity claim rests on.
+    let mut journal = credit_first.clone();
+    journal.voucher_type = VoucherType::Journal;
+    let xml = render_import_xml(
+        "Synthetic Book",
+        std::slice::from_ref(&journal),
+        "batch-render",
+    );
+    assert!(
+        xml.find("<LEDGERNAME>Bank</LEDGERNAME>") < xml.find("<LEDGERNAME>Supplier</LEDGERNAME>")
+    );
+}
+
+#[test]
+fn a_batch_mixing_the_two_rendered_shapes_is_refused() {
+    // Payment and Receipt shared a file in the measured import — 61 and 54 in
+    // one, 20 and 8 in another — so a heterogeneous bank file is qualified.
+    // The reallocation Journals went in on their own, and no file has mixed a
+    // Journal's shape with a bank one. Holding both citations at once is not
+    // evidence for their union.
+    let mut mixed = payload();
+    mixed.vouchers[0].voucher_type = VoucherType::Journal;
+    mixed.vouchers[1].voucher_type = VoucherType::Payment;
+    assert_eq!(
+        validate_payload(&mixed),
+        Err("voucher_type_shapes_mixed".to_string())
+    );
+    // Within a family, mixing stays allowed in both directions.
+    for (first, second) in [
+        (VoucherType::Payment, VoucherType::Receipt),
+        (VoucherType::Contra, VoucherType::Payment),
+        (VoucherType::Journal, VoucherType::Journal),
+    ] {
+        let mut same = payload();
+        same.vouchers[0].voucher_type = first;
+        same.vouchers[1].voucher_type = second;
+        assert_eq!(refuse_mixed_shapes(&same.vouchers), Ok(()));
+    }
+}
+
+#[test]
 fn a_journal_file_keeps_the_shape_its_own_measurement_ran_on() {
     let xml = rendered("Journal", "Expense", "Bank");
     assert!(xml.contains("<DATE>20260901</DATE><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>"));
