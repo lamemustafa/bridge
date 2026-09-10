@@ -745,6 +745,26 @@ not need, and one who supplies a `REMOTEID` without knowing it upserts can silen
 earlier voucher by reusing a key. §3.3a has the full table, including that `ACTION="Alter"` with a
 `REMOTEID` creates a duplicate — inverted from intuition — so the correction path is `Create`.
 
+**The key works but is not readable back — do not build a comparison on it.** §3.3a records that
+Tally overwrites the attribute with its own value; what it returns is a *company-GUID + master-id*
+pair, not a mangled version of what you sent. The committed capture
+`src-tauri/crates/bridge-tally-protocol/tests/fixtures/agent/native-namespaced-journal.utf16le.xml`
+shows a voucher Bridge imported coming back as
+`REMOTEID="61c6de69-1748-461c-ad3f-162cb949df9f-00000005"`, and the value Bridge sent appears
+nowhere in the response.
+
+So the client value is **stored, matched for upsert, and usable as a `Delete` key** — it is simply
+not visible through a `Voucher` collection read. **Any readback check that compares the returned
+`REMOTEID` against the one you sent will reject every legitimate import.** Confirm a voucher by its
+date, ledger entries and amounts instead. (Evidence and the decision not to add such a check are on
+PR #289.)
+
+**§9.8's scope limit still applies to all of the above.** The exact-file repeat was measured on the
+licensed **Journal** path; §9.8 says explicitly that it does not establish other request shapes,
+other voucher types, or universal `REMOTEID` semantics. Treat upsert-on-repeat as verified for
+Journal and **UNVERIFIED elsewhere** until the type you are emitting has been re-imported once and
+the voucher count checked.
+
 ### 9.4 Master re-create is a silent Alter
 
 **VERIFIED.** Re-sending an identical ledger `ACTION="Create"` returned `CREATED=0,
