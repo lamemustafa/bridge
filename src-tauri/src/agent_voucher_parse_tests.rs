@@ -91,6 +91,60 @@ fn reference_bearing_bill_allocation_with_empty_name_fails_closed() {
 }
 
 #[test]
+fn amount_only_bill_allocation_placeholder_is_ignored_not_refused() {
+    // Tally emits an amount-only container for a ledger entry with no typed
+    // allocation. It is not empty, so it reaches the field checks; requiring
+    // BILLTYPE unconditionally aborted the ENTIRE vouchers read over a row that
+    // carries no bill identity to record.
+    let captured = captured_bill_allocation_vouchers();
+    let start = captured.find("<BILLALLOCATIONS.LIST>").unwrap();
+    let end = start
+        + captured[start..].find("</BILLALLOCATIONS.LIST>").unwrap()
+        + "</BILLALLOCATIONS.LIST>".len();
+    let mut placeholder = captured.clone();
+    placeholder.replace_range(
+        start..end,
+        "<BILLALLOCATIONS.LIST><AMOUNT>-1137.50</AMOUNT></BILLALLOCATIONS.LIST>",
+    );
+
+    let rows = parse_agent_rows(&placeholder, CAPTURED_BILL_ALLOCATION_COMPANY_GUID)
+        .expect("an amount-only placeholder must not abort the voucher read");
+
+    assert_eq!(
+        rows[0]["amounts"][0]["bill_allocations"],
+        json!([]),
+        "the placeholder carries no allocation, so none is reported -- and it is \
+         skipped rather than invented"
+    );
+    // The rest of the read must be intact: skipping the row has to fall through
+    // to the scope bookkeeping, or every later element is mis-attributed.
+    assert_eq!(rows.len(), parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID).unwrap().len());
+    assert_eq!(rows[0]["amounts"][1]["bill_allocations"], json!([]));
+}
+
+#[test]
+fn named_bill_allocation_without_a_type_still_fails_closed() {
+    // The other half of the admission rule: a name without a type is partially
+    // populated, not a placeholder. Guessing the type would invent an allocation
+    // the book does not contain.
+    let captured = captured_bill_allocation_vouchers();
+    let start = captured.find("<BILLALLOCATIONS.LIST>").unwrap();
+    let end = start
+        + captured[start..].find("</BILLALLOCATIONS.LIST>").unwrap()
+        + "</BILLALLOCATIONS.LIST>".len();
+    let mut named_untyped = captured.clone();
+    named_untyped.replace_range(
+        start..end,
+        "<BILLALLOCATIONS.LIST><NAME>SET-INV-001</NAME>\
+         <AMOUNT>-1137.50</AMOUNT></BILLALLOCATIONS.LIST>",
+    );
+    assert_eq!(
+        parse_agent_rows(&named_untyped, CAPTURED_BILL_ALLOCATION_COMPANY_GUID),
+        Err("bill_allocation_field_missing".into())
+    );
+}
+
+#[test]
 fn incomplete_bill_allocations_are_refused_instead_of_becoming_empty() {
     let captured = captured_bill_allocation_vouchers();
     for field in ["NAME", "BILLTYPE", "AMOUNT"] {

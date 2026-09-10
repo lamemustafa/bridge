@@ -202,32 +202,51 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
                 if scope.bill_allocation() {
                     if let Some(allocation_row) = allocation.take().filter(|row| !row.is_empty()) {
+                        // Tally emits an amount-only container for a ledger entry with no
+                        // typed allocation. It is NOT empty, so the filter above admits
+                        // it, and requiring BILLTYPE unconditionally aborted the entire
+                        // read over a row that carries nothing to record. The rule for
+                        // which untyped rows are placeholders is shared with the
+                        // voucher-scan boundary rather than restated here.
+                        //
+                        // A skipped row must still fall through to `scope.end` below, so
+                        // this is an `if let` and not a `continue`: continuing the event
+                        // loop would leave the scope stack unbalanced and mis-attribute
+                        // every element after it.
                         let bill_type = allocation_row
                             .get("BILLTYPE")
-                            .filter(|value| !value.trim().is_empty())
-                            .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
-                        let amount = allocation_row
-                            .get("AMOUNT")
-                            .filter(|value| !value.trim().is_empty())
-                            .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
-                        bridge_tally_core::ExactDecimal::parse(amount.clone())
-                            .map_err(|_| "bill_allocation_amount_invalid".to_string())?;
-                        let reference = if bill_type.trim() == "On Account" {
-                            // On Account is the one bill type with no bill identity. Keep that
-                            // absence explicit instead of representing it as an empty name.
-                            json!({"kind": "on_account"})
-                        } else {
-                            let name = allocation_row
-                                .get("NAME")
+                            .filter(|value| !value.trim().is_empty());
+                        if let Some(bill_type) = bill_type {
+                            let amount = allocation_row
+                                .get("AMOUNT")
                                 .filter(|value| !value.trim().is_empty())
                                 .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
-                            json!({"kind": "named", "name": name})
-                        };
-                        allocations.push(json!({
-                            "reference": reference,
-                            "bill_type": bill_type,
-                            "amount": amount,
-                        }));
+                            bridge_tally_core::ExactDecimal::parse(amount.clone())
+                                .map_err(|_| "bill_allocation_amount_invalid".to_string())?;
+                            let reference = if bill_type.trim() == "On Account" {
+                                // On Account is the one bill type with no bill identity.
+                                // Keep that absence explicit instead of representing it
+                                // as an empty name.
+                                json!({"kind": "on_account"})
+                            } else {
+                                let name = allocation_row
+                                    .get("NAME")
+                                    .filter(|value| !value.trim().is_empty())
+                                    .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
+                                json!({"kind": "named", "name": name})
+                            };
+                            allocations.push(json!({
+                                "reference": reference,
+                                "bill_type": bill_type,
+                                "amount": amount,
+                            }));
+                        } else if !bridge_tally_protocol::outstandings_shared::bill_allocation_without_type_is_placeholder(
+                            allocation_row.get("NAME").map(String::as_str),
+                        ) {
+                            // A named bill with no type is partially populated, not a
+                            // placeholder. Guessing the type would invent an allocation.
+                            return Err("bill_allocation_field_missing".to_string());
+                        }
                     }
                 } else if scope.child("VOUCHER", "ALLLEDGERENTRIES.LIST") {
                     if allocation.is_some() {
