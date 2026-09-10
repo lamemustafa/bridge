@@ -36,14 +36,19 @@ a copy that is only sometimes updated drifts silently. So the gate reads the doc
 
 ## What the gate does and does not guarantee
 
-It **cannot** stop two open PRs from choosing the same number: nothing in the repository can see
-across unmerged branches, and rebasing shows only merged headings. Wanting that is reasonable, and
-it needs a check that reads open PRs — a CI job with repository access, not a file. That is not
-built.
+On a `pull_request` event GitHub checks out `refs/pull/N/merge`, so the gate runs against **the PR
+merged into the base as of that run**, not against the branch alone. Two PRs choosing the same
+number are therefore caught as soon as one of them merges and the other re-runs — the second is
+stopped before it lands, and rule 3 below says who moves.
 
-What it does guarantee is narrower and sufficient: **a duplicate cannot reach master.** Whichever
-PR rebases second picks up the first one's heading and fails the gate before merging, at which
-point rule 3 below says who moves.
+Two residuals, both worth knowing:
+
+- **A green check can go stale.** If the base moves after the run and the repository permits
+  merging a branch that is not up to date, the old result stands. Closing that is a repository
+  setting — *require branches to be up to date*, or a merge queue — not something a script can do.
+  The `push: master` run is the backstop: it fails loudly on master rather than quietly.
+- **Nothing catches two open PRs *before* either merges.** No file in the repository can see across
+  unmerged branches. That needs a job with repository access reading open PRs, and it is not built.
 
 ## Rules
 
