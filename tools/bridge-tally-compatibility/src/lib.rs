@@ -30,7 +30,15 @@ pub const RESERVED_SURFACE_FILES: usize = 15;
 /// reserved capacity covers a small cohesive feature (source, tests, docs
 /// and manifest) but makes further unreviewed additions an explicit
 /// compatibility-surface decision.
-pub const MAX_SURFACE_FILES: usize = 210;
+///
+/// Raised from 210 to 211 to admit
+/// `src-tauri/crates/bridge-tally-core/src/master_binding.rs`. That file
+/// decides `validate_masters` results and, through them, import admission;
+/// left unpinned, an edit confined to the matcher would leave the surface
+/// digest unchanged and let existing evidence attest behaviour it never
+/// covered. This is the deliberate decision the paragraph above requires, and
+/// it is one file for one named reason — not headroom.
+pub const MAX_SURFACE_FILES: usize = 211;
 pub const MAX_OPERATIONS: usize = 16;
 pub const MAX_CLAIMS: usize = 128;
 pub const MAX_KEYS: usize = 32;
@@ -2456,10 +2464,10 @@ mod tests {
     }
 
     #[test]
-    fn surface_file_cap_refuses_211_entries() {
+    fn surface_file_cap_refuses_one_more_than_the_cap() {
         let oversized = CompatibilitySurfaceManifest {
             schema_version: SURFACE_SCHEMA_VERSION,
-            files: (0..211)
+            files: (0..MAX_SURFACE_FILES + 1)
                 .map(|index| SurfaceFile {
                     path: format!("pinned-{index:03}"),
                     sha256: "0".repeat(64),

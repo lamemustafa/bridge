@@ -352,6 +352,201 @@ fn separated_digit_groups_do_not_fuse_into_an_identifier() {
     assert!(entity.identifiers().is_empty());
 }
 
+// --- the review findings, pinned -------------------------------------------
+
+#[test]
+fn a_byte_exact_name_carrying_a_number_is_reported_exact_not_identifier() {
+    // The write gate admits `ExactName` only. Reporting `Identifier` when the
+    // two agree made every ledger with a number in its name permanently
+    // unimportable — the exact population this contract exists to serve.
+    let catalog = ledgers(&["GAMMA (5550000001)", "GAMMA ALPHA"]);
+    let binding = bind_one_name(&catalog, "GAMMA (5550000001)");
+    assert_eq!(
+        binding.status,
+        BindingStatus::Bound {
+            catalog_name: "GAMMA (5550000001)".to_string(),
+            basis: BindingBasis::ExactName,
+        }
+    );
+}
+
+#[test]
+fn a_byte_exact_name_binds_even_when_its_identifier_is_shared() {
+    // Found by seeding two live ledgers that share an embedded number, which no
+    // fabricated fixture had combined. Refusing a name that exactly names one
+    // master makes that ledger permanently unimportable.
+    let catalog = ledgers(&[
+        "MB PARTY DELTA (5550001009)",
+        "MB PARTY EPSILON (5550001009)",
+        "Beta Supply",
+    ]);
+    let binding = bind_one_name(&catalog, "MB PARTY DELTA (5550001009)");
+    assert_eq!(
+        binding.status,
+        BindingStatus::Bound {
+            catalog_name: "MB PARTY DELTA (5550001009)".to_string(),
+            basis: BindingBasis::ExactName,
+        }
+    );
+    // The shared identifier alone, with no exact name, still refuses.
+    let source =
+        SourceEntity::with_identifier_hints(0, "SOME PARTY", ["5550001009"]).expect("valid");
+    let report = bound(&catalog, &[source]);
+    assert_eq!(
+        report.entities()[0].unresolved().expect("unbound").reason,
+        UnboundReason::IdentifierConflict
+    );
+}
+
+#[test]
+fn a_decisive_identifier_pointing_elsewhere_still_outranks_a_byte_exact_name() {
+    let catalog = ledgers(&["ALPHA (5550000001)", "BETA Supply"]);
+    let source =
+        SourceEntity::with_identifier_hints(0, "BETA Supply", ["5550000001"]).expect("valid");
+    let report = bound(&catalog, &[source]);
+    assert_eq!(
+        report.entities()[0].unresolved().expect("unbound").reason,
+        UnboundReason::IdentifierNameConflict
+    );
+}
+
+#[test]
+fn a_trailing_space_never_claims_byte_equality() {
+    // `Bank ` against live `Bank` must not report exact: the import file would
+    // still carry the trailing space. Normalized is the correct, loud outcome —
+    // the write gate refuses it.
+    let catalog = ledgers(&["Bank"]);
+    let binding = bind_one_name(&catalog, "Bank ");
+    assert_eq!(
+        binding.status,
+        BindingStatus::Bound {
+            catalog_name: "Bank".to_string(),
+            basis: BindingBasis::NormalizedName,
+        }
+    );
+    assert_eq!(
+        binding.source_name, "Bank ",
+        "the requested value is echoed verbatim"
+    );
+}
+
+#[test]
+fn digits_inside_a_mixed_code_are_not_also_a_standalone_identifier() {
+    // Otherwise `Part AB12345678` collides with an unrelated `Bank 12345678`.
+    let entity = entity("Part AB12345678");
+    assert_eq!(
+        entity.identifiers(),
+        [Identifier {
+            kind: IdentifierKind::Code,
+            value: "AB12345678".to_string(),
+        }]
+    );
+    let catalog = ledgers(&["Bank 12345678", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "Part AB12345678");
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a part code must not reach a bank ledger"
+    );
+}
+
+#[test]
+fn a_fiscal_period_label_is_not_an_identity_bearing_code() {
+    // Two unrelated ledgers routinely share a period label. Identifier-first
+    // matching would otherwise bind the source to whichever one exists before
+    // it ever compared the names.
+    for label in [
+        "FY25", "FY2025", "AY2026", "Q3", "H2", "PER2026", "APR2025", "2025Q1", "MAR26", "H12026",
+    ] {
+        assert!(
+            entity(&format!("Purchases {label}"))
+                .identifiers()
+                .is_empty(),
+            "{label} was treated as a code identifier"
+        );
+    }
+    let catalog = ledgers(&["Sales FY2025", "Beta Supply"]);
+    let binding = bind_one_name(&catalog, "Purchases FY2025");
+    assert_eq!(
+        binding.bound_name(),
+        None,
+        "a shared period label must not bind two unrelated ledgers"
+    );
+    // A genuine identity-bearing code still is one.
+    assert_eq!(entity("Item PH01AB00").identifiers().len(), 1);
+}
+
+#[test]
+fn a_report_bounds_its_own_candidate_allocation() {
+    // A per-entity cap does not bound a report: the clones exist the moment it
+    // is built, and a consumer capping its own copy afterwards bounds only the
+    // copy. The budget is spent in entity order; entities past it keep their
+    // true count and flag truncation.
+    let long = "Z".repeat(400);
+    let names = (0..30)
+        .map(|index| format!("SHARED PREFIX {index:03} {long}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let entities = (0..2_000)
+        .map(|position| SourceEntity::new(position, "SHARED PREFIX 001").expect("valid"))
+        .collect::<Vec<_>>();
+    let report = bound(&catalog, &entities);
+    let listed: usize = report
+        .unbound()
+        .filter_map(|entity| entity.unresolved())
+        .map(|unresolved| {
+            unresolved
+                .candidates
+                .iter()
+                .map(|candidate| candidate.catalog_name.len())
+                .sum::<usize>()
+        })
+        .sum();
+    assert!(
+        listed <= MAX_REPORT_CANDIDATE_BYTES,
+        "report allocated {listed} candidate bytes"
+    );
+    let starved = report
+        .unbound()
+        .filter_map(|entity| entity.unresolved())
+        .filter(|unresolved| unresolved.candidates.is_empty())
+        .collect::<Vec<_>>();
+    assert!(!starved.is_empty(), "the budget must actually bite here");
+    assert!(starved
+        .iter()
+        .all(|unresolved| unresolved.candidate_count > 0 && unresolved.candidates_truncated));
+}
+
+#[test]
+fn an_eight_digit_date_in_any_admitted_order_is_not_an_identifier() {
+    for date in ["20260910", "01012026", "31122026", "12312026"] {
+        assert!(
+            entity(&format!("Period {date}")).identifiers().is_empty(),
+            "{date} was treated as an identifier"
+        );
+    }
+    // A number that reads as no calendar date at all still is one.
+    assert_eq!(entity("Party 55500001").identifiers().len(), 1);
+}
+
+#[test]
+fn more_identifiers_than_the_bound_is_refused_not_truncated() {
+    // Keeping the first few can discard the identifier that pointed at a
+    // different master, turning a conflict into a bind.
+    let many = (0..MAX_IDENTIFIERS_PER_NAME + 1)
+        .map(|index| format!("5550{index:04}00"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(
+        SourceEntity::new(0, &many),
+        Err(MasterBindingError::TooManyIdentifiers)
+    );
+    assert_eq!(
+        MasterBindingError::TooManyIdentifiers.safe_reason_code(),
+        "master_identifiers_too_many"
+    );
+}
+
 // --- candidate discipline --------------------------------------------------
 
 #[test]
@@ -367,16 +562,64 @@ fn a_catalog_wide_token_stops_discriminating() {
 }
 
 #[test]
-fn candidates_are_capped_with_the_true_count_retained() {
-    let names = (0..MAX_CANDIDATES_PER_ENTITY + 5)
+fn a_prefix_matching_a_whole_family_is_counted_and_deliberately_not_listed() {
+    // Measured against live books: listing an arbitrary capped slice of a name
+    // family put the right master out of view about a third of the time,
+    // because the slice is ordered by name and the family is uniform. Counting
+    // the family and listing none of it is the honest answer — the source name
+    // genuinely does not distinguish one from another.
+    let names = (0..MAX_PREFIX_FAMILY + 5)
         .map(|index| format!("ALPHAGROUP UNIT {index:02}"))
         .collect::<Vec<_>>();
     let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
     let binding = bind_one_name(&catalog, "ALPHAGROUP");
     let unresolved = binding.unresolved().expect("unbound");
-    assert_eq!(unresolved.candidates.len(), MAX_CANDIDATES_PER_ENTITY);
-    assert_eq!(unresolved.candidate_count, MAX_CANDIDATES_PER_ENTITY + 5);
+    assert_eq!(reason(&binding), UnboundReason::NoDiscriminatingCandidate);
+    assert!(unresolved.candidates.is_empty());
+    assert_eq!(unresolved.candidate_count, MAX_PREFIX_FAMILY + 5);
     assert!(unresolved.candidates_truncated);
+}
+
+#[test]
+fn a_family_within_the_bound_is_still_listed_in_full() {
+    let names = (0..MAX_PREFIX_FAMILY)
+        .map(|index| format!("ALPHAGROUP UNIT {index:02}"))
+        .collect::<Vec<_>>();
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+    let binding = bind_one_name(&catalog, "ALPHAGROUP");
+    let unresolved = binding.unresolved().expect("unbound");
+    assert_eq!(reason(&binding), UnboundReason::NearMiss);
+    assert_eq!(unresolved.candidates.len(), MAX_PREFIX_FAMILY);
+    assert!(!unresolved.candidates_truncated);
+}
+
+#[test]
+fn the_reported_count_is_the_union_of_suppressed_and_listed_candidates() {
+    // A suppressed family and the candidates still worth listing are not the
+    // same masters. Reporting the larger of the two counts under-reports what
+    // the name actually reaches, and candidate_count is promised as the total
+    // found before truncation.
+    let mut names = (0..MAX_PREFIX_FAMILY + 5)
+        .map(|index| format!("Alpha Beta {index:02}"))
+        .collect::<Vec<_>>();
+    names.push("Alpha".to_string());
+    let catalog = MasterCatalog::new(MasterClass::Ledger, &names).expect("valid");
+
+    let binding = bind_one_name(&catalog, "Alpha Beta");
+    let unresolved = binding.unresolved().expect("unbound");
+    // The shorter master is still listed; the family behind it is not.
+    assert_eq!(candidate_names(&binding), ["Alpha"]);
+    assert_eq!(unresolved.candidate_count, MAX_PREFIX_FAMILY + 6);
+    assert!(unresolved.candidates_truncated);
+}
+
+#[test]
+fn an_identifier_hint_is_bounded_before_anything_scans_it() {
+    let huge = "5".repeat(MAX_NAME_CHARS + 1);
+    assert_eq!(
+        SourceEntity::with_identifier_hints(0, "Alpha Traders", [huge.as_str()]),
+        Err(MasterBindingError::NameTooLong)
+    );
 }
 
 #[test]
@@ -462,21 +705,23 @@ fn an_ambiguous_entity_parks_against_a_verified_fallback() {
         "BETA (5550000001)",
         "Suspense Placeholder",
     ]);
-    let binding = bind_one_name(&catalog, "PARTY 5550000001");
-    let fallback = FallbackBinding::assign(&binding, &catalog, "Suspense Placeholder")
+    let report = bound(&catalog, &[entity("PARTY 5550000001")]);
+    let fallback = report
+        .assign_fallback(0, &catalog, "Suspense Placeholder")
         .expect("an unbound entity may be parked");
     assert_eq!(fallback.fallback_name(), "Suspense Placeholder");
     assert_eq!(fallback.source_name(), "PARTY 5550000001");
     assert_eq!(fallback.reason(), UnboundReason::IdentifierConflict);
     assert_eq!(fallback.retained_tag(), "numeric:5550000001");
+    assert_eq!(fallback.class(), MasterClass::Ledger);
 }
 
 #[test]
 fn a_bound_entity_cannot_be_parked() {
     let catalog = ledgers(&["Alpha Traders", "Suspense Placeholder"]);
-    let binding = bind_one_name(&catalog, "Alpha Traders");
+    let report = bound(&catalog, &[entity("Alpha Traders")]);
     assert_eq!(
-        FallbackBinding::assign(&binding, &catalog, "Suspense Placeholder"),
+        report.assign_fallback(0, &catalog, "Suspense Placeholder"),
         Err(MasterBindingError::FallbackNotInCatalog)
     );
 }
@@ -485,10 +730,33 @@ fn a_bound_entity_cannot_be_parked() {
 fn a_fallback_master_that_does_not_exist_is_refused() {
     // A suspense ledger that was never created is how one batch was lost.
     let catalog = ledgers(&["Alpha Traders", "Beta Supply"]);
-    let binding = bind_one_name(&catalog, "Zeta Placeholder");
+    let report = bound(&catalog, &[entity("Zeta Placeholder")]);
     assert_eq!(
-        FallbackBinding::assign(&binding, &catalog, "Suspense Placeholder"),
+        report.assign_fallback(0, &catalog, "Suspense Placeholder"),
         Err(MasterBindingError::FallbackNotInCatalog)
+    );
+}
+
+#[test]
+fn a_fallback_cannot_be_drawn_from_another_catalog_class_or_another_report() {
+    // A stock-item binding parked against a ledger catalog was a representable
+    // state that nothing downstream could detect.
+    let stock = MasterCatalog::new(MasterClass::StockItem, ["PH-01A-B00", "Scrap Placeholder"])
+        .expect("valid");
+    let ledger = ledgers(&["Alpha Traders", "Suspense Placeholder"]);
+    let stock_report = bound(&stock, &[entity("Zeta Placeholder")]);
+    assert_eq!(
+        stock_report.assign_fallback(0, &ledger, "Suspense Placeholder"),
+        Err(MasterBindingError::ClassMismatch)
+    );
+    // An index outside this report cannot name another report's entity.
+    assert_eq!(
+        stock_report.assign_fallback(7, &stock, "Scrap Placeholder"),
+        Err(MasterBindingError::ClassMismatch)
+    );
+    assert_eq!(
+        MasterBindingError::ClassMismatch.safe_reason_code(),
+        "master_class_mismatch"
     );
 }
 

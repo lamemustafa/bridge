@@ -18,8 +18,11 @@ use unicode_normalization::UnicodeNormalization;
 
 /// Most masters one catalog may carry.
 pub const MAX_CATALOG_ENTRIES: usize = 20_000;
-/// Most entities one binding request may name.
-pub const MAX_SOURCE_ENTITIES: usize = 5_000;
+/// Most entities one binding request may name. This must stay at or above what
+/// a consumer's own parser admits: Bridge's source-draft parser accepts 2,000
+/// vouchers of 20 entries, and a bound below that turned a valid draft into a
+/// silently empty binding result.
+pub const MAX_SOURCE_ENTITIES: usize = 40_000;
 /// Longest accepted master or source name, in characters. This bounds
 /// pathological input; it is not a claim about what Tally accepts, and a
 /// caller with a stricter contract of its own enforces that at its own
@@ -27,21 +30,43 @@ pub const MAX_SOURCE_ENTITIES: usize = 5_000;
 pub const MAX_NAME_CHARS: usize = 16_384;
 /// Most candidates retained per unbound entity.
 pub const MAX_CANDIDATES_PER_ENTITY: usize = 25;
-/// Most identifiers extracted from one name.
-pub const MAX_IDENTIFIERS_PER_NAME: usize = 8;
+/// Total candidate-name bytes one report may allocate, across all entities.
+///
+/// A per-entity cap does not bound a report: a draft the source parser admits
+/// can carry tens of thousands of entries that each list 25 long names, and the
+/// clones exist the moment the report is built. A consumer capping its own copy
+/// afterwards bounds only the second copy. This is spent in entity order;
+/// entities past it report their true `candidate_count` with no candidates
+/// listed and truncation flagged.
+pub const MAX_REPORT_CANDIDATE_BYTES: usize = 256 * 1024;
+/// Most identifiers one name may carry. Exceeding it is refused, never
+/// truncated.
+pub const MAX_IDENTIFIERS_PER_NAME: usize = 32;
 /// Digits a numeric run needs before it is treated as an identifier. Eight
 /// excludes a year, a rate, a house number and a masked last-four; a mobile,
 /// an account number and a customer code all clear it.
 pub const MIN_NUMERIC_IDENTIFIER_DIGITS: usize = 8;
 /// Alphanumeric characters a mixed letter-and-digit token needs before it is
 /// treated as a code identifier.
-pub const MIN_CODE_IDENTIFIER_CHARS: usize = 4;
-/// Digits a code identifier needs alongside at least one letter.
-pub const MIN_CODE_IDENTIFIER_DIGITS: usize = 2;
+///
+/// Eight, raised twice under review. Enumerating the period shapes that must
+/// not be identifiers — `FY25`, then `APR2025`, then `2025Q1` — is a losing
+/// game, and each miss binds two unrelated ledgers that merely share a period.
+/// Requiring real length is the rule that does not depend on having thought of
+/// every label: a part number or registration code clears it, and a period
+/// label does not. Measured against 485 live ledger names, exactly one yields a
+/// code identifier at all, so this costs nothing observed.
+pub const MIN_CODE_IDENTIFIER_CHARS: usize = 8;
+/// Digits a code identifier needs alongside at least two letters.
+pub const MIN_CODE_IDENTIFIER_DIGITS: usize = 3;
 /// Shortest comparison key that may take part in a prefix near-miss.
 pub const MIN_PREFIX_KEY_CHARS: usize = 3;
 /// Shortest token that may take part in a shared-token near-miss.
 pub const MIN_TOKEN_CHARS: usize = 3;
+/// Masters a single prefix may match before the prefix stops discriminating.
+/// Beyond this the match is a name *family*, and an arbitrary slice of it is
+/// worse than saying so.
+pub const MAX_PREFIX_FAMILY: usize = MAX_CANDIDATES_PER_ENTITY;
 /// Share of the catalog above which a token stops discriminating.
 pub const COMMON_TOKEN_PERCENT: usize = 10;
 /// Catalog size below which no token is treated as common.
@@ -86,8 +111,15 @@ pub enum MasterBindingError {
     /// silently, so it fails loudly instead.
     #[error("identifier hint carried no usable identifier")]
     IdentifierHintUnusable,
+    /// Keeping only the first few would discard the identifier that pointed at
+    /// a different master, turning a conflict into a bind.
+    #[error("name carried more identifiers than the bound")]
+    TooManyIdentifiers,
     #[error("fallback master was not a current catalog entry")]
     FallbackNotInCatalog,
+    /// A catalog of the wrong class, or an entity from another report.
+    #[error("catalog did not match the report it is used with")]
+    ClassMismatch,
 }
 
 impl MasterBindingError {
@@ -102,7 +134,9 @@ impl MasterBindingError {
             Self::NameTooLong => "master_name_too_long",
             Self::NameUnsafe => "master_name_unsafe",
             Self::IdentifierHintUnusable => "master_identifier_hint_unusable",
+            Self::TooManyIdentifiers => "master_identifiers_too_many",
             Self::FallbackNotInCatalog => "master_fallback_not_in_catalog",
+            Self::ClassMismatch => "master_class_mismatch",
         }
     }
 }
@@ -176,6 +210,12 @@ pub enum UnboundReason {
     /// Candidates exist but none was decisive. This is the four-near-miss case
     /// that rejected a batch once; a single candidate stays here too.
     NearMiss,
+    /// The source name matches a whole family of masters and distinguishes
+    /// none of them — a truncated `DN Party 0` against `DN Party 001`…`120`.
+    /// Measured live: listing an arbitrary capped slice of such a family put
+    /// the right master out of view about a third of the time, so the family
+    /// is counted and deliberately not listed.
+    NoDiscriminatingCandidate,
     /// No rule produced a candidate. The master is probably missing.
     NoCandidate,
 }
@@ -188,6 +228,7 @@ impl UnboundReason {
             Self::IdentifierNameConflict => "master_binding_identifier_name_conflict",
             Self::NameAmbiguous => "master_binding_name_ambiguous",
             Self::NearMiss => "master_binding_near_miss",
+            Self::NoDiscriminatingCandidate => "master_binding_no_discriminating_candidate",
             Self::NoCandidate => "master_binding_no_candidate",
         }
     }
@@ -303,6 +344,44 @@ impl BindingReport {
             .filter(|entity| !matches!(entity.status, BindingStatus::Bound { .. }))
     }
 
+    /// Parks one of *this report's* unbound entities against a fallback master
+    /// drawn from a catalog of the same class.
+    ///
+    /// Taking an index rather than an `EntityBinding` is the point: an entity
+    /// from another report — a stock-item binding, say — cannot be handed to a
+    /// ledger catalog, because it cannot be named here at all. The class is
+    /// then checked as well, so a same-shaped catalog of the wrong class is
+    /// refused rather than silently accepted, and the result carries the class
+    /// forward for anything downstream that needs to prove it.
+    pub fn assign_fallback(
+        &self,
+        entity_index: usize,
+        catalog: &MasterCatalog,
+        fallback_name: &str,
+    ) -> Result<FallbackBinding, MasterBindingError> {
+        if catalog.class != self.class {
+            return Err(MasterBindingError::ClassMismatch);
+        }
+        let entity = self
+            .entities
+            .get(entity_index)
+            .ok_or(MasterBindingError::ClassMismatch)?;
+        let unresolved = entity
+            .unresolved()
+            .ok_or(MasterBindingError::FallbackNotInCatalog)?;
+        let fallback = catalog
+            .exact(fallback_name)
+            .ok_or(MasterBindingError::FallbackNotInCatalog)?;
+        Ok(FallbackBinding {
+            class: self.class,
+            position: entity.position,
+            source_name: entity.source_name.clone(),
+            fallback_name: fallback.to_string(),
+            retained: unresolved.unresolved_identity.clone(),
+            reason: unresolved.reason,
+        })
+    }
+
     pub fn totals(&self) -> BindingTotals {
         let mut totals = BindingTotals {
             requested: self.entities.len(),
@@ -335,6 +414,7 @@ impl BindingReport {
 /// that already matched is not a representable state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FallbackBinding {
+    class: MasterClass,
     position: usize,
     source_name: String,
     fallback_name: String,
@@ -343,29 +423,9 @@ pub struct FallbackBinding {
 }
 
 impl FallbackBinding {
-    /// Parks one unbound entity against a catalog-verified fallback master.
-    ///
-    /// Refuses a bound entity and refuses a fallback name that is not a current
-    /// catalog entry — a suspense ledger that does not exist is how one
-    /// engagement lost a batch.
-    pub fn assign(
-        entity: &EntityBinding,
-        catalog: &MasterCatalog,
-        fallback_name: &str,
-    ) -> Result<Self, MasterBindingError> {
-        let unresolved = entity
-            .unresolved()
-            .ok_or(MasterBindingError::FallbackNotInCatalog)?;
-        let fallback = catalog
-            .exact(fallback_name)
-            .ok_or(MasterBindingError::FallbackNotInCatalog)?;
-        Ok(Self {
-            position: entity.position,
-            source_name: entity.source_name.clone(),
-            fallback_name: fallback.to_string(),
-            retained: unresolved.unresolved_identity.clone(),
-            reason: unresolved.reason,
-        })
+    /// The class of the catalog this fallback was drawn from.
+    pub fn class(&self) -> MasterClass {
+        self.class
     }
 
     pub fn position(&self) -> usize {
@@ -429,10 +489,13 @@ impl SourceEntity {
         name: &str,
         hints: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self, MasterBindingError> {
-        let name = validated_source_name(name)?;
-        let mut identifiers = extract_identifiers(&name);
+        let name = validated_name(name)?;
+        let mut identifiers = extract_identifiers(&name)?;
         for hint in hints {
-            let extracted = extract_identifiers(hint);
+            // A hint is caller-supplied document text like any other name, and
+            // must clear the same bound before anything scans or copies it.
+            validate_name_bounds(hint)?;
+            let extracted = extract_identifiers(hint)?;
             if extracted.is_empty() {
                 return Err(MasterBindingError::IdentifierHintUnusable);
             }
@@ -440,7 +503,9 @@ impl SourceEntity {
         }
         identifiers.sort();
         identifiers.dedup();
-        identifiers.truncate(MAX_IDENTIFIERS_PER_NAME);
+        if identifiers.len() > MAX_IDENTIFIERS_PER_NAME {
+            return Err(MasterBindingError::TooManyIdentifiers);
+        }
         Ok(Self {
             position,
             key: comparison_key(&name),
@@ -501,14 +566,14 @@ impl MasterCatalog {
             if entries.len() >= MAX_CATALOG_ENTRIES {
                 return Err(MasterBindingError::CatalogTooLarge);
             }
-            let name = validated_catalog_name(name.as_ref())?;
+            let name = validated_name(name.as_ref())?;
             if by_name.contains_key(&name) {
                 return Err(MasterBindingError::CatalogDuplicateName);
             }
             by_name.insert(name.clone(), entries.len());
             let key = comparison_key(&name);
             entries.push(CatalogEntry {
-                identifiers: extract_identifiers(&name),
+                identifiers: extract_identifiers(&name)?,
                 tokens: tokens_of(&key),
                 key,
                 name,
@@ -595,16 +660,17 @@ pub fn bind(
     if entities.len() > MAX_SOURCE_ENTITIES {
         return Err(MasterBindingError::TooManySourceEntities);
     }
+    let mut budget = MAX_REPORT_CANDIDATE_BYTES;
     Ok(BindingReport {
         class: catalog.class,
         entities: entities
             .iter()
-            .map(|entity| bind_one(catalog, entity))
+            .map(|entity| bind_one(catalog, entity, &mut budget))
             .collect(),
     })
 }
 
-fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
+fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity, budget: &mut usize) -> EntityBinding {
     let exact = catalog.by_name.get(&entity.name).copied();
 
     // Rule one: the identifier is the key, the name is a hint. A name
@@ -624,36 +690,51 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
     // An identifier shared by two masters, and an entity whose identifiers
     // reach two masters, are the same refusal: the operator has a naming
     // collision to see, and neither case licenses a choice.
-    let status = if identifier_conflict || identifier_matches.len() > 1 {
+    // Byte equality with an observed master name is the strongest evidence
+    // there is, and it names exactly one master. An identifier that happens to
+    // be ambiguous does not undermine it: refusing here would make a ledger
+    // whose embedded number is shared with another permanently unimportable —
+    // the same dead end that reporting `Identifier` for an exact name created.
+    // Only a *decisive* identifier pointing elsewhere outranks a byte-exact
+    // name, and that stays a reported conflict rather than a silent choice.
+    //
+    // Found by seeding two live ledgers that share an embedded number. No
+    // fabricated fixture had produced the combination.
+    let identifier_points_elsewhere = !identifier_conflict
+        && identifier_matches.len() == 1
+        && exact.is_some_and(|index| !identifier_matches.contains(&index));
+    let status = if identifier_points_elsewhere {
+        unresolved_status(
+            catalog,
+            entity,
+            UnboundReason::IdentifierNameConflict,
+            exact,
+            &identifier_matches,
+            budget,
+        )
+    } else if let Some(index) = exact {
+        BindingStatus::Bound {
+            catalog_name: catalog.entries[index].name.clone(),
+            basis: BindingBasis::ExactName,
+        }
+    } else if identifier_conflict || identifier_matches.len() > 1 {
+        // An identifier shared by two masters, and an entity whose identifiers
+        // reach two masters, are the same refusal: the operator has a naming
+        // collision to see, and neither case licenses a choice.
         unresolved_status(
             catalog,
             entity,
             UnboundReason::IdentifierConflict,
             exact,
             &identifier_matches,
+            budget,
         )
     } else if let Some(matched) = identifier_matches.iter().copied().next() {
-        // An identifier pointing at one master while the name exactly names
-        // another is a disagreement between two strong signals; it is shown,
-        // not silently decided in the identifier's favour.
-        if exact.is_some_and(|index| index != matched) {
-            unresolved_status(
-                catalog,
-                entity,
-                UnboundReason::IdentifierNameConflict,
-                exact,
-                &identifier_matches,
-            )
-        } else {
-            BindingStatus::Bound {
-                catalog_name: catalog.entries[matched].name.clone(),
-                basis: BindingBasis::Identifier,
-            }
-        }
-    } else if let Some(index) = exact {
+        // A decisive identifier, with no byte-exact name to outrank it. This is
+        // the rule that decided the case fuzzy matching got wrong.
         BindingStatus::Bound {
-            catalog_name: catalog.entries[index].name.clone(),
-            basis: BindingBasis::ExactName,
+            catalog_name: catalog.entries[matched].name.clone(),
+            basis: BindingBasis::Identifier,
         }
     } else {
         match catalog.by_key.get(&entity.key).map(Vec::as_slice) {
@@ -667,15 +748,19 @@ fn bind_one(catalog: &MasterCatalog, entity: &SourceEntity) -> EntityBinding {
                 UnboundReason::NameAmbiguous,
                 exact,
                 &identifier_matches,
+                budget,
             ),
             None => {
-                let candidates = collect_candidates(catalog, entity, &identifier_matches);
-                let reason = if candidates.is_empty() {
-                    UnboundReason::NoCandidate
-                } else {
+                let (candidates, masters_found) =
+                    collect_candidates(catalog, entity, &identifier_matches);
+                let reason = if !candidates.is_empty() {
                     UnboundReason::NearMiss
+                } else if masters_found > MAX_PREFIX_FAMILY {
+                    UnboundReason::NoDiscriminatingCandidate
+                } else {
+                    UnboundReason::NoCandidate
                 };
-                unresolved_from(entity, reason, candidates)
+                unresolved_from(entity, reason, candidates, masters_found, budget)
             }
         }
     };
@@ -693,21 +778,24 @@ fn unresolved_status(
     reason: UnboundReason,
     exact: Option<usize>,
     identifier_matches: &BTreeSet<usize>,
+    budget: &mut usize,
 ) -> BindingStatus {
-    let mut candidates = collect_candidates(catalog, entity, identifier_matches);
+    let (mut candidates, masters_found) = collect_candidates(catalog, entity, identifier_matches);
     if let Some(index) = exact {
         let name = catalog.entries[index].name.as_str();
         if !candidates.iter().any(|(candidate, _)| candidate == name) {
             candidates.push((name.to_string(), CandidateRule::NormalizedEqual));
         }
     }
-    unresolved_from(entity, reason, candidates)
+    unresolved_from(entity, reason, candidates, masters_found, budget)
 }
 
 fn unresolved_from(
     entity: &SourceEntity,
     reason: UnboundReason,
     candidates: Vec<(String, CandidateRule)>,
+    masters_found: usize,
+    budget: &mut usize,
 ) -> BindingStatus {
     let mut ordered = candidates;
     ordered.sort_by(|left, right| {
@@ -716,19 +804,24 @@ fn unresolved_from(
             .cmp(&right.1.rank())
             .then_with(|| left.0.cmp(&right.0))
     });
-    let candidate_count = ordered.len();
-    let candidates_truncated = candidate_count > MAX_CANDIDATES_PER_ENTITY;
+    // A suppressed family is still counted. The operator is told how many
+    // masters the name reaches even when none of them is worth listing.
+    let candidate_count = ordered.len().max(masters_found);
+    let listed = ordered.len().min(MAX_CANDIDATES_PER_ENTITY);
     let candidates = ordered
         .into_iter()
         .take(MAX_CANDIDATES_PER_ENTITY)
-        .map(|(catalog_name, rule)| Candidate { catalog_name, rule })
-        .collect();
+        .map_while(|(catalog_name, rule)| {
+            *budget = budget.checked_sub(catalog_name.len())?;
+            Some(Candidate { catalog_name, rule })
+        })
+        .collect::<Vec<_>>();
     let unresolved = Unresolved {
         reason,
         unresolved_identity: entity.identifiers.clone(),
-        candidates,
         candidate_count,
-        candidates_truncated,
+        candidates_truncated: candidate_count > listed || candidates.len() < listed,
+        candidates,
     };
     if matches!(reason, UnboundReason::NoCandidate) {
         BindingStatus::Unmatched(unresolved)
@@ -744,7 +837,7 @@ fn collect_candidates(
     catalog: &MasterCatalog,
     entity: &SourceEntity,
     identifier_matches: &BTreeSet<usize>,
-) -> Vec<(String, CandidateRule)> {
+) -> (Vec<(String, CandidateRule)>, usize) {
     let mut best: BTreeMap<usize, CandidateRule> = BTreeMap::new();
     let mut offer = |index: usize, rule: CandidateRule| {
         best.entry(index)
@@ -764,29 +857,35 @@ fn collect_candidates(
             offer(*index, CandidateRule::NormalizedEqual);
         }
     }
+    let mut suppressed_family: BTreeSet<usize> = BTreeSet::new();
     if entity.key.chars().count() >= MIN_PREFIX_KEY_CHARS {
         // The key index is ordered, so both prefix directions are range or
         // point lookups rather than a scan of the whole catalog per entity.
-        for (key, holders) in catalog.by_key.range(entity.key.clone()..) {
-            if !key.starts_with(&entity.key) {
-                break;
+        let extending = catalog
+            .by_key
+            .range(entity.key.clone()..)
+            .take_while(|(key, _)| key.starts_with(&entity.key))
+            .filter(|(key, _)| *key != &entity.key)
+            .flat_map(|(_, holders)| holders.iter().copied())
+            .collect::<Vec<_>>();
+        // A prefix matching a whole family distinguishes nothing inside it, and
+        // an arbitrary capped slice is worse than none: measured against live
+        // books, that slice omitted the right master about a third of the time.
+        if extending.len() <= MAX_PREFIX_FAMILY {
+            for index in extending {
+                offer(index, CandidateRule::CatalogPrefix);
             }
-            if key == &entity.key {
-                continue;
-            }
-            for index in holders {
-                offer(*index, CandidateRule::CatalogPrefix);
-            }
+        } else {
+            suppressed_family.extend(extending);
         }
-        for split in MIN_PREFIX_KEY_CHARS..entity.key.len() {
-            if !entity.key.is_char_boundary(split) {
+        // One pass, carrying the character count forward. Recomputing
+        // `chars().count()` per prefix made this quadratic in the name length,
+        // and the source parser admits 4 KiB fields.
+        for (characters, (split, _)) in entity.key.char_indices().enumerate() {
+            if characters < MIN_PREFIX_KEY_CHARS {
                 continue;
             }
-            let prefix = &entity.key[..split];
-            if prefix.chars().count() < MIN_PREFIX_KEY_CHARS {
-                continue;
-            }
-            if let Some(holders) = catalog.by_key.get(prefix) {
+            if let Some(holders) = catalog.by_key.get(&entity.key[..split]) {
                 for index in holders {
                     offer(*index, CandidateRule::SourcePrefix);
                 }
@@ -804,27 +903,37 @@ fn collect_candidates(
         }
     }
 
-    best.into_iter()
-        .map(|(index, rule)| (catalog.entries[index].name.clone(), rule))
-        .collect()
+    // The reported total is the union: a suppressed family and the candidates
+    // still worth listing are not necessarily the same masters, so taking the
+    // larger of the two counts would under-report what the name actually
+    // reaches.
+    let found = best
+        .keys()
+        .copied()
+        .chain(suppressed_family)
+        .collect::<BTreeSet<_>>()
+        .len();
+    (
+        best.into_iter()
+            .map(|(index, rule)| (catalog.entries[index].name.clone(), rule))
+            .collect(),
+        found,
+    )
 }
 
-/// An observed master name is retained **verbatim**. Surrounding whitespace is
-/// part of what the book returned, and a caller that acts on a binding writes
-/// this string back to Tally byte for byte; trimming it here would report a
-/// spelling that does not exist and refuse at the write gate with no
-/// explanation. The comparison key collapses whitespace anyway, so a source
-/// name still matches across the difference.
-fn validated_catalog_name(value: &str) -> Result<String, MasterBindingError> {
+/// A name is retained **verbatim**, on both sides.
+///
+/// An observed master name is written back to Tally byte for byte by a caller
+/// that acts on a binding, so trimming it would report a spelling the book does
+/// not contain. A requested source name is what byte equality is judged
+/// against, so trimming it would let `Bank ` claim an exact match on `Bank`
+/// while the import file still carries the trailing space. The comparison key
+/// collapses surrounding whitespace anyway, so the two still meet as a
+/// normalized match — which is a bind the write gate does not admit, and that
+/// is the correct, loud outcome.
+fn validated_name(value: &str) -> Result<String, MasterBindingError> {
     validate_name_bounds(value)?;
     Ok(value.to_string())
-}
-
-/// A source name is trimmed: leading and trailing whitespace is document noise
-/// rather than an observation, and nothing is ever written back from it.
-fn validated_source_name(value: &str) -> Result<String, MasterBindingError> {
-    validate_name_bounds(value)?;
-    Ok(value.trim().to_string())
 }
 
 fn validate_name_bounds(value: &str) -> Result<(), MasterBindingError> {
@@ -843,7 +952,19 @@ fn validate_name_bounds(value: &str) -> Result<(), MasterBindingError> {
 /// Folds the punctuation an operator happened to type: NFC-equivalent dash and
 /// quote variants become ASCII, case is lowered, whitespace runs collapse.
 /// Nothing else is folded — no stemming, no transliteration, no vowel removal.
-fn comparison_key(value: &str) -> String {
+///
+/// **This is a contract, not an implementation detail.** Anything in this crate
+/// that decides whether two operator-typed strings are "the same" — master
+/// names here, and voucher numbers or voucher-type names elsewhere — must fold
+/// through this one function. A second, subtly different normaliser is exactly
+/// the divergence ADR 0016 exists to end, and it would diverge silently:
+/// the two agree on every name anyone tests by hand and disagree on the
+/// punctuation nobody thinks to try.
+///
+/// The corollary is that changing what this folds changes every consumer's
+/// notion of sameness at once. Widen it only with the same care as a wire
+/// format, and never to make one caller's case pass.
+pub(crate) fn comparison_key(value: &str) -> String {
     value
         .nfc()
         .flat_map(|character| match character {
@@ -871,20 +992,15 @@ fn tokens_of(key: &str) -> BTreeSet<String> {
 /// A numeric run may hold `-` and `/` internally, so a punctuated account
 /// number and a plain one agree; it may not hold spaces, so separated digit
 /// groups fail closed to a near-miss rather than fusing into a false
-/// identifier.
-fn extract_identifiers(value: &str) -> Vec<Identifier> {
+/// identifier. Digits that sit inside a mixed letter-and-digit token belong to
+/// that token's code and are never also emitted on their own — otherwise
+/// `Part AB12345678` would collide with an unrelated `Bank 12345678`.
+///
+/// Refuses rather than truncates when a name carries more identifiers than the
+/// bound: silently keeping the first few can turn a conflict into a bind by
+/// discarding the identifier that pointed elsewhere.
+fn extract_identifiers(value: &str) -> Result<Vec<Identifier>, MasterBindingError> {
     let mut identifiers = BTreeSet::new();
-    for run in value.split(|character: char| {
-        !(character.is_ascii_digit() || character == '-' || character == '/')
-    }) {
-        let digits = run.chars().filter(char::is_ascii_digit).collect::<String>();
-        if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS && !is_plausible_date(&digits) {
-            identifiers.insert(Identifier {
-                kind: IdentifierKind::Numeric,
-                value: digits,
-            });
-        }
-    }
     for token in value.split(char::is_whitespace) {
         let canonical = token
             .chars()
@@ -895,29 +1011,102 @@ fn extract_identifiers(value: &str) -> Vec<Identifier> {
         let letters = canonical.chars().filter(char::is_ascii_alphabetic).count();
         if canonical.len() >= MIN_CODE_IDENTIFIER_CHARS
             && digits >= MIN_CODE_IDENTIFIER_DIGITS
-            && letters >= 1
+            && letters >= 2
+            && !is_period_label(&canonical)
         {
             identifiers.insert(Identifier {
                 kind: IdentifierKind::Code,
                 value: canonical,
             });
+            // Its digits are part of this code, not an identifier of their own.
+            continue;
+        }
+        for run in token.split(|character: char| {
+            !(character.is_ascii_digit() || character == '-' || character == '/')
+        }) {
+            let digits = run.chars().filter(char::is_ascii_digit).collect::<String>();
+            if digits.len() >= MIN_NUMERIC_IDENTIFIER_DIGITS && !is_plausible_date(&digits) {
+                identifiers.insert(Identifier {
+                    kind: IdentifierKind::Numeric,
+                    value: digits,
+                });
+            }
         }
     }
-    let mut identifiers = identifiers.into_iter().collect::<Vec<_>>();
-    identifiers.truncate(MAX_IDENTIFIERS_PER_NAME);
-    identifiers
+    if identifiers.len() > MAX_IDENTIFIERS_PER_NAME {
+        return Err(MasterBindingError::TooManyIdentifiers);
+    }
+    Ok(identifiers.into_iter().collect())
 }
 
-/// An eight-digit run that reads as a calendar date is a date. Excluding it
-/// costs a near-miss on an account number that happens to look like one, and
-/// prevents a period label binding two unrelated masters together.
+/// A period label identifies a period, not a party or an item. Two unrelated
+/// ledgers routinely share one — `Purchases FY2025` and `Sales FY2025`,
+/// `Purchases APR2025` and `Sales APR2025` — and identifier-first matching
+/// would bind the source to whichever exists before it compared the names.
+///
+/// Recognized by *shape* rather than by a vocabulary of prefixes, because a
+/// list of prefixes kept missing one more spelling: every run in the token is
+/// either a short alphabetic marker or a number that reads as a year or a
+/// small ordinal, and there are at most three runs. `FY2025`, `APR2025`,
+/// `2025Q1` and `Q3` all match; `PH01AB00` and `AB12345678` do not.
+///
+/// Like every exclusion here it can only make a bind *less* likely.
+fn is_period_label(canonical: &str) -> bool {
+    let mut runs = 0_usize;
+    let mut has_period_number = false;
+    let mut rest = canonical;
+    while !rest.is_empty() {
+        runs += 1;
+        if runs > 3 {
+            return false;
+        }
+        let alphabetic = rest.starts_with(|character: char| character.is_ascii_alphabetic());
+        let split = rest
+            .find(|character: char| character.is_ascii_alphabetic() != alphabetic)
+            .unwrap_or(rest.len());
+        let (run, tail) = rest.split_at(split);
+        rest = tail;
+        if alphabetic {
+            if run.len() > 4 {
+                return false;
+            }
+        } else {
+            let value = run.parse::<u32>().unwrap_or(u32::MAX);
+            let reads_as_period = match run.len() {
+                1 | 2 => (1..=99).contains(&value),
+                4 => (1900..=2199).contains(&value),
+                _ => false,
+            };
+            if !reads_as_period {
+                return false;
+            }
+            has_period_number = true;
+        }
+    }
+    has_period_number
+}
+
+/// An eight-digit run that reads as a calendar date in any order this project/// An eight-digit run that reads as a calendar date in any order this project
+/// admits is a date, not an identifier. Recognizing only `YYYYMMDD` left
+/// `01012026` binding a source to an unrelated master that shares its period
+/// label. Being generous here can only make a bind *less* likely, which is the
+/// safe direction for a rule whose failure mode is money against the wrong
+/// party.
 fn is_plausible_date(digits: &str) -> bool {
     if digits.len() != 8 {
         return false;
     }
     let number = |range: std::ops::Range<usize>| digits[range].parse::<u32>().unwrap_or(0);
-    let (year, month, day) = (number(0..4), number(4..6), number(6..8));
-    (1900..=2199).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day)
+    let (first, second, third, fourth) = (number(0..4), number(4..6), number(6..8), number(4..8));
+    let (day, month) = (number(0..2), number(2..4));
+    let year_first =
+        (1900..=2199).contains(&first) && (1..=12).contains(&second) && (1..=31).contains(&third);
+    // DDMMYYYY and MMDDYYYY are indistinguishable from each other without a
+    // locale, so either reading is enough to disqualify the run.
+    let year_last = (1900..=2199).contains(&fourth)
+        && ((1..=31).contains(&day) && (1..=12).contains(&month)
+            || (1..=12).contains(&day) && (1..=31).contains(&month));
+    year_first || year_last
 }
 
 #[cfg(test)]

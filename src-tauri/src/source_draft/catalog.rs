@@ -55,6 +55,11 @@ pub(crate) struct SourceDraftCatalogTargets {
     pub(crate) source_sha256: String,
     pub(crate) targets: Vec<String>,
     pub(crate) bindings: Vec<SourceDraftCatalogBinding>,
+    /// `complete` when every source entry was bound, `unavailable` when the
+    /// narrowing pass could not run. An empty `bindings` list is otherwise
+    /// indistinguishable from a failed one, and the catalogue read itself still
+    /// succeeded.
+    pub(crate) bindings_state: &'static str,
     pub(crate) evidence: SourceDraftCatalogEvidence,
 }
 
@@ -132,25 +137,33 @@ pub(super) struct CatalogApplySnapshot {
 fn source_entry_bindings(
     source: &crate::source_draft_xml::ParsedSource,
     targets: &[String],
-) -> Vec<SourceDraftCatalogBinding> {
+) -> (Vec<SourceDraftCatalogBinding>, &'static str) {
     let Ok(catalog) = MasterCatalog::new(MasterClass::Ledger, targets) else {
-        return Vec::new();
+        return (Vec::new(), "unavailable");
     };
     let mut located = Vec::new();
     let mut entities = Vec::new();
     for voucher in &source.vouchers {
         for entry in &voucher.entries {
+            // Dropping an unusable entry would return fewer bindings than the
+            // source has rows while still claiming completeness, and the row
+            // that vanished is exactly the one an operator needs to look at.
             let Ok(entity) = SourceEntity::new(entities.len(), &entry.ledger) else {
-                continue;
+                return (Vec::new(), "unavailable");
             };
             located.push((voucher.position, entry.position));
             entities.push(entity);
         }
     }
     let Ok(report) = master_binding::bind(&catalog, &entities) else {
-        return Vec::new();
+        // A refusal is reported as such. Returning an empty list here would let
+        // a failed pass read exactly like a source that narrowed to nothing.
+        return (Vec::new(), "unavailable");
     };
-    report
+    // The report itself is bounded by `MAX_REPORT_CANDIDATE_BYTES`, so this
+    // path no longer needs a second budget of its own: capping the copy left
+    // the original allocation unbounded, which was the actual stall risk.
+    let bindings = report
         .entities()
         .iter()
         .zip(located)
@@ -176,18 +189,19 @@ fn source_entry_bindings(
                         bound_target: None,
                         bound_basis: None,
                         unbound_reason: Some(unresolved.reason.safe_reason_code()),
+                        candidates_truncated: unresolved.candidates_truncated,
                         candidates: unresolved
                             .candidates
                             .iter()
                             .map(|candidate| candidate.catalog_name.clone())
                             .collect(),
                         candidate_count: unresolved.candidate_count,
-                        candidates_truncated: unresolved.candidates_truncated,
                     }
                 }
             },
         )
-        .collect()
+        .collect();
+    (bindings, "complete")
 }
 
 pub(super) fn require_current_catalog_binding(
@@ -334,7 +348,7 @@ impl SourceDraftStore {
             return Err(error("source_draft_catalogue_invalidated"));
         }
         let targets = read.catalog.names().map(str::to_owned).collect::<Vec<_>>();
-        let bindings = source_entry_bindings(&current.source, &targets);
+        let (bindings, bindings_state) = source_entry_bindings(&current.source, &targets);
         let capture = CatalogCapture {
             id: Uuid::new_v4(),
             draft_id: current.id,
@@ -350,6 +364,7 @@ impl SourceDraftStore {
             source_sha256: capture.source_sha256.clone(),
             targets,
             bindings,
+            bindings_state,
             evidence: SourceDraftCatalogEvidence {
                 request_sha256: read.request_sha256,
                 response_sha256: read.response_sha256,
@@ -545,7 +560,8 @@ mod tests {
             "GAMMA ALPHA".to_string(),
             "Beta Supply".to_string(),
         ];
-        let bindings = source_entry_bindings(&fabricated_source(), &targets);
+        let (bindings, state) = source_entry_bindings(&fabricated_source(), &targets);
+        assert_eq!(state, "complete");
         assert_eq!(bindings.len(), 3);
 
         // Case alone does not defeat a bind, and the live spelling is named.
@@ -572,10 +588,13 @@ mod tests {
     }
 
     #[test]
-    fn narrowing_is_advisory_and_never_fails_a_completed_capture() {
+    fn a_narrowing_pass_that_could_not_run_says_so_rather_than_looking_empty() {
         // An unusable capture narrows nothing rather than discarding a read the
-        // operator just performed. The apply path still owns every refusal.
-        assert!(source_entry_bindings(&fabricated_source(), &[]).is_empty());
+        // operator just performed — but "no bindings" and "binding failed" must
+        // not read alike, because the catalogue read itself still succeeded.
+        let (bindings, state) = source_entry_bindings(&fabricated_source(), &[]);
+        assert!(bindings.is_empty());
+        assert_eq!(state, "unavailable");
     }
 
     const CAPTURED_COMPANY: &str = "WR2 Unicode Lab";

@@ -79,6 +79,9 @@ export type SourceDraftCatalogTargets = {
   source_sha256: string;
   targets: string[];
   bindings: SourceDraftCatalogBinding[];
+  /// "complete" when every source entry was bound; "unavailable" when the
+  /// narrowing pass could not run. An empty list alone cannot say which.
+  bindings_state: "complete" | "unavailable";
   evidence: { request_sha256: string; response_sha256: string; bytes: number; state: "complete" };
 };
 
