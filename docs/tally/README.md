@@ -36,10 +36,16 @@ capability from assumption, and a completed request from a verified snapshot.
   own output before writing. Contract tests:
   `python3 scripts/bank_statement_import.test.py`.
 
-  It exists because Bridge's own writer qualifies **Journal only**, which cannot express a
-  bank statement: money out is a Payment, money in a Receipt, and an own-account or ATM
-  movement a Contra. No statement, password, ledger name or account number lives in this
-  repository — all are supplied at run time.
+  It was written because Bridge's own writer could not express a bank statement at all: it
+  qualified **Journal only**, while money out is a Payment, money in a Receipt, and an
+  own-account or ATM movement a Contra. That gap is being closed — see
+  [reference §9.13](./TALLY_PROTOCOL_REFERENCE.md) — so this tool's remaining job is the part
+  Bridge does not do: it reads the **statement PDF**, whereas `build_import_xml` takes an
+  already-structured payload. It also still covers books the writer refuses, such as one whose
+  bank ledger sits under a money group Bridge has not yet observed a captured ledger beneath.
+
+  No statement, password, ledger name or account number lives in this repository — all are
+  supplied at run time.
 
 The architectural decisions are recorded in:
 
