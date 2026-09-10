@@ -195,30 +195,35 @@ impl GstDutyHeadObservation {
         duty_head: &PartyLedgerMasterFieldObservation,
     ) -> Self {
         match duty_head {
-            PartyLedgerMasterFieldObservation::Returned(raw) => match raw.as_str() {
-                "CGST" => Self::Recognized {
-                    raw: raw.clone(),
-                    head: GstDutyHead::Cgst,
-                },
-                "IGST" => Self::Recognized {
-                    raw: raw.clone(),
-                    head: GstDutyHead::Igst,
-                },
-                "State Tax" => Self::Recognized {
-                    raw: raw.clone(),
-                    head: GstDutyHead::StateTax,
-                },
-                "UT Tax" => Self::Recognized {
-                    raw: raw.clone(),
-                    head: GstDutyHead::UtTax,
-                },
-                "Cess" => Self::Recognized {
-                    raw: raw.clone(),
-                    head: GstDutyHead::Cess,
-                },
-                _ => Self::Unrecognized { raw: raw.clone() },
-            },
-            PartyLedgerMasterFieldObservation::NotObserved => match tax_type {
+            PartyLedgerMasterFieldObservation::Returned(raw) if !raw.is_empty() => {
+                match raw.as_str() {
+                    "CGST" => Self::Recognized {
+                        raw: raw.clone(),
+                        head: GstDutyHead::Cgst,
+                    },
+                    "IGST" => Self::Recognized {
+                        raw: raw.clone(),
+                        head: GstDutyHead::Igst,
+                    },
+                    "State Tax" => Self::Recognized {
+                        raw: raw.clone(),
+                        head: GstDutyHead::StateTax,
+                    },
+                    "UT Tax" => Self::Recognized {
+                        raw: raw.clone(),
+                        head: GstDutyHead::UtTax,
+                    },
+                    "Cess" => Self::Recognized {
+                        raw: raw.clone(),
+                        head: GstDutyHead::Cess,
+                    },
+                    _ => Self::Unrecognized { raw: raw.clone() },
+                }
+            }
+            // Tally renders an absent duty head both by omitting the element and
+            // as an explicit empty element. Classification intentionally gives
+            // both shapes the same meaning while retaining non-empty raw values.
+            _ => match tax_type {
                 PartyLedgerMasterFieldObservation::Returned(tax_type)
                     if !tax_type.is_empty() && tax_type != "GST" =>
                 {

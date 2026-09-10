@@ -202,10 +202,6 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                 let end = String::from_utf8_lossy(event.name().as_ref()).to_ascii_uppercase();
                 if scope.bill_allocation() {
                     if let Some(allocation_row) = allocation.take().filter(|row| !row.is_empty()) {
-                        let name = allocation_row
-                            .get("NAME")
-                            .filter(|value| !value.trim().is_empty())
-                            .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
                         let bill_type = allocation_row
                             .get("BILLTYPE")
                             .filter(|value| !value.trim().is_empty())
@@ -216,8 +212,19 @@ pub(super) fn parse_agent_rows_with_accounting_state(
                             .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
                         bridge_tally_core::ExactDecimal::parse(amount.clone())
                             .map_err(|_| "bill_allocation_amount_invalid".to_string())?;
+                        let reference = if bill_type.trim() == "On Account" {
+                            // On Account is the one bill type with no bill identity. Keep that
+                            // absence explicit instead of representing it as an empty name.
+                            json!({"kind": "on_account"})
+                        } else {
+                            let name = allocation_row
+                                .get("NAME")
+                                .filter(|value| !value.trim().is_empty())
+                                .ok_or_else(|| "bill_allocation_field_missing".to_string())?;
+                            json!({"kind": "named", "name": name})
+                        };
                         allocations.push(json!({
-                            "name": name,
+                            "reference": reference,
                             "bill_type": bill_type,
                             "amount": amount,
                         }));

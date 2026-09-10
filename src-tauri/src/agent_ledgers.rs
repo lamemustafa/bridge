@@ -95,9 +95,11 @@ mod tests {
     /// and record shape. It is not a live-response evidence capture.
     fn measured_ledger_master_response() -> String {
         let ledger = |name: &str, master_id: u8, tax_type: &str, duty_head: Option<&str>| {
-            let duty_head = duty_head
-                .map(|value| format!("<GSTDUTYHEAD>{value}</GSTDUTYHEAD>"))
-                .unwrap_or_default();
+            let duty_head = match duty_head {
+                Some("") => "<GSTDUTYHEAD/>".to_string(),
+                Some(value) => format!("<GSTDUTYHEAD>{value}</GSTDUTYHEAD>"),
+                None => String::new(),
+            };
             format!(
                 "<LEDGER NAME=\"{name}\" RESERVEDNAME=\"\"><GUID>{COMPANY_GUID}-000000{master_id:02x}</GUID><BRIDGECOMPANYGUID>{COMPANY_GUID}</BRIDGECOMPANYGUID><MASTERID>{master_id}</MASTERID><ALTERID>{master_id}</ALTERID><PARENT>Duties &amp; Taxes</PARENT><TAXTYPE>{tax_type}</TAXTYPE>{duty_head}<OPENINGBALANCE>0.00</OPENINGBALANCE><LANGUAGENAME.LIST><NAME.LIST><NAME>Localized {name}</NAME></NAME.LIST></LANGUAGENAME.LIST></LEDGER>"
             )
@@ -106,8 +108,30 @@ mod tests {
             "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><CMPINFO><LEDGER>107</LEDGER></CMPINFO><COLLECTION>{}{}{}{}</COLLECTION></DATA></BODY></ENVELOPE>",
             ledger("Input CGST", 1, "GST", Some("CGST")),
             ledger("Input SGST", 2, "GST", Some("SGST")),
-            ledger("GST Head Absent", 3, "GST", None),
-            ledger("Non-tax ledger", 4, "Others", None),
+            ledger("GST Head Absent", 3, "GST", Some("")),
+            ledger("Non-tax ledger", 4, "Others", Some("")),
+        )
+    }
+
+    fn captured_partial_alter_ledger(name: &str) -> String {
+        let capture = include_str!(
+            "../crates/bridge-tally-protocol/tests/fixtures/native/master_fields_lab_partial_alter_after.response.xml"
+        );
+        let start_tag = format!(r#"<LEDGER NAME="{name}" RESERVEDNAME="">"#);
+        let start = capture
+            .find(&start_tag)
+            .expect("captured partial-alter response contains the expected ledger");
+        let end = start
+            + capture[start..]
+                .find("</LEDGER>")
+                .expect("captured ledger closes")
+            + "</LEDGER>".len();
+        capture[start..end].to_string()
+    }
+
+    fn native_party_master_collection(fields: &str) -> String {
+        format!(
+            "<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION><LEDGER NAME=\"Captured partial-alter ledger\" RESERVEDNAME=\"\"><GUID>{COMPANY_GUID}-000000ce</GUID><BRIDGECOMPANYGUID>{COMPANY_GUID}</BRIDGECOMPANYGUID><MASTERID>206</MASTERID><ALTERID>208</ALTERID><PARENT>Sundry Debtors</PARENT>{fields}<OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER></COLLECTION></DATA></BODY></ENVELOPE>"
         )
     }
 
@@ -174,6 +198,33 @@ mod tests {
         assert_eq!(compliance["gst_duty_head"]["observation"], "recognized");
         assert_eq!(compliance["gst_duty_head"]["raw"], "CGST");
         assert_eq!(compliance["gst_duty_head"]["head"], "cgst");
+    }
+
+    #[test]
+    fn captured_empty_duty_head_uses_tax_type_classification() {
+        let ledger = captured_partial_alter_ledger("BRIDGE MFLAB PARTIAL ALTER PROBE");
+        let fields = ["<TAXTYPE>Others</TAXTYPE>", "<GSTDUTYHEAD/>"]
+            .into_iter()
+            .map(|field| {
+                let start = ledger
+                    .find(field)
+                    .expect("the real capture contains the expected duty-head field shape");
+                &ledger[start..start + field.len()]
+            })
+            .collect::<String>();
+
+        let parsed = parse_native_party_ledger_master_records_with_evidence(
+            &native_party_master_collection(&fields),
+            COMPANY_GUID,
+        )
+        .expect("the captured duty-head fields parse in the collection profile");
+        assert_eq!(parsed.records.len(), 1);
+        assert_eq!(
+            parsed.records[0].record.fields.gst_duty_head,
+            GstDutyHeadObservation::NotTaxLedger {
+                tax_type: "Others".to_string(),
+            }
+        );
     }
 
     #[test]

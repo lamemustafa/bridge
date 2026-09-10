@@ -36,7 +36,11 @@ fn captured_bill_allocations_preserve_raw_fields_and_empty_entries() {
     let rows = parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID).unwrap();
     assert_eq!(
         rows[0]["amounts"][0]["bill_allocations"],
-        json!([{"name": "SET-INV-001", "bill_type": "New Ref", "amount": "-1137.50"}])
+        json!([{
+            "reference": {"kind": "named", "name": "SET-INV-001"},
+            "bill_type": "New Ref",
+            "amount": "-1137.50"
+        }])
     );
     assert_eq!(rows[0]["amounts"][1]["bill_allocations"], json!([]));
 
@@ -48,8 +52,41 @@ fn captured_bill_allocations_preserve_raw_fields_and_empty_entries() {
     let padded =
         parse_agent_rows(&padded_reference, CAPTURED_BILL_ALLOCATION_COMPANY_GUID).unwrap();
     assert_eq!(
-        padded[0]["amounts"][0]["bill_allocations"][0]["name"],
+        padded[0]["amounts"][0]["bill_allocations"][0]["reference"]["name"],
         "  SET-INV-001  "
+    );
+}
+
+#[test]
+fn on_account_bill_allocation_with_empty_name_is_explicitly_unnamed() {
+    let captured = captured_bill_allocation_vouchers()
+        .replacen("<NAME>SET-INV-001</NAME>", "<NAME></NAME>", 1)
+        .replacen(
+            "<BILLTYPE>New Ref</BILLTYPE>",
+            "<BILLTYPE>On Account</BILLTYPE>",
+            1,
+        );
+    let rows = parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID)
+        .expect("an unnamed On Account allocation must not abort its voucher read");
+
+    let allocation = &rows[0]["amounts"][0]["bill_allocations"][0];
+    assert_eq!(allocation["reference"], json!({"kind": "on_account"}));
+    assert!(
+        allocation.get("name").is_none(),
+        "On Account must not be represented by an empty or placeholder name"
+    );
+}
+
+#[test]
+fn reference_bearing_bill_allocation_with_empty_name_fails_closed() {
+    let captured = captured_bill_allocation_vouchers().replacen(
+        "<NAME>SET-INV-001</NAME>",
+        "<NAME></NAME>",
+        1,
+    );
+    assert_eq!(
+        parse_agent_rows(&captured, CAPTURED_BILL_ALLOCATION_COMPANY_GUID),
+        Err("bill_allocation_field_missing".into())
     );
 }
 
