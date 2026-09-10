@@ -50,6 +50,7 @@ const catalog = {
   capture_id: "00000000-0000-4000-8000-000000000099",
   source_sha256: draft.source_sha256,
   targets: ["Existing target"],
+  bindings_state: "complete" as const,
   evidence: { request_sha256: "b".repeat(64), response_sha256: "c".repeat(64), bytes: 100, state: "complete" as const },
 };
 
@@ -399,6 +400,56 @@ test("reports a truncated candidate list truthfully and falls back to the flat c
   await act(async () => button(host, "Choose source XML").click());
   await act(async () => button(host, "Load existing ledgers").click());
   expect(host.textContent).toContain("1 of 40 possible ledger is listed first");
+  root.unmount();
+});
+
+test("a source line that separates no ledger says so instead of counting nothing", async () => {
+  // The state the live measurement made necessary: the name reaches a whole
+  // family and tells none of them apart, so listing an arbitrary slice would
+  // put the right one out of view. The old copy printed "0 possible ledgers
+  // are listed first", which is a count of nothing.
+  const familyCatalog = {
+    ...catalog,
+    targets: ["DN Party 001", "DN Party 002", "DN Party 003"],
+    bindings: [{
+      row_position: 1,
+      entry_position: 1,
+      bound_target: null,
+      bound_basis: null,
+      unbound_reason: "master_binding_no_discriminating_candidate",
+      candidates: [],
+      candidate_count: 120,
+      candidates_truncated: true,
+    }],
+  };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(familyCatalog);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+
+  expect(host.textContent).toContain("matches 120 existing ledgers and tells them apart from none of them, so none is listed");
+  expect(host.textContent).not.toContain("0 possible");
+  expect(host.textContent).not.toContain("listed first;");
+  const target = host.querySelector<HTMLSelectElement>("#source-draft-1-entry-0-ledger")!;
+  // No misleading "Possible" heading over an empty group, and the full list stays.
+  const groups = Array.from(target.querySelectorAll("optgroup")).map((group) => group.label);
+  expect(groups).toEqual(["Existing ledgers"]);
+  expect(Array.from(target.querySelectorAll("option")).map((option) => option.value))
+    .toEqual(["", "DN Party 001", "DN Party 002", "DN Party 003"]);
+  root.unmount();
+});
+
+test("a capture whose narrowing could not run says so rather than looking unnarrowed", async () => {
+  const unavailable = { ...catalog, bindings: [], bindings_state: "unavailable" as const };
+  mocks.invoke.mockResolvedValueOnce(draft).mockResolvedValueOnce(unavailable);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = await mount(host, { catalogScope, catalogScopeKey: "company-one" });
+  await act(async () => button(host, "Choose source XML").click());
+  await act(async () => button(host, "Load existing ledgers").click());
+  expect(host.textContent).toContain("could not narrow this source's lines, so every row lists the full catalogue");
   root.unmount();
 });
 
